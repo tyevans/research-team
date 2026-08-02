@@ -70,7 +70,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-88 tests, no network. The live smoke test in `tests/test_live.py` is marked `live`
+92 tests, no network. The live smoke test in `tests/test_live.py` is marked `live`
 and deselected by default; run it explicitly with:
 
 ```bash
@@ -79,9 +79,26 @@ uv run pytest tests/test_live.py -m live -v
 
 ## Status
 
-Working. The live smoke test was run once against a local `qwen3.6-27b-mtp` server
-at `http://192.168.1.14:8080/v1/` on 2026-08-01 and **passed in 48s**: asked to
-create `/fizzbuzz.py`, the model emitted a well-formed `write_file` tool call, the
-backend recorded a `FileWritten` event, and the resulting workspace contained a
-fizzbuzz file. No malformed tool calls were observed. Local models of this size are
-slow relative to the fake-model suite — allow a minute per live turn.
+Working, and exercised against a real model rather than only against fakes.
+
+On 2026-08-01, against a local `qwen3.6-27b-mtp` server at
+`http://192.168.1.14:8080/v1/`, a two-turn session was driven end to end: turn one
+asked for `/fizzbuzz.py` and the model emitted a well-formed `write_file` tool call;
+turn two asked for a docstring and it used `edit_file`, producing a `FileEdited`
+event carrying both the new content and the `old_string`/`new_string` intent.
+`/history /fizzbuzz.py` then showed the two revisions, and a cold refold of the
+stream through a fresh repository with no snapshot cache reproduced the live state
+exactly. Rewind was verified separately: rewinding past the second write restored
+the earlier file content while leaving the original stream intact and readable.
+
+No malformed tool calls were observed. Local models of this size are slow relative
+to the fake-model suite — allow a minute per live turn.
+
+**One bug was found this way and fixed** (`e97020b`): `to_langchain` prepended a
+`SystemMessage` while `create_deep_agent` was also given `system_prompt`, so the
+prompt had two owners. Because LangGraph echoes back every message it is handed,
+that extra leading message shifted the new-message suffix by one and each turn
+recorded a spurious `AssistantMessageAdded` containing the user's own text. The
+unit suite missed it because it asserted which event *types* appeared rather than
+how many; reading the actual event log from a live run is what surfaced it. The
+regression tests now pin the exact per-turn event sequence.
