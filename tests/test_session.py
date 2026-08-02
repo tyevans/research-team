@@ -1,0 +1,126 @@
+import pytest
+
+from research_team.events import (
+    AssistantMessageAdded,
+    FileDeleted,
+    FileEdited,
+    FileWritten,
+    SessionStarted,
+    ToolResultRecorded,
+    TurnCompleted,
+    UserMessageSent,
+)
+from research_team.session import CodingSession
+
+from conftest import MODEL_NAME, SYSTEM_PROMPT
+
+FILE_DATA = {"content": "print(1)\n", "encoding": "utf-8"}
+EDITED = {"content": "print(2)\n", "encoding": "utf-8"}
+
+
+def types_of(aggregate: CodingSession) -> list[type]:
+    return [type(e) for e in aggregate.uncommitted_events]
+
+
+def test_start_emits_session_started(session):
+    assert types_of(session) == [SessionStarted]
+    assert session.state.system_prompt == SYSTEM_PROMPT
+    assert session.state.model_name == MODEL_NAME
+
+
+def test_start_twice_is_rejected(session):
+    with pytest.raises(ValueError, match="already started"):
+        session.start(SYSTEM_PROMPT, MODEL_NAME)
+
+
+def test_commands_require_started_session(repo, session_id):
+    fresh = repo.create_new(session_id)
+    with pytest.raises(ValueError, match="not started"):
+        fresh.write_file("/a.py", FILE_DATA)
+
+
+def test_user_message_appended(session):
+    session.send_user_message({"type": "human", "data": {"content": "hi"}})
+    assert types_of(session)[-1] is UserMessageSent
+    assert session.state.messages[-1]["data"]["content"] == "hi"
+
+
+def test_assistant_message_appended(session):
+    session.record_assistant_message({"type": "ai", "data": {"content": "yo", "tool_calls": []}})
+    assert types_of(session)[-1] is AssistantMessageAdded
+    assert session.state.messages[-1]["type"] == "ai"
+
+
+def test_write_file_creates_entry(session):
+    session.write_file("/a.py", FILE_DATA)
+    assert types_of(session)[-1] is FileWritten
+    assert session.state.files["/a.py"] == FILE_DATA
+
+
+def test_edit_file_replaces_entry(session):
+    session.write_file("/a.py", FILE_DATA)
+    session.edit_file("/a.py", EDITED, "1", "2", False)
+    assert types_of(session)[-1] is FileEdited
+    assert session.state.files["/a.py"] == EDITED
+
+
+def test_edit_missing_file_is_rejected(session):
+    with pytest.raises(ValueError, match="does not exist"):
+        session.edit_file("/nope.py", EDITED, "1", "2", False)
+
+
+def test_delete_file_removes_entry(session):
+    session.write_file("/a.py", FILE_DATA)
+    session.delete_file("/a.py")
+    assert types_of(session)[-1] is FileDeleted
+    assert "/a.py" not in session.state.files
+
+
+def test_delete_missing_file_is_rejected(session):
+    with pytest.raises(ValueError, match="does not exist"):
+        session.delete_file("/nope.py")
+
+
+def test_tool_result_requires_outstanding_call(session):
+    with pytest.raises(ValueError, match="no outstanding tool call"):
+        session.record_tool_result({"type": "tool", "data": {"tool_call_id": "t1", "content": "ok"}})
+
+
+def test_tool_result_accepted_when_call_outstanding(session):
+    session.record_assistant_message({
+        "type": "ai",
+        "data": {"content": "", "tool_calls": [{"id": "t1", "name": "write_file", "args": {}}]},
+    })
+    session.record_tool_result({"type": "tool", "data": {"tool_call_id": "t1", "content": "ok"}})
+    assert types_of(session)[-1] is ToolResultRecorded
+
+
+def test_tool_results_may_resolve_out_of_order(session):
+    session.record_assistant_message({
+        "type": "ai",
+        "data": {"content": "", "tool_calls": [
+            {"id": "t1", "name": "write_file", "args": {}},
+            {"id": "t2", "name": "read_file", "args": {}},
+        ]},
+    })
+    session.record_tool_result({"type": "tool", "data": {"tool_call_id": "t2", "content": "b"}})
+    session.record_tool_result({"type": "tool", "data": {"tool_call_id": "t1", "content": "a"}})
+    assert types_of(session)[-2:] == [ToolResultRecorded, ToolResultRecorded]
+
+
+def test_complete_turn_increments_index(session):
+    session.complete_turn()
+    session.complete_turn()
+    assert types_of(session)[-1] is TurnCompleted
+    assert session.state.turn_index == 2
+
+
+async def test_state_survives_save_and_reload(repo, session, session_id):
+    session.write_file("/a.py", FILE_DATA)
+    session.send_user_message({"type": "human", "data": {"content": "hi"}})
+    await repo.save(session)
+
+    reloaded = await repo.load(session_id)
+    assert reloaded.state.files == {"/a.py": FILE_DATA}
+    assert reloaded.state.messages[-1]["data"]["content"] == "hi"
+    assert reloaded.version == 3
