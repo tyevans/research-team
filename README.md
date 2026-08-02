@@ -22,6 +22,13 @@ uv run main.py
 You get a prompt. Type anything to send it to the agent as a turn; type a
 `/`-command to inspect or manipulate the event log.
 
+The default endpoint is `http://localhost:8080/v1/`. If your model server lives
+somewhere else, point at it:
+
+```bash
+export AGENT_BASE_URL=http://your-host:8080/v1/
+```
+
 ## Configuration
 
 The model is an OpenAI-compatible endpoint, configured entirely by environment
@@ -30,7 +37,7 @@ variable:
 | Variable | Default | Meaning |
 |---|---|---|
 | `AGENT_MODEL` | `qwen3.6-27b-mtp` | model name sent to the endpoint |
-| `AGENT_BASE_URL` | `http://192.168.1.14:8080/v1/` | OpenAI-compatible base URL |
+| `AGENT_BASE_URL` | `http://localhost:8080/v1/` | OpenAI-compatible base URL |
 | `AGENT_API_KEY` | `not-needed` | API key; local servers usually ignore it |
 | `AGENT_DB` | `~/.research-team/sessions.db` | SQLite file holding all sessions |
 
@@ -97,8 +104,8 @@ uv run pytest tests/test_live.py -m live -v
 
 Working, and exercised against a real model rather than only against fakes.
 
-On 2026-08-01, against a local `qwen3.6-27b-mtp` server at
-`http://192.168.1.14:8080/v1/`, a two-turn session was driven end to end: turn one
+On 2026-08-01, against a local `qwen3.6-27b-mtp` server, a two-turn session was
+driven end to end: turn one
 asked for `/fizzbuzz.py` and the model emitted a well-formed `write_file` tool call;
 turn two asked for a docstring and it used `edit_file`, producing a `FileEdited`
 event carrying both the new content and the `old_string`/`new_string` intent.

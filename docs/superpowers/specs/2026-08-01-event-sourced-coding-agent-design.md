@@ -329,7 +329,7 @@ indistinguishable from a hang.
 ```python
 ChatOpenAI(
     model=os.getenv("AGENT_MODEL", "qwen3.6-27b-mtp"),
-    base_url=os.getenv("AGENT_BASE_URL", "http://192.168.1.14:8080/v1/"),
+    base_url=os.getenv("AGENT_BASE_URL", "http://localhost:8080/v1/"),
     api_key=os.getenv("AGENT_API_KEY", "not-needed"),
     temperature=0,
 )
