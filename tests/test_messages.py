@@ -23,15 +23,21 @@ def make_state(**kwargs) -> SessionState:
     return SessionState(session_id=uuid4(), system_prompt="SYS", **kwargs)
 
 
-def test_system_prompt_is_prepended():
-    messages = to_langchain(make_state())
-    assert isinstance(messages[0], SystemMessage)
-    assert messages[0].content == "SYS"
+def test_system_prompt_is_not_prepended():
+    """create_deep_agent owns the system prompt; two owners breaks turn accounting."""
+    state = make_state(messages=[message_to_dict(HumanMessage("hello", id="h1"))])
+    messages = to_langchain(state)
+    assert not any(isinstance(m, SystemMessage) for m in messages)
+    assert len(messages) == len(state.messages)
+
+
+def test_empty_history_folds_to_empty_list():
+    assert to_langchain(make_state()) == []
 
 
 def test_round_trip_preserves_human_message():
     state = make_state(messages=[message_to_dict(HumanMessage("hello", id="h1"))])
-    restored = to_langchain(state)[1]
+    restored = to_langchain(state)[0]
     assert isinstance(restored, HumanMessage)
     assert restored.content == "hello"
 
@@ -43,7 +49,7 @@ def test_round_trip_preserves_tool_calls():
         tool_calls=[{"name": "write_file", "args": {"path": "/a.py"}, "id": "t1"}],
     )
     state = make_state(messages=[message_to_dict(original)])
-    restored = to_langchain(state)[1]
+    restored = to_langchain(state)[0]
     assert isinstance(restored, AIMessage)
     assert restored.tool_calls[0]["id"] == "t1"
     assert restored.tool_calls[0]["args"] == {"path": "/a.py"}
@@ -53,7 +59,7 @@ def test_round_trip_preserves_tool_message():
     state = make_state(
         messages=[message_to_dict(ToolMessage(content="done", tool_call_id="t1", id="m1"))]
     )
-    restored = to_langchain(state)[1]
+    restored = to_langchain(state)[0]
     assert isinstance(restored, ToolMessage)
     assert restored.tool_call_id == "t1"
 

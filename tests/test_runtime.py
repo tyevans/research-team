@@ -111,3 +111,45 @@ async def test_rewind_repoints_session(runtime):
 async def test_snapshot_threshold_is_configured(runtime):
     assert runtime.repo.snapshot_threshold == 50
     assert runtime.repo.has_snapshot_support
+
+
+async def test_turn_records_each_message_exactly_once(runtime):
+    """Regression: a SystemMessage in the sent list shifted turn accounting,
+    causing the user's own message to be re-recorded as an assistant message."""
+    await rt.run_turn(runtime, "hello")
+
+    types = [type(e) for e in await rt.history(runtime)]
+    assert types == [
+        SessionStarted,
+        UserMessageSent,
+        AssistantMessageAdded,
+        TurnCompleted,
+    ]
+
+
+async def test_user_text_is_never_recorded_as_assistant(runtime):
+    await rt.run_turn(runtime, "a very distinctive user utterance")
+
+    assistant_texts = [
+        e.message.get("data", {}).get("content")
+        for e in await rt.history(runtime)
+        if isinstance(e, AssistantMessageAdded)
+    ]
+    assert "a very distinctive user utterance" not in assistant_texts
+
+
+async def test_second_turn_does_not_replay_earlier_messages(fake_model):
+    # Distinct ids per turn: LangGraph's message reducer dedupes by id, so a
+    # fake that replays one id would silently append nothing on turn two.
+    fake_model.responses = [
+        AIMessage(content="first reply", id="a1"),
+        AIMessage(content="second reply", id="a2"),
+    ]
+    runtime = await rt.build_runtime(model=fake_model)
+
+    await rt.run_turn(runtime, "first")
+    after_first = len(await rt.history(runtime))
+    await rt.run_turn(runtime, "second")
+
+    # Exactly UserMessageSent + AssistantMessageAdded + TurnCompleted again.
+    assert len(await rt.history(runtime)) == after_first + 3

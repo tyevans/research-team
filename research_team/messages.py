@@ -11,7 +11,6 @@ from langchain_core.messages import (
     AIMessage,
     BaseMessage,
     HumanMessage,
-    SystemMessage,
     ToolMessage,
     messages_from_dict,
 )
@@ -33,11 +32,17 @@ _EVENT_FOR_MESSAGE: tuple[tuple[type[BaseMessage], type[DomainEvent]], ...] = (
 
 
 def to_langchain(state: "SessionState") -> list[BaseMessage]:
-    """Fold stored payloads into the message list the agent consumes."""
-    history = messages_from_dict(state.messages)
-    if not state.system_prompt:
-        return history
-    return [SystemMessage(state.system_prompt), *history]
+    """Fold stored payloads into the message list the agent consumes.
+
+    The system prompt is deliberately NOT prepended. `create_deep_agent`
+    takes `system_prompt` as its own parameter and owns it; putting a
+    SystemMessage in this list as well would give the prompt two owners and
+    show it to the model twice. It would also break turn accounting:
+    LangGraph echoes back every message it is given, so an extra leading
+    message shifts the "what did the agent add" suffix by one and the user's
+    own message gets recorded a second time as an assistant message.
+    """
+    return messages_from_dict(state.messages)
 
 
 def classify(message: BaseMessage) -> type[DomainEvent]:
@@ -51,8 +56,9 @@ def classify(message: BaseMessage) -> type[DomainEvent]:
 def new_messages(sent_count: int, after: list[BaseMessage]) -> list[BaseMessage]:
     """The messages the agent appended beyond the `sent_count` we gave it.
 
-    LangGraph returns the input messages verbatim and in order, then the new
-    ones, and the SystemMessage is not among them (deepagents passes the
-    system prompt separately). So the suffix is exactly the new work.
+    LangGraph echoes the input messages back verbatim and in order, then
+    appends the new ones, so the suffix is exactly the new work. `sent_count`
+    must be the length of the list actually handed to the agent -- not the
+    stored message count -- or the accounting silently shifts.
     """
     return after[sent_count:]

@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, BaseMessage, message_to_dict
 from langchain_openai import ChatOpenAI
 
 from research_team.backend import EventSourcedBackend
-from research_team.events import ToolResultRecorded
+from research_team.events import AssistantMessageAdded, ToolResultRecorded
 from research_team.messages import classify, new_messages, to_langchain
 from research_team.session import CodingSession
 
@@ -99,15 +99,23 @@ async def run_turn(runtime: AgentRuntime, user_input: str) -> str:
     aggregate = await runtime.repo.load(runtime.session_id)
     aggregate.send_user_message(message_to_dict(_human(user_input)))
 
-    sent_count = len(aggregate.state.messages)
-    after = await _invoke_agent(runtime, aggregate, to_langchain(aggregate.state))
+    sent = to_langchain(aggregate.state)
+    after = await _invoke_agent(runtime, aggregate, sent)
 
-    for message in new_messages(sent_count, after):
+    for message in new_messages(len(sent), after):
         event_class = classify(message)
         if event_class is ToolResultRecorded:
             aggregate.record_tool_result(message_to_dict(message))
-        else:
+        elif event_class is AssistantMessageAdded:
             aggregate.record_assistant_message(message_to_dict(message))
+        else:
+            # A HumanMessage in the suffix means turn accounting has drifted:
+            # the user's message would be recorded twice. Fail loudly rather
+            # than quietly writing a corrupt event to an append-only log.
+            raise RuntimeError(
+                f"unexpected {type(message).__name__} in agent output suffix; "
+                "turn accounting is wrong"
+            )
 
     aggregate.complete_turn()
     await runtime.repo.save(aggregate)

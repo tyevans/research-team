@@ -223,13 +223,22 @@ commands are reached only on the success path.
 Thin, pure, no I/O. It is deliberately small because
 `langchain_core.messages.message_to_dict` / `messages_from_dict` do the actual work.
 
-- `to_langchain(state) -> list[BaseMessage]` — `messages_from_dict(state.messages)`,
-  prepended with the `SystemMessage` built from `state.system_prompt`.
+- `to_langchain(state) -> list[BaseMessage]` — `messages_from_dict(state.messages)`.
+  It does **not** prepend a `SystemMessage`: `create_deep_agent` takes
+  `system_prompt` as its own parameter and owns it. Giving the prompt two owners
+  would show it to the model twice, and — because LangGraph echoes back every
+  message it is handed — would shift the "what did the agent add" suffix by one,
+  re-recording the user's own message as an assistant message. This was found by
+  running the agent against the live model and reading the event log; the unit
+  tests missed it because they asserted event *membership* rather than counts.
 - `classify(message) -> type[DomainEvent]` — maps a `BaseMessage` to the matching
   event class (`HumanMessage`→`UserMessageSent`, `AIMessage`→`AssistantMessageAdded`,
   `ToolMessage`→`ToolResultRecorded`).
-- `new_messages(before, after) -> list[BaseMessage]` — the suffix of `after` not
-  present in `before`, matched on message `id`.
+- `new_messages(sent_count, after) -> list[BaseMessage]` — `after[sent_count:]`,
+  where `sent_count` is the length of the list actually handed to the agent.
+  LangGraph echoes inputs back verbatim then appends, so the suffix is the new
+  work. Note its message reducer dedupes by `id`, which is a second reason not to
+  diff on ids.
 
 `state.messages` is `list[dict]` — the raw langchain payloads, stored exactly as the
 events carried them. No intermediate `RecordedMessage` model. This keeps the
