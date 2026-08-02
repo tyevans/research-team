@@ -8,13 +8,13 @@ from langchain_core.messages import (
     message_to_dict,
 )
 
-from research_team.events import (
-    AssistantMessageAdded,
-    ToolResultRecorded,
-    UserMessageSent,
+from research_team.application import TurnAccountingError
+from research_team.infrastructure.agent.messages import (
+    new_messages,
+    to_langchain,
+    to_recorded,
 )
-from research_team.messages import classify, new_messages, to_langchain
-from research_team.session import SessionState
+from research_team.domain import SessionState
 
 from uuid import uuid4
 
@@ -67,18 +67,36 @@ def test_round_trip_preserves_tool_message():
 @pytest.mark.parametrize(
     ("message", "expected"),
     [
-        (HumanMessage("x"), UserMessageSent),
-        (AIMessage("x"), AssistantMessageAdded),
-        (ToolMessage(content="x", tool_call_id="t1"), ToolResultRecorded),
+        (AIMessage("x"), "assistant"),
+        (ToolMessage(content="x", tool_call_id="t1"), "tool"),
     ],
 )
-def test_classify(message, expected):
-    assert classify(message) is expected
+def test_to_recorded_kind(message, expected):
+    assert to_recorded(message).kind == expected
 
 
-def test_classify_rejects_unknown_type():
-    with pytest.raises(TypeError, match="cannot record"):
-        classify(SystemMessage("x"))
+def test_to_recorded_tool_success_is_not_an_error():
+    recorded = to_recorded(ToolMessage(content="ok", tool_call_id="t1"))
+    assert recorded.kind == "tool"
+    assert recorded.is_error is False
+
+
+def test_to_recorded_marks_failed_tool_results():
+    recorded = to_recorded(
+        ToolMessage(content="boom", tool_call_id="t1", status="error")
+    )
+    assert recorded.kind == "tool"
+    assert recorded.is_error is True
+
+
+def test_to_recorded_rejects_human_message():
+    with pytest.raises(TurnAccountingError, match="cannot record"):
+        to_recorded(HumanMessage("x"))
+
+
+def test_to_recorded_rejects_unknown_type():
+    with pytest.raises(TurnAccountingError, match="cannot record"):
+        to_recorded(SystemMessage("x"))
 
 
 def test_new_messages_returns_suffix():

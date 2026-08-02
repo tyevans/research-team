@@ -3,8 +3,8 @@ import inspect
 import pytest
 from deepagents.backends.state import StateBackend
 
-from research_team.backend import EventSourcedBackend
-from research_team.events import FileDeleted, FileEdited, FileWritten
+from research_team.infrastructure.agent.backend import EventSourcedBackend
+from research_team.domain.events import FileDeleted, FileEdited, FileWritten
 
 
 @pytest.fixture
