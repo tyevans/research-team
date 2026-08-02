@@ -6,7 +6,7 @@ from uuid import UUID
 from eventsource import DeclarativeAggregate, handles
 from pydantic import BaseModel, Field
 
-from research_team.events import (
+from research_team.domain.events import (
     AssistantMessageAdded,
     SessionForkedFrom,
     TurnFailed,

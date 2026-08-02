@@ -1,0 +1,165 @@
+"""Terminal REPL: parsing, dispatch, and the input loop.
+
+An adapter like any other -- it translates typed lines into use-case calls and
+renders what comes back. No domain rules and no storage knowledge live here.
+"""
+
+import asyncio
+from uuid import UUID
+
+from research_team.application import ActivityReporter, SessionService
+from research_team.infrastructure import config
+from research_team.interfaces.cli.formatters import (
+    format_diff,
+    format_file_history,
+    format_files,
+    format_log,
+    format_resumed,
+    format_sessions,
+    format_state,
+)
+
+HELP = """\
+Workspace
+  /files           files in the workspace, with revision counts
+  /cat <path>      current contents of a file
+  /history <path>  every event that touched a path
+  /diff <path>     each recorded edit to a path, old -> new
+
+Event log
+  /log [n]         last n events (default 20)
+  /state           session id, event count, turn count, file count
+
+Time travel
+  /rewind <n>      continue from a fork at event n
+  /fork <n>        fork at event n and switch to it
+
+Sessions (persisted to SQLite; they survive restarts)
+  /sessions        list every stored session, newest first
+  /resume <n|id>   switch to a stored session by list position or id
+  /new             start a fresh session
+
+  /help            this message
+  /quit            exit
+
+Anything else is sent to the agent as a turn."""
+
+
+async def _resolve_session(service: SessionService, argument: str) -> UUID | str:
+    """Accept a 1-based list position or an id prefix. Returns an error string."""
+    summaries = await service.list_sessions()
+    if argument.isdigit():
+        index = int(argument)
+        if not 1 <= index <= len(summaries):
+            return f"no session {index}: {len(summaries)} stored"
+        return summaries[index - 1].session_id
+    matches = [s for s in summaries if str(s.session_id).startswith(argument)]
+    if not matches:
+        return f"no session matching {argument!r}"
+    if len(matches) > 1:
+        return f"{argument!r} matches {len(matches)} sessions -- use more characters"
+    return matches[0].session_id
+
+
+async def handle_command(
+    service: SessionService,
+    line: str,
+    on_activity: ActivityReporter | None = None,
+) -> str | None:
+    """Run one input line. Returns text to print, or None to exit the REPL."""
+    line = line.strip()
+    if not line:
+        return ""
+    if not line.startswith("/"):
+        return await service.run_turn(line, on_activity)
+
+    command, _, argument = line.partition(" ")
+    argument = argument.strip()
+
+    if command == "/quit":
+        return None
+    if command == "/help":
+        return HELP
+    if command == "/sessions":
+        return format_sessions(await service.list_sessions(), service.session_id)
+    if command == "/resume":
+        if not argument:
+            return "usage: /resume <list-position|session-id>"
+        resolved = await _resolve_session(service, argument)
+        if isinstance(resolved, str):
+            return resolved
+        return format_resumed(await service.resume(resolved))
+    if command == "/new":
+        return f"started {await service.start_session()}"
+    if command == "/diff":
+        if not argument:
+            return "usage: /diff <path>"
+        return format_diff(await service.history(), argument)
+    if command == "/log":
+        limit = int(argument) if argument.isdigit() else 20
+        return format_log(await service.history(), limit)
+    if command == "/files":
+        session = await service.load()
+        return format_files(await service.history(), session.state.files)
+    if command == "/cat":
+        if not argument:
+            return "usage: /cat <path>"
+        session = await service.load()
+        entry = session.state.files.get(argument)
+        return entry["content"] if entry else f"{argument}: not found"
+    if command == "/history":
+        if not argument:
+            return "usage: /history <path>"
+        return format_file_history(await service.history(), argument)
+    if command in ("/rewind", "/fork"):
+        if not argument.isdigit():
+            return f"usage: {command} <event-number>"
+        try:
+            new_id = await service.switch_to_fork(int(argument))
+        except ValueError as error:
+            return str(error)
+        verb = "rewound to" if command == "/rewind" else "forked at"
+        return f"{verb} event {argument}; session {new_id}"
+    if command == "/state":
+        events = await service.history()
+        return format_state(await service.load(), len(events))
+    return f"unknown command {command!r} -- try /help"
+
+
+async def run(service: SessionService) -> None:
+    """Drive a session until the user leaves. The service is closed on the way out.
+
+    The service is passed in rather than built here: choosing adapters is the
+    composition root's job, and a REPL that builds its own would be one more
+    place that knows which database and which model the app happens to use.
+    """
+    try:
+        stored = await service.list_sessions()
+        print(f"session {service.session_id}")
+        print(f"database {config.default_db_path()}")
+        if len(stored) > 1:
+            print(f"{len(stored) - 1} earlier session(s) -- /sessions to list")
+        print("/help for commands")
+
+        while True:
+            try:
+                line = await asyncio.to_thread(input, "\n> ")
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return
+            try:
+                output = await handle_command(service, line, on_activity=print)
+            except KeyboardInterrupt:
+                # The turn is abandoned before its events are saved, so the
+                # log keeps the last completed turn rather than a partial one.
+                print("\n(interrupted -- turn discarded)")
+                continue
+            except Exception as error:  # noqa: BLE001 -- keep the REPL alive
+                print(f"error: {type(error).__name__}: {error}")
+                continue
+            if output is None:
+                return
+            if output:
+                print(output)
+    finally:
+        await service.close()

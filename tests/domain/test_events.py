@@ -3,7 +3,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from research_team.events import (
+from research_team.domain.events import (
     SESSION_EVENTS,
     AssistantMessageAdded,
     SessionForkedFrom,

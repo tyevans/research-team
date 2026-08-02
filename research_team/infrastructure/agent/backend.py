@@ -12,7 +12,7 @@ from typing import Any
 from deepagents.backends.protocol import EditResult
 from deepagents.backends.state import StateBackend
 
-from research_team.session import CodingSession
+from research_team.domain.session import CodingSession
 
 
 class EventSourcedBackend(StateBackend):

@@ -3,13 +3,16 @@ from uuid import uuid4
 
 import pytest
 from eventsource.adapters.sqlite import SQLiteEventStore
-from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
-from eventsource.application.aggregates.repository import AggregateRepository
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
-from research_team import runtime as rt
-from research_team.session import CodingSession
+from research_team import composition
+from research_team.application import SessionService
+from research_team.domain import CodingSession
+from research_team.infrastructure.persistence import (
+    EventStoreSessionRepository,
+    build_aggregate_repository,
+)
 
 SYSTEM_PROMPT = "You are a coding agent."
 MODEL_NAME = "test-model"
@@ -21,28 +24,33 @@ def db_path(tmp_path) -> str:
 
 
 @pytest.fixture(autouse=True)
-async def isolate_database(tmp_path, monkeypatch):
-    """Keep tests off the real database, and close what they open.
+def isolate_database(tmp_path, monkeypatch):
+    """Keep tests off the real database.
 
-    Every test gets its own file, so `AGENT_DB` is pointed at it -- otherwise
-    a bare `build_runtime()` in a test body would append to the developer's
-    own `~/.research-team/sessions.db`. Runtimes built during the test are
-    tracked and closed here, since SQLite connections are not garbage.
+    Every test gets its own file, so `AGENT_DB` is pointed at it -- otherwise a
+    bare `build_service()` in a test body would append to the developer's own
+    `~/.research-team/sessions.db`.
     """
     monkeypatch.setenv("AGENT_DB", str(tmp_path / "auto.db"))
 
-    opened: list[rt.AgentRuntime] = []
-    real_build = rt.build_runtime
 
-    async def tracking_build(**kwargs):
-        runtime = await real_build(**kwargs)
-        opened.append(runtime)
-        return runtime
+@pytest.fixture
+async def build_service():
+    """Build services and close them afterwards.
 
-    monkeypatch.setattr(rt, "build_runtime", tracking_build)
-    yield
-    for runtime in opened:
-        await runtime.close()
+    SQLite connections are not garbage, so anything opened during a test is
+    tracked here and closed when it ends.
+    """
+    opened: list[SessionService] = []
+
+    async def build(**kwargs) -> SessionService:
+        service = await composition.build_service(**kwargs)
+        opened.append(service)
+        return service
+
+    yield build
+    for service in opened:
+        await service.close()
 
 
 @pytest.fixture
@@ -53,16 +61,14 @@ async def store(db_path) -> SQLiteEventStore:
 
 
 @pytest.fixture
-def repo(store, db_path) -> AggregateRepository[CodingSession]:
-    return AggregateRepository(
-        store,
-        CodingSession,
-        # Same file as the event store: the store's connection is what applies
-        # the schema that creates the `snapshots` table.
-        snapshot_store=SQLiteSnapshotStore(db_path),
-        snapshot_threshold=50,
-        snapshot_mode="sync",
-    )
+def aggregates(store, db_path):
+    """The raw `eventsource` aggregate repository, for tests that need it."""
+    return build_aggregate_repository(store, db_path)
+
+
+@pytest.fixture
+def repository(store, aggregates) -> EventStoreSessionRepository:
+    return EventStoreSessionRepository(store, aggregates)
 
 
 @pytest.fixture
@@ -71,8 +77,8 @@ def session_id():
 
 
 @pytest.fixture
-def session(repo, session_id) -> CodingSession:
-    aggregate = repo.create_new(session_id)
+def session(aggregates, session_id) -> CodingSession:
+    aggregate = aggregates.create_new(session_id)
     aggregate.start(SYSTEM_PROMPT, MODEL_NAME)
     return aggregate
 

@@ -1,6 +1,6 @@
 import pytest
 
-from research_team.events import (
+from research_team.domain.events import (
     AssistantMessageAdded,
     FileDeleted,
     FileEdited,
@@ -10,7 +10,7 @@ from research_team.events import (
     TurnCompleted,
     UserMessageSent,
 )
-from research_team.session import CodingSession
+from research_team.domain import CodingSession
 
 from conftest import MODEL_NAME, SYSTEM_PROMPT
 
@@ -33,8 +33,8 @@ def test_start_twice_is_rejected(session):
         session.start(SYSTEM_PROMPT, MODEL_NAME)
 
 
-def test_commands_require_started_session(repo, session_id):
-    fresh = repo.create_new(session_id)
+def test_commands_require_started_session(aggregates, session_id):
+    fresh = aggregates.create_new(session_id)
     with pytest.raises(ValueError, match="not started"):
         fresh.write_file("/a.py", FILE_DATA)
 
@@ -115,12 +115,12 @@ def test_complete_turn_increments_index(session):
     assert session.state.turn_index == 2
 
 
-async def test_state_survives_save_and_reload(repo, session, session_id):
+async def test_state_survives_save_and_reload(aggregates, session, session_id):
     session.write_file("/a.py", FILE_DATA)
     session.send_user_message({"type": "human", "data": {"content": "hi"}})
-    await repo.save(session)
+    await aggregates.save(session)
 
-    reloaded = await repo.load(session_id)
+    reloaded = await aggregates.load(session_id)
     assert reloaded.state.files == {"/a.py": FILE_DATA}
     assert reloaded.state.messages[-1]["data"]["content"] == "hi"
     assert reloaded.version == 3

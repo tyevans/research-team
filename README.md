@@ -80,10 +80,39 @@ The log lives in SQLite. Listing sessions is a fold over `read_category`, not a
 separate table we maintain. Turns are streamed with `stream_mode="values"`, which
 gives both live tool-by-tool progress and the final message list in one pass.
 
-Module map: `events.py` (event definitions), `session.py` (aggregate: commands
-validate, reducers fold), `messages.py` (pure langchain conversion), `backend.py`
-(the seam overrides), `runtime.py` (wiring, turn loop, `history`/`fork`/`rewind`),
-`repl.py` (terminal loop and formatting).
+## Layout
+
+Four layers, and imports only ever point inward:
+
+```
+research_team/
+  domain/          events.py, session.py
+                   The aggregate and the events it folds. Knows nothing
+                   about langchain, deepagents, SQLite, or the environment.
+  application/     ports.py, session_service.py, summaries.py
+                   The use cases -- run a turn, fork, resume, list sessions --
+                   plus the ports (SessionRepository, TurnExecutor) they need
+                   the outside world to satisfy.
+  infrastructure/  persistence/  the event store, implementing SessionRepository
+                   agent/        deepagents + langchain, implementing TurnExecutor
+                   config.py     the only module that reads the environment
+  interfaces/      cli/          the REPL: parsing, dispatch, formatting
+  composition.py   the one place that picks concrete adapters and wires them
+```
+
+`main.py` builds the application and hands it to the REPL, so nothing below the
+entrypoint chooses its own database or model.
+
+The seam that matters is `TurnExecutor`. A turn's file writes land on the
+aggregate as they happen -- the agent's filesystem *is* the aggregate -- while
+conversation messages come back as `RecordedMessage` values for the use case to
+append. That is what keeps a turn all-or-nothing: the service decides whether
+the turn is committed at all, and a turn that raises is discarded whole.
+
+The dependency rule is asserted, not just documented: `tests/test_architecture.py`
+parses every module and fails if a layer imports outward, if the domain or
+application layer names a framework, or if anything but the entrypoint imports the
+composition root.
 
 Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-design.md`.
 
@@ -93,11 +122,15 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-132 tests, no network. The live smoke test in `tests/test_live.py` is marked `live`
-and deselected by default; run it explicitly with:
+167 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+`tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
+`tests/integration` for the cross-layer ones.
+
+The live smoke test in `tests/integration/test_live.py` is marked `live` and
+deselected by default; run it explicitly with:
 
 ```bash
-uv run pytest tests/test_live.py -m live -v
+uv run pytest tests/integration/test_live.py -m live -v
 ```
 
 ## Status
