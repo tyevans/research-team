@@ -1,9 +1,12 @@
+from typing import Any
 from uuid import uuid4
 
 import pytest
 from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
 from eventsource.application.aggregates.repository import AggregateRepository
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage
 
 from research_team.session import CodingSession
 
@@ -42,3 +45,19 @@ def session(repo, session_id) -> CodingSession:
     aggregate = repo.create_new(session_id)
     aggregate.start(SYSTEM_PROMPT, MODEL_NAME)
     return aggregate
+
+
+class ToolAwareFakeChatModel(FakeMessagesListChatModel):
+    """langchain's fake, plus the bind_tools deepagents requires.
+
+    Replays `responses` one per invocation. Do not hand-roll a BaseChatModel
+    subclass -- this is the library's fake with a single method added.
+    """
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "ToolAwareFakeChatModel":
+        return self
+
+
+@pytest.fixture
+def fake_model() -> ToolAwareFakeChatModel:
+    return ToolAwareFakeChatModel(responses=[AIMessage(content="done", id="a1")])
