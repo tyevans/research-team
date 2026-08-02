@@ -38,7 +38,7 @@ shell. This is deliberate: with no side effects escaping the process, replay is
         fold            │                    fold
         ▼               │                    ▼
    messages.py          │            SessionState.files
-   list[BaseMessage]    │            dict[path, FileEntry]
+   list[BaseMessage]    │            dict[path, FileData] 
         │               │                    │
         └──► create_deep_agent(              ◄── EventSourcedBackend
                 model=ChatOpenAI(...),           (BackendProtocol impl)
@@ -99,14 +99,17 @@ only the envelope is ours.
 
 | Event | Fields |
 |---|---|
-| `FileWritten` | `path: str`, `content: str` |
-| `FileEdited` | `path: str`, `content: str`, `old_string: str`, `new_string: str`, `replace_all: bool` |
+| `FileWritten` | `path: str`, `file_data: dict[str, Any]` |
+| `FileEdited` | `path: str`, `file_data: dict[str, Any]`, `old_string: str`, `new_string: str`, `replace_all: bool` |
 | `FileDeleted` | `path: str` |
 
-`FileEdited` carries the resulting full `content` as well as the edit intent. The
-content makes the fold trivial and O(1) per event; the `old_string`/`new_string` pair
-preserves *why* the file changed, which is the audit value. Storing only the diff
-would make folding cost O(history) per file.
+`file_data` is deepagents' `FileData` shape exactly as the superclass produced it
+(content, encoding, created_at, modified_at).
+
+`FileEdited` carries the resulting full `file_data` *as well as* the edit intent. The
+full content makes the fold trivial and O(1) per event; the `old_string`/`new_string`
+pair preserves *why* the file changed, which is the audit value. Storing only the
+diff would make folding cost O(history) per file.
 
 **Design constraint:** every event is self-contained. Folding never requires
 consulting state outside the stream.
@@ -114,18 +117,12 @@ consulting state outside the stream.
 ### `research_team/session.py`
 
 ```python
-class FileEntry(BaseModel):
-    content: str
-    version: int          # bumped per write/edit
-    created_at: datetime
-    updated_at: datetime
-
 class SessionState(BaseModel):
     session_id: UUID
     system_prompt: str = ""
     model_name: str = ""
-    files: dict[str, FileEntry] = {}
-    messages: list[dict[str, Any]] = []   # raw langchain message payloads
+    files: dict[str, dict[str, Any]] = {}  # path -> deepagents FileData
+    messages: list[dict[str, Any]] = []    # raw langchain message payloads
     turn_index: int = 0
 
 class CodingSession(DeclarativeAggregate[SessionState]):
@@ -173,15 +170,21 @@ class EventSourcedBackend(StateBackend):
         self._aggregate = aggregate
 
     def _read_files(self) -> dict[str, Any]:
-        return {p: e.to_file_data() for p, e in self._aggregate.state.files.items()}
+        return dict(self._aggregate.state.files)
 
     def _send_files_update(self, update: dict[str, Any]) -> None:
         for path, file_data in update.items():
             if file_data is None:
                 self._aggregate.delete_file(path)
+            elif self._edit_intent is not None:
+                self._aggregate.edit_file(path, file_data, *self._edit_intent)
             else:
-                self._aggregate.write_file(path, file_data_to_string(file_data))
+                self._aggregate.write_file(path, file_data)
 ```
+
+Events carry the whole `FileData` dict, so the fold is a plain dict assignment and
+`state.files` is already in the exact shape `_read_files` must return — no conversion
+layer in either direction.
 
 This also removes the dependency on LangGraph's `CONFIG_KEY_READ`/`CONFIG_KEY_SEND` —
 the inherited `_get_config()` is never reached, so the backend works outside a graph
@@ -207,9 +210,6 @@ replacement; we only observe.
 
 Async variants (`als`, `aread`, …) are inherited — the base delegates to the sync
 methods, and everything here is in-memory, so there is nothing to await.
-
-`FileEntry.to_file_data()` produces deepagents' `FileData` shape via the library's own
-`create_file_data` / `update_file_data` helpers rather than hand-built dicts.
 
 **Aggregate invariants vs. backend validation.** The aggregate still enforces its own
 invariants (path exists, session started) because it must be correct independent of
@@ -274,7 +274,7 @@ class AgentRuntime:
 | Command | Effect |
 |---|---|
 | `/log [n]` | last `n` events, one line each: `#idx  EventType  summary` |
-| `/files` | file list with version and size |
+| `/files` | path, size, and revision count (from the log) |
 | `/cat <path>` | current content |
 | `/history <path>` | every event touching that path, with turn index |
 | `/rewind <n>` | truncate session to `n` events |
@@ -325,10 +325,12 @@ whether one of the two libraries already provides it.
    The aggregate must be correct when driven directly (by replay, or by a test), so
    it cannot rely on a caller having validated. This is a genuine second consumer,
    not a copy.
-2. *`FileEntry` alongside `FileData`* — `FileData` is deepagents' transport shape and
-   has no version/history fields. `FileEntry` adds `version`, `created_at`,
-   `updated_at`, which is exactly the event-sourcing value we are adding.
-   `to_file_data()` converts, so the shapes never drift.
+2. *None in the filesystem layer.* An earlier draft wrapped `FileData` in a
+   `FileEntry` model carrying `version`/`created_at`/`updated_at`. Two of those
+   already exist on `FileData`, and `version` is derivable from the log — caching it
+   in the fold would mean storing an answer the event stream already gives. Dropped:
+   `state.files` holds raw `FileData` dicts, and `/history` and `/files` compute
+   version by counting that path's events.
 
 Anything else that looks like reimplementation is a bug in the implementation, not a
 design choice — the reviewer should flag it.
