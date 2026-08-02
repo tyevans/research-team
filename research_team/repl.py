@@ -1,7 +1,9 @@
 """Terminal REPL. Formatting and dispatch only -- no domain logic."""
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
+from uuid import UUID
 
 from eventsource import DomainEvent
 
@@ -12,14 +14,25 @@ from research_team.runtime import AgentRuntime
 FILE_EVENTS = (FileWritten, FileEdited, FileDeleted)
 
 HELP = """\
-Commands:
-  /log [n]         last n events (default 20)
+Workspace
   /files           files in the workspace, with revision counts
   /cat <path>      current contents of a file
   /history <path>  every event that touched a path
+  /diff <path>     each recorded edit to a path, old -> new
+
+Event log
+  /log [n]         last n events (default 20)
+  /state           session id, event count, turn count, file count
+
+Time travel
   /rewind <n>      continue from a fork at event n
   /fork <n>        fork at event n and switch to it
-  /state           session id, event count, turn count, file count
+
+Sessions (persisted to SQLite; they survive restarts)
+  /sessions        list every stored session, newest first
+  /resume <n|id>   switch to a stored session by list position or id
+  /new             start a fresh session
+
   /help            this message
   /quit            exit
 
@@ -32,7 +45,11 @@ def _summary(event: DomainEvent) -> str:
     if hasattr(event, "turn_index"):
         return f"turn {event.turn_index}"
     if hasattr(event, "message"):
-        return str(event.message.get("data", {}).get("content", ""))[:60]
+        content = str(event.message.get("data", {}).get("content", "")).strip()
+        calls = event.message.get("data", {}).get("tool_calls") or []
+        if calls:
+            return "→ " + ", ".join(call.get("name", "?") for call in calls)
+        return " ".join(content.split())[:60]
     return ""
 
 
@@ -42,9 +59,42 @@ def format_log(events: list[DomainEvent], limit: int) -> str:
     selected = events[-limit:]
     offset = len(events) - len(selected)
     return "\n".join(
-        f"#{offset + i + 1:<4} {type(event).__name__:<24} {_summary(event)}"
+        f"#{offset + i + 1:<4} {event.occurred_at:%H:%M:%S}  "
+        f"{type(event).__name__:<24} {_summary(event)}"
         for i, event in enumerate(selected)
     )
+
+
+def format_sessions(summaries: list[rt.SessionSummary], current: UUID) -> str:
+    if not summaries:
+        return "(no stored sessions)"
+    rows = []
+    for index, summary in enumerate(summaries, start=1):
+        marker = "*" if summary.session_id == current else " "
+        opening = " ".join(summary.first_message.split())[:44] or "(no messages)"
+        rows.append(
+            f"{marker}{index:>3}  {str(summary.session_id)[:8]}  "
+            f"{summary.started_at:%Y-%m-%d %H:%M}  "
+            f"{summary.turns:>3} turns  {summary.files:>3} files  {opening}"
+        )
+    return "\n".join(rows)
+
+
+def format_diff(events: list[DomainEvent], path: str) -> str:
+    """Surface the edit intent that FileEdited already records."""
+    edits = [e for e in events if isinstance(e, FileEdited) and e.path == path]
+    if not edits:
+        return f"(no recorded edits for {path})"
+    blocks = []
+    for number, edit in enumerate(edits, start=1):
+        scope = " (all occurrences)" if edit.replace_all else ""
+        blocks.append(
+            f"edit {number}{scope}\n"
+            + "\n".join(f"  - {line}" for line in edit.old_string.splitlines() or [""])
+            + "\n"
+            + "\n".join(f"  + {line}" for line in edit.new_string.splitlines() or [""])
+        )
+    return "\n\n".join(blocks)
 
 
 def format_files(events: list[DomainEvent], files: dict[str, dict[str, Any]]) -> str:
@@ -70,12 +120,43 @@ def format_file_history(events: list[DomainEvent], path: str) -> str:
     return "\n".join(rows) if rows else f"(no history for {path})"
 
 
-async def handle_command(runtime: AgentRuntime, line: str) -> str | None:
+async def _switch_to(runtime: AgentRuntime, session_id: UUID) -> str:
+    """Point the runtime at an existing session, adopting its stored prompt."""
+    aggregate = await runtime.repo.load(session_id)
+    runtime.session_id = session_id
+    runtime.system_prompt = aggregate.state.system_prompt or runtime.system_prompt
+    return (
+        f"resumed {session_id} -- "
+        f"{aggregate.state.turn_index} turns, {len(aggregate.state.files)} files"
+    )
+
+
+async def _resolve_session(runtime: AgentRuntime, argument: str) -> UUID | str:
+    """Accept a 1-based list position or an id prefix. Returns an error string."""
+    summaries = await rt.list_sessions(runtime)
+    if argument.isdigit():
+        index = int(argument)
+        if not 1 <= index <= len(summaries):
+            return f"no session {index}: {len(summaries)} stored"
+        return summaries[index - 1].session_id
+    matches = [s for s in summaries if str(s.session_id).startswith(argument)]
+    if not matches:
+        return f"no session matching {argument!r}"
+    if len(matches) > 1:
+        return f"{argument!r} matches {len(matches)} sessions -- use more characters"
+    return matches[0].session_id
+
+
+async def handle_command(
+    runtime: AgentRuntime,
+    line: str,
+    on_activity: Callable[[str], None] | None = None,
+) -> str | None:
     line = line.strip()
     if not line:
         return ""
     if not line.startswith("/"):
-        return await rt.run_turn(runtime, line)
+        return await rt.run_turn(runtime, line, on_activity)
 
     command, _, argument = line.partition(" ")
     argument = argument.strip()
@@ -84,6 +165,22 @@ async def handle_command(runtime: AgentRuntime, line: str) -> str | None:
         return None
     if command == "/help":
         return HELP
+    if command == "/sessions":
+        return format_sessions(await rt.list_sessions(runtime), runtime.session_id)
+    if command == "/resume":
+        if not argument:
+            return "usage: /resume <list-position|session-id>"
+        resolved = await _resolve_session(runtime, argument)
+        if isinstance(resolved, str):
+            return resolved
+        return await _switch_to(runtime, resolved)
+    if command == "/new":
+        fresh = await rt.start_session(runtime)
+        return f"started {fresh}"
+    if command == "/diff":
+        if not argument:
+            return "usage: /diff <path>"
+        return format_diff(await rt.history(runtime), argument)
     if command == "/log":
         limit = int(argument) if argument.isdigit() else 20
         return format_log(await rt.history(runtime), limit)
@@ -126,22 +223,36 @@ async def handle_command(runtime: AgentRuntime, line: str) -> str | None:
 
 async def main() -> None:
     runtime = await rt.build_runtime()
-    print(f"session {runtime.session_id} -- /help for commands")
-    while True:
-        try:
-            line = await asyncio.to_thread(input, "> ")
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-        try:
-            output = await handle_command(runtime, line)
-        except Exception as error:  # noqa: BLE001 -- keep the REPL alive
-            print(f"error: {type(error).__name__}: {error}")
-            continue
-        if output is None:
-            return
-        if output:
-            print(output)
+    try:
+        stored = await rt.list_sessions(runtime)
+        print(f"session {runtime.session_id}")
+        print(f"database {rt.default_db_path()}")
+        if len(stored) > 1:
+            print(f"{len(stored) - 1} earlier session(s) -- /sessions to list")
+        print("/help for commands")
+
+        while True:
+            try:
+                line = await asyncio.to_thread(input, "\n> ")
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return
+            try:
+                output = await handle_command(runtime, line, on_activity=print)
+            except KeyboardInterrupt:
+                # The turn is abandoned before its events are saved, so the
+                # log keeps the last completed turn rather than a partial one.
+                print("\n(interrupted -- turn discarded)")
+                continue
+            except Exception as error:  # noqa: BLE001 -- keep the REPL alive
+                print(f"error: {type(error).__name__}: {error}")
+                continue
+            if output is None:
+                return
+            if output:
+                print(output)
+    finally:
+        await runtime.close()
 
 
 if __name__ == "__main__":

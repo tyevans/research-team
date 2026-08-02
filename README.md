@@ -1,12 +1,17 @@
 # research-team
 
-An in-memory, event-sourced coding agent. The whole session — every user message,
-every model reply, every tool call, and every file the agent writes — is a single
-ordered event stream, and all state is derived by folding that stream. Nothing is
-written to the real disk and the agent has no shell, so replay is pure: refolding
-the log reproduces the exact workspace, every time. That buys three things at once:
-time-travel (rewind and fork to any point), a total audit trail of what the agent
-did and in what order, and a virtual filesystem with per-file history and provenance.
+An event-sourced coding agent with an in-memory workspace. The whole session — every
+user message, every model reply, every tool call, and every file the agent writes — is
+a single ordered event stream, and all state is derived by folding that stream.
+
+The agent's filesystem is purely virtual and it has no shell, so nothing it does
+escapes the process and replay is pure: refolding the log reproduces the exact
+workspace, every time. The log itself is stored in SQLite, so sessions outlive the
+process and can be listed and resumed.
+
+That buys four things: time travel (rewind and fork to any point), a total audit
+trail of what the agent did and in what order, a virtual filesystem with per-file
+history and provenance, and resumable sessions.
 
 ## Quickstart
 
@@ -27,18 +32,23 @@ variable:
 | `AGENT_MODEL` | `qwen3.6-27b-mtp` | model name sent to the endpoint |
 | `AGENT_BASE_URL` | `http://192.168.1.14:8080/v1/` | OpenAI-compatible base URL |
 | `AGENT_API_KEY` | `not-needed` | API key; local servers usually ignore it |
+| `AGENT_DB` | `~/.research-team/sessions.db` | SQLite file holding all sessions |
 
 ## REPL commands
 
 | Command | Effect |
 |---|---|
-| `/log [n]` | last `n` events (default 20) |
 | `/files` | files in the workspace, with revision counts |
 | `/cat <path>` | current contents of a file |
 | `/history <path>` | every event that touched a path |
+| `/diff <path>` | each recorded edit to a path, old → new |
+| `/log [n]` | last `n` events (default 20), with timestamps |
+| `/state` | session id, event count, turn count, file count |
 | `/rewind <n>` | continue from a fork at event `n` |
 | `/fork <n>` | fork at event `n` and switch to it |
-| `/state` | session id, event count, turn count, file count |
+| `/sessions` | every stored session, newest first; current one marked `*` |
+| `/resume <n\|id>` | switch to a stored session by list position or id prefix |
+| `/new` | start a fresh session |
 | `/help` | the command list |
 | `/quit` | exit |
 
@@ -55,7 +65,13 @@ there is no message schema of our own to maintain. File tools come from deepagen
 line numbering, edit-ambiguity checks, glob/grep, and error strings are all
 inherited rather than reimplemented. `create_deep_agent` is built with
 `checkpointer=None` so LangGraph stays stateless and the event log is the sole
-source of truth. A turn is atomic: all of its events append at the end, or none do.
+source of truth. A turn is atomic: all of its events append at the end, or none do —
+so an interrupted or failed turn leaves the log at the last completed turn rather
+than half-applied.
+
+The log lives in SQLite. Listing sessions is a fold over `read_category`, not a
+separate table we maintain. Turns are streamed with `stream_mode="values"`, which
+gives both live tool-by-tool progress and the final message list in one pass.
 
 Module map: `events.py` (event definitions), `session.py` (aggregate: commands
 validate, reducers fold), `messages.py` (pure langchain conversion), `backend.py`
@@ -70,7 +86,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-92 tests, no network. The live smoke test in `tests/test_live.py` is marked `live`
+115 tests, no network. The live smoke test in `tests/test_live.py` is marked `live`
 and deselected by default; run it explicitly with:
 
 ```bash
@@ -91,8 +107,16 @@ stream through a fresh repository with no snapshot cache reproduced the live sta
 exactly. Rewind was verified separately: rewinding past the second write restored
 the earlier file content while leaving the original stream intact and readable.
 
+On 2026-08-02, after moving the log to SQLite, persistence was verified across two
+**separate OS processes**: the first created `/greet.py` and exited; the second
+started fresh, resumed the session by id, saw the file already present, and
+continued the conversation — the model read the file back and edited it with full
+prior context. `/diff /greet.py` then showed the docstring being added, and
+`/sessions` listed the session with its turn and file counts.
+
 No malformed tool calls were observed. Local models of this size are slow relative
-to the fake-model suite — allow a minute per live turn.
+to the fake-model suite — allow a minute per live turn, which is why turns now
+report each tool call as it happens instead of sitting silent.
 
 **One bug was found this way and fixed** (`e97020b`): `to_langchain` prepended a
 `SystemMessage` while `create_deep_agent` was also given `system_prompt`, so the

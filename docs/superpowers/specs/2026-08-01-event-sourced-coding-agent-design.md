@@ -13,13 +13,18 @@ derived by folding it. This gives us three things at once:
 2. **Audit** — a total, ordered record of what the agent did and when.
 3. **Versioned virtual filesystem** — per-file history, diffs, and provenance.
 
-Everything lives in memory. Nothing touches the real disk, and the agent has no
-shell. This is deliberate: with no side effects escaping the process, replay is
-*pure* — refolding the log reproduces the exact workspace, every time.
+The agent's workspace is purely virtual and the agent has no shell, so no side
+effect escapes the process: replay is *pure*, and refolding the log reproduces the
+exact workspace every time. The **event log itself** is persisted to SQLite, which
+is the one thing worth keeping between runs — so sessions survive a restart and can
+be resumed, while the filesystem the agent manipulates remains entirely in memory.
 
 ## Non-Goals
 
-- No persistence adapter (Postgres/SQLite). `InMemoryEventStore` only.
+- No Postgres adapter. `SQLiteEventStore` only.
+  *(Superseded 2026-08-02: originally `InMemoryEventStore` only. Moving to SQLite
+  is what makes `/sessions` and `/resume` possible; the agent's virtual filesystem
+  is still in-memory, only the log is durable.)*
 - No shell/exec tool. No `SandboxBackendProtocol`.
 - No HTTP surface, no web UI.
 - No subagents, no multi-tenancy, no outbox, no event bus.
@@ -63,7 +68,10 @@ second source of truth to reconcile. Each turn we fold the stream into
 new events. Rewind is then just "fold fewer events."
 
 Long sessions refolding from zero is the only cost, so we attach
-`InMemorySnapshotStore` with `snapshot_threshold=50`, `snapshot_mode="sync"`.
+`SQLiteSnapshotStore` with `snapshot_threshold=50`, `snapshot_mode="sync"`. It must
+point at the **same database file** as the event store: the store's connection is
+what applies the schema creating the `snapshots` table, so a second path (or a
+second `":memory:"`, which is a different database) leaves the table missing.
 `SessionState` is a Pydantic model, so it snapshots without custom serialization.
 
 ## Components
@@ -289,7 +297,16 @@ class AgentRuntime:
 | `/rewind <n>` | truncate session to `n` events |
 | `/fork <n>` | fork at event `n`, switch to the fork |
 | `/state` | session id, event count, turn count, file count |
+| `/diff <path>` | each recorded edit, old → new (surfaces `FileEdited` intent) |
+| `/sessions` | every stored session, newest first, current one marked |
+| `/resume <n\|id>` | switch to a stored session by list position or id prefix |
+| `/new` | start a fresh session on the same database |
 | `/help`, `/quit` | |
+
+`run_turn` accepts an optional `on_activity` callback and streams the agent with
+`stream_mode="values"`, reporting each tool call as it happens. A local model can
+take a minute per turn, and undifferentiated silence for that long is
+indistinguishable from a hang.
 
 ### Model configuration
 
@@ -324,7 +341,9 @@ whether one of the two libraries already provides it.
 | Fold/reduce dispatch | `eventsource.DeclarativeAggregate`, `@handles` | reducers only |
 | Load/save/optimistic locking | `eventsource.AggregateRepository` | wiring only |
 | Snapshotting | `InMemorySnapshotStore` + repo `snapshot_threshold` | wiring only |
-| Storage | `InMemoryEventStore` | nothing |
+| Storage | `SQLiteEventStore` / `SQLiteSnapshotStore` | a path |
+| Session listing | `store.read_category` | a fold into `SessionSummary` |
+| Live turn progress | `agent.astream(stream_mode="values")` | a one-line formatter |
 | Test scaffolding | `eventsource.testing` (harness, assertions, builder) | test bodies only |
 
 **Where duplication is accepted, and why.** Two places, both deliberate:

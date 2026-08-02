@@ -4,6 +4,8 @@ import pytest
 
 from research_team import repl
 from research_team import runtime as rt
+from langchain_core.messages import AIMessage
+
 from research_team.events import FileEdited, FileWritten, SessionStarted, TurnCompleted
 
 
@@ -138,3 +140,131 @@ async def test_state_reports_session_facts(runtime):
 async def test_plain_input_runs_a_turn(runtime):
     output = await repl.handle_command(runtime, "hello there")
     assert output == "done"
+
+
+# ---- sessions, diff, and live activity ----
+
+
+async def test_sessions_lists_and_marks_the_current_one(runtime):
+    output = await repl.handle_command(runtime, "/sessions")
+    assert str(runtime.session_id)[:8] in output
+    assert output.lstrip().startswith("*") or "*" in output.splitlines()[0]
+
+
+async def test_resume_by_list_position(runtime):
+    original = runtime.session_id
+    await rt.start_session(runtime)
+    assert runtime.session_id != original
+
+    # Newest first, so the original is position 2.
+    output = await repl.handle_command(runtime, "/resume 2")
+    assert runtime.session_id == original
+    assert "resumed" in output
+
+
+async def test_resume_by_id_prefix(runtime):
+    original = runtime.session_id
+    await rt.start_session(runtime)
+
+    await repl.handle_command(runtime, f"/resume {str(original)[:8]}")
+    assert runtime.session_id == original
+
+
+async def test_resume_rejects_unknown_id(runtime):
+    output = await repl.handle_command(runtime, "/resume zzzzzzzz")
+    assert "no session matching" in output
+
+
+async def test_resume_rejects_out_of_range_position(runtime):
+    output = await repl.handle_command(runtime, "/resume 99")
+    assert "no session 99" in output
+
+
+async def test_resume_requires_argument(runtime):
+    assert "usage" in (await repl.handle_command(runtime, "/resume")).lower()
+
+
+async def test_new_starts_a_fresh_session(runtime):
+    original = runtime.session_id
+    output = await repl.handle_command(runtime, "/new")
+    assert runtime.session_id != original
+    assert "started" in output
+
+
+def test_format_diff_shows_old_and_new():
+    events = [
+        FileEdited(
+            path="/a.py",
+            file_data={"content": "y\n"},
+            old_string="x",
+            new_string="y",
+            replace_all=False,
+            aggregate_id=uuid4(),
+            aggregate_version=1,
+        )
+    ]
+    output = repl.format_diff(events, "/a.py")
+    assert "- x" in output
+    assert "+ y" in output
+
+
+def test_format_diff_marks_replace_all():
+    events = [
+        FileEdited(
+            path="/a.py",
+            file_data={"content": "y\n"},
+            old_string="x",
+            new_string="y",
+            replace_all=True,
+            aggregate_id=uuid4(),
+            aggregate_version=1,
+        )
+    ]
+    assert "all occurrences" in repl.format_diff(events, "/a.py")
+
+
+def test_format_diff_when_never_edited():
+    assert "no recorded edits" in repl.format_diff([], "/a.py")
+
+
+async def test_diff_requires_argument(runtime):
+    assert "usage" in (await repl.handle_command(runtime, "/diff")).lower()
+
+
+def test_format_log_includes_timestamps():
+    events = [
+        TurnCompleted(turn_index=1, aggregate_id=uuid4(), aggregate_version=1)
+    ]
+    output = repl.format_log(events, limit=10)
+    assert f"{events[0].occurred_at:%H:%M:%S}" in output
+
+
+async def test_turn_reports_tool_activity(fake_model):
+    fake_model.responses = [
+        AIMessage(
+            content="",
+            id="a1",
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {"file_path": "/a.py", "content": "x\n"},
+                    "id": "t1",
+                }
+            ],
+        ),
+        AIMessage(content="wrote it", id="a2"),
+    ]
+    runtime = await rt.build_runtime(model=fake_model)
+
+    seen: list[str] = []
+    await repl.handle_command(runtime, "write a.py", on_activity=seen.append)
+
+    assert any("write_file" in note for note in seen)
+    assert any("/a.py" in note for note in seen)
+
+
+async def test_no_activity_reported_for_a_plain_reply(fake_model):
+    runtime = await rt.build_runtime(model=fake_model)
+    seen: list[str] = []
+    await repl.handle_command(runtime, "hello", on_activity=seen.append)
+    assert seen == []
