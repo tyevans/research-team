@@ -1,5 +1,6 @@
 """Wiring and the operations that drive a session."""
 
+import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -22,8 +23,10 @@ from research_team.events import (
     FileDeleted,
     FileEdited,
     FileWritten,
+    SessionForkedFrom,
     ToolResultRecorded,
     TurnCompleted,
+    TurnFailed,
     UserMessageSent,
 )
 from research_team.messages import classify, new_messages, to_langchain
@@ -36,6 +39,8 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 SNAPSHOT_THRESHOLD = 50
+
+logger = logging.getLogger(__name__)
 
 
 def default_db_path() -> str:
@@ -79,6 +84,8 @@ class SessionSummary:
     turns: int
     files: int
     first_message: str
+    forked_from: UUID | None = None
+    failed_turns: int = 0
 
 
 def _build_repo(store: SQLiteEventStore, db_path: str) -> AggregateRepository[CodingSession]:
@@ -175,6 +182,11 @@ async def list_sessions(runtime: AgentRuntime) -> list[SessionSummary]:
                 - {e.path for e in events if isinstance(e, FileDeleted)}
             ),
             first_message=_first_user_text(events),
+            forked_from=next(
+                (e.source_session_id for e in events if isinstance(e, SessionForkedFrom)),
+                None,
+            ),
+            failed_turns=sum(1 for e in events if isinstance(e, TurnFailed)),
         )
         for session_id, events in grouped.items()
     ]
@@ -253,12 +265,25 @@ async def run_turn(
     aggregate.send_user_message(message_to_dict(_human(user_input)))
 
     sent = to_langchain(aggregate.state)
-    after = await _invoke_agent(runtime, aggregate, sent, on_activity)
+    try:
+        after = await _invoke_agent(runtime, aggregate, sent, on_activity)
+    except BaseException as error:
+        # The aggregate above is discarded with all of the failed turn's
+        # events, so the turn stays all-or-nothing. What gets appended is a
+        # single marker on a freshly loaded aggregate -- the log records that
+        # an attempt happened without recording a half-applied turn.
+        await _record_failure(runtime, error)
+        raise
 
     for message in new_messages(len(sent), after):
         event_class = classify(message)
         if event_class is ToolResultRecorded:
-            aggregate.record_tool_result(message_to_dict(message))
+            aggregate.record_tool_result(
+                message_to_dict(message),
+                # deepagents marks failed tool calls itself; trust its signal
+                # rather than sniffing the message text for "Error:".
+                is_error=getattr(message, "status", None) == "error",
+            )
         elif event_class is AssistantMessageAdded:
             aggregate.record_assistant_message(message_to_dict(message))
         else:
@@ -274,6 +299,16 @@ async def run_turn(
     await runtime.repo.save(aggregate)
 
     return _last_text(after)
+
+
+async def _record_failure(runtime: AgentRuntime, error: BaseException) -> None:
+    """Append a TurnFailed marker. Never masks the original error."""
+    try:
+        clean = await runtime.repo.load(runtime.session_id)
+        clean.fail_turn(error)
+        await runtime.repo.save(clean)
+    except Exception:  # noqa: BLE001 -- the original failure is what matters
+        logger.exception("could not record TurnFailed for %s", runtime.session_id)
 
 
 def _human(text: str) -> BaseMessage:
@@ -321,6 +356,7 @@ async def fork(runtime: AgentRuntime, at: int) -> UUID:
                 }
             ),
         )
+    forked.record_fork_source(runtime.session_id, at)
     await runtime.repo.save(forked)
     return new_id
 

@@ -86,7 +86,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-115 tests, no network. The live smoke test in `tests/test_live.py` is marked `live`
+132 tests, no network. The live smoke test in `tests/test_live.py` is marked `live`
 and deselected by default; run it explicitly with:
 
 ```bash
@@ -118,7 +118,17 @@ No malformed tool calls were observed. Local models of this size are slow relati
 to the fake-model suite — allow a minute per live turn, which is why turns now
 report each tool call as it happens instead of sitting silent.
 
-**One bug was found this way and fixed** (`e97020b`): `to_langchain` prepended a
+**An audit of the claim "is it fully event sourced?" found three gaps, now closed**
+(`0955c78`..): `is_error` was declared on `ToolResultRecorded` but never set, so
+every failed tool call was recorded as a success — it now comes from the
+`ToolMessage.status` field deepagents already sets. Forking replayed events onto a
+new stream without recording *that a fork happened*, so a branched session was
+indistinguishable from a coincidence — there is now a `SessionForkedFrom` event, and
+`/sessions` and `/state` show lineage. And a crashed turn left no trace at all; a
+`TurnFailed` marker is now appended on its own, after the failed turn's events are
+discarded, so the log gains the attempt without the turn ceasing to be atomic.
+
+**An earlier bug was found the same way and fixed** (`e97020b`): `to_langchain` prepended a
 `SystemMessage` while `create_deep_agent` was also given `system_prompt`, so the
 prompt had two owners. Because LangGraph echoes back every message it is handed,
 that extra leading message shifted the new-message suffix by one and each turn

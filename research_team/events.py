@@ -5,6 +5,7 @@ ordering between "the model said X" and "file Y changed" is total.
 """
 
 from typing import Any
+from uuid import UUID
 
 from eventsource import DomainEvent, register_event
 
@@ -44,6 +45,35 @@ class TurnCompleted(DomainEvent):
 
 
 @register_event
+class TurnFailed(DomainEvent):
+    """A turn was attempted and did not complete.
+
+    Appended on its own, after the failed turn's events have been discarded --
+    so the log gains the attempt without gaining a half-applied turn. The
+    turn_index is the one that was being attempted, and is not advanced.
+    """
+
+    aggregate_type: str = "CodingSession"
+    turn_index: int
+    error_type: str
+    error_message: str
+
+
+@register_event
+class SessionForkedFrom(DomainEvent):
+    """Records that this stream was branched off another one.
+
+    Emitted after the copied prefix rather than before it: `SessionStarted` is
+    the creation event and must come first, and its reducer replaces state
+    wholesale, so lineage recorded ahead of it would be overwritten.
+    """
+
+    aggregate_type: str = "CodingSession"
+    source_session_id: UUID
+    at_event: int
+
+
+@register_event
 class FileWritten(DomainEvent):
     aggregate_type: str = "CodingSession"
     path: str
@@ -78,6 +108,8 @@ SESSION_EVENTS: tuple[type[DomainEvent], ...] = (
     AssistantMessageAdded,
     ToolResultRecorded,
     TurnCompleted,
+    TurnFailed,
+    SessionForkedFrom,
     FileWritten,
     FileEdited,
     FileDeleted,

@@ -8,7 +8,13 @@ from uuid import UUID
 from eventsource import DomainEvent
 
 from research_team import runtime as rt
-from research_team.events import FileDeleted, FileEdited, FileWritten
+from research_team.events import (
+    FileDeleted,
+    FileEdited,
+    FileWritten,
+    SessionForkedFrom,
+    TurnFailed,
+)
 from research_team.runtime import AgentRuntime
 
 FILE_EVENTS = (FileWritten, FileEdited, FileDeleted)
@@ -42,10 +48,15 @@ Anything else is sent to the agent as a turn."""
 def _summary(event: DomainEvent) -> str:
     if isinstance(event, FILE_EVENTS):
         return event.path
+    if isinstance(event, SessionForkedFrom):
+        return f"from {str(event.source_session_id)[:8]} at event {event.at_event}"
+    if isinstance(event, TurnFailed):
+        return f"turn {event.turn_index}: {event.error_type}: {event.error_message[:40]}"
     if hasattr(event, "turn_index"):
         return f"turn {event.turn_index}"
     if hasattr(event, "message"):
-        content = str(event.message.get("data", {}).get("content", "")).strip()
+        prefix = "! " if getattr(event, "is_error", False) else ""
+        content = prefix + str(event.message.get("data", {}).get("content", "")).strip()
         calls = event.message.get("data", {}).get("tool_calls") or []
         if calls:
             return "→ " + ", ".join(call.get("name", "?") for call in calls)
@@ -71,11 +82,16 @@ def format_sessions(summaries: list[rt.SessionSummary], current: UUID) -> str:
     rows = []
     for index, summary in enumerate(summaries, start=1):
         marker = "*" if summary.session_id == current else " "
-        opening = " ".join(summary.first_message.split())[:44] or "(no messages)"
+        opening = " ".join(summary.first_message.split())[:40] or "(no messages)"
+        notes = ""
+        if summary.forked_from is not None:
+            notes += f"  ⑂{str(summary.forked_from)[:8]}"
+        if summary.failed_turns:
+            notes += f"  {summary.failed_turns} failed"
         rows.append(
             f"{marker}{index:>3}  {str(summary.session_id)[:8]}  "
             f"{summary.started_at:%Y-%m-%d %H:%M}  "
-            f"{summary.turns:>3} turns  {summary.files:>3} files  {opening}"
+            f"{summary.turns:>3} turns  {summary.files:>3} files  {opening}{notes}"
         )
     return "\n".join(rows)
 
@@ -215,8 +231,19 @@ async def handle_command(
         return (
             f"session  {runtime.session_id}\n"
             f"events   {len(events)}\n"
-            f"turns    {aggregate.state.turn_index}\n"
-            f"files    {len(aggregate.state.files)}"
+            f"turns    {aggregate.state.turn_index}"
+            + (
+                f" ({aggregate.state.failed_turns} failed)"
+                if aggregate.state.failed_turns
+                else ""
+            )
+            + f"\nfiles    {len(aggregate.state.files)}"
+            + (
+                f"\nforked   from {aggregate.state.forked_from} "
+                f"at event {aggregate.state.forked_at}"
+                if aggregate.state.forked_from
+                else ""
+            )
         )
     return f"unknown command {command!r} -- try /help"
 

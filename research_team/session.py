@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 
 from research_team.events import (
     AssistantMessageAdded,
+    SessionForkedFrom,
+    TurnFailed,
     FileDeleted,
     FileEdited,
     FileWritten,
@@ -27,6 +29,9 @@ class SessionState(BaseModel):
     files: dict[str, dict[str, Any]] = Field(default_factory=dict)
     messages: list[dict[str, Any]] = Field(default_factory=list)
     turn_index: int = 0
+    failed_turns: int = 0
+    forked_from: UUID | None = None
+    forked_at: int | None = None
 
 
 def _outstanding_tool_call_ids(messages: list[dict[str, Any]]) -> set[str]:
@@ -49,7 +54,7 @@ def _outstanding_tool_call_ids(messages: list[dict[str, Any]]) -> set[str]:
 class CodingSession(DeclarativeAggregate[SessionState]):
     aggregate_type = "CodingSession"
     requires_creation_event = True
-    schema_version = 1
+    schema_version = 2  # SessionState gained failed_turns / fork lineage
 
     # ---------------- commands ----------------
 
@@ -80,6 +85,29 @@ class CodingSession(DeclarativeAggregate[SessionState]):
     def complete_turn(self) -> None:
         self._require_started()
         self.create_event(TurnCompleted, turn_index=self.state.turn_index + 1)
+
+    def fail_turn(self, error: BaseException) -> None:
+        """Record an attempted turn that did not complete.
+
+        Does not advance turn_index: the turn did not happen. This is appended
+        to a freshly loaded aggregate, so it never carries the failed turn's
+        own events with it.
+        """
+        self._require_started()
+        self.create_event(
+            TurnFailed,
+            turn_index=self.state.turn_index + 1,
+            error_type=type(error).__name__,
+            error_message=str(error)[:500],
+        )
+
+    def record_fork_source(self, source_session_id: UUID, at_event: int) -> None:
+        self._require_started()
+        self.create_event(
+            SessionForkedFrom,
+            source_session_id=source_session_id,
+            at_event=at_event,
+        )
 
     def write_file(self, path: str, file_data: dict[str, Any]) -> None:
         self._require_started()
@@ -144,6 +172,22 @@ class CodingSession(DeclarativeAggregate[SessionState]):
     @handles(TurnCompleted)
     def _on_turn_completed(self, event: TurnCompleted) -> None:
         self._state = self._state.model_copy(update={"turn_index": event.turn_index})
+
+    @handles(TurnFailed)
+    def _on_turn_failed(self, event: TurnFailed) -> None:
+        # turn_index deliberately unchanged: the turn did not happen.
+        self._state = self._state.model_copy(
+            update={"failed_turns": self._state.failed_turns + 1}
+        )
+
+    @handles(SessionForkedFrom)
+    def _on_forked_from(self, event: SessionForkedFrom) -> None:
+        self._state = self._state.model_copy(
+            update={
+                "forked_from": event.source_session_id,
+                "forked_at": event.at_event,
+            }
+        )
 
     @handles(FileWritten)
     def _on_file_written(self, event: FileWritten) -> None:

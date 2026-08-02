@@ -6,6 +6,8 @@ from pydantic import ValidationError
 from research_team.events import (
     SESSION_EVENTS,
     AssistantMessageAdded,
+    SessionForkedFrom,
+    TurnFailed,
     FileDeleted,
     FileEdited,
     FileWritten,
@@ -20,14 +22,12 @@ from eventsource.domain.event_registry import get_event_class
 def test_all_events_exported():
     assert set(SESSION_EVENTS) == {
         SessionStarted, UserMessageSent, AssistantMessageAdded,
-        ToolResultRecorded, TurnCompleted, FileWritten, FileEdited, FileDeleted,
+        ToolResultRecorded, TurnCompleted, TurnFailed, SessionForkedFrom,
+        FileWritten, FileEdited, FileDeleted,
     }
 
 
-@pytest.mark.parametrize("event_class", [
-    SessionStarted, UserMessageSent, AssistantMessageAdded, ToolResultRecorded,
-    TurnCompleted, FileWritten, FileEdited, FileDeleted,
-])
+@pytest.mark.parametrize("event_class", list(SESSION_EVENTS))
 def test_event_is_registered_under_its_name(event_class):
     assert get_event_class(event_class.__name__) is event_class
 

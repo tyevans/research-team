@@ -4,6 +4,7 @@ from langchain_core.messages import AIMessage
 from research_team import runtime as rt
 from research_team.events import (
     AssistantMessageAdded,
+    TurnFailed,
     FileWritten,
     SessionStarted,
     TurnCompleted,
@@ -70,9 +71,22 @@ async def test_tool_call_writes_file_and_records_events(fake_model):
     assert FileWritten in [type(e) for e in await rt.history(runtime)]
 
 
-async def test_failed_turn_appends_nothing(runtime, monkeypatch):
-    before = len(await rt.history(runtime))
+async def test_failed_turn_appends_only_a_marker(runtime, monkeypatch):
+    """The turn stays all-or-nothing; only a TurnFailed marker is recorded."""
+    before = [type(e) for e in await rt.history(runtime)]
 
+    async def boom(*args, **kwargs):
+        raise RuntimeError("model exploded")
+
+    monkeypatch.setattr(rt, "_invoke_agent", boom)
+    with pytest.raises(RuntimeError, match="model exploded"):
+        await rt.run_turn(runtime, "hello")
+
+    after = [type(e) for e in await rt.history(runtime)]
+    assert after == [*before, TurnFailed]
+
+
+async def test_failed_turn_records_the_cause(runtime, monkeypatch):
     async def boom(*args, **kwargs):
         raise RuntimeError("model exploded")
 
@@ -80,7 +94,34 @@ async def test_failed_turn_appends_nothing(runtime, monkeypatch):
     with pytest.raises(RuntimeError):
         await rt.run_turn(runtime, "hello")
 
-    assert len(await rt.history(runtime)) == before
+    failure = [e for e in await rt.history(runtime) if isinstance(e, TurnFailed)][-1]
+    assert failure.error_type == "RuntimeError"
+    assert "model exploded" in failure.error_message
+
+
+async def test_failed_turn_does_not_advance_turn_index(runtime, monkeypatch):
+    async def boom(*args, **kwargs):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(rt, "_invoke_agent", boom)
+    with pytest.raises(RuntimeError):
+        await rt.run_turn(runtime, "hello")
+
+    aggregate = await runtime.repo.load(runtime.session_id)
+    assert aggregate.state.turn_index == 0
+    assert aggregate.state.failed_turns == 1
+
+
+async def test_user_message_from_a_failed_turn_is_not_kept(runtime, monkeypatch):
+    async def boom(*args, **kwargs):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(rt, "_invoke_agent", boom)
+    with pytest.raises(RuntimeError):
+        await rt.run_turn(runtime, "this should not persist")
+
+    aggregate = await runtime.repo.load(runtime.session_id)
+    assert aggregate.state.messages == []
 
 
 async def test_fork_creates_independent_stream(runtime):
@@ -91,8 +132,11 @@ async def test_fork_creates_independent_stream(runtime):
     forked = await runtime.repo.load(forked_id)
 
     assert forked_id != runtime.session_id
-    assert forked.version == 1
+    # The copied prefix, plus the SessionForkedFrom marker recording lineage.
+    assert forked.version == 2
     assert forked.state.messages == []
+    assert forked.state.forked_from == runtime.session_id
+    assert forked.state.forked_at == 1
     assert len(await rt.history(runtime)) == len(original_events)
 
 
@@ -103,7 +147,7 @@ async def test_rewind_repoints_session(runtime):
     await rt.rewind(runtime, at=1)
 
     assert runtime.session_id != original_id
-    assert len(await rt.history(runtime)) == 1
+    assert len(await rt.history(runtime)) == 2  # prefix + lineage marker
     original = await runtime.repo.load(original_id)
     assert original.version > 1, "rewind must not destroy the original stream"
 

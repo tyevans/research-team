@@ -90,7 +90,21 @@ are decorated with `@register_event`. Every event sets
 | `UserMessageSent` | `message: dict[str, Any]` |
 | `AssistantMessageAdded` | `message: dict[str, Any]` |
 | `ToolResultRecorded` | `message: dict[str, Any]`, `is_error: bool = False` |
+
+`is_error` is taken from the `ToolMessage`'s own `status` field, which deepagents
+sets to `"error"` on a failed tool call. We do not sniff the message text.
 | `TurnCompleted` | `turn_index: int` |
+| `TurnFailed` | `turn_index: int`, `error_type: str`, `error_message: str` |
+| `SessionForkedFrom` | `source_session_id: UUID`, `at_event: int` |
+
+`TurnFailed` is appended on its own, to a *freshly loaded* aggregate, after the
+failed turn's events have been discarded. The turn therefore stays all-or-nothing
+while the log still records that an attempt happened and why. It does not advance
+`turn_index` — the turn did not happen — but does increment `failed_turns`.
+
+`SessionForkedFrom` is emitted **after** the copied prefix, not before it:
+`SessionStarted` is the creation event and must come first, and its reducer replaces
+state wholesale, so lineage written ahead of it would be overwritten.
 
 Each message-bearing event carries `message` as the output of
 `langchain_core.messages.message_to_dict` — the library's canonical, lossless
