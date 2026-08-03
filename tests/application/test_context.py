@@ -77,11 +77,12 @@ async def test_elide_keeps_the_most_recent_results_whole():
     assert len(tool_results[-2]["data"]["content"]) == 5000
 
 
-async def test_elide_keeps_the_head_of_what_it_shortens():
-    """Which file this was is usually the part worth keeping, and it is first."""
+async def test_elide_leaves_no_partial_result_to_be_mistaken_for_a_whole_one():
+    """A truncated head reads as complete, which is how an agent concludes that
+    a half-finished thing succeeded. The marker must be unmistakable."""
     session = state(
         message("ai", "", tool_calls=[{"name": "read_file", "id": "c1"}]),
-        message("tool", "/important/path.py\n" + "X" * 9000, tool_call_id="c1"),
+        message("tool", "line one\n" + "X" * 9000, tool_call_id="c1"),
         message("ai", "", tool_calls=[{"name": "read_file", "id": "c2"}]),
         message("tool", "recent", tool_call_id="c2"),
     )
@@ -89,9 +90,10 @@ async def test_elide_keeps_the_head_of_what_it_shortens():
         session
     )
 
-    shortened = [m for m in prepared.messages if m["type"] == "tool"][0]
-    assert shortened["data"]["content"].startswith("/important/path.py")
-    assert "elided" in shortened["data"]["content"]
+    cleared = [m for m in prepared.messages if m["type"] == "tool"][0]["data"]["content"]
+    assert "line one" not in cleared, "no fragment survives to look like the answer"
+    assert "NOT the result" in cleared
+    assert "9009" in cleared  # says how much was cleared
 
 
 async def test_elide_leaves_prose_alone():
@@ -120,7 +122,7 @@ async def test_elide_says_what_it_did():
     )
 
     assert prepared.notes
-    assert "shortened 4" in prepared.notes[0]
+    assert "cleared 4" in prepared.notes[0]
 
 
 async def test_elide_never_claims_to_have_shortened_a_short_result():

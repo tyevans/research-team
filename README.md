@@ -57,9 +57,9 @@ variable:
 | `AGENT_WEB_HOST` | `127.0.0.1` | interface the web UI binds to |
 | `AGENT_WEB_PORT` | `8000` | port the web UI binds to |
 | `AGENT_CONTEXT` | `full` | how this instance manages context: `full`, `elide`, `compact`, `delegate` |
-| `AGENT_CONTEXT_TRIGGER` | `40000` | characters of live conversation before `compact` summarizes |
+| `AGENT_CONTEXT_TRIGGER` | `120000` | approximate tokens of live conversation before `compact` summarizes |
 | `AGENT_CONTEXT_KEEP` | `6` | recent messages (`compact`) or tool results (`elide`) left untouched |
-| `AGENT_CONTEXT_MAX_RESULT` | `2000` | characters kept from an older tool result under `elide` |
+| `AGENT_CONTEXT_MAX_RESULT` | `2000` | tool results longer than this are cleared under `elide` |
 
 ## REPL commands
 
@@ -221,6 +221,28 @@ its reads and reasoning never enter the parent's context. Measured here, a
 delegated turn left four messages in the parent — the request, the `task` call,
 the subagent's report, and the reply.
 
+Three choices are worth explaining, because the obvious alternative is wrong in
+each case:
+
+**The `compact` trigger is high** (≈120k tokens). Anthropic's server-side
+compaction defaults to 150k input tokens and refuses to be configured below
+50k; its tool-result clearing triggers at 100k. A trigger an order of magnitude
+lower costs a summarizer call on nearly every turn and discards detail that
+would have fit comfortably.
+
+**`compact` never cuts between a tool call and its result.** A result whose
+call was summarized away is a malformed request — an answer to a question the
+model cannot see itself having asked. The boundary snaps backwards until the
+first kept message is not a tool result, which summarizes strictly more and is
+therefore always safe.
+
+**`elide` clears a result rather than truncating it.** A cut-off head reads as
+a whole result, so the model trusts it — and a half-read file or half-finished
+command output is exactly how an agent concludes something succeeded when it
+did not. The marker says how much was removed and that it is *not* the result.
+The tool call itself is untouched, so the model can still see what it asked and
+ask again, which is what Anthropic's `clear_tool_uses` does and why.
+
 Scrubbing is the payoff of taking event sourcing seriously: `state_at(session, n)`
 folds the first `n` events and returns the aggregate, so viewing any past moment
 writes nothing and forks nothing. The live view is the same idea in the other
@@ -240,7 +262,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-320 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+323 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
 `tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
 `tests/integration` for the cross-layer ones.
 

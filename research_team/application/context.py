@@ -122,7 +122,7 @@ class ElideToolResults:
         for index, message in enumerate(messages):
             if index in stale:
                 shortened = _placeholder(message, self._max_chars)
-                # A short result is left alone: shrinking it saves nothing and
+                # A short result is left alone: clearing it saves nothing and
                 # a note claiming otherwise would be false.
                 elided += shortened is not message
                 message = shortened
@@ -133,25 +133,31 @@ class ElideToolResults:
         return PreparedContext(
             messages=prepared,
             notes=(
-                f"shortened {elided} older tool result(s); "
-                "the files are still readable",
+                f"cleared {elided} older tool result(s); "
+                "the tools can be run again if needed",
             ),
         )
 
 
 def _placeholder(message: dict[str, Any], max_chars: int) -> dict[str, Any]:
-    """Shrink one tool result, keeping enough to know what it was.
+    """Replace one tool result with something unmistakably incomplete.
 
-    The head of the result is kept rather than dropping it whole: "which file
-    was this" is usually the part the model needs, and it is usually first.
+    Deliberately not a truncation. A cut-off head reads as a whole result, so
+    the model trusts it -- and a half-read file or a half-finished command
+    output is exactly how an agent concludes that something succeeded when it
+    did not. The marker has to be impossible to mistake for the answer.
+
+    The tool *call* is untouched, so the model can still see what it asked and
+    ask again. This mirrors Anthropic's `clear_tool_uses`, which clears results
+    and keeps inputs for the same reason.
     """
     data = dict(message.get("data", {}))
     content = str(data.get("content", ""))
     if len(content) <= max_chars:
         return message
-    kept = content[:max_chars]
     data["content"] = (
-        f"{kept}\n\n[{len(content) - max_chars} more characters elided to save "
-        "context; read the file again if you need them]"
+        f"[{len(content)} characters of output from an earlier turn were "
+        "cleared to save context. This is NOT the result -- run the tool again "
+        "if you need it.]"
     )
     return {**message, "data": data}

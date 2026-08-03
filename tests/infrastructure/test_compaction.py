@@ -30,7 +30,7 @@ def summarizer(text: str = "GOAL: ship it. DONE: some of it.") -> ToolAwareFakeC
 
 async def test_a_small_conversation_is_sent_whole():
     session = conversation(3, chars=10)
-    strategy = SummarizingStrategy(summarizer(), trigger_chars=10_000, keep_messages=2)
+    strategy = SummarizingStrategy(summarizer(), trigger_tokens=10_000, keep_messages=2)
 
     prepared = await strategy.prepare(session)
 
@@ -41,7 +41,7 @@ async def test_a_small_conversation_is_sent_whole():
 async def test_a_long_conversation_of_few_messages_is_left_alone():
     """Nothing is gained by summarizing what we were going to keep anyway."""
     session = conversation(2, chars=50_000)
-    strategy = SummarizingStrategy(summarizer(), trigger_chars=1000, keep_messages=20)
+    strategy = SummarizingStrategy(summarizer(), trigger_tokens=250, keep_messages=20)
 
     prepared = await strategy.prepare(session)
 
@@ -54,7 +54,7 @@ async def test_a_long_conversation_of_few_messages_is_left_alone():
 async def test_the_older_part_is_replaced_by_a_summary():
     session = conversation(20, chars=500)
     strategy = SummarizingStrategy(
-        summarizer("GOAL: build the thing."), trigger_chars=1000, keep_messages=6
+        summarizer("GOAL: build the thing."), trigger_tokens=250, keep_messages=6
     )
 
     prepared = await strategy.prepare(session)
@@ -70,7 +70,7 @@ async def test_the_older_part_is_replaced_by_a_summary():
 async def test_the_recent_tail_is_never_summarized():
     """Recent detail is what the agent is actively using."""
     session = conversation(20, chars=500)
-    strategy = SummarizingStrategy(summarizer(), trigger_chars=1000, keep_messages=6)
+    strategy = SummarizingStrategy(summarizer(), trigger_tokens=250, keep_messages=6)
 
     prepared = await strategy.prepare(session)
 
@@ -81,7 +81,7 @@ async def test_the_recent_tail_is_never_summarized():
 async def test_the_compaction_is_reported_for_recording():
     session = conversation(20, chars=500)
     strategy = SummarizingStrategy(
-        summarizer("a summary"), trigger_chars=1000, keep_messages=6
+        summarizer("a summary"), trigger_tokens=250, keep_messages=6
     )
 
     prepared = await strategy.prepare(session)
@@ -95,7 +95,7 @@ async def test_an_already_compacted_session_sends_the_summary_and_the_rest():
     session = conversation(10, chars=100).model_copy(
         update={"compacted_through": 12, "compaction_summary": "what happened before"}
     )
-    strategy = SummarizingStrategy(summarizer(), trigger_chars=10_000, keep_messages=4)
+    strategy = SummarizingStrategy(summarizer(), trigger_tokens=10_000, keep_messages=4)
 
     prepared = await strategy.prepare(session)
 
@@ -117,7 +117,7 @@ async def test_compacting_again_builds_on_the_previous_summary():
         update={"compacted_through": 10, "compaction_summary": "the first summary"}
     )
     strategy = SummarizingStrategy(
-        Recording(responses=[]), trigger_chars=1000, keep_messages=6
+        Recording(responses=[]), trigger_tokens=250, keep_messages=6
     )
 
     prepared = await strategy.prepare(session)
@@ -131,7 +131,7 @@ async def test_the_messages_themselves_are_never_discarded():
     """Compaction is a view. The session still remembers everything."""
     session = conversation(20, chars=500)
     before = list(session.messages)
-    strategy = SummarizingStrategy(summarizer(), trigger_chars=1000, keep_messages=6)
+    strategy = SummarizingStrategy(summarizer(), trigger_tokens=250, keep_messages=6)
 
     await strategy.prepare(session)
 
@@ -149,7 +149,7 @@ async def test_an_empty_summary_is_refused():
     """
     session = conversation(20, chars=500)
     strategy = SummarizingStrategy(
-        summarizer("   "), trigger_chars=1000, keep_messages=6
+        summarizer("   "), trigger_tokens=250, keep_messages=6
     )
 
     prepared = await strategy.prepare(session)
@@ -161,10 +161,72 @@ async def test_an_empty_summary_is_refused():
 
 async def test_a_refused_compaction_can_be_retried():
     session = conversation(20, chars=500)
-    failing = SummarizingStrategy(summarizer(""), trigger_chars=1000, keep_messages=6)
+    failing = SummarizingStrategy(summarizer(""), trigger_tokens=250, keep_messages=6)
     assert (await failing.prepare(session)).compaction is None
 
     working = SummarizingStrategy(
-        summarizer("a real summary"), trigger_chars=1000, keep_messages=6
+        summarizer("a real summary"), trigger_tokens=250, keep_messages=6
     )
     assert (await working.prepare(session)).compaction is not None
+
+
+# ---------------- the boundary ----------------
+
+
+def interleaved(turns: int, chars: int) -> SessionState:
+    """A conversation where every turn is user / call / result / reply."""
+    messages: list[dict] = []
+    for i in range(turns):
+        messages.append(message("human", f"do {i}: " + "u" * chars))
+        messages.append(
+            message("ai", "", tool_calls=[{"name": "read_file", "id": f"c{i}"}])
+        )
+        messages.append(message("tool", "R" * chars, tool_call_id=f"c{i}"))
+        messages.append(message("ai", f"done {i}"))
+    return SessionState(session_id=uuid4(), messages=messages)
+
+
+async def test_the_boundary_never_orphans_a_tool_result():
+    """A result whose call was summarized away is a malformed request: an
+    answer to a question the model cannot see itself having asked."""
+    for keep in range(1, 12):
+        session = interleaved(12, chars=400)
+        strategy = SummarizingStrategy(
+            summarizer(), trigger_tokens=100, keep_messages=keep
+        )
+
+        prepared = await strategy.prepare(session)
+
+        tail = prepared.messages[1:] if prepared.compaction else prepared.messages
+        assert tail[0]["type"] != "tool", (
+            f"keep={keep} left a tool result at the head of the kept tail"
+        )
+
+
+async def test_the_boundary_only_ever_moves_earlier():
+    """Snapping backwards summarizes strictly more, which is always safe."""
+    session = interleaved(12, chars=400)
+    strategy = SummarizingStrategy(summarizer(), trigger_tokens=100, keep_messages=5)
+
+    prepared = await strategy.prepare(session)
+
+    assert prepared.compaction.through_index <= len(session.messages) - 5
+
+
+async def test_every_kept_tool_result_still_has_its_call():
+    session = interleaved(12, chars=400)
+    strategy = SummarizingStrategy(summarizer(), trigger_tokens=100, keep_messages=7)
+
+    prepared = await strategy.prepare(session)
+    tail = prepared.messages[1:]
+
+    answered = {
+        m["data"]["tool_call_id"] for m in tail if m["type"] == "tool"
+    }
+    asked = {
+        call["id"]
+        for m in tail
+        if m["type"] == "ai"
+        for call in (m["data"].get("tool_calls") or [])
+    }
+    assert answered <= asked

@@ -168,7 +168,7 @@ async def test_elide_mode_keeps_every_message_in_the_log(build_application, elid
 
     session = await application.service.load(session_id)
     stored = [m for m in session.state.messages if m["type"] == "tool"]
-    assert all("elided" not in str(m["data"]["content"]) for m in stored), (
+    assert all("cleared to save context" not in str(m["data"]["content"]) for m in stored), (
         "the log must hold the real tool output, not the shortened view"
     )
 

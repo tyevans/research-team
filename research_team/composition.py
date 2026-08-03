@@ -72,7 +72,7 @@ def _context_parts(
         return (
             SummarizingStrategy(
                 model,
-                trigger_chars=config.context_trigger_chars(),
+                trigger_tokens=config.context_trigger_tokens(),
                 keep_messages=config.context_keep(),
             ),
             (),

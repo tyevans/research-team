@@ -15,7 +15,7 @@ DEFAULT_API_KEY = "not-needed"
 CONTEXT_MODES = ("full", "elide", "compact", "delegate")
 DEFAULT_CONTEXT_MODE = "full"
 
-DEFAULT_CONTEXT_TRIGGER_CHARS = 40_000
+DEFAULT_CONTEXT_TRIGGER_TOKENS = 120_000
 DEFAULT_CONTEXT_KEEP = 6
 DEFAULT_CONTEXT_MAX_RESULT_CHARS = 2_000
 
@@ -65,14 +65,13 @@ def context_mode() -> str:
     return configured
 
 
-def context_trigger_chars() -> int:
+def context_trigger_tokens() -> int:
     """How much conversation `compact` tolerates before summarizing.
 
-    In characters rather than tokens: the count only has to be monotonic in the
-    real thing to decide when to act, and characters need no tokenizer and no
-    per-model calibration.
+    Approximate tokens, not characters: the threshold has to mean something
+    against a model's window, and every published trigger is quoted in tokens.
     """
-    return int(os.getenv("AGENT_CONTEXT_TRIGGER", DEFAULT_CONTEXT_TRIGGER_CHARS))
+    return int(os.getenv("AGENT_CONTEXT_TRIGGER", DEFAULT_CONTEXT_TRIGGER_TOKENS))
 
 
 def context_keep() -> int:
