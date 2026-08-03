@@ -2,9 +2,14 @@
 
 An adapter like any other -- it translates typed lines into use-case calls and
 renders what comes back. No domain rules and no storage knowledge live here.
+
+The REPL owns the notion of a *current* session, because that notion is its
+own: one terminal, one person, one session at a time. The service underneath
+serves any session it is asked about.
 """
 
 import asyncio
+from dataclasses import dataclass
 from uuid import UUID
 
 from research_team.application import ActivityReporter, SessionService
@@ -45,9 +50,21 @@ Sessions (persisted to SQLite; they survive restarts)
 Anything else is sent to the agent as a turn."""
 
 
-async def _resolve_session(service: SessionService, argument: str) -> UUID | str:
+@dataclass
+class Repl:
+    """A service, plus which session this terminal is looking at."""
+
+    service: SessionService
+    session_id: UUID
+
+    @classmethod
+    async def start(cls, service: SessionService) -> "Repl":
+        return cls(service, await service.create_session())
+
+
+async def _resolve_session(repl: Repl, argument: str) -> UUID | str:
     """Accept a 1-based list position or an id prefix. Returns an error string."""
-    summaries = await service.list_sessions()
+    summaries = await repl.service.list_sessions()
     if argument.isdigit():
         index = int(argument)
         if not 1 <= index <= len(summaries):
@@ -62,16 +79,17 @@ async def _resolve_session(service: SessionService, argument: str) -> UUID | str
 
 
 async def handle_command(
-    service: SessionService,
+    repl: Repl,
     line: str,
     on_activity: ActivityReporter | None = None,
 ) -> str | None:
     """Run one input line. Returns text to print, or None to exit the REPL."""
+    service = repl.service
     line = line.strip()
     if not line:
         return ""
     if not line.startswith("/"):
-        return await service.run_turn(line, on_activity)
+        return await service.run_turn(repl.session_id, line, on_activity)
 
     command, _, argument = line.partition(" ")
     argument = argument.strip()
@@ -81,48 +99,51 @@ async def handle_command(
     if command == "/help":
         return HELP
     if command == "/sessions":
-        return format_sessions(await service.list_sessions(), service.session_id)
+        return format_sessions(await service.list_sessions(), repl.session_id)
     if command == "/resume":
         if not argument:
             return "usage: /resume <list-position|session-id>"
-        resolved = await _resolve_session(service, argument)
+        resolved = await _resolve_session(repl, argument)
         if isinstance(resolved, str):
             return resolved
-        return format_resumed(await service.resume(resolved))
+        session = await service.load(resolved)
+        repl.session_id = resolved
+        return format_resumed(session)
     if command == "/new":
-        return f"started {await service.start_session()}"
+        repl.session_id = await service.create_session()
+        return f"started {repl.session_id}"
     if command == "/diff":
         if not argument:
             return "usage: /diff <path>"
-        return format_diff(await service.history(), argument)
+        return format_diff(await service.history(repl.session_id), argument)
     if command == "/log":
         limit = int(argument) if argument.isdigit() else 20
-        return format_log(await service.history(), limit)
+        return format_log(await service.history(repl.session_id), limit)
     if command == "/files":
-        session = await service.load()
-        return format_files(await service.history(), session.state.files)
+        session = await service.load(repl.session_id)
+        return format_files(await service.history(repl.session_id), session.state.files)
     if command == "/cat":
         if not argument:
             return "usage: /cat <path>"
-        session = await service.load()
+        session = await service.load(repl.session_id)
         entry = session.state.files.get(argument)
         return entry["content"] if entry else f"{argument}: not found"
     if command == "/history":
         if not argument:
             return "usage: /history <path>"
-        return format_file_history(await service.history(), argument)
+        return format_file_history(await service.history(repl.session_id), argument)
     if command in ("/rewind", "/fork"):
         if not argument.isdigit():
             return f"usage: {command} <event-number>"
         try:
-            new_id = await service.switch_to_fork(int(argument))
+            repl.session_id = await service.fork(repl.session_id, int(argument))
         except ValueError as error:
             return str(error)
         verb = "rewound to" if command == "/rewind" else "forked at"
-        return f"{verb} event {argument}; session {new_id}"
+        return f"{verb} event {argument}; session {repl.session_id}"
     if command == "/state":
-        events = await service.history()
-        return format_state(await service.load(), len(events))
+        events = await service.history(repl.session_id)
+        return format_state(await service.load(repl.session_id), len(events))
     return f"unknown command {command!r} -- try /help"
 
 
@@ -134,8 +155,9 @@ async def run(service: SessionService) -> None:
     place that knows which database and which model the app happens to use.
     """
     try:
+        repl = await Repl.start(service)
         stored = await service.list_sessions()
-        print(f"session {service.session_id}")
+        print(f"session {repl.session_id}")
         print(f"database {config.default_db_path()}")
         if len(stored) > 1:
             print(f"{len(stored) - 1} earlier session(s) -- /sessions to list")
@@ -148,7 +170,7 @@ async def run(service: SessionService) -> None:
                 print()
                 return
             try:
-                output = await handle_command(service, line, on_activity=print)
+                output = await handle_command(repl, line, on_activity=print)
             except KeyboardInterrupt:
                 # The turn is abandoned before its events are saved, so the
                 # log keeps the last completed turn rather than a partial one.

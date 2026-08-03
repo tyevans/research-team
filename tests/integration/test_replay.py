@@ -36,31 +36,33 @@ def scripted_model(fake_model):
 
 
 async def test_refolding_reproduces_state_exactly(build_service, store, db_path, scripted_model):
-    service = await build_service(model=scripted_model, db_path=db_path)
-    await service.run_turn("create app.py")
-    await service.run_turn("change 1 to 2")
+    service = build_service(model=scripted_model, db_path=db_path)
+    session_id = await service.create_session()
+    await service.run_turn(session_id, "create app.py")
+    await service.run_turn(session_id, "change 1 to 2")
 
-    live = await service.load()
+    live = await service.load(session_id)
 
     # Rebuild from event zero with a repository that has no snapshot cache.
     from eventsource.application.aggregates.repository import AggregateRepository
 
     cold_repo = AggregateRepository(store, CodingSession)
-    replayed = await cold_repo.load(service.session_id)
+    replayed = await cold_repo.load(session_id)
 
     assert replayed.version == live.version
     assert replayed.state == live.state
 
 
 async def test_replay_reproduces_file_content(build_service, store, db_path, scripted_model):
-    service = await build_service(model=scripted_model, db_path=db_path)
-    await service.run_turn("create app.py")
-    await service.run_turn("change 1 to 2")
+    service = build_service(model=scripted_model, db_path=db_path)
+    session_id = await service.create_session()
+    await service.run_turn(session_id, "create app.py")
+    await service.run_turn(session_id, "change 1 to 2")
 
     from eventsource.application.aggregates.repository import AggregateRepository
 
     cold_repo = AggregateRepository(store, CodingSession)
-    replayed = await cold_repo.load(service.session_id)
+    replayed = await cold_repo.load(session_id)
 
     assert replayed.state.files["/app.py"]["content"] == "x = 2\n"
 
@@ -68,13 +70,14 @@ async def test_replay_reproduces_file_content(build_service, store, db_path, scr
 async def test_replay_is_deterministic_across_repeats(
     build_service, store, db_path, scripted_model
 ):
-    service = await build_service(model=scripted_model, db_path=db_path)
-    await service.run_turn("create app.py")
+    service = build_service(model=scripted_model, db_path=db_path)
+    session_id = await service.create_session()
+    await service.run_turn(session_id, "create app.py")
 
     from eventsource.application.aggregates.repository import AggregateRepository
 
-    first = await AggregateRepository(store, CodingSession).load(service.session_id)
-    second = await AggregateRepository(store, CodingSession).load(service.session_id)
+    first = await AggregateRepository(store, CodingSession).load(session_id)
+    second = await AggregateRepository(store, CodingSession).load(session_id)
 
     assert first.state == second.state
 
@@ -82,13 +85,14 @@ async def test_replay_is_deterministic_across_repeats(
 async def test_fork_diverges_without_affecting_original(
     build_service, repository, db_path, scripted_model
 ):
-    service = await build_service(model=scripted_model, db_path=db_path)
-    await service.run_turn("create app.py")
-    await service.run_turn("change 1 to 2")
+    service = build_service(model=scripted_model, db_path=db_path)
+    session_id = await service.create_session()
+    await service.run_turn(session_id, "create app.py")
+    await service.run_turn(session_id, "change 1 to 2")
 
-    original_state = (await service.load()).state
-    forked_id = await service.fork(at=2)
+    original_state = (await service.load(session_id)).state
+    forked_id = await service.fork(session_id, at=2)
     forked = await repository.load(forked_id)
 
     assert forked.state != original_state
-    assert (await service.load()).state == original_state
+    assert (await service.load(session_id)).state == original_state
