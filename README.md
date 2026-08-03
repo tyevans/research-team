@@ -30,7 +30,7 @@ uv run web.py        # http://127.0.0.1:8000
 The web UI is built around the event log rather than the chat: a timeline you
 can scrub to any point (the workspace refolds to that moment — no fork, no
 write), per-file provenance with real diffs of each recorded edit, and the fork
-lineage as a tree. Turns stream in live over SSE. Both front ends share one
+lineage as a tree. New events reach every open browser over SSE. Both front ends share one
 SQLite database, so a session started in the terminal opens in the browser.
 
 From the REPL you get a prompt. Type anything to send it to the agent as a turn; type a
@@ -95,6 +95,9 @@ than half-applied.
 The log lives in SQLite. Listing sessions is a fold over `read_category`, not a
 separate table we maintain. Turns are streamed with `stream_mode="values"`, which
 gives both live tool-by-tool progress and the final message list in one pass.
+That progress goes to whoever started the turn, through `on_activity` — it is
+not in the log, so it does not reach a watching browser (see the live feed's
+limits below).
 
 ## Layout
 
@@ -105,10 +108,11 @@ research_team/
   domain/          events.py, session.py
                    The aggregate and the events it folds. Knows nothing
                    about langchain, deepagents, SQLite, or the environment.
-  application/     ports.py, session_service.py, summaries.py, live_feed.py
-                   The use cases -- run a turn, fork, scrub, list sessions --
-                   plus the ports (SessionRepository, TurnExecutor, EventFeed)
-                   they need the outside world to satisfy.
+  application/     ports.py, session_service.py, summaries.py, live_feed.py,
+                   turn_supervisor.py
+                   The use cases -- run a turn, cancel it, fork, scrub, list
+                   sessions -- plus the ports (SessionRepository, TurnExecutor,
+                   EventFeed) they need the outside world to satisfy.
   infrastructure/  persistence/  the event store, implementing SessionRepository
                    agent/        deepagents + langchain, implementing TurnExecutor
                    config.py     the only module that reads the environment
@@ -133,6 +137,23 @@ conversation messages come back as `RecordedMessage` values for the use case to
 append. That is what keeps a turn all-or-nothing: the service decides whether
 the turn is committed at all, and a turn that raises is discarded whole.
 
+**Turns are supervised.** `TurnSupervisor` owns the in-flight turn for each
+session, which buys two things. A second turn on a busy session is refused
+immediately rather than after a minute in the model (and then losing a version
+check anyway). And a turn can be *cancelled*: the events it had accumulated are
+discarded whole, `turn_index` does not advance, and a single `TurnFailed` marker
+records the attempt, flagged `cancelled` so the audit trail can tell "someone
+stopped this" from "this broke" — an abandoned turn is visible in the log rather
+than silently absent. Recording that marker is shielded, because the usual reason to
+be recording it is cancellation, and a cancelled coroutine's next await would be
+cancelled too. The wait for a turn to unwind is bounded, so a cancel request
+never hangs behind a slow model — it answers `settled: false` instead.
+
+A turn also reports *where it landed*: `TurnOutcome` carries the inclusive event
+span it wrote, which the REPL prints as `[turn 3 · events #14-21]` and the web
+UI uses to jump straight to them. An aggregate's version is its event count, so
+this is exact rather than inferred.
+
 **Concurrency, and its one limit.** The store serialises every statement
 through a single lock on a single connection, and `AggregateRepository.save()`
 appends with an expected version. So two turns posted to one session resolve as
@@ -145,6 +166,15 @@ connection. Running the web UI under multiple workers (`uvicorn --workers N`)
 would give each process its own lock and reintroduce the race, where SQLite's
 own locking would surface it as a busy error rather than a clean 409. Serve it
 from one process.
+
+**What the live feed can and cannot show.** A turn's events all arrive at the
+same instant — the moment it commits — because the feed reads the store and a
+turn is atomic. That is the all-or-nothing guarantee seen from the outside, and
+it is the correct behaviour, but it means SSE cannot narrate a turn *while* it
+runs: a browser watching a sixty-second turn sees nothing, then sees all of it.
+The REPL does show tool-by-tool progress, because the executor reports activity
+to it directly through `on_activity` rather than through the log. Giving the web
+UI the same would need a second channel that is not the event stream.
 
 Scrubbing is the payoff of taking event sourcing seriously: `state_at(session, n)`
 folds the first `n` events and returns the aggregate, so viewing any past moment
@@ -165,7 +195,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-242 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+277 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
 `tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
 `tests/integration` for the cross-layer ones.
 

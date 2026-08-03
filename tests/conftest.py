@@ -55,6 +55,25 @@ async def build_service():
 
 
 @pytest.fixture
+async def build_application():
+    """Build whole applications and close them afterwards.
+
+    Closing cancels any in-flight turn, so a test that leaves one running does
+    not strand a task past the end of its event loop.
+    """
+    opened = []
+
+    def build(**kwargs):
+        application = composition.build_application(**kwargs)
+        opened.append(application)
+        return application
+
+    yield build
+    for application in opened:
+        await application.close()
+
+
+@pytest.fixture
 async def store(db_path) -> SQLiteEventStore:
     opened = SQLiteEventStore(db_path)
     yield opened

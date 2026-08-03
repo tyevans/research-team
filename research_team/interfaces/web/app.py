@@ -7,8 +7,9 @@ whole reason the application layer stopped holding a "current session".
 
 import asyncio
 import json
-from contextlib import suppress
 from collections.abc import AsyncIterator
+from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -18,7 +19,14 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from research_team.application import LiveFeed, SessionService, build_fork_tree
+from research_team.application import (
+    LiveFeed,
+    SessionService,
+    TurnAlreadyRunning,
+    TurnCancelled,
+    TurnSupervisor,
+    build_fork_tree,
+)
 from research_team.interfaces.web.presenters import (
     event_rows,
     feed_event,
@@ -48,7 +56,9 @@ class NewFork(BaseModel):
     at: int
 
 
-def create_app(service: SessionService, feed: LiveFeed) -> FastAPI:
+def create_app(
+    service: SessionService, feed: LiveFeed, turns: TurnSupervisor
+) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside."""
     app = FastAPI(title="research-team", docs_url="/api/docs")
 
@@ -119,16 +129,64 @@ def create_app(service: SessionService, feed: LiveFeed) -> FastAPI:
     async def run_turn(session_id: UUID, body: NewTurn):
         await _load(session_id)
         try:
-            reply = await service.run_turn(session_id, body.input)
+            outcome = await turns.run(session_id, body.input)
+        except TurnAlreadyRunning as error:
+            raise HTTPException(
+                status_code=409,
+                detail="a turn is already running on this session",
+            ) from error
+        except TurnCancelled as error:
+            # Not a failure: someone asked for this. 499 is nginx's
+            # "client closed request" -- the closest thing to a standard code
+            # for work abandoned on purpose.
+            raise HTTPException(status_code=499, detail=str(error)) from error
         except OptimisticLockError as error:
-            # Two clients took a turn on one session at once. The log is
-            # append-only and the loser's events were discarded whole, so
-            # nothing happened -- this is a retry, not a failure.
+            # Another writer -- the REPL, or a second process -- got there
+            # first. The log is append-only and the loser's events were
+            # discarded whole, so nothing happened; this is a retry.
             raise HTTPException(
                 status_code=409,
                 detail="another turn was recorded on this session first; reload and retry",
             ) from error
-        return {"reply": reply}
+        return {
+            "reply": outcome.reply,
+            "turn_index": outcome.turn_index,
+            "from_index": outcome.from_index,
+            "to_index": outcome.to_index,
+        }
+
+    @app.post("/api/sessions/{session_id}/turns/cancel")
+    async def cancel_turn(session_id: UUID):
+        """Stop the in-flight turn on this session, if there is one.
+
+        Returns once the turn has actually unwound, so a caller that hears
+        "cancelled" can trust the log already reflects it.
+        """
+        await _load(session_id)
+        cancellation = await turns.cancel(session_id)
+        return {
+            "cancelled": cancellation.cancelled,
+            "settled": cancellation.settled,
+        }
+
+    @app.get("/api/sessions/{session_id}/turns/current")
+    async def current_turn(session_id: UUID):
+        """What is in flight -- so a tab that arrived mid-turn can say so."""
+        await _load(session_id)
+        running = turns.running(session_id)
+        if running is None:
+            return {
+                "running": False,
+                "turn_index": None,
+                "started_at": None,
+                "elapsed_seconds": None,
+            }
+        return {
+            "running": True,
+            "turn_index": running.turn_index,
+            "started_at": running.started_at.isoformat(),
+            "elapsed_seconds": running.elapsed_seconds(datetime.now(UTC)),
+        }
 
     @app.post("/api/sessions/{session_id}/forks")
     async def fork_session(session_id: UUID, body: NewFork):

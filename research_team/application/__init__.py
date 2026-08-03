@@ -18,6 +18,14 @@ from research_team.application.ports import (
 from research_team.application.session_service import (
     DEFAULT_SYSTEM_PROMPT,
     SessionService,
+    TurnOutcome,
+)
+from research_team.application.turn_supervisor import (
+    Cancellation,
+    RunningTurn,
+    TurnAlreadyRunning,
+    TurnCancelled,
+    TurnSupervisor,
 )
 from research_team.application.summaries import (
     ForkNode,
@@ -29,6 +37,8 @@ from research_team.application.summaries import (
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "ActivityReporter",
+    "Cancellation",
+    "RunningTurn",
     "EventFeed",
     "FeedEntry",
     "ForkNode",
@@ -39,7 +49,11 @@ __all__ = [
     "SessionService",
     "SessionSummary",
     "TurnAccountingError",
+    "TurnAlreadyRunning",
+    "TurnCancelled",
     "TurnExecutor",
+    "TurnOutcome",
+    "TurnSupervisor",
     "TurnResult",
     "summarize_sessions",
 ]

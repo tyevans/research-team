@@ -9,7 +9,12 @@ from dataclasses import dataclass
 
 from langchain_core.language_models import BaseChatModel
 
-from research_team.application import DEFAULT_SYSTEM_PROMPT, LiveFeed, SessionService
+from research_team.application import (
+    DEFAULT_SYSTEM_PROMPT,
+    LiveFeed,
+    SessionService,
+    TurnSupervisor,
+)
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import DeepAgentTurnExecutor, build_model
 from research_team.infrastructure.persistence import EventStoreSessionRepository
@@ -21,8 +26,15 @@ class Application:
 
     service: SessionService
     feed: LiveFeed
+    turns: TurnSupervisor
 
     async def close(self) -> None:
+        """Stop anything still running, then let go of the store.
+
+        Cancelling first means an in-flight turn unwinds into a recorded
+        failure rather than being abandoned mid-write.
+        """
+        await self.turns.cancel_all()
         await self.service.close()
 
 
@@ -44,11 +56,11 @@ def build_application(
     resolved_path = db_path if db_path is not None else config.default_db_path()
     repository = EventStoreSessionRepository.open(resolved_path)
     executor = DeepAgentTurnExecutor(model if model is not None else build_model())
+    service = SessionService(repository, executor, default_system_prompt=system_prompt)
     return Application(
-        service=SessionService(
-            repository, executor, default_system_prompt=system_prompt
-        ),
+        service=service,
         feed=LiveFeed(repository),
+        turns=TurnSupervisor(service),
     )
 
 

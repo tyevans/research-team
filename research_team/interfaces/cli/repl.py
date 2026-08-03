@@ -22,6 +22,7 @@ from research_team.interfaces.cli.formatters import (
     format_resumed,
     format_sessions,
     format_state,
+    format_turn,
 )
 
 HELP = """\
@@ -63,19 +64,26 @@ class Repl:
 
 
 async def _resolve_session(repl: Repl, argument: str) -> UUID | str:
-    """Accept a 1-based list position or an id prefix. Returns an error string."""
+    """Accept a 1-based list position or an id prefix. Returns an error string.
+
+    A digit string is only read as a position when it *is* one. Session ids are
+    hex, so roughly one in forty starts with eight digits -- and treating those
+    as an out-of-range list position made exactly those sessions impossible to
+    resume by prefix.
+    """
     summaries = await repl.service.list_sessions()
-    if argument.isdigit():
-        index = int(argument)
-        if not 1 <= index <= len(summaries):
-            return f"no session {index}: {len(summaries)} stored"
-        return summaries[index - 1].session_id
+    if argument.isdigit() and 1 <= int(argument) <= len(summaries):
+        return summaries[int(argument) - 1].session_id
+
     matches = [s for s in summaries if str(s.session_id).startswith(argument)]
-    if not matches:
-        return f"no session matching {argument!r}"
+    if len(matches) == 1:
+        return matches[0].session_id
     if len(matches) > 1:
         return f"{argument!r} matches {len(matches)} sessions -- use more characters"
-    return matches[0].session_id
+    if argument.isdigit():
+        # Nothing matched it as a prefix either, so it was meant as a position.
+        return f"no session {argument}: {len(summaries)} stored"
+    return f"no session matching {argument!r}"
 
 
 async def handle_command(
@@ -89,7 +97,8 @@ async def handle_command(
     if not line:
         return ""
     if not line.startswith("/"):
-        return await service.run_turn(repl.session_id, line, on_activity)
+        outcome = await service.run_turn(repl.session_id, line, on_activity)
+        return format_turn(outcome)
 
     command, _, argument = line.partition(" ")
     argument = argument.strip()
@@ -172,9 +181,11 @@ async def run(service: SessionService) -> None:
             try:
                 output = await handle_command(repl, line, on_activity=print)
             except KeyboardInterrupt:
-                # The turn is abandoned before its events are saved, so the
-                # log keeps the last completed turn rather than a partial one.
-                print("\n(interrupted -- turn discarded)")
+                # The turn's own events are discarded whole -- the log keeps
+                # the last completed turn rather than a partial one -- but the
+                # attempt still earns a TurnFailed marker, so an interrupted
+                # turn is visible in `/log` rather than silently absent.
+                print("\n(interrupted -- turn discarded, attempt recorded)")
                 continue
             except Exception as error:  # noqa: BLE001 -- keep the REPL alive
                 print(f"error: {type(error).__name__}: {error}")

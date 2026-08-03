@@ -5,7 +5,7 @@ from uuid import UUID
 
 from eventsource import DomainEvent
 
-from research_team.application import SessionSummary
+from research_team.application import SessionSummary, TurnOutcome
 from research_team.domain import (
     CodingSession,
     FileDeleted,
@@ -123,6 +123,21 @@ def format_state(session: CodingSession, event_count: int) -> str:
             else ""
         )
     )
+
+
+def format_turn(outcome: TurnOutcome) -> str:
+    """The agent's reply, with a pointer at what the turn wrote to the log.
+
+    The footer is what makes `/log` navigable afterwards: it names the exact
+    span to look at instead of leaving you to count backwards.
+    """
+    span = (
+        f"#{outcome.from_index}"
+        if outcome.from_index == outcome.to_index
+        else f"#{outcome.from_index}-{outcome.to_index}"
+    )
+    footer = f"[turn {outcome.turn_index} · events {span}]"
+    return f"{outcome.reply}\n{footer}" if outcome.reply else footer
 
 
 def format_resumed(session: CodingSession) -> str:

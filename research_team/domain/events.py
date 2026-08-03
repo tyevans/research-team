@@ -51,12 +51,19 @@ class TurnFailed(DomainEvent):
     Appended on its own, after the failed turn's events have been discarded --
     so the log gains the attempt without gaining a half-applied turn. The
     turn_index is the one that was being attempted, and is not advanced.
+
+    `cancelled` separates "someone stopped this" from "this broke". Both leave
+    the same hole in the log, but they are different facts about what happened,
+    and an audit trail that cannot tell them apart is a worse audit trail.
+    Defaults to False, so events written before the distinction existed read
+    as ordinary failures -- which is what they were.
     """
 
     aggregate_type: str = "CodingSession"
     turn_index: int
     error_type: str
     error_message: str
+    cancelled: bool = False
 
 
 @register_event

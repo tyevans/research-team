@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -145,7 +145,13 @@ async def test_state_reports_session_facts(current):
 
 async def test_plain_input_runs_a_turn(current):
     output = await repl.handle_command(current, "hello there")
-    assert output == "done"
+    assert output.startswith("done")
+
+
+async def test_a_turn_reports_the_events_it_wrote(current):
+    """So `/log` is navigable afterwards without counting backwards."""
+    output = await repl.handle_command(current, "hello there")
+    assert "[turn 1 · events #2-4]" in output
 
 
 # ---- sessions, diff, and live activity ----
@@ -274,3 +280,42 @@ async def test_no_activity_reported_for_a_plain_reply(build_service, fake_model)
     seen: list[str] = []
     await repl.handle_command(current, "hello", on_activity=seen.append)
     assert seen == []
+
+
+# ---- resolving a session by number or prefix ----
+
+
+async def test_resume_by_a_prefix_that_is_all_digits(current, monkeypatch):
+    """Regression: about one session id in forty starts with eight digits.
+
+    Those were unresolvable by prefix, because a digit string was always read
+    as a list position -- and a position that large is always out of range.
+    """
+    from research_team.application import session_service
+
+    digity = UUID("12345678-0000-4000-8000-00000000abcd")
+    monkeypatch.setattr(session_service, "uuid4", lambda: digity)
+    await current.service.create_session()
+    monkeypatch.undo()
+
+    output = await repl.handle_command(current, "/resume 12345678")
+
+    assert current.session_id == digity
+    assert "resumed" in output
+
+
+async def test_a_small_number_is_still_a_list_position(current):
+    original = current.session_id
+    current.session_id = await current.service.create_session()
+
+    await repl.handle_command(current, "/resume 2")
+
+    summaries = await current.service.list_sessions()
+    assert current.session_id == summaries[1].session_id
+    assert current.session_id == original
+
+
+async def test_a_number_that_is_neither_reports_the_position_error(current):
+    output = await repl.handle_command(current, "/resume 97")
+    assert "no session 97" in output
+    assert "stored" in output

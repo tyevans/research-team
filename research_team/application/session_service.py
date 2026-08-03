@@ -9,7 +9,9 @@ session": that is a property of whoever is driving -- one terminal has exactly
 one, and a web server has one per request -- so it belongs to the caller.
 """
 
+import asyncio
 import logging
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 from eventsource import DomainEvent
@@ -30,6 +32,24 @@ DEFAULT_SYSTEM_PROMPT = (
     "Use the provided file tools to read and write code. "
     "There is no shell and no network."
 )
+
+@dataclass(frozen=True)
+class TurnOutcome:
+    """What one turn produced: the reply, and where it landed in the log.
+
+    `from_index`/`to_index` are inclusive 1-based event numbers, matching the
+    numbering the REPL prints and the web timeline shows.
+    """
+
+    reply: str
+    turn_index: int
+    from_index: int
+    to_index: int
+
+    @property
+    def event_count(self) -> int:
+        return self.to_index - self.from_index + 1
+
 
 _INHERITED_EVENT_FIELDS = frozenset(
     {
@@ -113,14 +133,20 @@ class SessionService:
         session_id: UUID,
         user_input: str,
         on_activity: ActivityReporter | None = None,
-    ) -> str:
+    ) -> TurnOutcome:
         """One user turn. All events append atomically at the end, or not at all.
 
         The prompt comes from the session's own `SessionStarted` event, so a
         session resumed in a differently-configured process still runs under
         the prompt it was started with.
+
+        Reports the span of events the turn produced. A caller showing the log
+        would otherwise have to diff it against a snapshot taken beforehand to
+        answer "which of these did my turn write?" -- a question the aggregate
+        can answer exactly, because an aggregate's version *is* its event count.
         """
         aggregate = await self._repository.load(session_id)
+        first_index = aggregate.version + 1
         aggregate.send_user_message(self._executor.encode_user_message(user_input))
 
         try:
@@ -150,14 +176,38 @@ class SessionService:
                 aggregate.record_assistant_message(message.payload)
 
         aggregate.complete_turn()
+        last_index = aggregate.version
         await self._repository.save(aggregate)
-        return result.reply_text
+        return TurnOutcome(
+            reply=result.reply_text,
+            turn_index=aggregate.state.turn_index,
+            from_index=first_index,
+            to_index=last_index,
+        )
 
     async def _record_failure(self, session_id: UUID, error: BaseException) -> None:
-        """Append a TurnFailed marker. Never masks the original error."""
+        """Append a TurnFailed marker. Never masks the original error.
+
+        Shielded, because the most common reason to be here is cancellation --
+        and a cancelled coroutine's next await would be cancelled too, which
+        would lose the very marker that records the attempt.
+        """
+        writing = asyncio.ensure_future(self._append_failure(session_id, error))
+        try:
+            await asyncio.shield(writing)
+        except asyncio.CancelledError:
+            # We are being cancelled; the write is not. Wait for it anyway, so
+            # the marker is on disk before the cancellation carries on -- a
+            # fire-and-forget write can be lost if the process is shutting down.
+            await writing
+            raise
+
+    async def _append_failure(self, session_id: UUID, error: BaseException) -> None:
         try:
             clean = await self._repository.load(session_id)
-            clean.fail_turn(error)
+            # Whether this was a deliberate stop is an asyncio fact, which the
+            # aggregate has no business knowing -- so it is decided here.
+            clean.fail_turn(error, cancelled=isinstance(error, asyncio.CancelledError))
             await self._repository.save(clean)
         except Exception:  # noqa: BLE001 -- the original failure is what matters
             logger.exception("could not record TurnFailed for %s", session_id)
