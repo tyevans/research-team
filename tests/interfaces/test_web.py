@@ -696,3 +696,80 @@ async def test_the_session_still_works_after_a_cancellation(slow_app):
 
     assert response.status_code == 200
     assert response.json()["turn_index"] == 1  # the cancelled attempt never counted
+
+
+async def test_a_running_turn_is_described_not_just_flagged(slow_app):
+    """A tab arriving mid-turn should be able to say which turn, and for how long."""
+    application, client, _ = slow_app
+    session_id = await application.service.create_session()
+
+    turn = asyncio.create_task(
+        client.post(f"/api/sessions/{session_id}/turns", json={"input": "slow"})
+    )
+    await asyncio.sleep(0.4)
+
+    body = (await client.get(f"/api/sessions/{session_id}/turns/current")).json()
+    assert body["running"] is True
+    assert body["turn_index"] == 1
+    assert body["started_at"] is not None
+    assert 0 < body["elapsed_seconds"] < 60
+
+    await client.post(f"/api/sessions/{session_id}/turns/cancel")
+    await turn
+
+
+async def test_a_quiet_session_reports_no_running_turn_details(client):
+    session_id = await _new_session(client)
+    body = (await client.get(f"/api/sessions/{session_id}/turns/current")).json()
+    assert body == {
+        "running": False,
+        "turn_index": None,
+        "started_at": None,
+        "elapsed_seconds": None,
+    }
+
+
+async def test_a_cancellation_is_marked_as_such_in_the_log(slow_app):
+    """Stopped on purpose must be distinguishable from broke, without prose."""
+    application, client, _ = slow_app
+    session_id = await application.service.create_session()
+
+    turn = asyncio.create_task(
+        client.post(f"/api/sessions/{session_id}/turns", json={"input": "slow"})
+    )
+    await asyncio.sleep(0.4)
+    body = (await client.post(f"/api/sessions/{session_id}/turns/cancel")).json()
+    await turn
+
+    assert body == {"cancelled": True, "settled": True}
+
+    events = (await client.get(f"/api/sessions/{session_id}/events")).json()
+    failed = next(row for row in events if row["type"] == "TurnFailed")
+    assert failed["cancelled"] is True
+    assert "cancelled" in failed["summary"]
+
+
+async def test_a_genuine_failure_is_not_marked_cancelled(app_and_client, monkeypatch):
+    from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
+
+    application, client = app_and_client
+    session_id = await application.service.create_session()
+
+    async def boom(self, session, messages, system_prompt, on_activity):
+        raise RuntimeError("model endpoint is down")
+
+    monkeypatch.setattr(DeepAgentTurnExecutor, "_invoke", boom)
+    with pytest.raises(RuntimeError):
+        await application.turns.run(session_id, "hello")
+
+    events = (await client.get(f"/api/sessions/{session_id}/events")).json()
+    failed = next(row for row in events if row["type"] == "TurnFailed")
+    assert failed["cancelled"] is False
+    assert "RuntimeError" in failed["summary"]
+
+
+async def test_ordinary_events_carry_no_cancellation_flag(client):
+    session_id = await _new_session(client)
+    await client.post(f"/api/sessions/{session_id}/turns", json={"input": "hello"})
+    events = (await client.get(f"/api/sessions/{session_id}/events")).json()
+    assert all(row["cancelled"] is None for row in events)

@@ -81,7 +81,10 @@
           <textarea rows="2" placeholder="Send a turn&#8230;  (Ctrl+Enter)" data-slot="input"></textarea>
           <div class="composer-row">
             <span class="composer-hint" data-slot="composer-hint"></span>
-            <button type="submit" class="btn btn-accent" data-slot="send">Send turn</button>
+            <div class="composer-actions">
+              <button type="button" class="btn btn-quiet" data-slot="cancel" hidden>Cancel turn</button>
+              <button type="submit" class="btn btn-accent" data-slot="send">Send turn</button>
+            </div>
           </div>
         </form>
       </section>

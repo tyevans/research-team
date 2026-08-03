@@ -205,7 +205,9 @@ class SessionService:
     async def _append_failure(self, session_id: UUID, error: BaseException) -> None:
         try:
             clean = await self._repository.load(session_id)
-            clean.fail_turn(error)
+            # Whether this was a deliberate stop is an asyncio fact, which the
+            # aggregate has no business knowing -- so it is decided here.
+            clean.fail_turn(error, cancelled=isinstance(error, asyncio.CancelledError))
             await self._repository.save(clean)
         except Exception:  # noqa: BLE001 -- the original failure is what matters
             logger.exception("could not record TurnFailed for %s", session_id)

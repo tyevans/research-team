@@ -139,10 +139,12 @@ session, which buys two things. A second turn on a busy session is refused
 immediately rather than after a minute in the model (and then losing a version
 check anyway). And a turn can be *cancelled*: the events it had accumulated are
 discarded whole, `turn_index` does not advance, and a single `TurnFailed` marker
-records the attempt — so an abandoned turn is visible in the log rather than
-silently absent. Recording that marker is shielded, because the usual reason to
+records the attempt, flagged `cancelled` so the audit trail can tell "someone
+stopped this" from "this broke" — an abandoned turn is visible in the log rather
+than silently absent. Recording that marker is shielded, because the usual reason to
 be recording it is cancellation, and a cancelled coroutine's next await would be
-cancelled too.
+cancelled too. The wait for a turn to unwind is bounded, so a cancel request
+never hangs behind a slow model — it answers `settled: false` instead.
 
 A turn also reports *where it landed*: `TurnOutcome` carries the inclusive event
 span it wrote, which the REPL prints as `[turn 3 · events #14-21]` and the web
@@ -181,7 +183,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-262 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+271 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
 `tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
 `tests/integration` for the cross-layer ones.
 

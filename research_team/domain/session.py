@@ -86,19 +86,24 @@ class CodingSession(DeclarativeAggregate[SessionState]):
         self._require_started()
         self.create_event(TurnCompleted, turn_index=self.state.turn_index + 1)
 
-    def fail_turn(self, error: BaseException) -> None:
+    def fail_turn(self, error: BaseException, *, cancelled: bool = False) -> None:
         """Record an attempted turn that did not complete.
 
         Does not advance turn_index: the turn did not happen. This is appended
         to a freshly loaded aggregate, so it never carries the failed turn's
         own events with it.
+
+        `cancelled` says the attempt was stopped on purpose. Deciding that is
+        the caller's job -- what counts as a cancellation depends on how the
+        turn was being run, which is not something the aggregate knows.
         """
         self._require_started()
         self.create_event(
             TurnFailed,
             turn_index=self.state.turn_index + 1,
-            error_type=type(error).__name__,
-            error_message=str(error)[:500],
+            error_type="Cancelled" if cancelled else type(error).__name__,
+            error_message=str(error)[:500] or "cancelled",
+            cancelled=cancelled,
         )
 
     def record_fork_source(self, source_session_id: UUID, at_event: int) -> None:

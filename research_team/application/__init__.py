@@ -21,6 +21,8 @@ from research_team.application.session_service import (
     TurnOutcome,
 )
 from research_team.application.turn_supervisor import (
+    Cancellation,
+    RunningTurn,
     TurnAlreadyRunning,
     TurnCancelled,
     TurnSupervisor,
@@ -35,6 +37,8 @@ from research_team.application.summaries import (
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "ActivityReporter",
+    "Cancellation",
+    "RunningTurn",
     "EventFeed",
     "FeedEntry",
     "ForkNode",

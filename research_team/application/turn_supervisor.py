@@ -11,7 +11,8 @@ means, so they live here, beside the use cases and above the transport.
 """
 
 import asyncio
-from contextlib import suppress
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID
 
 from research_team.application.ports import ActivityReporter
@@ -39,16 +40,58 @@ class TurnCancelled(Exception):
         self.session_id = session_id
 
 
+CANCEL_SETTLE_TIMEOUT = 10.0
+"""How long `cancel` waits for a turn to unwind before answering anyway."""
+
+
+@dataclass(frozen=True)
+class RunningTurn:
+    """What is currently in flight on a session."""
+
+    session_id: UUID
+    turn_index: int
+    """The number this turn will take if it completes."""
+    started_at: datetime
+
+    def elapsed_seconds(self, now: datetime) -> float:
+        return (now - self.started_at).total_seconds()
+
+
+@dataclass(frozen=True)
+class Cancellation:
+    """The result of asking for a turn to stop."""
+
+    cancelled: bool
+    """False when there was nothing to stop."""
+    settled: bool
+    """True when the turn finished unwinding before we answered.
+
+    False means the cancel was delivered but the turn was still winding down --
+    so the caller should not yet treat the log as final. It will be shortly.
+    """
+
+
 class TurnSupervisor:
     """Owns the in-flight turn for each session."""
 
-    def __init__(self, service: SessionService) -> None:
+    def __init__(
+        self,
+        service: SessionService,
+        *,
+        settle_timeout: float = CANCEL_SETTLE_TIMEOUT,
+    ) -> None:
         self._service = service
+        self._settle_timeout = settle_timeout
         self._running: dict[UUID, asyncio.Task[TurnOutcome]] = {}
+        self._started: dict[UUID, RunningTurn] = {}
 
     def is_running(self, session_id: UUID) -> bool:
         task = self._running.get(session_id)
         return task is not None and not task.done()
+
+    def running(self, session_id: UUID) -> RunningTurn | None:
+        """Details of the in-flight turn, for a caller that arrived mid-turn."""
+        return self._started.get(session_id) if self.is_running(session_id) else None
 
     def running_sessions(self) -> list[UUID]:
         return [session_id for session_id in self._running if self.is_running(session_id)]
@@ -69,10 +112,16 @@ class TurnSupervisor:
         if self.is_running(session_id):
             raise TurnAlreadyRunning(session_id)
 
+        session = await self._service.load(session_id)
         task = asyncio.ensure_future(
             self._service.run_turn(session_id, user_input, on_activity)
         )
         self._running[session_id] = task
+        self._started[session_id] = RunningTurn(
+            session_id=session_id,
+            turn_index=session.state.turn_index + 1,
+            started_at=datetime.now(UTC),
+        )
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
@@ -86,22 +135,34 @@ class TurnSupervisor:
         finally:
             if self._running.get(session_id) is task and task.done():
                 del self._running[session_id]
+                self._started.pop(session_id, None)
 
-    async def cancel(self, session_id: UUID) -> bool:
-        """Stop the in-flight turn. Returns False if there was nothing to stop.
+    async def cancel(self, session_id: UUID) -> Cancellation:
+        """Stop the in-flight turn.
 
-        Waits for the turn to actually unwind before returning, so that by the
-        time a caller hears "cancelled" the log already records the attempt as
-        a failed turn and no events from it survive.
+        Waits for the turn to unwind, so that by the time a caller hears
+        "cancelled" the log already records the attempt and no events from it
+        survive. That wait is bounded: unwinding runs through the model client,
+        which can be slow, and a cancel request that hangs behind it is worse
+        than one that answers honestly that the turn is still settling.
         """
         task = self._running.get(session_id)
         if task is None or task.done():
-            return False
+            return Cancellation(cancelled=False, settled=True)
+
         task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await task
-        self._running.pop(session_id, None)
-        return True
+        settled = True
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=self._settle_timeout)
+        except TimeoutError:
+            settled = False
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001 -- how it ended
+            pass                                     # is the awaiter's business
+
+        if settled:
+            self._running.pop(session_id, None)
+            self._started.pop(session_id, None)
+        return Cancellation(cancelled=True, settled=settled)
 
     async def cancel_all(self) -> None:
         """Stop every in-flight turn. For shutting down without stranding work."""

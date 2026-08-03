@@ -443,6 +443,9 @@ ul.tree ul > li:last-child::after {
 .k-file     { --kind: var(--k-file); }
 .k-turn     { --kind: var(--k-turn); }
 .k-failure  { --kind: var(--k-failure); }
+/* a cancelled turn is part of the turn lifecycle, not a crash */
+.k-cancelled { --kind: var(--k-turn); }
+.k-cancelled .ev-summary { color: var(--fg-dim); font-style: italic; }
 .k-other    { --kind: var(--fg-faint); }
 
 .head-marker {
@@ -636,14 +639,46 @@ pre.code .ln {
 .composer textarea:focus { border-color: var(--accent-dim); outline: none; }
 .composer textarea:disabled { opacity: .55; }
 .composer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.composer-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .composer-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-family: var(--mono);
   font-size: var(--t-xs);
   color: var(--fg-faint);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
 }
+.composer-hint > .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-hint.busy { color: var(--accent); }
 .composer-hint.warn { color: var(--k-failure); }
+/* a cancellation is an outcome, not a fault -- never red */
+.composer-hint.calm { color: var(--fg-dim); }
+
+/* Cancel: available, but never louder than the primary action. */
+.btn-quiet {
+  background: transparent;
+  border-color: #3a2b2c;
+  color: var(--del-fg);
+}
+.btn-quiet:hover:not(:disabled) { background: #24151700; background: #241517; border-color: #543336; }
+
+/* the "turn 3 · events 14–21" jump chip */
+.turn-range {
+  flex: 0 0 auto;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.turn-range:hover { color: var(--accent); border-color: var(--accent-dim); background: #221a10; }
 
 .spinner {
   display: inline-block;

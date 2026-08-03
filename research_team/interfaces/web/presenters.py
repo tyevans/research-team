@@ -39,6 +39,8 @@ def event_summary(event: DomainEvent) -> str:
     if isinstance(event, SessionForkedFrom):
         return f"from {str(event.source_session_id)[:8]} at event {event.at_event}"
     if isinstance(event, TurnFailed):
+        if event.cancelled:
+            return f"turn {event.turn_index}: cancelled"
         return f"turn {event.turn_index}: {event.error_type}: {event.error_message[:80]}"
     if hasattr(event, "turn_index"):
         return f"turn {event.turn_index}"
@@ -67,6 +69,9 @@ def event_row(index: int, event: DomainEvent) -> dict[str, Any]:
         "path": getattr(event, "path", None),
         "turn_index": getattr(event, "turn_index", None),
         "is_error": getattr(event, "is_error", None),
+        # None on everything that is not a failed turn, so a client can tell
+        # "stopped on purpose" from "broke" without reading prose.
+        "cancelled": getattr(event, "cancelled", None),
     }
 
 

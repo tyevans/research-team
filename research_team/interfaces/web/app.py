@@ -7,8 +7,9 @@ whole reason the application layer stopped holding a "current session".
 
 import asyncio
 import json
-from contextlib import suppress
 from collections.abc import AsyncIterator
+from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -162,13 +163,30 @@ def create_app(
         "cancelled" can trust the log already reflects it.
         """
         await _load(session_id)
-        return {"cancelled": await turns.cancel(session_id)}
+        cancellation = await turns.cancel(session_id)
+        return {
+            "cancelled": cancellation.cancelled,
+            "settled": cancellation.settled,
+        }
 
     @app.get("/api/sessions/{session_id}/turns/current")
     async def current_turn(session_id: UUID):
-        """Whether a turn is in flight -- so a reloaded tab can tell."""
+        """What is in flight -- so a tab that arrived mid-turn can say so."""
         await _load(session_id)
-        return {"running": turns.is_running(session_id)}
+        running = turns.running(session_id)
+        if running is None:
+            return {
+                "running": False,
+                "turn_index": None,
+                "started_at": None,
+                "elapsed_seconds": None,
+            }
+        return {
+            "running": True,
+            "turn_index": running.turn_index,
+            "started_at": running.started_at.isoformat(),
+            "elapsed_seconds": running.elapsed_seconds(datetime.now(UTC)),
+        }
 
     @app.post("/api/sessions/{session_id}/forks")
     async def fork_session(session_id: UUID, body: NewFork):

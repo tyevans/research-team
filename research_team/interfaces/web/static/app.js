@@ -108,6 +108,18 @@ function eventKind(type) {
   return 'other';
 }
 
+/* A deliberate cancellation arrives as a TurnFailed carrying cancelled:true.
+ * It is an outcome, not a crash, so it must never render as a failure. */
+function isCancellation(ev) {
+  return !!ev && ev.cancelled === true;
+}
+
+/* TurnCompleted / TurnFailed both end a turn. */
+function isTurnEnd(type) {
+  const t = String(type || '').toLowerCase();
+  return t.indexOf('turn') >= 0 && (t.indexOf('completed') >= 0 || t.indexOf('failed') >= 0);
+}
+
 function humanType(type) {
   return String(type || 'Event').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
 }
@@ -303,7 +315,13 @@ const state = {
   fileError: null,
   fileMissing: false,       // 404: the path does not exist at this point
   openRevisions: {},        // history index -> bool
-  sending: false,
+  sending: false,          // this tab has a POST /turns in flight
+  turnRunning: false,      // a turn is running on the session (maybe another tab)
+  watchedTurn: null,       // {turn_index, started_at, elapsed_seconds, from_index}
+  cancelling: false,       // POST /turns/cancel in flight
+  cancelSettled: null,     // last cancel's `settled` flag
+  awaitingUnwind: false,   // cancelled but not settled: log not final yet
+  turnNote: null,          // {tone, text, range?, recheck?} shown when idle
   liveNote: '',
   sessionError: null,
   loadingSnapshot: false,
@@ -386,6 +404,12 @@ function onRoute() {
       // A turn in flight belongs to the session we just left; the composer we
       // are about to mount is a different one and must start enabled.
       state.sending = false;
+      state.turnRunning = false;
+      state.watchedTurn = null;
+      state.cancelling = false;
+      state.cancelSettled = null;
+      state.awaitingUnwind = false;
+      state.turnNote = null;
       state.loadingSnapshot = false;
       sessionEls = null;
       mountSessionView();
@@ -580,11 +604,17 @@ function mountSessionView() {
     composer: slot(root, 'composer'),
     input: slot(root, 'input'),
     send: slot(root, 'send'),
+    cancel: slot(root, 'cancel'),
     hint: slot(root, 'composer-hint')
   };
   sessionEls.composer.addEventListener('submit', onSend);
+  sessionEls.cancel.addEventListener('click', cancelTurn);
   sessionEls.input.addEventListener('keydown', function (ev) {
     if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); onSend(ev); }
+  });
+  // Once you start writing the next turn, the last one's outcome is history.
+  sessionEls.input.addEventListener('input', function () {
+    if (state.turnNote) { state.turnNote = null; renderComposer(); }
   });
   sessionEls.timeline.appendChild(h('div', { class: 'empty', text: 'loading event log…' }));
   renderComposer();
@@ -594,12 +624,17 @@ function loadSession() {
   const id = state.sessionId;
   return Promise.all([
     api.get('/api/sessions/' + encodeURIComponent(id)),
-    api.get('/api/sessions/' + encodeURIComponent(id) + '/events')
+    api.get('/api/sessions/' + encodeURIComponent(id) + '/events'),
+    // A turn may already be running (another tab, or a reload mid-turn). This
+    // is advisory, so a failure here must not fail the whole load.
+    api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current')
+      .catch(function () { return null; })
   ]).then(function (res) {
     if (state.sessionId !== id) return;
     state.head = res[0] || {};
     state.events = Array.isArray(res[1]) ? res[1] : [];
     state.sessionError = null;
+    applyRunning(res[2]);
     renderCrumbs();
     renderTimeline();
     if (state.at !== null) loadSnapshot();
@@ -609,6 +644,96 @@ function loadSession() {
     state.sessionError = e.message;
     renderSessionError();
   });
+}
+
+/* Reconcile "is a turn running" with what this tab is doing. Our own POST owns
+ * state.sending; turnRunning is only ever about a turn we did not start.
+ *
+ * This is only ever asked at mount (or on demand): a tab that arrives mid-turn
+ * has missed the earlier frames. Once running, the stream tells us when it ends
+ * -- TurnCompleted/TurnFailed are ordinary domain events -- so there is no poll.
+ */
+function applyRunning(res) {
+  if (!res || typeof res.running !== 'boolean') return;
+  const foreign = res.running && !state.sending;
+  if (foreign === state.turnRunning) return;
+  state.turnRunning = foreign;
+  if (foreign) {
+    state.liveNote = '';
+    state.turnNote = null;
+    state.watchedTurn = {
+      turn_index: typeof res.turn_index === 'number' ? res.turn_index : null,
+      started_at: res.started_at || null,
+      elapsed_seconds: typeof res.elapsed_seconds === 'number' ? res.elapsed_seconds : null,
+      from_index: null   // filled by the first frame we see for this turn
+    };
+  } else {
+    state.watchedTurn = null;
+  }
+  renderComposer();
+}
+
+let runningCheckInFlight = false;
+
+function refreshRunning(announce) {
+  const id = state.sessionId;
+  // Events arrive in bursts; one check at a time is enough.
+  if (!id || runningCheckInFlight) return Promise.resolve();
+  runningCheckInFlight = true;
+  return api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current')
+    .then(function (res) {
+      runningCheckInFlight = false;
+      if (state.sessionId !== id) return;
+      const wasRunning = state.turnRunning;
+      applyRunning(res);
+      if (wasRunning && !state.turnRunning) {
+        setNote('good', 'the turn running elsewhere finished');
+        loadSession();
+      } else if (announce && !state.turnRunning && !state.sending) {
+        setNote('good', 'nothing is running — you can send a turn');
+        renderComposer();
+      }
+    })
+    .catch(function (e) {
+      runningCheckInFlight = false;
+      if (state.sessionId !== id) return;
+      if (announce) { setNote('warn', 'could not check — ' + e.message, null, true); renderComposer(); }
+    });
+}
+
+/* A turn started elsewhere ended on the stream. Its span is derivable from the
+ * frames themselves: the closing frame's own index is to_index, and the first
+ * frame we saw after it started (its UserMessageSent) is from_index. */
+function foreignTurnEnded(payload) {
+  const watched = state.watchedTurn;
+  const to = typeof payload.index === 'number' ? payload.index : null;
+  const from = watched && typeof watched.from_index === 'number' ? watched.from_index : to;
+  const cancelled = isCancellation(payload);
+
+  state.turnRunning = false;
+  state.watchedTurn = null;
+  state.liveNote = '';
+
+  if (cancelled) {
+    setNote('calm', 'the turn running elsewhere was cancelled — its events were discarded');
+  } else if (/failed/i.test(String(payload.type || ''))) {
+    setNote('warn', 'the turn running elsewhere failed');
+  } else if (from !== null && to !== null) {
+    const range = {
+      turn_index: typeof payload.turn_index === 'number' ? payload.turn_index
+        : (watched ? watched.turn_index : null),
+      from_index: from,
+      to_index: to
+    };
+    markFresh(from, to);
+    setNote('good', 'the turn running elsewhere finished', range);
+  } else {
+    setNote('good', 'the turn running elsewhere finished');
+  }
+  renderComposer();
+  // A cancelled or failed turn discards its events, so the log we streamed in
+  // is not what the server kept -- refetch rather than trust the frames.
+  loadSession();
 }
 
 function renderSessionError() {
@@ -764,13 +889,15 @@ function renderTimeline() {
 
   state.events.forEach(function (ev, i) {
     const index = typeof ev.index === 'number' ? ev.index : i + 1;
-    const kind = eventKind(ev.type);
+    const cancelled = isCancellation(ev);
+    const kind = cancelled ? 'cancelled' : eventKind(ev.type);
     const selected = state.at === index;
     const future = isHistorical() && index > state.at;
     const summary = ev.summary === null || ev.summary === undefined ? '' : String(ev.summary);
     const row = h('div', {
       class: 'ev k-' + kind + (selected ? ' selected' : '') + (future ? ' future' : '') +
-             (ev.is_error ? ' is-error' : '') + (state.freshIndices[index] ? ' fresh' : ''),
+             (ev.is_error && !cancelled ? ' is-error' : '') +
+             (state.freshIndices[index] ? ' fresh' : ''),
       role: 'option',
       id: 'ev-' + index,
       'aria-selected': selected ? 'true' : 'false',
@@ -1166,42 +1293,127 @@ function safeJson(v) {
 
 function renderComposer() {
   if (!sessionEls) return;
-  const busy = state.sending;
+  // "busy" covers a turn we started AND one started elsewhere on this session.
+  const busy = state.sending || state.turnRunning;
+  const cancel = sessionEls.cancel;
+
   sessionEls.input.disabled = busy;
   sessionEls.send.disabled = busy;
-  sessionEls.send.textContent = busy ? 'Running…' : 'Send turn';
+  sessionEls.send.textContent = state.sending ? 'Running…'
+    : state.turnRunning ? 'Turn running' : 'Send turn';
+
+  cancel.hidden = !busy;
+  cancel.disabled = state.cancelling;
+  cancel.textContent = state.cancelling ? 'Cancelling…' : 'Cancel turn';
+
   const hint = sessionEls.hint;
   clear(hint);
-  hint.className = 'composer-hint' + (busy ? ' busy' : '') + (isHistorical() && !busy ? ' warn' : '');
+  const note = state.turnNote;
+  const tone = busy ? 'busy' : note ? note.tone : (isHistorical() ? 'warn' : '');
+  hint.className = 'composer-hint' + (tone ? ' ' + tone : '');
+
   if (busy) {
     hint.appendChild(h('span', { class: 'spinner' }));
-    hint.appendChild(document.createTextNode(state.liveNote || 'turn in flight — this can take a minute'));
-  } else if (isHistorical()) {
-    hint.textContent = 'viewing history — a turn appends to HEAD; fork to branch from here';
-  } else {
-    hint.textContent = 'Ctrl+Enter to send · ↑/↓ in the log to scrub';
+    hint.appendChild(h('span', { class: 'txt', text:
+      state.cancelling ? 'cancelling — waiting for the turn to unwind'
+        : state.sending ? (state.liveNote || 'turn in flight — this can take a minute')
+        : watchedLabel() }));
+    return;
   }
+
+  if (note) {
+    hint.appendChild(h('span', { class: 'txt', text: note.text }));
+    if (note.range) hint.appendChild(rangeChip(note.range));
+    if (note.recheck) {
+      hint.appendChild(h('button', {
+        class: 'turn-range', type: 'button',
+        onclick: function () { refreshRunning(true); }
+      }, 're-check'));
+    }
+    return;
+  }
+
+  hint.appendChild(h('span', { class: 'txt', text: isHistorical()
+    ? 'viewing history — a turn appends to HEAD; fork to branch from here'
+    : 'Ctrl+Enter to send · ↑/↓ in the log to scrub' }));
+}
+
+/* "turn 4 · started 40s ago — assistant message added" for a turn this tab is
+ * only watching. Falls back gracefully when the detail fields are absent. */
+function watchedLabel() {
+  const w = state.watchedTurn;
+  if (!w) return state.liveNote || 'a turn started elsewhere is running on this session';
+  const bits = [];
+  if (typeof w.turn_index === 'number') bits.push('turn ' + w.turn_index);
+  const age = watchedAge(w);
+  bits.push(age === null ? 'running elsewhere' : 'started ' + age + ' ago, elsewhere');
+  if (state.liveNote) bits.push(state.liveNote);
+  return bits.join(' · ');
+}
+
+function watchedAge(w) {
+  // started_at is preferred: it keeps counting up as the turn runs, whereas
+  // elapsed_seconds is a snapshot taken when we asked.
+  const started = parseTime(w.started_at);
+  const secs = started ? (Date.now() - started.getTime()) / 1000
+    : (typeof w.elapsed_seconds === 'number' ? w.elapsed_seconds : null);
+  if (secs === null) return null;
+  const whole = Math.max(0, Math.round(secs));
+  return whole < 90 ? whole + 's' : Math.round(whole / 60) + 'm';
+}
+
+/* "turn 3 · events 14–21" — clicking scrubs to where the turn began. */
+function rangeChip(range) {
+  const from = range.from_index, to = range.to_index;
+  const label = (typeof range.turn_index === 'number' ? 'turn ' + range.turn_index + ' · ' : '') +
+    (from === to ? 'event ' + from : 'events ' + from + '–' + to);
+  return h('button', {
+    class: 'turn-range',
+    type: 'button',
+    title: 'jump to event ' + from,
+    onclick: function () { selectEvent(from); }
+  }, label);
 }
 
 function onSend(ev) {
   if (ev && ev.preventDefault) ev.preventDefault();
-  if (state.sending) return;
+  if (state.sending || state.turnRunning) return;
   const input = sessionEls.input;
   const text = String(input.value || '').trim();
   if (!text) return;
   const id = state.sessionId;
 
   state.sending = true;
+  state.turnNote = null;
   state.liveNote = 'turn in flight — this can take a minute';
   renderComposer();
 
   api.post('/api/sessions/' + encodeURIComponent(id) + '/turns', { input: text })
-    .then(function () {
+    .then(function (res) {
       if (state.sessionId === id) input.value = '';
+      // The turn reports exactly where it landed, so highlight that span
+      // instead of diffing the log against what we had before.
+      const range = turnRange(res);
+      if (range) {
+        markFresh(range.from_index, range.to_index);
+        setNote('good', 'turn complete', range);
+      } else {
+        setNote('good', 'turn complete');
+      }
       toast('Turn complete.', 'good');
     })
     .catch(function (e) {
-      toast('Turn failed: ' + e.message, 'bad');
+      if (e.status === 499) {
+        // Cancelled on purpose. Not a failure -- no toast, no red.
+        setNote('calm', state.cancelSettled === false
+          ? 'cancel delivered — the turn is still unwinding'
+          : 'turn cancelled — its events were discarded');
+      } else if (e.status === 409) {
+        setNote('warn', String(e.message || 'a turn is already running on this session'), null, true);
+      } else {
+        setNote('warn', 'turn failed — ' + e.message);
+        toast('Turn failed: ' + e.message, 'bad');
+      }
     })
     .then(function () {
       // Always clear the in-flight flag, even if the user navigated away while
@@ -1213,6 +1425,67 @@ function onSend(ev) {
       // The turn is atomic, so refetch the whole log rather than trusting the
       // events that streamed in mid-flight.
       return loadSession();
+    });
+}
+
+function turnRange(res) {
+  if (!res || typeof res !== 'object') return null;
+  if (typeof res.from_index !== 'number' || typeof res.to_index !== 'number') return null;
+  return { turn_index: res.turn_index, from_index: res.from_index, to_index: res.to_index };
+}
+
+function setNote(tone, text, range, recheck) {
+  state.turnNote = { tone: tone, text: text, range: range || null, recheck: !!recheck };
+}
+
+function markFresh(from, to) {
+  if (typeof from !== 'number' || typeof to !== 'number') return;
+  const now = Date.now();
+  for (let i = from; i <= to; i++) state.freshIndices[i] = now;
+  scheduleFreshSweep();
+}
+
+function cancelTurn() {
+  if (state.cancelling) return;
+  const id = state.sessionId;
+  state.cancelling = true;
+  renderComposer();
+  api.post('/api/sessions/' + encodeURIComponent(id) + '/turns/cancel', {})
+    .then(function (res) {
+      if (state.sessionId !== id) return;
+      // Either way the composer returns to idle; only the wording differs.
+      state.turnRunning = false;
+      state.watchedTurn = null;
+      if (res && res.cancelled) {
+        // settled:false means the cancel landed but the turn was still
+        // unwinding -- don't claim the log is final; a TurnFailed frame is
+        // still on its way over the stream.
+        const settled = res.settled !== false;
+        state.cancelSettled = settled;
+        // Not settled: the log is not final yet, so wait for the TurnFailed
+        // frame before trusting what we have.
+        state.awaitingUnwind = !settled;
+        // The POST /turns still in flight will settle as a 499 and write the
+        // note; only speak up here when this tab is not the one that sent it.
+        if (!state.sending) {
+          setNote('calm', settled
+            ? 'turn cancelled — its events were discarded'
+            : 'cancel delivered — the turn is still unwinding');
+        }
+      } else {
+        setNote('calm', 'nothing was running');
+      }
+    })
+    .catch(function (e) {
+      if (state.sessionId !== id) return;
+      setNote('warn', 'could not cancel — ' + e.message, null, true);
+      toast('Cancel failed: ' + e.message, 'bad');
+    })
+    .then(function () {
+      state.cancelling = false;
+      if (state.sessionId !== id) return;
+      renderComposer();
+      if (!state.sending) loadSession();
     });
 }
 
@@ -1325,9 +1598,32 @@ function onStreamEvent(payload) {
     renderTimeline();
     renderScrubBar();
   }
-  if (state.sending) {
+  // Remember where a turn we are only watching began: its first frame is the
+  // UserMessageSent that opened it, which is exactly from_index.
+  if (state.turnRunning && !state.sending && state.watchedTurn &&
+      state.watchedTurn.from_index === null && !isTurnEnd(payload.type)) {
+    state.watchedTurn.from_index = index;
+  }
+
+  if (state.sending || state.turnRunning) {
     state.liveNote = truncate(humanType(payload.type) + (payload.summary ? ': ' + payload.summary : ''), 90);
     renderComposer();
+  }
+
+  // TurnCompleted / TurnFailed close a turn. For one we are watching, that
+  // frame IS the completion signal -- no polling, no follow-up request.
+  if (state.turnRunning && !state.sending && isTurnEnd(payload.type)) {
+    foreignTurnEnded(payload);
+    return;
+  }
+
+  // A cancel that returned settled:false left the turn unwinding; its closing
+  // frame is the signal that the log is finally trustworthy.
+  if (state.awaitingUnwind && isTurnEnd(payload.type)) {
+    state.awaitingUnwind = false;
+    setNote('calm', 'turn cancelled — its events were discarded');
+    renderComposer();
+    loadSession();
   }
 }
 

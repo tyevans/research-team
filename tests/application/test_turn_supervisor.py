@@ -7,6 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from research_team.application import (
+    RunningTurn,
     TurnAlreadyRunning,
     TurnCancelled,
     TurnSupervisor,
@@ -114,9 +115,10 @@ async def test_cancelling_stops_the_turn_and_records_the_attempt(slow_supervisor
 
     running = asyncio.create_task(supervisor.run(session_id, "slow one"))
     await asyncio.sleep(0.3)
-    cancelled = await supervisor.cancel(session_id)
+    cancellation = await supervisor.cancel(session_id)
 
-    assert cancelled is True
+    assert cancellation.cancelled is True
+    assert cancellation.settled is True
     with pytest.raises(TurnCancelled):
         await running
 
@@ -162,7 +164,7 @@ async def test_cancelling_nothing_says_so(fast_supervisor):
     supervisor, service = fast_supervisor
     session_id = await service.create_session()
 
-    assert await supervisor.cancel(session_id) is False
+    assert (await supervisor.cancel(session_id)).cancelled is False
 
 
 async def test_cancelling_a_finished_turn_says_so(fast_supervisor):
@@ -170,7 +172,7 @@ async def test_cancelling_a_finished_turn_says_so(fast_supervisor):
     session_id = await service.create_session()
     await supervisor.run(session_id, "hello")
 
-    assert await supervisor.cancel(session_id) is False
+    assert (await supervisor.cancel(session_id)).cancelled is False
 
 
 async def test_the_session_is_usable_again_after_a_cancellation(build_service, slow_model):
@@ -190,3 +192,90 @@ async def test_the_session_is_usable_again_after_a_cancellation(build_service, s
 
     assert outcome.reply == "eventually"
     assert outcome.turn_index == 1  # the cancelled attempt never counted
+
+
+# ---------------- what is running ----------------
+
+
+async def test_a_running_turn_reports_its_number_and_age(slow_supervisor):
+    """So a tab that arrives mid-turn can say more than "something is running"."""
+    from datetime import UTC, datetime
+
+    supervisor, service = slow_supervisor
+    session_id = await service.create_session()
+
+    running = asyncio.create_task(supervisor.run(session_id, "slow"))
+    await asyncio.sleep(0.3)
+
+    turn = supervisor.running(session_id)
+    assert isinstance(turn, RunningTurn)
+    assert turn.turn_index == 1  # the number it will take if it completes
+    assert 0 < turn.elapsed_seconds(datetime.now(UTC)) < 30
+
+    await supervisor.cancel(session_id)
+    with pytest.raises(TurnCancelled):
+        await running
+
+
+async def test_the_running_turn_number_follows_the_completed_ones(
+    build_service, slow_model
+):
+    service = build_service(model=slow_model)
+    supervisor = TurnSupervisor(service)
+    session_id = await service.create_session()
+    slow_model.delay = 0.0
+    await supervisor.run(session_id, "first")
+
+    slow_model.delay = 5.0
+    running = asyncio.create_task(supervisor.run(session_id, "second"))
+    await asyncio.sleep(0.3)
+
+    assert supervisor.running(session_id).turn_index == 2
+
+    await supervisor.cancel(session_id)
+    with pytest.raises(TurnCancelled):
+        await running
+
+
+async def test_nothing_is_reported_running_when_nothing_is(fast_supervisor):
+    supervisor, service = fast_supervisor
+    session_id = await service.create_session()
+    assert supervisor.running(session_id) is None
+
+    await supervisor.run(session_id, "hello")
+    assert supervisor.running(session_id) is None
+
+
+class StubbornModel(ToolAwareFakeChatModel):
+    """A client that does not stop promptly when asked.
+
+    Not a contrivance: a model call wedged in a socket read is exactly the
+    case where a cancel request must not wait for it.
+    """
+
+    async def _agenerate(self, *args: Any, **kwargs: Any):
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            await asyncio.sleep(30)  # ignores the first cancellation
+        return await super()._agenerate(*args, **kwargs)
+
+
+async def test_a_cancel_that_will_not_settle_says_so_rather_than_hanging(
+    build_service,
+):
+    """A turn wedged in a slow client must not wedge the cancel request too."""
+    service = build_service(
+        model=StubbornModel(responses=[AIMessage(content="never", id="n1")])
+    )
+    supervisor = TurnSupervisor(service, settle_timeout=0.1)
+    session_id = await service.create_session()
+
+    running = asyncio.create_task(supervisor.run(session_id, "slow"))
+    await asyncio.sleep(0.3)
+
+    cancellation = await supervisor.cancel(session_id)
+
+    assert cancellation.cancelled is True
+    assert cancellation.settled is False  # honest, rather than a hung request
+    running.cancel()
