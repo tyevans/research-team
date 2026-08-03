@@ -1,5 +1,7 @@
 """The `TurnExecutor` port, implemented with deepagents and langchain."""
 
+from collections.abc import Sequence
+
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, ToolMessage
 from langchain_openai import ChatOpenAI
@@ -14,7 +16,7 @@ from research_team.infrastructure.agent.messages import (
     encode_user_message,
     last_text,
     new_messages,
-    to_langchain,
+    to_payload_messages,
     to_recorded,
 )
 
@@ -58,8 +60,14 @@ class DeepAgentTurnExecutor:
     committed at all.
     """
 
-    def __init__(self, model: BaseChatModel) -> None:
+    def __init__(
+        self,
+        model: BaseChatModel,
+        *,
+        subagents: Sequence[dict] = (),
+    ) -> None:
         self._model = model
+        self._subagents = list(subagents)
 
     @property
     def model_name(self) -> str:
@@ -72,10 +80,11 @@ class DeepAgentTurnExecutor:
         self,
         session: CodingSession,
         *,
+        messages: list[dict],
         system_prompt: str,
         on_activity: ActivityReporter | None = None,
     ) -> TurnResult:
-        sent = to_langchain(session.state)
+        sent = to_payload_messages(messages)
         after = await self._invoke(session, sent, system_prompt, on_activity)
         return TurnResult(
             messages=tuple(
@@ -105,6 +114,10 @@ class DeepAgentTurnExecutor:
             backend=EventSourcedBackend(session),
             system_prompt=system_prompt,
             checkpointer=None,
+            # Subagents share this backend, so their file writes land in the
+            # same event log as everything else -- delegated work stays as
+            # auditable as work the main agent does itself.
+            subagents=self._subagents or None,
         )
 
         final: list[BaseMessage] = list(messages)

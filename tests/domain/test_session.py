@@ -124,3 +124,51 @@ async def test_state_survives_save_and_reload(aggregates, session, session_id):
     assert reloaded.state.files == {"/a.py": FILE_DATA}
     assert reloaded.state.messages[-1]["data"]["content"] == "hi"
     assert reloaded.version == 3
+
+
+# ---- conversation compaction ----
+
+
+def test_compaction_records_what_the_model_will_see(session):
+    for i in range(4):
+        session.send_user_message({"type": "human", "data": {"content": f"m{i}"}})
+
+    session.compact_conversation("a summary", through_index=3, strategy="compact")
+
+    assert session.state.compacted_through == 3
+    assert session.state.compaction_summary == "a summary"
+
+
+def test_compaction_keeps_every_message(session):
+    """The summary is a view. Nothing leaves the log, ever."""
+    for i in range(4):
+        session.send_user_message({"type": "human", "data": {"content": f"m{i}"}})
+
+    session.compact_conversation("a summary", through_index=3, strategy="compact")
+
+    assert len(session.state.messages) == 4
+    assert session.state.messages[0]["data"]["content"] == "m0"
+
+
+def test_compaction_cannot_go_backwards(session):
+    """Uncovering messages an earlier summary covered would show both."""
+    for i in range(6):
+        session.send_user_message({"type": "human", "data": {"content": f"m{i}"}})
+    session.compact_conversation("first", through_index=4, strategy="compact")
+
+    with pytest.raises(ValueError, match="cannot compact through"):
+        session.compact_conversation("second", through_index=2, strategy="compact")
+
+
+def test_compaction_cannot_cover_messages_that_do_not_exist(session):
+    session.send_user_message({"type": "human", "data": {"content": "only one"}})
+
+    with pytest.raises(ValueError, match="cannot compact through"):
+        session.compact_conversation("premature", through_index=5, strategy="compact")
+
+
+def test_compaction_needs_a_started_session(aggregates, session_id):
+    fresh = aggregates.create_new(session_id)
+
+    with pytest.raises(ValueError, match="not started"):
+        fresh.compact_conversation("s", through_index=1, strategy="compact")

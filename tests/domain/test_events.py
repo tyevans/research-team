@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from research_team.domain.events import (
+    ConversationCompacted,
     SESSION_EVENTS,
     AssistantMessageAdded,
     SessionForkedFrom,
@@ -23,7 +24,7 @@ def test_all_events_exported():
     assert set(SESSION_EVENTS) == {
         SessionStarted, UserMessageSent, AssistantMessageAdded,
         ToolResultRecorded, TurnCompleted, TurnFailed, SessionForkedFrom,
-        FileWritten, FileEdited, FileDeleted,
+        ConversationCompacted, FileWritten, FileEdited, FileDeleted,
     }
 
 

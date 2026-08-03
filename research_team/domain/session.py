@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from research_team.domain.events import (
     AssistantMessageAdded,
+    ConversationCompacted,
     SessionForkedFrom,
     TurnFailed,
     FileDeleted,
@@ -32,6 +33,10 @@ class SessionState(BaseModel):
     failed_turns: int = 0
     forked_from: UUID | None = None
     forked_at: int | None = None
+    compacted_through: int = 0
+    """How many leading messages a summary now stands in for. 0 means none."""
+    compaction_summary: str = ""
+    """The summary itself. The messages it replaces are still in `messages`."""
 
 
 def _outstanding_tool_call_ids(messages: list[dict[str, Any]]) -> set[str]:
@@ -54,7 +59,7 @@ def _outstanding_tool_call_ids(messages: list[dict[str, Any]]) -> set[str]:
 class CodingSession(DeclarativeAggregate[SessionState]):
     aggregate_type = "CodingSession"
     requires_creation_event = True
-    schema_version = 2  # SessionState gained failed_turns / fork lineage
+    schema_version = 3  # SessionState gained conversation compaction
 
     # ---------------- commands ----------------
 
@@ -104,6 +109,30 @@ class CodingSession(DeclarativeAggregate[SessionState]):
             error_type="Cancelled" if cancelled else type(error).__name__,
             error_message=str(error)[:500] or "cancelled",
             cancelled=cancelled,
+        )
+
+    def compact_conversation(
+        self, summary: str, through_index: int, strategy: str
+    ) -> None:
+        """Record that a summary now stands in for the first `through_index`
+        messages, as far as the model is concerned.
+
+        Refuses to go backwards or past the end: a compaction that uncovered
+        messages an earlier one had covered would leave the model seeing a
+        summary *and* the messages it summarises.
+        """
+        self._require_started()
+        if not self.state.compacted_through < through_index <= len(self.state.messages):
+            raise ValueError(
+                f"cannot compact through {through_index}: "
+                f"{len(self.state.messages)} messages, "
+                f"already compacted through {self.state.compacted_through}"
+            )
+        self.create_event(
+            ConversationCompacted,
+            summary=summary,
+            through_index=through_index,
+            strategy=strategy,
         )
 
     def record_fork_source(self, source_session_id: UUID, at_event: int) -> None:
@@ -183,6 +212,17 @@ class CodingSession(DeclarativeAggregate[SessionState]):
         # turn_index deliberately unchanged: the turn did not happen.
         self._state = self._state.model_copy(
             update={"failed_turns": self._state.failed_turns + 1}
+        )
+
+    @handles(ConversationCompacted)
+    def _on_compacted(self, event: ConversationCompacted) -> None:
+        # `messages` is untouched: the log keeps everything, and only the view
+        # handed to the model is shortened.
+        self._state = self._state.model_copy(
+            update={
+                "compacted_through": event.through_index,
+                "compaction_summary": event.summary,
+            }
         )
 
     @handles(SessionForkedFrom)

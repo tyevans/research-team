@@ -8,6 +8,7 @@ import from here; nothing here imports from above.
 from research_team.domain.events import (
     SESSION_EVENTS,
     AssistantMessageAdded,
+    ConversationCompacted,
     FileDeleted,
     FileEdited,
     FileWritten,
@@ -24,6 +25,7 @@ __all__ = [
     "SESSION_EVENTS",
     "AssistantMessageAdded",
     "CodingSession",
+    "ConversationCompacted",
     "FileDeleted",
     "FileEdited",
     "FileWritten",

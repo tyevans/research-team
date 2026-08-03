@@ -115,6 +115,8 @@ def session_view(
         "forked_from": str(state.forked_from) if state.forked_from else None,
         "forked_at": state.forked_at,
         "event_count": len(events),
+        "compacted_through": state.compacted_through,
+        "compaction_summary": state.compaction_summary,
         "at": at,
         "files": [
             {

@@ -23,6 +23,24 @@ if TYPE_CHECKING:
     from research_team.domain import SessionState
 
 
+def to_payload_messages(payloads: list[dict]) -> list[BaseMessage]:
+    """Turn stored payloads into the message list the agent consumes.
+
+    Takes the payloads rather than the session, because which of them to send
+    is decided a layer up -- a context strategy may have shortened or replaced
+    some of them before they get here.
+
+    The system prompt is deliberately NOT prepended. `create_deep_agent` takes
+    `system_prompt` as its own parameter and owns it; putting a SystemMessage
+    in this list as well would give the prompt two owners and show it to the
+    model twice. It would also break turn accounting: LangGraph echoes back
+    every message it is given, so an extra leading message shifts the "what did
+    the agent add" suffix by one and the user's own message gets recorded a
+    second time as an assistant message.
+    """
+    return messages_from_dict(payloads)
+
+
 def to_langchain(state: "SessionState") -> list[BaseMessage]:
     """Fold stored payloads into the message list the agent consumes.
 

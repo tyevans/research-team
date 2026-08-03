@@ -152,7 +152,11 @@ async def handle_command(
         return f"{verb} event {argument}; session {repl.session_id}"
     if command == "/state":
         events = await service.history(repl.session_id)
-        return format_state(await service.load(repl.session_id), len(events))
+        return format_state(
+            await service.load(repl.session_id),
+            len(events),
+            service.context_strategy,
+        )
     return f"unknown command {command!r} -- try /help"
 
 
