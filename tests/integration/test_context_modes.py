@@ -248,3 +248,20 @@ async def test_delegate_mode_leaves_the_history_untouched(build_application):
     events = await application.service.history(session_id)
     assert not any(isinstance(e, ConversationCompacted) for e in events)
     assert application.service.context_strategy == "full"
+
+
+async def test_delegation_guidance_says_when_not_to_delegate(build_application):
+    """A guard on evidence, not on wording.
+
+    The two documented ways this pattern fails are subagents duplicating work
+    when their scope is vague, and one coherent change split across workers who
+    cannot see each other. Both are addressed by instructions rather than by
+    code, so nothing but a test stops them being edited away -- and the failure
+    would only show up as an agent quietly behaving worse.
+    """
+    application = build_application(model=chatty(4), context_mode="delegate")
+    session_id = await application.service.create_session()
+    prompt = (await application.service.load(session_id)).state.system_prompt
+
+    assert "not delegate" in prompt, "the prompt must say when to keep the work"
+    assert "cannot see each other" in prompt, "the splitting failure must be named"

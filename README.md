@@ -221,6 +221,21 @@ its reads and reasoning never enter the parent's context. Measured here, a
 delegated turn left four messages in the parent — the request, the `task` call,
 the subagent's report, and the reply.
 
+**Delegation is the mode with two-sided evidence, and it is worth knowing which
+side you are on.** Anthropic reports a large quality win for a research system
+of one lead plus subagents — and also that token spend alone explained most of
+the performance variance, at three to ten times the tokens. Much of the win is
+paying more, not organising better. Cognition argues the opposite for
+*constructive* work: subagents each producing part of an artifact make
+conflicting implicit decisions that the parent then has to reconcile.
+
+That second warning applies here, because our subagents write to a shared
+filesystem later turns build on. So `delegate` steers towards investigation —
+reading, searching, surveying — where a subagent returns a conclusion rather
+than a piece of something that has to fit with other pieces. It is the right
+mode for "which of these forty files mentions X", and the wrong one for
+splitting a refactor three ways.
+
 Three choices are worth explaining, because the obvious alternative is wrong in
 each case:
 
@@ -262,7 +277,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-323 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+324 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
 `tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
 `tests/integration` for the cross-layer ones.
 
