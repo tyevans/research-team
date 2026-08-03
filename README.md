@@ -93,7 +93,15 @@ there is no message schema of our own to maintain. File tools come from deepagen
 line numbering, edit-ambiguity checks, glob/grep, and error strings are all
 inherited rather than reimplemented. `create_deep_agent` is built with
 `checkpointer=None` so LangGraph stays stateless and the event log is the sole
-source of truth. A turn is atomic: all of its events append at the end, or none do —
+source of truth.
+
+The "no shell" guarantee is worth being precise about, because it is not that
+the tool is absent. deepagents offers an `execute` tool regardless; it refuses
+here because `EventSourcedBackend` does not implement the sandbox protocol that
+would give it somewhere to run, so an attempt returns an ordinary error and is
+recorded like any other tool result. That is a subtle invariant to rest a
+safety claim on, so `tests/integration/test_no_shell.py` pins it: a command
+that tries to write outside the process must leave nothing behind. A turn is atomic: all of its events append at the end, or none do —
 so an interrupted or failed turn leaves the log at the last completed turn rather
 than half-applied.
 
@@ -252,6 +260,16 @@ model cannot see itself having asked. The boundary snaps backwards until the
 first kept message is not a tool result, which summarizes strictly more and is
 therefore always safe.
 
+**`elide` offers no way to retrieve what it cleared, on purpose.** The obvious
+improvement is a handle back to the original, which the log still holds. It
+would be wrong here. Every tool the agent has -- `read_file`, `ls`, `glob`,
+`grep` -- is a cheap, deterministic read of an in-memory filesystem, so
+re-running one costs almost nothing and returns the file as it is *now*. A
+recalled result is a snapshot from an earlier turn, which may since have been
+edited: it would be slower to reach for and sometimes wrong. The advice to keep
+a retrievable handle comes from systems whose cleared output was expensive or
+impossible to reproduce; ours is neither.
+
 **`elide` clears a result rather than truncating it.** A cut-off head reads as
 a whole result, so the model trusts it — and a half-read file or half-finished
 command output is exactly how an agent concludes something succeeded when it
@@ -278,7 +296,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-335 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+338 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
 `tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
 `tests/integration` for the cross-layer ones.
 
