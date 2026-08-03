@@ -322,7 +322,7 @@ const state = {
   cancelSettled: null,     // last cancel's `settled` flag
   awaitingUnwind: false,   // cancelled but not settled: log not final yet
   turnNote: null,          // {tone, text, range?, recheck?} shown when idle
-  liveNote: '',
+  turnStartedAt: null,     // ms timestamp of our own in-flight turn
   sessionError: null,
   loadingSnapshot: false,
   freshIndices: {}
@@ -384,6 +384,7 @@ function onRoute() {
   // Nothing scheduled against the previous view should fire against this one.
   clearTimeout(treeRefreshTimer); treeRefreshTimer = null;
   clearTimeout(freshSweepTimer); freshSweepTimer = null;
+  stopTick();
   if (next.name === 'session') {
     if (changedSession) {
       state.sessionId = next.id;
@@ -399,7 +400,7 @@ function onRoute() {
       state.fileMissing = false;
       state.openRevisions = {};
       state.sessionError = null;
-      state.liveNote = '';
+      state.turnStartedAt = null;
       state.freshIndices = {};
       // A turn in flight belongs to the session we just left; the composer we
       // are about to mount is a different one and must start enabled.
@@ -659,8 +660,8 @@ function applyRunning(res) {
   if (foreign === state.turnRunning) return;
   state.turnRunning = foreign;
   if (foreign) {
-    state.liveNote = '';
     state.turnNote = null;
+    startTick();
     state.watchedTurn = {
       turn_index: typeof res.turn_index === 'number' ? res.turn_index : null,
       started_at: res.started_at || null,
@@ -669,8 +670,27 @@ function applyRunning(res) {
     };
   } else {
     state.watchedTurn = null;
+    stopTick();
   }
   renderComposer();
+}
+
+/* Elapsed time is the only thing that moves while a turn runs, so repaint the
+ * composer once a second to keep it honest. Display only -- no requests. */
+let tickTimer = null;
+
+function startTick() {
+  if (tickTimer) return;
+  tickTimer = setInterval(function () {
+    if (!state.sending && !state.turnRunning) { stopTick(); return; }
+    renderComposer();
+  }, 1000);
+}
+
+function stopTick() {
+  if (!tickTimer) return;
+  clearInterval(tickTimer);
+  tickTimer = null;
 }
 
 let runningCheckInFlight = false;
@@ -712,7 +732,7 @@ function foreignTurnEnded(payload) {
 
   state.turnRunning = false;
   state.watchedTurn = null;
-  state.liveNote = '';
+  stopTick();
 
   if (cancelled) {
     setNote('calm', 'the turn running elsewhere was cancelled — its events were discarded');
@@ -731,8 +751,9 @@ function foreignTurnEnded(payload) {
     setNote('good', 'the turn running elsewhere finished');
   }
   renderComposer();
-  // A cancelled or failed turn discards its events, so the log we streamed in
-  // is not what the server kept -- refetch rather than trust the frames.
+  // Stream frames are timeline rows only -- they carry no message content and
+  // no file contents. The conversation and workspace panes can only be brought
+  // up to date by refetching, so a turn ending always costs one load.
   loadSession();
 }
 
@@ -1316,7 +1337,7 @@ function renderComposer() {
     hint.appendChild(h('span', { class: 'spinner' }));
     hint.appendChild(h('span', { class: 'txt', text:
       state.cancelling ? 'cancelling — waiting for the turn to unwind'
-        : state.sending ? (state.liveNote || 'turn in flight — this can take a minute')
+        : state.sending ? sendingLabel()
         : watchedLabel() }));
     return;
   }
@@ -1338,17 +1359,32 @@ function renderComposer() {
     : 'Ctrl+Enter to send · ↑/↓ in the log to scrub' }));
 }
 
-/* "turn 4 · started 40s ago — assistant message added" for a turn this tab is
- * only watching. Falls back gracefully when the detail fields are absent. */
+/* A turn saves atomically at the end, so NOTHING reaches the event stream while
+ * it runs -- every frame lands at once when it commits. There is no per-tool
+ * progress to show here, and claiming otherwise would be a lie. Elapsed time is
+ * the one thing that genuinely moves, so that is what these two labels report. */
+function sendingLabel() {
+  const age = elapsedLabel(state.turnStartedAt);
+  return 'turn in flight' + (age ? ' · ' + age : '') +
+         ' — events appear when it completes';
+}
+
+/* "turn 4 · started 40s ago, elsewhere" for a turn this tab is only watching. */
 function watchedLabel() {
   const w = state.watchedTurn;
-  if (!w) return state.liveNote || 'a turn started elsewhere is running on this session';
+  if (!w) return 'a turn started elsewhere is running on this session';
   const bits = [];
   if (typeof w.turn_index === 'number') bits.push('turn ' + w.turn_index);
   const age = watchedAge(w);
   bits.push(age === null ? 'running elsewhere' : 'started ' + age + ' ago, elsewhere');
-  if (state.liveNote) bits.push(state.liveNote);
+  bits.push('events appear when it completes');
   return bits.join(' · ');
+}
+
+function elapsedLabel(startedMs) {
+  if (!startedMs) return '';
+  const secs = Math.max(0, Math.round((Date.now() - startedMs) / 1000));
+  return secs < 90 ? secs + 's' : Math.round(secs / 60) + 'm';
 }
 
 function watchedAge(w) {
@@ -1385,7 +1421,8 @@ function onSend(ev) {
 
   state.sending = true;
   state.turnNote = null;
-  state.liveNote = 'turn in flight — this can take a minute';
+  state.turnStartedAt = Date.now();
+  startTick();
   renderComposer();
 
   api.post('/api/sessions/' + encodeURIComponent(id) + '/turns', { input: text })
@@ -1419,7 +1456,8 @@ function onSend(ev) {
       // Always clear the in-flight flag, even if the user navigated away while
       // the turn ran -- otherwise the composer stays disabled for good.
       state.sending = false;
-      state.liveNote = '';
+      state.turnStartedAt = null;
+      stopTick();
       if (state.sessionId !== id) return;
       renderComposer();
       // The turn is atomic, so refetch the whole log rather than trusting the
@@ -1605,10 +1643,8 @@ function onStreamEvent(payload) {
     state.watchedTurn.from_index = index;
   }
 
-  if (state.sending || state.turnRunning) {
-    state.liveNote = truncate(humanType(payload.type) + (payload.summary ? ': ' + payload.summary : ''), 90);
-    renderComposer();
-  }
+  // No narration here on purpose: a turn's frames all arrive together when it
+  // commits, so per-event progress would be a burst at the end, not progress.
 
   // TurnCompleted / TurnFailed close a turn. For one we are watching, that
   // frame IS the completion signal -- no polling, no follow-up request.
