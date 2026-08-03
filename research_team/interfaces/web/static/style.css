@@ -511,6 +511,9 @@ pre.code {
   white-space: pre;
   overflow-x: auto;
 }
+/* contents belonging to a scrub point we have already moved past */
+pre.code.stale { opacity: .4; }
+
 pre.code .ln {
   display: inline-block;
   width: 42px;

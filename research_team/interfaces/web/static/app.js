@@ -298,8 +298,10 @@ const state = {
   openPath: null,
   fileTab: 'content',       // 'content' | 'history'
   fileContent: null,
+  fileContentAt: undefined, // the scrub point fileContent was fetched for
   fileHistory: null,
   fileError: null,
+  fileMissing: false,       // 404: the path does not exist at this point
   openRevisions: {},        // history index -> bool
   sending: false,
   liveNote: '',
@@ -361,6 +363,9 @@ function onRoute() {
   const next = parseHash();
   const changedSession = next.name !== state.route.name || next.id !== state.route.id;
   state.route = next;
+  // Nothing scheduled against the previous view should fire against this one.
+  clearTimeout(treeRefreshTimer); treeRefreshTimer = null;
+  clearTimeout(freshSweepTimer); freshSweepTimer = null;
   if (next.name === 'session') {
     if (changedSession) {
       state.sessionId = next.id;
@@ -370,17 +375,27 @@ function onRoute() {
       state.snapshot = null;
       state.openPath = null;
       state.fileContent = null;
+      state.fileContentAt = undefined;
       state.fileHistory = null;
       state.fileError = null;
+      state.fileMissing = false;
       state.openRevisions = {};
       state.sessionError = null;
       state.liveNote = '';
       state.freshIndices = {};
+      // A turn in flight belongs to the session we just left; the composer we
+      // are about to mount is a different one and must start enabled.
+      state.sending = false;
+      state.loadingSnapshot = false;
       sessionEls = null;
       mountSessionView();
       loadSession();
     } else if (next.at !== state.at) {
+      // Browser back/forward or a hand-edited hash: the timeline's selection,
+      // dimming and HEAD marker are all derived from state.at, so re-render it.
       state.at = next.at;
+      renderTimeline();
+      renderScrubBar();
       loadSnapshot();
     }
   } else {
@@ -526,11 +541,22 @@ function num(a, b) {
   return null;
 }
 
-function newSession() {
+let creatingSession = false;
+
+function newSession(ev) {
+  if (creatingSession) return;
+  creatingSession = true;
+  const button = ev && ev.currentTarget;
+  if (button) button.disabled = true;
   api.post('/api/sessions', {}).then(function (res) {
     if (res && res.id) go('#/s/' + encodeURIComponent(res.id));
     else toast('Session created but no id was returned.', 'bad');
-  }).catch(function (e) { toast('Could not create session: ' + e.message, 'bad'); });
+  }).catch(function (e) {
+    toast('Could not create session: ' + e.message, 'bad');
+  }).then(function () {
+    creatingSession = false;
+    if (button && button.isConnected) button.disabled = false;
+  });
 }
 
 /* ===================================================================== */
@@ -627,7 +653,7 @@ function loadSnapshot() {
   const id = state.sessionId, at = state.at;
   state.loadingSnapshot = true;
   renderScrubBar();
-    renderComposer();
+  renderComposer();
   return api.get('/api/sessions/' + encodeURIComponent(id) + '/at/' + at)
     .then(function (snap) {
       if (state.sessionId !== id || state.at !== at) return;
@@ -636,7 +662,7 @@ function loadSnapshot() {
       renderWorkspace();
       renderConversation();
       renderScrubBar();
-    renderComposer();
+      renderComposer();
       refreshOpenFile();
     })
     .catch(function (e) {
@@ -646,7 +672,7 @@ function loadSnapshot() {
       renderWorkspace();
       renderConversation();
       renderScrubBar();
-    renderComposer();
+      renderComposer();
     });
 }
 
@@ -699,7 +725,7 @@ function renderScrubBar() {
   if (isHistorical()) {
     actions.appendChild(h('button', {
       class: 'btn btn-sm',
-      onclick: function () { forkAt(state.at); }
+      onclick: function (e) { forkAt(state.at, e.currentTarget); }
     }, 'Fork here'));
     actions.appendChild(h('button', {
       class: 'btn btn-sm btn-accent',
@@ -732,6 +758,7 @@ function renderTimeline() {
   }
 
   const list = h('div', { class: 'timeline', tabindex: '0', role: 'listbox',
+                          id: 'timeline-listbox',
                           'aria-label': 'event timeline' });
   list.addEventListener('keydown', onTimelineKey);
 
@@ -740,14 +767,16 @@ function renderTimeline() {
     const kind = eventKind(ev.type);
     const selected = state.at === index;
     const future = isHistorical() && index > state.at;
+    const summary = ev.summary === null || ev.summary === undefined ? '' : String(ev.summary);
     const row = h('div', {
       class: 'ev k-' + kind + (selected ? ' selected' : '') + (future ? ' future' : '') +
              (ev.is_error ? ' is-error' : '') + (state.freshIndices[index] ? ' fresh' : ''),
       role: 'option',
+      id: 'ev-' + index,
       'aria-selected': selected ? 'true' : 'false',
       dataset: { index: String(index) },
       title: humanType(ev.type) + '\n' + fullTime(ev.occurred_at) +
-             (ev.summary ? '\n' + ev.summary : ''),
+             (summary ? '\n' + summary : ''),
       onclick: function () { selectEvent(index); }
     }, [
       h('span', { class: 'ev-idx', text: String(index) }),
@@ -760,16 +789,20 @@ function renderTimeline() {
         h('span', { class: 'ev-summary' }, [
           // The summary stands alone (it has to, for the live feed), so for a
           // file event it already opens with the path -- don't print it twice.
-          ev.path && ev.summary.indexOf(ev.path) !== 0
+          ev.path && summary.indexOf(ev.path) !== 0
             ? h('span', { class: 'ev-path', text: ev.path + '  ' }) : null,
-          ev.summary ? truncate(ev.summary, 160) : (ev.path ? '' : '—')
+          summary ? truncate(summary, 160) : (ev.path ? '' : '—')
         ])
       ]),
       h('span', { class: 'ev-time', text: clockTime(ev.occurred_at) }),
+      // Out of the tab order and hidden from AT: it duplicates the scrub bar's
+      // "Fork here", and a focusable control inside a role="option" is invalid.
       h('button', {
         class: 'btn btn-ghost ev-fork',
+        tabindex: '-1',
+        'aria-hidden': 'true',
         title: 'fork a new session at event ' + index,
-        onclick: function (e) { e.stopPropagation(); forkAt(index); }
+        onclick: function (e) { e.stopPropagation(); forkAt(index, e.currentTarget); }
       }, 'fork here')
     ]);
     list.appendChild(row);
@@ -777,8 +810,14 @@ function renderTimeline() {
 
   list.appendChild(h('div', {
     class: 'head-marker' + (state.at === null ? ' selected' : ''),
+    role: 'option',
+    id: 'ev-head',
+    'aria-selected': state.at === null ? 'true' : 'false',
     onclick: function () { selectEvent(null); }
   }, state.at === null ? '● HEAD — live' : '○ HEAD — click to return to live'));
+
+  // Focus stays on the listbox; this is what announces the moving selection.
+  list.setAttribute('aria-activedescendant', state.at === null ? 'ev-head' : 'ev-' + state.at);
 
   box.appendChild(list);
   scrollSelectedIntoView();
@@ -786,7 +825,7 @@ function renderTimeline() {
 
 function scrollSelectedIntoView() {
   if (!sessionEls) return;
-  const el = sessionEls.timeline.querySelector('.ev.selected');
+  const el = sessionEls.timeline.querySelector('.ev.selected, .head-marker.selected');
   if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
 }
 
@@ -802,7 +841,11 @@ function onTimelineKey(ev) {
   else if (ev.key === 'Escape') next = total + 1;
   else return;
   ev.preventDefault();
-  selectEvent(next > total ? null : next);
+  // The document-level Escape handler is on the bubble phase too; without this
+  // one keypress would fold twice.
+  ev.stopPropagation();
+  const target = next > total ? null : next;
+  if (target !== state.at) selectEvent(target);
   const list = sessionEls && sessionEls.timeline.querySelector('.timeline');
   if (list) list.focus();
 }
@@ -833,14 +876,17 @@ function renderWorkspace() {
       ? 'The workspace was empty at event ' + state.at + '.'
       : 'The agent has not written anything yet.'));
   } else {
-    const list = h('div', { tabindex: '0', role: 'listbox', 'aria-label': 'files' });
+    const list = h('div', { tabindex: '0', role: 'listbox', id: 'files-listbox',
+                            'aria-label': 'files' });
     list.addEventListener('keydown', onFilesKey);
-    files.forEach(function (f) {
+    files.forEach(function (f, i) {
       const path = f && f.path ? f.path : String(f);
       const selected = state.openPath === path;
+      if (selected) list.setAttribute('aria-activedescendant', 'file-' + i);
       list.appendChild(h('div', {
         class: 'file-row' + (selected ? ' selected' : ''),
         role: 'option',
+        id: 'file-' + i,
         'aria-selected': selected ? 'true' : 'false',
         dataset: { path: path },
         onclick: function () { openFile(path); }
@@ -869,14 +915,21 @@ function onFilesKey(ev) {
   let idx = rows.findIndex(function (r) { return r.classList.contains('selected'); });
   if (ev.key === 'ArrowDown') idx = Math.min(idx + 1, rows.length - 1);
   else if (ev.key === 'ArrowUp') idx = Math.max(idx - 1, 0);
-  else if (ev.key === 'Enter') { if (idx >= 0) { rows[idx].click(); } return; }
+  else if (ev.key === 'Enter') { if (idx < 0) idx = 0; }
   else return;
   ev.preventDefault();
+  ev.stopPropagation();
   const path = rows[idx].dataset.path;
-  openFile(path);
-  const again = ev.currentTarget.querySelector('.file-row.selected');
-  if (again && again.scrollIntoView) again.scrollIntoView({ block: 'nearest' });
-  ev.currentTarget.focus();
+  // Enter on the already-open file re-reads it; arrows only move the selection.
+  if (path !== state.openPath) openFile(path);
+  else if (ev.key === 'Enter') loadFile();
+  // openFile re-renders the pane, so the list we were called on is now
+  // detached -- re-query from sessionEls.files, which is stable.
+  const list = sessionEls && sessionEls.files.querySelector('[role="listbox"]');
+  if (!list) return;
+  const selected = list.querySelector('.file-row.selected');
+  if (selected && selected.scrollIntoView) selected.scrollIntoView({ block: 'nearest' });
+  list.focus();
 }
 
 function openFile(path) {
@@ -884,8 +937,10 @@ function openFile(path) {
   state.openPath = path;
   if (changed) {
     state.fileContent = null;
+    state.fileContentAt = undefined;
     state.fileHistory = null;
     state.fileError = null;
+    state.fileMissing = false;
     state.openRevisions = {};
   }
   renderWorkspace();
@@ -897,21 +952,32 @@ function refreshOpenFile() {
 }
 
 function loadFile() {
-  const id = state.sessionId, path = state.openPath, tab = state.fileTab;
+  const id = state.sessionId, path = state.openPath, tab = state.fileTab, at = state.at;
   if (!path) return Promise.resolve();
   const base = '/api/sessions/' + encodeURIComponent(id);
+  // Contents are addressed by scrub point; history is the whole log for a path.
   const url = tab === 'history'
     ? base + '/files/history?path=' + encodePath(path)
-    : base + '/files?path=' + encodePath(path);
+    : base + '/files?path=' + encodePath(path) + (at === null ? '' : '&at=' + at);
   state.fileError = null;
+  state.fileMissing = false;
   return api.get(url).then(function (res) {
     if (state.sessionId !== id || state.openPath !== path) return;
-    if (tab === 'history') state.fileHistory = Array.isArray(res) ? res : [];
-    else state.fileContent = res && typeof res === 'object' ? res.content : res;
+    if (tab === 'history') {
+      state.fileHistory = Array.isArray(res) ? res : [];
+    } else {
+      if (state.at !== at) return;   // scrubbed on past this response
+      state.fileContent = res && typeof res === 'object' ? res.content : res;
+      state.fileContentAt = at;
+    }
     renderFileView();
   }).catch(function (e) {
     if (state.sessionId !== id || state.openPath !== path) return;
-    state.fileError = e.message;
+    if (tab === 'content' && state.at !== at) return;
+    // A 404 here is information, not a failure: the path simply had not been
+    // written yet (or had been removed) at this point in the log.
+    if (e.status === 404) { state.fileMissing = true; state.fileContent = null; }
+    else state.fileError = e.message;
     renderFileView();
   });
 }
@@ -941,17 +1007,24 @@ function renderFileView() {
   }
 
   if (state.fileTab === 'content') {
+    if (state.fileMissing) {
+      box.appendChild(emptyState(
+        isHistorical() ? 'Not in the workspace here.' : 'No such file.',
+        isHistorical()
+          ? state.openPath + ' did not exist at event ' + state.at + '.'
+          : state.openPath + ' is not in the workspace at HEAD.'));
+      return;
+    }
     if (state.fileContent === null || state.fileContent === undefined) {
       box.appendChild(h('div', { class: 'empty', text: 'loading…' }));
       return;
     }
-    // /files always reads HEAD; when scrubbed we prefer the folded revision.
-    const scrubbed = historicalContent();
-    box.appendChild(renderCode(scrubbed !== null ? scrubbed : state.fileContent));
-    if (isHistorical() && scrubbed === null) {
-      box.appendChild(h('div', { class: 'rev-note',
-        text: 'note: showing HEAD contents — no recorded revision at or before event ' + state.at + '.' }));
-    }
+    // The server folds the file to the scrub point for us; while a newer point
+    // is in flight the previous contents stay up, dimmed, rather than flashing.
+    const stale = state.fileContentAt !== state.at;
+    const code = renderCode(state.fileContent);
+    if (stale) code.classList.add('stale');
+    box.appendChild(code);
     return;
   }
 
@@ -964,34 +1037,6 @@ function renderFileView() {
   hist.forEach(function (rev, i) {
     box.appendChild(renderRevision(rev, i, hist));
   });
-}
-
-/* When scrubbed, derive the file's contents at that point from its history
- * (the /files endpoint has no `at` parameter). Returns null if unknown. */
-function historicalContent() {
-  if (!isHistorical()) return null;
-  const hist = state.fileHistory;
-  if (!Array.isArray(hist)) {
-    // Fetch it lazily so the content tab is accurate for the scrub point.
-    if (state.openPath && state.fileHistory === null && !state.__histInFlight) {
-      state.__histInFlight = true;
-      const id = state.sessionId, path = state.openPath;
-      api.get('/api/sessions/' + encodeURIComponent(id) + '/files/history?path=' + encodePath(path))
-        .then(function (res) {
-          state.__histInFlight = false;
-          if (state.sessionId !== id || state.openPath !== path) return;
-          state.fileHistory = Array.isArray(res) ? res : [];
-          renderFileView();
-        })
-        .catch(function () { state.__histInFlight = false; });
-    }
-    return null;
-  }
-  let best = null;
-  hist.forEach(function (rev) {
-    if (typeof rev.index === 'number' && rev.index <= state.at) best = rev;
-  });
-  return best && typeof best.content === 'string' ? best.content : null;
 }
 
 function renderRevision(rev, i, all) {
@@ -1159,9 +1204,11 @@ function onSend(ev) {
       toast('Turn failed: ' + e.message, 'bad');
     })
     .then(function () {
-      if (state.sessionId !== id) return;
+      // Always clear the in-flight flag, even if the user navigated away while
+      // the turn ran -- otherwise the composer stays disabled for good.
       state.sending = false;
       state.liveNote = '';
+      if (state.sessionId !== id) return;
       renderComposer();
       // The turn is atomic, so refetch the whole log rather than trusting the
       // events that streamed in mid-flight.
@@ -1169,7 +1216,12 @@ function onSend(ev) {
     });
 }
 
-function forkAt(index) {
+let forking = false;
+
+function forkAt(index, button) {
+  if (forking) return;
+  forking = true;
+  if (button) button.disabled = true;
   const id = state.sessionId;
   api.post('/api/sessions/' + encodeURIComponent(id) + '/forks', { at: index })
     .then(function (res) {
@@ -1180,7 +1232,11 @@ function forkAt(index) {
         toast('Fork returned no session id.', 'bad');
       }
     })
-    .catch(function (e) { toast('Fork failed: ' + e.message, 'bad'); });
+    .catch(function (e) { toast('Fork failed: ' + e.message, 'bad'); })
+    .then(function () {
+      forking = false;
+      if (button && button.isConnected) button.disabled = false;
+    });
 }
 
 /* ===================================================================== */
@@ -1190,7 +1246,9 @@ function forkAt(index) {
 let stream = null;
 let backoff = 1000;
 let treeRefreshTimer = null;
-let eventRefreshTimer = null;
+let freshSweepTimer = null;
+
+const FRESH_MS = 1500;
 
 function setConn(stateName, label) {
   const el = document.getElementById('conn');
@@ -1250,6 +1308,8 @@ function onStreamEvent(payload) {
   const index = typeof payload.index === 'number' ? payload.index : state.events.length + 1;
   const known = state.events.some(function (e) { return e.index === index; });
   if (!known) {
+    // The stream payload is the full timeline row, so the appended event needs
+    // no follow-up fetch to render its path, turn or error state correctly.
     state.events.push({
       index: index,
       type: payload.type,
@@ -1260,8 +1320,8 @@ function onStreamEvent(payload) {
       is_error: payload.is_error === undefined ? null : payload.is_error
     });
     state.events.sort(function (a, b) { return (a.index || 0) - (b.index || 0); });
-    state.freshIndices[index] = true;
-    setTimeout(function () { delete state.freshIndices[index]; }, 1500);
+    state.freshIndices[index] = Date.now();
+    scheduleFreshSweep();
     renderTimeline();
     renderScrubBar();
   }
@@ -1269,14 +1329,23 @@ function onStreamEvent(payload) {
     state.liveNote = truncate(humanType(payload.type) + (payload.summary ? ': ' + payload.summary : ''), 90);
     renderComposer();
   }
-  // The stream payload is a summary; refetch the canonical log shortly after
-  // the burst settles so path/turn_index/is_error are filled in.
-  if (!state.sending) {
-    clearTimeout(eventRefreshTimer);
-    eventRefreshTimer = setTimeout(function () {
-      if (state.route.name === 'session') loadSession();
-    }, 700);
-  }
+}
+
+/* Drop expired highlights and repaint once, so the flash does not linger until
+ * some unrelated render happens to clear it. */
+function scheduleFreshSweep() {
+  if (freshSweepTimer) return;
+  freshSweepTimer = setTimeout(function () {
+    freshSweepTimer = null;
+    const now = Date.now();
+    let remaining = 0;
+    Object.keys(state.freshIndices).forEach(function (key) {
+      if (now - state.freshIndices[key] >= FRESH_MS) delete state.freshIndices[key];
+      else remaining++;
+    });
+    if (state.route.name === 'session') renderTimeline();
+    if (remaining) scheduleFreshSweep();
+  }, FRESH_MS + 50);
 }
 
 /* ===================================================================== */
@@ -1288,11 +1357,13 @@ window.addEventListener('error', function (e) {
   if (e && e.message) toast('UI error: ' + e.message, 'bad');
 });
 
+// Global "back to live". onTimelineKey handles Escape itself and stops the
+// event, so a keypress with the timeline focused never folds twice.
 document.addEventListener('keydown', function (ev) {
-  if (ev.key === 'Escape' && state.route.name === 'session' && isHistorical() &&
-      document.activeElement !== sessionEls?.input) {
-    selectEvent(null);
-  }
+  if (ev.key !== 'Escape') return;
+  if (state.route.name !== 'session' || !isHistorical()) return;
+  if (sessionEls && document.activeElement === sessionEls.input) return;
+  selectEvent(null);
 });
 
 setConn('init', 'connecting');
