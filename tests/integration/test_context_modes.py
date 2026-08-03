@@ -81,13 +81,13 @@ def chatty(turns: int, file_lines: int = 600) -> Recording:
 def compact_soon(monkeypatch):
     """Thresholds low enough that a short test session trips them."""
     monkeypatch.setenv("AGENT_CONTEXT_TRIGGER", "500")
-    monkeypatch.setenv("AGENT_CONTEXT_KEEP", "4")
+    monkeypatch.setenv("AGENT_CONTEXT_KEEP_MESSAGES", "4")
 
 
 @pytest.fixture
 def elide_soon(monkeypatch):
     """Aggressive enough that a handful of file reads trip it."""
-    monkeypatch.setenv("AGENT_CONTEXT_KEEP", "1")
+    monkeypatch.setenv("AGENT_CONTEXT_KEEP_RESULTS", "1")
     monkeypatch.setenv("AGENT_CONTEXT_CLEAR_OVER", "200")
 
 
@@ -265,3 +265,4 @@ async def test_delegation_guidance_says_when_not_to_delegate(build_application):
 
     assert "not delegate" in prompt, "the prompt must say when to keep the work"
     assert "cannot see each other" in prompt, "the splitting failure must be named"
+

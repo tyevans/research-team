@@ -58,7 +58,8 @@ variable:
 | `AGENT_WEB_PORT` | `8000` | port the web UI binds to |
 | `AGENT_CONTEXT` | `full` | how this instance manages context: `full`, `elide`, `compact`, `delegate` |
 | `AGENT_CONTEXT_TRIGGER` | `120000` | approximate tokens of live conversation before `compact` summarizes |
-| `AGENT_CONTEXT_KEEP` | `6` | recent messages (`compact`) or tool results (`elide`) left untouched |
+| `AGENT_CONTEXT_KEEP_MESSAGES` | `20` | recent messages `compact` leaves out of the summary |
+| `AGENT_CONTEXT_KEEP_RESULTS` | `6` | recent tool results `elide` leaves whole |
 | `AGENT_CONTEXT_CLEAR_OVER` | `2000` | tool results longer than this are cleared outright under `elide` |
 
 ## REPL commands
@@ -277,7 +278,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-326 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+335 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
 `tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
 `tests/integration` for the cross-layer ones.
 

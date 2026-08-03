@@ -16,7 +16,8 @@ CONTEXT_MODES = ("full", "elide", "compact", "delegate")
 DEFAULT_CONTEXT_MODE = "full"
 
 DEFAULT_CONTEXT_TRIGGER_TOKENS = 120_000
-DEFAULT_CONTEXT_KEEP = 6
+DEFAULT_CONTEXT_KEEP_MESSAGES = 20
+DEFAULT_CONTEXT_KEEP_RESULTS = 6
 DEFAULT_CONTEXT_CLEAR_OVER_CHARS = 2_000
 
 
@@ -74,13 +75,26 @@ def context_trigger_tokens() -> int:
     return int(os.getenv("AGENT_CONTEXT_TRIGGER", DEFAULT_CONTEXT_TRIGGER_TOKENS))
 
 
-def context_keep() -> int:
-    """How much of the recent conversation a strategy leaves alone.
+def context_keep_messages() -> int:
+    """How many recent messages `compact` leaves out of the summary.
 
-    Messages for `compact`, tool results for `elide` -- in both cases the tail
-    the agent is most likely to still be using.
+    Separate from the tool-result count below because they are different
+    quantities: six messages might be one exchange or six, while six tool
+    results is six tool results. LangChain's summarizer keeps twenty by
+    default, and a thin tail is where summarization does most of its damage --
+    recent detail is what the agent is actively using.
     """
-    return int(os.getenv("AGENT_CONTEXT_KEEP", DEFAULT_CONTEXT_KEEP))
+    return int(os.getenv("AGENT_CONTEXT_KEEP_MESSAGES", DEFAULT_CONTEXT_KEEP_MESSAGES))
+
+
+def context_keep_results() -> int:
+    """How many recent tool results `elide` leaves whole.
+
+    Counted in results rather than messages so the retained volume does not
+    swing with the shape of the conversation; Anthropic's tool-result clearing
+    counts the same way.
+    """
+    return int(os.getenv("AGENT_CONTEXT_KEEP_RESULTS", DEFAULT_CONTEXT_KEEP_RESULTS))
 
 
 def context_clear_over_chars() -> int:
