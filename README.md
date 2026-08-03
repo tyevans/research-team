@@ -152,7 +152,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-235 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+236 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
 `tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
 `tests/integration` for the cross-layer ones.
 

@@ -470,3 +470,37 @@ async def test_reads_are_safe_while_a_turn_is_in_flight(app_and_client):
     assert events.status_code == 200
     assert listing.status_code == 200
     assert scrub.status_code == 200
+
+
+async def test_a_failed_turn_is_recorded_and_reported(app_and_client, monkeypatch):
+    """A turn the model could not complete: 500 to the browser, and a marker in
+    the log so the audit trail records the attempt."""
+    from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
+
+    application, client = app_and_client
+    session_id = await application.service.create_session()
+
+    async def boom(self, session, messages, system_prompt, on_activity):
+        raise RuntimeError("model endpoint is down")
+
+    monkeypatch.setattr(DeepAgentTurnExecutor, "_invoke", boom)
+
+    # The default transport re-raises app exceptions instead of turning them
+    # into a response; a browser sees the 500, so this test should too.
+    api = create_app(application.service, application.feed)
+    async with AsyncClient(
+        transport=ASGITransport(app=api, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as browser:
+        response = await browser.post(
+            f"/api/sessions/{session_id}/turns", json={"input": "hello"}
+        )
+    assert response.status_code == 500
+
+    events = (await client.get(f"/api/sessions/{session_id}/events")).json()
+    assert [row["type"] for row in events] == ["SessionStarted", "TurnFailed"]
+    assert "model endpoint is down" in events[1]["summary"]
+    # The user's message from the failed turn was discarded with the rest of it.
+    body = (await client.get(f"/api/sessions/{session_id}")).json()
+    assert body["messages"] == []
+    assert body["turn_index"] == 0
