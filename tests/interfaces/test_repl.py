@@ -319,3 +319,36 @@ async def test_a_number_that_is_neither_reports_the_position_error(current):
     output = await repl.handle_command(current, "/resume 97")
     assert "no session 97" in output
     assert "stored" in output
+
+
+async def test_a_short_number_is_never_read_as_an_id_prefix(current, monkeypatch):
+    """Otherwise the command's behaviour depends on the random ids in the
+    database: `/resume 97` would usually report a bad position, and about one
+    run in a hundred would resume a session that happened to start with "97"."""
+    from research_team.application import session_service
+
+    monkeypatch.setattr(
+        session_service, "uuid4", lambda: UUID("97000000-0000-4000-8000-00000000dddd")
+    )
+    await current.service.create_session()
+    monkeypatch.undo()
+    before = current.session_id
+
+    output = await repl.handle_command(current, "/resume 97")
+
+    assert "no session 97" in output
+    assert current.session_id == before, "a position error must not switch sessions"
+
+
+async def test_a_long_enough_prefix_is_still_a_prefix(current, monkeypatch):
+    """The rule must not undo the fix it sits next to."""
+    from research_team.application import session_service
+
+    target = UUID("97001234-0000-4000-8000-00000000eeee")
+    monkeypatch.setattr(session_service, "uuid4", lambda: target)
+    await current.service.create_session()
+    monkeypatch.undo()
+
+    await repl.handle_command(current, "/resume 9700")
+
+    assert current.session_id == target
