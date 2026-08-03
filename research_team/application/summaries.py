@@ -32,6 +32,7 @@ class SessionSummary:
     files: int
     first_message: str
     forked_from: UUID | None = None
+    forked_at: int | None = None
     failed_turns: int = 0
 
 
@@ -46,6 +47,46 @@ def summarize_sessions(events: list[DomainEvent]) -> list[SessionSummary]:
         for session_id, session_events in grouped.items()
     ]
     return sorted(summaries, key=lambda summary: summary.started_at, reverse=True)
+
+
+@dataclass(frozen=True)
+class ForkNode:
+    """A session in the lineage forest, with the sessions forked from it."""
+
+    session: SessionSummary
+    children: tuple["ForkNode", ...] = ()
+
+
+def build_fork_tree(summaries: list[SessionSummary]) -> list[ForkNode]:
+    """Arrange sessions into the forest their fork lineage describes.
+
+    Roots are sessions that were not forked from anything -- including any
+    whose parent is missing from the input, so a session never disappears just
+    because its ancestor is gone.
+    """
+    known = {summary.session_id for summary in summaries}
+    children: dict[UUID, list[SessionSummary]] = {}
+    roots: list[SessionSummary] = []
+    for summary in summaries:
+        parent = summary.forked_from
+        if parent is not None and parent in known:
+            children.setdefault(parent, []).append(summary)
+        else:
+            roots.append(summary)
+
+    def node(summary: SessionSummary) -> ForkNode:
+        return ForkNode(
+            session=summary,
+            children=tuple(
+                node(child)
+                for child in sorted(
+                    children.get(summary.session_id, []),
+                    key=lambda child: child.started_at,
+                )
+            ),
+        )
+
+    return [node(root) for root in roots]
 
 
 def _summarize(session_id: UUID, events: list[DomainEvent]) -> SessionSummary:
@@ -63,6 +104,10 @@ def _summarize(session_id: UUID, events: list[DomainEvent]) -> SessionSummary:
         first_message=_first_user_text(events),
         forked_from=next(
             (e.source_session_id for e in events if isinstance(e, SessionForkedFrom)),
+            None,
+        ),
+        forked_at=next(
+            (e.at_event for e in events if isinstance(e, SessionForkedFrom)),
             None,
         ),
         failed_turns=sum(1 for e in events if isinstance(e, TurnFailed)),

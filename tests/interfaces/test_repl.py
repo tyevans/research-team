@@ -15,8 +15,9 @@ from research_team.interfaces.cli.formatters import (
 
 
 @pytest.fixture
-async def service(build_service, fake_model):
-    return await build_service(model=fake_model)
+async def current(build_service, fake_model):
+    """A REPL pointed at a fresh session -- the terminal owns the cursor."""
+    return await repl.Repl.start(build_service(model=fake_model))
 
 
 def test_format_log_numbers_events():
@@ -101,98 +102,98 @@ def test_format_file_history_unknown_path():
     assert "no history" in format_file_history([], "/nope.py").lower()
 
 
-async def test_quit_returns_none(service):
-    assert await repl.handle_command(service, "/quit") is None
+async def test_quit_returns_none(current):
+    assert await repl.handle_command(current, "/quit") is None
 
 
-async def test_help_lists_commands(service):
-    output = await repl.handle_command(service, "/help")
+async def test_help_lists_commands(current):
+    output = await repl.handle_command(current, "/help")
     for command in ("/log", "/files", "/cat", "/history", "/rewind", "/fork", "/state"):
         assert command in output
 
 
-async def test_unknown_command_is_reported(service):
-    output = await repl.handle_command(service, "/bogus")
+async def test_unknown_command_is_reported(current):
+    output = await repl.handle_command(current, "/bogus")
     assert "unknown command" in output.lower()
 
 
-async def test_cat_requires_argument(service):
-    output = await repl.handle_command(service, "/cat")
+async def test_cat_requires_argument(current):
+    output = await repl.handle_command(current, "/cat")
     assert "usage" in output.lower()
 
 
-async def test_cat_missing_file(service):
-    output = await repl.handle_command(service, "/cat /nope.py")
+async def test_cat_missing_file(current):
+    output = await repl.handle_command(current, "/cat /nope.py")
     assert "not found" in output.lower()
 
 
-async def test_rewind_requires_integer(service):
-    output = await repl.handle_command(service, "/rewind abc")
+async def test_rewind_requires_integer(current):
+    output = await repl.handle_command(current, "/rewind abc")
     assert "usage" in output.lower()
 
 
-async def test_rewind_out_of_range_is_reported(service):
-    output = await repl.handle_command(service, "/rewind 99")
+async def test_rewind_out_of_range_is_reported(current):
+    output = await repl.handle_command(current, "/rewind 99")
     assert "cannot" in output.lower() or "range" in output.lower()
 
 
-async def test_state_reports_session_facts(service):
-    output = await repl.handle_command(service, "/state")
-    assert str(service.session_id) in output
+async def test_state_reports_session_facts(current):
+    output = await repl.handle_command(current, "/state")
+    assert str(current.session_id) in output
     assert "events" in output.lower()
 
 
-async def test_plain_input_runs_a_turn(service):
-    output = await repl.handle_command(service, "hello there")
+async def test_plain_input_runs_a_turn(current):
+    output = await repl.handle_command(current, "hello there")
     assert output == "done"
 
 
 # ---- sessions, diff, and live activity ----
 
 
-async def test_sessions_lists_and_marks_the_current_one(service):
-    output = await repl.handle_command(service, "/sessions")
-    assert str(service.session_id)[:8] in output
+async def test_sessions_lists_and_marks_the_current_one(current):
+    output = await repl.handle_command(current, "/sessions")
+    assert str(current.session_id)[:8] in output
     assert output.lstrip().startswith("*") or "*" in output.splitlines()[0]
 
 
-async def test_resume_by_list_position(service):
-    original = service.session_id
-    await service.start_session()
-    assert service.session_id != original
+async def test_resume_by_list_position(current):
+    original = current.session_id
+    current.session_id = await current.service.create_session()
+    assert current.session_id != original
 
     # Newest first, so the original is position 2.
-    output = await repl.handle_command(service, "/resume 2")
-    assert service.session_id == original
+    output = await repl.handle_command(current, "/resume 2")
+    assert current.session_id == original
     assert "resumed" in output
 
 
-async def test_resume_by_id_prefix(service):
-    original = service.session_id
-    await service.start_session()
+async def test_resume_by_id_prefix(current):
+    original = current.session_id
+    current.session_id = await current.service.create_session()
 
-    await repl.handle_command(service, f"/resume {str(original)[:8]}")
-    assert service.session_id == original
+    await repl.handle_command(current, f"/resume {str(original)[:8]}")
+    assert current.session_id == original
 
 
-async def test_resume_rejects_unknown_id(service):
-    output = await repl.handle_command(service, "/resume zzzzzzzz")
+async def test_resume_rejects_unknown_id(current):
+    output = await repl.handle_command(current, "/resume zzzzzzzz")
     assert "no session matching" in output
 
 
-async def test_resume_rejects_out_of_range_position(service):
-    output = await repl.handle_command(service, "/resume 99")
+async def test_resume_rejects_out_of_range_position(current):
+    output = await repl.handle_command(current, "/resume 99")
     assert "no session 99" in output
 
 
-async def test_resume_requires_argument(service):
-    assert "usage" in (await repl.handle_command(service, "/resume")).lower()
+async def test_resume_requires_argument(current):
+    assert "usage" in (await repl.handle_command(current, "/resume")).lower()
 
 
-async def test_new_starts_a_fresh_session(service):
-    original = service.session_id
-    output = await repl.handle_command(service, "/new")
-    assert service.session_id != original
+async def test_new_starts_a_fresh_session(current):
+    original = current.session_id
+    output = await repl.handle_command(current, "/new")
+    assert current.session_id != original
     assert "started" in output
 
 
@@ -232,8 +233,8 @@ def test_format_diff_when_never_edited():
     assert "no recorded edits" in format_diff([], "/a.py")
 
 
-async def test_diff_requires_argument(service):
-    assert "usage" in (await repl.handle_command(service, "/diff")).lower()
+async def test_diff_requires_argument(current):
+    assert "usage" in (await repl.handle_command(current, "/diff")).lower()
 
 
 def test_format_log_includes_timestamps():
@@ -259,17 +260,17 @@ async def test_turn_reports_tool_activity(build_service, fake_model):
         ),
         AIMessage(content="wrote it", id="a2"),
     ]
-    service = await build_service(model=fake_model)
+    current = await repl.Repl.start(build_service(model=fake_model))
 
     seen: list[str] = []
-    await repl.handle_command(service, "write a.py", on_activity=seen.append)
+    await repl.handle_command(current, "write a.py", on_activity=seen.append)
 
     assert any("write_file" in note for note in seen)
     assert any("/a.py" in note for note in seen)
 
 
 async def test_no_activity_reported_for_a_plain_reply(build_service, fake_model):
-    service = await build_service(model=fake_model)
+    current = await repl.Repl.start(build_service(model=fake_model))
     seen: list[str] = []
-    await repl.handle_command(service, "hello", on_activity=seen.append)
+    await repl.handle_command(current, "hello", on_activity=seen.append)
     assert seen == []

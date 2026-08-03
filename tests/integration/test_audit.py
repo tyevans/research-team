@@ -33,11 +33,12 @@ def failing_edit_model(fake_model):
 
 
 async def test_failed_tool_call_is_flagged(build_service, failing_edit_model):
-    service = await build_service(model=failing_edit_model)
-    await service.run_turn("edit a file that does not exist")
+    service = build_service(model=failing_edit_model)
+    session_id = await service.create_session()
+    await service.run_turn(session_id, "edit a file that does not exist")
 
     results = [
-        e for e in await service.history() if isinstance(e, ToolResultRecorded)
+        e for e in await service.history(session_id) if isinstance(e, ToolResultRecorded)
     ]
     assert results, "no tool result recorded"
     assert results[-1].is_error is True
@@ -59,11 +60,12 @@ async def test_successful_tool_call_is_not_flagged(build_service, fake_model):
         ),
         AIMessage(content="wrote", id="a2"),
     ]
-    service = await build_service(model=fake_model)
-    await service.run_turn("write it")
+    service = build_service(model=fake_model)
+    session_id = await service.create_session()
+    await service.run_turn(session_id, "write it")
 
     results = [
-        e for e in await service.history() if isinstance(e, ToolResultRecorded)
+        e for e in await service.history(session_id) if isinstance(e, ToolResultRecorded)
     ]
     assert results and all(r.is_error is False for r in results)
 
@@ -71,17 +73,18 @@ async def test_successful_tool_call_is_not_flagged(build_service, fake_model):
 async def test_errored_tool_result_is_marked_in_the_log(
     build_service, failing_edit_model
 ):
-    service = await build_service(model=failing_edit_model)
-    await service.run_turn("edit a file that does not exist")
-    assert "!" in format_log(await service.history(), limit=50)
+    service = build_service(model=failing_edit_model)
+    session_id = await service.create_session()
+    await service.run_turn(session_id, "edit a file that does not exist")
+    assert "!" in format_log(await service.history(session_id), limit=50)
 
 
 async def test_fork_records_its_source(build_service, repository, db_path, fake_model):
-    service = await build_service(model=fake_model, db_path=db_path)
-    await service.run_turn("hello")
-    source = service.session_id
+    service = build_service(model=fake_model, db_path=db_path)
+    source = await service.create_session()
+    await service.run_turn(source, "hello")
 
-    forked_id = await service.fork(at=2)
+    forked_id = await service.fork(source, at=2)
     forked = await repository.load(forked_id)
 
     assert forked.state.forked_from == source
@@ -89,79 +92,82 @@ async def test_fork_records_its_source(build_service, repository, db_path, fake_
 
 
 async def test_fork_lineage_is_an_event_on_the_stream(build_service, fake_model):
-    service = await build_service(model=fake_model)
-    await service.run_turn("hello")
-    await service.switch_to_fork(at=2)
+    service = build_service(model=fake_model)
+    session_id = await service.create_session()
+    await service.run_turn(session_id, "hello")
+    forked_id = await service.fork(session_id, at=2)
 
-    events = await service.history()
+    events = await service.history(forked_id)
     assert isinstance(events[-1], SessionForkedFrom)
     assert events[-1].at_event == 2
 
 
 async def test_lineage_survives_a_cold_refold(build_service, fake_model, db_path):
-    service = await build_service(model=fake_model, db_path=db_path)
-    await service.run_turn("hello")
-    source = service.session_id
-    forked_id = await service.fork(at=2)
+    service = build_service(model=fake_model, db_path=db_path)
+    source = await service.create_session()
+    await service.run_turn(source, "hello")
+    forked_id = await service.fork(source, at=2)
     await service.close()
 
-    reopened = await build_service(
-        model=fake_model, db_path=db_path, session_id=forked_id
-    )
-    assert (await reopened.load()).state.forked_from == source
+    reopened = build_service(model=fake_model, db_path=db_path)
+    assert (await reopened.load(forked_id)).state.forked_from == source
 
 
 async def test_unforked_session_has_no_lineage(build_service, fake_model):
-    service = await build_service(model=fake_model)
-    aggregate = await service.load()
+    service = build_service(model=fake_model)
+    session_id = await service.create_session()
+    aggregate = await service.load(session_id)
     assert aggregate.state.forked_from is None
 
 
 async def test_sessions_view_shows_lineage_and_failures(
     build_service, fake_model, monkeypatch
 ):
-    service = await build_service(model=fake_model)
-    await service.run_turn("hello")
-    source = service.session_id
-    await service.switch_to_fork(at=2)
+    service = build_service(model=fake_model)
+    source = await service.create_session()
+    await service.run_turn(source, "hello")
+    current = repl.Repl(service, await service.fork(source, at=2))
 
     async def boom(*args, **kwargs):
         raise RuntimeError("nope")
 
     monkeypatch.setattr(DeepAgentTurnExecutor, "_invoke", boom)
     with pytest.raises(RuntimeError):
-        await service.run_turn("will fail")
+        await service.run_turn(current.session_id, "will fail")
     monkeypatch.undo()
 
-    output = await repl.handle_command(service, "/sessions")
+    output = await repl.handle_command(current, "/sessions")
     assert str(source)[:8] in output
     assert "failed" in output
 
 
 async def test_state_reports_lineage(build_service, fake_model):
-    service = await build_service(model=fake_model)
-    await service.run_turn("hello")
-    await service.switch_to_fork(at=2)
+    service = build_service(model=fake_model)
+    session_id = await service.create_session()
+    await service.run_turn(session_id, "hello")
+    current = repl.Repl(service, await service.fork(session_id, at=2))
 
-    output = await repl.handle_command(service, "/state")
+    output = await repl.handle_command(current, "/state")
     assert "forked" in output
 
 
 async def test_turn_failed_appears_in_the_log(service_with_failure):
-    events = await service_with_failure.history()
+    service, session_id = service_with_failure
+    events = await service.history(session_id)
     assert isinstance(events[-1], TurnFailed)
     assert "RuntimeError" in format_log(events, limit=10)
 
 
 @pytest.fixture
 async def service_with_failure(build_service, fake_model, monkeypatch):
-    service = await build_service(model=fake_model)
+    service = build_service(model=fake_model)
+    session_id = await service.create_session()
 
     async def boom(*args, **kwargs):
         raise RuntimeError("model exploded")
 
     monkeypatch.setattr(DeepAgentTurnExecutor, "_invoke", boom)
     with pytest.raises(RuntimeError):
-        await service.run_turn("hello")
+        await service.run_turn(session_id, "hello")
     monkeypatch.undo()
-    return service
+    return service, session_id

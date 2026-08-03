@@ -6,12 +6,8 @@ from research_team.composition import build_service
 from research_team.interfaces.cli import run
 
 
-async def _main() -> None:
-    await run(await build_service())
-
-
 def main() -> None:
-    asyncio.run(_main())
+    asyncio.run(run(build_service()))
 
 
 if __name__ == "__main__":

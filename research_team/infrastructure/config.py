@@ -33,3 +33,11 @@ def base_url() -> str:
 
 def api_key() -> str:
     return os.getenv("AGENT_API_KEY", DEFAULT_API_KEY)
+
+
+def web_host() -> str:
+    return os.getenv("AGENT_WEB_HOST", "127.0.0.1")
+
+
+def web_port() -> int:
+    return int(os.getenv("AGENT_WEB_PORT", "8000"))

@@ -39,12 +39,13 @@ async def build_service():
     """Build services and close them afterwards.
 
     SQLite connections are not garbage, so anything opened during a test is
-    tracked here and closed when it ends.
+    tracked here and closed when it ends. Building is synchronous -- a service
+    creates no session, so there is nothing to await.
     """
     opened: list[SessionService] = []
 
-    async def build(**kwargs) -> SessionService:
-        service = await composition.build_service(**kwargs)
+    def build(**kwargs) -> SessionService:
+        service = composition.build_service(**kwargs)
         opened.append(service)
         return service
 

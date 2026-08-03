@@ -47,6 +47,33 @@ class SessionRepository(Protocol):
     async def close(self) -> None: ...
 
 
+@dataclass(frozen=True)
+class FeedEntry:
+    """One event from the global feed, with the cursor that follows it."""
+
+    session_id: UUID
+    event: DomainEvent
+    position: object
+    """Opaque to us: compared and persisted, never inspected or arithmetic'd."""
+
+
+class EventFeed(Protocol):
+    """Reads the store's global feed, across all sessions, in append order.
+
+    Separate from `SessionRepository` because it answers a different question:
+    not "what does this session look like" but "what has happened lately",
+    which is what a live view needs.
+    """
+
+    async def latest_position(self) -> object | None:
+        """The cursor at the end of the feed right now, or None if it is empty."""
+        ...
+
+    async def read_since(self, position: object | None) -> list[FeedEntry]:
+        """Everything appended after `position`. Exclusive; None means from the start."""
+        ...
+
+
 class TurnAccountingError(Exception):
     """The agent returned something the log cannot faithfully record.
 

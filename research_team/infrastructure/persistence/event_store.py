@@ -7,6 +7,7 @@ from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from eventsource.application.aggregates.repository import AggregateRepository
 
+from research_team.application import FeedEntry
 from research_team.domain import CodingSession
 
 SNAPSHOT_THRESHOLD = 50
@@ -28,10 +29,13 @@ def build_aggregate_repository(
 
 
 class EventStoreSessionRepository:
-    """Adapts `eventsource`'s store and repository to the application's port.
+    """Adapts `eventsource`'s store and repository to the application's ports.
 
-    Two access paths, both over the same log: the aggregate repository for
-    command handling, and raw stream reads for the log-as-read-model features.
+    Satisfies both `SessionRepository` and `EventFeed`: three access paths over
+    one log -- the aggregate repository for command handling, raw stream reads
+    for the log-as-read-model features, and the global feed for live views.
+    They are separate ports because they answer separate questions; they share
+    an implementation because they share a connection.
     """
 
     def __init__(
@@ -59,6 +63,24 @@ class EventStoreSessionRepository:
     async def events_for(self, session_id: UUID) -> list[DomainEvent]:
         stream = StreamId(session_id, CodingSession.aggregate_type)
         return [envelope.event for envelope in await collect(self._store.read_stream(stream))]
+
+    # ---- the EventFeed port ----
+
+    async def latest_position(self) -> object | None:
+        return await self._store.current_position()
+
+    async def read_since(self, position: object | None) -> list[FeedEntry]:
+        envelopes = await collect(self._store.read_all(from_position=position))
+        return [
+            FeedEntry(
+                session_id=envelope.event.aggregate_id,
+                event=envelope.event,
+                position=envelope.position,
+            )
+            for envelope in envelopes
+        ]
+
+    # ---- the SessionRepository port ----
 
     async def all_events(self) -> list[DomainEvent]:
         envelopes = await collect(

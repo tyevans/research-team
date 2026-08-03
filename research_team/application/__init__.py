@@ -4,8 +4,11 @@ Depends on the domain and on its own port declarations -- never on a concrete
 store, model provider, or user interface.
 """
 
+from research_team.application.live_feed import LiveFeed
 from research_team.application.ports import (
     ActivityReporter,
+    EventFeed,
+    FeedEntry,
     RecordedMessage,
     SessionRepository,
     TurnAccountingError,
@@ -15,13 +18,22 @@ from research_team.application.ports import (
 from research_team.application.session_service import (
     DEFAULT_SYSTEM_PROMPT,
     SessionService,
-    create_session,
 )
-from research_team.application.summaries import SessionSummary, summarize_sessions
+from research_team.application.summaries import (
+    ForkNode,
+    SessionSummary,
+    build_fork_tree,
+    summarize_sessions,
+)
 
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "ActivityReporter",
+    "EventFeed",
+    "FeedEntry",
+    "ForkNode",
+    "LiveFeed",
+    "build_fork_tree",
     "RecordedMessage",
     "SessionRepository",
     "SessionService",
@@ -29,6 +41,5 @@ __all__ = [
     "TurnAccountingError",
     "TurnExecutor",
     "TurnResult",
-    "create_session",
     "summarize_sessions",
 ]
