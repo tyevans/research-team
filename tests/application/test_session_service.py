@@ -43,8 +43,8 @@ async def test_create_session_starts_a_stream(service, session_id):
 
 
 async def test_run_turn_records_user_and_assistant(service, session_id):
-    reply = await service.run_turn(session_id, "hello")
-    assert reply == "done"
+    outcome = await service.run_turn(session_id, "hello")
+    assert outcome.reply == "done"
 
     types = [type(e) for e in await service.history(session_id)]
     assert types[0] is SessionStarted
@@ -84,9 +84,9 @@ async def test_tool_call_writes_file_and_records_events(build_service, fake_mode
     ]
     service = build_service(model=fake_model)
     session_id = await service.create_session()
-    reply = await service.run_turn(session_id, "write hello.py")
+    outcome = await service.run_turn(session_id, "write hello.py")
 
-    assert reply == "wrote it"
+    assert outcome.reply == "wrote it"
     aggregate = await service.load(session_id)
     assert aggregate.state.files["/hello.py"]["content"] == "print('hi')\n"
     assert FileWritten in [type(e) for e in await service.history(session_id)]

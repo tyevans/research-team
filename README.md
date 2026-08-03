@@ -105,10 +105,11 @@ research_team/
   domain/          events.py, session.py
                    The aggregate and the events it folds. Knows nothing
                    about langchain, deepagents, SQLite, or the environment.
-  application/     ports.py, session_service.py, summaries.py, live_feed.py
-                   The use cases -- run a turn, fork, scrub, list sessions --
-                   plus the ports (SessionRepository, TurnExecutor, EventFeed)
-                   they need the outside world to satisfy.
+  application/     ports.py, session_service.py, summaries.py, live_feed.py,
+                   turn_supervisor.py
+                   The use cases -- run a turn, cancel it, fork, scrub, list
+                   sessions -- plus the ports (SessionRepository, TurnExecutor,
+                   EventFeed) they need the outside world to satisfy.
   infrastructure/  persistence/  the event store, implementing SessionRepository
                    agent/        deepagents + langchain, implementing TurnExecutor
                    config.py     the only module that reads the environment
@@ -132,6 +133,21 @@ aggregate as they happen -- the agent's filesystem *is* the aggregate -- while
 conversation messages come back as `RecordedMessage` values for the use case to
 append. That is what keeps a turn all-or-nothing: the service decides whether
 the turn is committed at all, and a turn that raises is discarded whole.
+
+**Turns are supervised.** `TurnSupervisor` owns the in-flight turn for each
+session, which buys two things. A second turn on a busy session is refused
+immediately rather than after a minute in the model (and then losing a version
+check anyway). And a turn can be *cancelled*: the events it had accumulated are
+discarded whole, `turn_index` does not advance, and a single `TurnFailed` marker
+records the attempt — so an abandoned turn is visible in the log rather than
+silently absent. Recording that marker is shielded, because the usual reason to
+be recording it is cancellation, and a cancelled coroutine's next await would be
+cancelled too.
+
+A turn also reports *where it landed*: `TurnOutcome` carries the inclusive event
+span it wrote, which the REPL prints as `[turn 3 · events #14-21]` and the web
+UI uses to jump straight to them. An aggregate's version is its event count, so
+this is exact rather than inferred.
 
 **Concurrency, and its one limit.** The store serialises every statement
 through a single lock on a single connection, and `AggregateRepository.save()`
@@ -165,7 +181,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-242 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+262 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
 `tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
 `tests/integration` for the cross-layer ones.
 

@@ -145,7 +145,13 @@ async def test_state_reports_session_facts(current):
 
 async def test_plain_input_runs_a_turn(current):
     output = await repl.handle_command(current, "hello there")
-    assert output == "done"
+    assert output.startswith("done")
+
+
+async def test_a_turn_reports_the_events_it_wrote(current):
+    """So `/log` is navigable afterwards without counting backwards."""
+    output = await repl.handle_command(current, "hello there")
+    assert "[turn 1 · events #2-4]" in output
 
 
 # ---- sessions, diff, and live activity ----

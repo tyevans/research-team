@@ -22,6 +22,7 @@ from research_team.interfaces.cli.formatters import (
     format_resumed,
     format_sessions,
     format_state,
+    format_turn,
 )
 
 HELP = """\
@@ -89,7 +90,8 @@ async def handle_command(
     if not line:
         return ""
     if not line.startswith("/"):
-        return await service.run_turn(repl.session_id, line, on_activity)
+        outcome = await service.run_turn(repl.session_id, line, on_activity)
+        return format_turn(outcome)
 
     command, _, argument = line.partition(" ")
     argument = argument.strip()
@@ -172,9 +174,11 @@ async def run(service: SessionService) -> None:
             try:
                 output = await handle_command(repl, line, on_activity=print)
             except KeyboardInterrupt:
-                # The turn is abandoned before its events are saved, so the
-                # log keeps the last completed turn rather than a partial one.
-                print("\n(interrupted -- turn discarded)")
+                # The turn's own events are discarded whole -- the log keeps
+                # the last completed turn rather than a partial one -- but the
+                # attempt still earns a TurnFailed marker, so an interrupted
+                # turn is visible in `/log` rather than silently absent.
+                print("\n(interrupted -- turn discarded, attempt recorded)")
                 continue
             except Exception as error:  # noqa: BLE001 -- keep the REPL alive
                 print(f"error: {type(error).__name__}: {error}")

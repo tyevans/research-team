@@ -10,7 +10,7 @@ from research_team.interfaces.web import create_app
 def main() -> None:
     application = build_application()
     uvicorn.run(
-        create_app(application.service, application.feed),
+        create_app(application.service, application.feed, application.turns),
         host=config.web_host(),
         port=config.web_port(),
     )
