@@ -6,8 +6,6 @@ choice is exactly why this module is infrastructure: the payloads in the log
 have langchain's shape, and this is the only place that knows it.
 """
 
-from typing import TYPE_CHECKING
-
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -18,9 +16,6 @@ from langchain_core.messages import (
 )
 
 from research_team.application import RecordedMessage, TurnAccountingError
-
-if TYPE_CHECKING:
-    from research_team.domain import SessionState
 
 
 def to_payload_messages(payloads: list[dict]) -> list[BaseMessage]:
@@ -39,20 +34,6 @@ def to_payload_messages(payloads: list[dict]) -> list[BaseMessage]:
     second time as an assistant message.
     """
     return messages_from_dict(payloads)
-
-
-def to_langchain(state: "SessionState") -> list[BaseMessage]:
-    """Fold stored payloads into the message list the agent consumes.
-
-    The system prompt is deliberately NOT prepended. `create_deep_agent`
-    takes `system_prompt` as its own parameter and owns it; putting a
-    SystemMessage in this list as well would give the prompt two owners and
-    show it to the model twice. It would also break turn accounting:
-    LangGraph echoes back every message it is given, so an extra leading
-    message shifts the "what did the agent add" suffix by one and the user's
-    own message gets recorded a second time as an assistant message.
-    """
-    return messages_from_dict(state.messages)
 
 
 def encode_user_message(text: str) -> dict:
@@ -96,7 +77,10 @@ def new_messages(sent_count: int, after: list[BaseMessage]) -> list[BaseMessage]
 def last_text(messages: list[BaseMessage]) -> str:
     """The agent's final prose reply, if it made one."""
     for message in reversed(messages):
-        if isinstance(message, AIMessage) and isinstance(message.content, str):
-            if message.content:
-                return message.content
+        if (
+            isinstance(message, AIMessage)
+            and isinstance(message.content, str)
+            and message.content
+        ):
+            return message.content
     return ""

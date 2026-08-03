@@ -65,7 +65,7 @@ def create_app(
     async def _load(session_id: UUID):
         try:
             return await service.load(session_id)
-        except Exception as error:  # noqa: BLE001 -- any load failure is a 404 here
+        except Exception as error:
             raise HTTPException(status_code=404, detail=f"no session {session_id}") from error
 
     @app.get("/api/sessions")

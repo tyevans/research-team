@@ -99,6 +99,8 @@ function plural(n, one, many) {
  * added later still gets a sane colour instead of vanishing. */
 function eventKind(type) {
   const t = String(type || '').toLowerCase();
+  // Housekeeping, before the generic buckets: nothing else should claim it.
+  if (t.indexOf('compact') >= 0) return 'compaction';
   if (t.indexOf('fail') >= 0 || t.indexOf('error') >= 0) return 'failure';
   if (t.indexOf('fork') >= 0 || t.indexOf('session') >= 0) return 'session';
   if (t.indexOf('tool') >= 0) return 'tool';
@@ -308,6 +310,8 @@ const state = {
   at: null,                 // null === HEAD, else 1-based event index
   snapshot: null,           // /api/sessions/{id}/at/{n} (null when at HEAD)
   openPath: null,
+  timelineCol: 0,           // grid column with the tab stop: 0 event, 1 fork
+  compactionOpen: { summary: true, messages: false },
   fileTab: 'content',       // 'content' | 'history'
   fileContent: null,
   fileContentAt: undefined, // the scrub point fileContent was fetched for
@@ -401,6 +405,7 @@ function onRoute() {
       state.openRevisions = {};
       state.sessionError = null;
       state.turnStartedAt = null;
+      state.timelineCol = 0;
       state.freshIndices = {};
       // A turn in flight belongs to the session we just left; the composer we
       // are about to mount is a different one and must start enabled.
@@ -893,6 +898,9 @@ function eventAt(index) {
 function renderTimeline() {
   if (!sessionEls) return;
   const box = sessionEls.timeline;
+  // Must be read BEFORE clear(): emptying the box detaches the focused row and
+  // focus falls to <body>, which would make this test always false.
+  const hadFocus = box.contains(document.activeElement);
   clear(box);
   sessionEls.timelineMeta.textContent = state.events.length
     ? plural(state.events.length, 'event') : '';
@@ -903,9 +911,15 @@ function renderTimeline() {
     return;
   }
 
-  const list = h('div', { class: 'timeline', tabindex: '0', role: 'listbox',
-                          id: 'timeline-listbox',
-                          'aria-label': 'event timeline' });
+  // A grid, not a listbox: each row carries a primary action (scrub to it) AND
+  // a secondary one (fork here). role="grid" is the pattern that legitimately
+  // allows a focusable control inside a row, so the fork button can be reached
+  // with the keyboard instead of being hidden from assistive tech.
+  const list = h('div', { class: 'timeline', role: 'grid',
+                          id: 'timeline-grid',
+                          'aria-label': 'event timeline',
+                          'aria-rowcount': String(state.events.length + 1),
+                          'aria-colcount': '2' });
   list.addEventListener('keydown', onTimelineKey);
 
   state.events.forEach(function (ev, i) {
@@ -919,56 +933,87 @@ function renderTimeline() {
       class: 'ev k-' + kind + (selected ? ' selected' : '') + (future ? ' future' : '') +
              (ev.is_error && !cancelled ? ' is-error' : '') +
              (state.freshIndices[index] ? ' fresh' : ''),
-      role: 'option',
+      role: 'row',
       id: 'ev-' + index,
+      'aria-rowindex': String(i + 1),
       'aria-selected': selected ? 'true' : 'false',
-      dataset: { index: String(index) },
+      // Roving tabindex: exactly one row is in the tab order at a time.
+      tabindex: selected ? '0' : '-1',
+      dataset: { index: String(index), row: '1' },
       title: humanType(ev.type) + '\n' + fullTime(ev.occurred_at) +
              (summary ? '\n' + summary : ''),
       onclick: function () { selectEvent(index); }
     }, [
-      h('span', { class: 'ev-idx', text: String(index) }),
-      h('span', { class: 'ev-rail' }),
-      h('span', { class: 'ev-main' }, [
-        h('span', { class: 'ev-type' }, [
-          humanType(ev.type),
-          typeof ev.turn_index === 'number' ? h('span', { class: 'ev-path' }, ' · turn ' + ev.turn_index) : null
+      h('div', { class: 'ev-cell', role: 'gridcell' }, [
+        h('span', { class: 'ev-idx', text: String(index) }),
+        h('span', { class: 'ev-rail' }),
+        h('span', { class: 'ev-main' }, [
+          h('span', { class: 'ev-type' }, [
+            humanType(ev.type),
+            typeof ev.turn_index === 'number' ? h('span', { class: 'ev-path' }, ' · turn ' + ev.turn_index) : null,
+            ev.strategy ? h('span', { class: 'ev-strategy', text: ' · ' + ev.strategy }) : null
+          ]),
+          h('span', { class: 'ev-summary' }, [
+            // The summary stands alone (it has to, for the live feed), so for a
+            // file event it already opens with the path -- don't print it twice.
+            ev.path && summary.indexOf(ev.path) !== 0
+              ? h('span', { class: 'ev-path', text: ev.path + '  ' }) : null,
+            summary ? truncate(summary, 160) : (ev.path ? '' : '—')
+          ])
         ]),
-        h('span', { class: 'ev-summary' }, [
-          // The summary stands alone (it has to, for the live feed), so for a
-          // file event it already opens with the path -- don't print it twice.
-          ev.path && summary.indexOf(ev.path) !== 0
-            ? h('span', { class: 'ev-path', text: ev.path + '  ' }) : null,
-          summary ? truncate(summary, 160) : (ev.path ? '' : '—')
-        ])
+        h('span', { class: 'ev-time', text: clockTime(ev.occurred_at) })
       ]),
-      h('span', { class: 'ev-time', text: clockTime(ev.occurred_at) }),
-      // Out of the tab order and hidden from AT: it duplicates the scrub bar's
-      // "Fork here", and a focusable control inside a role="option" is invalid.
-      h('button', {
-        class: 'btn btn-ghost ev-fork',
-        tabindex: '-1',
-        'aria-hidden': 'true',
-        title: 'fork a new session at event ' + index,
-        onclick: function (e) { e.stopPropagation(); forkAt(index, e.currentTarget); }
-      }, 'fork here')
+      // A real, reachable control: ArrowRight moves into this cell. No
+      // aria-hidden, because role="grid" permits a widget inside a cell.
+      h('div', { class: 'ev-cell ev-cell-act', role: 'gridcell' },
+        h('button', {
+          class: 'btn btn-ghost ev-fork',
+          tabindex: '-1',
+          'aria-label': 'Fork a new session at event ' + index,
+          title: 'fork a new session at event ' + index,
+          onclick: function (e) { e.stopPropagation(); forkAt(index, e.currentTarget); }
+        }, 'fork here'))
     ]);
     list.appendChild(row);
   });
 
+  const atHead = state.at === null;
   list.appendChild(h('div', {
-    class: 'head-marker' + (state.at === null ? ' selected' : ''),
-    role: 'option',
+    class: 'head-marker' + (atHead ? ' selected' : ''),
+    role: 'row',
     id: 'ev-head',
-    'aria-selected': state.at === null ? 'true' : 'false',
+    'aria-rowindex': String(state.events.length + 1),
+    'aria-selected': atHead ? 'true' : 'false',
+    tabindex: atHead ? '0' : '-1',
+    dataset: { row: '1', head: '1' },
     onclick: function () { selectEvent(null); }
-  }, state.at === null ? '● HEAD — live' : '○ HEAD — click to return to live'));
-
-  // Focus stays on the listbox; this is what announces the moving selection.
-  list.setAttribute('aria-activedescendant', state.at === null ? 'ev-head' : 'ev-' + state.at);
+  }, [
+    h('div', { class: 'ev-cell', role: 'gridcell', text:
+      atHead ? '● HEAD — live' : '○ HEAD — click to return to live' }),
+    h('div', { class: 'ev-cell ev-cell-act', role: 'gridcell' })
+  ]));
 
   box.appendChild(list);
   scrollSelectedIntoView();
+  // Re-rendering replaces the focused node; put focus back where it was.
+  if (hadFocus) focusTimelineRow();
+}
+
+/* The row that owns the tab stop: the selected event, or HEAD. */
+function currentTimelineRow() {
+  if (!sessionEls) return null;
+  return sessionEls.timeline.querySelector('.ev.selected, .head-marker.selected');
+}
+
+function focusTimelineRow() {
+  const row = currentTimelineRow();
+  if (!row) return;
+  if (state.timelineCol === 1) {
+    const button = row.querySelector('.ev-fork');
+    if (button) { button.focus(); return; }
+    state.timelineCol = 0;
+  }
+  row.focus();
 }
 
 function scrollSelectedIntoView() {
@@ -980,6 +1025,37 @@ function scrollSelectedIntoView() {
 function onTimelineKey(ev) {
   const total = state.events.length;
   if (!total) return;
+
+  // Column navigation stays within the focused row: left is the event itself,
+  // right is its fork action.
+  if (ev.key === 'ArrowRight' || ev.key === 'ArrowLeft') {
+    const row = currentTimelineRow();
+    if (!row) return;
+    const button = row.querySelector('.ev-fork');
+    ev.preventDefault();
+    ev.stopPropagation();
+    state.timelineCol = (ev.key === 'ArrowRight' && button) ? 1 : 0;
+    focusTimelineRow();
+    return;
+  }
+
+  // Enter/Space act on whatever cell is focused.
+  if (ev.key === 'Enter' || ev.key === ' ') {
+    const row = currentTimelineRow();
+    if (!row) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (state.timelineCol === 1) {
+      const button = row.querySelector('.ev-fork');
+      if (button) button.click();
+    } else if (row.dataset.head) {
+      selectEvent(null);
+    } else {
+      selectEvent(parseInt(row.dataset.index, 10));
+    }
+    return;
+  }
+
   const cur = state.at === null ? total + 1 : state.at;
   let next = null;
   if (ev.key === 'ArrowDown' || ev.key === 'j') next = Math.min(cur + 1, total + 1);
@@ -992,10 +1068,12 @@ function onTimelineKey(ev) {
   // The document-level Escape handler is on the bubble phase too; without this
   // one keypress would fold twice.
   ev.stopPropagation();
+  // Moving rows returns to the primary column, so the fork button is never
+  // silently carried along as you scrub.
+  state.timelineCol = 0;
   const target = next > total ? null : next;
   if (target !== state.at) selectEvent(target);
-  const list = sessionEls && sessionEls.timeline.querySelector('.timeline');
-  if (list) list.focus();
+  else focusTimelineRow();
 }
 
 /* --- workspace --------------------------------------------------------- */
@@ -1249,8 +1327,11 @@ function renderConversation() {
 
   const v = view();
   const messages = Array.isArray(v.messages) ? v.messages : [];
+  const compacted = compactedThrough(v, messages.length);
   sessionEls.convMeta.textContent = messages.length
-    ? plural(messages.length, 'message') + (isHistorical() ? ' @ ' + state.at : '')
+    ? plural(messages.length, 'message') +
+      (compacted ? ' · ' + compacted + ' compacted' : '') +
+      (isHistorical() ? ' @ ' + state.at : '')
     : '';
 
   if (v.__error) { box.appendChild(errorBox('Unavailable', v.__error, loadSnapshot)); return; }
@@ -1263,9 +1344,85 @@ function renderConversation() {
   }
 
   const conv = h('div', { class: 'conv' });
-  messages.forEach(function (m) { conv.appendChild(renderMessage(m)); });
+  // How many leading messages the model now sees as a summary instead. Absent
+  // or 0 on most sessions, and 0 again when scrubbed to before the compaction.
+  const through = compacted;
+  if (through > 0) {
+    conv.appendChild(renderCompaction(v, messages.slice(0, through), through));
+    messages.slice(through).forEach(function (m) { conv.appendChild(renderMessage(m)); });
+  } else {
+    messages.forEach(function (m) { conv.appendChild(renderMessage(m)); });
+  }
   box.appendChild(conv);
   if (stick) box.scrollTop = box.scrollHeight;
+}
+
+function compactedThrough(v, messageCount) {
+  const raw = v && v.compacted_through;
+  if (typeof raw !== 'number' || !isFinite(raw) || raw <= 0) return 0;
+  // Never let a stale or oversized count eat the whole conversation.
+  return Math.min(Math.floor(raw), messageCount);
+}
+
+/* Nothing was deleted -- the log still holds every message, and so does this
+ * pane. What changed is what the MODEL is shown: a summary standing in for
+ * everything above the boundary. Make that distinction the visible idea. */
+function renderCompaction(v, hidden, through) {
+  const summary = typeof v.compaction_summary === 'string' ? v.compaction_summary : '';
+  const openSummary = state.compactionOpen.summary;
+  const openMessages = state.compactionOpen.messages;
+
+  const wrap = h('section', { class: 'compaction', 'aria-label': 'compacted context' });
+
+  wrap.appendChild(h('div', { class: 'compaction-head' }, [
+    h('span', { class: 'compaction-mark', 'aria-hidden': 'true' }),
+    h('span', { class: 'compaction-title', text:
+      'context compacted — the model sees a summary of the first ' +
+      plural(through, 'message') }),
+  ]));
+
+  if (summary) {
+    wrap.appendChild(disclosure('summary shown to the model', openSummary, function () {
+      state.compactionOpen.summary = !openSummary;
+      renderConversation();
+    }, h('div', { class: 'compaction-summary', text: summary })));
+  } else {
+    wrap.appendChild(h('div', { class: 'compaction-note',
+      text: 'no summary text was returned with this session.' }));
+  }
+
+  wrap.appendChild(disclosure(
+    plural(through, 'superseded message') + ' — still in the log, not sent to the model',
+    openMessages,
+    function () {
+      state.compactionOpen.messages = !openMessages;
+      renderConversation();
+    },
+    h('div', { class: 'compaction-msgs' }, hidden.map(renderMessage))));
+
+  wrap.appendChild(h('div', { class: 'compaction-boundary' },
+    h('span', { text: 'context boundary · everything below is sent verbatim' })));
+
+  return wrap;
+}
+
+function disclosure(label, open, toggle, body) {
+  const id = 'disc-' + Math.random().toString(36).slice(2, 8);
+  const wrap = h('div', { class: 'disc' });
+  wrap.appendChild(h('button', {
+    class: 'disc-head',
+    type: 'button',
+    'aria-expanded': open ? 'true' : 'false',
+    'aria-controls': id,
+    onclick: toggle
+  }, [
+    h('span', { class: 'disc-caret', 'aria-hidden': 'true', text: open ? '▾' : '▸' }),
+    label
+  ]));
+  const region = h('div', { class: 'disc-body', id: id });
+  if (open) region.appendChild(body); else region.hidden = true;
+  wrap.appendChild(region);
+  return wrap;
 }
 
 function renderMessage(m) {
@@ -1558,6 +1715,7 @@ let stream = null;
 let backoff = 1000;
 let treeRefreshTimer = null;
 let freshSweepTimer = null;
+let backoffResetTimer = null;
 
 const FRESH_MS = 1500;
 
@@ -1579,7 +1737,11 @@ function connect() {
   }
   stream.onopen = function () {
     const reconnected = backoff !== 1000;
-    backoff = 1000;
+    // Only treat the connection as healthy once it has STAYED open. A server
+    // that accepts and immediately drops would otherwise reset the backoff on
+    // every attempt, turning reconnection into a one-per-second reload loop.
+    clearTimeout(backoffResetTimer);
+    backoffResetTimer = setTimeout(function () { backoff = 1000; }, 5000);
     setConn('open', 'live');
     // The stream has no replay cursor, so anything appended while we were
     // disconnected was missed — resync whatever view is open.
@@ -1595,6 +1757,7 @@ function connect() {
   };
   stream.onerror = function () {
     if (stream) { stream.close(); stream = null; }
+    clearTimeout(backoffResetTimer);
     setConn('down', 'reconnecting');
     scheduleReconnect();
   };

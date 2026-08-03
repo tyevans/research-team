@@ -25,6 +25,7 @@
   --k-file:      #5ec98a;
   --k-turn:      #7e8b9b;
   --k-failure:   #f4736b;
+  --k-compaction:#5f7d8c;
 
   --add-fg:      #82d9a4;
   --add-bg:      #0f2418;
@@ -380,16 +381,37 @@ ul.tree ul > li:last-child::after {
 .timeline:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
 
 .ev {
-  display: grid;
-  grid-template-columns: 46px 8px 1fr auto;
-  align-items: baseline;
-  gap: 8px;
-  padding: 4px 10px 4px 4px;
+  display: flex;
+  align-items: stretch;
   border-bottom: 1px solid var(--line-soft);
   cursor: pointer;
   font-family: var(--mono);
   font-size: var(--t-sm);
   position: relative;
+  outline: none;
+}
+/* The row itself is the tab stop, so it needs a visible focus ring. */
+.ev:focus-visible, .head-marker:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.ev > .ev-cell:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 46px 8px 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 6px 4px 4px;
+}
+/* Overlaid rather than laid out, so the action costs the log no width. The
+   grid roles are unaffected -- ARIA structure does not depend on positioning. */
+.ev-cell-act {
+  position: absolute;
+  right: 6px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
 }
 .ev:hover { background: var(--bg-panel-2); }
 .ev.selected { background: var(--bg-raise); }
@@ -430,12 +452,18 @@ ul.tree ul > li:last-child::after {
 .ev-path { color: var(--k-file); }
 .ev.is-error .ev-summary { color: var(--k-failure); }
 .ev-time { color: var(--fg-faint); font-size: var(--t-xs); font-variant-numeric: tabular-nums; }
-.ev-fork {
-  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
-  display: none;
-}
-.ev:hover .ev-fork, .ev.selected .ev-fork { display: block; }
-.ev:hover .ev-time, .ev.selected .ev-time { visibility: hidden; }
+/* Kept in the layout (visibility, not display) so rows do not reflow on hover,
+   and revealed on focus-within so keyboard users can see what they reached. */
+.ev-fork { visibility: hidden; }
+.ev:hover .ev-fork,
+.ev.selected .ev-fork,
+.ev:focus-within .ev-fork { visibility: visible; }
+/* the overlay would otherwise sit on top of the timestamp */
+.ev:hover .ev-time,
+.ev.selected .ev-time,
+.ev:focus-within .ev-time { visibility: hidden; }
+.ev-fork:focus-visible { visibility: visible; outline: 2px solid var(--accent); }
+.ev-strategy { color: var(--k-compaction); }
 
 .k-session  { --kind: var(--k-session); }
 .k-message  { --kind: var(--k-message); }
@@ -443,19 +471,25 @@ ul.tree ul > li:last-child::after {
 .k-file     { --kind: var(--k-file); }
 .k-turn     { --kind: var(--k-turn); }
 .k-failure  { --kind: var(--k-failure); }
+/* housekeeping, not activity: quieter than anything the agent did */
+.k-compaction { --kind: var(--k-compaction); }
+.k-compaction .ev-summary { color: var(--fg-dim); }
 /* a cancelled turn is part of the turn lifecycle, not a crash */
 .k-cancelled { --kind: var(--k-turn); }
 .k-cancelled .ev-summary { color: var(--fg-dim); font-style: italic; }
 .k-other    { --kind: var(--fg-faint); }
 
 .head-marker {
-  padding: 5px 10px 5px 58px;
+  display: flex;
+  align-items: center;
   font-family: var(--mono);
   font-size: var(--t-xs);
   color: var(--fg-faint);
   border-bottom: 1px solid var(--line-soft);
   cursor: pointer;
+  outline: none;
 }
+.head-marker > .ev-cell:first-child { flex: 1 1 auto; padding: 5px 10px 5px 58px; }
 .head-marker:hover { background: var(--bg-panel-2); color: var(--fg-dim); }
 .head-marker.selected { color: var(--k-file); }
 
@@ -598,6 +632,86 @@ pre.code .ln {
 .msg-tool .msg-head { color: var(--k-tool); }
 .msg-tool.errored { border-color: #45272a; }
 .msg-tool.errored .msg-head { color: var(--k-failure); background: #1e1214; }
+
+/* --- compaction -------------------------------------------------------- */
+/* The log kept everything; only what the MODEL sees changed. Styled as an
+   annotation on the transcript, not as another message in it. */
+.compaction {
+  border: 1px dashed var(--k-compaction);
+  border-radius: var(--radius);
+  background: #0f1519;
+  padding: 8px 10px 0;
+  margin-bottom: 2px;
+}
+.compaction-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 6px;
+}
+.compaction-mark {
+  width: 7px; height: 7px; flex: 0 0 auto;
+  border-radius: 2px;
+  background: var(--k-compaction);
+  transform: translateY(-1px);
+}
+.compaction-title {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  letter-spacing: .04em;
+  color: var(--k-compaction);
+  text-transform: uppercase;
+}
+.compaction-note, .compaction-summary {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 6px 8px;
+  border-left: 2px solid var(--k-compaction);
+  background: var(--bg-panel);
+  border-radius: 0 3px 3px 0;
+}
+.compaction-msgs { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.compaction-msgs .msg { opacity: .62; }
+.compaction-boundary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px -10px 0;
+  padding: 4px 10px;
+  border-top: 1px dashed var(--k-compaction);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+}
+.compaction-boundary::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line), transparent);
+}
+
+/* generic disclosure, used by the compaction panel */
+.disc { margin-bottom: 6px; }
+.disc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 3px 0;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+.disc-head:hover { color: var(--fg); }
+.disc-caret { color: var(--k-compaction); }
+.disc-body { padding-top: 2px; }
 
 .calls { display: flex; flex-direction: column; gap: 3px; padding: 6px 10px 8px; }
 .call {

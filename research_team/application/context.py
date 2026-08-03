@@ -35,6 +35,9 @@ class Compaction:
     summary: str
     through_index: int
     """1-based index of the last message the summary stands in for."""
+    tokens_before: int = 0
+    """What the conversation cost when this was decided, if the strategy counts."""
+    tokens_after: int = 0
 
 
 @dataclass(frozen=True)
@@ -77,7 +80,7 @@ class FullHistory:
 
 
 DEFAULT_KEEP_RESULTS = 6
-DEFAULT_MAX_RESULT_CHARS = 2000
+DEFAULT_CLEAR_OVER_CHARS = 2000
 
 
 class ElideToolResults:
@@ -101,10 +104,10 @@ class ElideToolResults:
         self,
         *,
         keep_results: int = DEFAULT_KEEP_RESULTS,
-        max_result_chars: int = DEFAULT_MAX_RESULT_CHARS,
+        clear_over_chars: int = DEFAULT_CLEAR_OVER_CHARS,
     ) -> None:
         self._keep = keep_results
-        self._max_chars = max_result_chars
+        self._clear_over = clear_over_chars
 
     async def prepare(self, state: SessionState) -> PreparedContext:
         messages = list(state.messages)
@@ -121,7 +124,7 @@ class ElideToolResults:
         prepared: list[dict[str, Any]] = []
         for index, message in enumerate(messages):
             if index in stale:
-                shortened = _placeholder(message, self._max_chars)
+                shortened = _placeholder(message, self._clear_over)
                 # A short result is left alone: clearing it saves nothing and
                 # a note claiming otherwise would be false.
                 elided += shortened is not message
@@ -139,7 +142,7 @@ class ElideToolResults:
         )
 
 
-def _placeholder(message: dict[str, Any], max_chars: int) -> dict[str, Any]:
+def _placeholder(message: dict[str, Any], clear_over: int) -> dict[str, Any]:
     """Replace one tool result with something unmistakably incomplete.
 
     Deliberately not a truncation. A cut-off head reads as a whole result, so
@@ -153,7 +156,7 @@ def _placeholder(message: dict[str, Any], max_chars: int) -> dict[str, Any]:
     """
     data = dict(message.get("data", {}))
     content = str(data.get("content", ""))
-    if len(content) <= max_chars:
+    if len(content) <= clear_over:
         return message
     data["content"] = (
         f"[{len(content)} characters of output from an earlier turn were "

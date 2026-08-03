@@ -80,7 +80,8 @@ class SummarizingStrategy:
     async def prepare(self, state: SessionState) -> PreparedContext:
         already = state.compacted_through
         live = state.messages[already:]
-        if _tokens(live) < self._trigger_tokens or len(live) <= self._keep:
+        before = _tokens(live)
+        if before < self._trigger_tokens or len(live) <= self._keep:
             return PreparedContext(messages=self._view(state))
 
         # Everything except the tail becomes the new summary's territory.
@@ -105,11 +106,34 @@ class SummarizingStrategy:
         compacted = state.model_copy(
             update={"compacted_through": through, "compaction_summary": summary}
         )
+        view = self._view(compacted)
+        after = _tokens(view)
+        if after >= before:
+            # A summary can be longer than the little it replaced -- a
+            # four-section structured summary of one message reliably is. The
+            # model call is already paid for, but recording this would make
+            # every later turn carry a summary that costs more than the
+            # messages it stands in for, permanently.
+            logger.warning(
+                "compaction for %s would grow the context (%d -> %d tokens); "
+                "leaving it uncompacted",
+                state.session_id,
+                before,
+                after,
+            )
+            return PreparedContext(messages=self._view(state))
+
         return PreparedContext(
-            messages=self._view(compacted),
-            compaction=Compaction(summary=summary, through_index=through),
+            messages=view,
+            compaction=Compaction(
+                summary=summary,
+                through_index=through,
+                tokens_before=before,
+                tokens_after=after,
+            ),
             notes=(
-                f"compacted {through - already} message(s) into a summary; "
+                f"compacted {through - already} message(s) into a summary, "
+                f"about {before:,} tokens down to {after:,}; "
                 "the log still holds them",
             ),
         )
@@ -151,10 +175,27 @@ def _tokens(messages: list[dict]) -> int:
     Approximate on purpose: the count only has to be monotonic in the real
     thing to decide when to act, and an approximation needs no tokenizer and
     no per-model calibration.
+
+    Tool call arguments are counted along with content, because they are sent
+    too and they are frequently the larger half -- a `write_file` carries the
+    whole file in its arguments and answers with one line of confirmation.
+    Measured on a write-heavy session, counting content alone saw 224 tokens
+    where the real payload was nearer 2,600, so the trigger would have fired
+    long after it should have, or never.
     """
     return count_tokens_approximately(
-        HumanMessage(str(m.get("data", {}).get("content", ""))) for m in messages
+        HumanMessage(_billable_text(message)) for message in messages
     )
+
+
+def _billable_text(message: dict) -> str:
+    """Everything in one stored message that will be sent to the model."""
+    data = message.get("data", {})
+    parts = [str(data.get("content", ""))]
+    for call in data.get("tool_calls") or []:
+        parts.append(str(call.get("name", "")))
+        parts.append(str(call.get("args", "")))
+    return " ".join(parts)
 
 
 def _safe_boundary(messages: list[dict], candidate: int) -> int:

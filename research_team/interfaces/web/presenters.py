@@ -13,6 +13,7 @@ from eventsource import DomainEvent
 from research_team.application import ForkNode, SessionSummary
 from research_team.domain import (
     CodingSession,
+    ConversationCompacted,
     FileDeleted,
     FileEdited,
     FileWritten,
@@ -36,6 +37,16 @@ def event_summary(event: DomainEvent) -> str:
         return f"{event.path}  {_snippet(event.old_string)} → {_snippet(event.new_string)}"
     if isinstance(event, FILE_EVENTS):
         return event.path
+    if isinstance(event, ConversationCompacted):
+        saved = (
+            f", ~{event.tokens_before:,} → {event.tokens_after:,} tokens"
+            if event.tokens_before
+            else ""
+        )
+        return (
+            f"first {event.through_index} messages now behind a summary "
+            f"({event.strategy}{saved})"
+        )
     if isinstance(event, SessionForkedFrom):
         return f"from {str(event.source_session_id)[:8]} at event {event.at_event}"
     if isinstance(event, TurnFailed):

@@ -93,9 +93,6 @@ class TurnSupervisor:
         """Details of the in-flight turn, for a caller that arrived mid-turn."""
         return self._started.get(session_id) if self.is_running(session_id) else None
 
-    def running_sessions(self) -> list[UUID]:
-        return [session_id for session_id in self._running if self.is_running(session_id)]
-
     async def run(
         self,
         session_id: UUID,

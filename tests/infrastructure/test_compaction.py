@@ -230,3 +230,92 @@ async def test_every_kept_tool_result_still_has_its_call():
         for call in (m["data"].get("tool_calls") or [])
     }
     assert answered <= asked
+
+
+# ---------------- what counts towards the trigger ----------------
+
+
+def writing(path: str, body: str) -> dict:
+    """An assistant message whose bulk is in the tool call, not the content."""
+    return {
+        "type": "ai",
+        "data": {
+            "content": "",
+            "tool_calls": [
+                {
+                    "name": "write_file",
+                    "id": "c1",
+                    "args": {"file_path": path, "content": body},
+                }
+            ],
+        },
+    }
+
+
+async def test_tool_call_arguments_count_towards_the_trigger():
+    """A write_file carries the whole file in its arguments and answers with one
+    line. Counting only content saw a twelfth of the real payload, so the
+    trigger fired far too late on exactly the sessions that needed it."""
+    session = SessionState(
+        session_id=uuid4(),
+        messages=[writing(f"/f{i}.py", "x = 1\n" * 400) for i in range(12)]
+        + [message("ai", "done")] * 4,
+    )
+    strategy = SummarizingStrategy(summarizer(), trigger_tokens=500, keep_messages=4)
+
+    prepared = await strategy.prepare(session)
+
+    assert prepared.compaction is not None, (
+        "a session that is almost entirely tool arguments must still trigger"
+    )
+
+
+async def test_a_genuinely_small_session_still_does_not_trigger():
+    """The wider count must not make everything look big."""
+    session = SessionState(
+        session_id=uuid4(),
+        messages=[writing("/a.py", "x = 1\n")] + [message("ai", "done")] * 5,
+    )
+    strategy = SummarizingStrategy(summarizer(), trigger_tokens=500, keep_messages=4)
+
+    assert (await strategy.prepare(session)).compaction is None
+
+
+async def test_the_compaction_records_what_it_was_reacting_to():
+    """The log should answer "why then", which is not recoverable later: the
+    threshold it crossed is configuration that may since have changed."""
+    session = conversation(20, chars=500)
+    strategy = SummarizingStrategy(summarizer(), trigger_tokens=250, keep_messages=6)
+
+    prepared = await strategy.prepare(session)
+
+    assert prepared.compaction.tokens_before >= 250, "it crossed the trigger"
+    assert prepared.compaction.tokens_after < prepared.compaction.tokens_before
+    assert "tokens" in prepared.notes[0]
+
+
+async def test_a_compaction_that_would_grow_the_context_is_refused():
+    """A structured four-section summary of very little is bigger than the
+    little it replaced, and recording it would make every later turn carry a
+    summary that costs more than the messages it stands in for."""
+    session = conversation(3, chars=200)
+    verbose = "GOAL: " + "a great deal of summary prose " * 200
+    strategy = SummarizingStrategy(summarizer(verbose), trigger_tokens=10, keep_messages=2)
+
+    prepared = await strategy.prepare(session)
+
+    assert prepared.compaction is None
+    assert prepared.messages == session.messages
+
+
+async def test_a_compaction_that_shrinks_is_still_recorded():
+    """The guard must not refuse the case it exists to protect."""
+    session = conversation(30, chars=500)
+    strategy = SummarizingStrategy(
+        summarizer("a short summary"), trigger_tokens=100, keep_messages=4
+    )
+
+    prepared = await strategy.prepare(session)
+
+    assert prepared.compaction is not None
+    assert prepared.compaction.tokens_after < prepared.compaction.tokens_before

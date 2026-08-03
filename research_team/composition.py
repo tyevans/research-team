@@ -62,8 +62,8 @@ def _context_parts(
     if mode == "elide":
         return (
             ElideToolResults(
-                keep_results=config.context_keep(),
-                max_result_chars=config.context_max_result_chars(),
+                keep_results=config.context_keep_results(),
+                clear_over_chars=config.context_clear_over_chars(),
             ),
             (),
             "",
@@ -73,7 +73,7 @@ def _context_parts(
             SummarizingStrategy(
                 model,
                 trigger_tokens=config.context_trigger_tokens(),
-                keep_messages=config.context_keep(),
+                keep_messages=config.context_keep_messages(),
             ),
             (),
             "",

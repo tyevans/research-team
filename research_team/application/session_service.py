@@ -16,13 +16,13 @@ from uuid import UUID, uuid4
 
 from eventsource import DomainEvent
 
+from research_team.application.context import ContextStrategy, FullHistory
 from research_team.application.ports import (
     ActivityReporter,
     SessionRepository,
     TurnAccountingError,
     TurnExecutor,
 )
-from research_team.application.context import ContextStrategy, FullHistory
 from research_team.application.summaries import SessionSummary, summarize_sessions
 from research_team.domain import CodingSession
 
@@ -166,6 +166,8 @@ class SessionService:
                 prepared.compaction.summary,
                 prepared.compaction.through_index,
                 self._context.name,
+                tokens_before=prepared.compaction.tokens_before,
+                tokens_after=prepared.compaction.tokens_after,
             )
         if on_activity is not None:
             for note in prepared.notes:
@@ -232,7 +234,7 @@ class SessionService:
             # aggregate has no business knowing -- so it is decided here.
             clean.fail_turn(error, cancelled=isinstance(error, asyncio.CancelledError))
             await self._repository.save(clean)
-        except Exception:  # noqa: BLE001 -- the original failure is what matters
+        except Exception:
             logger.exception("could not record TurnFailed for %s", session_id)
 
     # ---------------- time travel ----------------

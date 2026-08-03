@@ -1,4 +1,4 @@
-# tests/test_messages.py
+"""Translation between stored payloads and the messages the agent consumes."""
 import pytest
 from langchain_core.messages import (
     AIMessage,
@@ -11,33 +11,29 @@ from langchain_core.messages import (
 from research_team.application import TurnAccountingError
 from research_team.infrastructure.agent.messages import (
     new_messages,
-    to_langchain,
+    to_payload_messages,
     to_recorded,
 )
-from research_team.domain import SessionState
-
-from uuid import uuid4
 
 
-def make_state(**kwargs) -> SessionState:
-    return SessionState(session_id=uuid4(), system_prompt="SYS", **kwargs)
+def payloads(*messages) -> list[dict]:
+    return [message_to_dict(m) for m in messages]
 
 
 def test_system_prompt_is_not_prepended():
     """create_deep_agent owns the system prompt; two owners breaks turn accounting."""
-    state = make_state(messages=[message_to_dict(HumanMessage("hello", id="h1"))])
-    messages = to_langchain(state)
+    stored = payloads(HumanMessage("hello", id="h1"))
+    messages = to_payload_messages(stored)
     assert not any(isinstance(m, SystemMessage) for m in messages)
-    assert len(messages) == len(state.messages)
+    assert len(messages) == len(stored)
 
 
 def test_empty_history_folds_to_empty_list():
-    assert to_langchain(make_state()) == []
+    assert to_payload_messages([]) == []
 
 
 def test_round_trip_preserves_human_message():
-    state = make_state(messages=[message_to_dict(HumanMessage("hello", id="h1"))])
-    restored = to_langchain(state)[0]
+    restored = to_payload_messages(payloads(HumanMessage("hello", id="h1")))[0]
     assert isinstance(restored, HumanMessage)
     assert restored.content == "hello"
 
@@ -48,18 +44,16 @@ def test_round_trip_preserves_tool_calls():
         id="a1",
         tool_calls=[{"name": "write_file", "args": {"path": "/a.py"}, "id": "t1"}],
     )
-    state = make_state(messages=[message_to_dict(original)])
-    restored = to_langchain(state)[0]
+    restored = to_payload_messages(payloads(original))[0]
     assert isinstance(restored, AIMessage)
     assert restored.tool_calls[0]["id"] == "t1"
     assert restored.tool_calls[0]["args"] == {"path": "/a.py"}
 
 
 def test_round_trip_preserves_tool_message():
-    state = make_state(
-        messages=[message_to_dict(ToolMessage(content="done", tool_call_id="t1", id="m1"))]
-    )
-    restored = to_langchain(state)[0]
+    restored = to_payload_messages(
+        payloads(ToolMessage(content="done", tool_call_id="t1", id="m1"))
+    )[0]
     assert isinstance(restored, ToolMessage)
     assert restored.tool_call_id == "t1"
 

@@ -58,8 +58,9 @@ variable:
 | `AGENT_WEB_PORT` | `8000` | port the web UI binds to |
 | `AGENT_CONTEXT` | `full` | how this instance manages context: `full`, `elide`, `compact`, `delegate` |
 | `AGENT_CONTEXT_TRIGGER` | `120000` | approximate tokens of live conversation before `compact` summarizes |
-| `AGENT_CONTEXT_KEEP` | `6` | recent messages (`compact`) or tool results (`elide`) left untouched |
-| `AGENT_CONTEXT_MAX_RESULT` | `2000` | tool results longer than this are cleared under `elide` |
+| `AGENT_CONTEXT_KEEP_MESSAGES` | `20` | recent messages `compact` leaves out of the summary |
+| `AGENT_CONTEXT_KEEP_RESULTS` | `6` | recent tool results `elide` leaves whole |
+| `AGENT_CONTEXT_CLEAR_OVER` | `2000` | tool results longer than this are cleared outright under `elide` |
 
 ## REPL commands
 
@@ -92,7 +93,15 @@ there is no message schema of our own to maintain. File tools come from deepagen
 line numbering, edit-ambiguity checks, glob/grep, and error strings are all
 inherited rather than reimplemented. `create_deep_agent` is built with
 `checkpointer=None` so LangGraph stays stateless and the event log is the sole
-source of truth. A turn is atomic: all of its events append at the end, or none do —
+source of truth.
+
+The "no shell" guarantee is worth being precise about, because it is not that
+the tool is absent. deepagents offers an `execute` tool regardless; it refuses
+here because `EventSourcedBackend` does not implement the sandbox protocol that
+would give it somewhere to run, so an attempt returns an ordinary error and is
+recorded like any other tool result. That is a subtle invariant to rest a
+safety claim on, so `tests/integration/test_no_shell.py` pins it: a command
+that tries to write outside the process must leave nothing behind. A turn is atomic: all of its events append at the end, or none do —
 so an interrupted or failed turn leaves the log at the last completed turn rather
 than half-applied.
 
@@ -239,6 +248,20 @@ splitting a refactor three ways.
 Three choices are worth explaining, because the obvious alternative is wrong in
 each case:
 
+**Keep the `compact` trigger well above the size of one turn.** If a turn costs
+a meaningful fraction of the trigger, the conversation re-crosses it almost
+immediately and you pay a summarizer call every turn. The default leaves a wide
+margin; a trigger set near per-turn size will thrash. A compaction that would
+not actually shrink the context is refused outright — a four-section summary of
+very little is bigger than the little it replaced, and recording it would
+burden every later turn permanently.
+
+**The trigger counts tool call arguments, not just message content.** A
+`write_file` carries the whole file in its arguments and answers with one line
+of confirmation, so counting content alone saw 224 tokens where the real
+payload was nearer 2,600 — the trigger would have fired long after it should
+have, or never.
+
 **The `compact` trigger is high** (≈120k tokens). Anthropic's server-side
 compaction defaults to 150k input tokens and refuses to be configured below
 50k; its tool-result clearing triggers at 100k. A trigger an order of magnitude
@@ -250,6 +273,16 @@ call was summarized away is a malformed request — an answer to a question the
 model cannot see itself having asked. The boundary snaps backwards until the
 first kept message is not a tool result, which summarizes strictly more and is
 therefore always safe.
+
+**`elide` offers no way to retrieve what it cleared, on purpose.** The obvious
+improvement is a handle back to the original, which the log still holds. It
+would be wrong here. Every tool the agent has -- `read_file`, `ls`, `glob`,
+`grep` -- is a cheap, deterministic read of an in-memory filesystem, so
+re-running one costs almost nothing and returns the file as it is *now*. A
+recalled result is a snapshot from an earlier turn, which may since have been
+edited: it would be slower to reach for and sometimes wrong. The advice to keep
+a retrievable handle comes from systems whose cleared output was expensive or
+impossible to reproduce; ours is neither.
 
 **`elide` clears a result rather than truncating it.** A cut-off head reads as
 a whole result, so the model trusts it — and a half-read file or half-finished
@@ -277,7 +310,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-326 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+338 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
 `tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
 `tests/integration` for the cross-layer ones.
 

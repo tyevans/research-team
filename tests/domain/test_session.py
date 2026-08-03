@@ -1,5 +1,7 @@
 import pytest
+from conftest import MODEL_NAME, SYSTEM_PROMPT
 
+from research_team.domain import CodingSession
 from research_team.domain.events import (
     AssistantMessageAdded,
     FileDeleted,
@@ -10,9 +12,6 @@ from research_team.domain.events import (
     TurnCompleted,
     UserMessageSent,
 )
-from research_team.domain import CodingSession
-
-from conftest import MODEL_NAME, SYSTEM_PROMPT
 
 FILE_DATA = {"content": "print(1)\n", "encoding": "utf-8"}
 EDITED = {"content": "print(2)\n", "encoding": "utf-8"}
@@ -20,6 +19,23 @@ EDITED = {"content": "print(2)\n", "encoding": "utf-8"}
 
 def types_of(aggregate: CodingSession) -> list[type]:
     return [type(e) for e in aggregate.uncommitted_events]
+
+
+def tool_result(call_id: str, content: str = "ok") -> dict:
+    return {"type": "tool", "data": {"tool_call_id": call_id, "content": content}}
+
+
+def calling(*call_ids: str) -> dict:
+    """An assistant message that asked for the given tool calls."""
+    return {
+        "type": "ai",
+        "data": {
+            "content": "",
+            "tool_calls": [
+                {"id": call_id, "name": "write_file", "args": {}} for call_id in call_ids
+            ],
+        },
+    }
 
 
 def test_start_emits_session_started(session):
@@ -46,7 +62,9 @@ def test_user_message_appended(session):
 
 
 def test_assistant_message_appended(session):
-    session.record_assistant_message({"type": "ai", "data": {"content": "yo", "tool_calls": []}})
+    session.record_assistant_message(
+        {"type": "ai", "data": {"content": "yo", "tool_calls": []}}
+    )
     assert types_of(session)[-1] is AssistantMessageAdded
     assert session.state.messages[-1]["type"] == "ai"
 
@@ -83,28 +101,19 @@ def test_delete_missing_file_is_rejected(session):
 
 def test_tool_result_requires_outstanding_call(session):
     with pytest.raises(ValueError, match="no outstanding tool call"):
-        session.record_tool_result({"type": "tool", "data": {"tool_call_id": "t1", "content": "ok"}})
+        session.record_tool_result(tool_result("t1", "ok"))
 
 
 def test_tool_result_accepted_when_call_outstanding(session):
-    session.record_assistant_message({
-        "type": "ai",
-        "data": {"content": "", "tool_calls": [{"id": "t1", "name": "write_file", "args": {}}]},
-    })
-    session.record_tool_result({"type": "tool", "data": {"tool_call_id": "t1", "content": "ok"}})
+    session.record_assistant_message(calling("t1"))
+    session.record_tool_result(tool_result("t1", "ok"))
     assert types_of(session)[-1] is ToolResultRecorded
 
 
 def test_tool_results_may_resolve_out_of_order(session):
-    session.record_assistant_message({
-        "type": "ai",
-        "data": {"content": "", "tool_calls": [
-            {"id": "t1", "name": "write_file", "args": {}},
-            {"id": "t2", "name": "read_file", "args": {}},
-        ]},
-    })
-    session.record_tool_result({"type": "tool", "data": {"tool_call_id": "t2", "content": "b"}})
-    session.record_tool_result({"type": "tool", "data": {"tool_call_id": "t1", "content": "a"}})
+    session.record_assistant_message(calling("t1", "t2"))
+    session.record_tool_result(tool_result("t2", "b"))
+    session.record_tool_result(tool_result("t1", "a"))
     assert types_of(session)[-2:] == [ToolResultRecorded, ToolResultRecorded]
 
 
@@ -172,3 +181,22 @@ def test_compaction_needs_a_started_session(aggregates, session_id):
 
     with pytest.raises(ValueError, match="not started"):
         fresh.compact_conversation("s", through_index=1, strategy="compact")
+
+
+def test_compaction_always_covers_a_prefix(session):
+    """The summary stands in for the *first* N messages, never a middle window.
+
+    Anything reading `compacted_through` -- the web console slices the
+    conversation on it -- is entitled to assume that, so the aggregate has to
+    guarantee it rather than leave it to whichever strategy is installed.
+    """
+    for i in range(6):
+        session.send_user_message({"type": "human", "data": {"content": f"m{i}"}})
+
+    session.compact_conversation("first", through_index=2, strategy="compact")
+    session.compact_conversation("second", through_index=5, strategy="compact")
+
+    # Each compaction extends the covered prefix; none can carve out a window.
+    assert session.state.compacted_through == 5
+    with pytest.raises(ValueError, match="cannot compact through"):
+        session.compact_conversation("backwards", through_index=3, strategy="compact")
