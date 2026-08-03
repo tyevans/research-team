@@ -166,6 +166,8 @@ class SessionService:
                 prepared.compaction.summary,
                 prepared.compaction.through_index,
                 self._context.name,
+                tokens_before=prepared.compaction.tokens_before,
+                tokens_after=prepared.compaction.tokens_after,
             )
         if on_activity is not None:
             for note in prepared.notes:

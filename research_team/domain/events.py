@@ -85,6 +85,16 @@ class ConversationCompacted(DomainEvent):
     through_index: int
     strategy: str
     """Which strategy produced this, so a log reader knows what made the call."""
+    tokens_before: int = 0
+    """Roughly what the conversation cost when this fired. 0 if unrecorded.
+
+    Without it the log says compaction happened but not why *then*, which is
+    the first question anyone asks of it -- and the answer is not recoverable
+    afterwards, because the threshold it crossed is configuration that may
+    since have changed.
+    """
+    tokens_after: int = 0
+    """Roughly what it cost afterwards. 0 if unrecorded."""
 
 
 @register_event

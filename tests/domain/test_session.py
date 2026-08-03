@@ -181,3 +181,22 @@ def test_compaction_needs_a_started_session(aggregates, session_id):
 
     with pytest.raises(ValueError, match="not started"):
         fresh.compact_conversation("s", through_index=1, strategy="compact")
+
+
+def test_compaction_always_covers_a_prefix(session):
+    """The summary stands in for the *first* N messages, never a middle window.
+
+    Anything reading `compacted_through` -- the web console slices the
+    conversation on it -- is entitled to assume that, so the aggregate has to
+    guarantee it rather than leave it to whichever strategy is installed.
+    """
+    for i in range(6):
+        session.send_user_message({"type": "human", "data": {"content": f"m{i}"}})
+
+    session.compact_conversation("first", through_index=2, strategy="compact")
+    session.compact_conversation("second", through_index=5, strategy="compact")
+
+    # Each compaction extends the covered prefix; none can carve out a window.
+    assert session.state.compacted_through == 5
+    with pytest.raises(ValueError, match="cannot compact through"):
+        session.compact_conversation("backwards", through_index=3, strategy="compact")

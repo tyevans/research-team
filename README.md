@@ -248,6 +248,20 @@ splitting a refactor three ways.
 Three choices are worth explaining, because the obvious alternative is wrong in
 each case:
 
+**Keep the `compact` trigger well above the size of one turn.** If a turn costs
+a meaningful fraction of the trigger, the conversation re-crosses it almost
+immediately and you pay a summarizer call every turn. The default leaves a wide
+margin; a trigger set near per-turn size will thrash. A compaction that would
+not actually shrink the context is refused outright — a four-section summary of
+very little is bigger than the little it replaced, and recording it would
+burden every later turn permanently.
+
+**The trigger counts tool call arguments, not just message content.** A
+`write_file` carries the whole file in its arguments and answers with one line
+of confirmation, so counting content alone saw 224 tokens where the real
+payload was nearer 2,600 — the trigger would have fired long after it should
+have, or never.
+
 **The `compact` trigger is high** (≈120k tokens). Anthropic's server-side
 compaction defaults to 150k input tokens and refuses to be configured below
 50k; its tool-result clearing triggers at 100k. A trigger an order of magnitude

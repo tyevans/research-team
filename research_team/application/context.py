@@ -35,6 +35,9 @@ class Compaction:
     summary: str
     through_index: int
     """1-based index of the last message the summary stands in for."""
+    tokens_before: int = 0
+    """What the conversation cost when this was decided, if the strategy counts."""
+    tokens_after: int = 0
 
 
 @dataclass(frozen=True)

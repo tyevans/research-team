@@ -112,7 +112,13 @@ class CodingSession(DeclarativeAggregate[SessionState]):
         )
 
     def compact_conversation(
-        self, summary: str, through_index: int, strategy: str
+        self,
+        summary: str,
+        through_index: int,
+        strategy: str,
+        *,
+        tokens_before: int = 0,
+        tokens_after: int = 0,
     ) -> None:
         """Record that a summary now stands in for the first `through_index`
         messages, as far as the model is concerned.
@@ -133,6 +139,8 @@ class CodingSession(DeclarativeAggregate[SessionState]):
             summary=summary,
             through_index=through_index,
             strategy=strategy,
+            tokens_before=tokens_before,
+            tokens_after=tokens_after,
         )
 
     def record_fork_source(self, source_session_id: UUID, at_event: int) -> None:
