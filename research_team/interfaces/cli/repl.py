@@ -63,17 +63,32 @@ class Repl:
         return cls(service, await service.create_session())
 
 
+MIN_PREFIX = 4
+"""Shorter than this is a list position, never an id prefix.
+
+Both readings are possible for a short run of digits, and picking whichever
+happens to match makes the command's behaviour depend on the random ids in the
+database: `/resume 97` would usually report a bad position and occasionally
+resume a session that happened to start with "97". Session ids are shown eight
+characters wide, so a one- or two-character "prefix" was never one.
+"""
+
+
 async def _resolve_session(repl: Repl, argument: str) -> UUID | str:
     """Accept a 1-based list position or an id prefix. Returns an error string.
 
-    A digit string is only read as a position when it *is* one. Session ids are
-    hex, so roughly one in forty starts with eight digits -- and treating those
-    as an out-of-range list position made exactly those sessions impossible to
-    resume by prefix.
+    A digit string is read as a position when it is a plausible one, and only
+    then. Session ids are hex, so roughly one in forty starts with eight
+    digits -- treating those as an out-of-range position made exactly those
+    sessions impossible to resume by the prefix the UI prints.
     """
     summaries = await repl.service.list_sessions()
+    looks_like_position = argument.isdigit() and len(argument) < MIN_PREFIX
+
     if argument.isdigit() and 1 <= int(argument) <= len(summaries):
         return summaries[int(argument) - 1].session_id
+    if looks_like_position:
+        return f"no session {argument}: {len(summaries)} stored"
 
     matches = [s for s in summaries if str(s.session_id).startswith(argument)]
     if len(matches) == 1:
@@ -81,7 +96,6 @@ async def _resolve_session(repl: Repl, argument: str) -> UUID | str:
     if len(matches) > 1:
         return f"{argument!r} matches {len(matches)} sessions -- use more characters"
     if argument.isdigit():
-        # Nothing matched it as a prefix either, so it was meant as a position.
         return f"no session {argument}: {len(summaries)} stored"
     return f"no session matching {argument!r}"
 
