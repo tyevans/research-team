@@ -102,7 +102,7 @@ async def test_a_finished_turn_frees_the_session(fast_supervisor):
     await supervisor.run(session_id, "hello")
 
     assert not supervisor.is_running(session_id)
-    assert supervisor.running_sessions() == []
+    assert supervisor.running(session_id) is None
 
 
 # ---------------- cancelling ----------------

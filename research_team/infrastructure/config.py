@@ -17,7 +17,7 @@ DEFAULT_CONTEXT_MODE = "full"
 
 DEFAULT_CONTEXT_TRIGGER_TOKENS = 120_000
 DEFAULT_CONTEXT_KEEP = 6
-DEFAULT_CONTEXT_MAX_RESULT_CHARS = 2_000
+DEFAULT_CONTEXT_CLEAR_OVER_CHARS = 2_000
 
 
 def default_db_path() -> str:
@@ -83,10 +83,10 @@ def context_keep() -> int:
     return int(os.getenv("AGENT_CONTEXT_KEEP", DEFAULT_CONTEXT_KEEP))
 
 
-def context_max_result_chars() -> int:
-    """How much of an older tool result `elide` keeps before cutting.
+def context_clear_over_chars() -> int:
+    """How long an older tool result may be before `elide` clears it.
 
-    Enough to identify what the result was -- usually its first line -- and no
-    more, since the agent can read the file again if it needs the rest.
+    Not a truncation length -- a result over this size is replaced outright,
+    because a partial result reads as a whole one.
     """
-    return int(os.getenv("AGENT_CONTEXT_MAX_RESULT", DEFAULT_CONTEXT_MAX_RESULT_CHARS))
+    return int(os.getenv("AGENT_CONTEXT_CLEAR_OVER", DEFAULT_CONTEXT_CLEAR_OVER_CHARS))

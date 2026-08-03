@@ -88,7 +88,7 @@ def compact_soon(monkeypatch):
 def elide_soon(monkeypatch):
     """Aggressive enough that a handful of file reads trip it."""
     monkeypatch.setenv("AGENT_CONTEXT_KEEP", "1")
-    monkeypatch.setenv("AGENT_CONTEXT_MAX_RESULT", "200")
+    monkeypatch.setenv("AGENT_CONTEXT_CLEAR_OVER", "200")
 
 
 @pytest.fixture(autouse=True)

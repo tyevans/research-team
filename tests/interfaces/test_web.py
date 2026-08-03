@@ -369,16 +369,15 @@ async def test_stream_reaches_a_real_browser_over_a_real_socket(db_path, fake_mo
     received: list[dict] = []
 
     async def listen() -> None:
-        async with AsyncClient(timeout=20) as browser:
-            async with browser.stream(
-                "GET", "http://127.0.0.1:8749/api/stream"
-            ) as response:
-                assert response.status_code == 200
-                assert "text/event-stream" in response.headers["content-type"]
-                async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        received.append(json.loads(line[len("data: ") :]))
-                        return
+        async with AsyncClient(timeout=20) as browser, browser.stream(
+            "GET", "http://127.0.0.1:8749/api/stream"
+        ) as response:
+            assert response.status_code == 200
+            assert "text/event-stream" in response.headers["content-type"]
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    received.append(json.loads(line[len("data: ") :]))
+                    return
 
     listener = asyncio.create_task(listen())
     try:

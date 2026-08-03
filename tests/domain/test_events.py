@@ -1,23 +1,23 @@
 from uuid import uuid4
 
 import pytest
+from eventsource.domain.event_registry import get_event_class
 from pydantic import ValidationError
 
 from research_team.domain.events import (
-    ConversationCompacted,
     SESSION_EVENTS,
     AssistantMessageAdded,
-    SessionForkedFrom,
-    TurnFailed,
+    ConversationCompacted,
     FileDeleted,
     FileEdited,
     FileWritten,
+    SessionForkedFrom,
     SessionStarted,
     ToolResultRecorded,
     TurnCompleted,
+    TurnFailed,
     UserMessageSent,
 )
-from eventsource.domain.event_registry import get_event_class
 
 
 def test_all_events_exported():

@@ -92,7 +92,7 @@ def test_inner_layers_name_no_framework(layer: str, module: Path) -> None:
 
 def test_only_the_entrypoint_imports_the_composition_root() -> None:
     """`composition` may know every layer, so no layer may know `composition`."""
-    for layer, module in ALL_MODULES:
+    for _, module in ALL_MODULES:
         assert "composition" not in _imported_layers(module), (
             f"{module.relative_to(PACKAGE)} imports the composition root; "
             "let the entrypoint inject what it needs"

@@ -35,7 +35,9 @@ def scripted_model(fake_model):
     return fake_model
 
 
-async def test_refolding_reproduces_state_exactly(build_service, store, db_path, scripted_model):
+async def test_refolding_reproduces_state_exactly(
+    build_service, store, db_path, scripted_model
+):
     service = build_service(model=scripted_model, db_path=db_path)
     session_id = await service.create_session()
     await service.run_turn(session_id, "create app.py")

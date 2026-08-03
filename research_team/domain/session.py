@@ -9,14 +9,14 @@ from pydantic import BaseModel, Field
 from research_team.domain.events import (
     AssistantMessageAdded,
     ConversationCompacted,
-    SessionForkedFrom,
-    TurnFailed,
     FileDeleted,
     FileEdited,
     FileWritten,
+    SessionForkedFrom,
     SessionStarted,
     ToolResultRecorded,
     TurnCompleted,
+    TurnFailed,
     UserMessageSent,
 )
 

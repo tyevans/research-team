@@ -1,7 +1,6 @@
 from uuid import UUID, uuid4
 
 import pytest
-
 from langchain_core.messages import AIMessage
 
 from research_team.domain import FileEdited, FileWritten, SessionStarted, TurnCompleted

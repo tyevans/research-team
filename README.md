@@ -59,7 +59,7 @@ variable:
 | `AGENT_CONTEXT` | `full` | how this instance manages context: `full`, `elide`, `compact`, `delegate` |
 | `AGENT_CONTEXT_TRIGGER` | `120000` | approximate tokens of live conversation before `compact` summarizes |
 | `AGENT_CONTEXT_KEEP` | `6` | recent messages (`compact`) or tool results (`elide`) left untouched |
-| `AGENT_CONTEXT_MAX_RESULT` | `2000` | tool results longer than this are cleared under `elide` |
+| `AGENT_CONTEXT_CLEAR_OVER` | `2000` | tool results longer than this are cleared outright under `elide` |
 
 ## REPL commands
 

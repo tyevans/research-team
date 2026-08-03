@@ -2,11 +2,10 @@
 
 from collections.abc import Sequence
 
+from deepagents import create_deep_agent
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, ToolMessage
 from langchain_openai import ChatOpenAI
-
-from deepagents import create_deep_agent
 
 from research_team.application import ActivityReporter, TurnResult
 from research_team.domain import CodingSession

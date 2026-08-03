@@ -63,7 +63,7 @@ def _context_parts(
         return (
             ElideToolResults(
                 keep_results=config.context_keep(),
-                max_result_chars=config.context_max_result_chars(),
+                clear_over_chars=config.context_clear_over_chars(),
             ),
             (),
             "",
