@@ -504,3 +504,68 @@ async def test_a_failed_turn_is_recorded_and_reported(app_and_client, monkeypatc
     body = (await client.get(f"/api/sessions/{session_id}")).json()
     assert body["messages"] == []
     assert body["turn_index"] == 0
+
+
+# ---------------- reading files in the past ----------------
+
+
+async def test_a_file_can_be_read_as_of_an_earlier_event(written):
+    """Scrubbing must reach file *contents*, not just the file list."""
+    client, session_id = written
+    events = (await client.get(f"/api/sessions/{session_id}/events")).json()
+    write_index = next(row["index"] for row in events if row["type"] == "FileWritten")
+
+    past = (
+        await client.get(
+            f"/api/sessions/{session_id}/files",
+            params={"path": "/hello.py", "at": write_index},
+        )
+    ).json()
+    head = (
+        await client.get(
+            f"/api/sessions/{session_id}/files", params={"path": "/hello.py"}
+        )
+    ).json()
+
+    assert past["at"] == write_index
+    assert "hi" in past["content"]
+    assert "hello" not in past["content"]
+    assert "hello" in head["content"]
+
+
+async def test_a_file_deleted_later_is_still_readable_in_the_past(db_path, fake_model):
+    """The headline case: seeing a deleted file again is the point."""
+    application = build_application(model=fake_model, db_path=db_path)
+    api = create_app(application.service, application.feed)
+    session_id = await application.service.create_session()
+    session = await application.service.load(session_id)
+    session.write_file("/doomed.py", {"content": "still here\n"})
+    session.delete_file("/doomed.py")
+    await application.service._repository.save(session)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        events = (await client.get(f"/api/sessions/{session_id}/events")).json()
+        written_at = next(r["index"] for r in events if r["type"] == "FileWritten")
+
+        gone = await client.get(
+            f"/api/sessions/{session_id}/files", params={"path": "/doomed.py"}
+        )
+        past = await client.get(
+            f"/api/sessions/{session_id}/files",
+            params={"path": "/doomed.py", "at": written_at},
+        )
+
+    assert gone.status_code == 404
+    assert past.status_code == 200
+    assert past.json()["content"] == "still here\n"
+    await application.close()
+
+
+async def test_reading_a_file_at_an_impossible_point_is_400(written):
+    client, session_id = written
+    response = await client.get(
+        f"/api/sessions/{session_id}/files", params={"path": "/hello.py", "at": 999}
+    )
+    assert response.status_code == 400

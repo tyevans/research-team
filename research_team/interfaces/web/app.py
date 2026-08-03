@@ -91,12 +91,24 @@ def create_app(service: SessionService, feed: LiveFeed) -> FastAPI:
         return session_view(session, await service.history(session_id), at=at)
 
     @app.get("/api/sessions/{session_id}/files")
-    async def get_file(session_id: UUID, path: str):
-        session = await _load(session_id)
+    async def get_file(session_id: UUID, path: str, at: int | None = None):
+        """A file's contents, at HEAD or as of event `at`.
+
+        Scrubbing has to be able to read a file that no longer exists at HEAD --
+        seeing a deleted file again is the point of time travel, not an error.
+        """
+        if at is None:
+            session = await _load(session_id)
+        else:
+            try:
+                session = await service.state_at(session_id, at)
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
         entry = session.state.files.get(path)
         if entry is None:
-            raise HTTPException(status_code=404, detail=f"{path}: not found")
-        return {"path": path, "content": entry.get("content", "")}
+            moment = "at HEAD" if at is None else f"as of event {at}"
+            raise HTTPException(status_code=404, detail=f"{path}: not found {moment}")
+        return {"path": path, "content": entry.get("content", ""), "at": at}
 
     @app.get("/api/sessions/{session_id}/files/history")
     async def get_file_history(session_id: UUID, path: str):

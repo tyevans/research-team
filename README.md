@@ -133,6 +133,19 @@ conversation messages come back as `RecordedMessage` values for the use case to
 append. That is what keeps a turn all-or-nothing: the service decides whether
 the turn is committed at all, and a turn that raises is discarded whole.
 
+**Concurrency, and its one limit.** The store serialises every statement
+through a single lock on a single connection, and `AggregateRepository.save()`
+appends with an expected version. So two turns posted to one session resolve as
+one success and one `OptimisticLockError` — mapped to HTTP 409 — with the
+loser's events discarded whole, leaving exactly one turn in the log. Turns on
+different sessions run concurrently, and reads during a write are safe.
+
+That safety is **single-process**: it rests on one in-process lock over one
+connection. Running the web UI under multiple workers (`uvicorn --workers N`)
+would give each process its own lock and reintroduce the race, where SQLite's
+own locking would surface it as a busy error rather than a clean 409. Serve it
+from one process.
+
 Scrubbing is the payoff of taking event sourcing seriously: `state_at(session, n)`
 folds the first `n` events and returns the aggregate, so viewing any past moment
 writes nothing and forks nothing. The live view is the same idea in the other
@@ -152,7 +165,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-236 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+242 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
 `tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
 `tests/integration` for the cross-layer ones.
 

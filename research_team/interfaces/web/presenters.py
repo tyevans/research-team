@@ -167,11 +167,13 @@ def tree_view(nodes: list[ForkNode]) -> list[dict[str, Any]]:
 
 
 def feed_event(session_id: UUID, event: DomainEvent, index: int | None) -> dict[str, Any]:
-    """One live event, as pushed over SSE."""
+    """One live event, as pushed over SSE.
+
+    Carries the same fields as a timeline row, so a live-appended event renders
+    identically to a fetched one and the browser needs no follow-up request to
+    colour it correctly.
+    """
     return {
         "session_id": str(session_id),
-        "type": type(event).__name__,
-        "occurred_at": event.occurred_at.isoformat(),
-        "summary": event_summary(event),
-        "index": index,
+        **event_row(index if index is not None else 0, event),
     }

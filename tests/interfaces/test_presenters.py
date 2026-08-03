@@ -217,3 +217,46 @@ def test_file_history_exposes_the_edit_strings_for_diffing():
 
 def test_file_history_of_an_untouched_path_is_empty():
     assert file_history([], "/nothing.py") == []
+
+
+# ---------------- the live feed payload ----------------
+
+
+def test_a_feed_event_carries_everything_a_timeline_row_does():
+    """A live-appended event must render identically to a fetched one, so the
+    browser never needs a follow-up request just to colour it."""
+    from research_team.interfaces.web.presenters import feed_event
+
+    session = uuid4()
+    event = make(FileWritten, path="/a.py", file_data={"content": "x"})
+
+    payload = feed_event(session, event, 4)
+    row = event_row(4, event)
+
+    assert payload["session_id"] == str(session)
+    for key, value in row.items():
+        assert payload[key] == value
+
+
+def test_a_feed_event_marks_an_errored_tool_result():
+    from research_team.interfaces.web.presenters import feed_event
+
+    event = make(
+        ToolResultRecorded,
+        message={"type": "tool", "data": {"content": "boom"}},
+        is_error=True,
+    )
+    assert feed_event(uuid4(), event, 2)["is_error"] is True
+
+
+def test_a_feed_event_always_has_a_summary_string():
+    """The browser dedupes path against summary, so summary is never null."""
+    from research_team.interfaces.web.presenters import feed_event
+
+    for event in (
+        make(FileWritten, path="/a.py", file_data={"content": "x"}),
+        make(SessionStarted, system_prompt="p", model_name="m"),
+        make(TurnCompleted, turn_index=1),
+    ):
+        payload = feed_event(uuid4(), event, 1)
+        assert isinstance(payload["summary"], str)
