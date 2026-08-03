@@ -109,8 +109,18 @@ def format_file_history(events: list[DomainEvent], path: str) -> str:
     return "\n".join(rows) if rows else f"(no history for {path})"
 
 
-def format_state(session: CodingSession, event_count: int) -> str:
+def format_state(
+    session: CodingSession, event_count: int, context_mode: str = "full"
+) -> str:
     state = session.state
+    compacted = (
+        f"\ncontext  {context_mode}"
+        + (
+            f" ({state.compacted_through} message(s) behind a summary)"
+            if state.compacted_through
+            else ""
+        )
+    )
     return (
         f"session  {state.session_id}\n"
         f"events   {event_count}\n"
@@ -122,6 +132,7 @@ def format_state(session: CodingSession, event_count: int) -> str:
             if state.forked_from
             else ""
         )
+        + compacted
     )
 
 

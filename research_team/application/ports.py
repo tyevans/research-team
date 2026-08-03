@@ -130,6 +130,15 @@ class TurnExecutor(Protocol):
         self,
         session: CodingSession,
         *,
+        messages: list[dict],
         system_prompt: str,
         on_activity: ActivityReporter | None = None,
-    ) -> TurnResult: ...
+    ) -> TurnResult:
+        """Run one pass over `messages`, which is what the model will see.
+
+        The caller chooses those, rather than the executor reading them off the
+        session: what the model is shown is a use-case decision (see
+        `research_team.application.context`), and the executor must not quietly
+        disagree with what the caller counted as sent.
+        """
+        ...

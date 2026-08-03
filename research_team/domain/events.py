@@ -67,6 +67,27 @@ class TurnFailed(DomainEvent):
 
 
 @register_event
+class ConversationCompacted(DomainEvent):
+    """Older messages were replaced, for the model's benefit, by a summary.
+
+    The messages themselves are not removed -- nothing is ever removed. This
+    records a decision about what the *model* is shown from here on, so the
+    fold can apply it while the log still holds every original message. Replay
+    stays exact, and folding to a point before this event shows the
+    conversation as it was.
+
+    `through_index` is the 1-based index, within the session's message list, of
+    the last message the summary stands in for.
+    """
+
+    aggregate_type: str = "CodingSession"
+    summary: str
+    through_index: int
+    strategy: str
+    """Which strategy produced this, so a log reader knows what made the call."""
+
+
+@register_event
 class SessionForkedFrom(DomainEvent):
     """Records that this stream was branched off another one.
 
@@ -111,6 +132,7 @@ class FileDeleted(DomainEvent):
 
 SESSION_EVENTS: tuple[type[DomainEvent], ...] = (
     SessionStarted,
+    ConversationCompacted,
     UserMessageSent,
     AssistantMessageAdded,
     ToolResultRecorded,

@@ -4,6 +4,13 @@ Depends on the domain and on its own port declarations -- never on a concrete
 store, model provider, or user interface.
 """
 
+from research_team.application.context import (
+    Compaction,
+    ContextStrategy,
+    ElideToolResults,
+    FullHistory,
+    PreparedContext,
+)
 from research_team.application.live_feed import LiveFeed
 from research_team.application.ports import (
     ActivityReporter,
@@ -38,6 +45,11 @@ __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "ActivityReporter",
     "Cancellation",
+    "Compaction",
+    "ContextStrategy",
+    "ElideToolResults",
+    "FullHistory",
+    "PreparedContext",
     "RunningTurn",
     "EventFeed",
     "FeedEntry",

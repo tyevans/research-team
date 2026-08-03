@@ -56,6 +56,10 @@ variable:
 | `AGENT_DB` | `~/.research-team/sessions.db` | SQLite file holding all sessions |
 | `AGENT_WEB_HOST` | `127.0.0.1` | interface the web UI binds to |
 | `AGENT_WEB_PORT` | `8000` | port the web UI binds to |
+| `AGENT_CONTEXT` | `full` | how this instance manages context: `full`, `elide`, `compact`, `delegate` |
+| `AGENT_CONTEXT_TRIGGER` | `40000` | characters of live conversation before `compact` summarizes |
+| `AGENT_CONTEXT_KEEP` | `6` | recent messages (`compact`) or tool results (`elide`) left untouched |
+| `AGENT_CONTEXT_MAX_RESULT` | `2000` | characters kept from an older tool result under `elide` |
 
 ## REPL commands
 
@@ -176,6 +180,47 @@ The REPL does show tool-by-tool progress, because the executor reports activity
 to it directly through `on_activity` rather than through the log. Giving the web
 UI the same would need a second channel that is not the event stream.
 
+## Context management
+
+Every turn re-sends the conversation, so a session's cost grows with its
+length and eventually hits the window. Four modes, chosen per instance with
+`AGENT_CONTEXT`, differ in what they do about it:
+
+| Mode | What it does | Costs | Best when |
+|---|---|---|---|
+| `full` | sends everything | nothing | short sessions; the default |
+| `elide` | shortens older tool results, keeping the recent ones whole | nothing — pure and deterministic | the context is mostly file reads |
+| `compact` | summarizes the older conversation, recording the summary as an event | one model call per compaction | the context is mostly prose |
+| `delegate` | gives the agent a `worker` subagent so bulky work happens in a fresh context | more model calls, less parent context | work that would fill the log with tool output |
+
+**Where the intervention happens matters more than which one you pick.** It
+happens at the *fold* — the log always holds every message, and a strategy
+decides which of them, and in what form, the model is shown next turn.
+
+That is not a stylistic choice. Measured against this codebase, langchain's
+`SummarizationMiddleware` rewrites the running message list via
+`RemoveMessage(REMOVE_ALL_MESSAGES)`, and doing so silently breaks how a turn
+is recorded: we identify what a turn produced by slicing the agent's returned
+list at the length we sent, and rewritten history makes that slice meaningless.
+Turns then land in the log missing their assistant messages and tool results —
+`UserMessageSent → FileWritten → TurnCompleted`, a log claiming the agent wrote
+a file with no reply and no tool call. It does not even fail loudly. Middleware
+that only rewraps the outbound request is safe by the same reasoning:
+`ContextEditingMiddleware` hooks `wrap_model_call`, leaves state alone, and is
+what `elide` is modelled on.
+
+`compact` records its decision as a `ConversationCompacted` event rather than
+recomputing a summary each turn. So it costs one model call rather than one per
+turn, two replays of a log produce the same context, and folding to a point
+before the compaction shows the conversation as it was. The messages it
+summarizes are never removed — only hidden from the model.
+
+`delegate` is the odd one out: it does not transform anything. Subagents share
+the backend, so a subagent's file writes are recorded on the same stream, while
+its reads and reasoning never enter the parent's context. Measured here, a
+delegated turn left four messages in the parent — the request, the `task` call,
+the subagent's report, and the reply.
+
 Scrubbing is the payoff of taking event sourcing seriously: `state_at(session, n)`
 folds the first `n` events and returns the aggregate, so viewing any past moment
 writes nothing and forks nothing. The live view is the same idea in the other
@@ -195,7 +240,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-277 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+320 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
 `tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
 `tests/integration` for the cross-layer ones.
 

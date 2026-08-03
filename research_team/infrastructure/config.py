@@ -12,6 +12,13 @@ DEFAULT_MODEL = "qwen3.6-27b-mtp"
 DEFAULT_BASE_URL = "http://localhost:8080/v1/"
 DEFAULT_API_KEY = "not-needed"
 
+CONTEXT_MODES = ("full", "elide", "compact", "delegate")
+DEFAULT_CONTEXT_MODE = "full"
+
+DEFAULT_CONTEXT_TRIGGER_CHARS = 40_000
+DEFAULT_CONTEXT_KEEP = 6
+DEFAULT_CONTEXT_MAX_RESULT_CHARS = 2_000
+
 
 def default_db_path() -> str:
     """Where sessions live. Sessions persist across runs and are resumable."""
@@ -41,3 +48,46 @@ def web_host() -> str:
 
 def web_port() -> int:
     return int(os.getenv("AGENT_WEB_PORT", "8000"))
+
+
+def context_mode() -> str:
+    """How this instance manages a conversation that outgrows the window.
+
+    One instance, one mode: the choice shapes what every session on it sends
+    to the model, and mixing them within a process would make "why did this
+    turn see that?" unanswerable.
+    """
+    configured = os.getenv("AGENT_CONTEXT", DEFAULT_CONTEXT_MODE).strip().lower()
+    if configured not in CONTEXT_MODES:
+        raise ValueError(
+            f"AGENT_CONTEXT={configured!r} is not one of {', '.join(CONTEXT_MODES)}"
+        )
+    return configured
+
+
+def context_trigger_chars() -> int:
+    """How much conversation `compact` tolerates before summarizing.
+
+    In characters rather than tokens: the count only has to be monotonic in the
+    real thing to decide when to act, and characters need no tokenizer and no
+    per-model calibration.
+    """
+    return int(os.getenv("AGENT_CONTEXT_TRIGGER", DEFAULT_CONTEXT_TRIGGER_CHARS))
+
+
+def context_keep() -> int:
+    """How much of the recent conversation a strategy leaves alone.
+
+    Messages for `compact`, tool results for `elide` -- in both cases the tail
+    the agent is most likely to still be using.
+    """
+    return int(os.getenv("AGENT_CONTEXT_KEEP", DEFAULT_CONTEXT_KEEP))
+
+
+def context_max_result_chars() -> int:
+    """How much of an older tool result `elide` keeps before cutting.
+
+    Enough to identify what the result was -- usually its first line -- and no
+    more, since the agent can read the file again if it needs the rest.
+    """
+    return int(os.getenv("AGENT_CONTEXT_MAX_RESULT", DEFAULT_CONTEXT_MAX_RESULT_CHARS))

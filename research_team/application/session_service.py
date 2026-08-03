@@ -22,6 +22,7 @@ from research_team.application.ports import (
     TurnAccountingError,
     TurnExecutor,
 )
+from research_team.application.context import ContextStrategy, FullHistory
 from research_team.application.summaries import SessionSummary, summarize_sessions
 from research_team.domain import CodingSession
 
@@ -72,10 +73,17 @@ class SessionService:
         executor: TurnExecutor,
         *,
         default_system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        context: ContextStrategy | None = None,
     ) -> None:
         self._repository = repository
         self._executor = executor
         self._default_system_prompt = default_system_prompt
+        self._context = context if context is not None else FullHistory()
+
+    @property
+    def context_strategy(self) -> str:
+        """Which context strategy this instance runs under."""
+        return self._context.name
 
     @property
     def default_system_prompt(self) -> str:
@@ -149,9 +157,24 @@ class SessionService:
         first_index = aggregate.version + 1
         aggregate.send_user_message(self._executor.encode_user_message(user_input))
 
+        # What the model sees is decided here, before the turn, and any
+        # decision that needs remembering becomes an event of its own -- so a
+        # replay of this log reproduces this context, not merely this outcome.
+        prepared = await self._context.prepare(aggregate.state)
+        if prepared.compaction is not None:
+            aggregate.compact_conversation(
+                prepared.compaction.summary,
+                prepared.compaction.through_index,
+                self._context.name,
+            )
+        if on_activity is not None:
+            for note in prepared.notes:
+                on_activity(f"· {note}")
+
         try:
             result = await self._executor.execute(
                 aggregate,
+                messages=prepared.messages,
                 system_prompt=aggregate.state.system_prompt
                 or self._default_system_prompt,
                 on_activity=on_activity,
