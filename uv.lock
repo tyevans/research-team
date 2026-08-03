@@ -312,16 +312,16 @@ wheels = [
 
 [[package]]
 name = "eventsource-py"
-version = "0.9.0"
+version = "0.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "orjson" },
     { name = "pydantic" },
     { name = "sqlalchemy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7d/88/75ce0e63023cfc3c82243e8fa231d77a0098e8dd8c7baa8d298a675fbb0b/eventsource_py-0.9.0.tar.gz", hash = "sha256:d1612f480ee995d0a02119e61c56ad1d90e7708509e49917cc77df6ca6c3d815", size = 2799940, upload-time = "2026-08-02T05:54:34.592Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5d/21/e0dd595f10f841abc75b23880543cda1eb4628c3459d6fa1a6a9fe49799a/eventsource_py-0.9.1.tar.gz", hash = "sha256:c0e7d288477daaac31cb0ec61426d02847a725e20dd5e2af16ba786011ec889e", size = 2805978, upload-time = "2026-08-03T06:24:19.836Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5f/3f/aadc0567201a9d5e59a40bab67bf7337e1d92c55bd1d10b2c368d82f2d72/eventsource_py-0.9.0-py3-none-any.whl", hash = "sha256:693a98ab42a8bcb26e13acad9c744d916076615fdc8ca1e655cc115d0fa3e5f1", size = 706880, upload-time = "2026-08-02T05:54:33.035Z" },
+    { url = "https://files.pythonhosted.org/packages/af/b0/1fd42ead6f161ba45a8f3d1b59441a683b80e2f84712b10a419902a08b56/eventsource_py-0.9.1-py3-none-any.whl", hash = "sha256:4282f5a81aecdfe7fd6c81f2e6856dfcc43e4023294b9b93e662afc500d81559", size = 707027, upload-time = "2026-08-03T06:24:17.688Z" },
 ]
 
 [package.optional-dependencies]
@@ -1187,7 +1187,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "deepagents", specifier = ">=0.7.1,<0.8" },
-    { name = "eventsource-py", extras = ["sqlite"], specifier = ">=0.9.0" },
+    { name = "eventsource-py", extras = ["sqlite"], specifier = ">=0.9.1" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "langchain-openai", specifier = ">=1.4.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.1" },
