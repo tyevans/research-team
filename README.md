@@ -30,7 +30,7 @@ uv run web.py        # http://127.0.0.1:8000
 The web UI is built around the event log rather than the chat: a timeline you
 can scrub to any point (the workspace refolds to that moment — no fork, no
 write), per-file provenance with real diffs of each recorded edit, and the fork
-lineage as a tree. Turns stream in live over SSE. Both front ends share one
+lineage as a tree. New events reach every open browser over SSE. Both front ends share one
 SQLite database, so a session started in the terminal opens in the browser.
 
 From the REPL you get a prompt. Type anything to send it to the agent as a turn; type a
@@ -95,6 +95,9 @@ than half-applied.
 The log lives in SQLite. Listing sessions is a fold over `read_category`, not a
 separate table we maintain. Turns are streamed with `stream_mode="values"`, which
 gives both live tool-by-tool progress and the final message list in one pass.
+That progress goes to whoever started the turn, through `on_activity` — it is
+not in the log, so it does not reach a watching browser (see the live feed's
+limits below).
 
 ## Layout
 
@@ -164,6 +167,15 @@ would give each process its own lock and reintroduce the race, where SQLite's
 own locking would surface it as a busy error rather than a clean 409. Serve it
 from one process.
 
+**What the live feed can and cannot show.** A turn's events all arrive at the
+same instant — the moment it commits — because the feed reads the store and a
+turn is atomic. That is the all-or-nothing guarantee seen from the outside, and
+it is the correct behaviour, but it means SSE cannot narrate a turn *while* it
+runs: a browser watching a sixty-second turn sees nothing, then sees all of it.
+The REPL does show tool-by-tool progress, because the executor reports activity
+to it directly through `on_activity` rather than through the log. Giving the web
+UI the same would need a second channel that is not the event stream.
+
 Scrubbing is the payoff of taking event sourcing seriously: `state_at(session, n)`
 folds the first `n` events and returns the aggregate, so viewing any past moment
 writes nothing and forks nothing. The live view is the same idea in the other
@@ -183,7 +195,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-271 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+274 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
 `tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
 `tests/integration` for the cross-layer ones.
 
