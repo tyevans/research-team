@@ -5,7 +5,16 @@ from uuid import uuid4
 import pytest
 
 from research_team.application import summarize_sessions
-from research_team.domain import CodingSession
+from research_team.domain import (
+    CodingSession,
+    CompleteTurn,
+    DeleteFile,
+    FailTurn,
+    RecordForkSource,
+    SendUserMessage,
+    StartSession,
+    WriteFile,
+)
 
 SYSTEM_PROMPT = "You are a coding agent."
 MODEL_NAME = "test-model"
@@ -19,9 +28,9 @@ def user_message(text: str) -> dict:
 def make_session(aggregates):
     def make(first_message: str | None = None) -> CodingSession:
         aggregate = aggregates.create_new(uuid4())
-        aggregate.start(SYSTEM_PROMPT, MODEL_NAME)
+        aggregate.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
         if first_message is not None:
-            aggregate.send_user_message(user_message(first_message))
+            aggregate.execute(SendUserMessage(message=user_message(first_message)))
         return aggregate
 
     return make
@@ -49,12 +58,12 @@ def test_sessions_are_newest_first(make_session):
 
 def test_counts_turns_and_surviving_files(make_session):
     session = make_session("do things")
-    session.complete_turn()
-    session.write_file("/a.py", {"content": "a"})
-    session.write_file("/b.py", {"content": "b"})
-    session.delete_file("/b.py")
-    session.send_user_message(user_message("again"))
-    session.complete_turn()
+    session.execute(CompleteTurn())
+    session.execute(WriteFile(path="/a.py", file_data={"content": "a"}))
+    session.execute(WriteFile(path="/b.py", file_data={"content": "b"}))
+    session.execute(DeleteFile(path="/b.py"))
+    session.execute(SendUserMessage(message=user_message("again")))
+    session.execute(CompleteTurn())
 
     (row,) = summaries_for(session)
 
@@ -69,8 +78,8 @@ def test_failed_turns_are_counted_and_do_not_count_as_turns(
     make_session
 ):
     session = make_session()
-    session.fail_turn(RuntimeError("boom"))
-    session.fail_turn(RuntimeError("boom again"))
+    session.execute(FailTurn.from_error(RuntimeError("boom")))
+    session.execute(FailTurn.from_error(RuntimeError("boom again")))
 
     (row,) = summaries_for(session)
 
@@ -82,7 +91,7 @@ def test_failed_turns_are_counted_and_do_not_count_as_turns(
 def test_fork_lineage_is_reported(make_session):
     source = make_session("original")
     forked = make_session("copy")
-    forked.record_fork_source(source.aggregate_id, 1)
+    forked.execute(RecordForkSource(source_session_id=source.aggregate_id, at_event=1))
 
     summaries = summaries_for(source, forked)
     rows = {row.session_id: row for row in summaries}

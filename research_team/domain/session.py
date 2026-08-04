@@ -1,11 +1,36 @@
-"""The CodingSession aggregate: the single source of truth for a session."""
+"""The CodingSession decider: the rules, as three pure functions.
 
-from typing import Any
+`initial_state` says what a session is before anything has happened, `decide`
+says which requests are legal and what facts they produce, and `evolve` says
+what each fact does to the state. None of them touch a store, a version, an
+aggregate, or anything async, so the rules can be read and tested as rules.
+
+`CodingSession` at the bottom is the shell that connects them to the library's
+machinery -- replay, snapshots, optimistic concurrency, the repository. It
+holds no logic of its own, which is the point: everything that decides
+anything is above it, and everything below it is bookkeeping.
+"""
+
+from typing import Any, Literal
 from uuid import UUID
 
-from eventsource import DeclarativeAggregate, handles
+from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent
 from pydantic import BaseModel, Field
 
+from research_team.domain.commands import (
+    CompactConversation,
+    CompleteTurn,
+    DeleteFile,
+    EditFile,
+    FailTurn,
+    RecordAssistantMessage,
+    RecordForkSource,
+    RecordToolResult,
+    SendUserMessage,
+    SessionCommand,
+    StartSession,
+    WriteFile,
+)
 from research_team.domain.events import (
     AssistantMessageAdded,
     ConversationCompacted,
@@ -25,6 +50,15 @@ class SessionState(BaseModel):
     """Everything derivable from the event stream."""
 
     session_id: UUID
+    status: Literal["new", "started"] = "new"
+    """Whether the session exists yet.
+
+    The imperative aggregate answered this with `version > 0`, which is a fact
+    about the event store rather than about a session. A decider has to phrase
+    it in the domain, because `decide` runs against a real state before any
+    event exists and has nothing else to match on.
+    """
+
     system_prompt: str = ""
     model_name: str = ""
     files: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -39,7 +73,12 @@ class SessionState(BaseModel):
     """The summary itself. The messages it replaces are still in `messages`."""
 
 
-def _outstanding_tool_call_ids(messages: list[dict[str, Any]]) -> set[str]:
+def initial_state(aggregate_id: UUID) -> SessionState:
+    """A session before anything has happened to it."""
+    return SessionState(session_id=aggregate_id)
+
+
+def outstanding_tool_call_ids(messages: list[dict[str, Any]]) -> set[str]:
     """Tool call ids requested by the last AI message but not yet answered."""
     requested: set[str] = set()
     for message in reversed(messages):
@@ -56,213 +95,212 @@ def _outstanding_tool_call_ids(messages: list[dict[str, Any]]) -> set[str]:
     return requested - answered
 
 
-class CodingSession(DeclarativeAggregate[SessionState]):
-    aggregate_type = "CodingSession"
-    requires_creation_event = True
-    schema_version = 3  # SessionState gained conversation compaction
+def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
+    """Which requests are legal, and what facts they produce.
 
-    # ---------------- commands ----------------
+    Reads as a transition table: each `case` is one legal move, or one
+    explicitly illegal one. The "session does not exist yet" rejection is a
+    single case near the top rather than a guard repeated per command -- every
+    command except `StartSession` needs a started session, and saying that
+    once is both shorter and harder to forget.
+    """
+    session_id = state.session_id
+    match command, state:
+        # ---- creation ----
+        case StartSession(system_prompt=prompt, model_name=model), SessionState(
+            status="new"
+        ):
+            return [
+                SessionStarted(
+                    aggregate_id=session_id, system_prompt=prompt, model_name=model
+                )
+            ]
+        case StartSession(), _:
+            raise CommandRejectedError("session already started")
 
-    def start(self, system_prompt: str, model_name: str) -> None:
-        if self.version > 0:
-            raise ValueError("session already started")
-        self.create_event(
-            SessionStarted, system_prompt=system_prompt, model_name=model_name
-        )
+        case _, SessionState(status="new"):
+            raise CommandRejectedError("session not started")
 
-    def send_user_message(self, message: dict[str, Any]) -> None:
-        self._require_started()
-        self.create_event(UserMessageSent, message=message)
+        # ---- conversation ----
+        case SendUserMessage(message=message), _:
+            return [UserMessageSent(aggregate_id=session_id, message=message)]
 
-    def record_assistant_message(self, message: dict[str, Any]) -> None:
-        self._require_started()
-        self.create_event(AssistantMessageAdded, message=message)
+        case RecordAssistantMessage(message=message), _:
+            return [AssistantMessageAdded(aggregate_id=session_id, message=message)]
 
-    def record_tool_result(
-        self, message: dict[str, Any], *, is_error: bool = False
-    ) -> None:
-        self._require_started()
-        call_id = message.get("data", {}).get("tool_call_id")
-        if call_id not in _outstanding_tool_call_ids(self.state.messages):
-            raise ValueError(f"no outstanding tool call with id {call_id!r}")
-        self.create_event(ToolResultRecorded, message=message, is_error=is_error)
+        case RecordToolResult(message=message, is_error=is_error), _:
+            call_id = message.get("data", {}).get("tool_call_id")
+            if call_id not in outstanding_tool_call_ids(state.messages):
+                raise CommandRejectedError(
+                    f"no outstanding tool call with id {call_id!r}"
+                )
+            return [
+                ToolResultRecorded(
+                    aggregate_id=session_id, message=message, is_error=is_error
+                )
+            ]
 
-    def complete_turn(self) -> None:
-        self._require_started()
-        self.create_event(TurnCompleted, turn_index=self.state.turn_index + 1)
+        # ---- turns ----
+        case CompleteTurn(), _:
+            return [
+                TurnCompleted(aggregate_id=session_id, turn_index=state.turn_index + 1)
+            ]
 
-    def fail_turn(self, error: BaseException, *, cancelled: bool = False) -> None:
-        """Record an attempted turn that did not complete.
+        case FailTurn(
+            error_type=error_type, error_message=error_message, cancelled=cancelled
+        ), _:
+            # turn_index is not advanced: the turn did not happen.
+            return [
+                TurnFailed(
+                    aggregate_id=session_id,
+                    turn_index=state.turn_index + 1,
+                    error_type=error_type,
+                    error_message=error_message,
+                    cancelled=cancelled,
+                )
+            ]
 
-        Does not advance turn_index: the turn did not happen. This is appended
-        to a freshly loaded aggregate, so it never carries the failed turn's
-        own events with it.
-
-        `cancelled` says the attempt was stopped on purpose. Deciding that is
-        the caller's job -- what counts as a cancellation depends on how the
-        turn was being run, which is not something the aggregate knows.
-        """
-        self._require_started()
-        self.create_event(
-            TurnFailed,
-            turn_index=self.state.turn_index + 1,
-            error_type="Cancelled" if cancelled else type(error).__name__,
-            error_message=str(error)[:500] or "cancelled",
-            cancelled=cancelled,
-        )
-
-    def compact_conversation(
-        self,
-        summary: str,
-        through_index: int,
-        strategy: str,
-        *,
-        tokens_before: int = 0,
-        tokens_after: int = 0,
-    ) -> None:
-        """Record that a summary now stands in for the first `through_index`
-        messages, as far as the model is concerned.
-
-        Refuses to go backwards or past the end: a compaction that uncovered
-        messages an earlier one had covered would leave the model seeing a
-        summary *and* the messages it summarises.
-        """
-        self._require_started()
-        if not self.state.compacted_through < through_index <= len(self.state.messages):
-            raise ValueError(
-                f"cannot compact through {through_index}: "
-                f"{len(self.state.messages)} messages, "
-                f"already compacted through {self.state.compacted_through}"
+        # ---- context ----
+        case CompactConversation(through_index=through), _ if not (
+            state.compacted_through < through <= len(state.messages)
+        ):
+            # Going backwards would uncover messages an earlier summary
+            # covered, leaving the model both a summary and its own inputs.
+            raise CommandRejectedError(
+                f"cannot compact through {through}: "
+                f"{len(state.messages)} messages, "
+                f"already compacted through {state.compacted_through}"
             )
-        self.create_event(
-            ConversationCompacted,
+        case CompactConversation(
             summary=summary,
-            through_index=through_index,
+            through_index=through,
             strategy=strategy,
-            tokens_before=tokens_before,
-            tokens_after=tokens_after,
-        )
+            tokens_before=before,
+            tokens_after=after,
+        ), _:
+            return [
+                ConversationCompacted(
+                    aggregate_id=session_id,
+                    summary=summary,
+                    through_index=through,
+                    strategy=strategy,
+                    tokens_before=before,
+                    tokens_after=after,
+                )
+            ]
 
-    def record_fork_source(self, source_session_id: UUID, at_event: int) -> None:
-        self._require_started()
-        self.create_event(
-            SessionForkedFrom,
-            source_session_id=source_session_id,
-            at_event=at_event,
-        )
+        # ---- lineage ----
+        case RecordForkSource(source_session_id=source, at_event=at), _:
+            return [
+                SessionForkedFrom(
+                    aggregate_id=session_id, source_session_id=source, at_event=at
+                )
+            ]
 
-    def write_file(self, path: str, file_data: dict[str, Any]) -> None:
-        self._require_started()
-        self.create_event(FileWritten, path=path, file_data=file_data)
+        # ---- files ----
+        case WriteFile(path=path, file_data=file_data), _:
+            return [FileWritten(aggregate_id=session_id, path=path, file_data=file_data)]
 
-    def edit_file(
-        self,
-        path: str,
-        file_data: dict[str, Any],
-        old_string: str,
-        new_string: str,
-        replace_all: bool,
-    ) -> None:
-        self._require_started()
-        self._require_file(path)
-        self.create_event(
-            FileEdited,
+        case EditFile(path=path), _ if path not in state.files:
+            raise CommandRejectedError(f"file {path!r} does not exist")
+        case EditFile(
             path=path,
             file_data=file_data,
-            old_string=old_string,
-            new_string=new_string,
+            old_string=old,
+            new_string=new,
             replace_all=replace_all,
-        )
+        ), _:
+            return [
+                FileEdited(
+                    aggregate_id=session_id,
+                    path=path,
+                    file_data=file_data,
+                    old_string=old,
+                    new_string=new,
+                    replace_all=replace_all,
+                )
+            ]
 
-    def delete_file(self, path: str) -> None:
-        self._require_started()
-        self._require_file(path)
-        self.create_event(FileDeleted, path=path)
+        case DeleteFile(path=path), _ if path not in state.files:
+            raise CommandRejectedError(f"file {path!r} does not exist")
+        case DeleteFile(path=path), _:
+            return [FileDeleted(aggregate_id=session_id, path=path)]
 
-    # ---------------- guards ----------------
+    raise CommandRejectedError(f"unhandled command {type(command).__name__}")
 
-    def _require_started(self) -> None:
-        if self.version == 0:
-            raise ValueError("session not started")
 
-    def _require_file(self, path: str) -> None:
-        if path not in self.state.files:
-            raise ValueError(f"file {path!r} does not exist")
+def evolve(state: SessionState, event: DomainEvent) -> SessionState:
+    """What each fact does to the state.
 
-    # ---------------- reducers ----------------
+    Total on purpose: an event with no branch leaves the state alone rather
+    than raising, so a stream carrying an event this build does not know about
+    still replays instead of failing halfway through.
+    """
+    match event:
+        case SessionStarted(system_prompt=prompt, model_name=model):
+            # Replaces state wholesale: this is the creation event, and it is
+            # the only one that establishes rather than amends.
+            return SessionState(
+                session_id=state.session_id,
+                status="started",
+                system_prompt=prompt,
+                model_name=model,
+            )
 
-    @handles(SessionStarted)
-    def _on_started(self, event: SessionStarted) -> None:
-        self._state = SessionState(
-            session_id=self.aggregate_id,
-            system_prompt=event.system_prompt,
-            model_name=event.model_name,
-        )
+        case (
+            UserMessageSent(message=message)
+            | AssistantMessageAdded(message=message)
+            | ToolResultRecorded(message=message)
+        ):
+            return state.model_copy(update={"messages": [*state.messages, message]})
 
-    @handles(UserMessageSent)
-    def _on_user_message(self, event: UserMessageSent) -> None:
-        self._append_message(event.message)
+        case TurnCompleted(turn_index=turn_index):
+            return state.model_copy(update={"turn_index": turn_index})
 
-    @handles(AssistantMessageAdded)
-    def _on_assistant_message(self, event: AssistantMessageAdded) -> None:
-        self._append_message(event.message)
+        case TurnFailed():
+            # turn_index deliberately unchanged: the turn did not happen.
+            return state.model_copy(update={"failed_turns": state.failed_turns + 1})
 
-    @handles(ToolResultRecorded)
-    def _on_tool_result(self, event: ToolResultRecorded) -> None:
-        self._append_message(event.message)
+        case ConversationCompacted(summary=summary, through_index=through):
+            # `messages` is untouched: the log keeps everything, and only the
+            # view handed to the model is shortened.
+            return state.model_copy(
+                update={"compacted_through": through, "compaction_summary": summary}
+            )
 
-    @handles(TurnCompleted)
-    def _on_turn_completed(self, event: TurnCompleted) -> None:
-        self._state = self._state.model_copy(update={"turn_index": event.turn_index})
+        case SessionForkedFrom(source_session_id=source, at_event=at):
+            return state.model_copy(update={"forked_from": source, "forked_at": at})
 
-    @handles(TurnFailed)
-    def _on_turn_failed(self, event: TurnFailed) -> None:
-        # turn_index deliberately unchanged: the turn did not happen.
-        self._state = self._state.model_copy(
-            update={"failed_turns": self._state.failed_turns + 1}
-        )
+        case (
+            FileWritten(path=path, file_data=file_data)
+            | FileEdited(path=path, file_data=file_data)
+        ):
+            return state.model_copy(update={"files": {**state.files, path: file_data}})
 
-    @handles(ConversationCompacted)
-    def _on_compacted(self, event: ConversationCompacted) -> None:
-        # `messages` is untouched: the log keeps everything, and only the view
-        # handed to the model is shortened.
-        self._state = self._state.model_copy(
-            update={
-                "compacted_through": event.through_index,
-                "compaction_summary": event.summary,
-            }
-        )
+        case FileDeleted(path=path):
+            remaining = {k: v for k, v in state.files.items() if k != path}
+            return state.model_copy(update={"files": remaining})
 
-    @handles(SessionForkedFrom)
-    def _on_forked_from(self, event: SessionForkedFrom) -> None:
-        self._state = self._state.model_copy(
-            update={
-                "forked_from": event.source_session_id,
-                "forked_at": event.at_event,
-            }
-        )
+        case _:
+            return state
 
-    @handles(FileWritten)
-    def _on_file_written(self, event: FileWritten) -> None:
-        self._put_file(event.path, event.file_data)
 
-    @handles(FileEdited)
-    def _on_file_edited(self, event: FileEdited) -> None:
-        self._put_file(event.path, event.file_data)
+class CodingSession(DeciderAggregate[SessionState, SessionCommand]):
+    """The imperative shell. Holds no rules -- it delegates all three.
 
-    @handles(FileDeleted)
-    def _on_file_deleted(self, event: FileDeleted) -> None:
-        files = {k: v for k, v in self._state.files.items() if k != event.path}
-        self._state = self._state.model_copy(update={"files": files})
+    Everything the library needs from an aggregate (replay, snapshots, version
+    checks, repository integration) is inherited; everything this project
+    decides lives in the functions above.
 
-    # ---------------- reducer helpers ----------------
+    Note what is gone relative to the imperative version: there is no
+    `requires_creation_event`, because `DeciderAggregate` initialises state
+    eagerly and "not created yet" is `status="new"` instead -- a fact about
+    the session rather than about its event count.
+    """
 
-    def _append_message(self, message: dict[str, Any]) -> None:
-        self._state = self._state.model_copy(
-            update={"messages": [*self._state.messages, message]}
-        )
+    aggregate_type = "CodingSession"
+    schema_version = 4  # SessionState gained `status` for the decider port
 
-    def _put_file(self, path: str, file_data: dict[str, Any]) -> None:
-        self._state = self._state.model_copy(
-            update={"files": {**self._state.files, path: file_data}}
-        )
+    initial_state = staticmethod(initial_state)
+    decide = staticmethod(decide)
+    evolve = staticmethod(evolve)

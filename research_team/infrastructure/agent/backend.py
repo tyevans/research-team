@@ -12,6 +12,7 @@ from typing import Any
 from deepagents.backends.protocol import EditResult
 from deepagents.backends.state import StateBackend
 
+from research_team.domain import DeleteFile, EditFile, WriteFile
 from research_team.domain.session import CodingSession
 
 
@@ -28,14 +29,20 @@ class EventSourcedBackend(StateBackend):
     def _send_files_update(self, update: dict[str, Any]) -> None:
         for path, file_data in update.items():
             if file_data is None:
-                self._aggregate.delete_file(path)
+                self._aggregate.execute(DeleteFile(path=path))
             elif self._edit_intent is not None:
                 old_string, new_string, replace_all = self._edit_intent
-                self._aggregate.edit_file(
-                    path, file_data, old_string, new_string, replace_all
+                self._aggregate.execute(
+                    EditFile(
+                        path=path,
+                        file_data=file_data,
+                        old_string=old_string,
+                        new_string=new_string,
+                        replace_all=replace_all,
+                    )
                 )
             else:
-                self._aggregate.write_file(path, file_data)
+                self._aggregate.execute(WriteFile(path=path, file_data=file_data))
 
     # ---- intent capture ----
 

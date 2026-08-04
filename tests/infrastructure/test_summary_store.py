@@ -8,6 +8,10 @@ picks up where it left off instead of starting over or double-counting.
 
 from uuid import uuid4
 
+from research_team.domain import (
+    SendUserMessage,
+    StartSession,
+)
 from research_team.infrastructure.persistence import SessionSummaryStore
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
@@ -23,8 +27,10 @@ async def test_the_table_is_created_on_open(db_path):
 
 async def test_rows_outlive_the_process(db_path, repository, session_id):
     session = repository.create(session_id)
-    session.start(SYSTEM_PROMPT, MODEL_NAME)
-    session.send_user_message({"type": "human", "data": {"content": "remembered"}})
+    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(
+        SendUserMessage(message={"type": "human", "data": {"content": "remembered"}})
+    )
     events = list(session.uncommitted_events)
 
     store = await SessionSummaryStore.open(db_path)
@@ -46,8 +52,10 @@ async def test_sessions_are_listed_newest_first(db_path, repository):
     try:
         for label in ("older", "newer"):
             session = repository.create(uuid4())
-            session.start(SYSTEM_PROMPT, MODEL_NAME)
-            session.send_user_message({"type": "human", "data": {"content": label}})
+            session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+            session.execute(
+                SendUserMessage(message={"type": "human", "data": {"content": label}})
+            )
             for event in session.uncommitted_events:
                 await store.projection.handle(event)
 

@@ -18,7 +18,13 @@ from uuid import uuid4
 import aiosqlite
 import pytest
 
-from research_team.domain import CodingSession, ConversationCompacted, TurnFailed
+from research_team.domain import (
+    CodingSession,
+    ConversationCompacted,
+    SendUserMessage,
+    StartSession,
+    TurnFailed,
+)
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
 
@@ -51,7 +57,7 @@ async def _write_old_event(
 async def started(repository, session_id, db_path):
     """A session with only its creation event, written normally."""
     session = repository.create(session_id)
-    session.start(SYSTEM_PROMPT, MODEL_NAME)
+    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
     await repository.save(session)
     return session_id
 
@@ -145,9 +151,11 @@ async def test_a_schema_version_bump_falls_back_to_replay(
     fatal, so a future bump is a performance decision and not a gamble.
     """
     session = repository.create(session_id)
-    session.start(SYSTEM_PROMPT, MODEL_NAME)
+    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
     for index in range(60):  # comfortably past the snapshot threshold
-        session.send_user_message({"type": "human", "data": {"content": str(index)}})
+        session.execute(
+            SendUserMessage(message={"type": "human", "data": {"content": str(index)}})
+        )
     await repository.save(session)
     await repository.drain_snapshots()
 
