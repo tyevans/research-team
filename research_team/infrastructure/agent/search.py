@@ -23,14 +23,26 @@ _JSON_DISABLED = (
     "settings.yml. No results this time."
 )
 
+_MALFORMED_PAYLOAD = (
+    "The SearXNG instance returned JSON that was not a results object -- a "
+    "misconfigured instance or a proxy error page can do this. No results "
+    "this time."
+)
 
-def format_results(payload: dict, limit: int) -> str:
+
+def format_results(payload: object, limit: int) -> str:
     """Flatten a SearXNG payload to title/url/snippet, capped at `limit`.
 
-    Total by construction: an instance is a foreign system and a missing key is
-    an ordinary thing for one to return, not an exception for the agent to
-    reason about.
+    Total by construction: an instance is a foreign system, and `response.json()`
+    only promises valid JSON, not a dict shaped the way SearXNG's docs say --
+    a proxy error page rendered as JSON, or a future API change, can hand back
+    a list, a string, or null just as easily. A missing key inside a well-formed
+    payload is an ordinary thing for a search instance to send, not an exception
+    for the agent to reason about; a payload that isn't a dict at all gets the
+    same treatment, not a crash.
     """
+    if not isinstance(payload, dict):
+        return _MALFORMED_PAYLOAD
     results = payload.get("results") or []
     chosen = results[:limit]
     if not chosen:
@@ -71,6 +83,7 @@ def build_search_tool(
             )
             response.raise_for_status()
             payload = response.json()
+            return format_results(payload, limit)
         except ValueError:
             # Not JSON. Overwhelmingly the default-settings case, and worth
             # naming precisely -- the model cannot fix it, but the person
@@ -81,7 +94,6 @@ def build_search_tool(
         finally:
             if owned:
                 await http.aclose()
-        return format_results(payload, limit)
 
     return web_search
 

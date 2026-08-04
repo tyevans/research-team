@@ -2,6 +2,7 @@
 
 from langchain_core.messages import AIMessage
 
+from research_team.application.session_service import NO_NETWORK_CLAUSE
 from research_team.infrastructure.persistence import (
     SNAPSHOT_THRESHOLD,
     build_aggregate_repository,
@@ -61,8 +62,7 @@ async def test_reopening_keeps_the_stored_system_prompt(fake_model, db_path, bui
     # Composition appends a capability clause (no search configured here) to
     # whatever system_prompt it is given -- so the stored value is the first
     # process's prompt plus its suffix, not "DIFFERENT" plus the second's.
-    assert session.state.system_prompt.startswith("ORIGINAL")
-    assert "DIFFERENT" not in session.state.system_prompt
+    assert session.state.system_prompt == "ORIGINAL" + NO_NETWORK_CLAUSE
 
 
 async def test_files_survive_a_reopen(fake_model, db_path, build_service, repository):

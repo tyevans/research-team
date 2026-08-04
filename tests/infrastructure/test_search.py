@@ -120,6 +120,30 @@ async def test_the_default_cap_is_five_when_the_caller_does_not_choose_one():
     assert "https://5.example" not in text
 
 
+def test_format_results_rejects_a_non_dict_payload_without_raising():
+    """`response.json()` only promises valid JSON, not the dict shape SearXNG's
+    docs describe -- a list, string, or null is legal JSON a foreign instance
+    can hand back. `format_results` must stay total for all of them.
+    """
+    assert isinstance(format_results([], limit=5), str)
+    assert isinstance(format_results("oops", limit=5), str)
+    assert isinstance(format_results(None, limit=5), str)
+
+
+async def test_a_json_array_response_is_an_ordinary_tool_error_not_a_turn_failure():
+    """A misconfigured instance or a proxy error page can render as a JSON
+    array instead of the expected results object; the turn must survive it.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    tool = build_search_tool("http://searx.local", client=_client(handler))
+    text = await tool.ainvoke({"query": "anything"})
+
+    assert "not a results object" in text
+
+
 async def test_an_unreachable_instance_is_an_ordinary_tool_error():
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
