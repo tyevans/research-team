@@ -121,8 +121,16 @@ is otherwise mystifying.
 
 One `CodingSession` aggregate owns one event stream carrying both the conversation
 and the filesystem, so the ordering between "the model said X" and "file Y changed"
-is total. Messages are stored as langchain's own `message_to_dict` payloads, so
-there is no message schema of our own to maintain. File tools come from deepagents'
+is total. The session is written as a **decider**: `decide(command, state)` says
+which requests are legal and what facts they produce, `evolve(state, event)` says
+what each fact does, and `CodingSession` is a thin `DeciderAggregate` shell that
+connects those two pure functions to replay, snapshots, and the repository. The
+rules therefore test as rules -- `tests/domain/test_decider.py` folds commands
+through plain function calls with no aggregate, store, or event loop in sight --
+and `decide` doubles as the inventory of every legal transition.
+
+Messages are stored as langchain's own `message_to_dict` payloads, so there is
+no message schema of our own to maintain. File tools come from deepagents'
 `StateBackend`: `EventSourcedBackend` overrides only its two private state seams
 (`_read_files` / `_send_files_update`) plus `edit()` for intent capture, which means
 line numbering, edit-ambiguity checks, glob/grep, and error strings are all
@@ -173,9 +181,10 @@ Four layers, and imports only ever point inward:
 
 ```
 research_team/
-  domain/          events.py, session.py
-                   The aggregate and the events it folds. Knows nothing
-                   about langchain, deepagents, SQLite, or the environment.
+  domain/          commands.py, events.py, session.py
+                   The requests a session accepts, the facts it records, and
+                   the decider relating them. Knows nothing about langchain,
+                   deepagents, SQLite, or the environment.
   application/     ports.py, session_service.py, summaries.py, live_feed.py,
                    turn_supervisor.py
                    The use cases -- run a turn, cancel it, fork, scrub, list

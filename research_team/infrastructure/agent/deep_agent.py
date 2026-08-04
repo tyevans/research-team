@@ -19,7 +19,7 @@ from research_team.application import (
     AutonomyPolicy,
     TurnResult,
 )
-from research_team.domain import CodingSession
+from research_team.domain import CodingSession, RecordToolDecision
 from research_team.infrastructure import config
 from research_team.infrastructure.agent.approval import interrupt_config
 from research_team.infrastructure.agent.backend import EventSourcedBackend
@@ -198,7 +198,11 @@ class DeepAgentTurnExecutor:
         name = request["name"]
         args = dict(request.get("args") or {})
         if self._policy.level_for(name) == "deny" or self._approvals is None:
-            session.record_tool_decision(name, args, "reject", "policy")
+            session.execute(
+                RecordToolDecision(
+                    tool_name=name, args=args, decision="reject", decided_by="policy"
+                )
+            )
             return {
                 "type": "reject",
                 "message": f"The {name} tool is not permitted in this session.",
@@ -224,9 +228,21 @@ class DeepAgentTurnExecutor:
         """Record a human's decision and translate it into langchain's shape."""
         if decision.type == "edit":
             edited = dict(decision.edited_args or args)
-            session.record_tool_decision(name, args, "edit", "human", edited)
+            session.execute(
+                RecordToolDecision(
+                    tool_name=name,
+                    args=args,
+                    decision="edit",
+                    decided_by="human",
+                    edited_args=edited,
+                )
+            )
             return {"type": "edit", "edited_action": {"name": name, "args": edited}}
-        session.record_tool_decision(name, args, decision.type, "human")
+        session.execute(
+            RecordToolDecision(
+                tool_name=name, args=args, decision=decision.type, decided_by="human"
+            )
+        )
         if decision.type == "approve":
             return {"type": "approve"}
         resumed = {"type": decision.type}

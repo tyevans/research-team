@@ -12,7 +12,17 @@ import pytest
 from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 
 from research_team.application import summarize_sessions
-from research_team.domain import CodingSession
+from research_team.domain import (
+    CodingSession,
+    CompleteTurn,
+    DeleteFile,
+    EditFile,
+    FailTurn,
+    RecordForkSource,
+    SendUserMessage,
+    StartSession,
+    WriteFile,
+)
 from research_team.infrastructure.persistence.read_models import (
     LOCAL_RETRY_POLICY,
     SessionSummaryProjection,
@@ -40,7 +50,7 @@ async def _project(projection, session: CodingSession) -> None:
 
 def _new_session(session_id=None) -> CodingSession:
     session = CodingSession(session_id or uuid4())
-    session.start(SYSTEM_PROMPT, MODEL_NAME)
+    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
     return session
 
 
@@ -57,8 +67,12 @@ async def test_a_started_session_becomes_a_row(projection, rows):
 async def test_the_first_user_message_is_the_one_that_sticks(projection, rows):
     """`first_message` labels the session in the list -- it must not drift."""
     session = _new_session()
-    session.send_user_message({"type": "human", "data": {"content": "the first"}})
-    session.send_user_message({"type": "human", "data": {"content": "the second"}})
+    session.execute(
+        SendUserMessage(message={"type": "human", "data": {"content": "the first"}})
+    )
+    session.execute(
+        SendUserMessage(message={"type": "human", "data": {"content": "the second"}})
+    )
     await _project(projection, session)
 
     row = await rows.get(session.aggregate_id)
@@ -67,8 +81,8 @@ async def test_the_first_user_message_is_the_one_that_sticks(projection, rows):
 
 async def test_a_failed_turn_counts_without_advancing_the_turn_count(projection, rows):
     session = _new_session()
-    session.complete_turn()
-    session.fail_turn(RuntimeError("nope"))
+    session.execute(CompleteTurn())
+    session.execute(FailTurn.from_error(RuntimeError("nope")))
     await _project(projection, session)
 
     row = await rows.get(session.aggregate_id)
@@ -78,9 +92,16 @@ async def test_a_failed_turn_counts_without_advancing_the_turn_count(projection,
 async def test_rewriting_a_file_does_not_count_it_twice(projection, rows):
     """The count is of files, not of writes -- which a running total misses."""
     session = _new_session()
-    session.write_file("/a.py", {"content": "one"})
-    session.edit_file("/a.py", {"content": "two"}, "one", "two", False)
-    session.write_file("/b.py", {"content": "b"})
+    session.execute(WriteFile(path="/a.py", file_data={"content": "one"}))
+    session.execute(
+        EditFile(
+            path="/a.py",
+            file_data={"content": "two"},
+            old_string="one",
+            new_string="two",
+        )
+    )
+    session.execute(WriteFile(path="/b.py", file_data={"content": "b"}))
     await _project(projection, session)
 
     row = await rows.get(session.aggregate_id)
@@ -89,9 +110,9 @@ async def test_rewriting_a_file_does_not_count_it_twice(projection, rows):
 
 async def test_a_deleted_file_stops_counting(projection, rows):
     session = _new_session()
-    session.write_file("/a.py", {"content": "a"})
-    session.write_file("/b.py", {"content": "b"})
-    session.delete_file("/a.py")
+    session.execute(WriteFile(path="/a.py", file_data={"content": "a"}))
+    session.execute(WriteFile(path="/b.py", file_data={"content": "b"}))
+    session.execute(DeleteFile(path="/a.py"))
     await _project(projection, session)
 
     row = await rows.get(session.aggregate_id)
@@ -101,7 +122,7 @@ async def test_a_deleted_file_stops_counting(projection, rows):
 async def test_fork_lineage_is_recorded(projection, rows):
     source = uuid4()
     session = _new_session()
-    session.record_fork_source(source, 7)
+    session.execute(RecordForkSource(source_session_id=source, at_event=7))
     await _project(projection, session)
 
     summary = to_summary(await rows.get(session.aggregate_id))
@@ -116,16 +137,16 @@ async def test_the_projection_agrees_with_the_fold_it_replaces(projection, rows)
     path ever disagrees with it, this is the test that says so.
     """
     first = _new_session()
-    first.send_user_message({"type": "human", "data": {"content": "hello"}})
-    first.complete_turn()
-    first.write_file("/kept.py", {"content": "k"})
-    first.write_file("/gone.py", {"content": "g"})
-    first.delete_file("/gone.py")
-    first.fail_turn(RuntimeError("boom"))
+    first.execute(SendUserMessage(message={"type": "human", "data": {"content": "hello"}}))
+    first.execute(CompleteTurn())
+    first.execute(WriteFile(path="/kept.py", file_data={"content": "k"}))
+    first.execute(WriteFile(path="/gone.py", file_data={"content": "g"}))
+    first.execute(DeleteFile(path="/gone.py"))
+    first.execute(FailTurn.from_error(RuntimeError("boom")))
 
     second = _new_session()
-    second.record_fork_source(first.aggregate_id, 3)
-    second.send_user_message({"type": "human", "data": {"content": "forked"}})
+    second.execute(RecordForkSource(source_session_id=first.aggregate_id, at_event=3))
+    second.execute(SendUserMessage(message={"type": "human", "data": {"content": "forked"}}))
 
     events = [*first.uncommitted_events, *second.uncommitted_events]
     for event in events:

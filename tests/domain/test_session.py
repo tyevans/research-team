@@ -1,239 +1,77 @@
-import pytest
-from eventsource.testing.assertions import EventAssertions
+"""The shell: what `CodingSession` adds on top of the pure decider.
 
-from research_team.domain import CodingSession
-from research_team.domain.events import (
-    AssistantMessageAdded,
-    AutonomyChanged,
-    FileDeleted,
-    FileEdited,
-    FileWritten,
-    SessionStarted,
-    ToolCallDecided,
-    ToolResultRecorded,
-    TurnCompleted,
-    UserMessageSent,
+`test_decider.py` covers the rules. This covers the wiring -- that `execute`
+runs `decide`, stamps and applies the events it returns, and that the state
+those events fold into survives a round trip through the repository. Anything
+here needs an aggregate or a store; anything that does not belongs next door.
+"""
+
+import pytest
+from eventsource import CommandRejectedError
+
+from research_team.domain import (
+    CodingSession,
+    SendUserMessage,
+    StartSession,
+    WriteFile,
 )
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
 FILE_DATA = {"content": "print(1)\n", "encoding": "utf-8"}
-EDITED = {"content": "print(2)\n", "encoding": "utf-8"}
 
 
-def types_of(aggregate: CodingSession) -> list[type]:
-    return [type(e) for e in aggregate.uncommitted_events]
+def test_execute_applies_the_events_decide_returns(session_id):
+    session = CodingSession(session_id)
 
+    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
 
-def emitted(aggregate: CodingSession) -> EventAssertions:
-    """The library's assertions over what this aggregate has emitted.
-
-    Worth reaching for wherever the whole sequence is the claim -- it reports
-    what it actually saw when the sequence is wrong, where a bare list
-    comparison just prints two lists and leaves you to diff them. The
-    positional `types_of(...)[-1]` checks below stay as they are: what they
-    assert is *where* an event landed, which these helpers do not express.
-    """
-    return EventAssertions(list(aggregate.uncommitted_events))
-
-
-def tool_result(call_id: str, content: str = "ok") -> dict:
-    return {"type": "tool", "data": {"tool_call_id": call_id, "content": content}}
-
-
-def calling(*call_ids: str) -> dict:
-    """An assistant message that asked for the given tool calls."""
-    return {
-        "type": "ai",
-        "data": {
-            "content": "",
-            "tool_calls": [
-                {"id": call_id, "name": "write_file", "args": {}} for call_id in call_ids
-            ],
-        },
-    }
-
-
-def test_start_emits_session_started(session):
-    emitted(session).assert_event_sequence([SessionStarted])
+    assert [type(e).__name__ for e in session.uncommitted_events] == ["SessionStarted"]
     assert session.state.system_prompt == SYSTEM_PROMPT
-    assert session.state.model_name == MODEL_NAME
 
 
-def test_start_twice_is_rejected(session):
-    with pytest.raises(ValueError, match="already started"):
-        session.start(SYSTEM_PROMPT, MODEL_NAME)
+def test_execute_stamps_the_version_decide_cannot_know(session_id):
+    """Pure functions have no business knowing about optimistic concurrency."""
+    session = CodingSession(session_id)
+
+    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(SendUserMessage(message={"type": "human", "data": {}}))
+
+    assert [e.aggregate_version for e in session.uncommitted_events] == [1, 2]
 
 
-def test_commands_require_started_session(aggregates, session_id):
-    fresh = aggregates.create_new(session_id)
-    with pytest.raises(ValueError, match="not started"):
-        fresh.write_file("/a.py", FILE_DATA)
+def test_a_rejected_command_leaves_the_aggregate_untouched(session_id):
+    """`decide` runs to completion before anything is applied, so a refusal
+    cannot leave half a turn behind."""
+    session = CodingSession(session_id)
+
+    with pytest.raises(CommandRejectedError):
+        session.execute(WriteFile(path="/a.py", file_data=FILE_DATA))
+
+    assert session.uncommitted_events == []
+    assert session.version == 0
 
 
-def test_user_message_appended(session):
-    session.send_user_message({"type": "human", "data": {"content": "hi"}})
-    assert types_of(session)[-1] is UserMessageSent
-    assert session.state.messages[-1]["data"]["content"] == "hi"
+def test_state_is_real_before_the_first_event(session_id):
+    """The gotcha `DeciderAggregate` exists to close.
+
+    `AggregateRoot._state` is None until an event lands, but `decide` has to
+    match against a session that does not exist yet. If this were None the
+    very first `StartSession` would fall through to "already started".
+    """
+    assert CodingSession(session_id).state.status == "new"
 
 
-def test_assistant_message_appended(session):
-    session.record_assistant_message(
-        {"type": "ai", "data": {"content": "yo", "tool_calls": []}}
-    )
-    assert types_of(session)[-1] is AssistantMessageAdded
-    assert session.state.messages[-1]["type"] == "ai"
-
-
-def test_write_file_creates_entry(session):
-    session.write_file("/a.py", FILE_DATA)
-    assert types_of(session)[-1] is FileWritten
-    assert session.state.files["/a.py"] == FILE_DATA
-
-
-def test_edit_file_replaces_entry(session):
-    session.write_file("/a.py", FILE_DATA)
-    session.edit_file("/a.py", EDITED, "1", "2", False)
-    assert types_of(session)[-1] is FileEdited
-    assert session.state.files["/a.py"] == EDITED
-
-
-def test_edit_missing_file_is_rejected(session):
-    with pytest.raises(ValueError, match="does not exist"):
-        session.edit_file("/nope.py", EDITED, "1", "2", False)
-
-
-def test_delete_file_removes_entry(session):
-    session.write_file("/a.py", FILE_DATA)
-    session.delete_file("/a.py")
-    assert types_of(session)[-1] is FileDeleted
-    assert "/a.py" not in session.state.files
-
-
-def test_delete_missing_file_is_rejected(session):
-    with pytest.raises(ValueError, match="does not exist"):
-        session.delete_file("/nope.py")
-
-
-def test_tool_result_requires_outstanding_call(session):
-    with pytest.raises(ValueError, match="no outstanding tool call"):
-        session.record_tool_result(tool_result("t1", "ok"))
-
-
-def test_tool_result_accepted_when_call_outstanding(session):
-    session.record_assistant_message(calling("t1"))
-    session.record_tool_result(tool_result("t1", "ok"))
-    assert types_of(session)[-1] is ToolResultRecorded
-
-
-def test_tool_results_may_resolve_out_of_order(session):
-    session.record_assistant_message(calling("t1", "t2"))
-    session.record_tool_result(tool_result("t2", "b"))
-    session.record_tool_result(tool_result("t1", "a"))
-    assert types_of(session)[-2:] == [ToolResultRecorded, ToolResultRecorded]
-
-
-def test_a_tool_decision_is_recorded_on_the_stream(session):
-    session.record_tool_decision(
-        tool_name="web_search",
-        args={"query": "event sourcing"},
-        decision="approve",
-        decided_by="human",
-    )
-    event = session.uncommitted_events[-1]
-    assert isinstance(event, ToolCallDecided)
-    assert event.decision == "approve"
-    assert event.decided_by == "human"
-    assert event.edited_args is None
-
-
-def test_an_autonomy_change_is_recorded_on_the_stream(session):
-    session.record_autonomy_change("web_search", "ask")
-    event = session.uncommitted_events[-1]
-    assert isinstance(event, AutonomyChanged)
-    assert event.tool_name == "web_search"
-    assert event.level == "ask"
-
-
-def test_complete_turn_increments_index(session):
-    session.complete_turn()
-    session.complete_turn()
-    assert types_of(session)[-1] is TurnCompleted
-    assert session.state.turn_index == 2
-
-
-async def test_state_survives_save_and_reload(aggregates, session, session_id):
-    session.write_file("/a.py", FILE_DATA)
-    session.send_user_message({"type": "human", "data": {"content": "hi"}})
+async def test_state_survives_save_and_reload(aggregates, session_id):
+    session = aggregates.create_new(session_id)
+    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(WriteFile(path="/a.py", file_data=FILE_DATA))
+    session.execute(SendUserMessage(message={"type": "human", "data": {"content": "hi"}}))
     await aggregates.save(session)
 
     reloaded = await aggregates.load(session_id)
+
     assert reloaded.state.files == {"/a.py": FILE_DATA}
     assert reloaded.state.messages[-1]["data"]["content"] == "hi"
     assert reloaded.version == 3
-
-
-# ---- conversation compaction ----
-
-
-def test_compaction_records_what_the_model_will_see(session):
-    for i in range(4):
-        session.send_user_message({"type": "human", "data": {"content": f"m{i}"}})
-
-    session.compact_conversation("a summary", through_index=3, strategy="compact")
-
-    assert session.state.compacted_through == 3
-    assert session.state.compaction_summary == "a summary"
-
-
-def test_compaction_keeps_every_message(session):
-    """The summary is a view. Nothing leaves the log, ever."""
-    for i in range(4):
-        session.send_user_message({"type": "human", "data": {"content": f"m{i}"}})
-
-    session.compact_conversation("a summary", through_index=3, strategy="compact")
-
-    assert len(session.state.messages) == 4
-    assert session.state.messages[0]["data"]["content"] == "m0"
-
-
-def test_compaction_cannot_go_backwards(session):
-    """Uncovering messages an earlier summary covered would show both."""
-    for i in range(6):
-        session.send_user_message({"type": "human", "data": {"content": f"m{i}"}})
-    session.compact_conversation("first", through_index=4, strategy="compact")
-
-    with pytest.raises(ValueError, match="cannot compact through"):
-        session.compact_conversation("second", through_index=2, strategy="compact")
-
-
-def test_compaction_cannot_cover_messages_that_do_not_exist(session):
-    session.send_user_message({"type": "human", "data": {"content": "only one"}})
-
-    with pytest.raises(ValueError, match="cannot compact through"):
-        session.compact_conversation("premature", through_index=5, strategy="compact")
-
-
-def test_compaction_needs_a_started_session(aggregates, session_id):
-    fresh = aggregates.create_new(session_id)
-
-    with pytest.raises(ValueError, match="not started"):
-        fresh.compact_conversation("s", through_index=1, strategy="compact")
-
-
-def test_compaction_always_covers_a_prefix(session):
-    """The summary stands in for the *first* N messages, never a middle window.
-
-    Anything reading `compacted_through` -- the web console slices the
-    conversation on it -- is entitled to assume that, so the aggregate has to
-    guarantee it rather than leave it to whichever strategy is installed.
-    """
-    for i in range(6):
-        session.send_user_message({"type": "human", "data": {"content": f"m{i}"}})
-
-    session.compact_conversation("first", through_index=2, strategy="compact")
-    session.compact_conversation("second", through_index=5, strategy="compact")
-
-    # Each compaction extends the covered prefix; none can carve out a window.
-    assert session.state.compacted_through == 5
-    with pytest.raises(ValueError, match="cannot compact through"):
-        session.compact_conversation("backwards", through_index=3, strategy="compact")
+    # Replay reconstitutes the decider's own view, not just the payloads.
+    assert reloaded.state.status == "started"

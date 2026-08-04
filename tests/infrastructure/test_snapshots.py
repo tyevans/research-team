@@ -5,7 +5,11 @@ Snapshotting is an optimisation for later reads. Paying for it inside the
 which is the wrong way round -- replays are rare and turns are not.
 """
 
-from research_team.domain import CodingSession
+from research_team.domain import (
+    CodingSession,
+    SendUserMessage,
+    StartSession,
+)
 from research_team.infrastructure.persistence import SNAPSHOT_THRESHOLD
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
@@ -13,12 +17,14 @@ from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 async def _grow_past_threshold(session: CodingSession) -> None:
     """Append enough events that the next save crosses the snapshot threshold."""
     for index in range(SNAPSHOT_THRESHOLD + 1):
-        session.send_user_message({"type": "human", "data": {"content": str(index)}})
+        session.execute(
+            SendUserMessage(message={"type": "human", "data": {"content": str(index)}})
+        )
 
 
 async def test_save_does_not_wait_for_the_snapshot_it_triggers(aggregates, session_id):
     session = aggregates.create_new(session_id)
-    session.start(SYSTEM_PROMPT, MODEL_NAME)
+    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
     await _grow_past_threshold(session)
 
     await aggregates.save(session)
@@ -31,7 +37,7 @@ async def test_save_does_not_wait_for_the_snapshot_it_triggers(aggregates, sessi
 
 async def test_the_backgrounded_snapshot_still_gets_written(aggregates, session_id):
     session = aggregates.create_new(session_id)
-    session.start(SYSTEM_PROMPT, MODEL_NAME)
+    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
     await _grow_past_threshold(session)
     await aggregates.save(session)
 
@@ -52,7 +58,7 @@ async def test_closing_waits_for_snapshots_still_in_flight(repository, session_i
     before it releases.
     """
     session = repository.create(session_id)
-    session.start(SYSTEM_PROMPT, MODEL_NAME)
+    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
     await _grow_past_threshold(session)
     await repository.save(session)
     assert repository.pending_snapshot_count > 0

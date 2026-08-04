@@ -8,6 +8,12 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
 from research_team.composition import build_application as _build_application
+from research_team.domain import (
+    DeleteFile,
+    SendUserMessage,
+    StartSession,
+    WriteFile,
+)
 from research_team.interfaces.web import create_app
 
 
@@ -309,14 +315,14 @@ async def test_sse_frames_each_event_as_a_data_line(repository, session_id):
 
     feed = LiveFeed(repository, poll_interval=0.01)
     aggregate = repository.create(session_id)
-    aggregate.start("prompt", "test-model")
+    aggregate.execute(StartSession(system_prompt="prompt", model_name="test-model"))
     await repository.save(aggregate)
 
     frames: list[str] = []
     generator = _sse(StubRequest(), feed)
     task = asyncio.create_task(_drain(generator, frames, wanted=1))
     await asyncio.sleep(0.05)
-    aggregate.send_user_message({"type": "human", "data": {"content": "hi"}})
+    aggregate.execute(SendUserMessage(message={"type": "human", "data": {"content": "hi"}}))
     await repository.save(aggregate)
     await asyncio.wait_for(task, timeout=5)
 
@@ -552,8 +558,8 @@ async def test_a_file_deleted_later_is_still_readable_in_the_past(db_path, fake_
     api = create_app(application.service, application.feed, application.turns)
     session_id = await application.service.create_session()
     session = await application.service.load(session_id)
-    session.write_file("/doomed.py", {"content": "still here\n"})
-    session.delete_file("/doomed.py")
+    session.execute(WriteFile(path="/doomed.py", file_data={"content": "still here\n"}))
+    session.execute(DeleteFile(path="/doomed.py"))
     await application.service._repository.save(session)
 
     async with AsyncClient(
@@ -814,11 +820,11 @@ async def test_each_frame_carries_the_cursor_that_follows_it(repository, session
 
     feed = LiveFeed(repository, poll_interval=0.01)
     aggregate = repository.create(session_id)
-    aggregate.start("prompt", "test-model")
+    aggregate.execute(StartSession(system_prompt="prompt", model_name="test-model"))
     await repository.save(aggregate)
 
     task, frames = await _watch(feed)
-    aggregate.send_user_message({"type": "human", "data": {"content": "hi"}})
+    aggregate.execute(SendUserMessage(message={"type": "human", "data": {"content": "hi"}}))
     await repository.save(aggregate)
     await asyncio.wait_for(task, timeout=5)
 
@@ -839,17 +845,19 @@ async def test_reconnecting_with_a_cursor_delivers_what_was_missed(
 
     feed = LiveFeed(repository, poll_interval=0.01)
     aggregate = repository.create(session_id)
-    aggregate.start("prompt", "test-model")
+    aggregate.execute(StartSession(system_prompt="prompt", model_name="test-model"))
     await repository.save(aggregate)
 
     task, frames = await _watch(feed)
-    aggregate.send_user_message({"type": "human", "data": {"content": "seen"}})
+    aggregate.execute(SendUserMessage(message={"type": "human", "data": {"content": "seen"}}))
     await repository.save(aggregate)
     await asyncio.wait_for(task, timeout=5)
     cursor = _cursor_of(frames[0])
 
     # Nobody is listening for this one.
-    aggregate.send_user_message({"type": "human", "data": {"content": "missed"}})
+    aggregate.execute(
+        SendUserMessage(message={"type": "human", "data": {"content": "missed"}})
+    )
     await repository.save(aggregate)
 
     resumed, recovered = await _watch(feed, resume_from=cursor)
@@ -865,11 +873,11 @@ async def test_an_unplaceable_cursor_falls_back_to_the_live_end(repository, sess
 
     feed = LiveFeed(repository, poll_interval=0.01)
     aggregate = repository.create(session_id)
-    aggregate.start("prompt", "test-model")
+    aggregate.execute(StartSession(system_prompt="prompt", model_name="test-model"))
     await repository.save(aggregate)  # already in the log, must not be replayed
 
     task, frames = await _watch(feed, resume_from="junk-from-another-database")
-    aggregate.send_user_message({"type": "human", "data": {"content": "after"}})
+    aggregate.execute(SendUserMessage(message={"type": "human", "data": {"content": "after"}}))
     await repository.save(aggregate)
     await asyncio.wait_for(task, timeout=5)
 

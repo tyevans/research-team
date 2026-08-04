@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-from eventsource import OptimisticLockError
+from eventsource import CommandRejectedError, OptimisticLockError
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -148,7 +148,7 @@ def create_app(
         """Time travel: the workspace as of event `at`. Folds, never writes."""
         try:
             session = await service.state_at(session_id, at)
-        except ValueError as error:
+        except (ValueError, CommandRejectedError) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return session_view(session, await service.history(session_id), at=at)
 
@@ -164,7 +164,7 @@ def create_app(
         else:
             try:
                 session = await service.state_at(session_id, at)
-            except ValueError as error:
+            except (ValueError, CommandRejectedError) as error:
                 raise HTTPException(status_code=400, detail=str(error)) from error
         entry = session.state.files.get(path)
         if entry is None:
@@ -277,7 +277,7 @@ def create_app(
         await _load(session_id)
         try:
             return {"id": str(await service.fork(session_id, body.at))}
-        except ValueError as error:
+        except (ValueError, CommandRejectedError) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/api/stream")

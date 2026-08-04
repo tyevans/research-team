@@ -14,7 +14,7 @@ from hypothesis import strategies as st
 from langchain_core.messages import AIMessage
 
 from research_team.application import ApprovalDecision, AutonomyPolicy
-from research_team.domain import CodingSession, ToolCallDecided
+from research_team.domain import CodingSession, StartSession, ToolCallDecided
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 from research_team.infrastructure.agent.search import build_search_tool
 from tests.conftest import ToolAwareFakeChatModel
@@ -51,7 +51,9 @@ class Searches:
 
 def _session() -> CodingSession:
     session = CodingSession(uuid4())
-    session.start("You are a coding agent.", "test-model")
+    session.execute(
+        StartSession(system_prompt="You are a coding agent.", model_name="test-model")
+    )
     return session
 
 
