@@ -17,6 +17,8 @@ import pytest
 from eventsource import CommandRejectedError
 
 from research_team.domain import (
+    AutonomyChanged,
+    ChangeAutonomy,
     CompactConversation,
     CompleteTurn,
     DeleteFile,
@@ -25,10 +27,12 @@ from research_team.domain import (
     FileEdited,
     RecordAssistantMessage,
     RecordForkSource,
+    RecordToolDecision,
     RecordToolResult,
     SendUserMessage,
     SessionStarted,
     StartSession,
+    ToolCallDecided,
     ToolResultRecorded,
     TurnFailed,
     WriteFile,
@@ -354,3 +358,69 @@ def test_evolve_ignores_an_event_it_has_no_branch_for():
     assert evolve(state, Unrelated(
         aggregate_id=state.session_id, system_prompt="", model_name=""
     )).messages == state.messages
+
+
+# ---------------- supervision ----------------
+
+
+def test_a_tool_decision_produces_an_audit_event():
+    state = started()
+
+    (event,) = decide(
+        RecordToolDecision(
+            tool_name="web_search",
+            args={"query": "event sourcing"},
+            decision="approve",
+            decided_by="human",
+        ),
+        state,
+    )
+
+    assert isinstance(event, ToolCallDecided)
+    assert (event.decision, event.decided_by, event.edited_args) == (
+        "approve",
+        "human",
+        None,
+    )
+
+
+def test_an_edited_tool_call_carries_the_amended_args():
+    state = started()
+
+    (event,) = decide(
+        RecordToolDecision(
+            tool_name="web_search",
+            args={"query": "a"},
+            decision="edit",
+            decided_by="human",
+            edited_args={"query": "b"},
+        ),
+        state,
+    )
+
+    assert event.edited_args == {"query": "b"}
+
+
+def test_an_autonomy_change_produces_an_audit_event():
+    state = started()
+
+    (event,) = decide(ChangeAutonomy(tool_name="web_search", level="ask"), state)
+
+    assert isinstance(event, AutonomyChanged)
+    assert (event.tool_name, event.level) == ("web_search", "ask")
+
+
+def test_supervision_events_leave_the_state_alone():
+    """Audit records, not facts SessionState tracks: `evolve` is a no-op for
+    both, and the assertion is that nothing moved."""
+    state = started()
+
+    after = run(
+        state,
+        ChangeAutonomy(tool_name="web_search", level="ask"),
+        RecordToolDecision(
+            tool_name="web_search", args={}, decision="approve", decided_by="human"
+        ),
+    )
+
+    assert after == state

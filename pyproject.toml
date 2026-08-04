@@ -8,6 +8,7 @@ dependencies = [
     "deepagents>=0.7.1,<0.8",
     "eventsource-py[sqlite]>=0.10.0",
     "fastapi>=0.141.1",
+    "httpx>=0.28.1",
     "langchain-openai>=1.4.1",
     "uvicorn[standard]>=0.52.1",
 ]
@@ -23,9 +24,10 @@ tracing = [
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "hypothesis>=6.100",
+    "mutmut>=3.0",
 ]
 
 [tool.pytest.ini_options]
@@ -46,3 +48,26 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "C4", "BLE"]
 [tool.ruff.lint.per-file-ignores]
 # Test doubles keep mutable class attributes on purpose, to record what they saw.
 "tests/*" = ["RUF012"]
+
+[tool.mutmut]
+source_paths = [
+    "research_team/application/autonomy.py",
+    "research_team/infrastructure/agent/search.py",
+    "research_team/infrastructure/agent/approval.py",
+]
+# --import-mode=importlib avoids pytest's bare-module-name collision: mutmut
+# always copies tests/ into mutants/tests/ (its own also_copy default, not
+# ours), and this repo's test files have no __init__.py. Under the default
+# "prepend" import mode, running pytest against both the real tests/ tree and
+# mutmut's copy in the same process (mutmut does this deliberately -- once
+# for stats collection, again for its "clean tests" baseline) raises
+# `import file mismatch` for a bare module name collected from two different
+# paths. importlib mode keys modules by their exact file path instead, so the
+# two copies never collide. (This requires every `from conftest import ...`
+# in tests/ to be phrased as `from tests.conftest import ...`, which
+# tests/domain/test_session.py was not doing -- fixed alongside this.)
+pytest_add_cli_args_test_selection = ["--import-mode=importlib", "tests/"]
+# The three target files import sibling modules within research_team; mutmut only
+# copies the paths it mutates into mutants/, so the rest of the package must be
+# copied too or test collection fails on missing imports (e.g. `composition`).
+also_copy = ["research_team"]

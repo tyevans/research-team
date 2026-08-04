@@ -6,11 +6,15 @@ import uvicorn
 
 from research_team.composition import build_application
 from research_team.infrastructure import config
-from research_team.interfaces.web import create_app
+from research_team.interfaces.web import WebApprovals, create_app
 
 
 def main() -> None:
-    application = build_application()
+    # One object on both sides of the wire: the executor asks it for decisions,
+    # the HTTP routes hand it the answers. Built here because it is the seam
+    # between them, and the composition root is where seams are chosen.
+    approvals = WebApprovals()
+    application = build_application(approvals=approvals)
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -23,7 +27,13 @@ def main() -> None:
         await application.close()
 
     uvicorn.run(
-        create_app(application.service, application.feed, application.turns, lifespan),
+        create_app(
+            application.service,
+            application.feed,
+            application.turns,
+            lifespan,
+            approvals=approvals,
+        ),
         host=config.web_host(),
         port=config.web_port(),
     )

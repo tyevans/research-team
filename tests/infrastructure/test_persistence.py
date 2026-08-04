@@ -2,6 +2,7 @@
 
 from langchain_core.messages import AIMessage
 
+from research_team.application.session_service import NO_NETWORK_CLAUSE
 from research_team.infrastructure.persistence import (
     SNAPSHOT_THRESHOLD,
     build_aggregate_repository,
@@ -58,7 +59,10 @@ async def test_reopening_keeps_the_stored_system_prompt(fake_model, db_path, bui
         model=fake_model, db_path=db_path, system_prompt="DIFFERENT"
     )
     session = await reopened.load(session_id)
-    assert session.state.system_prompt == "ORIGINAL"
+    # Composition appends a capability clause (no search configured here) to
+    # whatever system_prompt it is given -- so the stored value is the first
+    # process's prompt plus its suffix, not "DIFFERENT" plus the second's.
+    assert session.state.system_prompt == "ORIGINAL" + NO_NETWORK_CLAUSE
 
 
 async def test_files_survive_a_reopen(fake_model, db_path, build_service, repository):
@@ -105,9 +109,7 @@ async def test_session_summary_describes_the_session(fake_model, db_path, build_
     session_id = await service.create_session()
     await service.run_turn(session_id, "a memorable opening line")
 
-    summary = next(
-        s for s in await service.list_sessions() if s.session_id == session_id
-    )
+    summary = next(s for s in await service.list_sessions() if s.session_id == session_id)
     assert summary.turns == 1
     assert summary.first_message == "a memorable opening line"
 

@@ -329,7 +329,9 @@ const state = {
   turnStartedAt: null,     // ms timestamp of our own in-flight turn
   sessionError: null,
   loadingSnapshot: false,
-  freshIndices: {}
+  freshIndices: {},
+  approvals: {},           // id -> approval view, gated calls waiting on a person
+  approvalDeciding: null   // id of the approval whose POST is in flight
 };
 
 let root = null;            // current view element
@@ -417,6 +419,8 @@ function onRoute() {
       state.awaitingUnwind = false;
       state.turnNote = null;
       state.loadingSnapshot = false;
+      state.approvals = {};
+      state.approvalDeciding = null;
       sessionEls = null;
       mountSessionView();
       loadSession();
@@ -607,6 +611,7 @@ function mountSessionView() {
     workspaceMeta: slot(root, 'workspace-meta'),
     conversation: slot(root, 'conversation'),
     convMeta: slot(root, 'conv-meta'),
+    approvals: slot(root, 'approvals'),
     composer: slot(root, 'composer'),
     input: slot(root, 'input'),
     send: slot(root, 'send'),
@@ -634,13 +639,18 @@ function loadSession() {
     // A turn may already be running (another tab, or a reload mid-turn). This
     // is advisory, so a failure here must not fail the whole load.
     api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current')
-      .catch(function () { return null; })
+      .catch(function () { return null; }),
+    // A tab that (re)loads mid-approval never saw the ApprovalRequested frame
+    // -- this is how it catches up. Advisory like the turn check above.
+    api.get('/api/sessions/' + encodeURIComponent(id) + '/approvals')
+      .catch(function () { return []; })
   ]).then(function (res) {
     if (state.sessionId !== id) return;
     state.head = res[0] || {};
     state.events = Array.isArray(res[1]) ? res[1] : [];
     state.sessionError = null;
     applyRunning(res[2]);
+    setApprovals(res[3]);
     renderCrumbs();
     renderTimeline();
     if (state.at !== null) loadSnapshot();
@@ -1467,6 +1477,74 @@ function safeJson(v) {
   try { return JSON.stringify(v, null, 2); } catch (e) { return String(v); }
 }
 
+/* --- approvals ----------------------------------------------------------
+ * A gated call parks the turn until a person answers it here, in the REPL,
+ * or in another tab -- whichever gets there first. ApprovalSettled, not the
+ * click handler, is what clears a card: that is what makes the other two
+ * paths work too, instead of only the one this tab drove. */
+
+function setApprovals(list) {
+  const next = {};
+  (Array.isArray(list) ? list : []).forEach(function (a) { if (a && a.id) next[a.id] = a; });
+  state.approvals = next;
+  renderApprovals();
+}
+
+function fetchApprovals(id) {
+  return api.get('/api/sessions/' + encodeURIComponent(id) + '/approvals')
+    .then(function (list) { if (state.sessionId === id) setApprovals(list); })
+    .catch(function () { /* advisory -- the next reconnect or reload tries again */ });
+}
+
+function renderApprovals() {
+  if (!sessionEls || !sessionEls.approvals) return;
+  const box = sessionEls.approvals;
+  clear(box);
+  Object.keys(state.approvals).forEach(function (id) {
+    box.appendChild(renderApproval(state.approvals[id]));
+  });
+}
+
+function renderApproval(a) {
+  const deciding = state.approvalDeciding === a.id;
+  return h('div', { class: 'approval' }, [
+    h('div', { class: 'approval-head' }, [
+      h('span', { text: 'wants to run' }),
+      h('b', { text: a.tool_name })
+    ]),
+    a.description ? h('div', { class: 'approval-desc', text: a.description }) : null,
+    h('div', { class: 'approval-args', text: safeJson(a.args) }),
+    h('div', { class: 'approval-actions' }, [
+      h('button', {
+        class: 'btn btn-accent', type: 'button', disabled: deciding,
+        onclick: function () { decideApproval(a, 'approve'); }
+      }, 'Approve'),
+      h('button', {
+        class: 'btn btn-quiet', type: 'button', disabled: deciding,
+        onclick: function () { decideApproval(a, 'reject'); }
+      }, 'Reject')
+    ])
+  ]);
+}
+
+/* langchain's vocabulary, not ours -- "accept" is not a valid decision type. */
+function decideApproval(a, type) {
+  if (state.approvalDeciding) return;
+  state.approvalDeciding = a.id;
+  renderApprovals();
+  api.post(
+    '/api/sessions/' + encodeURIComponent(a.session_id) + '/approvals/' + encodeURIComponent(a.id),
+    { type: type }
+  ).catch(function (e) {
+    // A 404 here just means someone else already answered it; ApprovalSettled
+    // will have cleared the card already, so there is nothing left to undo.
+    if (e.status !== 404) toast('Could not record decision: ' + e.message, 'bad');
+  }).then(function () {
+    if (state.approvalDeciding === a.id) state.approvalDeciding = null;
+    renderApprovals();
+  });
+}
+
 /* --- turns ------------------------------------------------------------- */
 
 function renderComposer() {
@@ -1795,6 +1873,10 @@ function connect() {
     if (reconnected && !lastEventId) {
       if (state.route.name === 'session' && !state.sending) loadSession();
       else if (state.route.name === 'tree') loadTree();
+    } else if (reconnected && state.route.name === 'session' && state.sessionId) {
+      // Approval frames carry no feed position, so Last-Event-ID resumes the
+      // log but not these -- reconcile them on every reconnect regardless.
+      fetchApprovals(state.sessionId);
     }
   };
   stream.onmessage = function (msg) {
@@ -1818,6 +1900,13 @@ function scheduleReconnect() {
 }
 
 function onStreamEvent(payload) {
+  // Approval frames ride the same connection but are not log entries -- they
+  // carry no index and must not be treated as one. See approvals.py's `_sse`
+  // docstring for why they get no id of their own.
+  if (payload.type === 'ApprovalRequested' || payload.type === 'ApprovalSettled') {
+    onApprovalFrame(payload);
+    return;
+  }
   if (state.route.name === 'tree') {
     clearTimeout(treeRefreshTimer);
     treeRefreshTimer = setTimeout(loadTree, 400);
@@ -1872,6 +1961,18 @@ function onStreamEvent(payload) {
     renderComposer();
     loadSession();
   }
+}
+
+function onApprovalFrame(payload) {
+  if (state.route.name !== 'session' || payload.session_id !== state.sessionId) return;
+  if (payload.type === 'ApprovalRequested') {
+    state.approvals[payload.id] = payload;
+  } else {
+    // Settled elsewhere or here -- either way, the card comes down.
+    delete state.approvals[payload.id];
+    if (state.approvalDeciding === payload.id) state.approvalDeciding = null;
+  }
+  renderApprovals();
 }
 
 /* Drop expired highlights and repaint once, so the flash does not linger until

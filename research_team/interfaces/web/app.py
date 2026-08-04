@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from research_team.application import (
+    ApprovalDecision,
     LiveFeed,
     SessionService,
     TurnAlreadyRunning,
@@ -27,6 +28,7 @@ from research_team.application import (
     TurnSupervisor,
     build_fork_tree,
 )
+from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.presenters import (
     event_rows,
     feed_event,
@@ -56,11 +58,20 @@ class NewFork(BaseModel):
     at: int
 
 
+class Decision(BaseModel):
+    """A human's answer to a parked approval. `type` is langchain's vocabulary."""
+
+    type: str
+    edited_args: dict | None = None
+    message: str | None = None
+
+
 def create_app(
     service: SessionService,
     feed: LiveFeed,
     turns: TurnSupervisor,
     lifespan=None,
+    approvals: WebApprovals | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -229,6 +240,38 @@ def create_app(
             "elapsed_seconds": running.elapsed_seconds(datetime.now(UTC)),
         }
 
+    @app.get("/api/sessions/{session_id}/approvals")
+    async def pending_approvals(session_id: UUID):
+        """Gated calls this session is waiting on.
+
+        The live feed announces each one as it is parked, but a tab that opened
+        mid-turn never saw that frame -- this is how it catches up.
+        """
+        await _load(session_id)
+        return [] if approvals is None else approvals.pending(session_id)
+
+    @app.post("/api/sessions/{session_id}/approvals/{approval_id}")
+    async def decide_approval(session_id: UUID, approval_id: str, body: Decision):
+        """Answer one parked approval, unblocking the turn waiting on it."""
+        if approvals is None:
+            raise HTTPException(status_code=404, detail="approvals are not wired up")
+        await _load(session_id)
+        try:
+            approvals.resolve(
+                session_id,
+                approval_id,
+                ApprovalDecision(
+                    type=body.type,
+                    edited_args=body.edited_args,
+                    message=body.message,
+                ),
+            )
+        except UnknownApproval as error:
+            # Already answered, or the turn behind it was cancelled. Both are
+            # races a second tab can lose honestly.
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return {"decided": True}
+
     @app.post("/api/sessions/{session_id}/forks")
     async def fork_session(session_id: UUID, body: NewFork):
         await _load(session_id)
@@ -248,7 +291,7 @@ def create_app(
         """
         resume_from = request.headers.get("last-event-id")
         return StreamingResponse(
-            _sse(request, feed, resume_from),
+            _sse(request, feed, resume_from, approvals),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -264,7 +307,10 @@ def create_app(
 
 
 async def _sse(
-    request: Request, feed: LiveFeed, resume_from: str | None = None
+    request: Request,
+    feed: LiveFeed,
+    resume_from: str | None = None,
+    approvals: WebApprovals | None = None,
 ) -> AsyncIterator[str]:
     """Serialise the live feed as server-sent events.
 
@@ -272,29 +318,46 @@ async def _sse(
     a session can sit silent for a minute while the model thinks, which is
     exactly when the browser most needs the connection to still be there.
 
-    Every frame carries the position that follows it as its id, so a browser
-    that drops can say where it got to. An id we cannot place -- stale, or
-    from a database since replaced -- is treated as no id at all: starting at
-    the live end shows less than the client wanted, while replaying the entire
-    log at it would be worse than the gap.
+    Every logged frame carries the position that follows it as its id, so a
+    browser that drops can say where it got to. An id we cannot place --
+    stale, or from a database since replaced -- is treated as no id at all:
+    starting at the live end shows less than the client wanted, while
+    replaying the entire log at it would be worse than the gap.
+
+    Approval requests ride this same connection rather than one of their own.
+    They are not log entries -- a request that is never answered leaves no
+    event behind -- so they carry no id, and a reconnecting browser refetches
+    what is still pending instead of replaying them. But a second channel
+    would double the ways a tab can be half-connected, and a turn that halts
+    for a person is exactly the moment when being half-connected is worst.
     """
     queue: asyncio.Queue = asyncio.Queue()
     start_at = feed.decode_position(resume_from) if resume_from else None
 
     async def pump() -> None:
         async for entry in feed.follow(from_position=start_at):
-            await queue.put(entry)
+            await queue.put(("event", entry))
 
     # The feed is drained by its own task rather than awaited inline, so waiting
     # for the next event never means being unable to notice anything else. What
     # this coroutine waits on is a queue, which is safe to cancel; cancelling a
     # database poll mid-flight is not.
-    pumping = asyncio.create_task(pump())
+    pumps = [asyncio.create_task(pump())]
+    listening = None
+    if approvals is not None:
+        listening = approvals.listen()
+
+        async def pump_approvals() -> None:
+            while True:
+                await queue.put(("approval", await listening.get()))
+
+        pumps.append(asyncio.create_task(pump_approvals()))
+
     idle = 0.0
     try:
         while not await request.is_disconnected():
             try:
-                entry = await asyncio.wait_for(queue.get(), timeout=DISCONNECT_CHECK)
+                kind, item = await asyncio.wait_for(queue.get(), timeout=DISCONNECT_CHECK)
             except TimeoutError:
                 idle += DISCONNECT_CHECK
                 if idle >= KEEPALIVE_SECONDS:
@@ -304,17 +367,23 @@ async def _sse(
                     idle = 0.0
                 continue
             idle = 0.0
+            if kind == "approval":
+                yield f"data: {json.dumps(item)}\n\n"
+                continue
             payload = feed_event(
-                entry.session_id,
-                entry.event,
-                getattr(entry.event, "aggregate_version", None),
+                item.session_id,
+                item.event,
+                getattr(item.event, "aggregate_version", None),
             )
             # One yield, not two: an id and its data are a single SSE frame,
             # and splitting them would let a cancellation land between the
             # cursor and the event it belongs to.
-            cursor = feed.encode_position(entry.position)
+            cursor = feed.encode_position(item.position)
             yield f"id: {cursor}\ndata: {json.dumps(payload)}\n\n"
     finally:
-        pumping.cancel()
-        with suppress(asyncio.CancelledError):
-            await pumping
+        if approvals is not None and listening is not None:
+            approvals.stop_listening(listening)
+        for pumping in pumps:
+            pumping.cancel()
+            with suppress(asyncio.CancelledError):
+                await pumping

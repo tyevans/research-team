@@ -167,6 +167,11 @@ def format_resumed(session: CodingSession) -> str:
     )
 
 
+def format_autonomy(levels: dict[str, str]) -> str:
+    """Every gated tool and how much rope it currently has."""
+    return "\n".join(f"  {tool:<14} {level}" for tool, level in levels.items())
+
+
 def format_summary_health(health: SummaryHealth) -> str:
     """Say plainly whether the session list can be trusted, and what to do.
 

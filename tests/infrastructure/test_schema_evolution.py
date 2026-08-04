@@ -23,6 +23,7 @@ from research_team.domain import (
     ConversationCompacted,
     SendUserMessage,
     StartSession,
+    ToolCallDecided,
     TurnFailed,
 )
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
@@ -138,9 +139,34 @@ async def test_an_old_event_still_folds_into_state(repository, started, db_path)
     assert session.state.turn_index == 0  # a failed turn did not happen
 
 
-async def test_a_schema_version_bump_falls_back_to_replay(
-    repository, session_id, monkeypatch
+async def test_a_tool_call_decision_written_before_edited_args_existed_still_loads(
+    repository, started, db_path
 ):
+    """`edited_args` defaults to None, which is what its absence meant."""
+    await _write_old_event(
+        db_path,
+        started,
+        version=2,
+        event_type="ToolCallDecided",
+        payload={
+            "aggregate_id": str(started),
+            "aggregate_type": "CodingSession",
+            "aggregate_version": 2,
+            "tool_name": "web_search",
+            "args": {"query": "x"},
+            "decision": "approve",
+            "decided_by": "human",
+        },
+    )
+
+    events = await repository.events_for(started)
+
+    decision = events[-1]
+    assert isinstance(decision, ToolCallDecided)
+    assert decision.edited_args is None
+
+
+async def test_a_schema_version_bump_falls_back_to_replay(repository, session_id, monkeypatch):
     """The snapshot cliff, made explicit.
 
     Bumping `schema_version` invalidates every stored snapshot -- the library
@@ -159,9 +185,7 @@ async def test_a_schema_version_bump_falls_back_to_replay(
     await repository.save(session)
     await repository.drain_snapshots()
 
-    monkeypatch.setattr(
-        CodingSession, "schema_version", CodingSession.schema_version + 1
-    )
+    monkeypatch.setattr(CodingSession, "schema_version", CodingSession.schema_version + 1)
     reloaded = await repository.load(session_id)
 
     assert reloaded.version == session.version
@@ -185,7 +209,17 @@ async def test_a_before_validator_can_reshape_an_old_payload(repository, started
     from eventsource import DomainEvent, register_event
     from pydantic import model_validator
 
-    @register_event
+    # The registry is process-global and this class is registered at call
+    # time rather than at import time, so its wire name has to be unique per
+    # call: a test runner that executes the whole suite more than once in
+    # the same process (mutation testing tools do this deliberately, to get
+    # a clean baseline before mutating) would otherwise register
+    # "RenamedFieldEvent" twice and raise DuplicateEventTypeError on the
+    # second pass -- a self-inflicted failure that has nothing to do with
+    # the mechanism under test.
+    event_type = f"RenamedFieldEvent-{uuid4().hex}"
+
+    @register_event(event_type=event_type)
     class RenamedFieldEvent(DomainEvent):
         aggregate_type: str = "CodingSession"
         error_message: str
@@ -207,7 +241,7 @@ async def test_a_before_validator_can_reshape_an_old_payload(repository, started
         db_path,
         started,
         version=2,
-        event_type="RenamedFieldEvent",
+        event_type=event_type,
         payload={
             "aggregate_id": str(started),
             "aggregate_type": "CodingSession",

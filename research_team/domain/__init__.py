@@ -6,6 +6,7 @@ import from here; nothing here imports from above.
 """
 
 from research_team.domain.commands import (
+    ChangeAutonomy,
     CompactConversation,
     CompleteTurn,
     DeleteFile,
@@ -13,6 +14,7 @@ from research_team.domain.commands import (
     FailTurn,
     RecordAssistantMessage,
     RecordForkSource,
+    RecordToolDecision,
     RecordToolResult,
     SendUserMessage,
     SessionCommand,
@@ -22,12 +24,14 @@ from research_team.domain.commands import (
 from research_team.domain.events import (
     SESSION_EVENTS,
     AssistantMessageAdded,
+    AutonomyChanged,
     ConversationCompacted,
     FileDeleted,
     FileEdited,
     FileWritten,
     SessionForkedFrom,
     SessionStarted,
+    ToolCallDecided,
     ToolResultRecorded,
     TurnCompleted,
     TurnFailed,
@@ -44,6 +48,8 @@ from research_team.domain.session import (
 __all__ = [
     "SESSION_EVENTS",
     "AssistantMessageAdded",
+    "AutonomyChanged",
+    "ChangeAutonomy",
     "CodingSession",
     "CompactConversation",
     "CompleteTurn",
@@ -56,6 +62,7 @@ __all__ = [
     "FileWritten",
     "RecordAssistantMessage",
     "RecordForkSource",
+    "RecordToolDecision",
     "RecordToolResult",
     "SendUserMessage",
     "SessionCommand",
@@ -63,6 +70,7 @@ __all__ = [
     "SessionStarted",
     "SessionState",
     "StartSession",
+    "ToolCallDecided",
     "ToolResultRecorded",
     "TurnCompleted",
     "TurnFailed",

@@ -18,6 +18,7 @@ from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent
 from pydantic import BaseModel, Field
 
 from research_team.domain.commands import (
+    ChangeAutonomy,
     CompactConversation,
     CompleteTurn,
     DeleteFile,
@@ -25,6 +26,7 @@ from research_team.domain.commands import (
     FailTurn,
     RecordAssistantMessage,
     RecordForkSource,
+    RecordToolDecision,
     RecordToolResult,
     SendUserMessage,
     SessionCommand,
@@ -33,12 +35,14 @@ from research_team.domain.commands import (
 )
 from research_team.domain.events import (
     AssistantMessageAdded,
+    AutonomyChanged,
     ConversationCompacted,
     FileDeleted,
     FileEdited,
     FileWritten,
     SessionForkedFrom,
     SessionStarted,
+    ToolCallDecided,
     ToolResultRecorded,
     TurnCompleted,
     TurnFailed,
@@ -83,9 +87,7 @@ def outstanding_tool_call_ids(messages: list[dict[str, Any]]) -> set[str]:
     requested: set[str] = set()
     for message in reversed(messages):
         if message.get("type") == "ai":
-            requested = {
-                call["id"] for call in message.get("data", {}).get("tool_calls", [])
-            }
+            requested = {call["id"] for call in message.get("data", {}).get("tool_calls", [])}
             break
     answered = {
         message.get("data", {}).get("tool_call_id")
@@ -225,6 +227,35 @@ def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
             raise CommandRejectedError(f"file {path!r} does not exist")
         case DeleteFile(path=path), _:
             return [FileDeleted(aggregate_id=session_id, path=path)]
+
+        # ---- supervision ----
+        # Both of these are audit records: they say what was decided about a
+        # tool call, or how a tool's autonomy level changed. Neither is a fact
+        # `SessionState` tracks, so `evolve` deliberately leaves them alone.
+        case RecordToolDecision(
+            tool_name=tool_name,
+            args=args,
+            decision=decision,
+            decided_by=decided_by,
+            edited_args=edited_args,
+        ), _:
+            return [
+                ToolCallDecided(
+                    aggregate_id=session_id,
+                    tool_name=tool_name,
+                    args=args,
+                    decision=decision,
+                    decided_by=decided_by,
+                    edited_args=edited_args,
+                )
+            ]
+
+        case ChangeAutonomy(tool_name=tool_name, level=level), _:
+            return [
+                AutonomyChanged(
+                    aggregate_id=session_id, tool_name=tool_name, level=level
+                )
+            ]
 
     raise CommandRejectedError(f"unhandled command {type(command).__name__}")
 

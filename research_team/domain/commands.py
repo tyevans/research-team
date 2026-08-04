@@ -112,6 +112,23 @@ class DeleteFile(Command):
     path: str
 
 
+class RecordToolDecision(Command):
+    """A tool call was allowed, refused, or amended, and by whom."""
+
+    tool_name: str
+    args: dict[str, Any]
+    decision: str
+    decided_by: str
+    edited_args: dict[str, Any] | None = None
+
+
+class ChangeAutonomy(Command):
+    """A tool's autonomy level changed mid-session."""
+
+    tool_name: str
+    level: str
+
+
 SessionCommand = (
     StartSession
     | SendUserMessage
@@ -124,6 +141,8 @@ SessionCommand = (
     | WriteFile
     | EditFile
     | DeleteFile
+    | RecordToolDecision
+    | ChangeAutonomy
 )
 """Every request a session accepts.
 

@@ -7,12 +7,14 @@ from pydantic import ValidationError
 from research_team.domain.events import (
     SESSION_EVENTS,
     AssistantMessageAdded,
+    AutonomyChanged,
     ConversationCompacted,
     FileDeleted,
     FileEdited,
     FileWritten,
     SessionForkedFrom,
     SessionStarted,
+    ToolCallDecided,
     ToolResultRecorded,
     TurnCompleted,
     TurnFailed,
@@ -22,9 +24,19 @@ from research_team.domain.events import (
 
 def test_all_events_exported():
     assert set(SESSION_EVENTS) == {
-        SessionStarted, UserMessageSent, AssistantMessageAdded,
-        ToolResultRecorded, TurnCompleted, TurnFailed, SessionForkedFrom,
-        ConversationCompacted, FileWritten, FileEdited, FileDeleted,
+        SessionStarted,
+        UserMessageSent,
+        AssistantMessageAdded,
+        ToolResultRecorded,
+        TurnCompleted,
+        TurnFailed,
+        SessionForkedFrom,
+        ConversationCompacted,
+        FileWritten,
+        FileEdited,
+        FileDeleted,
+        ToolCallDecided,
+        AutonomyChanged,
     }
 
 

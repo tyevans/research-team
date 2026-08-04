@@ -8,3 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+# SDD scratch: per-plan workspace for subagent-driven development
+.superpowers/
+
+# mutmut copies sources and tests here to mutate them; pytest and ruff
+# would otherwise collect the copies and fail on the duplicates.
+mutants/

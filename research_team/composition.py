@@ -12,6 +12,8 @@ from langchain_core.language_models import BaseChatModel
 
 from research_team.application import (
     DEFAULT_SYSTEM_PROMPT,
+    ApprovalPort,
+    AutonomyPolicy,
     ContextStrategy,
     ElideToolResults,
     FullHistory,
@@ -19,6 +21,7 @@ from research_team.application import (
     SessionService,
     TurnSupervisor,
 )
+from research_team.application.session_service import NO_NETWORK_CLAUSE
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import DeepAgentTurnExecutor, build_model
 from research_team.infrastructure.agent.compaction import SummarizingStrategy
@@ -26,6 +29,7 @@ from research_team.infrastructure.agent.delegation import (
     DEFAULT_SUBAGENTS,
     DELEGATION_PROMPT,
 )
+from research_team.infrastructure.agent.search import SEARCH_PROMPT, build_search_tool
 from research_team.infrastructure.persistence import (
     EventStoreSessionRepository,
     SessionSummaryRunner,
@@ -46,6 +50,13 @@ class Application:
 
     summaries: SessionSummaryRunner
     """Keeps `/sessions` following the log. Idle until `start()`."""
+
+    policy: AutonomyPolicy
+    """Per-tool autonomy levels for this instance, mutable after construction.
+
+    Exposed here rather than buried in the executor because a front end that
+    lets someone change autonomy mid-session needs a handle to mutate -- this
+    is that handle, whichever adapter (CLI, web) drives it."""
 
     async def start(self) -> None:
         """Open what needs a running event loop to open.
@@ -123,6 +134,8 @@ def build_application(
     db_path: str | None = None,
     context_mode: str | None = None,
     tracer: Tracer | None = None,
+    approvals: ApprovalPort | None = None,
+    policy: AutonomyPolicy | None = None,
 ) -> Application:
     """Wire everything over one event store.
 
@@ -136,12 +149,29 @@ def build_application(
     resolved_path = db_path if db_path is not None else config.default_db_path()
     resolved_model = model if model is not None else build_model()
     mode = context_mode if context_mode is not None else config.context_mode()
-    strategy, subagents, prompt_suffix = _context_parts(
-        mode, resolved_model, system_prompt
-    )
+    strategy, subagents, prompt_suffix = _context_parts(mode, resolved_model, system_prompt)
+    resolved_policy = policy if policy is not None else AutonomyPolicy()
+
+    # Search is the one tool that leaves the process, so it is registered only
+    # when an instance is configured -- unset means the agent gets no network
+    # tool at all, which is what keeps the README's sandbox claim true for
+    # anyone who has not opted in.
+    searxng = config.searxng_url()
+    if searxng is not None:
+        tools = (build_search_tool(searxng, limit=config.searxng_results()),)
+        prompt_suffix += SEARCH_PROMPT
+    else:
+        tools = ()
+        prompt_suffix += NO_NETWORK_CLAUSE
 
     repository = EventStoreSessionRepository.open(resolved_path)
-    executor = DeepAgentTurnExecutor(resolved_model, subagents=subagents)
+    executor = DeepAgentTurnExecutor(
+        resolved_model,
+        subagents=subagents,
+        tools=tools,
+        policy=resolved_policy,
+        approvals=approvals,
+    )
     resolved_tracer = tracer if tracer is not None else build_tracer()
     summaries = SessionSummaryRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
@@ -164,6 +194,7 @@ def build_application(
         turns=TurnSupervisor(service),
         context_mode=mode,
         summaries=summaries,
+        policy=resolved_policy,
     )
 
 

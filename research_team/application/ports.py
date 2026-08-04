@@ -195,6 +195,49 @@ class TurnResult:
     reply_text: str
 
 
+@dataclass(frozen=True)
+class ApprovalRequest:
+    """A request for a human to approve, edit, or reject a gated tool call.
+
+    The application layer must not know whether the human is at a terminal or
+    browsing in a web UI -- this port abstracts that choice away. Paired with
+    ApprovalPort so the executor depends only on the interface, not on any UI
+    framework or presentation layer.
+    """
+
+    session_id: UUID
+    tool_name: str
+    args: dict
+    description: str
+    allowed_decisions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ApprovalDecision:
+    """A human's response to an ApprovalRequest.
+
+    The `type` field holds one of: approve, edit, reject, respond. When edit
+    is chosen, `edited_args` replaces the original args. When respond is
+    chosen, `message` carries the human's reply.
+    """
+
+    type: str
+    edited_args: dict | None = None
+    message: str | None = None
+
+
+class ApprovalPort(Protocol):
+    """Asks a human to approve, edit, or reject a gated tool call.
+
+    Decouples the executor from the medium of human interaction. The executor
+    calls this port knowing only that a human will receive the request and
+    return a decision -- whether they are at a terminal, in a web browser, or
+    somewhere else is an infrastructure detail, not the executor's concern.
+    """
+
+    async def decide(self, request: ApprovalRequest) -> ApprovalDecision: ...
+
+
 class TurnExecutor(Protocol):
     """Runs the agent for one turn.
 

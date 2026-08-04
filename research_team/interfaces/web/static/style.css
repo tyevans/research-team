@@ -760,6 +760,40 @@ pre.code .ln {
 .call b { color: var(--k-tool); font-weight: 600; }
 .call .arg { color: var(--fg-faint); }
 
+/* --- approvals ----------------------------------------------------------
+ * A gated turn parks here rather than in the conversation pane's own flow:
+ * the call it wants to make isn't a message yet, and until someone decides
+ * it may never become one. */
+.approvals { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 0; }
+.approval {
+  border: 1px solid var(--k-tool);
+  border-radius: var(--radius);
+  background: var(--bg-raise);
+  padding: 7px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.approval-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+.approval-head b { color: var(--k-tool); font-weight: 600; }
+.approval-desc { font-size: var(--t-xs); color: var(--fg-dim); }
+.approval-args {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+  white-space: pre-wrap;
+  overflow-x: auto;
+  max-height: 120px;
+}
+.approval-actions { display: flex; gap: 6px; }
+.approval-actions .btn { padding: 3px 10px; }
+
 /* --- composer ---------------------------------------------------------- */
 .composer {
   flex: 0 0 auto;
