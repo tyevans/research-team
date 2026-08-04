@@ -38,8 +38,18 @@ logger = logging.getLogger(__name__)
 DEFAULT_SYSTEM_PROMPT = (
     "You are a coding agent working in an in-memory filesystem. "
     "Use the provided file tools to read and write code. "
-    "There is no shell and no network."
+    "There is no shell."
 )
+"""Framework-free by construction: whether *network* belongs on the end of
+this depends on whether a search tool was actually registered, which is a
+composition-root decision. Appending "and no network" unconditionally would
+tell the model a lie on any install with search configured, and a model told
+it has no network will not use a tool it was just given."""
+
+NO_NETWORK_CLAUSE = " There is no network."
+"""What composition appends when no search tool is registered. Kept here,
+next to the prompt it modifies, rather than duplicated at the call site."""
+
 
 @dataclass(frozen=True)
 class TurnOutcome:
@@ -234,8 +244,7 @@ class SessionService:
             result = await self._executor.execute(
                 aggregate,
                 messages=prepared.messages,
-                system_prompt=aggregate.state.system_prompt
-                or self._default_system_prompt,
+                system_prompt=aggregate.state.system_prompt or self._default_system_prompt,
                 on_activity=on_activity,
             )
         except TurnAccountingError:

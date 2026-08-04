@@ -84,3 +84,16 @@ def build_search_tool(
         return format_results(payload, limit)
 
     return web_search
+
+
+SEARCH_PROMPT = (
+    "\n\nYou can search the web with the `web_search` tool. What it returns is "
+    "a snapshot at the moment you searched, recorded permanently in this "
+    "session's log -- not a live view you can refresh by asking again. If a "
+    "search is refused, that refusal is your answer for this turn; retrying "
+    "the same query will not change it.\n\n"
+    "Search when your own knowledge is stale or thin for the question at "
+    "hand, not reflexively on every question you could plausibly answer "
+    "yourself -- each search is a real request against a real instance, not a "
+    "free way to double-check."
+)
