@@ -12,6 +12,8 @@ import asyncio
 from dataclasses import dataclass
 from uuid import UUID
 
+from eventsource import CommandRejectedError
+
 from research_team.application import ActivityReporter, SessionService
 from research_team.infrastructure import config
 from research_team.interfaces.cli.formatters import (
@@ -163,7 +165,7 @@ async def handle_command(
             return f"usage: {command} <event-number>"
         try:
             repl.session_id = await service.fork(repl.session_id, int(argument))
-        except ValueError as error:
+        except (ValueError, CommandRejectedError) as error:
             return str(error)
         verb = "rewound to" if command == "/rewind" else "forked at"
         return f"{verb} event {argument}; session {repl.session_id}"

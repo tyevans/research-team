@@ -31,7 +31,17 @@ from research_team.application.ports import (
     TurnExecutor,
 )
 from research_team.application.summaries import SessionSummary
-from research_team.domain import CodingSession
+from research_team.domain import (
+    CodingSession,
+    CompactConversation,
+    CompleteTurn,
+    FailTurn,
+    RecordAssistantMessage,
+    RecordForkSource,
+    RecordToolResult,
+    SendUserMessage,
+    StartSession,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -165,9 +175,15 @@ class SessionService:
         """Start a new session and return its id."""
         session_id = uuid4()
         aggregate = self._repository.create(session_id)
-        aggregate.start(
-            system_prompt if system_prompt is not None else self._default_system_prompt,
-            self._executor.model_name,
+        aggregate.execute(
+            StartSession(
+                system_prompt=(
+                    system_prompt
+                    if system_prompt is not None
+                    else self._default_system_prompt
+                ),
+                model_name=self._executor.model_name,
+            )
         )
         await self._repository.save(aggregate)
         return session_id
@@ -212,19 +228,23 @@ class SessionService:
     ) -> TurnOutcome:
         aggregate = await self._repository.load(session_id)
         first_index = aggregate.version + 1
-        aggregate.send_user_message(self._executor.encode_user_message(user_input))
+        aggregate.execute(
+            SendUserMessage(message=self._executor.encode_user_message(user_input))
+        )
 
         # What the model sees is decided here, before the turn, and any
         # decision that needs remembering becomes an event of its own -- so a
         # replay of this log reproduces this context, not merely this outcome.
         prepared = await self._context.prepare(aggregate.state)
         if prepared.compaction is not None:
-            aggregate.compact_conversation(
-                prepared.compaction.summary,
-                prepared.compaction.through_index,
-                self._context.name,
-                tokens_before=prepared.compaction.tokens_before,
-                tokens_after=prepared.compaction.tokens_after,
+            aggregate.execute(
+                CompactConversation(
+                    summary=prepared.compaction.summary,
+                    through_index=prepared.compaction.through_index,
+                    strategy=self._context.name,
+                    tokens_before=prepared.compaction.tokens_before,
+                    tokens_after=prepared.compaction.tokens_after,
+                )
             )
         if on_activity is not None:
             for note in prepared.notes:
@@ -253,11 +273,15 @@ class SessionService:
 
         for message in result.messages:
             if message.kind == "tool":
-                aggregate.record_tool_result(message.payload, is_error=message.is_error)
+                aggregate.execute(
+                    RecordToolResult(
+                        message=message.payload, is_error=message.is_error
+                    )
+                )
             else:
-                aggregate.record_assistant_message(message.payload)
+                aggregate.execute(RecordAssistantMessage(message=message.payload))
 
-        aggregate.complete_turn()
+        aggregate.execute(CompleteTurn())
         last_index = aggregate.version
         await self._repository.save(aggregate)
         return TurnOutcome(
@@ -289,7 +313,11 @@ class SessionService:
             clean = await self._repository.load(session_id)
             # Whether this was a deliberate stop is an asyncio fact, which the
             # aggregate has no business knowing -- so it is decided here.
-            clean.fail_turn(error, cancelled=isinstance(error, asyncio.CancelledError))
+            clean.execute(
+                FailTurn.from_error(
+                    error, cancelled=isinstance(error, asyncio.CancelledError)
+                )
+            )
             await self._repository.save(clean)
         except Exception:
             logger.exception("could not record TurnFailed for %s", session_id)
@@ -308,6 +336,8 @@ class SessionService:
             forked.create_event(
                 type(event), **event.model_dump(exclude=set(_INHERITED_EVENT_FIELDS))
             )
-        forked.record_fork_source(session_id, at)
+        forked.execute(
+            RecordForkSource(source_session_id=session_id, at_event=at)
+        )
         await self._repository.save(forked)
         return new_id

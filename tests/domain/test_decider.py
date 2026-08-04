@@ -1,0 +1,356 @@
+"""The session's rules, as three pure functions.
+
+No aggregate, no repository, no event loop, no fixtures -- `decide` takes a
+command and a state and returns events or raises, and `evolve` takes a state
+and an event and returns the next state. A test is "fold these events, decide
+this command, assert on the result", which is what the rules were always about
+underneath the aggregate that used to carry them.
+
+`decide` also doubles as the inventory of legal transitions: every case below
+corresponds to one branch of it, and a transition with no test here is a
+transition nobody has claimed is legal.
+"""
+
+from uuid import uuid4
+
+import pytest
+from eventsource import CommandRejectedError
+
+from research_team.domain import (
+    CompactConversation,
+    CompleteTurn,
+    DeleteFile,
+    EditFile,
+    FailTurn,
+    FileEdited,
+    RecordAssistantMessage,
+    RecordForkSource,
+    RecordToolResult,
+    SendUserMessage,
+    SessionStarted,
+    StartSession,
+    ToolResultRecorded,
+    TurnFailed,
+    WriteFile,
+    decide,
+    evolve,
+    initial_state,
+)
+
+SYSTEM_PROMPT = "You are a coding agent."
+MODEL_NAME = "test-model"
+
+FILE_DATA = {"content": "print(1)\n", "encoding": "utf-8"}
+
+
+def run(state, *commands):
+    """Fold a sequence of commands through decide/evolve. The whole harness."""
+    for command in commands:
+        for event in decide(command, state):
+            state = evolve(state, event)
+    return state
+
+
+def started(session_id=None):
+    """A session that has been started and nothing else."""
+    return run(
+        initial_state(session_id or uuid4()),
+        StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME),
+    )
+
+
+def user(text: str) -> dict:
+    return {"type": "human", "data": {"content": text}}
+
+
+def calling(*call_ids: str) -> dict:
+    """An assistant message that asked for the given tool calls."""
+    return {
+        "type": "ai",
+        "data": {
+            "content": "",
+            "tool_calls": [
+                {"id": call_id, "name": "write_file", "args": {}}
+                for call_id in call_ids
+            ],
+        },
+    }
+
+
+def tool_result(call_id: str, content: str = "ok") -> dict:
+    return {"type": "tool", "data": {"tool_call_id": call_id, "content": content}}
+
+
+# ---------------- creation ----------------
+
+
+def test_a_new_session_is_not_yet_started():
+    """The decider has to encode "uncreated" as a fact about the domain.
+
+    The aggregate used to answer this with `version > 0`, which is a statement
+    about the event store rather than about a session. Here it is `status`,
+    which is the thing `decide` matches on.
+    """
+    assert initial_state(uuid4()).status == "new"
+
+
+def test_starting_a_session_emits_session_started():
+    state = initial_state(uuid4())
+
+    [event] = decide(
+        StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME), state
+    )
+
+    assert isinstance(event, SessionStarted)
+    assert event.system_prompt == SYSTEM_PROMPT
+    assert event.model_name == MODEL_NAME
+
+
+def test_starting_twice_is_rejected():
+    with pytest.raises(CommandRejectedError, match="already started"):
+        decide(StartSession(system_prompt="x", model_name="y"), started())
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        SendUserMessage(message={"type": "human", "data": {"content": "hi"}}),
+        CompleteTurn(),
+        WriteFile(path="/a.py", file_data=FILE_DATA),
+        DeleteFile(path="/a.py"),
+        RecordForkSource(source_session_id=uuid4(), at_event=2),
+    ],
+    ids=lambda c: type(c).__name__,
+)
+def test_nothing_is_accepted_before_the_session_starts(command):
+    """One case per command in `decide`, rather than a guard called everywhere."""
+    with pytest.raises(CommandRejectedError, match="not started"):
+        decide(command, initial_state(uuid4()))
+
+
+# ---------------- conversation ----------------
+
+
+def test_messages_accumulate_in_order():
+    state = run(
+        started(),
+        SendUserMessage(message=user("first")),
+        RecordAssistantMessage(message=calling("t1")),
+        RecordToolResult(message=tool_result("t1")),
+    )
+
+    assert [m["type"] for m in state.messages] == ["human", "ai", "tool"]
+
+
+def test_a_tool_result_needs_an_outstanding_call():
+    """The invariant that keeps the message log replayable by the model.
+
+    A tool result answering nothing would leave a message the model cannot
+    make sense of on replay, so it is refused rather than recorded.
+    """
+    with pytest.raises(CommandRejectedError, match="no outstanding tool call"):
+        decide(RecordToolResult(message=tool_result("t1")), started())
+
+
+def test_a_tool_result_is_accepted_once_its_call_is_outstanding():
+    state = run(started(), RecordAssistantMessage(message=calling("t1")))
+
+    [event] = decide(RecordToolResult(message=tool_result("t1")), state)
+
+    assert isinstance(event, ToolResultRecorded)
+
+
+def test_tool_results_may_answer_out_of_order():
+    state = run(started(), RecordAssistantMessage(message=calling("t1", "t2")))
+
+    state = run(
+        state,
+        RecordToolResult(message=tool_result("t2", "b")),
+        RecordToolResult(message=tool_result("t1", "a")),
+    )
+
+    assert [m["type"] for m in state.messages][-2:] == ["tool", "tool"]
+
+
+def test_the_same_tool_call_cannot_be_answered_twice():
+    state = run(
+        started(),
+        RecordAssistantMessage(message=calling("t1")),
+        RecordToolResult(message=tool_result("t1")),
+    )
+
+    with pytest.raises(CommandRejectedError, match="no outstanding tool call"):
+        decide(RecordToolResult(message=tool_result("t1")), state)
+
+
+# ---------------- turns ----------------
+
+
+def test_completing_a_turn_advances_the_index():
+    state = run(started(), CompleteTurn(), CompleteTurn())
+
+    assert state.turn_index == 2
+
+
+def test_a_failed_turn_counts_but_does_not_advance_the_index():
+    """A turn that did not happen must not look like one that did."""
+    state = run(started(), CompleteTurn(), FailTurn.from_error(RuntimeError("boom")))
+
+    assert (state.turn_index, state.failed_turns) == (1, 1)
+
+
+def test_a_failure_records_the_error_it_was_given():
+    [event] = decide(FailTurn.from_error(RuntimeError("boom")), started())
+
+    assert isinstance(event, TurnFailed)
+    assert (event.error_type, event.error_message) == ("RuntimeError", "boom")
+    assert event.cancelled is False
+
+
+def test_a_cancellation_is_recorded_as_one():
+    """Stopped on purpose and broke are different facts about the same hole."""
+    [event] = decide(
+        FailTurn.from_error(RuntimeError("stopped"), cancelled=True), started()
+    )
+
+    assert event.cancelled is True
+    assert event.error_type == "Cancelled"
+
+
+def test_a_long_error_message_is_truncated():
+    [event] = decide(FailTurn.from_error(RuntimeError("x" * 900)), started())
+
+    assert len(event.error_message) == 500
+
+
+# ---------------- compaction ----------------
+
+
+def _with_messages(count: int):
+    state = started()
+    for index in range(count):
+        state = run(state, SendUserMessage(message=user(str(index))))
+    return state
+
+
+def test_compaction_records_what_the_model_will_see():
+    state = _with_messages(4)
+
+    [event] = decide(
+        CompactConversation(summary="they talked", through_index=3, strategy="s"),
+        state,
+    )
+
+    assert event.through_index == 3
+    state = evolve(state, event)
+    # The messages themselves are untouched -- only the model's view narrows.
+    assert len(state.messages) == 4
+    assert state.compacted_through == 3
+
+
+def test_compaction_cannot_go_backwards():
+    """Uncovering messages an earlier summary covered would show the model
+    both the summary and the messages it stands in for."""
+    state = _with_messages(4)
+    state = run(
+        state, CompactConversation(summary="s", through_index=3, strategy="s")
+    )
+
+    with pytest.raises(CommandRejectedError, match="cannot compact"):
+        decide(
+            CompactConversation(summary="s", through_index=2, strategy="s"), state
+        )
+
+
+def test_compaction_cannot_run_past_the_end():
+    state = _with_messages(2)
+
+    with pytest.raises(CommandRejectedError, match="cannot compact"):
+        decide(
+            CompactConversation(summary="s", through_index=5, strategy="s"), state
+        )
+
+
+# ---------------- files ----------------
+
+
+def test_writing_a_file_adds_it():
+    state = run(started(), WriteFile(path="/a.py", file_data=FILE_DATA))
+
+    assert state.files["/a.py"] == FILE_DATA
+
+
+def test_editing_a_file_that_does_not_exist_is_rejected():
+    with pytest.raises(CommandRejectedError, match="does not exist"):
+        decide(
+            EditFile(
+                path="/nope.py",
+                file_data=FILE_DATA,
+                old_string="a",
+                new_string="b",
+                replace_all=False,
+            ),
+            started(),
+        )
+
+
+def test_deleting_a_file_that_does_not_exist_is_rejected():
+    with pytest.raises(CommandRejectedError, match="does not exist"):
+        decide(DeleteFile(path="/nope.py"), started())
+
+
+def test_an_edit_carries_both_the_result_and_the_intent():
+    """`file_data` keeps the fold O(1); the strings keep the log meaningful."""
+    state = run(started(), WriteFile(path="/a.py", file_data=FILE_DATA))
+
+    [event] = decide(
+        EditFile(
+            path="/a.py",
+            file_data={"content": "print(2)\n"},
+            old_string="1",
+            new_string="2",
+            replace_all=False,
+        ),
+        state,
+    )
+
+    assert isinstance(event, FileEdited)
+    assert (event.old_string, event.new_string) == ("1", "2")
+
+
+def test_deleting_a_file_removes_it_from_state():
+    state = run(
+        started(),
+        WriteFile(path="/a.py", file_data=FILE_DATA),
+        WriteFile(path="/b.py", file_data=FILE_DATA),
+        DeleteFile(path="/a.py"),
+    )
+
+    assert list(state.files) == ["/b.py"]
+
+
+# ---------------- lineage ----------------
+
+
+def test_fork_lineage_is_recorded():
+    source = uuid4()
+
+    state = run(started(), RecordForkSource(source_session_id=source, at_event=7))
+
+    assert (state.forked_from, state.forked_at) == (source, 7)
+
+
+# ---------------- evolve's totality ----------------
+
+
+def test_evolve_ignores_an_event_it_has_no_branch_for():
+    """Total by construction, so a new event type cannot break replay of an
+    old stream -- it simply does not move the state."""
+    state = started()
+
+    class Unrelated(SessionStarted):
+        pass
+
+    assert evolve(state, Unrelated(
+        aggregate_id=state.session_id, system_prompt="", model_name=""
+    )).messages == state.messages

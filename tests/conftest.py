@@ -9,7 +9,10 @@ from langchain_core.messages import AIMessage
 
 from research_team import composition
 from research_team.application import SessionService
-from research_team.domain import CodingSession
+from research_team.domain import (
+    CodingSession,
+    StartSession,
+)
 from research_team.infrastructure.persistence import (
     EventStoreSessionRepository,
     build_aggregate_repository,
@@ -108,7 +111,7 @@ def session_id():
 @pytest.fixture
 def session(aggregates, session_id) -> CodingSession:
     aggregate = aggregates.create_new(session_id)
-    aggregate.start(SYSTEM_PROMPT, MODEL_NAME)
+    aggregate.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
     return aggregate
 
 
