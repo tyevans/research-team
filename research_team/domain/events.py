@@ -2,6 +2,30 @@
 
 One stream carries both the conversation and the virtual filesystem, so
 ordering between "the model said X" and "file Y changed" is total.
+
+Changing an event's shape
+-------------------------
+Events already written are not rewritten, so every change here has to be
+readable against payloads stored by an older build. Two cases, in order of
+preference:
+
+1. **Adding a field.** Give it a default that means what its absence meant.
+   `TurnFailed.cancelled` and `ConversationCompacted.tokens_*` were both done
+   this way -- an old payload has no key, the default fills in, and the value
+   reads as "unrecorded" rather than as a real measurement.
+
+2. **Renaming or restructuring one.** No default can express this, so add a
+   pydantic `model_validator(mode="before")` to the event class and translate
+   the old shape there. It runs on the stored dict before validation, which is
+   the only point where both shapes are visible at once, and it needs nothing
+   from the library -- events are rebuilt through their own model on the way
+   out of the registry. Bump `event_version` at the same time so a reader can
+   tell which shape a payload was written in.
+
+Either way, add a case to `tests/infrastructure/test_schema_evolution.py`,
+which writes old-shaped payloads straight into the events table and reads them
+back. That file is the only thing standing between this strategy and the
+discovery, much later, that some old session no longer loads.
 """
 
 from typing import Any

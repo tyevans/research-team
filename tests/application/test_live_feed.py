@@ -13,10 +13,20 @@ class FakeFeed:
     def __init__(self) -> None:
         self.entries: list[FeedEntry] = []
         self.reads = 0
+        self._appended = asyncio.Event()
 
     def push(self, name: str) -> None:
         position = len(self.entries) + 1
         self.entries.append(FeedEntry(session_id=name, event=name, position=position))
+        self._appended.set()
+
+    async def wait_for_append(self, timeout: float) -> None:
+        try:
+            await asyncio.wait_for(self._appended.wait(), timeout)
+        except TimeoutError:
+            return
+        finally:
+            self._appended.clear()
 
     async def latest_position(self) -> object | None:
         return self.entries[-1].position if self.entries else None
@@ -77,6 +87,41 @@ async def test_the_cursor_advances_so_events_arrive_once():
     taken = await asyncio.wait_for(_take(feed, 3, from_start=True), timeout=5)
 
     assert [entry.event for entry in taken] == ["a", "b", "c"]
+
+
+async def test_an_append_wakes_the_feed_without_waiting_out_the_interval():
+    """The poll interval is a ceiling on latency, not the latency itself.
+
+    With a 30-second interval, a purely time-driven loop cannot deliver
+    anything inside this test's timeout. Arriving quickly is only possible if
+    the append itself woke the loop.
+    """
+    fake = FakeFeed()
+    feed = LiveFeed(fake, poll_interval=30.0)
+
+    async def push_soon() -> None:
+        await asyncio.sleep(0.05)
+        fake.push("pushed")
+
+    pusher = asyncio.create_task(push_soon())
+    taken = await asyncio.wait_for(_take(feed, 1), timeout=2)
+    await pusher
+
+    assert [entry.event for entry in taken] == ["pushed"]
+
+
+async def test_following_from_a_position_resumes_after_it():
+    """What a reconnecting subscriber needs: neither a replay nor a gap."""
+    fake = FakeFeed()
+    fake.push("before")
+    fake.push("cutoff")
+    resume_from = fake.entries[-1].position
+    fake.push("after")
+    feed = LiveFeed(fake, poll_interval=0.01)
+
+    taken = await asyncio.wait_for(_take(feed, 1, from_position=resume_from), timeout=5)
+
+    assert [entry.event for entry in taken] == ["after"]
 
 
 async def test_an_idle_log_polls_rather_than_spins():

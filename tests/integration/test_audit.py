@@ -1,6 +1,7 @@
 """The log must record what actually happened -- including failures and lineage."""
 
 import pytest
+from eventsource.testing.assertions import EventAssertions
 from langchain_core.messages import AIMessage
 
 from research_team.domain import SessionForkedFrom, ToolResultRecorded, TurnFailed
@@ -33,13 +34,12 @@ def failing_edit_model(fake_model):
 
 
 async def test_failed_tool_call_is_flagged(build_service, failing_edit_model):
-    service = build_service(model=failing_edit_model)
+    service = await build_service(model=failing_edit_model)
     session_id = await service.create_session()
     await service.run_turn(session_id, "edit a file that does not exist")
 
-    results = [
-        e for e in await service.history(session_id) if isinstance(e, ToolResultRecorded)
-    ]
+    log = EventAssertions(await service.history(session_id))
+    results = log.get_events_of_type(ToolResultRecorded)
     assert results, "no tool result recorded"
     assert results[-1].is_error is True
     assert "not found" in results[-1].message["data"]["content"]
@@ -60,27 +60,27 @@ async def test_successful_tool_call_is_not_flagged(build_service, fake_model):
         ),
         AIMessage(content="wrote", id="a2"),
     ]
-    service = build_service(model=fake_model)
+    service = await build_service(model=fake_model)
     session_id = await service.create_session()
     await service.run_turn(session_id, "write it")
 
-    results = [
-        e for e in await service.history(session_id) if isinstance(e, ToolResultRecorded)
-    ]
+    results = EventAssertions(
+        await service.history(session_id)
+    ).get_events_of_type(ToolResultRecorded)
     assert results and all(r.is_error is False for r in results)
 
 
 async def test_errored_tool_result_is_marked_in_the_log(
     build_service, failing_edit_model
 ):
-    service = build_service(model=failing_edit_model)
+    service = await build_service(model=failing_edit_model)
     session_id = await service.create_session()
     await service.run_turn(session_id, "edit a file that does not exist")
     assert "!" in format_log(await service.history(session_id), limit=50)
 
 
 async def test_fork_records_its_source(build_service, repository, db_path, fake_model):
-    service = build_service(model=fake_model, db_path=db_path)
+    service = await build_service(model=fake_model, db_path=db_path)
     source = await service.create_session()
     await service.run_turn(source, "hello")
 
@@ -92,29 +92,32 @@ async def test_fork_records_its_source(build_service, repository, db_path, fake_
 
 
 async def test_fork_lineage_is_an_event_on_the_stream(build_service, fake_model):
-    service = build_service(model=fake_model)
+    service = await build_service(model=fake_model)
     session_id = await service.create_session()
     await service.run_turn(session_id, "hello")
     forked_id = await service.fork(session_id, at=2)
 
     events = await service.history(forked_id)
+    # Positional on purpose: lineage is recorded *after* the copied prefix,
+    # because `SessionStarted` has to come first and its reducer replaces state
+    # wholesale. "A SessionForkedFrom exists somewhere" would not catch that.
     assert isinstance(events[-1], SessionForkedFrom)
     assert events[-1].at_event == 2
 
 
 async def test_lineage_survives_a_cold_refold(build_service, fake_model, db_path):
-    service = build_service(model=fake_model, db_path=db_path)
+    service = await build_service(model=fake_model, db_path=db_path)
     source = await service.create_session()
     await service.run_turn(source, "hello")
     forked_id = await service.fork(source, at=2)
     await service.close()
 
-    reopened = build_service(model=fake_model, db_path=db_path)
+    reopened = await build_service(model=fake_model, db_path=db_path)
     assert (await reopened.load(forked_id)).state.forked_from == source
 
 
 async def test_unforked_session_has_no_lineage(build_service, fake_model):
-    service = build_service(model=fake_model)
+    service = await build_service(model=fake_model)
     session_id = await service.create_session()
     aggregate = await service.load(session_id)
     assert aggregate.state.forked_from is None
@@ -123,7 +126,7 @@ async def test_unforked_session_has_no_lineage(build_service, fake_model):
 async def test_sessions_view_shows_lineage_and_failures(
     build_service, fake_model, monkeypatch
 ):
-    service = build_service(model=fake_model)
+    service = await build_service(model=fake_model)
     source = await service.create_session()
     await service.run_turn(source, "hello")
     current = repl.Repl(service, await service.fork(source, at=2))
@@ -142,7 +145,7 @@ async def test_sessions_view_shows_lineage_and_failures(
 
 
 async def test_state_reports_lineage(build_service, fake_model):
-    service = build_service(model=fake_model)
+    service = await build_service(model=fake_model)
     session_id = await service.create_session()
     await service.run_turn(session_id, "hello")
     current = repl.Repl(service, await service.fork(session_id, at=2))
@@ -154,13 +157,15 @@ async def test_state_reports_lineage(build_service, fake_model):
 async def test_turn_failed_appears_in_the_log(service_with_failure):
     service, session_id = service_with_failure
     events = await service.history(session_id)
+    # Also positional: a failed turn is appended after its events are discarded,
+    # so it being last is the evidence that nothing half-applied followed it.
     assert isinstance(events[-1], TurnFailed)
     assert "RuntimeError" in format_log(events, limit=10)
 
 
 @pytest.fixture
 async def service_with_failure(build_service, fake_model, monkeypatch):
-    service = build_service(model=fake_model)
+    service = await build_service(model=fake_model)
     session_id = await service.create_session()
 
     async def boom(*args, **kwargs):

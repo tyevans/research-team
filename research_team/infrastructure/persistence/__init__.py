@@ -5,9 +5,19 @@ from research_team.infrastructure.persistence.event_store import (
     EventStoreSessionRepository,
     build_aggregate_repository,
 )
+from research_team.infrastructure.persistence.read_models import (
+    SessionSummaryProjection,
+    SessionSummaryRow,
+    SessionSummaryRunner,
+    SessionSummaryStore,
+)
 
 __all__ = [
     "SNAPSHOT_THRESHOLD",
     "EventStoreSessionRepository",
+    "SessionSummaryProjection",
+    "SessionSummaryRow",
+    "SessionSummaryRunner",
+    "SessionSummaryStore",
     "build_aggregate_repository",
 ]

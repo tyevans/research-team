@@ -32,14 +32,14 @@ def slow_model() -> SlowModel:
 
 
 @pytest.fixture
-def fast_supervisor(build_service, fake_model):
-    service = build_service(model=fake_model)
+async def fast_supervisor(build_service, fake_model):
+    service = await build_service(model=fake_model)
     return TurnSupervisor(service), service
 
 
 @pytest.fixture
-def slow_supervisor(build_service, slow_model):
-    service = build_service(model=slow_model)
+async def slow_supervisor(build_service, slow_model):
+    service = await build_service(model=slow_model)
     return TurnSupervisor(service), service
 
 
@@ -177,7 +177,7 @@ async def test_cancelling_a_finished_turn_says_so(fast_supervisor):
 
 async def test_the_session_is_usable_again_after_a_cancellation(build_service, slow_model):
     """Cancelling must not wedge the session: the next turn has to work."""
-    service = build_service(model=slow_model)
+    service = await build_service(model=slow_model)
     supervisor = TurnSupervisor(service)
     session_id = await service.create_session()
 
@@ -220,7 +220,7 @@ async def test_a_running_turn_reports_its_number_and_age(slow_supervisor):
 async def test_the_running_turn_number_follows_the_completed_ones(
     build_service, slow_model
 ):
-    service = build_service(model=slow_model)
+    service = await build_service(model=slow_model)
     supervisor = TurnSupervisor(service)
     session_id = await service.create_session()
     slow_model.delay = 0.0
@@ -265,7 +265,7 @@ async def test_a_cancel_that_will_not_settle_says_so_rather_than_hanging(
     build_service,
 ):
     """A turn wedged in a slow client must not wedge the cancel request too."""
-    service = build_service(
+    service = await build_service(
         model=StubbornModel(responses=[AIMessage(content="never", id="n1")])
     )
     supervisor = TurnSupervisor(service, settle_timeout=0.1)

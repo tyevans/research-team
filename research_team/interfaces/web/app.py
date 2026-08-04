@@ -57,10 +57,20 @@ class NewFork(BaseModel):
 
 
 def create_app(
-    service: SessionService, feed: LiveFeed, turns: TurnSupervisor
+    service: SessionService,
+    feed: LiveFeed,
+    turns: TurnSupervisor,
+    lifespan=None,
 ) -> FastAPI:
-    """Build the app around an already-wired service. Composition stays outside."""
-    app = FastAPI(title="research-team", docs_url="/api/docs")
+    """Build the app around an already-wired service. Composition stays outside.
+
+    `lifespan` is how the composition root gets a foot inside the server's
+    event loop. Anything holding a connection bound to the loop that opened it
+    -- the `/sessions` projection, in particular -- has to be started there
+    rather than at construction time, and this is the only hook the server
+    offers for that.
+    """
+    app = FastAPI(title="research-team", docs_url="/api/docs", lifespan=lifespan)
 
     async def _load(session_id: UUID):
         try:
@@ -76,6 +86,37 @@ def create_app(
     async def create_session(body: NewSession | None = None):
         prompt = body.system_prompt if body else None
         return {"id": str(await service.create_session(prompt))}
+
+    @app.get("/api/health")
+    async def health():
+        """Whether the derived views behind this API can be trusted.
+
+        `/sessions` is answered from a projection, so unlike a fold it can be
+        wrong -- and a wrong row looks exactly like a right one. This is where
+        a UI finds out to say so.
+        """
+        summaries = await service.summaries_health()
+        return {
+            "summaries": {
+                "healthy": summaries.healthy,
+                "failed_events": summaries.failed_events,
+                "following": summaries.following,
+                "behind": summaries.behind,
+            }
+        }
+
+    @app.post("/api/summaries/rebuild")
+    async def rebuild_summaries():
+        """Derive the session list from the log again, and report the result.
+
+        Exposed over HTTP because the browser is the primary surface and a
+        problem you can see but not fix is only half-reported. Safe to call at
+        any time: it discards derived data and recomputes it, so the worst case
+        is wasted work, and the log it derives from is never touched.
+        """
+        await service.rebuild_summaries()
+        health = await service.summaries_health()
+        return {"healthy": health.healthy, "failed_events": health.failed_events}
 
     @app.get("/api/tree")
     async def fork_tree():
@@ -198,9 +239,16 @@ def create_app(
 
     @app.get("/api/stream")
     async def stream(request: Request) -> StreamingResponse:
-        """Every event, as it is appended, to every listening browser."""
+        """Every event, as it is appended, to every listening browser.
+
+        `Last-Event-ID` is the browser's own reconnect header -- EventSource
+        sends it automatically with the id of the last frame it received, so
+        resuming costs the client nothing and closes the window where events
+        appended during a dropped connection would never be seen.
+        """
+        resume_from = request.headers.get("last-event-id")
         return StreamingResponse(
-            _sse(request, feed),
+            _sse(request, feed, resume_from),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -215,17 +263,26 @@ def create_app(
     return app
 
 
-async def _sse(request: Request, feed: LiveFeed) -> AsyncIterator[str]:
+async def _sse(
+    request: Request, feed: LiveFeed, resume_from: str | None = None
+) -> AsyncIterator[str]:
     """Serialise the live feed as server-sent events.
 
     Keepalive comments keep intermediaries from closing an idle connection --
     a session can sit silent for a minute while the model thinks, which is
     exactly when the browser most needs the connection to still be there.
+
+    Every frame carries the position that follows it as its id, so a browser
+    that drops can say where it got to. An id we cannot place -- stale, or
+    from a database since replaced -- is treated as no id at all: starting at
+    the live end shows less than the client wanted, while replaying the entire
+    log at it would be worse than the gap.
     """
     queue: asyncio.Queue = asyncio.Queue()
+    start_at = feed.decode_position(resume_from) if resume_from else None
 
     async def pump() -> None:
-        async for entry in feed.follow():
+        async for entry in feed.follow(from_position=start_at):
             await queue.put(entry)
 
     # The feed is drained by its own task rather than awaited inline, so waiting
@@ -252,7 +309,11 @@ async def _sse(request: Request, feed: LiveFeed) -> AsyncIterator[str]:
                 entry.event,
                 getattr(entry.event, "aggregate_version", None),
             )
-            yield f"data: {json.dumps(payload)}\n\n"
+            # One yield, not two: an id and its data are a single SSE frame,
+            # and splitting them would let a cancellation land between the
+            # cursor and the event it belongs to.
+            cursor = feed.encode_position(entry.position)
+            yield f"id: {cursor}\ndata: {json.dumps(payload)}\n\n"
     finally:
         pumping.cancel()
         with suppress(asyncio.CancelledError):

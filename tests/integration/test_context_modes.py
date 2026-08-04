@@ -108,7 +108,7 @@ def sent_chars(index: int = -1) -> int:
 
 
 async def test_full_mode_sends_the_whole_conversation(build_application):
-    application = build_application(model=chatty(8), context_mode="full")
+    application = await build_application(model=chatty(8), context_mode="full")
     session_id = await application.service.create_session()
 
     for i in range(6):
@@ -127,14 +127,14 @@ async def test_elide_mode_sends_less_than_full_mode(
     build_application, db_path, elide_soon
 ):
     """The point of the mode, measured rather than asserted."""
-    full = build_application(model=chatty(10), context_mode="full", db_path=db_path)
+    full = await build_application(model=chatty(10), context_mode="full", db_path=db_path)
     session_id = await full.service.create_session()
     for i in range(5):
         await full.service.run_turn(session_id, f"turn {i}")
     full_chars = sent_chars()
 
     Recording.calls = []
-    elided = build_application(
+    elided = await build_application(
         model=chatty(10), context_mode="elide", db_path=f"{db_path}.elide"
     )
     session_id = await elided.service.create_session()
@@ -147,7 +147,7 @@ async def test_elide_mode_sends_less_than_full_mode(
 
 async def test_elide_mode_records_no_extra_events(build_application, elide_soon):
     """It is a view: the log looks exactly as it would have without it."""
-    application = build_application(model=chatty(8), context_mode="elide")
+    application = await build_application(model=chatty(8), context_mode="elide")
     session_id = await application.service.create_session()
 
     for i in range(5):
@@ -160,7 +160,7 @@ async def test_elide_mode_records_no_extra_events(build_application, elide_soon)
 
 
 async def test_elide_mode_keeps_every_message_in_the_log(build_application, elide_soon):
-    application = build_application(model=chatty(8), context_mode="elide")
+    application = await build_application(model=chatty(8), context_mode="elide")
     session_id = await application.service.create_session()
 
     for i in range(5):
@@ -177,7 +177,7 @@ async def test_elide_mode_keeps_every_message_in_the_log(build_application, elid
 
 
 async def test_compact_mode_records_a_compaction_event(build_application, compact_soon):
-    application = build_application(model=chatty(12), context_mode="compact")
+    application = await build_application(model=chatty(12), context_mode="compact")
     session_id = await application.service.create_session()
 
     for i in range(6):
@@ -193,7 +193,7 @@ async def test_compact_mode_keeps_the_original_messages_in_the_log(
     build_application, compact_soon
 ):
     """The summary is what the model sees; the log keeps what actually happened."""
-    application = build_application(model=chatty(12), context_mode="compact")
+    application = await build_application(model=chatty(12), context_mode="compact")
     session_id = await application.service.create_session()
     for i in range(6):
         await application.service.run_turn(session_id, f"turn {i}")
@@ -206,7 +206,7 @@ async def test_compact_mode_keeps_the_original_messages_in_the_log(
 
 async def test_time_travel_predates_the_compaction(build_application, compact_soon):
     """Folding to before the compaction shows the conversation uncompacted."""
-    application = build_application(model=chatty(12), context_mode="compact")
+    application = await build_application(model=chatty(12), context_mode="compact")
     session_id = await application.service.create_session()
     for i in range(6):
         await application.service.run_turn(session_id, f"turn {i}")
@@ -228,7 +228,7 @@ async def test_time_travel_predates_the_compaction(build_application, compact_so
 
 async def test_delegate_mode_offers_the_agent_a_worker(build_application):
     """The subagent has to be reachable, or the mode is decoration."""
-    application = build_application(model=chatty(4), context_mode="delegate")
+    application = await build_application(model=chatty(4), context_mode="delegate")
     assert application.context_mode == "delegate"
 
     session_id = await application.service.create_session()
@@ -239,7 +239,7 @@ async def test_delegate_mode_offers_the_agent_a_worker(build_application):
 
 async def test_delegate_mode_leaves_the_history_untouched(build_application):
     """It prevents growth rather than treating it -- no view transform at all."""
-    application = build_application(model=chatty(8), context_mode="delegate")
+    application = await build_application(model=chatty(8), context_mode="delegate")
     session_id = await application.service.create_session()
 
     for i in range(4):
@@ -259,7 +259,7 @@ async def test_delegation_guidance_says_when_not_to_delegate(build_application):
     code, so nothing but a test stops them being edited away -- and the failure
     would only show up as an agent quietly behaving worse.
     """
-    application = build_application(model=chatty(4), context_mode="delegate")
+    application = await build_application(model=chatty(4), context_mode="delegate")
     session_id = await application.service.create_session()
     prompt = (await application.service.load(session_id)).state.system_prompt
 

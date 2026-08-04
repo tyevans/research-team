@@ -22,6 +22,7 @@ from research_team.interfaces.cli.formatters import (
     format_resumed,
     format_sessions,
     format_state,
+    format_summary_health,
     format_turn,
 )
 
@@ -35,6 +36,8 @@ Workspace
 Event log
   /log [n]         last n events (default 20)
   /state           session id, event count, turn count, file count
+  /health          whether the session list is derived from a healthy projection
+  /rebuild         rebuild the session list from the log (safe at any time)
 
 Time travel
   /rewind <n>      continue from a fork at event n
@@ -164,6 +167,11 @@ async def handle_command(
             return str(error)
         verb = "rewound to" if command == "/rewind" else "forked at"
         return f"{verb} event {argument}; session {repl.session_id}"
+    if command == "/health":
+        return format_summary_health(await service.summaries_health())
+    if command == "/rebuild":
+        await service.rebuild_summaries()
+        return "session list rebuilt from the log"
     if command == "/state":
         events = await service.history(repl.session_id)
         return format_state(
