@@ -8,6 +8,7 @@ dependencies = [
     "deepagents>=0.7.1,<0.8",
     "eventsource-py[sqlite]>=0.10.0",
     "fastapi>=0.141.1",
+    "httpx>=0.28.1",
     "langchain-openai>=1.4.1",
     "uvicorn[standard]>=0.52.1",
 ]
@@ -23,9 +24,10 @@ tracing = [
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "hypothesis>=6.100",
+    "mutmut>=3.0",
 ]
 
 [tool.pytest.ini_options]
@@ -46,3 +48,11 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "C4", "BLE"]
 [tool.ruff.lint.per-file-ignores]
 # Test doubles keep mutable class attributes on purpose, to record what they saw.
 "tests/*" = ["RUF012"]
+
+[tool.mutmut]
+paths_to_mutate = [
+    "research_team/application/autonomy.py",
+    "research_team/infrastructure/agent/search.py",
+    "research_team/infrastructure/agent/approval.py",
+]
+tests_dir = "tests/"
