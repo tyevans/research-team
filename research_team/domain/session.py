@@ -8,12 +8,14 @@ from pydantic import BaseModel, Field
 
 from research_team.domain.events import (
     AssistantMessageAdded,
+    AutonomyChanged,
     ConversationCompacted,
     FileDeleted,
     FileEdited,
     FileWritten,
     SessionForkedFrom,
     SessionStarted,
+    ToolCallDecided,
     ToolResultRecorded,
     TurnCompleted,
     TurnFailed,
@@ -44,9 +46,7 @@ def _outstanding_tool_call_ids(messages: list[dict[str, Any]]) -> set[str]:
     requested: set[str] = set()
     for message in reversed(messages):
         if message.get("type") == "ai":
-            requested = {
-                call["id"] for call in message.get("data", {}).get("tool_calls", [])
-            }
+            requested = {call["id"] for call in message.get("data", {}).get("tool_calls", [])}
             break
     answered = {
         message.get("data", {}).get("tool_call_id")
@@ -66,9 +66,7 @@ class CodingSession(DeclarativeAggregate[SessionState]):
     def start(self, system_prompt: str, model_name: str) -> None:
         if self.version > 0:
             raise ValueError("session already started")
-        self.create_event(
-            SessionStarted, system_prompt=system_prompt, model_name=model_name
-        )
+        self.create_event(SessionStarted, system_prompt=system_prompt, model_name=model_name)
 
     def send_user_message(self, message: dict[str, Any]) -> None:
         self._require_started()
@@ -78,9 +76,7 @@ class CodingSession(DeclarativeAggregate[SessionState]):
         self._require_started()
         self.create_event(AssistantMessageAdded, message=message)
 
-    def record_tool_result(
-        self, message: dict[str, Any], *, is_error: bool = False
-    ) -> None:
+    def record_tool_result(self, message: dict[str, Any], *, is_error: bool = False) -> None:
         self._require_started()
         call_id = message.get("data", {}).get("tool_call_id")
         if call_id not in _outstanding_tool_call_ids(self.state.messages):
@@ -179,6 +175,28 @@ class CodingSession(DeclarativeAggregate[SessionState]):
         self._require_file(path)
         self.create_event(FileDeleted, path=path)
 
+    def record_tool_decision(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        decision: str,
+        decided_by: str,
+        edited_args: dict[str, Any] | None = None,
+    ) -> None:
+        self._require_started()
+        self.create_event(
+            ToolCallDecided,
+            tool_name=tool_name,
+            args=args,
+            decision=decision,
+            decided_by=decided_by,
+            edited_args=edited_args,
+        )
+
+    def record_autonomy_change(self, tool_name: str, level: str) -> None:
+        self._require_started()
+        self.create_event(AutonomyChanged, tool_name=tool_name, level=level)
+
     # ---------------- guards ----------------
 
     def _require_started(self) -> None:
@@ -254,6 +272,18 @@ class CodingSession(DeclarativeAggregate[SessionState]):
     def _on_file_deleted(self, event: FileDeleted) -> None:
         files = {k: v for k, v in self._state.files.items() if k != event.path}
         self._state = self._state.model_copy(update={"files": files})
+
+    @handles(ToolCallDecided)
+    def _on_tool_call_decided(self, event: ToolCallDecided) -> None:
+        # Recorded for the audit trail only -- a supervision decision does not
+        # change any derived state, so the fold is deliberately a no-op.
+        pass
+
+    @handles(AutonomyChanged)
+    def _on_autonomy_changed(self, event: AutonomyChanged) -> None:
+        # Same as above: this is the record of a policy change, not a fact
+        # SessionState tracks. The fold is deliberately a no-op.
+        pass
 
     # ---------------- reducer helpers ----------------
 

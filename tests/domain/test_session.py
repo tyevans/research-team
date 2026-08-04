@@ -5,10 +5,12 @@ from eventsource.testing.assertions import EventAssertions
 from research_team.domain import CodingSession
 from research_team.domain.events import (
     AssistantMessageAdded,
+    AutonomyChanged,
     FileDeleted,
     FileEdited,
     FileWritten,
     SessionStarted,
+    ToolCallDecided,
     ToolResultRecorded,
     TurnCompleted,
     UserMessageSent,
@@ -128,6 +130,28 @@ def test_tool_results_may_resolve_out_of_order(session):
     session.record_tool_result(tool_result("t2", "b"))
     session.record_tool_result(tool_result("t1", "a"))
     assert types_of(session)[-2:] == [ToolResultRecorded, ToolResultRecorded]
+
+
+def test_a_tool_decision_is_recorded_on_the_stream(session):
+    session.record_tool_decision(
+        tool_name="web_search",
+        args={"query": "event sourcing"},
+        decision="approve",
+        decided_by="human",
+    )
+    event = session.uncommitted_events[-1]
+    assert isinstance(event, ToolCallDecided)
+    assert event.decision == "approve"
+    assert event.decided_by == "human"
+    assert event.edited_args is None
+
+
+def test_an_autonomy_change_is_recorded_on_the_stream(session):
+    session.record_autonomy_change("web_search", "ask")
+    event = session.uncommitted_events[-1]
+    assert isinstance(event, AutonomyChanged)
+    assert event.tool_name == "web_search"
+    assert event.level == "ask"
 
 
 def test_complete_turn_increments_index(session):

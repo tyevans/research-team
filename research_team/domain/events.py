@@ -164,6 +164,38 @@ class FileDeleted(DomainEvent):
     path: str
 
 
+@register_event
+class ToolCallDecided(DomainEvent):
+    """A gated tool call was allowed, refused, or amended -- and by whom.
+
+    Recorded because a supervision decision is a fact about how the session was
+    conducted, and one that is not recoverable afterwards: the policy that
+    produced it is configuration, and configuration changes. `decided_by`
+    separates a human's judgement from the policy's own refusal; both stop a
+    call, and an audit trail that cannot tell them apart is a worse one.
+    """
+
+    aggregate_type: str = "CodingSession"
+    tool_name: str
+    args: dict[str, Any]
+    decision: str
+    """langchain's vocabulary: approve | edit | reject | respond."""
+    decided_by: str
+    """`human` or `policy`."""
+    edited_args: dict[str, Any] | None = None
+    """The amended arguments when `decision` is `edit`. None otherwise."""
+
+
+@register_event
+class AutonomyChanged(DomainEvent):
+    """How much the agent may do without asking was changed mid-session."""
+
+    aggregate_type: str = "CodingSession"
+    tool_name: str
+    level: str
+    """auto | ask | deny."""
+
+
 SESSION_EVENTS: tuple[type[DomainEvent], ...] = (
     SessionStarted,
     ConversationCompacted,
@@ -176,4 +208,6 @@ SESSION_EVENTS: tuple[type[DomainEvent], ...] = (
     FileWritten,
     FileEdited,
     FileDeleted,
+    ToolCallDecided,
+    AutonomyChanged,
 )

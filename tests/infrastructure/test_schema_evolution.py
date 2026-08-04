@@ -18,7 +18,12 @@ from uuid import uuid4
 import aiosqlite
 import pytest
 
-from research_team.domain import CodingSession, ConversationCompacted, TurnFailed
+from research_team.domain import (
+    CodingSession,
+    ConversationCompacted,
+    ToolCallDecided,
+    TurnFailed,
+)
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
 
@@ -132,9 +137,34 @@ async def test_an_old_event_still_folds_into_state(repository, started, db_path)
     assert session.state.turn_index == 0  # a failed turn did not happen
 
 
-async def test_a_schema_version_bump_falls_back_to_replay(
-    repository, session_id, monkeypatch
+async def test_a_tool_call_decision_written_before_edited_args_existed_still_loads(
+    repository, started, db_path
 ):
+    """`edited_args` defaults to None, which is what its absence meant."""
+    await _write_old_event(
+        db_path,
+        started,
+        version=2,
+        event_type="ToolCallDecided",
+        payload={
+            "aggregate_id": str(started),
+            "aggregate_type": "CodingSession",
+            "aggregate_version": 2,
+            "tool_name": "web_search",
+            "args": {"query": "x"},
+            "decision": "approve",
+            "decided_by": "human",
+        },
+    )
+
+    events = await repository.events_for(started)
+
+    decision = events[-1]
+    assert isinstance(decision, ToolCallDecided)
+    assert decision.edited_args is None
+
+
+async def test_a_schema_version_bump_falls_back_to_replay(repository, session_id, monkeypatch):
     """The snapshot cliff, made explicit.
 
     Bumping `schema_version` invalidates every stored snapshot -- the library
@@ -151,9 +181,7 @@ async def test_a_schema_version_bump_falls_back_to_replay(
     await repository.save(session)
     await repository.drain_snapshots()
 
-    monkeypatch.setattr(
-        CodingSession, "schema_version", CodingSession.schema_version + 1
-    )
+    monkeypatch.setattr(CodingSession, "schema_version", CodingSession.schema_version + 1)
     reloaded = await repository.load(session_id)
 
     assert reloaded.version == session.version
