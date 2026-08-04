@@ -15,15 +15,21 @@ from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 from eventsource import DomainEvent
+from eventsource.observability import Tracer, create_tracer
+from eventsource.observability.attributes import (
+    ATTR_AGGREGATE_ID,
+    ATTR_AGGREGATE_TYPE,
+)
 
 from research_team.application.context import ContextStrategy, FullHistory
 from research_team.application.ports import (
     ActivityReporter,
     SessionRepository,
+    SessionSummaries,
     TurnAccountingError,
     TurnExecutor,
 )
-from research_team.application.summaries import SessionSummary, summarize_sessions
+from research_team.application.summaries import SessionSummary
 from research_team.domain import CodingSession
 
 logger = logging.getLogger(__name__)
@@ -71,14 +77,26 @@ class SessionService:
         self,
         repository: SessionRepository,
         executor: TurnExecutor,
+        summaries: SessionSummaries,
         *,
         default_system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         context: ContextStrategy | None = None,
+        tracer: Tracer | None = None,
     ) -> None:
         self._repository = repository
         self._executor = executor
+        self._summaries = summaries
+        # `create_tracer` returns a no-op when OpenTelemetry is not installed,
+        # which is the normal case here -- so spans cost a couple of attribute
+        # lookups and are thrown away, and nothing has to be conditional.
+        self._tracer = tracer if tracer is not None else create_tracer(__name__, False)
         self._default_system_prompt = default_system_prompt
         self._context = context if context is not None else FullHistory()
+
+    @property
+    def tracer(self) -> Tracer:
+        """The tracer spans are opened on. No-op unless one was supplied."""
+        return self._tracer
 
     @property
     def context_strategy(self) -> str:
@@ -118,8 +136,15 @@ class SessionService:
         return aggregate
 
     async def list_sessions(self) -> list[SessionSummary]:
-        """Every session in the store, newest first."""
-        return summarize_sessions(await self._repository.all_events())
+        """Every session in the store, newest first.
+
+        Read straight out of the projection's table. What this used to do --
+        fold every event in the database, per request -- is still the
+        definition of a summary, and still lives in `summarize_sessions`; it is
+        just applied once per event now instead of once per page view.
+        """
+        return await self._summaries.list()
+
 
     # ---------------- lifecycle ----------------
 
@@ -152,7 +177,26 @@ class SessionService:
         would otherwise have to diff it against a snapshot taken beforehand to
         answer "which of these did my turn write?" -- a question the aggregate
         can answer exactly, because an aggregate's version *is* its event count.
+
+        Traced as one span. `eventsource` traces its own loads and appends, but
+        those are leaves: without a parent naming the turn, a trace shows a
+        pile of database calls with nothing to say which turn they served or
+        how much of the wall clock was the model rather than the store. The
+        span covers a failed turn too -- ending only on success would report
+        every failure as a span that never closed.
         """
+        with self._tracer.span(
+            "research_team.turn",
+            {ATTR_AGGREGATE_ID: str(session_id), ATTR_AGGREGATE_TYPE: "CodingSession"},
+        ):
+            return await self._run_turn(session_id, user_input, on_activity)
+
+    async def _run_turn(
+        self,
+        session_id: UUID,
+        user_input: str,
+        on_activity: ActivityReporter | None = None,
+    ) -> TurnOutcome:
         aggregate = await self._repository.load(session_id)
         first_index = aggregate.version + 1
         aggregate.send_user_message(self._executor.encode_user_message(user_input))

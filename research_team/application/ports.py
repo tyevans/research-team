@@ -7,12 +7,18 @@ langchain, or deepagents; those are details chosen at composition time.
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
 from eventsource import DomainEvent
 
 from research_team.domain import CodingSession
+
+if TYPE_CHECKING:
+    # Imported for typing only: `summaries` imports nothing from here, and
+    # keeping it that way is what stops the ports module from depending on a
+    # use case that depends on it.
+    from research_team.application.summaries import SessionSummary
 
 ActivityReporter = Callable[[str], None]
 """Called with a one-line progress note while a turn is in flight."""
@@ -40,11 +46,23 @@ class SessionRepository(Protocol):
         """Every event on one session's stream, in order."""
         ...
 
-    async def all_events(self) -> list[DomainEvent]:
-        """Every event across every session, for building projections."""
+    async def close(self) -> None: ...
+
+
+class SessionSummaries(Protocol):
+    """The `/sessions` list, as a thing that is stored rather than computed.
+
+    Separate from `SessionRepository` because it is the query side: it answers
+    from a view maintained by a projection, and knows nothing about aggregates
+    or streams. There is deliberately no method here for reading every event --
+    that was the full scan this port exists to replace.
+    """
+
+    async def list(self) -> list["SessionSummary"]:
+        """Every session, newest first."""
         ...
 
-    async def close(self) -> None: ...
+
 
 
 @dataclass(frozen=True)
@@ -71,6 +89,30 @@ class EventFeed(Protocol):
 
     async def read_since(self, position: object | None) -> list[FeedEntry]:
         """Everything appended after `position`. Exclusive; None means from the start."""
+        ...
+
+    def encode_position(self, position: object) -> str:
+        """A position as text, for handing to a client that may hand it back."""
+        ...
+
+    def decode_position(self, raw: str) -> object | None:
+        """A position from text, or None if it is not one this store can place.
+
+        Returning None rather than raising is the contract: the text comes from
+        outside, so "unusable" is an ordinary answer and the caller is expected
+        to have somewhere else to start.
+        """
+        ...
+
+    async def wait_for_append(self, timeout: float) -> None:
+        """Return once something has been appended, or after `timeout`.
+
+        A hint, not a guarantee, and deliberately carries no events: the reader
+        still asks the store what is new, so ordering and completeness stay the
+        store's business. All this saves is the wait -- an implementation that
+        cannot tell when a write happened may simply sleep, and the only cost
+        is latency the caller had already agreed to.
+        """
         ...
 
 

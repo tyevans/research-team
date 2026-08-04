@@ -165,3 +165,4 @@ def format_resumed(session: CodingSession) -> str:
         f"resumed {state.session_id} -- "
         f"{state.turn_index} turns, {len(state.files)} files"
     )
+

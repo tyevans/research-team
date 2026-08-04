@@ -1,5 +1,6 @@
 import pytest
 from conftest import MODEL_NAME, SYSTEM_PROMPT
+from eventsource.testing.assertions import EventAssertions
 
 from research_team.domain import CodingSession
 from research_team.domain.events import (
@@ -21,6 +22,18 @@ def types_of(aggregate: CodingSession) -> list[type]:
     return [type(e) for e in aggregate.uncommitted_events]
 
 
+def emitted(aggregate: CodingSession) -> EventAssertions:
+    """The library's assertions over what this aggregate has emitted.
+
+    Worth reaching for wherever the whole sequence is the claim -- it reports
+    what it actually saw when the sequence is wrong, where a bare list
+    comparison just prints two lists and leaves you to diff them. The
+    positional `types_of(...)[-1]` checks below stay as they are: what they
+    assert is *where* an event landed, which these helpers do not express.
+    """
+    return EventAssertions(list(aggregate.uncommitted_events))
+
+
 def tool_result(call_id: str, content: str = "ok") -> dict:
     return {"type": "tool", "data": {"tool_call_id": call_id, "content": content}}
 
@@ -39,7 +52,7 @@ def calling(*call_ids: str) -> dict:
 
 
 def test_start_emits_session_started(session):
-    assert types_of(session) == [SessionStarted]
+    emitted(session).assert_event_sequence([SessionStarted])
     assert session.state.system_prompt == SYSTEM_PROMPT
     assert session.state.model_name == MODEL_NAME
 

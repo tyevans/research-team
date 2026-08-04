@@ -1713,6 +1713,11 @@ function forkAt(index, button) {
 
 let stream = null;
 let backoff = 1000;
+// The last feed position we were handed. EventSource sends it back on
+// reconnect by itself; we keep our own copy only to tell "resumed from a
+// cursor" apart from "never had one", which decides whether a reconnect
+// needs a full resync.
+let lastEventId = null;
 let treeRefreshTimer = null;
 let freshSweepTimer = null;
 let backoffResetTimer = null;
@@ -1743,14 +1748,18 @@ function connect() {
     clearTimeout(backoffResetTimer);
     backoffResetTimer = setTimeout(function () { backoff = 1000; }, 5000);
     setConn('open', 'live');
-    // The stream has no replay cursor, so anything appended while we were
-    // disconnected was missed — resync whatever view is open.
-    if (reconnected) {
+    // Every frame carries its feed position as an SSE id, and EventSource
+    // replays it in Last-Event-ID on reconnect, so the server resumes from
+    // where we left off and the gap arrives as ordinary events. The resync is
+    // only for the case where we never got an id to send back — a connection
+    // that dropped before its first event, which the server cannot place.
+    if (reconnected && !lastEventId) {
       if (state.route.name === 'session' && !state.sending) loadSession();
       else if (state.route.name === 'tree') loadTree();
     }
   };
   stream.onmessage = function (msg) {
+    if (msg.lastEventId) lastEventId = msg.lastEventId;
     let payload = null;
     try { payload = JSON.parse(msg.data); } catch (e) { return; }
     if (payload) onStreamEvent(payload);

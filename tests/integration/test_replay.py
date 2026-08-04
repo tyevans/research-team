@@ -38,7 +38,7 @@ def scripted_model(fake_model):
 async def test_refolding_reproduces_state_exactly(
     build_service, store, db_path, scripted_model
 ):
-    service = build_service(model=scripted_model, db_path=db_path)
+    service = await build_service(model=scripted_model, db_path=db_path)
     session_id = await service.create_session()
     await service.run_turn(session_id, "create app.py")
     await service.run_turn(session_id, "change 1 to 2")
@@ -56,7 +56,7 @@ async def test_refolding_reproduces_state_exactly(
 
 
 async def test_replay_reproduces_file_content(build_service, store, db_path, scripted_model):
-    service = build_service(model=scripted_model, db_path=db_path)
+    service = await build_service(model=scripted_model, db_path=db_path)
     session_id = await service.create_session()
     await service.run_turn(session_id, "create app.py")
     await service.run_turn(session_id, "change 1 to 2")
@@ -72,7 +72,7 @@ async def test_replay_reproduces_file_content(build_service, store, db_path, scr
 async def test_replay_is_deterministic_across_repeats(
     build_service, store, db_path, scripted_model
 ):
-    service = build_service(model=scripted_model, db_path=db_path)
+    service = await build_service(model=scripted_model, db_path=db_path)
     session_id = await service.create_session()
     await service.run_turn(session_id, "create app.py")
 
@@ -87,7 +87,7 @@ async def test_replay_is_deterministic_across_repeats(
 async def test_fork_diverges_without_affecting_original(
     build_service, repository, db_path, scripted_model
 ):
-    service = build_service(model=scripted_model, db_path=db_path)
+    service = await build_service(model=scripted_model, db_path=db_path)
     session_id = await service.create_session()
     await service.run_turn(session_id, "create app.py")
     await service.run_turn(session_id, "change 1 to 2")

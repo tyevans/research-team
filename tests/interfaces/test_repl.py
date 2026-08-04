@@ -16,7 +16,7 @@ from research_team.interfaces.cli.formatters import (
 @pytest.fixture
 async def current(build_service, fake_model):
     """A REPL pointed at a fresh session -- the terminal owns the cursor."""
-    return await repl.Repl.start(build_service(model=fake_model))
+    return await repl.Repl.start(await build_service(model=fake_model))
 
 
 def test_format_log_numbers_events():
@@ -265,7 +265,7 @@ async def test_turn_reports_tool_activity(build_service, fake_model):
         ),
         AIMessage(content="wrote it", id="a2"),
     ]
-    current = await repl.Repl.start(build_service(model=fake_model))
+    current = await repl.Repl.start(await build_service(model=fake_model))
 
     seen: list[str] = []
     await repl.handle_command(current, "write a.py", on_activity=seen.append)
@@ -275,7 +275,7 @@ async def test_turn_reports_tool_activity(build_service, fake_model):
 
 
 async def test_no_activity_reported_for_a_plain_reply(build_service, fake_model):
-    current = await repl.Repl.start(build_service(model=fake_model))
+    current = await repl.Repl.start(await build_service(model=fake_model))
     seen: list[str] = []
     await repl.handle_command(current, "hello", on_activity=seen.append)
     assert seen == []

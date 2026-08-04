@@ -62,3 +62,21 @@ def test_the_web_binding_defaults_to_this_machine(monkeypatch):
     by default."""
     monkeypatch.delenv("AGENT_WEB_HOST", raising=False)
     assert config.web_host() == "127.0.0.1"
+
+
+def test_tracing_is_off_by_default(monkeypatch):
+    monkeypatch.delenv("AGENT_TRACING", raising=False)
+    assert config.tracing_enabled() is False
+
+
+def test_tracing_accepts_the_usual_spellings(monkeypatch):
+    for value in ("1", "true", "TRUE", "yes", "on"):
+        monkeypatch.setenv("AGENT_TRACING", value)
+        assert config.tracing_enabled() is True, value
+
+
+def test_a_falsey_looking_value_does_not_enable_tracing(monkeypatch):
+    """`AGENT_TRACING=0` must mean off, not "the variable is set"."""
+    for value in ("0", "false", "no", ""):
+        monkeypatch.setenv("AGENT_TRACING", value)
+        assert config.tracing_enabled() is False, value

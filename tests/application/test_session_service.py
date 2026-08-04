@@ -14,8 +14,8 @@ from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 
 
 @pytest.fixture
-def service(build_service, fake_model):
-    return build_service(model=fake_model)
+async def service(build_service, fake_model):
+    return await build_service(model=fake_model)
 
 
 @pytest.fixture
@@ -82,7 +82,7 @@ async def test_tool_call_writes_file_and_records_events(build_service, fake_mode
         ),
         AIMessage(content="wrote it", id="a2"),
     ]
-    service = build_service(model=fake_model)
+    service = await build_service(model=fake_model)
     session_id = await service.create_session()
     outcome = await service.run_turn(session_id, "write hello.py")
 
@@ -192,7 +192,7 @@ async def test_second_turn_does_not_replay_earlier_messages(build_service, fake_
         AIMessage(content="first reply", id="a1"),
         AIMessage(content="second reply", id="a2"),
     ]
-    service = build_service(model=fake_model)
+    service = await build_service(model=fake_model)
     session_id = await service.create_session()
 
     await service.run_turn(session_id, "first")
@@ -266,7 +266,7 @@ def editing_model(fake_model):
 
 
 async def test_state_at_reproduces_the_earlier_workspace(build_service, editing_model):
-    service = build_service(model=editing_model)
+    service = await build_service(model=editing_model)
     session_id = await service.create_session()
     await service.run_turn(session_id, "write a.py")
     await service.run_turn(session_id, "revise it")
@@ -282,7 +282,7 @@ async def test_state_at_reproduces_the_earlier_workspace(build_service, editing_
 
 
 async def test_state_at_writes_nothing_to_the_log(build_service, editing_model):
-    service = build_service(model=editing_model)
+    service = await build_service(model=editing_model)
     session_id = await service.create_session()
     await service.run_turn(session_id, "write a.py")
     before = await service.history(session_id)
@@ -293,7 +293,7 @@ async def test_state_at_writes_nothing_to_the_log(build_service, editing_model):
 
 
 async def test_state_at_creates_no_session(build_service, editing_model):
-    service = build_service(model=editing_model)
+    service = await build_service(model=editing_model)
     session_id = await service.create_session()
     await service.run_turn(session_id, "write a.py")
     before = len(await service.list_sessions())
@@ -324,7 +324,7 @@ async def test_turn_runs_under_the_sessions_own_prompt(
 
     monkeypatch.setattr(DeepAgentTurnExecutor, "_invoke", capture)
 
-    service = build_service(model=fake_model, system_prompt="the service default")
+    service = await build_service(model=fake_model, system_prompt="the service default")
     session_id = await service.create_session("a distinctive prompt")
     await service.run_turn(session_id, "hello")
 
@@ -336,7 +336,7 @@ async def test_state_at_leaves_the_folded_aggregate_with_nothing_to_commit(
 ):
     """A fold is a read. If it left uncommitted events, a later save would
     silently append a duplicate of the past to the log."""
-    service = build_service(model=editing_model)
+    service = await build_service(model=editing_model)
     session_id = await service.create_session()
     await service.run_turn(session_id, "write a.py")
 
@@ -349,7 +349,7 @@ async def test_state_at_leaves_the_folded_aggregate_with_nothing_to_commit(
 async def test_state_at_does_not_disturb_the_live_aggregate(
     build_service, editing_model
 ):
-    service = build_service(model=editing_model)
+    service = await build_service(model=editing_model)
     session_id = await service.create_session()
     await service.run_turn(session_id, "write a.py")
     await service.run_turn(session_id, "revise it")

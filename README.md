@@ -61,6 +61,9 @@ variable:
 | `AGENT_CONTEXT_KEEP_MESSAGES` | `20` | recent messages `compact` leaves out of the summary |
 | `AGENT_CONTEXT_KEEP_RESULTS` | `6` | recent tool results `elide` leaves whole |
 | `AGENT_CONTEXT_CLEAR_OVER` | `2000` | tool results longer than this are cleared outright under `elide` |
+| `AGENT_TRACING` | unset | set to `1` to export OpenTelemetry traces (needs the `tracing` extra) |
+| `AGENT_OTLP_ENDPOINT` | `http://localhost:4318/v1/traces` | where traces are sent |
+| `AGENT_SERVICE_NAME` | `research-team` | what this process calls itself in a trace |
 
 ## REPL commands
 
@@ -105,8 +108,15 @@ that tries to write outside the process must leave nothing behind. A turn is ato
 so an interrupted or failed turn leaves the log at the last completed turn rather
 than half-applied.
 
-The log lives in SQLite. Listing sessions is a fold over `read_category`, not a
-separate table we maintain. Turns are streamed with `stream_mode="values"`, which
+The log lives in SQLite. Listing sessions reads a projection -- a
+`session_summary_rows` table kept up to date event by event by a `SubscriptionManager`,
+which replays from a persisted checkpoint on startup and then follows the live bus.
+It used to be a fold over `read_category` on every request, which was the clearest
+possible statement of what a summary is and got linearly slower forever; the fold
+itself still lives in `summaries.py` as the definition, and a test feeds identical
+events through both to keep them honest.
+
+Turns are streamed with `stream_mode="values"`, which
 gives both live tool-by-tool progress and the final message list in one pass.
 That progress goes to whoever started the turn, through `on_activity` — it is
 not in the log, so it does not reach a watching browser (see the live feed's
@@ -125,9 +135,13 @@ research_team/
                    turn_supervisor.py
                    The use cases -- run a turn, cancel it, fork, scrub, list
                    sessions -- plus the ports (SessionRepository, TurnExecutor,
-                   EventFeed) they need the outside world to satisfy.
-  infrastructure/  persistence/  the event store, implementing SessionRepository
+                   EventFeed, SessionSummaries) they need the outside world
+                   to satisfy.
+  infrastructure/  persistence/  the event store implementing SessionRepository,
+                                 and the `/sessions` read model and the
+                                 projection that keeps it current
                    agent/        deepagents + langchain, implementing TurnExecutor
+                   telemetry.py  tracer setup; a no-op unless AGENT_TRACING is on
                    config.py     the only module that reads the environment
   interfaces/      cli/          the REPL: parsing, dispatch, formatting
                    web/          FastAPI routes + presenters, and the SPA
@@ -135,7 +149,11 @@ research_team/
 ```
 
 `main.py` and `web.py` build the application and hand it to a front end, so
-nothing below an entrypoint chooses its own database or model.
+nothing below an entrypoint chooses its own database or model. Building is
+synchronous and `start()` is not: the `/sessions` projection opens its own
+aiosqlite connection, and aiosqlite binds a connection to the loop that created
+it, so it has to be opened inside the loop that will use it -- under uvicorn's
+lifespan for the web UI, inside `asyncio.run` for the REPL.
 
 **No current session.** The application layer is session-addressed: every use
 case names the session it acts on, and the service holds no cursor. "The
@@ -188,6 +206,16 @@ runs: a browser watching a sixty-second turn sees nothing, then sees all of it.
 The REPL does show tool-by-tool progress, because the executor reports activity
 to it directly through `on_activity` rather than through the log. Giving the web
 UI the same would need a second channel that is not the event stream.
+
+What the feed *does* guarantee is that nothing is missed. Each SSE frame carries
+its feed position as the event id, and `EventSource` replays that in
+`Last-Event-ID` when it reconnects, so a browser that drops resumes from where it
+left off instead of silently skipping whatever landed while it was away. An id the
+store cannot place -- stale, or from a database since replaced -- falls back to the
+live end rather than replaying the whole log. Delivery itself is still a read of
+the store, never of the bus: the bus only says "something landed", and ordering and
+completeness stay the log's business. That signal is what lets the feed skip its
+poll interval, which is now a ceiling on latency rather than the latency itself.
 
 ## Context management
 

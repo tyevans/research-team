@@ -7,13 +7,26 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
-from research_team.composition import build_application
+from research_team.composition import build_application as _build_application
 from research_team.interfaces.web import create_app
+
+
+async def _started(**kwargs):
+    """Build an application and start its projection.
+
+    These tests construct their own applications rather than take the fixture,
+    because they need the FastAPI app wired around the same instance. Starting
+    is still not optional -- `/sessions` reads a projection that has to be
+    following the log before it can answer.
+    """
+    application = _build_application(**kwargs)
+    await application.start()
+    return application
 
 
 @pytest.fixture
 async def app_and_client(db_path, fake_model):
-    application = build_application(model=fake_model, db_path=db_path)
+    application = await _started(model=fake_model, db_path=db_path)
     api = create_app(application.service, application.feed, application.turns)
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -143,7 +156,7 @@ def writing_model(fake_model):
 
 @pytest.fixture
 async def written(db_path, writing_model):
-    application = build_application(model=writing_model, db_path=db_path)
+    application = await _started(model=writing_model, db_path=db_path)
     api = create_app(application.service, application.feed, application.turns)
     async with AsyncClient(
         transport=ASGITransport(app=api), base_url="http://test"
@@ -307,9 +320,8 @@ async def test_sse_frames_each_event_as_a_data_line(repository, session_id):
     await repository.save(aggregate)
     await asyncio.wait_for(task, timeout=5)
 
-    assert frames[0].startswith("data: ")
     assert frames[0].endswith("\n\n")
-    payload = json.loads(frames[0][len("data: ") :])
+    payload = json.loads(frames[0].split("data: ", 1)[1])
     assert payload["session_id"] == str(session_id)
     assert payload["type"] == "UserMessageSent"
 
@@ -322,7 +334,9 @@ async def _drain(generator, frames: list[str], *, wanted: int) -> None:
     """
     try:
         async for frame in generator:
-            if frame.startswith("data: "):
+            # Event frames carry an id line ahead of their data; the only other
+            # thing on the wire is a `:` keepalive comment.
+            if not frame.startswith(":"):
                 frames.append(frame)
                 if len(frames) >= wanted:
                     return
@@ -358,7 +372,7 @@ async def test_stream_reaches_a_real_browser_over_a_real_socket(db_path, fake_mo
     """One end-to-end proof over the wire, since the ASGI transport cannot."""
     import uvicorn
 
-    application = build_application(model=fake_model, db_path=db_path)
+    application = await _started(model=fake_model, db_path=db_path)
     api = create_app(application.service, application.feed, application.turns)
     config = uvicorn.Config(api, host="127.0.0.1", port=8749, log_level="error")
     server = uvicorn.Server(config)
@@ -534,7 +548,7 @@ async def test_a_file_can_be_read_as_of_an_earlier_event(written):
 
 async def test_a_file_deleted_later_is_still_readable_in_the_past(db_path, fake_model):
     """The headline case: seeing a deleted file again is the point."""
-    application = build_application(model=fake_model, db_path=db_path)
+    application = await _started(model=fake_model, db_path=db_path)
     api = create_app(application.service, application.feed, application.turns)
     session_id = await application.service.create_session()
     session = await application.service.load(session_id)
@@ -623,7 +637,7 @@ async def slow_app(db_path):
     from tests.application.test_turn_supervisor import SlowModel
 
     model = SlowModel(responses=[AIMessage(content="eventually", id="s1")])
-    application = build_application(model=model, db_path=db_path)
+    application = await _started(model=model, db_path=db_path)
     api = create_app(application.service, application.feed, application.turns)
     async with AsyncClient(
         transport=ASGITransport(app=api, raise_app_exceptions=False),
@@ -772,3 +786,92 @@ async def test_ordinary_events_carry_no_cancellation_flag(client):
     await client.post(f"/api/sessions/{session_id}/turns", json={"input": "hello"})
     events = (await client.get(f"/api/sessions/{session_id}/events")).json()
     assert all(row["cancelled"] is None for row in events)
+
+
+def _cursor_of(frame: str) -> str:
+    return frame.split("id: ", 1)[1].split("\n", 1)[0]
+
+
+async def _watch(feed, resume_from=None, wanted: int = 1):
+    """Start an `_sse` stream and collect frames in the background.
+
+    Returns the task and the list it fills. Starting the drain *before* the
+    events are appended is what makes the test meaningful: a stream takes its
+    position when it is first iterated, not when it is constructed.
+    """
+    from research_team.interfaces.web.app import _sse
+
+    frames: list[str] = []
+    generator = _sse(StubRequest(), feed, resume_from)
+    task = asyncio.create_task(_drain(generator, frames, wanted=wanted))
+    await asyncio.sleep(0.05)
+    return task, frames
+
+
+async def test_each_frame_carries_the_cursor_that_follows_it(repository, session_id):
+    """Without an id, a browser has nothing to reconnect with."""
+    from research_team.application import LiveFeed
+
+    feed = LiveFeed(repository, poll_interval=0.01)
+    aggregate = repository.create(session_id)
+    aggregate.start("prompt", "test-model")
+    await repository.save(aggregate)
+
+    task, frames = await _watch(feed)
+    aggregate.send_user_message({"type": "human", "data": {"content": "hi"}})
+    await repository.save(aggregate)
+    await asyncio.wait_for(task, timeout=5)
+
+    assert frames[0].startswith("id: ")
+    assert repository.decode_position(_cursor_of(frames[0])) is not None
+
+
+async def test_reconnecting_with_a_cursor_delivers_what_was_missed(
+    repository, session_id
+):
+    """The gap a dropped connection leaves is the whole point of the id.
+
+    The second message is appended while no stream is open at all, so a feed
+    that started at the live end would never show it -- and the browser would
+    have no way to know it had missed anything.
+    """
+    from research_team.application import LiveFeed
+
+    feed = LiveFeed(repository, poll_interval=0.01)
+    aggregate = repository.create(session_id)
+    aggregate.start("prompt", "test-model")
+    await repository.save(aggregate)
+
+    task, frames = await _watch(feed)
+    aggregate.send_user_message({"type": "human", "data": {"content": "seen"}})
+    await repository.save(aggregate)
+    await asyncio.wait_for(task, timeout=5)
+    cursor = _cursor_of(frames[0])
+
+    # Nobody is listening for this one.
+    aggregate.send_user_message({"type": "human", "data": {"content": "missed"}})
+    await repository.save(aggregate)
+
+    resumed, recovered = await _watch(feed, resume_from=cursor)
+    await asyncio.wait_for(resumed, timeout=5)
+
+    assert json.loads(recovered[0].split("data: ", 1)[1])["type"] == "UserMessageSent"
+    assert _cursor_of(recovered[0]) != cursor
+
+
+async def test_an_unplaceable_cursor_falls_back_to_the_live_end(repository, session_id):
+    """A stale or foreign id must not replay the whole log at a browser."""
+    from research_team.application import LiveFeed
+
+    feed = LiveFeed(repository, poll_interval=0.01)
+    aggregate = repository.create(session_id)
+    aggregate.start("prompt", "test-model")
+    await repository.save(aggregate)  # already in the log, must not be replayed
+
+    task, frames = await _watch(feed, resume_from="junk-from-another-database")
+    aggregate.send_user_message({"type": "human", "data": {"content": "after"}})
+    await repository.save(aggregate)
+    await asyncio.wait_for(task, timeout=5)
+
+    payload = json.loads(frames[0].split("data: ", 1)[1])
+    assert payload["type"] == "UserMessageSent"

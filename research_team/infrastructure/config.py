@@ -20,6 +20,9 @@ DEFAULT_CONTEXT_KEEP_MESSAGES = 20
 DEFAULT_CONTEXT_KEEP_RESULTS = 6
 DEFAULT_CONTEXT_CLEAR_OVER_CHARS = 2_000
 
+DEFAULT_OTLP_ENDPOINT = "http://localhost:4318/v1/traces"
+DEFAULT_SERVICE_NAME = "research-team"
+
 
 def default_db_path() -> str:
     """Where sessions live. Sessions persist across runs and are resumable."""
@@ -104,3 +107,22 @@ def context_clear_over_chars() -> int:
     because a partial result reads as a whole one.
     """
     return int(os.getenv("AGENT_CONTEXT_CLEAR_OVER", DEFAULT_CONTEXT_CLEAR_OVER_CHARS))
+
+
+def tracing_enabled() -> bool:
+    """Whether this process should export traces. Off unless asked.
+
+    Opt-in rather than opt-out because tracing is only useful if something is
+    collecting it, and a developer running this locally has nothing listening.
+    """
+    return os.getenv("AGENT_TRACING", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def otlp_endpoint() -> str:
+    """Where traces are sent. The OTLP/HTTP default collector address."""
+    return os.getenv("AGENT_OTLP_ENDPOINT", DEFAULT_OTLP_ENDPOINT)
+
+
+def tracing_service_name() -> str:
+    """What this process calls itself in a trace."""
+    return os.getenv("AGENT_SERVICE_NAME", DEFAULT_SERVICE_NAME)

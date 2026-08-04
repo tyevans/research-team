@@ -7,6 +7,7 @@ swapping any of them is an edit here and nowhere else.
 
 from dataclasses import dataclass
 
+from eventsource.observability import Tracer
 from langchain_core.language_models import BaseChatModel
 
 from research_team.application import (
@@ -25,7 +26,11 @@ from research_team.infrastructure.agent.delegation import (
     DEFAULT_SUBAGENTS,
     DELEGATION_PROMPT,
 )
-from research_team.infrastructure.persistence import EventStoreSessionRepository
+from research_team.infrastructure.persistence import (
+    EventStoreSessionRepository,
+    SessionSummaryRunner,
+)
+from research_team.infrastructure.telemetry import build_tracer
 
 
 @dataclass(frozen=True)
@@ -39,13 +44,39 @@ class Application:
     """How this instance manages context. Not the same as the strategy name:
     `delegate` sends the full history and simply has less of it."""
 
+    summaries: SessionSummaryRunner
+    """Keeps `/sessions` following the log. Idle until `start()`."""
+
+    async def start(self) -> None:
+        """Open what needs a running event loop to open.
+
+        Building an application is deliberately synchronous -- it picks
+        adapters and wires them, nothing more -- because the web entrypoint
+        constructs it before uvicorn has a loop, and an aiosqlite connection
+        made on one loop cannot be used from another. Anything that has to be
+        opened *inside* the loop that will use it is opened here.
+        """
+        await self.summaries.start()
+
+    async def summaries_caught_up(self) -> None:
+        """Wait until the `/sessions` projection has seen everything appended.
+
+        The read model is eventually consistent by construction -- a turn
+        commits to the log and the projection follows -- which is invisible to
+        a person clicking around and maddening to a test. This is the seam that
+        makes the lag addressable rather than something to sleep through.
+        """
+        await self.summaries.caught_up()
+
     async def close(self) -> None:
         """Stop anything still running, then let go of the store.
 
         Cancelling first means an in-flight turn unwinds into a recorded
-        failure rather than being abandoned mid-write.
+        failure rather than being abandoned mid-write. The projection stops
+        before the store it reads through does, for the same reason.
         """
         await self.turns.cancel_all()
+        await self.summaries.stop()
         await self.service.close()
 
 
@@ -91,6 +122,7 @@ def build_application(
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     db_path: str | None = None,
     context_mode: str | None = None,
+    tracer: Tracer | None = None,
 ) -> Application:
     """Wire everything over one event store.
 
@@ -110,17 +142,26 @@ def build_application(
 
     repository = EventStoreSessionRepository.open(resolved_path)
     executor = DeepAgentTurnExecutor(resolved_model, subagents=subagents)
+    summaries = SessionSummaryRunner(
+        repository.store, resolved_path, repository.publisher
+    )
     service = SessionService(
         repository,
         executor,
+        summaries,
         default_system_prompt=system_prompt + prompt_suffix,
         context=strategy,
+        # Resolved here rather than defaulted inside the service: whether this
+        # process exports traces is a deployment decision, and the composition
+        # root is where deployment decisions live.
+        tracer=tracer if tracer is not None else build_tracer(),
     )
     return Application(
         service=service,
         feed=LiveFeed(repository),
         turns=TurnSupervisor(service),
         context_mode=mode,
+        summaries=summaries,
     )
 
 
@@ -130,6 +171,7 @@ def build_service(
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     db_path: str | None = None,
     context_mode: str | None = None,
+    tracer: Tracer | None = None,
 ) -> SessionService:
     """Just the use cases, for callers with no use for a live feed."""
     return build_application(
@@ -137,4 +179,5 @@ def build_service(
         system_prompt=system_prompt,
         db_path=db_path,
         context_mode=context_mode,
+        tracer=tracer,
     ).service

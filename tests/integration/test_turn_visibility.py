@@ -77,7 +77,7 @@ async def test_a_turns_events_all_become_visible_at_once(build_application, writ
     This is what makes the log safe to read at any moment: there is no instant
     at which it holds half a turn.
     """
-    application = build_application(model=writing_model)
+    application = await build_application(model=writing_model)
     seen: list[FeedEntry] = []
     watcher = asyncio.create_task(_watch(application.feed, seen))
     await asyncio.sleep(0.2)
@@ -111,7 +111,7 @@ async def test_a_cancelled_turns_events_never_become_visible(
 ):
     """Discarded events are not "removed" from the feed -- they never reach it."""
     writing_model.delay = 5.0
-    application = build_application(model=writing_model)
+    application = await build_application(model=writing_model)
     seen: list[FeedEntry] = []
     watcher = asyncio.create_task(_watch(application.feed, seen))
     await asyncio.sleep(0.2)
@@ -135,7 +135,7 @@ async def test_the_reported_span_matches_what_the_watcher_saw(
     build_application, writing_model
 ):
     """A watching tab can derive the turn's span from the frames alone."""
-    application = build_application(model=writing_model)
+    application = await build_application(model=writing_model)
     seen: list[FeedEntry] = []
     watcher = asyncio.create_task(_watch(application.feed, seen))
     await asyncio.sleep(0.2)
