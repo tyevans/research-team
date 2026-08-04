@@ -1118,6 +1118,43 @@ git commit -m "feat: approve tool calls from the REPL and the web UI"
 
 ---
 
+### Task 9b: The browser approval UI
+
+Added mid-execution. Task 9 delivered a complete web *backend* — approval frames on the SSE channel, a GET for pending approvals, a POST to resolve one — but `static/app.js` renders none of it, so a gated turn in the browser parks correctly and looks to a person like a hang. The plan's Task 9 file list omitted the frontend; that was a plan gap, not an implementation failure. A human-in-the-loop feature whose main UI cannot answer the prompt is not finished.
+
+**Files:**
+- Modify: `research_team/interfaces/web/static/app.js` (1918 lines), and `index.html`/CSS as needed
+
+**Interfaces (already built, do not change):**
+- SSE frames on the existing `/api/stream` channel, types `ApprovalRequested` and `ApprovalSettled`
+- `GET /api/sessions/{id}/approvals` — pending approvals for a session
+- `POST /api/sessions/{id}/approvals/{approval_id}` — resolve one with a decision
+
+- [ ] **Step 1: Render pending approvals**
+
+On an `ApprovalRequested` frame for the open session, show the tool name and its arguments where the turn's activity already appears, with approve / reject buttons. Match the existing rendering idiom in `app.js` — it has a small element helper at the top and a frame dispatch near the `EventSource` wiring at line ~1775. Do not introduce a framework.
+
+- [ ] **Step 2: Resolve on click**
+
+POST the decision to the endpoint above. On `ApprovalSettled`, clear the prompt — including when it was settled elsewhere (the REPL, or another browser tab), which is why the settled frame exists rather than just hiding the card locally.
+
+- [ ] **Step 3: Reconcile on reconnect**
+
+A browser that connects mid-approval must not miss the prompt. On load and on SSE reconnect, `GET` the pending approvals for the open session and render any that are outstanding. This is the case the SSE frame alone cannot cover.
+
+- [ ] **Step 4: Verify by hand**
+
+Run `uv run web.py` with `AGENT_SEARXNG_URL` set and the policy at `ask`, drive a search from the browser, and confirm: the prompt appears, approving lets the turn finish, rejecting records the refusal, and a page reload mid-approval still shows it. Report what you actually observed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add research_team/interfaces/web/static/app.js
+git commit -m "feat: answer approval prompts from the browser"
+```
+
+---
+
 ### Task 10: Documentation
 
 **Files:**
