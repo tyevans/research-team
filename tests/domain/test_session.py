@@ -1,5 +1,4 @@
 import pytest
-from conftest import MODEL_NAME, SYSTEM_PROMPT
 from eventsource.testing.assertions import EventAssertions
 
 from research_team.domain import CodingSession
@@ -15,6 +14,7 @@ from research_team.domain.events import (
     TurnCompleted,
     UserMessageSent,
 )
+from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
 FILE_DATA = {"content": "print(1)\n", "encoding": "utf-8"}
 EDITED = {"content": "print(2)\n", "encoding": "utf-8"}

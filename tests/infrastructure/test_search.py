@@ -40,6 +40,37 @@ def test_no_results_says_so_rather_than_returning_nothing():
     assert "no results" in format_results({"results": []}, limit=5).lower()
 
 
+def test_no_results_message_is_exact():
+    """Pinned exactly, not just "contains" -- a wording or casing slip here
+    is a real regression in what the model sees, not a cosmetic one.
+    """
+    assert format_results({"results": []}, limit=5) == "No results."
+
+
+def test_a_result_missing_every_field_gets_named_placeholders():
+    """`.get(key, "")` handles an absent field the same as an empty one; a
+    real instance can omit a field entirely rather than send it empty, and
+    the placeholder text is part of the contract with the model reading it.
+    """
+    text = format_results({"results": [{}]}, limit=5)
+    assert text == "(untitled)\n(no url)\n(no snippet)"
+
+
+def test_two_results_are_joined_by_a_blank_line():
+    """The "\\n\\n" join is what lets the model tell blocks apart; pinning the
+    exact separator (not just "a blank line appears somewhere") catches a
+    mutation to the join string itself.
+    """
+    payload = {
+        "results": [
+            {"title": "One", "url": "https://a.example", "content": "First."},
+            {"title": "Two", "url": "https://b.example", "content": "Second."},
+        ]
+    }
+    text = format_results(payload, limit=5)
+    assert text == ("One\nhttps://a.example\nFirst.\n\nTwo\nhttps://b.example\nSecond.")
+
+
 async def test_a_query_reaches_the_instance_and_comes_back_formatted():
     seen = {}
 
@@ -66,6 +97,27 @@ async def test_a_non_json_response_names_the_setting_that_causes_it():
 
     assert "formats" in text
     assert "settings.yml" in text
+
+
+async def test_the_default_cap_is_five_when_the_caller_does_not_choose_one():
+    """`limit` defaults to 5 in the signature; a caller that never passes it
+    (the ordinary case when the tool is wired up) still gets a bounded
+    result set, not whatever the instance happens to send back.
+    """
+    six_results = {
+        "results": [
+            {"title": str(i), "url": f"https://{i}.example", "content": "x"} for i in range(6)
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=six_results)
+
+    tool = build_search_tool("http://searx.local", client=_client(handler))
+    text = await tool.ainvoke({"query": "anything"})
+
+    assert text.count("\n\n") == 4  # 5 blocks joined by 4 separators
+    assert "https://5.example" not in text
 
 
 async def test_an_unreachable_instance_is_an_ordinary_tool_error():

@@ -205,7 +205,17 @@ async def test_a_before_validator_can_reshape_an_old_payload(repository, started
     from eventsource import DomainEvent, register_event
     from pydantic import model_validator
 
-    @register_event
+    # The registry is process-global and this class is registered at call
+    # time rather than at import time, so its wire name has to be unique per
+    # call: a test runner that executes the whole suite more than once in
+    # the same process (mutation testing tools do this deliberately, to get
+    # a clean baseline before mutating) would otherwise register
+    # "RenamedFieldEvent" twice and raise DuplicateEventTypeError on the
+    # second pass -- a self-inflicted failure that has nothing to do with
+    # the mechanism under test.
+    event_type = f"RenamedFieldEvent-{uuid4().hex}"
+
+    @register_event(event_type=event_type)
     class RenamedFieldEvent(DomainEvent):
         aggregate_type: str = "CodingSession"
         error_message: str
@@ -227,7 +237,7 @@ async def test_a_before_validator_can_reshape_an_old_payload(repository, started
         db_path,
         started,
         version=2,
-        event_type="RenamedFieldEvent",
+        event_type=event_type,
         payload={
             "aggregate_id": str(started),
             "aggregate_type": "CodingSession",
