@@ -160,7 +160,7 @@ class ToolCallDecided(DomainEvent):
     aggregate_type: str = "CodingSession"
     tool_name: str
     args: dict[str, Any]
-    decision: str          # "accept" | "reject" | "edit"
+    decision: str          # "approve" | "edit" | "reject" | "respond"
     decided_by: str        # "human" | "policy"
     edited_args: dict[str, Any] | None = None
 
@@ -203,6 +203,9 @@ in the configuration table and an honest note about the gated-egress exception.
 present and already used in tests, so this is a promotion rather than a new
 dependency.
 
+`hypothesis` and `mutmut` join the `dev` group. Both are test-time only and
+neither is imported by shipped code.
+
 ## Error handling
 
 - **SearXNG's JSON format is disabled by default**; an instance needs
@@ -228,6 +231,33 @@ dependency.
 - **A `live`-marked test** against a real instance, following the existing
   marker convention in `pyproject.toml` (deselected by default).
 - **Schema evolution** — a case for each of the two new events.
+
+### Property-based tests (Hypothesis)
+
+Example-based tests confirm the cases we thought of. The policy and the resume
+loop both have state spaces small enough to describe and large enough to hide a
+case, so they get properties rather than only examples:
+
+- **Policy** — for any sequence of `set` calls, `level_for` returns the last
+  level set for that tool, and an untouched tool always returns the default.
+  Levels never leak between tools.
+- **Resume loop** — for any sequence of interrupt decisions (accept / reject /
+  edit / deny, in any order and quantity), the loop terminates, every
+  interrupted call receives exactly one decision, and exactly one
+  `ToolCallDecided` event is recorded per interrupted call. This is the
+  invariant that a hand-written example set is least likely to cover, because
+  the failure mode is a miscount across resumed passes.
+- **Search result formatting** — for any well-formed SearXNG JSON payload, the
+  formatted output never exceeds the configured result cap and never raises.
+
+### Mutation testing
+
+Property tests can still be vacuous, so the suite's own strength is measured
+rather than assumed. `mutmut` runs over the modules this design adds —
+`application/autonomy.py`, `infrastructure/agent/search.py`, and the resume loop
+— and surviving mutants are either killed with a new test or annotated with why
+the mutant is equivalent. Mutation testing is scoped to the new modules, not the
+whole codebase: a whole-repo run is slow enough that nobody will run it twice.
 
 ## Open question to resolve first in implementation
 
