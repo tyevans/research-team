@@ -1,15 +1,27 @@
 """The `TurnExecutor` port, implemented with deepagents and langchain."""
 
 from collections.abc import Sequence
+from typing import Any
 
 from deepagents import create_deep_agent
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, ToolMessage
+from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 
-from research_team.application import ActivityReporter, TurnResult
+from research_team.application import (
+    ActivityReporter,
+    ApprovalDecision,
+    ApprovalPort,
+    ApprovalRequest,
+    AutonomyPolicy,
+    TurnResult,
+)
 from research_team.domain import CodingSession
 from research_team.infrastructure import config
+from research_team.infrastructure.agent.approval import interrupt_config
 from research_team.infrastructure.agent.backend import EventSourcedBackend
 from research_team.infrastructure.agent.messages import (
     encode_user_message,
@@ -64,9 +76,18 @@ class DeepAgentTurnExecutor:
         model: BaseChatModel,
         *,
         subagents: Sequence[dict] = (),
+        tools: Sequence[BaseTool] = (),
+        policy: AutonomyPolicy | None = None,
+        approvals: ApprovalPort | None = None,
     ) -> None:
         self._model = model
         self._subagents = list(subagents)
+        self._tools = list(tools)
+        # An all-`auto` policy is the default so that wiring a supervisor is
+        # opt-in: without one, nothing is gated and the executor behaves
+        # exactly as it did before interrupts existed.
+        self._policy = policy if policy is not None else AutonomyPolicy()
+        self._approvals = approvals
 
     @property
     def model_name(self) -> str:
@@ -86,9 +107,7 @@ class DeepAgentTurnExecutor:
         sent = to_payload_messages(messages)
         after = await self._invoke(session, sent, system_prompt, on_activity)
         return TurnResult(
-            messages=tuple(
-                to_recorded(message) for message in new_messages(len(sent), after)
-            ),
+            messages=tuple(to_recorded(message) for message in new_messages(len(sent), after)),
             reply_text=last_text(after),
         )
 
@@ -106,27 +125,111 @@ class DeepAgentTurnExecutor:
         single pass -- a local model can take a minute per turn, and silence
         for that long is indistinguishable from a hang.
 
+        A gated tool call halts the graph instead of running, so one turn can
+        take several passes: stream, settle whatever was interrupted, resume,
+        stream again. `reported` deliberately survives the loop -- it counts
+        messages already announced, and restarting it each pass would replay
+        the whole turn's activity to the caller on every resume.
+
         Kept as a separate seam so tests can force a mid-turn failure.
         """
         agent = create_deep_agent(
             model=self._model,
+            tools=self._tools or None,
             backend=EventSourcedBackend(session),
             system_prompt=system_prompt,
-            checkpointer=None,
+            interrupt_on=interrupt_config(self._policy),
+            # Resuming is impossible without one: `Command(resume=...)` needs
+            # somewhere to have parked the halted graph. Per turn and in
+            # memory, because nothing here outlives the turn -- the durable
+            # record of what happened is the event log, not this.
+            checkpointer=MemorySaver(),
             # Subagents share this backend, so their file writes land in the
             # same event log as everything else -- delegated work stays as
             # auditable as work the main agent does itself.
             subagents=self._subagents or None,
         )
+        run_config = {
+            "configurable": {"thread_id": f"{session.aggregate_id}:{session.state.turn_index}"}
+        }
 
         final: list[BaseMessage] = list(messages)
         reported = len(messages)
-        async for state in agent.astream({"messages": messages}, stream_mode="values"):
-            final = state["messages"]
-            if on_activity is not None:
-                for message in final[reported:]:
-                    note = describe_activity(message)
-                    if note:
-                        on_activity(note)
-            reported = len(final)
-        return final
+        payload: Any = {"messages": messages}
+        while True:
+            state: dict[str, Any] = {}
+            async for state in agent.astream(payload, config=run_config, stream_mode="values"):
+                final = state.get("messages", final)
+                if on_activity is not None:
+                    for message in final[reported:]:
+                        note = describe_activity(message)
+                        if note:
+                            on_activity(note)
+                reported = len(final)
+            interrupts = state.get("__interrupt__")
+            if not interrupts:
+                return final
+            decisions = await self._settle(session, interrupts)
+            payload = Command(resume={"decisions": decisions})
+
+    async def _settle(self, session: CodingSession, interrupts: Sequence[Any]) -> list[dict]:
+        """One decision per interrupted call, in the order they were requested.
+
+        The order and the count are both load-bearing: langchain pairs the
+        decisions with `action_requests` positionally and raises if the lengths
+        disagree, so this walks the requests rather than the tools it expected.
+        """
+        decisions: list[dict] = []
+        for interrupt in interrupts:
+            value = getattr(interrupt, "value", interrupt)
+            requests = value["action_requests"]
+            reviews = value.get("review_configs") or [{}] * len(requests)
+            for request, review in zip(requests, reviews, strict=False):
+                decisions.append(await self._decide(session, request, review))
+        return decisions
+
+    async def _decide(self, session: CodingSession, request: dict, review: dict) -> dict:
+        """Settle one interrupted call, recording the decision either way.
+
+        `deny` is refused here without the human ever seeing it -- that is the
+        whole difference between it and `ask`, and the reason the `when`
+        predicate can get away with returning a bool.
+        """
+        name = request["name"]
+        args = dict(request.get("args") or {})
+        if self._policy.level_for(name) == "deny" or self._approvals is None:
+            session.record_tool_decision(name, args, "reject", "policy")
+            return {
+                "type": "reject",
+                "message": f"The {name} tool is not permitted in this session.",
+            }
+        decision = await self._approvals.decide(
+            ApprovalRequest(
+                session_id=session.aggregate_id,
+                tool_name=name,
+                args=args,
+                description=str(request.get("description") or ""),
+                allowed_decisions=tuple(review.get("allowed_decisions") or ()),
+            )
+        )
+        return self._apply(session, name, args, decision)
+
+    def _apply(
+        self,
+        session: CodingSession,
+        name: str,
+        args: dict,
+        decision: ApprovalDecision,
+    ) -> dict:
+        """Record a human's decision and translate it into langchain's shape."""
+        if decision.type == "edit":
+            edited = dict(decision.edited_args or args)
+            session.record_tool_decision(name, args, "edit", "human", edited)
+            return {"type": "edit", "edited_action": {"name": name, "args": edited}}
+        session.record_tool_decision(name, args, decision.type, "human")
+        if decision.type == "approve":
+            return {"type": "approve"}
+        resumed = {"type": decision.type}
+        if decision.message is not None:
+            resumed["message"] = decision.message
+        return resumed
