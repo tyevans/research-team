@@ -4,10 +4,17 @@ An event-sourced coding agent with an in-memory workspace. The whole session —
 user message, every model reply, every tool call, and every file the agent writes — is
 a single ordered event stream, and all state is derived by folding that stream.
 
-The agent's filesystem is purely virtual and it has no shell, so nothing it does
-escapes the process and replay is pure: refolding the log reproduces the exact
-workspace, every time. The log itself is stored in SQLite, so sessions outlive the
-process and can be listed and resumed.
+The agent's filesystem is purely virtual and it has no shell, so nothing it
+*writes* escapes the process. Network egress is a real, documented exception:
+a web search tool exists, gated per-tool, and absent unless configured. With
+no `AGENT_SEARXNG_URL` set, no search tool is registered at all --
+`tests/integration/test_no_network.py` pins that. Replay stays pure even with
+search in the picture, because a search result is recorded as an ordinary
+tool-result event: refolding the log replays the results the agent actually
+saw rather than fetching new ones, so a session refolded years later
+reproduces exactly, even if the SearXNG instance is long gone. The log itself
+is stored in SQLite, so sessions outlive the process and can be listed and
+resumed.
 
 That buys four things: time travel (rewind and fork to any point), a total audit
 trail of what the agent did and in what order, a virtual filesystem with per-file
@@ -64,6 +71,8 @@ variable:
 | `AGENT_TRACING` | unset | set to `1` to export OpenTelemetry traces (needs the `tracing` extra) |
 | `AGENT_OTLP_ENDPOINT` | `http://localhost:4318/v1/traces` | where traces are sent |
 | `AGENT_SERVICE_NAME` | `research-team` | what this process calls itself in a trace |
+| `AGENT_SEARXNG_URL` | *(unset)* | SearXNG base URL; unset means no search tool is registered |
+| `AGENT_SEARXNG_RESULTS` | `5` | how many results reach the model |
 
 ## REPL commands
 
@@ -82,10 +91,31 @@ variable:
 | `/sessions` | every stored session, newest first; current one marked `*` |
 | `/resume <n\|id>` | switch to a stored session by list position or id prefix |
 | `/new` | start a fresh session |
+| `/autonomy` | current autonomy level for each gated tool |
+| `/autonomy <tool> <level>` | set a gated tool's level: `auto`, `ask`, or `deny` |
 | `/help` | the command list |
 | `/quit` | exit |
 
 Anything not starting with `/` is sent to the agent as a turn.
+
+## Autonomy and approvals
+
+Four tools are gated: `web_search`, `write_file`, `edit_file`, `delete_file`.
+Read-only file tools (`read_file`, `ls`, `glob`, `grep`) are deliberately not
+gated -- there is nothing to approve about a read. Each gated tool has one of
+three levels: `auto` runs it, `ask` interrupts the turn for a human to approve
+or deny, and `deny` refuses without asking. Every tool starts at `auto`, so
+behaviour is unchanged until someone asks for a gate.
+
+Set a level from the REPL with `/autonomy <tool> <level>`, or from the web UI.
+A change takes effect on the *next tool call* -- including one made partway
+through a turn already running -- not at the next session. A pending `ask`
+approval can be answered from either front end.
+
+Search runs against a self-hosted SearXNG instance. Most instances ship with
+their JSON API disabled; without `formats: [json]` under `search:` in the
+instance's `settings.yml`, the tool cannot read its response and the failure
+is otherwise mystifying.
 
 ## How it works
 
