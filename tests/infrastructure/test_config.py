@@ -80,3 +80,23 @@ def test_a_falsey_looking_value_does_not_enable_tracing(monkeypatch):
     for value in ("0", "false", "no", ""):
         monkeypatch.setenv("AGENT_TRACING", value)
         assert config.tracing_enabled() is False, value
+
+
+def test_no_searxng_url_means_no_search_tool(monkeypatch):
+    monkeypatch.delenv("AGENT_SEARXNG_URL", raising=False)
+    assert config.searxng_url() is None
+
+
+def test_a_blank_searxng_url_reads_as_unset(monkeypatch):
+    monkeypatch.setenv("AGENT_SEARXNG_URL", "   ")
+    assert config.searxng_url() is None
+
+
+def test_searxng_url_loses_its_trailing_slash(monkeypatch):
+    monkeypatch.setenv("AGENT_SEARXNG_URL", "http://searx.local/")
+    assert config.searxng_url() == "http://searx.local"
+
+
+def test_result_cap_defaults(monkeypatch):
+    monkeypatch.delenv("AGENT_SEARXNG_RESULTS", raising=False)
+    assert config.searxng_results() == 5

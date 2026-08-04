@@ -23,6 +23,8 @@ DEFAULT_CONTEXT_CLEAR_OVER_CHARS = 2_000
 DEFAULT_OTLP_ENDPOINT = "http://localhost:4318/v1/traces"
 DEFAULT_SERVICE_NAME = "research-team"
 
+DEFAULT_SEARXNG_RESULTS = 5
+
 
 def default_db_path() -> str:
     """Where sessions live. Sessions persist across runs and are resumable."""
@@ -126,3 +128,18 @@ def otlp_endpoint() -> str:
 def tracing_service_name() -> str:
     """What this process calls itself in a trace."""
     return os.getenv("AGENT_SERVICE_NAME", DEFAULT_SERVICE_NAME)
+
+
+def searxng_url() -> str | None:
+    """The SearXNG instance to search, or None if this install has no search.
+
+    Unset is the default and means the agent gets no network tool at all --
+    which is what keeps the sandbox claim true for anyone who has not opted in.
+    """
+    configured = os.getenv("AGENT_SEARXNG_URL", "").strip()
+    return configured.rstrip("/") or None
+
+
+def searxng_results() -> int:
+    """How many results reach the model. Capped because context is the cost."""
+    return int(os.getenv("AGENT_SEARXNG_RESULTS", str(DEFAULT_SEARXNG_RESULTS)))
