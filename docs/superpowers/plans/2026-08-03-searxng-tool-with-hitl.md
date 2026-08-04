@@ -75,7 +75,7 @@ Command(resume={"decisions": [
 - `research_team/application/__init__.py` — re-export the new names.
 - `research_team/application/session_service.py:38` — `DEFAULT_SYSTEM_PROMPT`.
 - `research_team/domain/events.py` — two new events, added to `SESSION_EVENTS`.
-- `research_team/domain/commands.py` and `research_team/domain/session.py` — commands to record them.
+- `research_team/domain/session.py` — commands to record them. (Corrected mid-execution: this branch is based on `origin/main`, where there is no `domain/commands.py` — commands are plain methods on `CodingSession`. The `refactor/decider-pattern` branch, which does have that file, is **not** in this branch's history.)
 - `research_team/domain/__init__.py` — re-export.
 - `research_team/infrastructure/config.py` — two new settings.
 - `research_team/infrastructure/agent/deep_agent.py` — `tools=`, `interrupt_on=`, checkpointer, resume loop.
