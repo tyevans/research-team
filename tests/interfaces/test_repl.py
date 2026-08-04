@@ -351,3 +351,16 @@ async def test_a_long_enough_prefix_is_still_a_prefix(current, monkeypatch):
     await repl.handle_command(current, "/resume 9700")
 
     assert current.session_id == target
+
+
+async def test_health_command_reports_the_session_list_is_trustworthy(current):
+    output = await repl.handle_command(current, "/health")
+    assert "ok" in output.lower()
+
+
+async def test_rebuild_command_rederives_the_session_list(current):
+    """The operator's repair, reachable without a database client."""
+    output = await repl.handle_command(current, "/rebuild")
+    assert "rebuilt" in output.lower()
+    # And the list still answers afterwards.
+    assert await repl.handle_command(current, "/sessions")

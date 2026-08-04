@@ -26,6 +26,7 @@ from research_team.application.ports import (
     ActivityReporter,
     SessionRepository,
     SessionSummaries,
+    SummaryHealth,
     TurnAccountingError,
     TurnExecutor,
 )
@@ -145,6 +146,18 @@ class SessionService:
         """
         return await self._summaries.list()
 
+    async def summaries_health(self) -> SummaryHealth:
+        """Whether `list_sessions` can currently be trusted.
+
+        Exposed as a use case rather than left to the composition root because
+        every front end that shows the list has the same question about it,
+        and the answer decides whether to show a warning next to it.
+        """
+        return await self._summaries.health()
+
+    async def rebuild_summaries(self) -> None:
+        """Derive the session list from the log again. Safe at any time."""
+        await self._summaries.rebuild()
 
     # ---------------- lifecycle ----------------
 

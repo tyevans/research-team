@@ -1731,6 +1731,44 @@ function setConn(stateName, label) {
   el.querySelector('.conn-label').textContent = label;
 }
 
+async function refreshHealth() {
+  // The session list is answered from a projection, so it can be wrong in a
+  // way that reading it will never reveal. This is the only signal.
+  let health = null;
+  try {
+    const response = await fetch('/api/health');
+    if (!response.ok) return;
+    health = (await response.json()).summaries;
+  } catch (e) { return; }
+  const el = document.getElementById('drift');
+  if (!el || !health) return;
+  if (health.healthy) { el.hidden = true; return; }
+  el.querySelector('.drift-label').textContent = health.following
+    ? `list drifted (${health.failed_events})`
+    : 'list not updating';
+  // Only a drifted list has a remedy from here; a stopped projection needs a
+  // restart, which a browser cannot do.
+  el.querySelector('.drift-fix').hidden = !health.following;
+  el.hidden = false;
+}
+
+async function rebuildSummaries() {
+  const button = document.getElementById('drift-fix');
+  if (!button) return;
+  button.disabled = true;
+  button.textContent = 'rebuilding';
+  try {
+    await fetch('/api/summaries/rebuild', { method: 'POST' });
+    await refreshHealth();
+    if (state.route.name === 'tree') loadTree();
+  } catch (e) {
+    // Leave the badge up: the problem it reports is still there.
+  } finally {
+    button.disabled = false;
+    button.textContent = 'rebuild';
+  }
+}
+
 function connect() {
   if (typeof EventSource === 'undefined') { setConn('down', 'no sse'); return; }
   try {
@@ -1748,6 +1786,7 @@ function connect() {
     clearTimeout(backoffResetTimer);
     backoffResetTimer = setTimeout(function () { backoff = 1000; }, 5000);
     setConn('open', 'live');
+    refreshHealth();
     // Every frame carries its feed position as an SSE id, and EventSource
     // replays it in Last-Event-ID on reconnect, so the server resumes from
     // where we left off and the gap arrives as ordinary events. The resync is
@@ -1871,7 +1910,9 @@ document.addEventListener('keydown', function (ev) {
 });
 
 setConn('init', 'connecting');
+document.getElementById('drift-fix').addEventListener('click', rebuildSummaries);
 onRoute();
 connect();
+refreshHealth();
 
 })();

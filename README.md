@@ -75,6 +75,8 @@ variable:
 | `/diff <path>` | each recorded edit to a path, old → new |
 | `/log [n]` | last `n` events (default 20), with timestamps |
 | `/state` | session id, event count, turn count, file count |
+| `/health` | whether the session list's projection is healthy |
+| `/rebuild` | derive the session list from the log again; safe at any time |
 | `/rewind <n>` | continue from a fork at event `n` |
 | `/fork <n>` | fork at event `n` and switch to it |
 | `/sessions` | every stored session, newest first; current one marked `*` |
@@ -115,6 +117,19 @@ It used to be a fold over `read_category` on every request, which was the cleare
 possible statement of what a summary is and got linearly slower forever; the fold
 itself still lives in `summaries.py` as the definition, and a test feeds identical
 events through both to keep them honest.
+
+That trade buys speed and costs a failure mode a fold does not have. A fold is
+recomputed every time, so it cannot be stale and a fixed bug is retroactive. A
+projection is written down once: if a handler throws, the subscription carries on
+(one bad event must not stop the rest), the checkpoint advances past it, and the
+row it would have updated is wrong permanently -- a restart does not help, because
+catch-up resumes after the event that was never applied. So failures go to a
+dead-letter queue rather than only a log line, `/api/health` and the REPL's
+`/health` report the count, the web UI shows a badge when it is non-zero, and
+`/rebuild` (or `POST /api/summaries/rebuild`) drops the rows and the checkpoint
+together so the whole table is derived again from the log. Rebuilding is
+idempotent and safe to reach for on a hunch, which is the point: the log is the
+only source of truth, so anything computed from it can be thrown away.
 
 Turns are streamed with `stream_mode="values"`, which
 gives both live tool-by-tool progress and the final message list in one pass.

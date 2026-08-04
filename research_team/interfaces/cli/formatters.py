@@ -5,7 +5,7 @@ from uuid import UUID
 
 from eventsource import DomainEvent
 
-from research_team.application import SessionSummary, TurnOutcome
+from research_team.application import SessionSummary, SummaryHealth, TurnOutcome
 from research_team.domain import (
     CodingSession,
     ConversationCompacted,
@@ -166,3 +166,20 @@ def format_resumed(session: CodingSession) -> str:
         f"{state.turn_index} turns, {len(state.files)} files"
     )
 
+
+def format_summary_health(health: SummaryHealth) -> str:
+    """Say plainly whether the session list can be trusted, and what to do.
+
+    A health report that only prints numbers leaves the reader to work out
+    whether they matter. The one number that does is `failed_events`, and its
+    remedy is a single command, so the report names it.
+    """
+    if health.healthy:
+        lag = " (catching up)" if health.behind else ""
+        return f"session list  ok{lag}"
+    if not health.following:
+        return "session list  NOT FOLLOWING the log -- restart to resume"
+    return (
+        f"session list  DRIFTED: {health.failed_events} event(s) were never applied\n"
+        f"              some rows are wrong; /rebuild to derive the list again"
+    )

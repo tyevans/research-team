@@ -49,6 +49,40 @@ class SessionRepository(Protocol):
     async def close(self) -> None: ...
 
 
+@dataclass(frozen=True)
+class SummaryHealth:
+    """Whether the `/sessions` list can be trusted right now.
+
+    Worth reporting because a stale or drifted row is indistinguishable from a
+    correct one by looking at it. The old per-request fold could not be wrong
+    -- it was recomputed every time -- so nothing needed to say it was right.
+    A projection does.
+    """
+
+    failed_events: int
+    """Events the projection gave up on. Each one is a row that is now wrong."""
+
+    following: bool
+    """Whether the projection is running and applying new events."""
+
+    behind: bool
+    """Whether the log has moved on past what the projection has applied.
+
+    Ordinary and momentary -- the projection follows the log rather than
+    sharing its transaction. Only interesting if it stays true.
+    """
+
+    @property
+    def healthy(self) -> bool:
+        """False when the table needs rebuilding, or is not being maintained.
+
+        Deliberately does not include `behind`: being briefly behind is the
+        normal condition of a read model, and a health flag that blinks during
+        routine operation is one nobody looks at.
+        """
+        return self.failed_events == 0 and self.following
+
+
 class SessionSummaries(Protocol):
     """The `/sessions` list, as a thing that is stored rather than computed.
 
@@ -62,7 +96,17 @@ class SessionSummaries(Protocol):
         """Every session, newest first."""
         ...
 
+    async def health(self) -> SummaryHealth:
+        """Whether the list is currently trustworthy."""
+        ...
 
+    async def rebuild(self) -> None:
+        """Discard the stored list and derive it from the log again.
+
+        The repair for drift, and safe to run at any time: the log is the only
+        source of truth, so anything computed from it can be thrown away.
+        """
+        ...
 
 
 @dataclass(frozen=True)

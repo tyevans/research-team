@@ -875,3 +875,25 @@ async def test_an_unplaceable_cursor_falls_back_to_the_live_end(repository, sess
 
     payload = json.loads(frames[0].split("data: ", 1)[1])
     assert payload["type"] == "UserMessageSent"
+
+
+async def test_health_reports_the_projection_is_trustworthy(client):
+    body = (await client.get("/api/health")).json()
+    assert body["summaries"]["healthy"] is True
+    assert body["summaries"]["failed_events"] == 0
+
+
+async def test_rebuild_endpoint_rederives_the_session_list(client, service):
+    """A browser is the primary surface, so the repair has to be reachable there.
+
+    Safe to expose: it discards derived data and recomputes it from the log,
+    which is idempotent and cannot lose anything the log still holds.
+    """
+    session_id = await service.create_session()
+
+    response = await client.post("/api/summaries/rebuild")
+
+    assert response.status_code == 200
+    assert response.json()["healthy"] is True
+    listed = (await client.get("/api/sessions")).json()
+    assert [row["id"] for row in listed] == [str(session_id)]

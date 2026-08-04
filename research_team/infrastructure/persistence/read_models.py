@@ -21,20 +21,24 @@ from eventsource import (
     InMemoryEventBus,
     ReadModel,
     SQLCheckpointRepository,
+    SQLDLQRepository,
     create_async_engine,
     handles,
 )
 from eventsource.adapters.sql.readmodel_schema import generate_full_schema
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
+from eventsource.application.projections.retry import ExponentialBackoffRetryPolicy
 from eventsource.application.subscriptions import (
     SubscriptionConfig,
     SubscriptionManager,
 )
+from eventsource.application.subscriptions.retry import RetryConfig
+from eventsource.ports.dlq import DLQEntry
 from eventsource.ports.readmodels import Query, ReadModelRepository
 from pydantic import Field, field_validator
 
-from research_team.application import SessionSummary
+from research_team.application import SessionSummary, SummaryHealth
 from research_team.domain import (
     FileDeleted,
     FileEdited,
@@ -45,6 +49,19 @@ from research_team.domain import (
     TurnFailed,
     UserMessageSent,
 )
+
+LOCAL_RETRY_POLICY = ExponentialBackoffRetryPolicy(
+    config=RetryConfig(max_retries=2, initial_delay=0.05, max_delay=1.0)
+)
+"""How hard to retry a projection handler before giving up on an event.
+
+The library's default backs off for seconds at a time, which is right for a
+projection writing over a network -- a broker hiccup or a connection reset is
+worth waiting out. This one writes to a SQLite file in the same process, where
+the realistic transient failure is a briefly-locked database that clears in
+milliseconds. Waiting seconds would not fix anything a fast retry misses; it
+would just delay the DLQ entry that tells you something is actually wrong.
+"""
 
 
 class SessionSummaryRow(ReadModel):
@@ -113,9 +130,20 @@ class SessionSummaryProjection(DeclarativeProjection):
         self,
         rows: ReadModelRepository[SessionSummaryRow],
         checkpoint_repo=None,
+        dlq_repo=None,
     ) -> None:
         self._rows = rows
-        super().__init__(checkpoint_repo=checkpoint_repo)
+        # Without a DLQ the library logs a permanent failure at CRITICAL and
+        # moves on, so the only record of a corrupted row is a line in a log
+        # nobody is reading. With one, the failure is queryable -- which is
+        # what makes `rebuild()` something you know to reach for.
+        super().__init__(checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo)
+        # Assigned rather than passed: `CheckpointTrackingProjection` accepts a
+        # retry_policy, but `DeclarativeProjection` does not forward one, so
+        # this attribute is the only seam a declarative projection has. If a
+        # future eventsource release adds the parameter, pass it instead --
+        # this line is a workaround for a gap, not a preference.
+        self._retry_policy = LOCAL_RETRY_POLICY
 
     @handles(SessionStarted)
     async def _on_started(self, event: SessionStarted) -> None:
@@ -203,14 +231,20 @@ class SessionSummaryStore:
         self.projection = projection
 
     @classmethod
-    async def open(cls, db_path: str, checkpoint_repo=None) -> "SessionSummaryStore":
+    async def open(
+        cls, db_path: str, checkpoint_repo=None, dlq_repo=None
+    ) -> "SessionSummaryStore":
         connection = await aiosqlite.connect(db_path)
         await connection.executescript(
             generate_full_schema(SessionSummaryRow, dialect="sqlite")
         )
         await connection.commit()
         rows = SQLiteReadModelRepository(connection, SessionSummaryRow)
-        return cls(connection, rows, SessionSummaryProjection(rows, checkpoint_repo))
+        return cls(
+            connection,
+            rows,
+            SessionSummaryProjection(rows, checkpoint_repo, dlq_repo),
+        )
 
     async def list(self) -> list[SessionSummary]:
         """Every session, newest first -- one indexed query, not a full fold."""
@@ -218,6 +252,16 @@ class SessionSummaryStore:
             Query(order_by="started_at", order_direction="desc")
         )
         return [to_summary(row) for row in found]
+
+    async def truncate(self) -> None:
+        """Empty the table, for a rebuild to fill again.
+
+        Deletes rather than soft-deletes: a rebuild is not a domain event, and
+        a soft-deleted row would linger invisibly and collide with the row the
+        replay is about to write for the same session.
+        """
+        await self._connection.execute(f"DELETE FROM {SessionSummaryRow.table_name()}")
+        await self._connection.commit()
 
     async def close(self) -> None:
         await self._connection.close()
@@ -240,6 +284,13 @@ class SessionSummaryRunner:
         self._summaries: SessionSummaryStore | None = None
         self._manager: SubscriptionManager | None = None
         self._subscription = None
+        self._checkpoints: SQLCheckpointRepository | None = None
+        self._dlq: SQLDLQRepository | None = None
+
+    @property
+    def projection_name(self) -> str:
+        """The subscription's name, which is also its checkpoint and DLQ key."""
+        return SessionSummaryProjection.__name__
 
     async def start(self) -> None:
         """Open the table and start following the log.
@@ -258,11 +309,15 @@ class SessionSummaryRunner:
         # connection, not at construction. Reaching for checkpoints before
         # anything has used the store finds no table at all.
         await self._store.current_position()
-        checkpoints = SQLCheckpointRepository(
-            create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        self._checkpoints = SQLCheckpointRepository(engine)
+        self._dlq = SQLDLQRepository(engine)
+        self._summaries = await SessionSummaryStore.open(
+            self._db_path, self._checkpoints, self._dlq
         )
-        self._summaries = await SessionSummaryStore.open(self._db_path, checkpoints)
-        self._manager = SubscriptionManager(self._store, self._bus, checkpoints)
+        self._manager = SubscriptionManager(
+            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq
+        )
         self._subscription = await self._manager.subscribe(
             self._summaries.projection, SubscriptionConfig(start_from="checkpoint")
         )
@@ -270,6 +325,70 @@ class SessionSummaryRunner:
         failures = {name: err for name, err in results.items() if err is not None}
         if failures:
             raise RuntimeError(f"the /sessions projection failed to start: {failures}")
+
+    async def failures(self, limit: int = 100) -> list[DLQEntry]:
+        """Events this projection could not process.
+
+        A non-empty list means the table has drifted from the log: the
+        subscription carried on past the failure, so the row those events would
+        have updated is wrong and will stay wrong until `rebuild()`.
+        """
+        if self._dlq is None:
+            return []
+        return await self._dlq.get_failed_events(
+            projection_name=self.projection_name, limit=limit
+        )
+
+    async def health(self) -> SummaryHealth:
+        """Whether the table can currently be trusted.
+
+        `failed_events` is the one that matters: each entry is an event the
+        projection gave up on, so each is a row that is wrong and will stay
+        wrong until a rebuild. The other two describe ordinary operation.
+        """
+        if self._manager is None or self._subscription is None:
+            return SummaryHealth(failed_events=0, following=False, behind=False)
+        target = await self._store.current_position()
+        reached = self._subscription.last_processed_position
+        return SummaryHealth(
+            failed_events=len(await self.failures()),
+            following=self._subscription.is_running,
+            behind=target is not None and (reached is None or reached < target),
+        )
+
+    async def rebuild(self) -> None:
+        """Throw the table away and derive it again from the log.
+
+        This is the repair for drift, and the reason drift is survivable at
+        all: the log is the only source of truth, so anything computed from it
+        can be discarded. Dropping the checkpoint with the rows is the part
+        that matters -- dropping the rows alone would leave the subscription
+        resuming from its old position over an empty table, which is a far
+        worse state than the one being repaired.
+
+        Runs the replay through a stopped subscription and starts it again
+        afterwards, so nothing is applying live events into a table that is
+        halfway through being rebuilt.
+        """
+        if self._manager is None or self._summaries is None:
+            raise RuntimeError("the /sessions projection has not been started")
+        await self._manager.stop()
+        # Resolve the outstanding failures first. They record events that were
+        # never applied *to the table being discarded*, so once it is gone they
+        # describe nothing -- and a health check that stays red after a
+        # successful repair is one people learn to ignore. Marked resolved
+        # rather than deleted, so the record that it happened survives. If the
+        # underlying bug is still there, the replay below files fresh entries.
+        for entry in await self.failures(limit=1000):
+            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
+        await self._summaries.truncate()
+        await self._checkpoints.reset_checkpoint(self.projection_name)
+        self._manager = None
+        self._subscription = None
+        await self._summaries.close()
+        self._summaries = None
+        await self.start()
+        await self.caught_up()
 
     async def list(self) -> list[SessionSummary]:
         if self._summaries is None:

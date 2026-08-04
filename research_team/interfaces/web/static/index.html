@@ -16,6 +16,13 @@
   </a>
   <nav class="crumbs" id="crumbs"></nav>
   <div class="topbar-right">
+    <!-- Hidden while the session list is trustworthy, which is almost always.
+         A wrong row looks exactly like a right one, so this is the only thing
+         that would tell you otherwise. -->
+    <span class="drift" id="drift" hidden role="status" aria-live="polite">
+      <span class="conn-dot"></span><span class="drift-label"></span>
+      <button type="button" class="drift-fix" id="drift-fix">rebuild</button>
+    </span>
     <span class="conn" id="conn" data-state="init" title="event stream"
           role="status" aria-live="polite" aria-atomic="true">
       <span class="conn-dot"></span><span class="conn-label">connecting</span>

@@ -87,6 +87,37 @@ def create_app(
         prompt = body.system_prompt if body else None
         return {"id": str(await service.create_session(prompt))}
 
+    @app.get("/api/health")
+    async def health():
+        """Whether the derived views behind this API can be trusted.
+
+        `/sessions` is answered from a projection, so unlike a fold it can be
+        wrong -- and a wrong row looks exactly like a right one. This is where
+        a UI finds out to say so.
+        """
+        summaries = await service.summaries_health()
+        return {
+            "summaries": {
+                "healthy": summaries.healthy,
+                "failed_events": summaries.failed_events,
+                "following": summaries.following,
+                "behind": summaries.behind,
+            }
+        }
+
+    @app.post("/api/summaries/rebuild")
+    async def rebuild_summaries():
+        """Derive the session list from the log again, and report the result.
+
+        Exposed over HTTP because the browser is the primary surface and a
+        problem you can see but not fix is only half-reported. Safe to call at
+        any time: it discards derived data and recomputes it, so the worst case
+        is wasted work, and the log it derives from is never touched.
+        """
+        await service.rebuild_summaries()
+        health = await service.summaries_health()
+        return {"healthy": health.healthy, "failed_events": health.failed_events}
+
     @app.get("/api/tree")
     async def fork_tree():
         return tree_view(build_fork_tree(await service.list_sessions()))

@@ -153,6 +153,39 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .conn[data-state="down"] .conn-dot { background: var(--k-failure); animation: pulse 1.4s infinite; }
 .conn[data-state="init"] .conn-dot { animation: pulse 1.4s infinite; }
 
+/* Drift badge: same pill vocabulary as .conn, in the failure colour, so it
+   reads as "this indicator is unhappy" rather than as a new kind of thing. */
+.drift {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--k-failure);
+  padding: 3px 4px 3px 8px;
+  border: 1px solid #3a2022;
+  border-radius: 999px;
+}
+/* An explicit `display` beats the `hidden` attribute's UA `display: none`, so
+   without this the badge stays on screen with an empty label. */
+.drift[hidden] { display: none; }
+.drift .conn-dot { background: var(--k-failure); animation: pulse 1.4s infinite; }
+.drift-fix {
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  color: var(--bg);
+  background: var(--k-failure);
+  border: 0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.drift-fix:hover { filter: brightness(1.15); }
+.drift-fix[disabled] { opacity: 0.6; cursor: default; }
+
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.25 } }
 
 /* app shell ------------------------------------------------------------- */
