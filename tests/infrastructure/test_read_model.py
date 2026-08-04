@@ -14,6 +14,7 @@ from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 from research_team.application import summarize_sessions
 from research_team.domain import CodingSession
 from research_team.infrastructure.persistence.read_models import (
+    LOCAL_RETRY_POLICY,
     SessionSummaryProjection,
     SessionSummaryRow,
     to_summary,
@@ -136,3 +137,25 @@ async def test_the_projection_agrees_with_the_fold_it_replaces(projection, rows)
         reverse=True,
     )
     assert projected == summarize_sessions(events)
+
+
+def test_the_projection_retries_on_local_timings_not_network_ones(rows):
+    """Guards the constructor contract eventsource 0.10.0 opened up.
+
+    `retry_policy` reaches the projection through `DeclarativeProjection`'s
+    constructor. Before 0.10.0 the parent accepted it and every subclass
+    silently dropped it, so the only way in was assigning the private attribute
+    after construction. Nothing failed when it was dropped -- the projection
+    just fell back to the library default of three attempts over about six
+    seconds, which is tuned for a projection writing over a network, not to a
+    local file.
+
+    A parameter that can be ignored without anything failing is the shape that
+    regresses, so this asserts the policy actually in force. It reads a private
+    attribute because the library exposes no accessor; that is the right place
+    for the reach, rather than widening production code to make a test possible.
+    """
+    projection = SessionSummaryProjection(rows)
+
+    assert projection._retry_policy is LOCAL_RETRY_POLICY
+    assert projection._retry_policy.get_backoff(0) < 1.0

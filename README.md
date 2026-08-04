@@ -156,7 +156,10 @@ research_team/
                                  and the `/sessions` read model and the
                                  projection that keeps it current
                    agent/        deepagents + langchain, implementing TurnExecutor
-                   telemetry.py  tracer setup; a no-op unless AGENT_TRACING is on
+                   telemetry.py  tracer setup; a no-op unless AGENT_TRACING is on;
+                                 one tracer is shared by the turn, the store, and
+                                 the /sessions projection, so a slow list and a
+                                 slow turn are read off the same trace
                    config.py     the only module that reads the environment
   interfaces/      cli/          the REPL: parsing, dispatch, formatting
                    web/          FastAPI routes + presenters, and the SPA

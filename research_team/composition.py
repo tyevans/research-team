@@ -142,8 +142,9 @@ def build_application(
 
     repository = EventStoreSessionRepository.open(resolved_path)
     executor = DeepAgentTurnExecutor(resolved_model, subagents=subagents)
+    resolved_tracer = tracer if tracer is not None else build_tracer()
     summaries = SessionSummaryRunner(
-        repository.store, resolved_path, repository.publisher
+        repository.store, resolved_path, repository.publisher, resolved_tracer
     )
     service = SessionService(
         repository,
@@ -151,10 +152,11 @@ def build_application(
         summaries,
         default_system_prompt=system_prompt + prompt_suffix,
         context=strategy,
-        # Resolved here rather than defaulted inside the service: whether this
-        # process exports traces is a deployment decision, and the composition
-        # root is where deployment decisions live.
-        tracer=tracer if tracer is not None else build_tracer(),
+        # Resolved once and shared: whether this process exports traces is a
+        # deployment decision, and the composition root is where deployment
+        # decisions live. The projection gets the same instance, so a turn and
+        # the read-model work it causes are read off one trace rather than two.
+        tracer=resolved_tracer,
     )
     return Application(
         service=service,

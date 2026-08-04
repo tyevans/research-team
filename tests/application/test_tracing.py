@@ -43,3 +43,21 @@ async def test_tracing_is_off_unless_asked_for(build_application, fake_model):
     application = await build_application(model=fake_model)
 
     assert application.service.tracer.enabled is False
+
+
+async def test_the_sessions_projection_is_traced_too(build_application, fake_model):
+    """A trace that stops at the write is only half the picture.
+
+    `/sessions` is maintained by a projection running behind the turn, so when
+    the list lags, the work that has to be accounted for happens there. The
+    library defaults projection tracing off -- reasonably, since a projection
+    can be extremely high-frequency -- but this one handles a handful of events
+    per turn, and its cost is exactly what a trace is being read to find.
+    """
+    tracer = MockTracer()
+    application = await build_application(model=fake_model, tracer=tracer)
+    session_id = await application.service.create_session()
+    await application.service.run_turn(session_id, "hello")
+    await application.summaries_caught_up()
+
+    assert any("projection" in name for name in tracer.span_names)

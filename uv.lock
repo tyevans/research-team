@@ -312,16 +312,16 @@ wheels = [
 
 [[package]]
 name = "eventsource-py"
-version = "0.9.1"
+version = "0.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "orjson" },
     { name = "pydantic" },
     { name = "sqlalchemy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5d/21/e0dd595f10f841abc75b23880543cda1eb4628c3459d6fa1a6a9fe49799a/eventsource_py-0.9.1.tar.gz", hash = "sha256:c0e7d288477daaac31cb0ec61426d02847a725e20dd5e2af16ba786011ec889e", size = 2805978, upload-time = "2026-08-03T06:24:19.836Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9b/b1/05983b1d287ce091ab49f9f359f96ca85badb426c2db33c00f1a4dc561ab/eventsource_py-0.10.0.tar.gz", hash = "sha256:c06b04ac0cd432d629c12d6f834eb75e357bc63091514431d9ff764632a766c9", size = 2808160, upload-time = "2026-08-04T04:33:59.569Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/af/b0/1fd42ead6f161ba45a8f3d1b59441a683b80e2f84712b10a419902a08b56/eventsource_py-0.9.1-py3-none-any.whl", hash = "sha256:4282f5a81aecdfe7fd6c81f2e6856dfcc43e4023294b9b93e662afc500d81559", size = 707027, upload-time = "2026-08-03T06:24:17.688Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/7c/5b980081cdbf8b25855b36036f368400f3a8437c31efa0276518388736ac/eventsource_py-0.10.0-py3-none-any.whl", hash = "sha256:0fb701eeec486ca9f5dee2d2bc87c8d4d3d35335cd6bc7bb19292a963b0265c7", size = 707528, upload-time = "2026-08-04T04:33:57.495Z" },
 ]
 
 [package.optional-dependencies]
@@ -1305,8 +1305,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "deepagents", specifier = ">=0.7.1,<0.8" },
-    { name = "eventsource-py", extras = ["sqlite"], specifier = ">=0.9.1" },
-    { name = "eventsource-py", extras = ["telemetry"], marker = "extra == 'tracing'", specifier = ">=0.9.1" },
+    { name = "eventsource-py", extras = ["sqlite"], specifier = ">=0.10.0" },
+    { name = "eventsource-py", extras = ["telemetry"], marker = "extra == 'tracing'", specifier = ">=0.10.0" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "langchain-openai", specifier = ">=1.4.1" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'tracing'", specifier = ">=1.0,<2.0" },

@@ -131,19 +131,19 @@ class SessionSummaryProjection(DeclarativeProjection):
         rows: ReadModelRepository[SessionSummaryRow],
         checkpoint_repo=None,
         dlq_repo=None,
+        tracer=None,
     ) -> None:
         self._rows = rows
         # Without a DLQ the library logs a permanent failure at CRITICAL and
         # moves on, so the only record of a corrupted row is a line in a log
         # nobody is reading. With one, the failure is queryable -- which is
         # what makes `rebuild()` something you know to reach for.
-        super().__init__(checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo)
-        # Assigned rather than passed: `CheckpointTrackingProjection` accepts a
-        # retry_policy, but `DeclarativeProjection` does not forward one, so
-        # this attribute is the only seam a declarative projection has. If a
-        # future eventsource release adds the parameter, pass it instead --
-        # this line is a workaround for a gap, not a preference.
-        self._retry_policy = LOCAL_RETRY_POLICY
+        super().__init__(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+            retry_policy=LOCAL_RETRY_POLICY,
+            tracer=tracer,
+        )
 
     @handles(SessionStarted)
     async def _on_started(self, event: SessionStarted) -> None:
@@ -232,18 +232,18 @@ class SessionSummaryStore:
 
     @classmethod
     async def open(
-        cls, db_path: str, checkpoint_repo=None, dlq_repo=None
+        cls, db_path: str, checkpoint_repo=None, dlq_repo=None, tracer=None
     ) -> "SessionSummaryStore":
         connection = await aiosqlite.connect(db_path)
         await connection.executescript(
             generate_full_schema(SessionSummaryRow, dialect="sqlite")
         )
         await connection.commit()
-        rows = SQLiteReadModelRepository(connection, SessionSummaryRow)
+        rows = SQLiteReadModelRepository(connection, SessionSummaryRow, tracer)
         return cls(
             connection,
             rows,
-            SessionSummaryProjection(rows, checkpoint_repo, dlq_repo),
+            SessionSummaryProjection(rows, checkpoint_repo, dlq_repo, tracer),
         )
 
     async def list(self) -> list[SessionSummary]:
@@ -277,10 +277,17 @@ class SessionSummaryRunner:
     one at import or construction time is a bug waiting for a different loop.
     """
 
-    def __init__(self, store: SQLiteEventStore, db_path: str, bus: InMemoryEventBus):
+    def __init__(
+        self,
+        store: SQLiteEventStore,
+        db_path: str,
+        bus: InMemoryEventBus,
+        tracer=None,
+    ):
         self._store = store
         self._db_path = db_path
         self._bus = bus
+        self._tracer = tracer
         self._summaries: SessionSummaryStore | None = None
         self._manager: SubscriptionManager | None = None
         self._subscription = None
@@ -313,10 +320,14 @@ class SessionSummaryRunner:
         self._checkpoints = SQLCheckpointRepository(engine)
         self._dlq = SQLDLQRepository(engine)
         self._summaries = await SessionSummaryStore.open(
-            self._db_path, self._checkpoints, self._dlq
+            self._db_path, self._checkpoints, self._dlq, self._tracer
         )
         self._manager = SubscriptionManager(
-            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq
+            self._store,
+            self._bus,
+            self._checkpoints,
+            dlq_repo=self._dlq,
+            tracer=self._tracer,
         )
         self._subscription = await self._manager.subscribe(
             self._summaries.projection, SubscriptionConfig(start_from="checkpoint")
