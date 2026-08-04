@@ -3,7 +3,7 @@
 import asyncio
 
 from research_team.composition import build_application
-from research_team.interfaces.cli import run
+from research_team.interfaces.cli import TerminalApprovals, run
 
 
 async def _run() -> None:
@@ -13,10 +13,10 @@ async def _run() -> None:
     aiosqlite binds a connection to the loop that opened it -- so starting has
     to happen in here, not around `asyncio.run`.
     """
-    application = build_application()
+    application = build_application(approvals=TerminalApprovals())
     await application.start()
     try:
-        await run(application.service)
+        await run(application.service, application.policy)
     finally:
         await application.close()
 

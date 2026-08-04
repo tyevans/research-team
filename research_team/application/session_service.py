@@ -182,6 +182,21 @@ class SessionService:
         await self._repository.save(aggregate)
         return session_id
 
+    async def record_autonomy_change(
+        self, session_id: UUID, tool_name: str, level: str
+    ) -> None:
+        """Note in the log that a tool's autonomy level was changed.
+
+        The policy object itself is what the executor consults, and it is
+        mutated by whoever owns it -- but a level that changed mid-session and
+        left no trace makes the surrounding decisions unreadable afterwards.
+        Recording it is a use case, so the adapters do not have to reach past
+        the service for a repository to write through.
+        """
+        aggregate = await self._repository.load(session_id)
+        aggregate.record_autonomy_change(tool_name, level)
+        await self._repository.save(aggregate)
+
     # ---------------- turns ----------------
 
     async def run_turn(

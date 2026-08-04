@@ -9,12 +9,20 @@ serves any session it is asked about.
 """
 
 import asyncio
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from uuid import UUID
 
-from research_team.application import ActivityReporter, SessionService
+from research_team.application import (
+    ActivityReporter,
+    ApprovalDecision,
+    ApprovalRequest,
+    AutonomyPolicy,
+    SessionService,
+)
 from research_team.infrastructure import config
 from research_team.interfaces.cli.formatters import (
+    format_autonomy,
     format_diff,
     format_file_history,
     format_files,
@@ -48,10 +56,73 @@ Sessions (persisted to SQLite; they survive restarts)
   /resume <n|id>   switch to a stored session by list position or id
   /new             start a fresh session
 
+Autonomy (how much the agent may do without asking)
+  /autonomy              every gated tool and its level
+  /autonomy <tool> <l>   set one to auto, ask, or deny
+
   /help            this message
   /quit            exit
 
 Anything else is sent to the agent as a turn."""
+
+
+Prompter = Callable[[str], Awaitable[str]]
+"""Asks the person a question and waits for the line they type."""
+
+
+async def _ask_terminal(prompt: str) -> str:
+    """Read one line without blocking the loop the turn is running on.
+
+    A bare `input()` inside a coroutine stops everything -- including the
+    turn that is waiting on this answer, and the keepalives and cancellation
+    that surround it. The REPL's own loop reads the same way.
+    """
+    try:
+        return await asyncio.to_thread(input, prompt)
+    except (EOFError, KeyboardInterrupt):
+        # Nobody is there, or they gave up. Either way the call is not
+        # approved, and a hung turn would be the worse answer.
+        return ""
+
+
+DECISION_KEYS = {"a": "approve", "y": "approve", "r": "reject", "n": "reject", "e": "edit"}
+
+
+@dataclass
+class TerminalApprovals:
+    """An `ApprovalPort` that asks whoever is at this terminal.
+
+    Prints in the same register as the activity notes a turn already emits --
+    a gated call is one more thing happening inside the turn, and giving it its
+    own visual language would make the interruption read as a different program
+    talking.
+    """
+
+    ask: Prompter = _ask_terminal
+    show: Callable[[str], None] = print
+
+    async def decide(self, request: ApprovalRequest) -> ApprovalDecision:
+        self.show(f"· {request.tool_name} -- approval needed")
+        for key, value in request.args.items():
+            self.show(f"  ↳ {key}: {value}")
+        while True:
+            answer = (await self.ask("  [a]pprove  [r]eject  [e]dit > ")).strip().lower()
+            choice = DECISION_KEYS.get(answer[:1]) if answer else "reject"
+            if choice is None:
+                self.show("  ↳ answer a, r, or e")
+                continue
+            if choice != "edit":
+                return ApprovalDecision(choice)
+            return ApprovalDecision("edit", edited_args=await self._amend(request.args))
+
+    async def _amend(self, args: dict) -> dict:
+        """Offer each argument for replacement; an empty line keeps it."""
+        edited = dict(args)
+        for key, value in args.items():
+            replacement = (await self.ask(f"  {key} [{value}] > ")).strip()
+            if replacement:
+                edited[key] = replacement
+        return edited
 
 
 @dataclass
@@ -60,10 +131,20 @@ class Repl:
 
     service: SessionService
     session_id: UUID
+    policy: AutonomyPolicy = field(default_factory=AutonomyPolicy)
+    """The same object the executor consults, when one was wired. A REPL given
+    its own is honest rather than broken: `/autonomy` still reports and sets,
+    it simply governs nothing."""
 
     @classmethod
-    async def start(cls, service: SessionService) -> "Repl":
-        return cls(service, await service.create_session())
+    async def start(
+        cls, service: SessionService, policy: AutonomyPolicy | None = None
+    ) -> "Repl":
+        return cls(
+            service,
+            await service.create_session(),
+            policy if policy is not None else AutonomyPolicy(),
+        )
 
 
 MIN_PREFIX = 4
@@ -167,6 +248,21 @@ async def handle_command(
             return str(error)
         verb = "rewound to" if command == "/rewind" else "forked at"
         return f"{verb} event {argument}; session {repl.session_id}"
+    if command == "/autonomy":
+        if not argument:
+            return format_autonomy(repl.policy.levels())
+        parts = argument.split()
+        if len(parts) != 2:
+            return "usage: /autonomy [<tool> <auto|ask|deny>]"
+        tool, level = parts
+        try:
+            repl.policy.set(tool, level)  # type: ignore[arg-type]
+        except ValueError as error:
+            # A typo is an ordinary thing to type at a prompt, and the policy
+            # already words the complaint better than a generic traceback.
+            return str(error)
+        await service.record_autonomy_change(repl.session_id, tool, level)
+        return f"{tool}: {level}"
     if command == "/health":
         return format_summary_health(await service.summaries_health())
     if command == "/rebuild":
@@ -182,7 +278,7 @@ async def handle_command(
     return f"unknown command {command!r} -- try /help"
 
 
-async def run(service: SessionService) -> None:
+async def run(service: SessionService, policy: AutonomyPolicy | None = None) -> None:
     """Drive a session until the user leaves. The service is closed on the way out.
 
     The service is passed in rather than built here: choosing adapters is the
@@ -190,7 +286,7 @@ async def run(service: SessionService) -> None:
     place that knows which database and which model the app happens to use.
     """
     try:
-        repl = await Repl.start(service)
+        repl = await Repl.start(service, policy)
         stored = await service.list_sessions()
         print(f"session {repl.session_id}")
         print(f"database {config.default_db_path()}")
