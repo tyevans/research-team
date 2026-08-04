@@ -4,6 +4,12 @@ Depends on the domain and on its own port declarations -- never on a concrete
 store, model provider, or user interface.
 """
 
+from research_team.application.autonomy import (
+    GATED_TOOLS,
+    SEARCH_TOOL,
+    AutonomyPolicy,
+    Level,
+)
 from research_team.application.context import (
     Compaction,
     ContextStrategy,
@@ -45,7 +51,10 @@ from research_team.application.turn_supervisor import (
 
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
+    "GATED_TOOLS",
+    "SEARCH_TOOL",
     "ActivityReporter",
+    "AutonomyPolicy",
     "Cancellation",
     "Compaction",
     "ContextStrategy",
@@ -54,6 +63,7 @@ __all__ = [
     "FeedEntry",
     "ForkNode",
     "FullHistory",
+    "Level",
     "LiveFeed",
     "PreparedContext",
     "RecordedMessage",
