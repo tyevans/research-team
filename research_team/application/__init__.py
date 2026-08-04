@@ -20,6 +20,9 @@ from research_team.application.context import (
 from research_team.application.live_feed import LiveFeed
 from research_team.application.ports import (
     ActivityReporter,
+    ApprovalDecision,
+    ApprovalPort,
+    ApprovalRequest,
     EventFeed,
     FeedEntry,
     RecordedMessage,
@@ -54,6 +57,9 @@ __all__ = [
     "GATED_TOOLS",
     "SEARCH_TOOL",
     "ActivityReporter",
+    "ApprovalDecision",
+    "ApprovalPort",
+    "ApprovalRequest",
     "AutonomyPolicy",
     "Cancellation",
     "Compaction",
