@@ -33,8 +33,8 @@ from redstring import (
     RedstringError,
     SourceDocument,
     build_graph,
+    document_stream,
 )
-from redstring.events.streams import document_stream
 
 from research_team.application.knowledge import (
     IngestReport,

@@ -10,7 +10,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "langchain-openai>=1.4.1",
-    "redstring[llm,neo4j]>=0.1.0",
+    "redstring[llm,neo4j]>=0.2.0",
     "uvicorn[standard]>=0.52.1",
 ]
 
