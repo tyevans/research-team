@@ -22,10 +22,11 @@ from research_team.application import (
     AutonomyPolicy,
     SessionService,
 )
-from research_team.application.ports import ActivityDelta, ActivityNote
+from research_team.application.ports import ActivityNote
 from research_team.domain import CreateProject
 from research_team.infrastructure import config
 from research_team.interfaces.cli.formatters import (
+    format_activity,
     format_autonomy,
     format_diff,
     format_file_history,
@@ -165,49 +166,6 @@ database: `/resume 97` would usually report a bad position and occasionally
 resume a session that happened to start with "97". Session ids are shown eight
 characters wide, so a one- or two-character "prefix" was never one.
 """
-
-
-ACTIVITY_RESULT_WIDTH = 70
-"""Matches what the terminal has always shown for a tool result."""
-
-
-def format_activity(note: ActivityNote) -> str | None:
-    """One terminal line for a note, or None if it is not worth showing.
-
-    Deliberately silent for prose and deltas: the transcript prints the reply
-    when the turn completes, and echoing it token by token into a scrolling
-    terminal would be noise. This is the terminal's presenter for the same
-    notes the web UI renders as content.
-
-    Payloads arrive from message_to_dict, with a nested structure: the actual
-    message data lives under the 'data' key.
-    """
-    if isinstance(note, ActivityDelta):
-        return None
-
-    # Payloads from deep_agent have a nested structure with 'data' key
-    # (from langchain's message_to_dict).
-    data = note.payload["data"]
-
-    calls = data.get("tool_calls") or []
-    if calls:
-        return "· " + ", ".join(
-            f"{call.get('name', '?')}({_first_arg(call.get('args') or {})})"
-            for call in calls
-        )
-    if note.kind == "tool":
-        content = data.get("content", "")
-        lines = str(content).strip().splitlines()
-        return f"  ↳ {lines[0][:ACTIVITY_RESULT_WIDTH]}" if lines else None
-    return None
-
-
-def _first_arg(args: dict) -> str:
-    """Extract the first significant argument from a call's args dict."""
-    for key in ("file_path", "path", "pattern", "command"):
-        if key in args:
-            return str(args[key])
-    return ""
 
 
 async def _resolve_session(repl: Repl, argument: str) -> UUID | str:

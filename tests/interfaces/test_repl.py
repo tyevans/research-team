@@ -12,7 +12,7 @@ from research_team.interfaces.cli.formatters import (
     format_files,
     format_log,
 )
-from research_team.interfaces.cli.repl import format_activity
+from research_team.interfaces.cli.formatters import format_activity
 
 
 @pytest.fixture
