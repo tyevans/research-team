@@ -12,9 +12,9 @@ covers our wiring of it.
 """
 
 import os
-import pytest
 from uuid import uuid4
 
+import pytest
 from redstring import SourceDocument, build_graph
 
 from research_team.infrastructure.knowledge.stores import build_graph_store

@@ -8,6 +8,17 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage
 from redstring import FakeLlmProvider
 
+from research_team import composition
+from research_team.application import SessionService
+from research_team.domain import (
+    CodingSession,
+    StartSession,
+)
+from research_team.infrastructure.persistence import (
+    EventStoreSessionRepository,
+    build_aggregate_repository,
+)
+
 #: A canned extraction result: two people and the relationship between them.
 #: Shared by every test that needs `build_graph` to produce *something*
 #: recognisable without caring what text it was fed -- `fake_provider()`
@@ -38,17 +49,6 @@ def fake_provider(answer: dict = TWO_PEOPLE) -> FakeLlmProvider:
     """
     return FakeLlmProvider(by_substring={}, default=answer)
 
-
-from research_team import composition
-from research_team.application import SessionService
-from research_team.domain import (
-    CodingSession,
-    StartSession,
-)
-from research_team.infrastructure.persistence import (
-    EventStoreSessionRepository,
-    build_aggregate_repository,
-)
 
 SYSTEM_PROMPT = "You are a coding agent."
 MODEL_NAME = "test-model"

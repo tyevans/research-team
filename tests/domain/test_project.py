@@ -1,19 +1,19 @@
-import pytest
 from uuid import uuid4
+
+import pytest
+from eventsource import CommandRejectedError
 
 from research_team.domain.project import (
     AdvanceTip,
     CreateProject,
     JoinProject,
     ProjectCreated,
-    ProjectState,
     ProjectTipAdvanced,
     SessionJoinedProject,
     decide,
     evolve,
     initial_state,
 )
-from eventsource import CommandRejectedError
 
 
 def test_creating_a_project_emits_project_created():
