@@ -1113,17 +1113,19 @@ Run: `uv run pytest tests/infrastructure/test_knowledge_stores.py tests/infrastr
 Expected: PASS. The integration test is deselected — confirm with
 `uv run pytest --collect-only -q 2>&1 | tail -3`, which should report it deselected rather than collected.
 
-- [ ] **Step 7: Verify Neo4j end to end**
+- [ ] **Step 7: Leave the Neo4j run to CI**
+
+Do **not** start a Neo4j container locally. The integration marker runs against a service container on every pull request (`.github/workflows/ci.yml`, the `integration` job), which is where a server is free and where a developer's machine is not asked to host one.
+
+Locally, verify only that the test is well-formed and correctly deselected:
 
 ```bash
-docker compose -f docker-compose.test.yml up -d neo4j
-# Wait for the healthcheck to pass:
-until [ "$(docker inspect -f '{{.State.Health.Status}}' $(docker compose -f docker-compose.test.yml ps -q neo4j))" = "healthy" ]; do sleep 2; done
-uv run pytest -m integration tests/integration/test_neo4j_graph_store.py -v
-docker compose -f docker-compose.test.yml down
+uv run pytest --collect-only -q 2>&1 | tail -3
 ```
 
-Expected: PASS. If the Neo4j container cannot start in this environment, report that in your task report as a `DONE_WITH_CONCERNS` — do not delete the test or mark it skipped to make the run green.
+Expected: the integration test is reported as deselected, not collected and not errored. A collection *error* means the test file's imports are wrong and must be fixed here; a deselection means CI will do the rest.
+
+`docker-compose.test.yml` still exists for anyone who wants to run it locally on purpose. Note that its `7688:7687` binding collides with kg-builder's own test container if that happens to be up on the same machine — rebind rather than stopping somebody else's server.
 
 - [ ] **Step 8: Commit**
 
@@ -1136,6 +1138,97 @@ config but not construct is a config option in name only. No default
 Neo4j password: a graph store that silently comes up on neo4j/neo4j either
 fails confusingly or connects to somebody's development server."
 ```
+
+---
+
+### Task 5b: The tooling gate
+
+**Files:**
+- Modify: `pyproject.toml` (dev group)
+- Create: `.github/workflows/ci.yml` (already drafted, uncommitted — review and commit it)
+- Modify: every file `ruff format` rewrites (~31) and `ruff check` flags (9 errors)
+- Test: the gate itself is the test
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: a green `ruff check` and `ruff format --check`, and a CI workflow running lint, the default suite, and the integration suite against a Neo4j service container.
+
+This is deliberately its own task and its own commits. `ruff format` rewrites 31 of 84 files; folded into a feature task, that churn would swamp the review of the actual change. It lands before Task 6 so every remaining task is written against an already-formatted tree.
+
+- [ ] **Step 1: Declare the tooling**
+
+`ruff` is not in the dev group — it currently resolves from outside the project, which means the gate depends on what happens to be on a machine. Add it, pinned exactly, for the reason kg-builder pins its own: a floating tool version turns this gate red on a branch that changed nothing.
+
+```bash
+uv add --dev "ruff==<current version>"
+```
+
+Get `<current version>` from `uv run ruff --version` and pin that exact value.
+
+- [ ] **Step 2: Commit the formatting pass on its own**
+
+```bash
+uv run ruff format .
+uv run pytest
+```
+
+The suite must pass unchanged — `ruff format` is not supposed to alter behaviour, and if the suite moves, something is wrong and you should stop and report it.
+
+```bash
+git add -A
+git commit -m "style: apply ruff format to the tree
+
+Never run here before, so this is 31 files of pure formatting and no
+behaviour change. Its own commit, so it never has to be read as part of a
+change that means something."
+```
+
+- [ ] **Step 3: Fix the 9 `ruff check` errors, in a separate commit**
+
+```bash
+uv run ruff check .
+```
+
+Three are auto-fixable (`--fix`); the rest need reading. One you will certainly hit: `tests/conftest.py` now defines `TWO_PEOPLE` and `fake_provider()` *between* its import blocks, which trips E402 on the imports below them. Move the definitions below all imports rather than silencing the rule.
+
+Do not add `# noqa` to make an error go away unless you can say in the comment why the rule is wrong here. Re-run `uv run pytest` afterwards — an import reorder can change behaviour when a module has side effects.
+
+```bash
+git commit -m "style: fix the ruff check errors"
+```
+
+- [ ] **Step 4: Review and commit the CI workflow**
+
+`.github/workflows/ci.yml` is already drafted in the working tree, untracked. Read it before committing — you own it now. Verify:
+- the action SHAs are pinned with tags in trailing comments,
+- `uv sync --all-extras --locked` matches how this project is actually installed (`uv.lock` IS committed here, unlike kg-builder),
+- the `test` job passes no `-m` override, so it runs exactly what a developer runs,
+- the `integration` job's env matches the config readers' variable names (`AGENT_NEO4J_URI`, `AGENT_NEO4J_USER`, `AGENT_NEO4J_PASSWORD`),
+- there is no `mypy` job. mypy is deliberately out of scope and recorded in `BACKLOG.md`.
+
+Validate the YAML parses:
+
+```bash
+uv run python -c "import yaml,sys; yaml.safe_load(open('.github/workflows/ci.yml')); print('yaml ok')"
+```
+
+If `yaml` is not installed, use any available parser or `python -c "import json"`-style check you can actually run; do not skip validation.
+
+```bash
+git add .github/workflows/ci.yml pyproject.toml uv.lock
+git commit -m "ci: lint, tests, and the integration suite on every pull request
+
+The integration marker needs a real Neo4j, which is free on a runner and a
+burden on a laptop -- so that is where it runs."
+```
+
+- [ ] **Step 5: Confirm the gate is green**
+
+```bash
+uv run ruff check . && uv run ruff format --check . && uv run pytest
+```
+
+Expected: no errors, no reformatting, suite passes. Report the counts.
 
 ---
 

@@ -20,6 +20,22 @@ Found in the Task 1 review of the projects/redstring work and deferred as
 Minor, because the docstring convention is satisfied and nothing is
 misleading.
 
+### B3. No type checking
+
+`mypy` is not configured and has never run against this codebase. The CI gate
+added alongside the projects/redstring work covers `ruff check`, `ruff format`
+and the test suites, and deliberately stops there.
+
+Deferred on measurement rather than principle: ~40 modules have never been
+type-checked, so `mypy --strict` is an open-ended migration whose size is
+unknown until it is run, and starting one in the middle of a feature was the
+wrong trade. The sibling project (`redstring`) gates on `mypy --strict` and is
+the model to copy when this is picked up.
+
+Do not add mypy in permissive mode as a stepping stone. A gate that starts
+permissive tends to stay permissive, and it costs the honesty of saying
+plainly, as this entry does, that there is no type checking today.
+
 ## Waiting on redstring
 
 ### B2. Two workarounds to unwind when redstring closes R3 and R4
