@@ -17,6 +17,11 @@ This spec covers the foundation: a **project** that scopes shared state across
 sessions, a **knowledge port** with a redstring adapter behind it, and an
 **ingest path** the agent drives, plus one recall tool to prove the read side.
 
+research-team is redstring's first consumer. Five gaps that finding surfaced
+are recorded in [Upstream dependencies](#upstream-dependencies); this spec is
+designed to ship against redstring as it is today, and to unwind cleanly when
+they land.
+
 ## Scope
 
 In scope:
@@ -31,7 +36,10 @@ In scope:
 
 Out of scope, each with its own later spec:
 
-- The rest of recall: `neighbors`, vector similarity, temporal slicing.
+- **Vector search of any kind**, and the embedding step it needs. See R1: the
+  library cannot populate a `VectorStore` today, so a slice that configured one
+  would configure a store guaranteed to stay empty.
+- The rest of recall: `neighbors`, temporal slicing.
 - A `fetch` tool, and distillation strategies over what it retrieves.
 - The event log as a content source — folding session events into documents.
 - Web and CLI surfaces for the graph.
@@ -59,26 +67,41 @@ Forked concurrency is the expected next step, and nothing here forecloses it.
 
 ### The graph is scoped to a project
 
-`tenant_id` is the project. This is why the project concept comes first: a
-shared graph without a boundary has no natural tenant, and a session-scoped
-graph is a research memory that forgets.
+The project id **is** redstring's `tenant_id`, which means `project_id` must be
+a `UUID` — redstring's `TenantId` is `UUID`, not a string.
 
-### Extraction events live on their own stream in the same store
+This is why the project concept comes first: a shared graph without a boundary
+has no natural tenant, and a session-scoped graph is a research memory that
+forgets.
 
-`StreamId(project_id, "knowledge")`, alongside the session streams in the same
-SQLite file. The session log records the ingest tool call and its result the
-way it records a search. The knowledge stream holds redstring's
-`DocumentExtracted` and `EntitiesMerged`, and the graph is
-`redstring.projections.project` folded over it.
+### redstring's own streams live in the same event store
 
-This keeps redstring's central claim intact — the store is derived, and
-"re-extract everything with a better prompt" is a replay rather than a
-migration — while keeping one file to back up and one place to look for
-provenance. Interleaving redstring's events into the session stream was
-rejected because it would make `CodingSession`'s decider know redstring's event
-schema, and would make rebuilding the graph a fold over every session. A
-separate database was rejected for the same reason a second source of truth is
-always rejected here.
+Not a stream of our naming. redstring derives its stream ids and does not
+accept a caller-supplied one:
+
+- `DocumentExtracted` → `StreamId(uuid5(tenant_id, source_id), "Document")` —
+  one stream per document.
+- `EntitiesMerged` / `MergeUndone` → `StreamId(tenant_id, "Consolidation")` —
+  one per project.
+
+Both events bake `aggregate_type` in, and the services write through their own
+repositories. So the adapter passes research-team's `SQLiteEventStore` and
+`SQLiteSnapshotStore` into redstring rather than routing redstring's events
+somewhere of its own choosing.
+
+An earlier draft of this spec invented a single `StreamId(project_id,
+"knowledge")` stream. That is recorded here because the reason it fails is
+worth keeping: parking these events on a foreign stream is mechanically legal —
+the SQLite adapter writes the stream's category and ignores the event's — but
+it forfeits `Document`'s per-`model_version` idempotency, the merge guards, and
+`unmerge` entirely, because `undo` rehydrates `ConsolidationLog` by replaying
+the `Consolidation` stream and would raise `UnknownMergeError` against events it
+cannot see.
+
+Everything that framing was reaching for survives without it. One SQLite file
+holds the session streams and redstring's, so there is one place to look for
+provenance and one thing to back up, and the graph is still a projection that
+can be rebuilt.
 
 **Replay purity is the constraint every part of this obeys.** Extraction is a
 model call. If it runs at fold time, a refolded session stops reproducing what
@@ -86,71 +109,139 @@ the agent actually saw, and a session refolded years later depends on a live
 endpoint. So extraction results are recorded as events and never recomputed on
 replay — the same reason a search result is recorded rather than re-fetched.
 
+### Sharing a store with redstring has two consumer-side costs
+
+Both are ours, not redstring's, and both must be paid or reads break:
+
+- **The event registry must be complete.** redstring registers its event types
+  by `@register_event` at *import* time, and research-team constructs
+  `SQLiteEventStore` against the default registry. A read that touches
+  redstring rows without redstring imported raises `EventTypeNotFoundError` —
+  which would hit exactly the "no project, no store" path. So composition
+  imports `redstring.events` unconditionally. It is cheap and touches no
+  network.
+- **`read_since` must be filtered.** `EventStoreSessionRepository.read_since`
+  reads the whole store and builds `FeedEntry(session_id=event.aggregate_id)`.
+  Unfiltered, the live feed and session list would show entries attributed to
+  documents that are not sessions. It filters to the `CodingSession` category.
+
 ### Knowledge-first ordering
 
-An ingest appends to the knowledge stream before returning a tool result to the
+An ingest writes to redstring's streams before returning a tool result to the
 session. A crash between the two leaves an orphan extraction — the graph
 learned something the session log does not mention — rather than a phantom one,
 where the log claims an extraction that never landed. The graph is the thing
 that must not lie.
 
-### Consolidation is automatic, and the agent can reverse it
+### Consolidation is automatic, adjudicated, and reversible
 
-`Consolidator.resolve()` runs after each extraction. Skipping consolidation
-produces one node per *mention*, which looks like a knowledge graph and answers
-every question wrong, because an entity's edges are split across its aliases —
-so a default that leaves the graph in that state is not an option.
+`Consolidator.resolve()` runs over the entities from each extraction. Skipping
+consolidation produces one node per *mention*, which looks like a knowledge
+graph and answers every question wrong, because an entity's edges are split
+across its aliases.
 
-But the agent has context the blocker does not: whether two identically-named
-entities are one thing. So merges are recorded reversibly on the knowledge
-stream and the agent gets `unmerge`. Because the merge history is on a stream
-rather than in memory, `undo` is durable here rather than session-only.
+Three things about how redstring actually does this shape the adapter:
+
+- **`resolve` is per-entity.** It takes an `Entity` and returns a
+  `ConsolidationReport | None`, where `None` means nothing worth merging. So an
+  ingest loops over the extraction's entities.
+- **`resolve` appends and folds its own merge event.** The adapter must *not*
+  append `EntitiesMerged` itself; doing so would double-apply the merge.
+- **Without an `Adjudicator`, the middle similarity band is rejected rather
+  than merged.** So the adapter passes one, built over the same LLM provider as
+  extraction. `Adjudicator` is exported. Without it, consolidation would be
+  name-and-structure-only, which is materially weaker than this decision
+  promises — and weaker still here, because there are no embeddings to
+  contribute a signal (R1).
+
+Merges are reversible: the agent gets `unmerge`. `undo` is durable rather than
+session-only *only if* the `Consolidator` is constructed with both `event_store`
+and `snapshot_store`; omitting them silently substitutes an in-memory store. The
+adapter passes both, and a test asserts `remembers_merges_across_restarts` —
+that property exists to be asserted.
+
+### Repairing an interrupted ingest is our bookkeeping, not a sweep
+
+An earlier draft proposed a `resolve` sweep over "unconsolidated entities" at
+project open. There is no such API and no way to identify one — `Entity` carries
+no consolidation state, so the only approximation is paging every entity in the
+tenant and re-resolving it, which is O(all entities) per open and redoes settled
+work.
+
+Instead the ingest records the `source_id` on the session side before
+consolidating. If consolidation is interrupted, repair re-resolves the entities
+of *that* extraction only: bounded, cheap, and needing no library support. R2
+would let this be simpler, and this is the code it replaces.
 
 ### Stores are in-memory by default, and swappable
 
-`InMemoryGraphStore` and the in-memory vector store, folded from the knowledge
-stream when a project opens. No servers, no extras, `uv run main.py` keeps
-working. Store construction sits behind config, so moving to Neo4j or pgvector
-is wiring rather than redesign — and the rebuild-from-log path that move needs
-is the same path used at every startup, so it is continuously exercised rather
-than written under duress during a migration.
+`InMemoryGraphStore`, rebuilt at project open. No servers, `uv run main.py`
+keeps working. Store construction sits behind config, so moving to Neo4j is
+wiring rather than redesign — and the rebuild-from-log path that move needs is
+the same path used at every startup, so it is continuously exercised rather than
+written under duress during a migration.
 
-In-memory vector search over a few thousand entities is fine. It is the half
-that pushes toward pgvector first as a project grows.
+Two qualifications:
+
+- **"No extras" covers the stores, not the model provider.**
+  `LangChainLlmProvider` needs `redstring[llm]`. `FakeLlmProvider` is in the
+  base install, so the adapter tests still need nothing.
+- **Rebuilding scopes by `tenant_filter`, not by stream.** `project()` folds the
+  *global* feed with no stream or category argument, so in a shared store it
+  reads every session event too. Passing `tenant_filter=project_id` to
+  `GraphProjection` is the supported scoping; research-team's own events carry
+  no tenant and are filtered out. This is a workaround for R3 and should be
+  revisited when that lands.
+- **Project open refuses on a failed replay.** `ReplayReport.failed` is a count,
+  not a raise — poison events are swallowed. Startup checks it and refuses,
+  because a half-populated graph that answers queries is worse than one that
+  does not start. Workaround for R4.
 
 ## Architecture
 
 ```
-remember(text, source)
-  -> extract (LLM)
-  -> append DocumentExtracted   -\
-  -> Consolidator.resolve         >- StreamId(project_id, "knowledge")
-  -> append EntitiesMerged      -/
-  -> fold into GraphStore + VectorStore
+remember(text, source_id)
+  -> build_graph(...)               # extract, fold into GraphStore
+  -> append report.event            # DocumentExtracted -> Document stream
+  -> for each entity:
+       Consolidator.resolve(entity) # appends EntitiesMerged AND folds, itself
   -> tool result on the session stream
 ```
+
+`build_graph` rather than driving `ExtractionPipeline` by hand: it folds into
+the store *and* returns `report.event` unappended for precisely this purpose,
+and it yields `domain` and `domain_confidence`, which the manual path loses —
+recovering them would mean a dotted import of the internal `ContentClassifier`.
+The cost is one redundant fold, which is idempotent by upsert. Chunking is not
+omitted; `ExtractionPipeline` defaults to `SlidingWindowChunker`.
+
+Every redstring call happens inside `async with tenant_scope(project_id)` —
+`TenantAwareRepository` raises `TenantContextNotSetError` outside one, and the
+extraction path does not open its own.
 
 Three seams:
 
 **`Project`** (`domain/project.py`) — a decider aggregate holding membership and
 the filesystem lineage pointer. Events: `ProjectCreated`,
-`SessionJoinedProject`, `ProjectTipAdvanced`. Sessions gain `project_id`.
-Mirrors `session.py` in structure: `decide`, `evolve`, pure.
+`SessionJoinedProject`, `ProjectTipAdvanced`. Mirrors `session.py`: `decide`,
+`evolve`, pure. It must declare `aggregate_type = "Project"` — the default was
+removed in eventsource 0.9.0 and its absence raises `AggregateTypeNotSetError`.
 
 **`KnowledgePort`** (`application/knowledge.py`) — a Protocol in the style of
 the existing ports:
 
 - `ingest(source: SourceRef) -> IngestReport`
 - `search(query: str) -> list[Match]`
-- `undo_merge(merge_id: str) -> MergeRecord`
+- `undo_merge(merge_id: UUID) -> MergeRecord`
 
 `SourceRef`, `IngestReport`, `Match` and `MergeRecord` are research-team's own
-DTOs. No redstring type appears in this module.
+DTOs. No redstring type appears in this module. The tenant is not a parameter;
+the adapter supplies it from the project.
 
 **`RedstringKnowledge`** (`infrastructure/knowledge/redstring_adapter.py`) — the
-only module that imports redstring. Owns the knowledge stream, the projection,
-store construction, and the `LlmProvider` built via `LangChainLlmProvider` over
-the endpoint already configured by `AGENT_BASE_URL`.
+only module that imports redstring. Owns tenant scoping, the projection, store
+construction, and the `LlmProvider` built via `LangChainLlmProvider` over the
+endpoint already configured by `AGENT_BASE_URL`.
 
 ### Modules
 
@@ -162,12 +253,18 @@ the endpoint already configured by `AGENT_BASE_URL`.
 | `infrastructure/knowledge/stores.py` | Store construction behind config |
 | `infrastructure/agent/knowledge_tools.py` | The three tools, shaped like `search.py` |
 
+### Dependencies
+
+- `redstring[llm]` — the base install plus `langchain-openai`.
+- `eventsource-py[sqlite]>=0.10.0` — already pinned. The floor must not drop:
+  redstring's projections forward `retry_policy`, `tracer` and `tenant_filter`,
+  which 0.9.x rejects with `TypeError`. See R5.
+
 ### Configuration
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `AGENT_GRAPH_STORE` | `memory` | `memory` or `neo4j` |
-| `AGENT_VECTOR_STORE` | `memory` | `memory` or `pgvector` |
 | `AGENT_KNOWLEDGE_DOMAIN` | `auto` | A redstring schema name, or `auto` |
 
 Projects are not configured by environment variable. They are created and
@@ -184,11 +281,13 @@ variables above only decide what backs the store once a project exists.
 - **`remember(text, source_id, note?)`** — extract and consolidate. Returns
   entity and relationship counts, the extraction's domain and confidence, and
   the merges performed, so the agent can see what was joined and object.
+  `source_id` must be non-blank; redstring raises on an empty one.
 - **`graph_search(query)`** — entities matching a query, each with its type and
   a count of its relationships, capped and flattened the way search results
   are. Traversal from a known entity is `neighbors`, which is deliberately in
   the next spec; this tool finds entry points, it does not walk the graph.
-- **`unmerge(merge_id)`** — reverses a consolidation.
+- **`unmerge(merge_id)`** — reverses a consolidation. The id is the `event_id`
+  of the `EntitiesMerged`, surfaced by `remember`'s result.
 
 `remember` and `unmerge` are writes and join the gated set alongside the file
 tools. `graph_search` is a read and defaults to `auto` like the file reads.
@@ -201,32 +300,56 @@ against merely reading.
 | Situation | Behaviour |
 |---|---|
 | Extraction fails — endpoint down, timeout, malformed response | Nothing is appended. The tool returns a plain-language failure, as `search.py` does for a disabled JSON API. |
-| Crash between the knowledge append and the session tool result | An orphan extraction. Recoverable, and the reason for knowledge-first ordering. |
-| Consolidation fails after extraction succeeded | The extraction stands, the merge does not, and the report says so. Project open runs a `resolve` sweep over unconsolidated entities, which is also the repair path for an interrupted ingest. |
-| Store unreachable at startup | Fail at composition, before any session opens. Never degrade silently to in-memory: a half-populated graph that answers queries is worse than one that refuses. |
-| `domain=AUTO` falls back | `AUTO` never raises; it falls back to `encyclopedia_wiki` on three paths, and a fallback is indistinguishable from a confident choice by the domain alone. `IngestReport` carries `domain_confidence` and the tool result prints it. |
-| Oversized input | Capped before extraction, for the reason search results are capped: cheaper not to make the mess. |
+| Crash between the redstring append and the session tool result | An orphan extraction. Recoverable, and the reason for knowledge-first ordering. |
+| Consolidation fails after extraction succeeded | The extraction stands, the merges so far stand, and the report says so. Repair re-resolves that `source_id`'s entities only. |
+| Replay reports failures at project open | Refuse to start, naming the count. `ReplayReport.failed` is otherwise silent (R4). |
+| Store unreachable at startup | Fail at composition, before any session opens. Never degrade silently to in-memory. |
+| `domain=AUTO` falls back | `AUTO` never raises; it falls back to `encyclopedia_wiki` with confidence `0.0` on four paths. A fallback is indistinguishable from a confident choice by the domain alone, so `IngestReport` carries `domain_confidence` and the tool result prints it. `None` means no classifier ran; `0.0` means it gave up. |
+| `unmerge` with an unknown id | `UnknownMergeError` covers never-happened, already-undone and wrong-consolidator indistinguishably. The tool reports it as "no such merge in this project". |
+| Oversized input | Capped before extraction. Chunking multiplies model calls rather than capping them, so the cap is still ours to impose. |
 | A second concurrent session in a project | Rejected by the decider, naming the session that holds it. |
 
 ## Testing
 
 - **Decider tests** for `Project`, mirroring the existing `session.py` tests.
   Pure, no I/O.
-- **Adapter tests against redstring's `FakeLlmProvider`** — no server, no
+- **Adapter tests against redstring's `FakeLlmProvider`** — no server, no store
   extras, runnable in CI.
-- **Projection determinism** — fold the knowledge stream twice, assert
+- **Projection determinism** — rebuild twice from the same store, assert
   identical graphs.
 - **Replay purity** — refold a session with a provider stub that raises on
   call, asserting no extraction happens at fold time. This is the property most
   worth pinning, because it is the one that dies silently.
-- **A no-network sibling** to `tests/integration/test_no_network.py`: the
-  default install registers no knowledge tools and opens no store.
+- **Durable undo** — assert `remembers_merges_across_restarts`, and that a
+  merge survives reopening the store.
+- **Feed isolation** — with redstring events in the store, `read_since` yields
+  only session entries.
+- **Registry completeness** — reading a store containing redstring events
+  succeeds from a cold import of research-team alone.
+- **A no-network sibling** to `tests/integration/test_no_network.py`: a session
+  with no project registers no knowledge tools and opens no store.
 - Existing mutation testing covers the new decider and the report formatting.
+
+## Upstream dependencies
+
+Gaps in redstring that research-team, as its first consumer, surfaced. None
+blocks this spec; each has a workaround named above, and each workaround is
+written to be deleted.
+
+| | Gap | What it costs here |
+|---|---|---|
+| **R1** | **No `EmbeddingProvider` port.** `VectorProjection` folds only `EntitiesEmbedded`, whose sole producer takes caller-supplied vectors. Nothing in the library can populate a `VectorStore`. | Vector search is out of scope entirely, and consolidation loses the embedding signal. |
+| **R2** | **No way to identify unconsolidated entities.** `Entity` carries no consolidation state. | Repair bookkeeping moves to our side, keyed by `source_id`. |
+| **R3** | **`project()` cannot scope to a stream or category** — global feed only. | Rebuild uses `tenant_filter` and still scans the whole log. |
+| **R4** | **`ReplayReport.failed` is a count, not a raise.** No strict mode. | Project open checks it manually and refuses. |
+| **R5** | **eventsource floor understated** — `>=0.9.1`, but projections forward keywords added in 0.10.0. | None here; our floor is already 0.10.0. Noted so it is not lowered. |
+
+When a redstring release closes these, the workarounds are the change list.
 
 ## What comes next
 
-In order: the rest of recall (`neighbors`, vector similarity, temporal
-slicing); a `fetch` tool with distillation strategies, which is what gives
+In order: the rest of recall (`neighbors`, temporal slicing); vector search,
+once R1 lands; a `fetch` tool with distillation strategies, which is what gives
 `remember` substantial content instead of search snippets; web and CLI surfaces
 for the graph; and last, folding the session event log itself into documents —
 the most speculative piece, and the one that benefits most from the others
