@@ -129,6 +129,23 @@ the task's business. **If a third case appears, stop and fix the pattern rather
 than adding to it** — at that point it is the codebase's convention whether
 anyone decided so or not.
 
+### B9. A silent no-op release hides one failure it cannot distinguish
+
+`SessionService.release_project` returns early when the caller is not the
+project's active holder. That is deliberate: releasing something you do not hold
+should be nothing rather than an error, and it is what keeps the REPL's `finally`
+from raising and skipping `service.close()`.
+
+The cost is that two situations look identical — a session that correctly is not
+the holder, and a session that *should* be the holder but lost `active_session_id`
+through some logic error. Both no-op silently. A real bug of the second kind would
+surface only as a later "held by nobody in particular", not as a loud failure.
+
+Accepted as the better trade for now: the alternative reopens a `finally` that can
+raise. If it needs closing, the cheap version is a logged warning when a session
+carrying a `project_id` releases and finds itself not the holder — enough to leave
+a trace without turning a shutdown path into a failure path.
+
 ## Waiting on redstring
 
 ### B2. Two workarounds to unwind when redstring closes R3 and R4
