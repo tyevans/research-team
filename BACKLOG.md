@@ -55,6 +55,35 @@ Left alone for now because they pass reliably on an unloaded machine and the
 CI runner is quieter than the machine they flaked on. If CI proves otherwise,
 this moves up.
 
+### B5. `SQLiteSnapshotStore` cannot be closed, and its thread outlives the process
+
+`eventsource.adapters.sqlite.snapshots.SQLiteSnapshotStore` has no `close()`.
+`SQLiteEventStore` does. Each opens an `aiosqlite` connection, and aiosqlite
+runs one non-daemon worker thread per connection — so a snapshot store that has
+been used keeps a thread alive that nothing can release, and a non-daemon thread
+blocks interpreter shutdown.
+
+Found the expensive way: a test that opened a second snapshot store over the
+same file appeared to hang forever. It was not hanging — the test body
+completed in under a second and the process then parked in
+`threading._shutdown` waiting on two aiosqlite workers. A `faulthandler` dump is
+what distinguished the two, and nothing short of that would have.
+
+**This is not only a test problem.** `build_aggregate_repository` in
+`research_team/infrastructure/persistence/event_store.py` constructs a
+`SQLiteSnapshotStore(db_path)` that nothing closes, and composition will
+construct another for the knowledge adapter. Long-lived processes are fine
+because the connection is wanted for the process's life; anything that builds an
+application and then expects a clean exit is not.
+
+Two fixes, and the first is upstream: give `SQLiteSnapshotStore` a `close()` (or
+make its worker a daemon thread) in `eventsource-py`. Then have
+`EventStoreSessionRepository.close()` and `Application.close()` call it. Until
+then, tests must reuse one snapshot store instance rather than opening a second.
+
+Also the likely explanation for the pre-existing aiosqlite "Event loop is
+closed" teardown warning noted during this work — same family, same cause.
+
 ## Waiting on redstring
 
 ### B2. Two workarounds to unwind when redstring closes R3 and R4
