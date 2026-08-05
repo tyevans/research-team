@@ -343,7 +343,8 @@ const state = {
   approvals: {},           // id -> approval view, gated calls waiting on a person
   approvalDeciding: null,  // id of the approval whose POST is in flight
   activity: { order: [], byId: {} },  // provisional content for the running turn
-  discarded: {}                       // failed turn index -> provisional content
+  discarded: {},                      // failed turn index -> provisional content
+  lastEndedTurn: null                 // turn_index most recently seen end (see fetchTurnRunning)
 };
 
 let root = null;            // current view element
@@ -438,6 +439,7 @@ function onRoute() {
       // one before the first activity frame (or the turn end) replaces it.
       state.activity = { order: [], byId: {} };
       state.discarded = {};
+      state.lastEndedTurn = null;
       sessionEls = null;
       mountSessionView();
       loadSession();
@@ -656,8 +658,7 @@ function loadSession() {
     api.get('/api/sessions/' + encodeURIComponent(id) + '/events'),
     // A turn may already be running (another tab, or a reload mid-turn). This
     // is advisory, so a failure here must not fail the whole load.
-    api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current')
-      .catch(function () { return null; }),
+    fetchTurnRunning(id).catch(function () { return null; }),
     // A tab that (re)loads mid-approval never saw the ApprovalRequested frame
     // -- this is how it catches up. Advisory like the turn check above.
     api.get('/api/sessions/' + encodeURIComponent(id) + '/approvals')
@@ -677,10 +678,15 @@ function loadSession() {
     // carry no position for Last-Event-ID to resume from -- this is the only
     // way it finds out what is provisionally in flight. Best-effort, like the
     // running/approvals checks above.
+    const activitySeqAtRequest = turnEndSeq;
     api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current/activity')
       .then(function (body) {
         if (state.sessionId !== id) return;
-        (body.running || []).forEach(putActivity);
+        // Same non-atomicity as /turns/current (see fetchTurnRunning): the
+        // activity buffer's own settle() and the TurnCompleted/TurnFailed
+        // event it settles around are two steps, not one, so `running` here
+        // can still list a turn that, on this connection, already ended.
+        if (turnEndSeq === activitySeqAtRequest) (body.running || []).forEach(putActivity);
         renderActivity();
         // The discarded buffer isn't tied to an index server-side (it's just
         // "the last failed turn's content"), so pin it to that turn's
@@ -727,6 +733,9 @@ function applyRunning(res) {
     stopTick();
   }
   renderComposer();
+  // A flip either way can change what onActivityFrame was waiting to show (or
+  // hide, if a straggler's optimistic refreshRunning came back negative).
+  renderActivity();
 }
 
 /* Elapsed time is the only thing that moves while a turn runs, so repaint the
@@ -747,6 +756,39 @@ function stopTick() {
   tickTimer = null;
 }
 
+// Bumped every time a TurnCompleted/TurnFailed frame is reconciled (see
+// onStreamEvent). Unlike a GET to /turns/current, a turn-end frame is
+// strictly ordered on this connection and can never be stale -- so every GET
+// against that endpoint (below, and the mount-time one in loadSession) is
+// checked against this, not the other way around.
+let turnEndSeq = 0;
+
+/* GET /turns/current, but distrust a positive answer for the turn we most
+ * recently watched end. The backend clears its "current turn" tracker and
+ * emits the TurnCompleted/TurnFailed event as two separate steps, not
+ * atomically -- so a response can say running:true, naming that exact
+ * turn_index, for tens of milliseconds after this connection already saw it
+ * end, REGARDLESS of when the request was sent (this is not a narrow
+ * in-flight window; the server side itself lags). That includes the request
+ * loadSession() fires on every call, which foreignTurnEnded triggers right
+ * after correctly clearing turnRunning -- without this, that GET would
+ * immediately undo it. turnEndSeq is kept as a second, cheaper check for the
+ * (rarer) in-flight case; the turn_index comparison is what actually closes
+ * the gap above, since it holds regardless of request timing. Only the
+ * positive case is downgraded -- running:false is always safe to trust. */
+function fetchTurnRunning(id) {
+  const seqAtRequest = turnEndSeq;
+  return api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current')
+    .then(function (res) {
+      if (res && res.running &&
+          (turnEndSeq !== seqAtRequest ||
+           (typeof res.turn_index === 'number' && res.turn_index === state.lastEndedTurn))) {
+        return { running: false, turn_index: null, started_at: null, elapsed_seconds: null };
+      }
+      return res;
+    });
+}
+
 let runningCheckInFlight = false;
 
 function refreshRunning(announce) {
@@ -754,7 +796,7 @@ function refreshRunning(announce) {
   // Events arrive in bursts; one check at a time is enough.
   if (!id || runningCheckInFlight) return Promise.resolve();
   runningCheckInFlight = true;
-  return api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current')
+  return fetchTurnRunning(id)
     .then(function (res) {
       runningCheckInFlight = false;
       if (state.sessionId !== id) return;
@@ -1994,14 +2036,22 @@ function onStreamEvent(payload) {
   // is the durable record, arriving in a burst when the turn commits, while
   // provisional content streams in above via onActivityFrame.
 
-  // A turn ending -- ours or one we're only watching -- reconciles whatever
-  // streamed in as activity. On success the real log events (just pushed
-  // above) are the record now, so provisional content is dropped outright: it
-  // would only duplicate what is about to render from state.events. On
-  // failure nothing was appended but the marker itself, so what streamed is
-  // the only trace of the attempt -- keep it, behind a disclosure, on this
-  // row.
-  if (isTurnEnd(payload.type)) {
+  // Everything below reconciles a turn ending, and must run only once per
+  // turn -- guard on !known (a genuinely new frame), not on state.turnRunning.
+  // A reconnect can replay an already-known TurnCompleted/TurnFailed, and
+  // unlike turnRunning (which onActivityFrame's refreshRunning() can now flip
+  // from outside this function) known/index is this function's own, so it is
+  // the one guard here immune to that race.
+  if (!known && isTurnEnd(payload.type)) {
+    turnEndSeq++;
+    if (typeof payload.turn_index === 'number') state.lastEndedTurn = payload.turn_index;
+    // A turn ending -- ours or one we're only watching -- reconciles whatever
+    // streamed in as activity. On success the real log events (just pushed
+    // above) are the record now, so provisional content is dropped outright:
+    // it would only duplicate what is about to render from state.events. On
+    // failure nothing was appended but the marker itself, so what streamed is
+    // the only trace of the attempt -- keep it, behind a disclosure, on this
+    // row.
     if (String(payload.type).toLowerCase().indexOf('failed') >= 0) {
       const provisional = state.activity.order
         .map(function (id) { return state.activity.byId[id]; })
@@ -2011,13 +2061,21 @@ function onStreamEvent(payload) {
     state.activity = { order: [], byId: {} };
     renderActivity();
     renderTimeline();
-  }
 
-  // TurnCompleted / TurnFailed close a turn. For one we are watching, that
-  // frame IS the completion signal -- no polling, no follow-up request.
-  if (state.turnRunning && !state.sending && isTurnEnd(payload.type)) {
-    foreignTurnEnded(payload);
-    return;
+    // TurnCompleted / TurnFailed close a turn. For one we were watching, that
+    // frame IS the completion signal -- no polling, no follow-up request.
+    // This no longer requires state.turnRunning to already be true:
+    // refreshRunning() (see onActivityFrame) asks the server whether a turn
+    // is running, and the server clears that answer and emits this very
+    // frame in two separate steps, not atomically -- so a response can say
+    // running:true a moment after this frame already said otherwise, wrongly
+    // setting turnRunning true with nothing left to correct it if this branch
+    // stayed conditional on the flag it exists to fix. A turn-end frame for a
+    // turn we didn't start is authoritative regardless of what we believed.
+    if (!state.sending) {
+      foreignTurnEnded(payload);
+      return;
+    }
   }
 
   // A cancel that returned settled:false left the turn unwinding; its closing
@@ -2035,6 +2093,20 @@ function onStreamEvent(payload) {
 function onActivityFrame(payload) {
   if (state.route.name !== 'session' || payload.session_id !== state.sessionId) return;
   putActivity(payload);
+  // A turn's ordinary log frames only arrive in a burst when it commits (see
+  // the comment in onStreamEvent), so a tab that did not send this turn and
+  // has not polled /turns/current has no other way to learn one is running --
+  // this frame is the only early signal it gets. But activity and log frames
+  // are pumped onto the SSE connection by two independent tasks (app.py's
+  // _sse), so a frame can legitimately straggle in after the turn it belongs
+  // to has already committed -- there is no turn id on the frame to tell the
+  // two cases apart client-side. Rather than trust the frame's mere arrival
+  // (which would resurrect a turn that already ended and leave a provisional
+  // bubble nothing will ever clear), ask the server: refreshRunning() is a
+  // real GET, so a straggler for an ended turn correctly reports not-running
+  // and never flips turnRunning at all. applyRunning() re-renders activity
+  // once the answer is in, whichever way it goes.
+  if (!state.sending && !state.turnRunning) refreshRunning();
   renderActivity();
 }
 
@@ -2053,7 +2125,10 @@ function renderActivity() {
   if (!sessionEls || !sessionEls.activity) return;
   const box = sessionEls.activity;
   clear(box);
-  if (!state.turnRunning || !state.activity.order.length) return;
+  // state.turnRunning is documented as "only ever about a turn we did not
+  // start" (see applyRunning) -- the tab that sent the turn tracks it via
+  // state.sending instead, so both must gate this, not turnRunning alone.
+  if ((!state.sending && !state.turnRunning) || !state.activity.order.length) return;
   state.activity.order.forEach(function (id) {
     const entry = state.activity.byId[id];
     if (entry) box.appendChild(renderProvisional(entry));
