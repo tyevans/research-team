@@ -915,9 +915,7 @@ async def activity_app(db_path, fake_model):
 async def test_activity_catch_up_route_is_empty_before_a_turn(activity_app):
     _, client, _ = activity_app
     session_id = await _new_session(client)
-    body = (
-        await client.get(f"/api/sessions/{session_id}/turns/current/activity")
-    ).json()
+    body = (await client.get(f"/api/sessions/{session_id}/turns/current/activity")).json()
     assert body == {"running": [], "discarded": []}
 
 
@@ -925,14 +923,10 @@ async def test_a_turn_reports_activity_into_the_buffer(activity_app):
     """The buffer fills during the turn; it is dropped once the turn commits."""
     _, client, _ = activity_app
     session_id = await _new_session(client)
-    response = await client.post(
-        f"/api/sessions/{session_id}/turns", json={"input": "hi"}
-    )
+    response = await client.post(f"/api/sessions/{session_id}/turns", json={"input": "hi"})
     assert response.status_code == 200
     # Committed, so the log is authoritative and the buffer is gone.
-    body = (
-        await client.get(f"/api/sessions/{session_id}/turns/current/activity")
-    ).json()
+    body = (await client.get(f"/api/sessions/{session_id}/turns/current/activity")).json()
     assert body["running"] == []
 
 

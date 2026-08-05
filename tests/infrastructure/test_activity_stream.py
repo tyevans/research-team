@@ -27,9 +27,7 @@ def test_assistant_message_becomes_an_activity_message():
 
 
 def test_tool_message_becomes_a_tool_activity_message():
-    note = to_activity_message(
-        ToolMessage(content="result text", tool_call_id="c1", id="t1")
-    )
+    note = to_activity_message(ToolMessage(content="result text", tool_call_id="c1", id="t1"))
     assert isinstance(note, ActivityMessage)
     assert note.message_id == "t1"
     assert note.kind == "tool"
@@ -43,9 +41,7 @@ def test_a_message_without_an_id_is_not_reported():
 async def test_running_a_turn_reports_whole_messages(aggregates, session_id):
     session = aggregates.create_new(session_id)
     session.execute(StartSession(system_prompt="be brief", model_name="fake"))
-    model = ToolAwareFakeChatModel(
-        responses=[AIMessage(content="the reply", id="a1")]
-    )
+    model = ToolAwareFakeChatModel(responses=[AIMessage(content="the reply", id="a1")])
     executor = DeepAgentTurnExecutor(model)
 
     seen: list = []
@@ -92,9 +88,7 @@ async def test_the_durable_record_is_identical_with_and_without_a_reporter(
     async def run(reporter):
         session = aggregates.create_new(session_id)
         session.execute(StartSession(system_prompt="be brief", model_name="fake"))
-        model = ToolAwareFakeChatModel(
-            responses=[AIMessage(content="the reply", id="a1")]
-        )
+        model = ToolAwareFakeChatModel(responses=[AIMessage(content="the reply", id="a1")])
         executor = DeepAgentTurnExecutor(model)
         return await executor.execute(
             session,
@@ -107,18 +101,14 @@ async def test_the_durable_record_is_identical_with_and_without_a_reporter(
     without = await run(None)
 
     assert with_reporter.reply_text == without.reply_text
-    assert [m.payload for m in with_reporter.messages] == [
-        m.payload for m in without.messages
-    ]
+    assert [m.payload for m in with_reporter.messages] == [m.payload for m in without.messages]
 
 
 async def test_a_raising_reporter_does_not_fail_the_turn(aggregates, session_id):
     """A minute of model work is not worth discarding because a browser feed raised."""
     session = aggregates.create_new(session_id)
     session.execute(StartSession(system_prompt="be brief", model_name="fake"))
-    model = ToolAwareFakeChatModel(
-        responses=[AIMessage(content="the reply", id="a1")]
-    )
+    model = ToolAwareFakeChatModel(responses=[AIMessage(content="the reply", id="a1")])
     executor = DeepAgentTurnExecutor(model)
 
     def raising_reporter(note: object) -> None:

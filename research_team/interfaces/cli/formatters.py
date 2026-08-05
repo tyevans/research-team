@@ -44,8 +44,7 @@ def format_activity(note: ActivityNote) -> str | None:
     calls = data.get("tool_calls") or []
     if calls:
         return "· " + ", ".join(
-            f"{call.get('name', '?')}({_first_arg(call.get('args') or {})})"
-            for call in calls
+            f"{call.get('name', '?')}({_first_arg(call.get('args') or {})})" for call in calls
         )
     if note.kind == "tool":
         content = data.get("content", "")
