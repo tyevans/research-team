@@ -1,10 +1,17 @@
 """Sessions outlive the process: the point of moving off the in-memory store."""
 
+from uuid import uuid4
+
+from eventsource import StreamId
+from eventsource.ports.positions import ExpectedVersion
 from langchain_core.messages import AIMessage
 
 from research_team.application.session_service import NO_NETWORK_CLAUSE
+from research_team.domain import StartSession
+from research_team.domain.project import ProjectCreated
 from research_team.infrastructure.persistence import (
     SNAPSHOT_THRESHOLD,
+    EventStoreSessionRepository,
     build_aggregate_repository,
 )
 
@@ -141,3 +148,27 @@ def test_aggregate_repository_snapshots_are_configured(store, db_path):
     aggregates = build_aggregate_repository(store, db_path)
     assert aggregates.snapshot_threshold == SNAPSHOT_THRESHOLD == 50
     assert aggregates.has_snapshot_support
+
+
+async def test_read_since_ignores_events_from_other_aggregate_types(tmp_path):
+    """A shared store carries foreign streams; the session feed must not see them."""
+    repository = EventStoreSessionRepository.open(str(tmp_path / "sessions.db"))
+    try:
+        session_id = uuid4()
+        session = repository.create(session_id)
+        session.execute(StartSession(system_prompt="p", model_name="m"))
+        await repository.save(session)
+
+        project_id = uuid4()
+        await repository.store.append(
+            StreamId(aggregate_id=project_id, category="Project"),
+            [ProjectCreated(aggregate_id=project_id, name="research")],
+            ExpectedVersion.any_(),
+        )
+
+        entries = await repository.read_since(None)
+
+        assert entries, "the session's own events should still arrive"
+        assert all(entry.session_id == session_id for entry in entries)
+    finally:
+        await repository.close()

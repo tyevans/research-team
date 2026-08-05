@@ -144,6 +144,14 @@ class EventStoreSessionRepository:
         return await self._store.current_position()
 
     async def read_since(self, position: object | None) -> list[FeedEntry]:
+        """Session events since `position`, in append order.
+
+        Filtered by aggregate type rather than taking the whole feed. This
+        store is shared: redstring's `Document` and `Consolidation` streams
+        live in the same file, and their aggregate ids are document and tenant
+        ids, not sessions. Unfiltered, every one of them would arrive here as a
+        `FeedEntry` claiming to be a session that does not exist.
+        """
         envelopes = await collect(self._store.read_all(from_position=position))
         return [
             FeedEntry(
@@ -152,6 +160,7 @@ class EventStoreSessionRepository:
                 position=envelope.position,
             )
             for envelope in envelopes
+            if envelope.event.aggregate_type == CodingSession.aggregate_type
         ]
 
     def encode_position(self, position: object) -> str:
