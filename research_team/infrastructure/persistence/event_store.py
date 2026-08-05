@@ -26,6 +26,7 @@ def build_aggregate_repository(
     store: SQLiteEventStore,
     db_path: str,
     publisher: InMemoryEventBus | None = None,
+    snapshot_store: SQLiteSnapshotStore | None = None,
 ) -> AggregateRepository[CodingSession]:
     return AggregateRepository(
         store,
@@ -38,7 +39,15 @@ def build_aggregate_repository(
         # Same database file as the event store: the schema that creates the
         # `snapshots` table is applied by the store's connection, so a separate
         # path (or a second ":memory:") would leave the table missing.
-        snapshot_store=SQLiteSnapshotStore(db_path),
+        #
+        # `SQLiteSnapshotStore` has no `close()` and its aiosqlite worker is a
+        # non-daemon thread, so a second instance leaks a thread nothing can
+        # release (BACKLOG B5). A caller that already has one -- the
+        # composition root, for the knowledge graph's consolidator -- passes
+        # it in rather than letting a second get built here.
+        snapshot_store=(
+            snapshot_store if snapshot_store is not None else SQLiteSnapshotStore(db_path)
+        ),
         snapshot_threshold=SNAPSHOT_THRESHOLD,
         # A snapshot is an optimisation for a future read, and the turn that
         # triggers it is the one thing in this application a person is actually
@@ -69,10 +78,12 @@ class EventStoreSessionRepository:
         store: SQLiteEventStore,
         aggregates: AggregateRepository[CodingSession],
         publisher: InMemoryEventBus | None = None,
+        snapshot_store: SQLiteSnapshotStore | None = None,
     ) -> None:
         self._store = store
         self._aggregates = aggregates
         self._publisher = publisher
+        self._snapshot_store = snapshot_store
         self._appended = asyncio.Event()
         if publisher is not None:
             publisher.subscribe_to_all_events(self._on_published)
@@ -81,7 +92,11 @@ class EventStoreSessionRepository:
     def open(cls, db_path: str) -> "EventStoreSessionRepository":
         store = SQLiteEventStore(db_path)
         publisher = InMemoryEventBus()
-        return cls(store, build_aggregate_repository(store, db_path, publisher), publisher)
+        snapshot_store = SQLiteSnapshotStore(db_path)
+        aggregates = build_aggregate_repository(
+            store, db_path, publisher, snapshot_store=snapshot_store
+        )
+        return cls(store, aggregates, publisher, snapshot_store=snapshot_store)
 
     @property
     def store(self) -> SQLiteEventStore:
@@ -93,6 +108,18 @@ class EventStoreSessionRepository:
         having to open a second connection to the same file.
         """
         return self._store
+
+    @property
+    def snapshot_store(self) -> SQLiteSnapshotStore | None:
+        """The snapshot store this repository's aggregates use, if any.
+
+        Exposed so a collaborator that needs one of its own -- the knowledge
+        graph's consolidator, at composition -- reuses this one instead of
+        opening a second `SQLiteSnapshotStore` against the same file. A second
+        instance would spin up its own non-daemon aiosqlite worker thread that
+        nothing closes (BACKLOG B5).
+        """
+        return self._snapshot_store
 
     @property
     def publisher(self) -> InMemoryEventBus | None:

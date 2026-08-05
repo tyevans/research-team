@@ -86,6 +86,21 @@ class RedstringKnowledge:
         # makes the model's judgement worth more here, not less.
         self._adjudicator = Adjudicator(provider) if adjudicate else None
 
+    @property
+    def graph_store(self) -> GraphStore:
+        """The store this project's graph lives in, for the rebuild-at-start path."""
+        return self._store
+
+    @property
+    def event_store(self) -> AggregateStore:
+        """The log to rebuild the graph from, for the rebuild-at-start path."""
+        return self._event_store
+
+    @property
+    def project_id(self) -> UUID:
+        """The tenant this instance is scoped to."""
+        return self._project_id
+
     async def ingest(self, source: SourceRef) -> IngestReport:
         if not source.source_id.strip():
             raise KnowledgeError("source_id must not be blank; it identifies the document")
