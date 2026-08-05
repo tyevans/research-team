@@ -2135,11 +2135,28 @@ function renderActivity() {
   });
 }
 
+/* A whole-message entry's `payload` is raw message_to_dict output -- content
+ * and tool_calls sit under "data", not at the top level (the same nesting
+ * event_summary() unwraps server-side for the timeline, and message_view()
+ * unwraps for /conversation). Mirror that here rather than reading
+ * payload.content directly, which is always undefined. */
+function activityBody(payload) {
+  const data = (payload && payload.data) || {};
+  const calls = Array.isArray(data.tool_calls) ? data.tool_calls : [];
+  if (calls.length) {
+    // Same "→ name, name" shape presenters.py's event_summary() uses for a
+    // tool-calling assistant message, so a provisional bubble reads like the
+    // timeline row it is about to become.
+    return '→ ' + calls.map(function (c) { return (c && c.name) || '?'; }).join(', ');
+  }
+  return contentText(data.content);
+}
+
 function renderProvisional(entry) {
   // A whole message clears `text` server-side and populates `payload`
   // instead, so prefer `text` (the delta accumulator) and fall back to the
   // message content.
-  const body = entry.text || contentText(entry.payload && entry.payload.content);
+  const body = entry.text || activityBody(entry.payload);
   return h('div', { class: 'provisional provisional-' + entry.kind }, [
     h('div', { class: 'provisional-tag', text: 'in progress — not yet recorded' }),
     h('div', { class: 'provisional-body', text: body })
