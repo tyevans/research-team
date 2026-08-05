@@ -84,6 +84,21 @@ then, tests must reuse one snapshot store instance rather than opening a second.
 Also the likely explanation for the pre-existing aiosqlite "Event loop is
 closed" teardown warning noted during this work — same family, same cause.
 
+### B6. `undo_merge` always reports `reason=None`
+
+`RedstringKnowledge.undo_merge` builds its `MergeRecord` from
+`ConsolidationReport.reason`, and `Consolidator.undo` documents that field as
+`None` for an undo — the reason belongs to the merge, not to its reversal. So
+the `reason` on an undo's record is always empty, and a caller reading it sees
+nothing rather than the reason the original merge was made.
+
+Nothing is wrong today: `unmerge`'s tool output does not print it. It becomes a
+papercut the moment something wants to say "this merge, made because X, was
+reversed". The fix is either to say so in the docstring and leave it, or to read
+the original `EntitiesMerged` off the consolidation stream and carry its reason
+through. Deferred rather than guessed at, because which one is right depends on
+whether any caller ever wants that string.
+
 ## Waiting on redstring
 
 ### B2. Two workarounds to unwind when redstring closes R3 and R4
