@@ -7,6 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
+from research_team.application.ports import ActivityMessage
 from research_team.composition import build_application as _build_application
 from research_team.domain import (
     DeleteFile,
@@ -14,7 +15,7 @@ from research_team.domain import (
     StartSession,
     WriteFile,
 )
-from research_team.interfaces.web import create_app
+from research_team.interfaces.web import TurnActivity, create_app
 
 
 async def _started(**kwargs):
@@ -905,3 +906,76 @@ async def test_rebuild_endpoint_rederives_the_session_list(client, service):
     assert response.json()["healthy"] is True
     listed = (await client.get("/api/sessions")).json()
     assert [row["id"] for row in listed] == [str(session_id)]
+
+
+# ---------------- turn activity ----------------
+
+
+@pytest.fixture
+async def activity_app(db_path, fake_model):
+    application = await _started(model=fake_model, db_path=db_path)
+    activity = TurnActivity()
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        activity=activity,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield application, client, activity
+    await application.close()
+
+
+async def test_activity_catch_up_route_is_empty_before_a_turn(activity_app):
+    _, client, _ = activity_app
+    session_id = await _new_session(client)
+    body = (
+        await client.get(f"/api/sessions/{session_id}/turns/current/activity")
+    ).json()
+    assert body == {"running": [], "discarded": []}
+
+
+async def test_a_turn_reports_activity_into_the_buffer(activity_app):
+    """The buffer fills during the turn; it is dropped once the turn commits."""
+    _, client, _ = activity_app
+    session_id = await _new_session(client)
+    response = await client.post(
+        f"/api/sessions/{session_id}/turns", json={"input": "hi"}
+    )
+    assert response.status_code == 200
+    # Committed, so the log is authoritative and the buffer is gone.
+    body = (
+        await client.get(f"/api/sessions/{session_id}/turns/current/activity")
+    ).json()
+    assert body["running"] == []
+
+
+async def test_activity_frames_ride_the_stream_without_an_id(repository, session_id):
+    """Exercises `_sse` directly, like the other frame-shape tests above --
+    the ASGI transport cannot stream a still-running response (see
+    `test_stream_reaches_a_real_browser_over_a_real_socket`), so going
+    through the HTTP client here would just hang.
+    """
+    from research_team.application import LiveFeed
+    from research_team.interfaces.web.app import _sse
+
+    activity = TurnActivity()
+    feed = LiveFeed(repository, poll_interval=0.01)
+
+    frames: list[str] = []
+    generator = _sse(StubRequest(), feed, None, None, activity)
+    task = asyncio.create_task(_drain(generator, frames, wanted=1))
+    await asyncio.sleep(0.05)
+    activity.begin(session_id)
+    activity.reporter(session_id)(
+        ActivityMessage(message_id="a1", kind="assistant", payload={"content": "hi"})
+    )
+    await asyncio.wait_for(task, timeout=5)
+
+    assert frames[0].startswith("data: ")
+    payload = json.loads(frames[0][len("data: ") :])
+    assert payload["type"] == "TurnActivity"
+    assert payload["message_id"] == "a1"
+    # Not a log entry: no id line precedes the data, unlike a logged event.
+    assert "\nid:" not in frames[0]

@@ -28,6 +28,7 @@ from research_team.application import (
     TurnSupervisor,
     build_fork_tree,
 )
+from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.presenters import (
     event_rows,
@@ -72,6 +73,7 @@ def create_app(
     turns: TurnSupervisor,
     lifespan=None,
     approvals: WebApprovals | None = None,
+    activity: TurnActivity | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -180,19 +182,35 @@ def create_app(
     @app.post("/api/sessions/{session_id}/turns")
     async def run_turn(session_id: UUID, body: NewTurn):
         await _load(session_id)
+        if turns.is_running(session_id):
+            # Checked here as well as in the supervisor so that a refused
+            # second turn cannot reach `begin` and wipe the buffer of the turn
+            # that is legitimately running.
+            raise HTTPException(
+                status_code=409,
+                detail="a turn is already running on this session",
+            )
+        reporter = None
+        if activity is not None:
+            activity.begin(session_id)
+            reporter = activity.reporter(session_id)
         try:
-            outcome = await turns.run(session_id, body.input)
+            outcome = await turns.run(session_id, body.input, reporter)
         except TurnAlreadyRunning as error:
             raise HTTPException(
                 status_code=409,
                 detail="a turn is already running on this session",
             ) from error
         except TurnCancelled as error:
+            if activity is not None:
+                activity.settle(session_id, committed=False)
             # Not a failure: someone asked for this. 499 is nginx's
             # "client closed request" -- the closest thing to a standard code
             # for work abandoned on purpose.
             raise HTTPException(status_code=499, detail=str(error)) from error
         except OptimisticLockError as error:
+            if activity is not None:
+                activity.settle(session_id, committed=False)
             # Another writer -- the REPL, or a second process -- got there
             # first. The log is append-only and the loser's events were
             # discarded whole, so nothing happened; this is a retry.
@@ -200,6 +218,13 @@ def create_app(
                 status_code=409,
                 detail="another turn was recorded on this session first; reload and retry",
             ) from error
+        except BaseException:
+            if activity is not None:
+                activity.settle(session_id, committed=False)
+            raise
+        else:
+            if activity is not None:
+                activity.settle(session_id, committed=True)
         return {
             "reply": outcome.reply,
             "turn_index": outcome.turn_index,
@@ -238,6 +263,24 @@ def create_app(
             "turn_index": running.turn_index,
             "started_at": running.started_at.isoformat(),
             "elapsed_seconds": running.elapsed_seconds(datetime.now(UTC)),
+        }
+
+    @app.get("/api/sessions/{session_id}/turns/current/activity")
+    async def current_activity(session_id: UUID):
+        """What the running turn has produced so far, and what the last failed
+        one threw away.
+
+        The live feed announces each note as it arrives, but a tab that opened
+        mid-turn never saw those frames -- and unlike log events they carry no
+        position, so `Last-Event-ID` cannot replay them. This is how it
+        catches up, exactly as `/approvals` is for a parked approval.
+        """
+        await _load(session_id)
+        if activity is None:
+            return {"running": [], "discarded": []}
+        return {
+            "running": activity.current(session_id),
+            "discarded": activity.discarded(session_id),
         }
 
     @app.get("/api/sessions/{session_id}/approvals")
@@ -291,7 +334,7 @@ def create_app(
         """
         resume_from = request.headers.get("last-event-id")
         return StreamingResponse(
-            _sse(request, feed, resume_from, approvals),
+            _sse(request, feed, resume_from, approvals, activity),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -311,6 +354,7 @@ async def _sse(
     feed: LiveFeed,
     resume_from: str | None = None,
     approvals: WebApprovals | None = None,
+    activity: TurnActivity | None = None,
 ) -> AsyncIterator[str]:
     """Serialise the live feed as server-sent events.
 
@@ -324,12 +368,15 @@ async def _sse(
     starting at the live end shows less than the client wanted, while
     replaying the entire log at it would be worse than the gap.
 
-    Approval requests ride this same connection rather than one of their own.
-    They are not log entries -- a request that is never answered leaves no
-    event behind -- so they carry no id, and a reconnecting browser refetches
-    what is still pending instead of replaying them. But a second channel
-    would double the ways a tab can be half-connected, and a turn that halts
-    for a person is exactly the moment when being half-connected is worst.
+    Approval requests, and turn activity notes, ride this same connection
+    rather than one of their own, for the same reason each other: neither is
+    a log entry -- an approval that is never answered, and provisional turn
+    content, both leave no event behind -- so neither carries an id, and a
+    reconnecting browser refetches what it missed (`/approvals`, or the
+    activity catch-up route) instead of replaying them. But a second channel
+    per concern would multiply the ways a tab can be half-connected, and a
+    turn that halts for a person, or is still streaming its reply, is exactly
+    the moment when being half-connected is worst.
     """
     queue: asyncio.Queue = asyncio.Queue()
     start_at = feed.decode_position(resume_from) if resume_from else None
@@ -353,6 +400,16 @@ async def _sse(
 
         pumps.append(asyncio.create_task(pump_approvals()))
 
+    watching = None
+    if activity is not None:
+        watching = activity.listen()
+
+        async def pump_activity() -> None:
+            while True:
+                await queue.put(("activity", await watching.get()))
+
+        pumps.append(asyncio.create_task(pump_activity()))
+
     idle = 0.0
     try:
         while not await request.is_disconnected():
@@ -367,7 +424,7 @@ async def _sse(
                     idle = 0.0
                 continue
             idle = 0.0
-            if kind == "approval":
+            if kind in ("approval", "activity"):
                 yield f"data: {json.dumps(item)}\n\n"
                 continue
             payload = feed_event(
@@ -383,6 +440,8 @@ async def _sse(
     finally:
         if approvals is not None and listening is not None:
             approvals.stop_listening(listening)
+        if activity is not None and watching is not None:
+            activity.stop_listening(watching)
         for pumping in pumps:
             pumping.cancel()
             with suppress(asyncio.CancelledError):
