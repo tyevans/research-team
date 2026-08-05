@@ -64,15 +64,13 @@ async def test_successful_tool_call_is_not_flagged(build_service, fake_model):
     session_id = await service.create_session()
     await service.run_turn(session_id, "write it")
 
-    results = EventAssertions(
-        await service.history(session_id)
-    ).get_events_of_type(ToolResultRecorded)
+    results = EventAssertions(await service.history(session_id)).get_events_of_type(
+        ToolResultRecorded
+    )
     assert results and all(r.is_error is False for r in results)
 
 
-async def test_errored_tool_result_is_marked_in_the_log(
-    build_service, failing_edit_model
-):
+async def test_errored_tool_result_is_marked_in_the_log(build_service, failing_edit_model):
     service = await build_service(model=failing_edit_model)
     session_id = await service.create_session()
     await service.run_turn(session_id, "edit a file that does not exist")

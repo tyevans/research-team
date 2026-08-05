@@ -111,13 +111,9 @@ def decide(command: ProjectCommand, state: ProjectState) -> list[DomainEvent]:
 
         case AdvanceTip(session_id=session_id, at_event=at), _:
             if state.active_session_id != session_id:
-                raise CommandRejectedError(
-                    f"session {session_id} does not hold this project"
-                )
+                raise CommandRejectedError(f"session {session_id} does not hold this project")
             return [
-                ProjectTipAdvanced(
-                    aggregate_id=project_id, session_id=session_id, at_event=at
-                )
+                ProjectTipAdvanced(aggregate_id=project_id, session_id=session_id, at_event=at)
             ]
 
     raise CommandRejectedError(f"unhandled command {type(command).__name__}")
@@ -132,9 +128,7 @@ def evolve(state: ProjectState, event: DomainEvent) -> ProjectState:
     """
     match event:
         case ProjectCreated(name=name):
-            return ProjectState(
-                project_id=state.project_id, status="created", name=name
-            )
+            return ProjectState(project_id=state.project_id, status="created", name=name)
 
         case SessionJoinedProject(session_id=session_id):
             return state.model_copy(

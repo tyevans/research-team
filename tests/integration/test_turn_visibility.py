@@ -106,9 +106,7 @@ async def test_a_turns_events_all_become_visible_at_once(build_application, writ
     ]
 
 
-async def test_a_cancelled_turns_events_never_become_visible(
-    build_application, writing_model
-):
+async def test_a_cancelled_turns_events_never_become_visible(build_application, writing_model):
     """Discarded events are not "removed" from the feed -- they never reach it."""
     writing_model.delay = 5.0
     application = await build_application(model=writing_model)

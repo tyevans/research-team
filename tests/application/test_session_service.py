@@ -272,9 +272,7 @@ async def test_state_at_reproduces_the_earlier_workspace(build_service, editing_
     await service.run_turn(session_id, "revise it")
 
     events = await service.history(session_id)
-    after_write = next(
-        i for i, e in enumerate(events, start=1) if isinstance(e, FileWritten)
-    )
+    after_write = next(i for i, e in enumerate(events, start=1) if isinstance(e, FileWritten))
 
     earlier = await service.state_at(session_id, after_write)
     assert earlier.state.files["/a.py"]["content"] == "original\n"
@@ -312,9 +310,7 @@ async def test_state_at_rejects_an_out_of_range_point(service, session_id, at):
 # ---- whose prompt runs the turn ----
 
 
-async def test_turn_runs_under_the_sessions_own_prompt(
-    build_service, fake_model, monkeypatch
-):
+async def test_turn_runs_under_the_sessions_own_prompt(build_service, fake_model, monkeypatch):
     """A session keeps the prompt it was started with, whatever the service default."""
     seen: list[str] = []
 
@@ -346,9 +342,7 @@ async def test_state_at_leaves_the_folded_aggregate_with_nothing_to_commit(
     assert not folded.has_uncommitted_events
 
 
-async def test_state_at_does_not_disturb_the_live_aggregate(
-    build_service, editing_model
-):
+async def test_state_at_does_not_disturb_the_live_aggregate(build_service, editing_model):
     service = await build_service(model=editing_model)
     session_id = await service.create_session()
     await service.run_turn(session_id, "write a.py")

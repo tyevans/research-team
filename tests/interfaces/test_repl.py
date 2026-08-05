@@ -243,9 +243,7 @@ async def test_diff_requires_argument(current):
 
 
 def test_format_log_includes_timestamps():
-    events = [
-        TurnCompleted(turn_index=1, aggregate_id=uuid4(), aggregate_version=1)
-    ]
+    events = [TurnCompleted(turn_index=1, aggregate_id=uuid4(), aggregate_version=1)]
     output = format_log(events, limit=10)
     assert f"{events[0].occurred_at:%H:%M:%S}" in output
 

@@ -89,9 +89,7 @@ async def test_nothing_can_ask_the_store_for_every_event(repository):
     assert not hasattr(repository, "all_events")
 
 
-async def test_a_new_session_is_listed_without_waiting(
-    build_application, fake_model, db_path
-):
+async def test_a_new_session_is_listed_without_waiting(build_application, fake_model, db_path):
     """Create-then-list is consistent in practice, and should stay that way.
 
     The read model is eventually consistent in principle, but the bus it

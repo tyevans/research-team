@@ -25,7 +25,9 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def neo4j_env(monkeypatch):
-    monkeypatch.setenv("AGENT_NEO4J_URI", os.getenv("AGENT_NEO4J_URI", "bolt://localhost:7688"))
+    monkeypatch.setenv(
+        "AGENT_NEO4J_URI", os.getenv("AGENT_NEO4J_URI", "bolt://localhost:7688")
+    )
     monkeypatch.setenv("AGENT_NEO4J_USER", os.getenv("AGENT_NEO4J_USER", "neo4j"))
     monkeypatch.setenv("AGENT_NEO4J_PASSWORD", os.getenv("AGENT_NEO4J_PASSWORD", "redstring"))
 

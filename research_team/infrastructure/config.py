@@ -174,9 +174,7 @@ def neo4j_auth() -> tuple[str, str]:
     """
     password = os.getenv("AGENT_NEO4J_PASSWORD")
     if not password:
-        raise ValueError(
-            "AGENT_NEO4J_PASSWORD must be set when AGENT_GRAPH_STORE=neo4j"
-        )
+        raise ValueError("AGENT_NEO4J_PASSWORD must be set when AGENT_GRAPH_STORE=neo4j")
     return os.getenv("AGENT_NEO4J_USER", DEFAULT_NEO4J_USER), password
 
 

@@ -189,9 +189,7 @@ class SessionService:
         aggregate.execute(
             StartSession(
                 system_prompt=(
-                    system_prompt
-                    if system_prompt is not None
-                    else self._default_system_prompt
+                    system_prompt if system_prompt is not None else self._default_system_prompt
                 ),
                 model_name=self._executor.model_name,
             )
@@ -299,9 +297,7 @@ class SessionService:
         for message in result.messages:
             if message.kind == "tool":
                 aggregate.execute(
-                    RecordToolResult(
-                        message=message.payload, is_error=message.is_error
-                    )
+                    RecordToolResult(message=message.payload, is_error=message.is_error)
                 )
             else:
                 aggregate.execute(RecordAssistantMessage(message=message.payload))
@@ -339,9 +335,7 @@ class SessionService:
             # Whether this was a deliberate stop is an asyncio fact, which the
             # aggregate has no business knowing -- so it is decided here.
             clean.execute(
-                FailTurn.from_error(
-                    error, cancelled=isinstance(error, asyncio.CancelledError)
-                )
+                FailTurn.from_error(error, cancelled=isinstance(error, asyncio.CancelledError))
             )
             await self._repository.save(clean)
         except Exception:
@@ -361,8 +355,6 @@ class SessionService:
             forked.create_event(
                 type(event), **event.model_dump(exclude=set(_INHERITED_EVENT_FIELDS))
             )
-        forked.execute(
-            RecordForkSource(source_session_id=session_id, at_event=at)
-        )
+        forked.execute(RecordForkSource(source_session_id=session_id, at_event=at))
         await self._repository.save(forked)
         return new_id

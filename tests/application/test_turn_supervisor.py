@@ -154,9 +154,7 @@ async def test_the_cancellation_is_named_in_the_log(slow_supervisor):
     with pytest.raises(TurnCancelled):
         await running
 
-    failure = next(
-        e for e in await service.history(session_id) if isinstance(e, TurnFailed)
-    )
+    failure = next(e for e in await service.history(session_id) if isinstance(e, TurnFailed))
     assert "Cancelled" in failure.error_type
 
 
@@ -217,9 +215,7 @@ async def test_a_running_turn_reports_its_number_and_age(slow_supervisor):
         await running
 
 
-async def test_the_running_turn_number_follows_the_completed_ones(
-    build_service, slow_model
-):
+async def test_the_running_turn_number_follows_the_completed_ones(build_service, slow_model):
     service = await build_service(model=slow_model)
     supervisor = TurnSupervisor(service)
     session_id = await service.create_session()

@@ -154,7 +154,7 @@ class TurnSupervisor:
         except TimeoutError:
             settled = False
         except (asyncio.CancelledError, Exception):  # noqa: BLE001 -- how it ended
-            pass                                     # is the awaiter's business
+            pass  # is the awaiter's business
 
         if settled:
             self._running.pop(session_id, None)

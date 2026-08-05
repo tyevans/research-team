@@ -38,6 +38,7 @@ def fake_provider(answer: dict = TWO_PEOPLE) -> FakeLlmProvider:
     """
     return FakeLlmProvider(by_substring={}, default=answer)
 
+
 from research_team import composition
 from research_team.application import SessionService
 from research_team.domain import (

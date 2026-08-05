@@ -97,9 +97,7 @@ async def test_malformed_session_id_is_422(client):
 
 async def test_run_turn_records_events_and_returns_the_reply(client):
     session_id = await _new_session(client)
-    response = await client.post(
-        f"/api/sessions/{session_id}/turns", json={"input": "hello"}
-    )
+    response = await client.post(f"/api/sessions/{session_id}/turns", json={"input": "hello"})
     assert response.status_code == 200
     assert response.json()["reply"] == "done"
 
@@ -164,9 +162,7 @@ def writing_model(fake_model):
 async def written(db_path, writing_model):
     application = await _started(model=writing_model, db_path=db_path)
     api = create_app(application.service, application.feed, application.turns)
-    async with AsyncClient(
-        transport=ASGITransport(app=api), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=api), base_url="http://test") as client:
         session_id = await _new_session(client)
         await client.post(f"/api/sessions/{session_id}/turns", json={"input": "write"})
         await client.post(f"/api/sessions/{session_id}/turns", json={"input": "edit"})
@@ -252,9 +248,9 @@ async def test_fork_creates_a_child_and_leaves_the_original(client):
     await client.post(f"/api/sessions/{session_id}/turns", json={"input": "hello"})
     before = (await client.get(f"/api/sessions/{session_id}/events")).json()
 
-    forked = (
-        await client.post(f"/api/sessions/{session_id}/forks", json={"at": 1})
-    ).json()["id"]
+    forked = (await client.post(f"/api/sessions/{session_id}/forks", json={"at": 1})).json()[
+        "id"
+    ]
 
     assert forked != session_id
     assert (await client.get(f"/api/sessions/{session_id}/events")).json() == before
@@ -272,9 +268,7 @@ async def test_fork_out_of_range_is_400(client):
 async def test_tree_nests_forks_under_their_parent(client):
     parent = await _new_session(client)
     await client.post(f"/api/sessions/{parent}/turns", json={"input": "hello"})
-    child = (await client.post(f"/api/sessions/{parent}/forks", json={"at": 1})).json()[
-        "id"
-    ]
+    child = (await client.post(f"/api/sessions/{parent}/forks", json={"at": 1})).json()["id"]
 
     tree = (await client.get("/api/tree")).json()
     assert [node["id"] for node in tree] == [parent]
@@ -389,9 +383,10 @@ async def test_stream_reaches_a_real_browser_over_a_real_socket(db_path, fake_mo
     received: list[dict] = []
 
     async def listen() -> None:
-        async with AsyncClient(timeout=20) as browser, browser.stream(
-            "GET", "http://127.0.0.1:8749/api/stream"
-        ) as response:
+        async with (
+            AsyncClient(timeout=20) as browser,
+            browser.stream("GET", "http://127.0.0.1:8749/api/stream") as response,
+        ):
             assert response.status_code == 200
             assert "text/event-stream" in response.headers["content-type"]
             async for line in response.aiter_lines():
@@ -541,9 +536,7 @@ async def test_a_file_can_be_read_as_of_an_earlier_event(written):
         )
     ).json()
     head = (
-        await client.get(
-            f"/api/sessions/{session_id}/files", params={"path": "/hello.py"}
-        )
+        await client.get(f"/api/sessions/{session_id}/files", params={"path": "/hello.py"})
     ).json()
 
     assert past["at"] == write_index
@@ -562,9 +555,7 @@ async def test_a_file_deleted_later_is_still_readable_in_the_past(db_path, fake_
     session.execute(DeleteFile(path="/doomed.py"))
     await application.service._repository.save(session)
 
-    async with AsyncClient(
-        transport=ASGITransport(app=api), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=api), base_url="http://test") as client:
         events = (await client.get(f"/api/sessions/{session_id}/events")).json()
         written_at = next(r["index"] for r in events if r["type"] == "FileWritten")
 
@@ -688,9 +679,7 @@ async def test_a_second_turn_is_refused_while_one_is_running(slow_app):
     )
     await asyncio.sleep(0.4)
 
-    second = await client.post(
-        f"/api/sessions/{session_id}/turns", json={"input": "me too"}
-    )
+    second = await client.post(f"/api/sessions/{session_id}/turns", json={"input": "me too"})
     assert second.status_code == 409
 
     await client.post(f"/api/sessions/{session_id}/turns/cancel")
@@ -709,9 +698,7 @@ async def test_the_session_still_works_after_a_cancellation(slow_app):
     await turn
 
     model.delay = 0.0
-    response = await client.post(
-        f"/api/sessions/{session_id}/turns", json={"input": "quick"}
-    )
+    response = await client.post(f"/api/sessions/{session_id}/turns", json={"input": "quick"})
 
     assert response.status_code == 200
     assert response.json()["turn_index"] == 1  # the cancelled attempt never counted
@@ -832,9 +819,7 @@ async def test_each_frame_carries_the_cursor_that_follows_it(repository, session
     assert repository.decode_position(_cursor_of(frames[0])) is not None
 
 
-async def test_reconnecting_with_a_cursor_delivers_what_was_missed(
-    repository, session_id
-):
+async def test_reconnecting_with_a_cursor_delivers_what_was_missed(repository, session_id):
     """The gap a dropped connection leaves is the whole point of the id.
 
     The second message is appended while no stream is open at all, so a feed

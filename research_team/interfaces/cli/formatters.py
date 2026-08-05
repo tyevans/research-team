@@ -117,17 +117,12 @@ def format_file_history(events: list[DomainEvent], path: str) -> str:
     return "\n".join(rows) if rows else f"(no history for {path})"
 
 
-def format_state(
-    session: CodingSession, event_count: int, context_mode: str = "full"
-) -> str:
+def format_state(session: CodingSession, event_count: int, context_mode: str = "full") -> str:
     state = session.state
-    compacted = (
-        f"\ncontext  {context_mode}"
-        + (
-            f" ({state.compacted_through} message(s) behind a summary)"
-            if state.compacted_through
-            else ""
-        )
+    compacted = f"\ncontext  {context_mode}" + (
+        f" ({state.compacted_through} message(s) behind a summary)"
+        if state.compacted_through
+        else ""
     )
     return (
         f"session  {state.session_id}\n"
@@ -161,10 +156,7 @@ def format_turn(outcome: TurnOutcome) -> str:
 
 def format_resumed(session: CodingSession) -> str:
     state = session.state
-    return (
-        f"resumed {state.session_id} -- "
-        f"{state.turn_index} turns, {len(state.files)} files"
-    )
+    return f"resumed {state.session_id} -- {state.turn_index} turns, {len(state.files)} files"
 
 
 def format_autonomy(levels: dict[str, str]) -> str:

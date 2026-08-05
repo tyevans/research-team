@@ -1,4 +1,5 @@
 """Translation between stored payloads and the messages the agent consumes."""
+
 import pytest
 from langchain_core.messages import (
     AIMessage,
@@ -76,9 +77,7 @@ def test_to_recorded_tool_success_is_not_an_error():
 
 
 def test_to_recorded_marks_failed_tool_results():
-    recorded = to_recorded(
-        ToolMessage(content="boom", tool_call_id="t1", status="error")
-    )
+    recorded = to_recorded(ToolMessage(content="boom", tool_call_id="t1", status="error"))
     assert recorded.kind == "tool"
     assert recorded.is_error is True
 

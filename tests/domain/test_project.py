@@ -29,7 +29,9 @@ def test_creating_a_project_emits_project_created():
 
 def test_a_project_cannot_be_created_twice():
     project_id = uuid4()
-    state = evolve(initial_state(project_id), ProjectCreated(aggregate_id=project_id, name="research"))
+    state = evolve(
+        initial_state(project_id), ProjectCreated(aggregate_id=project_id, name="research")
+    )
 
     with pytest.raises(CommandRejectedError, match="already created"):
         decide(CreateProject(name="research"), state)
@@ -103,6 +105,8 @@ def test_only_the_active_session_may_advance_the_tip():
 
 def test_evolve_ignores_unknown_events():
     project_id = uuid4()
-    state = evolve(initial_state(project_id), ProjectCreated(aggregate_id=project_id, name="r"))
+    state = evolve(
+        initial_state(project_id), ProjectCreated(aggregate_id=project_id, name="r")
+    )
 
     assert evolve(state, ProjectCreated(aggregate_id=project_id, name="other")) is not None

@@ -74,9 +74,7 @@ def test_counts_turns_and_surviving_files(make_session):
     assert row.failed_turns == 0
 
 
-def test_failed_turns_are_counted_and_do_not_count_as_turns(
-    make_session
-):
+def test_failed_turns_are_counted_and_do_not_count_as_turns(make_session):
     session = make_session()
     session.execute(FailTurn.from_error(RuntimeError("boom")))
     session.execute(FailTurn.from_error(RuntimeError("boom again")))

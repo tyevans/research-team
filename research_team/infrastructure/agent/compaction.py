@@ -89,9 +89,7 @@ class SummarizingStrategy:
         if through <= already:
             return PreparedContext(messages=self._view(state))
 
-        summary = await self._summarize(
-            state, previous=state.compaction_summary, upto=through
-        )
+        summary = await self._summarize(state, previous=state.compaction_summary, upto=through)
         if not summary.strip():
             # An empty summary would be recorded forever and would stand in for
             # messages the model can then never see. A long context is a lesser

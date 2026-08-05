@@ -138,20 +138,14 @@ def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
         case RecordToolResult(message=message, is_error=is_error), _:
             call_id = message.get("data", {}).get("tool_call_id")
             if call_id not in outstanding_tool_call_ids(state.messages):
-                raise CommandRejectedError(
-                    f"no outstanding tool call with id {call_id!r}"
-                )
+                raise CommandRejectedError(f"no outstanding tool call with id {call_id!r}")
             return [
-                ToolResultRecorded(
-                    aggregate_id=session_id, message=message, is_error=is_error
-                )
+                ToolResultRecorded(aggregate_id=session_id, message=message, is_error=is_error)
             ]
 
         # ---- turns ----
         case CompleteTurn(), _:
-            return [
-                TurnCompleted(aggregate_id=session_id, turn_index=state.turn_index + 1)
-            ]
+            return [TurnCompleted(aggregate_id=session_id, turn_index=state.turn_index + 1)]
 
         case FailTurn(
             error_type=error_type, error_message=error_message, cancelled=cancelled
@@ -256,11 +250,7 @@ def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
             ]
 
         case ChangeAutonomy(tool_name=tool_name, level=level), _:
-            return [
-                AutonomyChanged(
-                    aggregate_id=session_id, tool_name=tool_name, level=level
-                )
-            ]
+            return [AutonomyChanged(aggregate_id=session_id, tool_name=tool_name, level=level)]
 
     raise CommandRejectedError(f"unhandled command {type(command).__name__}")
 
@@ -273,9 +263,7 @@ def evolve(state: SessionState, event: DomainEvent) -> SessionState:
     still replays instead of failing halfway through.
     """
     match event:
-        case SessionStarted(
-            system_prompt=prompt, model_name=model, project_id=project_id
-        ):
+        case SessionStarted(system_prompt=prompt, model_name=model, project_id=project_id):
             # Replaces state wholesale: this is the creation event, and it is
             # the only one that establishes rather than amends.
             return SessionState(

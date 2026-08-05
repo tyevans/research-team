@@ -173,9 +173,7 @@ def test_a_message_view_carries_its_tool_calls():
             },
         }
     )
-    assert view["tool_calls"] == [
-        {"name": "write_file", "args": {"file_path": "/a.py"}}
-    ]
+    assert view["tool_calls"] == [{"name": "write_file", "args": {"file_path": "/a.py"}}]
 
 
 def test_an_errored_tool_message_is_marked():

@@ -81,9 +81,7 @@ class EventStoreSessionRepository:
     def open(cls, db_path: str) -> "EventStoreSessionRepository":
         store = SQLiteEventStore(db_path)
         publisher = InMemoryEventBus()
-        return cls(
-            store, build_aggregate_repository(store, db_path, publisher), publisher
-        )
+        return cls(store, build_aggregate_repository(store, db_path, publisher), publisher)
 
     @property
     def store(self) -> SQLiteEventStore:

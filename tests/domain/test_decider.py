@@ -74,8 +74,7 @@ def calling(*call_ids: str) -> dict:
         "data": {
             "content": "",
             "tool_calls": [
-                {"id": call_id, "name": "write_file", "args": {}}
-                for call_id in call_ids
+                {"id": call_id, "name": "write_file", "args": {}} for call_id in call_ids
             ],
         },
     }
@@ -101,9 +100,7 @@ def test_a_new_session_is_not_yet_started():
 def test_starting_a_session_emits_session_started():
     state = initial_state(uuid4())
 
-    [event] = decide(
-        StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME), state
-    )
+    [event] = decide(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME), state)
 
     assert isinstance(event, SessionStarted)
     assert event.system_prompt == SYSTEM_PROMPT
@@ -235,9 +232,7 @@ def test_a_failure_records_the_error_it_was_given():
 
 def test_a_cancellation_is_recorded_as_one():
     """Stopped on purpose and broke are different facts about the same hole."""
-    [event] = decide(
-        FailTurn.from_error(RuntimeError("stopped"), cancelled=True), started()
-    )
+    [event] = decide(FailTurn.from_error(RuntimeError("stopped"), cancelled=True), started())
 
     assert event.cancelled is True
     assert event.error_type == "Cancelled"
@@ -278,23 +273,17 @@ def test_compaction_cannot_go_backwards():
     """Uncovering messages an earlier summary covered would show the model
     both the summary and the messages it stands in for."""
     state = _with_messages(4)
-    state = run(
-        state, CompactConversation(summary="s", through_index=3, strategy="s")
-    )
+    state = run(state, CompactConversation(summary="s", through_index=3, strategy="s"))
 
     with pytest.raises(CommandRejectedError, match="cannot compact"):
-        decide(
-            CompactConversation(summary="s", through_index=2, strategy="s"), state
-        )
+        decide(CompactConversation(summary="s", through_index=2, strategy="s"), state)
 
 
 def test_compaction_cannot_run_past_the_end():
     state = _with_messages(2)
 
     with pytest.raises(CommandRejectedError, match="cannot compact"):
-        decide(
-            CompactConversation(summary="s", through_index=5, strategy="s"), state
-        )
+        decide(CompactConversation(summary="s", through_index=5, strategy="s"), state)
 
 
 # ---------------- files ----------------
@@ -377,9 +366,12 @@ def test_evolve_ignores_an_event_it_has_no_branch_for():
     class Unrelated(SessionStarted):
         pass
 
-    assert evolve(state, Unrelated(
-        aggregate_id=state.session_id, system_prompt="", model_name=""
-    )).messages == state.messages
+    assert (
+        evolve(
+            state, Unrelated(aggregate_id=state.session_id, system_prompt="", model_name="")
+        ).messages
+        == state.messages
+    )
 
 
 # ---------------- supervision ----------------
