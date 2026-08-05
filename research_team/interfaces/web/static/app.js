@@ -678,43 +678,57 @@ function loadSession() {
     // carry no position for Last-Event-ID to resume from -- this is the only
     // way it finds out what is provisionally in flight. Best-effort, like the
     // running/approvals checks above.
-    const activitySeqAtRequest = turnEndSeq;
-    api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current/activity')
-      .then(function (body) {
-        if (state.sessionId !== id) return;
-        // Same non-atomicity as /turns/current (see fetchTurnRunning): the
-        // activity buffer's own settle() and the TurnCompleted/TurnFailed
-        // event it settles around are two steps, not one, so `running` here
-        // can still list a turn that, on this connection, already ended --
-        // and turnEndSeq alone does not catch it, because this call can be
-        // triggered BY that very reconciliation (foreignTurnEnded calls
-        // loadSession right after correctly clearing state.activity), so
-        // turnEndSeq does not change between request and response at all.
-        // The frame-based mechanism (onStreamEvent/onActivityFrame) is what
-        // now owns turnRunning correctly, so trust ITS verdict over this
-        // GET's: only accept a positive answer here if something is already
-        // believed to be running by that authoritative path.
-        if (turnEndSeq === activitySeqAtRequest && (state.sending || state.turnRunning)) {
-          (body.running || []).forEach(putActivity);
-        }
-        renderActivity();
-        // The discarded buffer isn't tied to an index server-side (it's just
-        // "the last failed turn's content"), so pin it to that turn's
-        // TurnFailed row here, the same place a live frame would have put it.
-        if (body.discarded && body.discarded.length) {
-          const idx = lastFailedTurnIndex();
-          if (idx !== null) {
-            state.discarded[idx] = body.discarded;
-            renderTimeline();
-          }
-        }
-      })
-      .catch(function () { /* catch-up is best-effort */ });
+    catchUpActivity(id);
   }).catch(function (e) {
     if (state.sessionId !== id) return;
     state.sessionError = e.message;
     renderSessionError();
   });
+}
+
+/* Best-effort catch-up for provisional content: called from loadSession
+ * (mount, or mid-turn reload) and from connect()'s reconnect handler (an SSE
+ * drop loses these frames outright -- they carry no feed position, so
+ * Last-Event-ID cannot replay them the way it does for the log). Shared
+ * rather than duplicated so both call sites get the same staleness handling. */
+function catchUpActivity(id) {
+  const activitySeqAtRequest = turnEndSeq;
+  api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current/activity')
+    .then(function (body) {
+      if (state.sessionId !== id) return;
+      // Same non-atomicity as /turns/current (see fetchTurnRunning): the
+      // activity buffer's own settle() and the TurnCompleted/TurnFailed
+      // event it settles around are two steps, not one, so `running` here
+      // can still list a turn that, on this connection, already ended --
+      // and turnEndSeq alone does not catch it, because this call can be
+      // triggered BY that very reconciliation (foreignTurnEnded calls
+      // loadSession right after correctly clearing state.activity), so
+      // turnEndSeq does not change between request and response at all.
+      // The frame-based mechanism (onStreamEvent/onActivityFrame) is what
+      // now owns turnRunning correctly, so trust ITS verdict over this
+      // GET's: only accept a positive answer here if something is already
+      // believed to be running by that authoritative path. Callers that
+      // cannot yet be sure (a reconnect, where a turn may have started
+      // entirely during the gap) must resync turnRunning itself first --
+      // see connect()'s reconnect handler, which calls refreshRunning()
+      // before this, precisely so that belief is current by the time this
+      // guard checks it.
+      if (turnEndSeq === activitySeqAtRequest && (state.sending || state.turnRunning)) {
+        (body.running || []).forEach(putActivity);
+      }
+      renderActivity();
+      // The discarded buffer isn't tied to an index server-side (it's just
+      // "the last failed turn's content"), so pin it to that turn's
+      // TurnFailed row here, the same place a live frame would have put it.
+      if (body.discarded && body.discarded.length) {
+        const idx = lastFailedTurnIndex();
+        if (idx !== null) {
+          state.discarded[idx] = body.discarded;
+          renderTimeline();
+        }
+      }
+    })
+    .catch(function () { /* catch-up is best-effort */ });
 }
 
 /* Reconcile "is a turn running" with what this tab is doing. Our own POST owns
@@ -1984,6 +1998,21 @@ function connect() {
       // Approval frames carry no feed position, so Last-Event-ID resumes the
       // log but not these -- reconcile them on every reconnect regardless.
       fetchApprovals(state.sessionId);
+      // Activity frames carry no feed position either, and the buffer's own
+      // design note is explicit that surviving a dropped connection is the
+      // reason it exists at all -- without this, a laptop waking mid-turn
+      // would show a frozen provisional pane for the rest of that turn, the
+      // exact symptom the buffer was built to prevent. refreshRunning() runs
+      // first and is awaited: catchUpActivity's guard trusts turnRunning as
+      // the authoritative belief, but a turn may have started entirely
+      // during the gap, so that belief has to be brought current before the
+      // guard checks it, not after.
+      if (!state.sending) {
+        const id = state.sessionId;
+        refreshRunning().then(function () {
+          if (state.sessionId === id) catchUpActivity(id);
+        });
+      }
     }
   };
   stream.onmessage = function (msg) {
