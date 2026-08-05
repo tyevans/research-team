@@ -124,8 +124,16 @@ and no chance of the streamed content disagreeing with the recorded content.
   `new_messages()` accounting. Emits `ActivityMessage` where today it emits a
   formatted string.
 - **`messages`** — yields `(message_chunk, metadata)`. Emit `ActivityDelta`
-  only when the chunk is an `AIMessageChunk`, carries text content, and has no
+  only when the chunk is an AI message, carries text content, and has no
   `tool_calls`.
+
+  The type test is `isinstance(chunk, AIMessage)`, which covers `AIMessageChunk`
+  because it subclasses `AIMessage`. Testing for `AIMessageChunk` alone would be
+  wrong: a non-streaming model — including the `ToolAwareFakeChatModel` every
+  existing test uses — delivers one whole `AIMessage` on this channel rather
+  than a series of chunks. That is the correct behaviour and needs no special
+  case: the whole text arrives as a single delta, and the frontend's accumulator
+  handles a one-chunk message the same way it handles fifty.
 
 Subagent chunks arrive on the `messages` stream as well. They are filtered by
 `metadata["langgraph_node"]` — without that, a subagent's internal prose would
@@ -252,17 +260,24 @@ between the two channels.
 - A reporter that raises does not fail the turn.
 - REPL output is unchanged for the same sequence of messages.
 
-## Open question to resolve first in implementation
+## Open question — resolved 2026-08-04
 
 **Does `create_deep_agent`'s compiled graph accept `stream_mode` as a list?**
 
-`create_deep_agent` returns a compiled langgraph graph, and langgraph 1.2.10
-supports multi-mode streaming with `(mode, chunk)` tuples — but this is the one
-assumption the whole design rests on, and it spans deepagents 0.7.1 as well.
+**Yes.** Verified against the pinned versions before planning:
 
-Verify it before building anything else. If it does not hold, the fallback is
-`values`-only: whole messages stream, prose deltas do not. Everything else in
-this design is unaffected, because deltas were always additive to it.
+- `create_deep_agent(...)` returns a `CompiledStateGraph`, which is a `Pregel`,
+  whose `astream` signature is
+  `stream_mode: StreamMode | Sequence[StreamMode] | None`.
+- Passing `["values", "messages"]` yields `(mode, chunk)` tuples, with both
+  modes arriving interleaved from a single pass.
+- `metadata["langgraph_node"]` is `"model"` for the main agent, which is the
+  discriminator the subagent filter uses.
+- `message.id` is identical across the two channels (`"a1"` in the spike), so
+  the `message_id` correlation between a delta and the whole message that
+  supersedes it holds without inventing a scheme.
+
+The fallback (`values`-only, no prose deltas) is therefore not needed.
 
 ## Alternatives considered
 
