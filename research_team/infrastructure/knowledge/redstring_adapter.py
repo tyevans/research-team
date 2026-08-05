@@ -39,6 +39,7 @@ from redstring.events.streams import document_stream
 from research_team.application.knowledge import (
     IngestReport,
     KnowledgeError,
+    Match,
     MergeRecord,
     SourceRef,
 )
@@ -214,6 +215,72 @@ class RedstringKnowledge:
         if not envelopes:
             raise KnowledgeError(f"no extraction recorded for source_id {source_id!r}")
         return tuple(envelopes[-1].event.entities)
+
+    @property
+    def remembers_merges_across_restarts(self) -> bool:
+        """Whether `undo_merge` survives a restart. False means the log is in-memory."""
+        return self._consolidator.remembers_merges_across_restarts
+
+    async def search(self, query: str, *, limit: int = 10) -> list[Match]:
+        """Entities whose name contains `query`, case-insensitively.
+
+        Filtered here rather than by the store because `find_entities(name=...)`
+        matches `normalized_name` exactly -- no substring, no fuzziness -- and a
+        tool the agent drives with free text needs more give than that. The cost
+        is a page of the tenant's entities per call, which is acceptable against
+        an in-memory store and is the first thing to revisit behind Neo4j.
+        """
+        if limit < 1:
+            raise KnowledgeError("limit must be at least 1")
+        needle = query.strip().lower()
+        if not needle:
+            return []
+
+        try:
+            async with tenant_scope(self._project_id):
+                entities = await self._store.find_entities(self._project_id)
+                matches = []
+                for entity in entities:
+                    if needle not in entity.name.lower():
+                        continue
+                    edges = await self._store.get_relationships_for(
+                        [entity.id], self._project_id
+                    )
+                    matches.append(
+                        Match(
+                            entity_id=entity.id,
+                            name=entity.name,
+                            entity_type=entity.entity_type,
+                            relationship_count=len(edges),
+                        )
+                    )
+                    if len(matches) == limit:
+                        break
+        except RedstringError as error:
+            raise KnowledgeError(str(error)) from error
+        return matches
+
+    async def undo_merge(self, merge_id: UUID) -> MergeRecord:
+        """Reverse a consolidation.
+
+        `UnknownMergeError` covers "never happened", "already undone" and "made
+        by a different consolidator" as one case, so this cannot report which --
+        it says what it knows.
+        """
+        try:
+            async with tenant_scope(self._project_id):
+                report = await self._consolidator.undo(
+                    tenant_id=self._project_id, merge_event_id=merge_id
+                )
+        except RedstringError as error:
+            raise KnowledgeError(f"no merge in effect has id {merge_id}: {error}") from error
+
+        return MergeRecord(
+            merge_id=merge_id,
+            canonical_name=str(report.canonical_entity_id),
+            absorbed_names=tuple(str(i) for i in report.affected_entity_ids),
+            reason=report.reason,
+        )
 
     async def merge_entities(
         self, *, canonical: UUID, absorbed: list[UUID], reason: str
