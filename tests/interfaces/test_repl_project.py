@@ -157,3 +157,43 @@ async def test_exiting_the_repl_releases_a_held_project(
     project_id = (await other_service.list_projects())[0][0]
     joined = await other_service.start_in_project(project_id)
     assert joined is not None
+
+
+async def test_resuming_a_project_session_reattaches_its_knowledge_graph(
+    build_application, fake_model
+):
+    """`/resume` into a project session must not leave it without the graph
+    its own recorded prompt describes.
+
+    `_switch_to` detaches unconditionally on every switch (whatever was
+    attached belonged to the outgoing session), so a session resumed back
+    into a project needs its own re-attach -- otherwise the model is told
+    about `remember`/`graph_search`/`unmerge` by its `SessionStarted` prompt
+    while the executor no longer has them. Reattaching must not re-acquire
+    the project's filesystem lease: that is `/project use`'s job (via
+    `start_in_project`'s `JoinProject`), not a side effect of merely looking
+    at an old session again, or every `/resume` into a project would fight
+    over who holds it.
+    """
+    application = await build_application(model=fake_model)
+    current = await repl.Repl.start(application.service)
+
+    await repl.handle_command(current, "/project new research")
+    await repl.handle_command(current, "/project use research")
+    project_session_id = current.session_id
+
+    # Switch away: this detaches the graph and releases the lease (the
+    # project has no holder afterwards -- `/new` never joins one).
+    await repl.handle_command(current, "/new")
+    assert "remember" not in {tool.name for tool in application.turns_tools()}
+
+    output = await repl.handle_command(current, f"/resume {project_session_id}")
+
+    assert "error" not in output.lower()
+    names = {tool.name for tool in application.turns_tools()}
+    assert "remember" in names
+
+    # Resuming looked at the session, it did not take the project back.
+    project_id = (await application.service.list_projects())[0][0]
+    project = await application.service.projects.load(project_id)
+    assert project.state.active_session_id is None

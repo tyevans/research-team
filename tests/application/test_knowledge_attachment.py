@@ -82,7 +82,12 @@ async def test_before_attach_nothing_is_current_and_no_knowledge_tools(repositor
     attachment, executor, _ = _build(repository)
 
     assert attachment.current is None
-    assert "remember" not in _tool_names(executor)
+    # Equality with the base tuple, read off the executor's own (mutable)
+    # `tools` property -- not `"remember" not in BASE_TOOLS`, which would
+    # hold no matter what `KnowledgeAttachment.__init__` did, since nothing
+    # in `BASE_TOOLS` was ever going to contain it. This would fail if
+    # construction ever pre-attached something onto the executor.
+    assert executor.tools == BASE_TOOLS
 
 
 async def test_attach_registers_current_and_all_three_knowledge_tools(repository):
@@ -125,11 +130,12 @@ async def test_a_failed_open_leaves_nothing_attached(repository):
 
 
 async def test_attaching_twice_leaves_exactly_one_graph_for_the_second_project(repository):
-    attachment, executor, _closed = _build(repository)
+    attachment, executor, closed = _build(repository)
     first_project = uuid4()
     second_project = uuid4()
 
     await attachment.attach(first_project)
+    first_knowledge = attachment.current
     await attachment.attach(second_project)
 
     assert attachment.current.project_id == second_project
@@ -137,3 +143,6 @@ async def test_attaching_twice_leaves_exactly_one_graph_for_the_second_project(r
     # not append a second copy of the three knowledge tools.
     assert _tool_names(executor) == KNOWLEDGE_TOOL_NAMES | {"search"}
     assert len(executor.tools) == len(BASE_TOOLS) + len(KNOWLEDGE_TOOL_NAMES)
+    # The graph attaching over replaced was actually closed, not leaked --
+    # the branch `attach` takes to avoid leaking a store when re-attaching.
+    assert closed == [first_knowledge]

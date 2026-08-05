@@ -233,6 +233,17 @@ def build_application(
         tools = ()
         prompt_suffix += NO_NETWORK_CLAUSE
 
+    if project_id is not None:
+        # A `project_id=` at build time scopes the whole application to that
+        # project, not just sessions started through `start_in_project` --
+        # `create_session` on an application built this way still gets the
+        # knowledge tools (Task 14's `_initial_project_id` path, attached at
+        # `start()`), so its default prompt has to describe them too, the
+        # same way `start_in_project`'s per-session prompt does. Otherwise a
+        # session it creates has `remember` on the executor and no idea the
+        # tool exists.
+        prompt_suffix += KNOWLEDGE_PROMPT
+
     executor = DeepAgentTurnExecutor(
         resolved_model,
         subagents=subagents,
