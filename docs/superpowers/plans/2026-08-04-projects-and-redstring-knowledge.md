@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **`eventsource-py[sqlite]>=0.10.0`** — the floor must not drop. redstring's projections forward `retry_policy`, `tracer` and `tenant_filter`, which 0.9.x rejects with `TypeError`.
-- **`redstring[llm]`** is the dependency to add — the base install plus `langchain-openai`. The "no extras" property covers the *stores*, not the model provider.
+- **`redstring[llm,neo4j]`** is the dependency to add. The "no servers needed" property comes from `memory` being the *default* store, not from the driver being absent.
 - **`project_id` is a `UUID`, never a string.** redstring's `TenantId` is `UUID`.
 - **No model call at fold time.** Extraction results are recorded as events and replayed, never recomputed.
 - **Every redstring call happens inside `async with tenant_scope(project_id)`.** `TenantAwareRepository` raises `TenantContextNotSetError` outside one.
@@ -798,19 +798,22 @@ Names no redstring type, so the graph backend stays behind one adapter."
 
 **Files:**
 - Modify: `pyproject.toml`
+- Create: `docker-compose.test.yml`
 - Modify: `research_team/infrastructure/config.py`
 - Create: `research_team/infrastructure/knowledge/__init__.py`
 - Create: `research_team/infrastructure/knowledge/stores.py`
-- Test: `tests/infrastructure/test_knowledge_stores.py`
+- Test: `tests/infrastructure/test_knowledge_stores.py`, `tests/integration/test_neo4j_graph_store.py`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `config.graph_store()` → `str`, `config.knowledge_domain()` → `str`; `build_graph_store(kind: str) -> GraphStore`.
+- Produces: `config.graph_store()`, `config.knowledge_domain()`, `config.neo4j_uri()`, `config.neo4j_auth()`, `config.neo4j_database()`; `build_graph_store(kind: str) -> GraphStore`.
+
+Both backends are wired here. Neo4j is a real option, not a reserved word — a store selected by config that raises on selection is a config option in name only.
 
 - [ ] **Step 1: Add the dependency**
 
 ```bash
-uv add "redstring[llm]"
+uv add "redstring[llm,neo4j]"
 ```
 
 Then verify the eventsource floor did not move below 0.10.0:
@@ -837,10 +840,92 @@ def test_memory_is_the_default_store():
     assert type(store).__name__ == "InMemoryGraphStore"
 
 
+def test_neo4j_builds_a_neo4j_store(monkeypatch):
+    """Constructing the driver does not connect; the first query does."""
+    monkeypatch.setenv("AGENT_NEO4J_URI", "bolt://localhost:7688")
+    monkeypatch.setenv("AGENT_NEO4J_PASSWORD", "redstring")
+
+    store = build_graph_store("neo4j")
+
+    assert type(store).__name__ == "Neo4jGraphStore"
+
+
+def test_neo4j_without_a_password_is_refused(monkeypatch):
+    monkeypatch.delenv("AGENT_NEO4J_PASSWORD", raising=False)
+
+    with pytest.raises(ValueError, match="AGENT_NEO4J_PASSWORD"):
+        build_graph_store("neo4j")
+
+
 def test_an_unknown_store_is_rejected_by_name():
     with pytest.raises(ValueError, match="postgres"):
         build_graph_store("postgres")
 ```
+
+And `tests/integration/test_neo4j_graph_store.py`, which needs a running server:
+
+```python
+"""The Neo4j graph store, against a real server.
+
+Deselected by default. Start the server and run it deliberately:
+
+    docker compose -f docker-compose.test.yml up -d neo4j
+    uv run pytest -m integration tests/integration/test_neo4j_graph_store.py
+"""
+
+import os
+import pytest
+from uuid import uuid4
+
+from eventsource.adapters.sqlite import SQLiteEventStore
+from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
+from redstring import FakeLlmProvider
+
+from research_team.application.knowledge import SourceRef
+from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
+from research_team.infrastructure.knowledge.stores import build_graph_store
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+def neo4j_env(monkeypatch):
+    monkeypatch.setenv("AGENT_NEO4J_URI", os.getenv("AGENT_NEO4J_URI", "bolt://localhost:7688"))
+    monkeypatch.setenv("AGENT_NEO4J_USER", os.getenv("AGENT_NEO4J_USER", "neo4j"))
+    monkeypatch.setenv("AGENT_NEO4J_PASSWORD", os.getenv("AGENT_NEO4J_PASSWORD", "redstring"))
+
+
+@pytest.mark.asyncio
+async def test_ingest_and_search_against_a_real_neo4j(tmp_path, neo4j_env):
+    project_id = uuid4()
+    store = build_graph_store("neo4j")
+    await store.ensure_schema()
+    db_path = str(tmp_path / "sessions.db")
+    try:
+        adapter = RedstringKnowledge(
+            project_id,
+            store=store,
+            event_store=SQLiteEventStore(db_path),
+            snapshot_store=SQLiteSnapshotStore(db_path),
+            provider=FakeLlmProvider(),
+            domain="encyclopedia_wiki",
+            adjudicate=False,
+        )
+
+        report = await adapter.ingest(
+            SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+        )
+        matches = await adapter.search("lovelace")
+
+        assert report.entity_count >= 1
+        assert any("lovelace" in match.name.lower() for match in matches)
+    finally:
+        # Leave no rows behind: the next run shares this database.
+        await store.delete_by_tenant(project_id)
+        await store.close()
+```
+
+Check `pyproject.toml` for how the `integration` marker is registered and deselected by default (the search work established this pattern); if no such marker exists, register it under `[tool.pytest.ini_options]` with `markers` and add `-m "not integration"` to `addopts`.
 
 And add to `tests/infrastructure/test_config.py` (matching that file's existing style):
 
@@ -877,6 +962,37 @@ def graph_store() -> str:
 def knowledge_domain() -> str:
     """A redstring schema id, or `auto` to have a classifier choose."""
     return os.getenv("AGENT_KNOWLEDGE_DOMAIN", DEFAULT_KNOWLEDGE_DOMAIN)
+
+
+def neo4j_uri() -> str:
+    return os.getenv("AGENT_NEO4J_URI", DEFAULT_NEO4J_URI)
+
+
+def neo4j_auth() -> tuple[str, str]:
+    """User and password. Raises when the password is unset.
+
+    No default password. A graph store that silently comes up on `neo4j/neo4j`
+    is one that either fails confusingly or, worse, connects to somebody's
+    development server.
+    """
+    password = os.getenv("AGENT_NEO4J_PASSWORD")
+    if not password:
+        raise ValueError(
+            "AGENT_NEO4J_PASSWORD must be set when AGENT_GRAPH_STORE=neo4j"
+        )
+    return os.getenv("AGENT_NEO4J_USER", DEFAULT_NEO4J_USER), password
+
+
+def neo4j_database() -> str | None:
+    """Which database within the server. None means the server's default."""
+    return os.getenv("AGENT_NEO4J_DATABASE") or None
+```
+
+with the constants alongside the others:
+
+```python
+DEFAULT_NEO4J_URI = "bolt://localhost:7687"
+DEFAULT_NEO4J_USER = "neo4j"
 ```
 
 Create `research_team/infrastructure/knowledge/__init__.py`:
@@ -897,7 +1013,10 @@ written under duress during a migration.
 """
 
 from redstring import InMemoryGraphStore
+from redstring.graph.adapters.neo4j import Neo4jGraphStore
 from redstring.ports import GraphStore
+
+from research_team.infrastructure import config
 
 
 def build_graph_store(kind: str) -> GraphStore:
@@ -906,29 +1025,78 @@ def build_graph_store(kind: str) -> GraphStore:
     Raises `ValueError` naming the unknown kind rather than falling back to
     memory: a deployment that asked for Neo4j and silently got a store that
     empties on restart is worse off than one that refused to start.
+
+    `Neo4jGraphStore.connect` builds a driver but does not talk to the server;
+    the first query does. Reachability is therefore established at project
+    open, by `ensure_schema`, which is where a connection failure can still
+    stop the process rather than surfacing mid-turn.
     """
     if kind == "memory":
         return InMemoryGraphStore()
     if kind == "neo4j":
-        raise ValueError(
-            "the neo4j graph store is not wired yet; use AGENT_GRAPH_STORE=memory"
+        return Neo4jGraphStore.connect(
+            config.neo4j_uri(),
+            auth=config.neo4j_auth(),
+            database=config.neo4j_database(),
         )
     raise ValueError(f"unknown AGENT_GRAPH_STORE {kind!r}; expected 'memory' or 'neo4j'")
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 5: Add the test server**
+
+Create `docker-compose.test.yml`:
+
+```yaml
+# Backends the integration tests need. Started deliberately, never by the
+# default test run:
+#
+#     docker compose -f docker-compose.test.yml up -d neo4j
+#     uv run pytest -m integration
+#
+# Port 7688 rather than 7687 so a run cannot reach a Neo4j anybody is using
+# for anything else -- the integration test deletes its tenant's rows when it
+# finishes.
+services:
+  neo4j:
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: neo4j/redstring
+    ports: ["7688:7687", "7475:7474"]
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p redstring 'RETURN 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+```
+
+- [ ] **Step 6: Run tests to verify they pass**
 
 Run: `uv run pytest tests/infrastructure/test_knowledge_stores.py tests/infrastructure/test_config.py -v`
-Expected: PASS
+Expected: PASS. The integration test is deselected — confirm with
+`uv run pytest --collect-only -q 2>&1 | tail -3`, which should report it deselected rather than collected.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Verify Neo4j end to end**
 
 ```bash
-git add pyproject.toml uv.lock research_team/infrastructure/config.py research_team/infrastructure/knowledge/ tests/infrastructure/test_knowledge_stores.py tests/infrastructure/test_config.py
-git commit -m "feat: add redstring, and config for what backs the graph
+docker compose -f docker-compose.test.yml up -d neo4j
+# Wait for the healthcheck to pass:
+until [ "$(docker inspect -f '{{.State.Health.Status}}' $(docker compose -f docker-compose.test.yml ps -q neo4j))" = "healthy" ]; do sleep 2; done
+uv run pytest -m integration tests/integration/test_neo4j_graph_store.py -v
+docker compose -f docker-compose.test.yml down
+```
 
-Memory by default. An unknown or unwired store raises rather than falling
-back, so a deployment never silently gets a store that empties on restart."
+Expected: PASS. If the Neo4j container cannot start in this environment, report that in your task report as a `DONE_WITH_CONCERNS` — do not delete the test or mark it skipped to make the run green.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add pyproject.toml uv.lock docker-compose.test.yml research_team/infrastructure/config.py research_team/infrastructure/knowledge/ tests/infrastructure/ tests/integration/test_neo4j_graph_store.py
+git commit -m "feat: add redstring, and both graph store backends
+
+Memory by default and Neo4j wired for real -- a store you can select by
+config but not construct is a config option in name only. No default
+Neo4j password: a graph store that silently comes up on neo4j/neo4j either
+fails confusingly or connects to somebody's development server."
 ```
 
 ---
@@ -1033,18 +1201,33 @@ async def test_an_oversized_document_is_refused_before_extraction(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_reconsolidate_reresolves_only_that_documents_entities(tmp_path):
-    """The repair path for an interrupted ingest, keyed by source_id."""
+async def test_reconsolidate_is_scoped_to_one_documents_entities(tmp_path):
+    """The repair path is keyed by source_id, and touches nothing else.
+
+    Observable because an entity that has already been absorbed by a merge
+    raises on re-resolution, which `_consolidate` counts. Merge one of `a`'s
+    entities away, and only `a`'s repair should see the consequence.
+    """
     project_id = uuid4()
     adapter, _ = build_adapter(tmp_path, project_id)
     await adapter.ingest(
-        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+        SourceRef(source_id="a", text="Ada Lovelace worked with Charles Babbage.")
+    )
+    await adapter.ingest(
+        SourceRef(source_id="b", text="Grace Hopper worked on the Harvard Mark I.")
     )
 
-    merges, failures = await adapter.reconsolidate("notes")
+    a_entities = await adapter.entities_for("a")
+    assert len(a_entities) >= 2, "fixture needs two entities in document a"
+    await adapter.merge_entities(
+        canonical=a_entities[0].id, absorbed=[a_entities[1].id], reason="test fixture"
+    )
 
-    assert failures >= 0
-    assert isinstance(merges, tuple)
+    _, a_failures = await adapter.reconsolidate("a")
+    _, b_failures = await adapter.reconsolidate("b")
+
+    assert a_failures >= 1, "the absorbed entity should fail to re-resolve"
+    assert b_failures == 0, "document b's entities were never touched"
 
 
 @pytest.mark.asyncio
@@ -1291,6 +1474,44 @@ class RedstringKnowledge:
         async with tenant_scope(self._project_id):
             merges, failures = await self._consolidate(entities)
         return tuple(merges), failures
+
+    async def entities_for(self, source_id: str) -> tuple:
+        """The entities the last recorded extraction of `source_id` found.
+
+        Read off the event rather than the graph: the event is what the repair
+        path replays, so this is the same set `reconsolidate` would act on.
+        """
+        stream = document_stream(tenant_id=self._project_id, source_id=source_id)
+        envelopes = await collect(self._event_store.read_stream(stream))
+        if not envelopes:
+            raise KnowledgeError(f"no extraction recorded for source_id {source_id!r}")
+        return tuple(envelopes[-1].event.entities)
+
+    async def merge_entities(
+        self, *, canonical: UUID, absorbed: list[UUID], reason: str
+    ) -> MergeRecord:
+        """Merge entities whose identity is already decided elsewhere.
+
+        The explicit path -- no blocking, no scoring, no model call. Exposed
+        because a caller that already knows two ids are one thing should not
+        have to go through similarity scoring to say so.
+        """
+        try:
+            async with tenant_scope(self._project_id):
+                report = await self._consolidator.merge(
+                    tenant_id=self._project_id,
+                    canonical_entity_id=canonical,
+                    merged_entity_ids=absorbed,
+                    merge_reason=reason,
+                )
+        except RedstringError as error:
+            raise KnowledgeError(str(error)) from error
+        return MergeRecord(
+            merge_id=report.event.event_id,
+            canonical_name=str(report.canonical_entity_id),
+            absorbed_names=tuple(str(i) for i in report.affected_entity_ids),
+            reason=report.reason,
+        )
 ```
 
 Add `from eventsource import collect` to the imports.
@@ -2138,14 +2359,49 @@ In `Application.start()`, before returning, rebuild when a project is configured
     async def start(self) -> None:
         ...existing body...
         if self.knowledge is not None:
+            # `ensure_schema` is the first call that actually talks to a Neo4j
+            # server, so an unreachable one fails here -- at start, where it
+            # can stop the process -- rather than mid-turn. Idempotent, and a
+            # no-op for the in-memory store.
+            store = self.knowledge.graph_store
+            if hasattr(store, "ensure_schema"):
+                await store.ensure_schema()
             await rebuild_graph(
-                self.knowledge.graph_store,
+                store,
                 feed=self.knowledge.event_store,
                 project_id=self.knowledge.project_id,
             )
 ```
 
+and in `Application.close()`, release the driver if the store owns one:
+
+```python
+        if self.knowledge is not None:
+            store = self.knowledge.graph_store
+            if hasattr(store, "close"):
+                await store.close()
+```
+
 Add `graph_store`, `event_store` and `project_id` as read-only properties on `RedstringKnowledge` returning `self._store`, `self._event_store` and `self._project_id`.
+
+Add a test to `tests/integration/test_no_knowledge.py` that an unreachable Neo4j fails at `start()` rather than later:
+
+```python
+@pytest.mark.asyncio
+async def test_an_unreachable_graph_store_fails_at_start(tmp_path, fake_model, monkeypatch):
+    monkeypatch.setenv("AGENT_GRAPH_STORE", "neo4j")
+    monkeypatch.setenv("AGENT_NEO4J_URI", "bolt://127.0.0.1:9")  # discard port
+    monkeypatch.setenv("AGENT_NEO4J_PASSWORD", "irrelevant")
+
+    app = build_application(
+        model=fake_model, db_path=str(tmp_path / "sessions.db"), project_id=uuid4()
+    )
+    try:
+        with pytest.raises(Exception):
+            await app.start()
+    finally:
+        await app.close()
+```
 
 - [ ] **Step 5: Run the full suite**
 
@@ -2510,7 +2766,8 @@ Add to `README.md` after the search discussion, matching the README's existing v
 - `remember` commits content; `graph_search` reads it back; `unmerge` reverses a consolidation the agent judges wrong.
 - The graph is a projection of the same SQLite log the sessions live in, so it rebuilds at project open and extraction never re-runs on replay.
 - No project means no knowledge tools and no store, exactly as no `AGENT_SEARXNG_URL` means no search tool.
-- Update the configuration table with `AGENT_GRAPH_STORE` and `AGENT_KNOWLEDGE_DOMAIN`.
+- Update the configuration table with `AGENT_GRAPH_STORE`, `AGENT_KNOWLEDGE_DOMAIN`, `AGENT_NEO4J_URI`, `AGENT_NEO4J_USER`, `AGENT_NEO4J_PASSWORD` and `AGENT_NEO4J_DATABASE`.
+- Both backends work: `memory` needs no server and rebuilds from the log at project open; `neo4j` persists, needs `AGENT_NEO4J_PASSWORD` (there is no default), and is reached at start so an unreachable server stops the process rather than failing mid-turn. Mention `docker-compose.test.yml` and how to run the integration test.
 
 Be accurate about the network posture. The README currently says web search is the one documented egress exception; `remember` calls the same model endpoint the agent already uses, so it is not new egress — but it *does* mean content the agent passes goes to that endpoint. Say so plainly rather than leaving the existing sentence to imply otherwise.
 
