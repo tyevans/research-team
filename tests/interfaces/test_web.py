@@ -960,6 +960,33 @@ async def test_joining_a_project_starts_a_session_that_inherits_its_files(client
     assert file_body["content"] == "shared content\n"
 
 
+async def test_joining_a_project_attaches_the_knowledge_tools(app_and_client):
+    """The web-route counterpart of Task 14's REPL fix.
+
+    `application.turns_tools()` is the surface the executor actually reads
+    from on the next turn -- the same surface
+    `test_project_use_attaches_the_knowledge_graph` asserts on for the REPL.
+    Before `POST /api/projects/{id}/join`, no project is attached, so the
+    knowledge tools must be absent; asserting that first is what lets this
+    test fail if the join route stops calling `attach_project`.
+    """
+    application, client = app_and_client
+
+    names_before = {tool.name for tool in application.turns_tools()}
+    assert "remember" not in names_before
+    assert "graph_search" not in names_before
+    assert "unmerge" not in names_before
+
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    join = await client.post(f"/api/projects/{project_id}/join")
+    assert join.status_code == 200
+
+    names_after = {tool.name for tool in application.turns_tools()}
+    assert "remember" in names_after
+    assert "graph_search" in names_after
+    assert "unmerge" in names_after
+
+
 async def test_joining_an_already_held_project_names_the_holder(client):
     project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
     first_join = await client.post(f"/api/projects/{project_id}/join")
@@ -969,6 +996,8 @@ async def test_joining_an_already_held_project_names_the_holder(client):
 
     assert second_join.status_code == 409
     assert holder_session_id in second_join.json()["detail"]
+
+
 # ---------------- turn activity ----------------
 
 
