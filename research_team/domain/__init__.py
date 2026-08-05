@@ -37,6 +37,16 @@ from research_team.domain.events import (
     TurnFailed,
     UserMessageSent,
 )
+from research_team.domain.project import (
+    AdvanceTip,
+    CreateProject,
+    JoinProject,
+    Project,
+    ProjectCreated,
+    ProjectState,
+    ProjectTipAdvanced,
+    SessionJoinedProject,
+)
 from research_team.domain.session import (
     CodingSession,
     SessionState,
@@ -47,6 +57,7 @@ from research_team.domain.session import (
 
 __all__ = [
     "SESSION_EVENTS",
+    "AdvanceTip",
     "AssistantMessageAdded",
     "AutonomyChanged",
     "ChangeAutonomy",
@@ -54,12 +65,18 @@ __all__ = [
     "CompactConversation",
     "CompleteTurn",
     "ConversationCompacted",
+    "CreateProject",
     "DeleteFile",
     "EditFile",
     "FailTurn",
     "FileDeleted",
     "FileEdited",
     "FileWritten",
+    "JoinProject",
+    "Project",
+    "ProjectCreated",
+    "ProjectState",
+    "ProjectTipAdvanced",
     "RecordAssistantMessage",
     "RecordForkSource",
     "RecordToolDecision",
@@ -67,6 +84,7 @@ __all__ = [
     "SendUserMessage",
     "SessionCommand",
     "SessionForkedFrom",
+    "SessionJoinedProject",
     "SessionStarted",
     "SessionState",
     "StartSession",
