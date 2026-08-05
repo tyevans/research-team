@@ -4,8 +4,7 @@ import pytest
 from eventsource import collect
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
-from redstring import InMemoryGraphStore
-from redstring.events.streams import document_stream
+from redstring import InMemoryGraphStore, document_stream
 
 from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge

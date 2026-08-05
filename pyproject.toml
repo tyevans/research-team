@@ -10,7 +10,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "langchain-openai>=1.4.1",
-    "redstring[llm,neo4j]>=0.1.0",
+    "redstring[llm,neo4j]>=0.2.0",
     "uvicorn[standard]>=0.52.1",
 ]
 
@@ -34,6 +34,14 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# The repo root, explicitly, so `research_team` is importable from tests.
+# This project declares no `[build-system]`, so `uv sync` installs its
+# dependencies but not the project itself -- importing it has always relied on
+# the root being on `sys.path`. uv 0.8 put it there implicitly for a project
+# like this and uv 0.12 does not, which surfaced as a `ModuleNotFoundError` in
+# CI (which floats to the latest uv) while every local run stayed green. Saying
+# it here makes the suite independent of that.
+pythonpath = ["."]
 markers = [
     "live: hits the real model endpoint; deselected by default",
     "integration: hits a real backend service (e.g. Neo4j); deselected by default",

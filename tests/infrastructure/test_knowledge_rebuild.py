@@ -3,8 +3,8 @@ from uuid import uuid4
 
 import pytest
 from eventsource.adapters.sqlite import SQLiteEventStore
-from redstring import InMemoryGraphStore
-from redstring.projections import GraphProjection, project
+from redstring import GraphProjection, InMemoryGraphStore
+from redstring import project as fold_into
 
 from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.infrastructure.knowledge import rebuild
@@ -57,16 +57,17 @@ async def test_rebuilding_never_calls_the_model(tmp_path, build_adapter):  # noq
     """Replay purity: extraction is recorded, never recomputed.
 
     `rebuild_graph` accepts no provider, and neither `GraphProjection` nor
-    `project()` -- the only two redstring calls this module makes -- accept one
-    either, so there is genuinely nowhere in this path a provider could be
-    reached. A raising-provider stub can't be "wired in" because there is no
-    seam to wire it into; the strongest test available is pinning that absence
+    redstring's `project()` -- the only two redstring calls this module makes,
+    the latter imported here as `fold_into` -- accept one either, so there is
+    genuinely nowhere in this path a provider could be reached. A
+    raising-provider stub can't be "wired in" because there is no seam to wire
+    it into; the strongest test available is pinning that absence
     at every point the call could plausibly have taken a provider, not just on
     `rebuild_graph` itself.
     """
     assert "provider" not in inspect.signature(rebuild.rebuild_graph).parameters
     assert "provider" not in inspect.signature(GraphProjection.__init__).parameters
-    assert "provider" not in inspect.signature(project).parameters
+    assert "provider" not in inspect.signature(fold_into).parameters
 
     project_id = uuid4()
     adapter, event_store, _ = build_adapter(tmp_path, project_id)
@@ -90,7 +91,7 @@ async def test_a_failed_replay_is_refused_rather_than_served_partial(tmp_path, m
     async def _fake_project(feed, projections, **kwargs):
         return _FakeReport()
 
-    monkeypatch.setattr(rebuild, "project", _fake_project)
+    monkeypatch.setattr(rebuild, "fold_into", _fake_project)
 
     project_id = uuid4()
     event_store = SQLiteEventStore(str(tmp_path / "sessions.db"))

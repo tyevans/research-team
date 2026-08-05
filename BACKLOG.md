@@ -171,8 +171,27 @@ both commented in place, both recorded as R3 and R4 in
   checks the count by hand and refuses. A strict mode upstream would replace
   that check.
 
-Three further redstring gaps (R1 embedding provider, R2 identifying
-unconsolidated entities, R5 an understated eventsource floor) are recorded in
-the same spec section. R1 is why there is no vector search and no
-`AGENT_VECTOR_STORE`; R2 is why the repair path is keyed by `source_id` here
-rather than asking the library what is unconsolidated.
+Both still stand as of redstring **0.2.0**, and both are worth filing upstream
+with the detail found while upgrading:
+
+- **R3 is a small change, not a redesign.** `GlobalEventFeed.read_all` already
+  takes `FeedReadOptions(tenant_id=...)`, and eventsource's SQLite adapter
+  pushes it into the `WHERE` clause. `project()` just never passes it.
+  Forwarding a `tenant_id` would turn our per-open full-log scan into an
+  indexed read.
+- **R4's real defect is lost information, not the missing raise.** The handler
+  is a bare `except Exception` that discards the exception, so `failed` is an
+  integer with no way back to the offending event. We can implement the raise
+  ourselves — we do — but we cannot reconstruct what redstring threw away. Ask
+  for `ReplayReport.failures` carrying position, event type and error; the
+  strict mode is the lesser half.
+
+Of the other three gaps recorded in the same spec section, **R1 (embedding
+provider) and R5 (understated eventsource floor) are closed in 0.2.0**. R2
+(identifying unconsolidated entities) is still open, and is why the repair path
+is keyed by `source_id` here rather than asking the library what is
+unconsolidated.
+
+R1 closing means vector search is now *possible*, not present: there is still
+no `AGENT_VECTOR_STORE` and no recall path. That is a feature to spec, not a
+workaround to delete, and it does not belong in this section.

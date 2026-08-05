@@ -20,8 +20,7 @@ if TYPE_CHECKING:
     # use case that depends on it.
     from research_team.application.summaries import SessionSummary
 
-ActivityReporter = Callable[[str], None]
-"""Called with a one-line progress note while a turn is in flight."""
+# ActivityReporter is defined below after ActivityNote
 
 
 class SessionRepository(Protocol):
@@ -182,6 +181,51 @@ class TurnAccountingError(Exception):
 
 
 MessageKind = Literal["assistant", "tool"]
+
+
+@dataclass(frozen=True)
+class ActivityMessage:
+    """A whole message the agent produced, reported before the turn commits.
+
+    Provisional by construction: the turn may still fail, in which case none of
+    these becomes an event. `payload` is opaque here for the same reason
+    `RecordedMessage.payload` is -- only the executor that produced it knows
+    its shape, and this layer may not name langchain.
+    """
+
+    message_id: str
+    """The message's own id, so a delta and the whole message that supersedes
+    it can be matched without inventing a correlation scheme."""
+
+    kind: MessageKind
+    payload: dict
+    is_error: bool = False
+
+
+@dataclass(frozen=True)
+class ActivityDelta:
+    """A chunk of assistant prose, to append to `message_id`.
+
+    Only ever prose. Tool call arguments are never streamed in pieces: partial
+    JSON renders as garbage and would have to be buffered whole anyway.
+    """
+
+    message_id: str
+    text: str
+
+
+ActivityNote = ActivityMessage | ActivityDelta
+
+ActivityReporter = Callable[[ActivityNote], None]
+"""Called with progress as a turn runs, before anything is appended to the log.
+
+Widened from a one-line string: the web UI renders the content itself, so a
+formatted line is not enough. The terminal formats these back down to a line
+(`research_team.interfaces.cli.repl`).
+
+Never called for anything the log will not eventually contain on a successful
+turn -- this is a preview of the turn, not a side channel for commentary.
+"""
 
 
 @dataclass(frozen=True)

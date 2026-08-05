@@ -1,11 +1,12 @@
 """The `TurnExecutor` port, implemented with deepagents and langchain."""
 
+import logging
 from collections.abc import Sequence
 from typing import Any
 
 from deepagents import create_deep_agent
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
@@ -19,6 +20,7 @@ from research_team.application import (
     AutonomyPolicy,
     TurnResult,
 )
+from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.domain import CodingSession, RecordToolDecision
 from research_team.infrastructure import config
 from research_team.infrastructure.agent.approval import interrupt_config
@@ -30,6 +32,8 @@ from research_team.infrastructure.agent.messages import (
     to_payload_messages,
     to_recorded,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def build_model() -> BaseChatModel:
@@ -53,6 +57,84 @@ def describe_activity(message: BaseMessage) -> str | None:
         first_line = str(message.content).strip().splitlines()
         return f"  ↳ {first_line[0][:70]}" if first_line else None
     return None
+
+
+def to_activity_message(message: BaseMessage) -> ActivityMessage | None:
+    """A whole message as a provisional note, or None if it cannot be keyed.
+
+    Built from `to_recorded` rather than from a second reading of the message,
+    so what streams and what is eventually recorded cannot disagree about kind
+    or payload -- that divergence is the failure mode this channel most needs
+    to avoid.
+
+    A message with no id is dropped rather than given a synthetic one: the id
+    is what the browser accumulates deltas against, and a guessed one would
+    splice two messages into one bubble.
+    """
+    message_id = getattr(message, "id", None)
+    if not message_id:
+        return None
+    recorded = to_recorded(message)
+    return ActivityMessage(
+        message_id=str(message_id),
+        kind=recorded.kind,
+        payload=recorded.payload,
+        is_error=recorded.is_error,
+    )
+
+
+MAIN_AGENT_NODE = "model"
+"""The graph node the top-level agent's model call runs under.
+
+Subagents stream on the same channel. Without this discriminator a subagent's
+internal reasoning would render as the main agent's answer to the user.
+"""
+
+
+def to_activity_delta(chunk: Any) -> ActivityDelta | None:
+    """A prose delta from a `messages`-mode chunk, or None if it is not one.
+
+    Returns None for tool calls, for subagent chunks, and for anything without
+    text -- this channel carries only what a person is waiting to read.
+
+    The type test is `AIMessage`, which covers `AIMessageChunk` because it
+    subclasses it. Testing for the chunk type alone would report nothing at
+    all from a non-streaming model, which delivers one whole message here.
+    """
+    try:
+        message, metadata = chunk
+    except (TypeError, ValueError):
+        return None
+    if metadata.get("langgraph_node") != MAIN_AGENT_NODE:
+        return None
+    if not isinstance(message, AIMessage):
+        return None
+    if getattr(message, "tool_calls", None):
+        return None
+    message_id = getattr(message, "id", None)
+    if not message_id:
+        return None
+    text = message.text if isinstance(getattr(message, "text", None), str) else message.content
+    if not isinstance(text, str) or not text:
+        return None
+    return ActivityDelta(message_id=str(message_id), text=text)
+
+
+def _report(
+    on_activity: ActivityReporter | None, note: ActivityMessage | ActivityDelta
+) -> None:
+    """Deliver one note to the reporter, never letting it fail the turn.
+
+    A minute of model work is not worth discarding because a browser feed
+    raised -- this is a side channel to a human watching, not a dependency
+    the turn's outcome should ever hinge on.
+    """
+    if on_activity is None:
+        return
+    try:
+        on_activity(note)
+    except Exception:
+        logger.exception("activity reporter raised; continuing the turn")
 
 
 def _first_arg(args: dict[str, object]) -> str:
@@ -135,10 +217,12 @@ class DeepAgentTurnExecutor:
     ) -> list[BaseMessage]:
         """Run one agent pass, reporting tool activity as it happens.
 
-        Streams with `stream_mode="values"`, where each chunk is the full
-        state. That yields live progress and the final message list from a
-        single pass -- a local model can take a minute per turn, and silence
-        for that long is indistinguishable from a hang.
+        Streams both `"values"` and `"messages"` from one pass: `values`
+        chunks carry the full state, from which `final` and the durable
+        record are built exactly as before; `messages` chunks carry
+        token-level prose deltas for a human waiting on the reply. A local
+        model can take a minute per turn, and silence for that long is
+        indistinguishable from a hang.
 
         A gated tool call halts the graph instead of running, so one turn can
         take several passes: stream, settle whatever was interrupted, resume,
@@ -173,14 +257,27 @@ class DeepAgentTurnExecutor:
         payload: Any = {"messages": messages}
         while True:
             state: dict[str, Any] = {}
-            async for state in agent.astream(payload, config=run_config, stream_mode="values"):
-                final = state.get("messages", final)
-                if on_activity is not None:
+            async for mode, chunk in agent.astream(
+                payload,
+                config=run_config,
+                # Two modes from one pass. `values` is what the durable record
+                # is built from, exactly as before; `messages` exists only to
+                # let prose reach a waiting human before the turn commits. One
+                # pass rather than two is what keeps them from disagreeing.
+                stream_mode=["values", "messages"],
+            ):
+                if mode == "values":
+                    state = chunk
+                    final = state.get("messages", final)
                     for message in final[reported:]:
-                        note = describe_activity(message)
-                        if note:
-                            on_activity(note)
-                reported = len(final)
+                        note = to_activity_message(message)
+                        if note is not None:
+                            _report(on_activity, note)
+                    reported = len(final)
+                elif mode == "messages":
+                    delta = to_activity_delta(chunk)
+                    if delta is not None:
+                        _report(on_activity, delta)
             interrupts = state.get("__interrupt__")
             if not interrupts:
                 return final

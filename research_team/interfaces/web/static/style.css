@@ -794,6 +794,47 @@ pre.code .ln {
 .approval-actions { display: flex; gap: 6px; }
 .approval-actions .btn { padding: 3px 10px; }
 
+/* --- provisional turn activity -------------------------------------------
+ * Streamed content for a turn that has not committed yet -- reduced opacity
+ * and a left border (the approval card's own language for "not settled")
+ * mark it as not-yet-real, so it can never be mistaken for a log entry. */
+.activity { display: flex; flex-direction: column; gap: 6px; padding: 4px 10px 8px; flex: 0 0 auto; }
+.provisional {
+  border-left: 2px solid var(--fg-faint);
+  border-radius: var(--radius);
+  background: var(--bg-raise);
+  padding: 6px 9px;
+  opacity: 0.7;
+}
+.provisional-tag {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.04em;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+.provisional-body { font-size: var(--t-sm); white-space: pre-wrap; word-break: break-word; }
+.provisional-tool .provisional-tag,
+.provisional-tool { border-color: var(--k-tool); }
+
+/* A discarded turn: everything the failed attempt streamed, kept behind a
+ * disclosure since it was never recorded and won't survive a reload. */
+.discarded {
+  margin: 2px 0 8px;
+  padding: 4px 10px 6px;
+}
+.discarded summary {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--k-failure);
+  cursor: pointer;
+  text-decoration: line-through;
+  text-decoration-color: var(--k-failure);
+}
+.discarded[open] summary { text-decoration: none; }
+.discarded .provisional { margin-top: 6px; opacity: 0.55; }
+
 /* --- composer ---------------------------------------------------------- */
 .composer {
   flex: 0 0 auto;

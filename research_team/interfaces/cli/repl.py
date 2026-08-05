@@ -22,9 +22,11 @@ from research_team.application import (
     AutonomyPolicy,
     SessionService,
 )
+from research_team.application.ports import ActivityNote
 from research_team.domain import CreateProject
 from research_team.infrastructure import config
 from research_team.interfaces.cli.formatters import (
+    format_activity,
     format_autonomy,
     format_diff,
     format_file_history,
@@ -389,6 +391,13 @@ async def handle_command(
     return f"unknown command {command!r} -- try /help"
 
 
+def _print_activity(note: ActivityNote) -> None:
+    """Format and print a note, or stay silent if there is nothing to show."""
+    line = format_activity(note)
+    if line is not None:
+        print(line)
+
+
 async def run(service: SessionService, policy: AutonomyPolicy | None = None) -> None:
     """Drive a session until the user leaves. The service is closed on the way out.
 
@@ -413,7 +422,7 @@ async def run(service: SessionService, policy: AutonomyPolicy | None = None) -> 
                 print()
                 return
             try:
-                output = await handle_command(repl, line, on_activity=print)
+                output = await handle_command(repl, line, on_activity=_print_activity)
             except KeyboardInterrupt:
                 # The turn's own events are discarded whole -- the log keeps
                 # the last completed turn rather than a partial one -- but the
