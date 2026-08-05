@@ -1489,7 +1489,7 @@ wheels = [
 
 [[package]]
 name = "redstring"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dateparser" },
@@ -1499,9 +1499,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f2/1d/50509ae021fc7040c344120160901c61531c27a4a74a237f0ba6f8833450/redstring-0.1.0.tar.gz", hash = "sha256:8fd9985bcef463f89f470bf78e266e9cdc76664cf9c15aed39f7ba1335ff4c30", size = 1137679, upload-time = "2026-08-05T04:45:43.241Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dd/a0/9373ca2f2b4444dcc1c7dd9c776ded7f0dbf1bb66e9ec57a71a2f08fc3ab/redstring-0.2.0.tar.gz", hash = "sha256:abb4bb90d51dc06cdf1a8e710e3d0a88153d466b8e7863927a971b93cb04675f", size = 1188454, upload-time = "2026-08-05T17:26:46.886Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9e/4e/36966f962fc03adec0349d843228f3e32f929609b2a7374e22084232cda5/redstring-0.1.0-py3-none-any.whl", hash = "sha256:a665ef182906b5369ad00d341420bc44678456ef55a61db7252742a22c0edd41", size = 230526, upload-time = "2026-08-05T04:45:41.734Z" },
+    { url = "https://files.pythonhosted.org/packages/70/5f/a9f628c611d0aff15e18287597cb82192257dbc5f4eacc2f231baf3e9bb5/redstring-0.2.0-py3-none-any.whl", hash = "sha256:1be645d3c04b5eebeecca69467b8e87f4f763dd45df10007917507d8bcd72f1b", size = 240734, upload-time = "2026-08-05T17:26:45.475Z" },
 ]
 
 [package.optional-dependencies]
@@ -1650,7 +1650,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "langchain-openai", specifier = ">=1.4.1" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'tracing'", specifier = ">=1.0,<2.0" },
-    { name = "redstring", extras = ["llm", "neo4j"], specifier = ">=0.1.0" },
+    { name = "redstring", extras = ["llm", "neo4j"], specifier = ">=0.2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.1" },
 ]
 provides-extras = ["tracing"]

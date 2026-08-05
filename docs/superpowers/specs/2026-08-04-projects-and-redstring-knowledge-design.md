@@ -336,15 +336,31 @@ Gaps in redstring that research-team, as its first consumer, surfaced. None
 blocks this spec; each has a workaround named above, and each workaround is
 written to be deleted.
 
-| | Gap | What it costs here |
-|---|---|---|
-| **R1** | **No `EmbeddingProvider` port.** `VectorProjection` folds only `EntitiesEmbedded`, whose sole producer takes caller-supplied vectors. Nothing in the library can populate a `VectorStore`. | Vector search is out of scope entirely, and consolidation loses the embedding signal. |
-| **R2** | **No way to identify unconsolidated entities.** `Entity` carries no consolidation state. | Repair bookkeeping moves to our side, keyed by `source_id`. |
-| **R3** | **`project()` cannot scope to a stream or category** — global feed only. | Rebuild uses `tenant_filter` and still scans the whole log. |
-| **R4** | **`ReplayReport.failed` is a count, not a raise.** No strict mode. | Project open checks it manually and refuses. |
-| **R5** | **eventsource floor understated** — `>=0.9.1`, but projections forward keywords added in 0.10.0. | None here; our floor is already 0.10.0. Noted so it is not lowered. |
+Status is against **redstring 0.2.0**, which closed two of the five.
+
+| | Gap | Status | What it costs here |
+|---|---|---|---|
+| **R1** | **No `EmbeddingProvider` port.** `VectorProjection` folds only `EntitiesEmbedded`, whose sole producer takes caller-supplied vectors. Nothing in the library can populate a `VectorStore`. | **Closed in 0.2.0.** `EmbeddingProvider`, `FakeEmbeddingProvider` and `EmbeddingProviderError` are exported; `build_graph` takes `embedding_provider` and `vector_store` together and refuses a mismatched or half-supplied pair. `LangChainEmbeddingProvider` is reached by path, so `import redstring` still pulls in no LangChain. | Nothing now. Vector search is unblocked but **not built** — no `AGENT_VECTOR_STORE`, no recall path. That is a feature to spec, not a workaround to delete. |
+| **R2** | **No way to identify unconsolidated entities.** `Entity` carries no consolidation state. | Open. 0.2.0's `Entity` still has no such field, and its docstring records the omission as deliberate. | Repair bookkeeping stays on our side, keyed by `source_id`. |
+| **R3** | **`project()` cannot scope to a stream, category or tenant** — global feed only. | Open, and cheaper to close than first recorded: `GlobalEventFeed.read_all` already accepts `FeedReadOptions(tenant_id=...)`, which the eventsource SQLite adapter pushes into the `WHERE` clause. `project()` calls `read_all(from_position)` and never passes options, so filtering the query could do happens in Python instead. | Rebuild uses `tenant_filter` and still reads the whole log per project open. |
+| **R4** | **`ReplayReport.failed` is a count, not a raise.** No strict mode. | Open, and worse than "no strict mode": the handler is a bare `except Exception` that **discards the exception**, so no caller can learn which event failed or why. | Project open checks the count and refuses — safely, and with a message nobody can act on. |
+| **R5** | **eventsource floor understated** — `>=0.9.1`, but projections forward keywords added in 0.10.0. | **Closed in 0.2.0.** Floor is now `>=0.10.0,<0.12`, tested against 0.11.0. | None, and none before: our floor was already 0.10.0. |
 
 When a redstring release closes these, the workarounds are the change list.
+
+Two further asks that no longer fit the table, because they are additions
+rather than gaps this spec worked around:
+
+- **A progress callback on `build_graph`.** `remember` is one opaque `await`
+  that chunks, extracts per chunk and consolidates per entity — the slowest
+  thing in a turn and the least legible. The web UI's activity channel shows
+  the tool call and the final report with nothing in between, and cannot show
+  more until redstring emits something to show. Closing this also needs work
+  here: `build_knowledge_tools` takes no `ActivityReporter`, so a tool has
+  nowhere to send progress even if it had some.
+- **An alias for the `project` verb.** redstring exports it bare, and any
+  consumer with its own project noun collides. Ours does; `rebuild.py` imports
+  it as `fold_into` for exactly this reason.
 
 ## What comes next
 
