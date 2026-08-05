@@ -14,6 +14,7 @@ from hypothesis import strategies as st
 from langchain_core.messages import AIMessage
 
 from research_team.application import ApprovalDecision, AutonomyPolicy
+from research_team.application.ports import ActivityMessage
 from research_team.domain import CodingSession, StartSession, ToolCallDecided
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 from research_team.infrastructure.agent.search import build_search_tool
@@ -202,14 +203,15 @@ async def test_activity_is_not_re_reported_across_resumed_passes():
         on_activity=notes.append,
     )
 
-    # Deduplicate by message_id for ActivityMessage objects, or use identity for others.
-    # The test ensures that the reported variable survives the loop and prevents
-    # re-reporting of the same activity.
+    # Only whole messages are checked for duplicates. A delta legitimately
+    # shares its message_id with the whole message it builds toward -- that
+    # is by design (Task 3), not a re-report -- so it is excluded here.
     seen_ids = set()
     for note in notes:
-        note_id = getattr(note, "message_id", id(note))
-        assert note_id not in seen_ids, f"activity was reported twice: {note}"
-        seen_ids.add(note_id)
+        if not isinstance(note, ActivityMessage):
+            continue
+        assert note.message_id not in seen_ids, f"activity was reported twice: {note}"
+        seen_ids.add(note.message_id)
 
 
 async def test_a_level_raised_mid_turn_gates_the_next_call():
