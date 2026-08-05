@@ -1,5 +1,3 @@
-from uuid import uuid4
-
 from research_team.application.knowledge import (
     IngestReport,
     KnowledgePort,
