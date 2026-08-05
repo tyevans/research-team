@@ -99,6 +99,18 @@ the original `EntitiesMerged` off the consolidation stream and carry its reason
 through. Deferred rather than guessed at, because which one is right depends on
 whether any caller ever wants that string.
 
+### B7. One weak assertion in the knowledge-tools tests
+
+`tests/infrastructure/test_knowledge_tools.py::test_remember_reports_counts_and_confidence`
+asserts `"7" in result and "4" in result` — bare digits, which could appear
+incidentally inside a UUID or another number in the same output. It should
+assert the whole informative phrase instead.
+
+It came from the plan's own test code, and the surrounding assertions (the
+domain name, the confidence disambiguation) make a false pass unlikely in
+practice — which is why it was not worth a fix round on its own. Worth
+correcting the next time that file is touched.
+
 ## Waiting on redstring
 
 ### B2. Two workarounds to unwind when redstring closes R3 and R4
