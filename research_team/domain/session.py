@@ -65,6 +65,8 @@ class SessionState(BaseModel):
 
     system_prompt: str = ""
     model_name: str = ""
+    project_id: UUID | None = None
+    """The project whose filesystem and knowledge graph this session shares."""
     files: dict[str, dict[str, Any]] = Field(default_factory=dict)
     messages: list[dict[str, Any]] = Field(default_factory=list)
     turn_index: int = 0
@@ -109,12 +111,15 @@ def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
     session_id = state.session_id
     match command, state:
         # ---- creation ----
-        case StartSession(system_prompt=prompt, model_name=model), SessionState(
-            status="new"
-        ):
+        case StartSession(
+            system_prompt=prompt, model_name=model, project_id=project_id
+        ), SessionState(status="new"):
             return [
                 SessionStarted(
-                    aggregate_id=session_id, system_prompt=prompt, model_name=model
+                    aggregate_id=session_id,
+                    system_prompt=prompt,
+                    model_name=model,
+                    project_id=project_id,
                 )
             ]
         case StartSession(), _:
@@ -268,7 +273,9 @@ def evolve(state: SessionState, event: DomainEvent) -> SessionState:
     still replays instead of failing halfway through.
     """
     match event:
-        case SessionStarted(system_prompt=prompt, model_name=model):
+        case SessionStarted(
+            system_prompt=prompt, model_name=model, project_id=project_id
+        ):
             # Replaces state wholesale: this is the creation event, and it is
             # the only one that establishes rather than amends.
             return SessionState(
@@ -276,6 +283,7 @@ def evolve(state: SessionState, event: DomainEvent) -> SessionState:
                 status="started",
                 system_prompt=prompt,
                 model_name=model,
+                project_id=project_id,
             )
 
         case (

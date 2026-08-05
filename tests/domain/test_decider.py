@@ -115,6 +115,28 @@ def test_starting_twice_is_rejected():
         decide(StartSession(system_prompt="x", model_name="y"), started())
 
 
+def test_a_session_records_the_project_it_belongs_to():
+    session_id, project_id = uuid4(), uuid4()
+    state = initial_state(session_id)
+
+    events = decide(
+        StartSession(system_prompt="p", model_name="m", project_id=project_id), state
+    )
+
+    assert events[0].project_id == project_id
+    assert evolve(state, events[0]).project_id == project_id
+
+
+def test_a_session_without_a_project_has_none():
+    session_id = uuid4()
+    state = initial_state(session_id)
+
+    events = decide(StartSession(system_prompt="p", model_name="m"), state)
+
+    assert events[0].project_id is None
+    assert evolve(state, events[0]).project_id is None
+
+
 @pytest.mark.parametrize(
     "command",
     [

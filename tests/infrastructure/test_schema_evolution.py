@@ -22,6 +22,7 @@ from research_team.domain import (
     CodingSession,
     ConversationCompacted,
     SendUserMessage,
+    SessionStarted,
     StartSession,
     ToolCallDecided,
     TurnFailed,
@@ -190,6 +191,38 @@ async def test_a_schema_version_bump_falls_back_to_replay(repository, session_id
 
     assert reloaded.version == session.version
     assert len(reloaded.state.messages) == 60
+
+
+async def test_session_started_without_project_id_still_loads(repository, started, db_path):
+    """A SessionStarted written before projects existed has no project_id key.
+
+    Written against a fresh id rather than `started`'s own session_id:
+    `SessionStarted` must be the stream's first event, and that fixture
+    already wrote one through the ordinary path. Depending on `started`
+    anyway (rather than just `db_path`) is what guarantees the `events`
+    table already exists -- schema init happens on first save, and this
+    test is the only one that never calls it otherwise.
+    """
+    session_id = uuid4()
+    await _write_old_event(
+        db_path,
+        session_id,
+        version=1,
+        event_type="SessionStarted",
+        payload={
+            "aggregate_id": str(session_id),
+            "aggregate_type": "CodingSession",
+            "aggregate_version": 1,
+            "system_prompt": "p",
+            "model_name": "m",
+        },
+    )
+
+    events = await repository.events_for(session_id)
+
+    event = events[0]
+    assert isinstance(event, SessionStarted)
+    assert event.project_id is None
 
 
 async def test_a_before_validator_can_reshape_an_old_payload(repository, started, db_path):
