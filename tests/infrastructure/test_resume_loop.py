@@ -191,7 +191,7 @@ async def test_activity_is_not_re_reported_across_resumed_passes():
     searches = Searches()
     policy = AutonomyPolicy(default="auto")
     policy.set("web_search", "ask")
-    notes: list[str] = []
+    notes: list = []
 
     await _run(
         session,
@@ -202,7 +202,14 @@ async def test_activity_is_not_re_reported_across_resumed_passes():
         on_activity=notes.append,
     )
 
-    assert len(notes) == len(set(notes)), f"activity was reported twice: {notes}"
+    # Deduplicate by message_id for ActivityMessage objects, or use identity for others.
+    # The test ensures that the reported variable survives the loop and prevents
+    # re-reporting of the same activity.
+    seen_ids = set()
+    for note in notes:
+        note_id = getattr(note, "message_id", id(note))
+        assert note_id not in seen_ids, f"activity was reported twice: {note}"
+        seen_ids.add(note_id)
 
 
 async def test_a_level_raised_mid_turn_gates_the_next_call():

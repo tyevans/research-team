@@ -19,6 +19,7 @@ from research_team.application import (
     AutonomyPolicy,
     TurnResult,
 )
+from research_team.application.ports import ActivityMessage
 from research_team.domain import CodingSession, RecordToolDecision
 from research_team.infrastructure import config
 from research_team.infrastructure.agent.approval import interrupt_config
@@ -53,6 +54,30 @@ def describe_activity(message: BaseMessage) -> str | None:
         first_line = str(message.content).strip().splitlines()
         return f"  ↳ {first_line[0][:70]}" if first_line else None
     return None
+
+
+def to_activity_message(message: BaseMessage) -> ActivityMessage | None:
+    """A whole message as a provisional note, or None if it cannot be keyed.
+
+    Built from `to_recorded` rather than from a second reading of the message,
+    so what streams and what is eventually recorded cannot disagree about kind
+    or payload -- that divergence is the failure mode this channel most needs
+    to avoid.
+
+    A message with no id is dropped rather than given a synthetic one: the id
+    is what the browser accumulates deltas against, and a guessed one would
+    splice two messages into one bubble.
+    """
+    message_id = getattr(message, "id", None)
+    if not message_id:
+        return None
+    recorded = to_recorded(message)
+    return ActivityMessage(
+        message_id=str(message_id),
+        kind=recorded.kind,
+        payload=recorded.payload,
+        is_error=recorded.is_error,
+    )
 
 
 def _first_arg(args: dict[str, object]) -> str:
@@ -162,8 +187,8 @@ class DeepAgentTurnExecutor:
                 final = state.get("messages", final)
                 if on_activity is not None:
                     for message in final[reported:]:
-                        note = describe_activity(message)
-                        if note:
+                        note = to_activity_message(message)
+                        if note is not None:
                             on_activity(note)
                 reported = len(final)
             interrupts = state.get("__interrupt__")
