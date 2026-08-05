@@ -118,23 +118,52 @@ domain name, the confidence disambiguation) make a false pass unlikely in
 practice — which is why it was not worth a fix round on its own. Worth
 correcting the next time that file is touched.
 
-### B8. Two accessors reach through private attributes
+### B8. One accessor reaches through a private attribute
 
-- `Application.turns_tools()` in `research_team/composition.py` reads
-  `service._executor._tools`, so a test can inspect which tools were registered.
-- `_project_repository` in `research_team/interfaces/cli/repl.py` reads
-  `service._repository`, to reach the `Project` aggregate repository.
+`Application.turns_tools()` in `research_team/composition.py` reads
+`self.service._executor`, so a test can inspect which tools are bound.
 
-Each is documented inline and each works. The concern is drift: the second one
-was written *because* the first established the precedent, which is how an
-expedient becomes a convention nobody chose. The cleaner shapes are a public
-`tools` property on the executor, and a real port method for project access
-rather than reaching past `SessionService`.
+**This entry has shrunk twice, and both reductions were the rule working.** It
+originally covered two reaches. The REPL's `_project_repository` is gone —
+`SessionService` grew `projects` and `list_projects`, so the interface asks
+rather than reaches. And the `._tools` half is gone — the executor now has a
+public `tools` property, added when Task 14 needed to swap tools at runtime
+anyway. What survives is the `._executor` hop itself.
 
-Deferred twice because both alternatives widen a public surface that was not
-the task's business. **If a third case appears, stop and fix the pattern rather
-than adding to it** — at that point it is the codebase's convention whether
-anyone decided so or not.
+The remaining fix is a `tools` accessor on `SessionService`, or accepting that a
+composition root may know its own executor. Left as-is because the case for the
+latter is real and nobody has needed to decide.
+
+**The rule that produced those reductions still stands: if a third reach
+appears, fix the pattern rather than adding to it** — at that point it is the
+codebase's convention whether anyone chose it or not.
+
+### B10. `Application.close()` can skip `detach_project`
+
+`research_team/composition.py`. `detach_project()` is the last statement after
+`turns.cancel_all()`, `summaries.stop()` and `service.close()`. If any of those
+raises, a Neo4j driver is left open at process exit.
+
+Shutdown-path only, and only for the Neo4j backend, so nothing leaks in the
+default in-memory configuration. The fix is a `finally` or a small ordered
+teardown that runs every step regardless — worth doing the next time that
+function is touched, not on its own.
+
+### B11. The web UI's "last join wins" swaps tools under an open tab
+
+`research_team/interfaces/web/app.py`, the join route. The web app serves every
+session from one process with one executor, so a second browser tab joining
+project B rebinds the executor's tools while tab A's session prompt still
+describes project A's graph.
+
+Chosen deliberately: this is a local single-user tool, and a per-session
+attachment map would add isolation nothing currently needs. The route's
+docstring says so. There is no corruption risk in flight — `set_tools` rebinds
+rather than mutates, and a running turn keeps the list it started with.
+
+It becomes worth fixing the moment two people, or two projects, use one server
+at once. The shape is a per-session attachment keyed the way `TurnActivity`
+already keys its buffers.
 
 ### B9. A silent no-op release hides one failure it cannot distinguish
 
