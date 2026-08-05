@@ -122,6 +122,16 @@ function isTurnEnd(type) {
   return t.indexOf('turn') >= 0 && (t.indexOf('completed') >= 0 || t.indexOf('failed') >= 0);
 }
 
+/* The most recent TurnFailed row, if any -- where catch-up's `discarded`
+ * content (itself index-less) belongs. */
+function lastFailedTurnIndex() {
+  for (let i = state.events.length - 1; i >= 0; i--) {
+    const t = String(state.events[i].type || '').toLowerCase();
+    if (t.indexOf('turn') >= 0 && t.indexOf('failed') >= 0) return state.events[i].index;
+  }
+  return null;
+}
+
 function humanType(type) {
   return String(type || 'Event').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
 }
@@ -331,7 +341,9 @@ const state = {
   loadingSnapshot: false,
   freshIndices: {},
   approvals: {},           // id -> approval view, gated calls waiting on a person
-  approvalDeciding: null   // id of the approval whose POST is in flight
+  approvalDeciding: null,  // id of the approval whose POST is in flight
+  activity: { order: [], byId: {} },  // provisional content for the running turn
+  discarded: {}                       // failed turn index -> provisional content
 };
 
 let root = null;            // current view element
@@ -421,6 +433,11 @@ function onRoute() {
       state.loadingSnapshot = false;
       state.approvals = {};
       state.approvalDeciding = null;
+      // Leaving the session leaves its provisional content behind too --
+      // otherwise a stale bubble from the old session would flash in the new
+      // one before the first activity frame (or the turn end) replaces it.
+      state.activity = { order: [], byId: {} };
+      state.discarded = {};
       sessionEls = null;
       mountSessionView();
       loadSession();
@@ -612,6 +629,7 @@ function mountSessionView() {
     conversation: slot(root, 'conversation'),
     convMeta: slot(root, 'conv-meta'),
     approvals: slot(root, 'approvals'),
+    activity: slot(root, 'activity'),
     composer: slot(root, 'composer'),
     input: slot(root, 'input'),
     send: slot(root, 'send'),
@@ -655,6 +673,27 @@ function loadSession() {
     renderTimeline();
     if (state.at !== null) loadSnapshot();
     else { state.snapshot = null; renderWorkspace(); renderConversation(); renderScrubBar(); }
+    // A tab that (re)loads mid-turn never saw the activity frames, and they
+    // carry no position for Last-Event-ID to resume from -- this is the only
+    // way it finds out what is provisionally in flight. Best-effort, like the
+    // running/approvals checks above.
+    api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current/activity')
+      .then(function (body) {
+        if (state.sessionId !== id) return;
+        (body.running || []).forEach(putActivity);
+        renderActivity();
+        // The discarded buffer isn't tied to an index server-side (it's just
+        // "the last failed turn's content"), so pin it to that turn's
+        // TurnFailed row here, the same place a live frame would have put it.
+        if (body.discarded && body.discarded.length) {
+          const idx = lastFailedTurnIndex();
+          if (idx !== null) {
+            state.discarded[idx] = body.discarded;
+            renderTimeline();
+          }
+        }
+      })
+      .catch(function () { /* catch-up is best-effort */ });
   }).catch(function (e) {
     if (state.sessionId !== id) return;
     state.sessionError = e.message;
@@ -985,6 +1024,8 @@ function renderTimeline() {
         }, 'fork here'))
     ]);
     list.appendChild(row);
+    const discarded = renderDiscarded(index);
+    if (discarded) list.appendChild(discarded);
   });
 
   const atHead = state.at === null;
@@ -1907,6 +1948,12 @@ function onStreamEvent(payload) {
     onApprovalFrame(payload);
     return;
   }
+  // Provisional turn content rides the same connection but is not a log entry
+  // either -- same reasoning as approvals above, see onActivityFrame.
+  if (payload.type === 'TurnActivity') {
+    onActivityFrame(payload);
+    return;
+  }
   if (state.route.name === 'tree') {
     clearTimeout(treeRefreshTimer);
     treeRefreshTimer = setTimeout(loadTree, 400);
@@ -1943,8 +1990,28 @@ function onStreamEvent(payload) {
     state.watchedTurn.from_index = index;
   }
 
-  // No narration here on purpose: a turn's frames all arrive together when it
-  // commits, so per-event progress would be a burst at the end, not progress.
+  // Log frames and activity frames are different channels on purpose: this one
+  // is the durable record, arriving in a burst when the turn commits, while
+  // provisional content streams in above via onActivityFrame.
+
+  // A turn ending -- ours or one we're only watching -- reconciles whatever
+  // streamed in as activity. On success the real log events (just pushed
+  // above) are the record now, so provisional content is dropped outright: it
+  // would only duplicate what is about to render from state.events. On
+  // failure nothing was appended but the marker itself, so what streamed is
+  // the only trace of the attempt -- keep it, behind a disclosure, on this
+  // row.
+  if (isTurnEnd(payload.type)) {
+    if (String(payload.type).toLowerCase().indexOf('failed') >= 0) {
+      const provisional = state.activity.order
+        .map(function (id) { return state.activity.byId[id]; })
+        .filter(Boolean);
+      if (provisional.length) state.discarded[index] = provisional;
+    }
+    state.activity = { order: [], byId: {} };
+    renderActivity();
+    renderTimeline();
+  }
 
   // TurnCompleted / TurnFailed close a turn. For one we are watching, that
   // frame IS the completion signal -- no polling, no follow-up request.
@@ -1961,6 +2028,59 @@ function onStreamEvent(payload) {
     renderComposer();
     loadSession();
   }
+}
+
+// Provisional turn content. Not a log entry -- it carries no index, and the
+// events it previews may never be appended at all if the turn fails.
+function onActivityFrame(payload) {
+  if (state.route.name !== 'session' || payload.session_id !== state.sessionId) return;
+  putActivity(payload);
+  renderActivity();
+}
+
+// The server already accumulates delta text (each frame's `text` is the full
+// prose so far, not an increment), so the browser stores whole entries rather
+// than appending -- one accumulator, on the side that has to answer the
+// catch-up route anyway. A whole message replaces any accumulated prose under
+// the same message_id, which this overwrite handles for free.
+function putActivity(entry) {
+  const id = entry.message_id;
+  if (!state.activity.byId[id]) state.activity.order.push(id);
+  state.activity.byId[id] = entry;
+}
+
+function renderActivity() {
+  if (!sessionEls || !sessionEls.activity) return;
+  const box = sessionEls.activity;
+  clear(box);
+  if (!state.turnRunning || !state.activity.order.length) return;
+  state.activity.order.forEach(function (id) {
+    const entry = state.activity.byId[id];
+    if (entry) box.appendChild(renderProvisional(entry));
+  });
+}
+
+function renderProvisional(entry) {
+  // A whole message clears `text` server-side and populates `payload`
+  // instead, so prefer `text` (the delta accumulator) and fall back to the
+  // message content.
+  const body = entry.text || contentText(entry.payload && entry.payload.content);
+  return h('div', { class: 'provisional provisional-' + entry.kind }, [
+    h('div', { class: 'provisional-tag', text: 'in progress — not yet recorded' }),
+    h('div', { class: 'provisional-body', text: body })
+  ]);
+}
+
+/* A discarded turn's provisional content: everything that streamed in before
+ * a TurnFailed marker with nothing else to show for it. Ephemeral -- gone on
+ * reload -- which the disclosure's label says plainly. */
+function renderDiscarded(index) {
+  const entries = state.discarded[index];
+  if (!entries || !entries.length) return null;
+  return h('details', { class: 'discarded' }, [
+    h('summary', { text: 'discarded — not recorded' }),
+    entries.map(function (entry) { return renderProvisional(entry); })
+  ]);
 }
 
 function onApprovalFrame(payload) {
