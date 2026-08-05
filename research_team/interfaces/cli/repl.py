@@ -236,10 +236,26 @@ async def _handle_project(repl: "Repl", argument: str) -> str:
             # Worded verbatim: it names the session holding the project,
             # which is the next thing anyone asks.
             return str(error)
-        repl.session_id = new_session_id
+        await _switch_to(repl, new_session_id)
         return f"joined project {name}; session {repl.session_id}"
 
     return "usage: /project [new <name>|use <name>]"
+
+
+async def _switch_to(repl: "Repl", new_session_id: UUID) -> None:
+    """Move the REPL's cursor, releasing any project the outgoing session held.
+
+    Every path that reassigns `repl.session_id` -- `/resume`, `/new`,
+    `/rewind`/`/fork`, `/project use` -- goes through this rather than
+    assigning directly. Without it, a session that held a project keeps
+    "holding" it (per `Project.state.active_session_id`) even after nobody is
+    driving it anymore: `release_project` was previously only called at
+    REPL exit, so switching sessions leaked the project it held with no
+    command able to get it back. `release_project` is a no-op for a session
+    that held nothing, so this is safe to call on every switch.
+    """
+    await repl.service.release_project(repl.session_id)
+    repl.session_id = new_session_id
 
 
 async def handle_command(
@@ -272,10 +288,10 @@ async def handle_command(
         if isinstance(resolved, str):
             return resolved
         session = await service.load(resolved)
-        repl.session_id = resolved
+        await _switch_to(repl, resolved)
         return format_resumed(session)
     if command == "/new":
-        repl.session_id = await service.create_session()
+        await _switch_to(repl, await service.create_session())
         return f"started {repl.session_id}"
     if command == "/diff":
         if not argument:
@@ -301,9 +317,10 @@ async def handle_command(
         if not argument.isdigit():
             return f"usage: {command} <event-number>"
         try:
-            repl.session_id = await service.fork(repl.session_id, int(argument))
+            forked_id = await service.fork(repl.session_id, int(argument))
         except (ValueError, CommandRejectedError) as error:
             return str(error)
+        await _switch_to(repl, forked_id)
         verb = "rewound to" if command == "/rewind" else "forked at"
         return f"{verb} event {argument}; session {repl.session_id}"
     if command == "/autonomy":

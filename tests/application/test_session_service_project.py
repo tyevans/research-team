@@ -115,10 +115,43 @@ async def test_release_project_is_a_no_op_for_a_plain_session(service):
     await service.release_project(session_id)
 
 
-async def test_releasing_lets_a_second_session_take_the_project(service, project_id):
+async def test_releasing_lets_a_second_session_take_the_project(
+    service, project_id, fake_model
+):
+    """`second != first` alone proves nothing -- two `uuid4()`s can't collide.
+    What matters: the second call does not raise, it actually joined the
+    project, and it inherited the tip the first session left behind.
+    """
     first = await service.start_in_project(project_id)
+    await _write_file(service, first, "/notes.md", "hello", fake_model)
     await service.release_project(first)
 
     second = await service.start_in_project(project_id)
 
-    assert second != first
+    session = await service.load(second)
+    assert session.state.project_id == project_id
+    assert session.state.files["/notes.md"]["content"] == "hello"
+
+
+async def test_release_project_is_a_no_op_for_a_session_that_is_not_the_holder(
+    service, project_id
+):
+    """Releasing something you do not hold is nothing, not an error.
+
+    Reachable in the REPL: session `first` holds the project and releases it
+    normally, `second` then takes it -- and later something resumes `first`
+    (an old session whose `project_id` is still set to this project) and
+    tries to release it again on exit. Before this behaviour,
+    `AdvanceTip` rejected that as "you do not hold this", and the rejection
+    escaped the REPL's cleanup `finally`. This pins the fix: releasing a
+    non-holding session must not raise, and must not disturb whoever
+    actually holds it.
+    """
+    first = await service.start_in_project(project_id)
+    await service.release_project(first)
+    second = await service.start_in_project(project_id)
+
+    await service.release_project(first)
+
+    project = await service.projects.load(project_id)
+    assert project.state.active_session_id == second

@@ -313,16 +313,24 @@ class SessionService:
         await self._repository.save(session)
 
     async def release_project(self, session_id: UUID) -> None:
-        """Hand the project's filesystem tip back, so another session can take it.
+        """Hand the project's filesystem tip back, if this session holds it.
 
-        A no-op for a session that was never part of a project -- callers on
-        the normal exit path do not have to know which kind of session they
-        are closing.
+        A no-op whenever there is nothing to release: a session with no
+        `project_id`, or one whose project is no longer (or never was)
+        actively held by it. That second case is ordinary, not exceptional --
+        a REPL switching away from a session, or resuming an old session
+        that named a project long since handed to someone else, both reach
+        it -- so this stays quiet rather than raising `AdvanceTip`'s
+        "you do not hold this" rejection. That is what lets every
+        session-switch path call this unconditionally, and keeps the
+        rejection from ever escaping a caller's exit/cleanup path.
         """
         session = await self._repository.load(session_id)
         if session.state.project_id is None:
             return
         project = await self._projects.load(session.state.project_id)
+        if project.state.active_session_id != session_id:
+            return
         project.execute(AdvanceTip(session_id=session_id, at_event=session.version))
         await self._projects.save(project)
 
