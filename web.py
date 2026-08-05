@@ -6,7 +6,7 @@ import uvicorn
 
 from research_team.composition import build_application
 from research_team.infrastructure import config
-from research_team.interfaces.web import WebApprovals, create_app
+from research_team.interfaces.web import TurnActivity, WebApprovals, create_app
 
 
 def main() -> None:
@@ -14,6 +14,7 @@ def main() -> None:
     # the HTTP routes hand it the answers. Built here because it is the seam
     # between them, and the composition root is where seams are chosen.
     approvals = WebApprovals()
+    activity = TurnActivity()
     application = build_application(approvals=approvals)
 
     @asynccontextmanager
@@ -33,6 +34,7 @@ def main() -> None:
             application.turns,
             lifespan,
             approvals=approvals,
+            activity=activity,
         ),
         host=config.web_host(),
         port=config.web_port(),

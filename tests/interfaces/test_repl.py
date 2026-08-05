@@ -1,8 +1,9 @@
 from uuid import UUID, uuid4
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage, message_to_dict
 
+from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.domain import FileEdited, FileWritten, SessionStarted, TurnCompleted
 from research_team.interfaces.cli import repl
 from research_team.interfaces.cli.formatters import (
@@ -11,6 +12,7 @@ from research_team.interfaces.cli.formatters import (
     format_files,
     format_log,
 )
+from research_team.interfaces.cli.repl import format_activity
 
 
 @pytest.fixture
@@ -266,7 +268,12 @@ async def test_turn_reports_tool_activity(build_service, fake_model):
     current = await repl.Repl.start(await build_service(model=fake_model))
 
     seen: list[str] = []
-    await repl.handle_command(current, "write a.py", on_activity=seen.append)
+    def collect_formatted(note):
+        formatted = repl.format_activity(note)
+        if formatted is not None:
+            seen.append(formatted)
+
+    await repl.handle_command(current, "write a.py", on_activity=collect_formatted)
 
     assert any("write_file" in note for note in seen)
     assert any("/a.py" in note for note in seen)
@@ -275,7 +282,12 @@ async def test_turn_reports_tool_activity(build_service, fake_model):
 async def test_no_activity_reported_for_a_plain_reply(build_service, fake_model):
     current = await repl.Repl.start(await build_service(model=fake_model))
     seen: list[str] = []
-    await repl.handle_command(current, "hello", on_activity=seen.append)
+    def collect_formatted(note):
+        formatted = repl.format_activity(note)
+        if formatted is not None:
+            seen.append(formatted)
+
+    await repl.handle_command(current, "hello", on_activity=collect_formatted)
     assert seen == []
 
 
@@ -362,3 +374,54 @@ async def test_rebuild_command_rederives_the_session_list(current):
     assert "rebuilt" in output.lower()
     # And the list still answers afterwards.
     assert await repl.handle_command(current, "/sessions")
+
+
+# ---- activity formatting ----
+
+
+def test_tool_calls_format_as_a_bullet_line():
+    msg = AIMessage(
+        content="",
+        id="a1",
+        tool_calls=[
+            {
+                "name": "read_file",
+                "args": {"file_path": "a.py"},
+                "id": "c1",
+                "type": "tool_call",
+            }
+        ],
+    )
+    note = ActivityMessage(
+        message_id="a1",
+        kind="assistant",
+        payload=message_to_dict(msg),
+    )
+    assert format_activity(note) == "· read_file(a.py)"
+
+
+def test_tool_results_format_as_an_indented_first_line():
+    msg = ToolMessage(
+        content="found 3 matches\nline two",
+        tool_call_id="c1",
+        id="t1"
+    )
+    note = ActivityMessage(
+        message_id="t1",
+        kind="tool",
+        payload=message_to_dict(msg),
+    )
+    assert format_activity(note) == "  ↳ found 3 matches"
+
+
+def test_plain_prose_prints_nothing():
+    msg = AIMessage(content="hello", id="a1")
+    note = ActivityMessage(
+        message_id="a1", kind="assistant", payload=message_to_dict(msg)
+    )
+    assert format_activity(note) is None
+
+
+def test_deltas_print_nothing():
+    """The terminal shows the reply when the turn completes, not token by token."""
+    assert format_activity(ActivityDelta(message_id="a1", text="hel")) is None
