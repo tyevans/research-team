@@ -93,6 +93,21 @@ class DeepAgentTurnExecutor:
     def model_name(self) -> str:
         return getattr(self._model, "model_name", type(self._model).__name__)
 
+    @property
+    def tools(self) -> tuple[BaseTool, ...]:
+        """What this executor will hand the agent on its next turn."""
+        return tuple(self._tools)
+
+    def set_tools(self, tools: Sequence[BaseTool]) -> None:
+        """Replace the tool set for subsequent turns.
+
+        Safe between turns because `_invoke` builds the agent from `_tools` on
+        every pass -- there is no long-lived agent holding a stale list. Not
+        safe *during* a turn, and nothing calls it there: attaching a project
+        happens from the REPL's command loop, which is not inside a turn.
+        """
+        self._tools = list(tools)
+
     def encode_user_message(self, text: str) -> dict:
         return encode_user_message(text)
 

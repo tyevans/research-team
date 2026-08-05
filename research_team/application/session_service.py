@@ -23,6 +23,7 @@ from eventsource.observability.attributes import (
 )
 
 from research_team.application.context import ContextStrategy, FullHistory
+from research_team.application.knowledge_attachment import KnowledgeAttachment
 from research_team.application.ports import (
     ActivityReporter,
     SessionRepository,
@@ -117,6 +118,8 @@ class SessionService:
         default_system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         context: ContextStrategy | None = None,
         tracer: Tracer | None = None,
+        knowledge_prompt: str = "",
+        attachment: KnowledgeAttachment | None = None,
     ) -> None:
         self._repository = repository
         self._executor = executor
@@ -128,6 +131,14 @@ class SessionService:
         self._tracer = tracer if tracer is not None else create_tracer(__name__, False)
         self._default_system_prompt = default_system_prompt
         self._context = context if context is not None else FullHistory()
+        # Appended only for sessions started in a project: a session with no
+        # project gets no knowledge tools, so telling it about `remember` and
+        # `graph_search` would describe tools it does not have.
+        self._knowledge_prompt = knowledge_prompt
+        # None when the composition root wired no knowledge subsystem at all
+        # -- `attach_project`/`detach_project` are then no-ops, the same
+        # posture `search` has without an instance configured.
+        self._attachment = attachment
 
     @property
     def tracer(self) -> Tracer:
@@ -254,7 +265,7 @@ class SessionService:
             session = self._repository.create(session_id)
             session.execute(
                 StartSession(
-                    system_prompt=self._default_system_prompt,
+                    system_prompt=self._default_system_prompt + self._knowledge_prompt,
                     model_name=self._executor.model_name,
                     project_id=project_id,
                 )
@@ -297,7 +308,7 @@ class SessionService:
         session = self._repository.create(session_id)
         session.execute(
             StartSession(
-                system_prompt=self._default_system_prompt,
+                system_prompt=self._default_system_prompt + self._knowledge_prompt,
                 model_name=self._executor.model_name,
                 project_id=project_id,
             )
@@ -348,6 +359,42 @@ class SessionService:
         aggregate = await self._repository.load(session_id)
         aggregate.execute(ChangeAutonomy(tool_name=tool_name, level=level))
         await self._repository.save(aggregate)
+
+    @property
+    def current_knowledge(self) -> object | None:
+        """Whichever project's graph is attached right now, or None.
+
+        A read, not a use case -- callers that need to act on the graph go
+        through the `KnowledgePort` behind the executor's tools, not through
+        here. This exists for callers that only need to know *whether* one is
+        attached (a front end showing state, a test asserting on it).
+        """
+        return self._attachment.current if self._attachment is not None else None
+
+    async def attach_project(self, project_id: UUID) -> None:
+        """Open `project_id`'s knowledge graph and give the executor its tools.
+
+        A no-op when the composition root wired no knowledge subsystem --
+        the same posture `search` has without an instance configured. A
+        caller that wants to know whether attaching actually happened has
+        `current_knowledge` for that; this does not raise on "there is
+        nothing to attach to".
+
+        Delegates to `KnowledgeAttachment` for the atomicity guarantee: if
+        opening the graph fails, nothing here is left half-attached.
+        """
+        if self._attachment is not None:
+            await self._attachment.attach(project_id)
+
+    async def detach_project(self) -> None:
+        """Close whatever knowledge graph is attached and restore the plain tools.
+
+        Safe to call whether or not anything is attached, and whether or not
+        a knowledge subsystem was wired at all -- so every caller leaving a
+        project can call this unconditionally.
+        """
+        if self._attachment is not None:
+            await self._attachment.detach()
 
     # ---------------- turns ----------------
 

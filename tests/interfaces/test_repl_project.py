@@ -60,6 +60,26 @@ async def test_project_use_reports_an_unknown_name(current):
     assert "nope" in output and "no such project" in output.lower()
 
 
+async def test_project_use_attaches_the_knowledge_graph(build_application, fake_model):
+    """The gap Task 14 closes: `/project use` must make `remember` reachable.
+
+    Goes through a whole `Application`, not just a `SessionService`, because
+    the tools live on the executor `build_application` wires -- the same
+    object `/project use` has to reach through the service to swap. Before
+    this task, nothing called `attach_project` at all: `build_application`
+    only ever attached a graph when given `project_id=` at construction, and
+    `/project use` had no way to attach one to an application already built.
+    """
+    application = await build_application(model=fake_model)
+    current = await repl.Repl.start(application.service)
+
+    await repl.handle_command(current, "/project new research")
+    await repl.handle_command(current, "/project use research")
+
+    names = {tool.name for tool in application.turns_tools()}
+    assert "remember" in names
+
+
 async def test_project_use_starts_a_session_in_the_project(current):
     """Assert wording only a successful join produces.
 

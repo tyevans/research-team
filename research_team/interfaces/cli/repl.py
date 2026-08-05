@@ -237,7 +237,16 @@ async def _handle_project(repl: "Repl", argument: str) -> str:
             # which is the next thing anyone asks.
             return str(error)
         await _switch_to(repl, new_session_id)
-        return f"joined project {name}; session {repl.session_id}"
+        joined = f"joined project {name}; session {repl.session_id}"
+        try:
+            await service.attach_project(match)
+        except Exception as error:  # noqa: BLE001 -- report, do not take the REPL down
+            # A graph that will not open must not make the session unusable:
+            # the session is already switched, so this is worded as a
+            # standalone warning rather than folded into a failure the
+            # session join itself did not have.
+            return f"{joined}\nknowledge graph unavailable: {error}"
+        return joined
 
     return "usage: /project [new <name>|use <name>]"
 
@@ -253,8 +262,15 @@ async def _switch_to(repl: "Repl", new_session_id: UUID) -> None:
     REPL exit, so switching sessions leaked the project it held with no
     command able to get it back. `release_project` is a no-op for a session
     that held nothing, so this is safe to call on every switch.
+
+    Detaching the knowledge graph belongs here for the same reason: whatever
+    is attached belongs to the session being left, not the one about to
+    start, and `/project use` re-attaches afterwards if the new session
+    needs one. `detach_project` is a no-op when nothing is attached, so this
+    is safe on every switch too.
     """
     await repl.service.release_project(repl.session_id)
+    await repl.service.detach_project()
     repl.session_id = new_session_id
 
 
