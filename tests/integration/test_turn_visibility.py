@@ -12,6 +12,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from research_team.application import FeedEntry, TurnCancelled
+from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.domain import (
     AssistantMessageAdded,
     FileWritten,
@@ -20,6 +21,7 @@ from research_team.domain import (
     TurnFailed,
     UserMessageSent,
 )
+from research_team.interfaces.web import TurnActivity
 from tests.conftest import ToolAwareFakeChatModel
 
 
@@ -152,3 +154,62 @@ async def test_the_reported_span_matches_what_the_watcher_saw(
     versions = [entry.event.aggregate_version for entry in frames]
     assert versions[0] == outcome.from_index
     assert versions[-1] == outcome.to_index
+
+
+async def test_activity_streams_without_appending_to_the_log(build_application, writing_model):
+    """The whole design in one assertion: content streams, the log does not move.
+
+    `TurnActivity` exists so a browser tab can watch a turn happen -- prose
+    and tool notes as they are produced, well before the turn commits. But
+    that channel is deliberately *not* the log: it is a provisional, throwaway
+    buffer, wired up beside the atomic append rather than folded into it. This
+    test proves that "beside" holds: while a turn is running and reporting
+    activity, the session's event count does not move. It changes exactly
+    once, when the turn commits.
+
+    If this ever fails, someone has made the turn incremental -- appending
+    events as they happen instead of once at the end -- which means a failed
+    or cancelled turn could no longer be discarded whole, and the guarantee
+    the other tests in this file exist to protect is gone.
+    """
+    application = await build_application(model=writing_model)
+    activity = TurnActivity()
+    session_id = await application.service.create_session()
+
+    observed: list[ActivityMessage | ActivityDelta] = []
+    first_note = asyncio.Event()
+
+    def watch(note: ActivityMessage | ActivityDelta) -> None:
+        # Recorded before the real reporter runs, so `during` below is read
+        # at the earliest possible instant -- the moment the turn first has
+        # something to show, not some point later in its run.
+        observed.append(note)
+        first_note.set()
+
+    activity.begin(session_id)
+    reporter = activity.reporter(session_id)
+
+    def wrapped(note: ActivityMessage | ActivityDelta) -> None:
+        watch(note)
+        reporter(note)
+
+    before = len(await application.service.history(session_id))
+    turn = asyncio.create_task(application.turns.run(session_id, "write a file", wrapped))
+    await asyncio.wait_for(first_note.wait(), timeout=5.0)
+    during = len(await application.service.history(session_id))
+
+    try:
+        await turn
+    except BaseException:
+        activity.settle(session_id, committed=False)
+        raise
+    else:
+        activity.settle(session_id, committed=True)
+    after = len(await application.service.history(session_id))
+
+    assert observed, "the turn reported no activity at all -- this test would pass vacuously"
+    assert during == before, "the log grew while the turn was still streaming activity"
+    assert after > before, "the turn's events never made it to the log"
+    # The buffer is provisional; once the log has the real thing, nothing of
+    # it should survive to be shown as if it were still in flight.
+    assert activity.current(session_id) == []
