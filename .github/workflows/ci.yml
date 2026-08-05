@@ -1,0 +1,113 @@
+# CI
+#
+# Every job installs with `uv sync --all-extras --locked` and runs tools
+# through `uv run`, so CI executes the same versions a developer has locally.
+# `--locked` is right here in a way it would not be for a library: this is an
+# application, `uv.lock` is committed, and a resolution that drifts between a
+# developer's machine and this gate is a bug rather than early warning.
+#
+# The integration job is the reason this file exists. The default suite
+# deselects `-m integration` because those tests need a real Neo4j, and a
+# developer should not have to run one to commit. CI is where a server is
+# free, so that is where they run -- on every pull request, not on a laptop.
+#
+# Third-party actions are pinned to a full commit SHA with the tag in a
+# trailing comment. A tag is a mutable pointer: whoever controls the action
+# repository can move it.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: '3.13'
+          enable-cache: true
+
+      - run: uv sync --all-extras --locked
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format --check
+        run: uv run ruff format --check .
+
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: '3.13'
+          enable-cache: true
+
+      - run: uv sync --all-extras --locked
+
+      # No `-m` override: the default addopts already deselect `live` and
+      # `integration`. Naming a marker here would silently diverge from what
+      # the same command does on a developer's machine.
+      - run: uv run pytest
+
+  integration:
+    name: pytest -m integration
+    runs-on: ubuntu-latest
+
+    services:
+      neo4j:
+        image: neo4j:5-community
+        env:
+          NEO4J_AUTH: neo4j/redstring
+        ports:
+          - 7688:7687
+        # `services` starts the container but does not wait for the server to
+        # answer, so without a healthcheck the first test races the boot.
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p redstring 'RETURN 1'"
+          --health-interval 15s
+          --health-timeout 10s
+          --health-retries 10
+
+    env:
+      AGENT_NEO4J_URI: bolt://localhost:7688
+      AGENT_NEO4J_USER: neo4j
+      AGENT_NEO4J_PASSWORD: redstring
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: '3.13'
+          enable-cache: true
+
+      - run: uv sync --all-extras --locked
+
+      # `live` stays deselected: it hits a real model endpoint, which this
+      # runner has no way to reach.
+      - run: uv run pytest -m "integration and not live"
