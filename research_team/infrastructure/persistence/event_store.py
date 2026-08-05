@@ -118,6 +118,13 @@ class EventStoreSessionRepository:
         opening a second `SQLiteSnapshotStore` against the same file. A second
         instance would spin up its own non-daemon aiosqlite worker thread that
         nothing closes (BACKLOG B5).
+
+        Typed optional because the constructor accepts `None` -- a repository
+        assembled by hand, as some tests do, need not supply one. `open()`,
+        the only path composition uses, always builds and passes one, so for
+        every repository composition sees this is never `None`; the type
+        stays honest about the constructor rather than the narrower guarantee
+        one particular factory happens to provide.
         """
         return self._snapshot_store
 

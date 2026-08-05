@@ -17,6 +17,7 @@ from uuid import UUID
 import redstring.events  # noqa: F401
 from eventsource.observability import Tracer
 from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import BaseTool
 from redstring.llm.adapters.langchain import LangChainLlmProvider
 
 from research_team.application import (
@@ -106,7 +107,7 @@ class Application:
                 project_id=self.knowledge.project_id,
             )
 
-    def turns_tools(self) -> tuple:
+    def turns_tools(self) -> tuple[BaseTool, ...]:
         """The tools available to this instance's agent, for tests that assert on them.
 
         Reaches into the executor rather than tracking a separate copy: the
