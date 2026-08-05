@@ -112,9 +112,7 @@ class ElideToolResults:
     async def prepare(self, state: SessionState) -> PreparedContext:
         messages = list(state.messages)
         tool_positions = [
-            index
-            for index, message in enumerate(messages)
-            if message.get("type") == "tool"
+            index for index, message in enumerate(messages) if message.get("type") == "tool"
         ]
         stale = set(tool_positions[: max(0, len(tool_positions) - self._keep)])
         if not stale:
@@ -136,8 +134,7 @@ class ElideToolResults:
         return PreparedContext(
             messages=prepared,
             notes=(
-                f"cleared {elided} older tool result(s); "
-                "the tools can be run again if needed",
+                f"cleared {elided} older tool result(s); the tools can be run again if needed",
             ),
         )
 

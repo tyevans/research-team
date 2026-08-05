@@ -33,6 +33,7 @@ class Command(BaseModel):
 class StartSession(Command):
     system_prompt: str
     model_name: str
+    project_id: UUID | None = None
 
 
 class SendUserMessage(Command):

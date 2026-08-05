@@ -17,6 +17,17 @@ from research_team.application.context import (
     FullHistory,
     PreparedContext,
 )
+from research_team.application.knowledge import (
+    GRAPH_SEARCH_TOOL,
+    REMEMBER_TOOL,
+    UNMERGE_TOOL,
+    IngestReport,
+    KnowledgeError,
+    KnowledgePort,
+    Match,
+    MergeRecord,
+    SourceRef,
+)
 from research_team.application.live_feed import LiveFeed
 from research_team.application.ports import (
     ActivityReporter,
@@ -55,7 +66,10 @@ from research_team.application.turn_supervisor import (
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "GATED_TOOLS",
+    "GRAPH_SEARCH_TOOL",
+    "REMEMBER_TOOL",
     "SEARCH_TOOL",
+    "UNMERGE_TOOL",
     "ActivityReporter",
     "ApprovalDecision",
     "ApprovalPort",
@@ -69,8 +83,13 @@ __all__ = [
     "FeedEntry",
     "ForkNode",
     "FullHistory",
+    "IngestReport",
+    "KnowledgeError",
+    "KnowledgePort",
     "Level",
     "LiveFeed",
+    "Match",
+    "MergeRecord",
     "PreparedContext",
     "RecordedMessage",
     "RunningTurn",
@@ -78,6 +97,7 @@ __all__ = [
     "SessionService",
     "SessionSummaries",
     "SessionSummary",
+    "SourceRef",
     "SummaryHealth",
     "TurnAccountingError",
     "TurnAlreadyRunning",

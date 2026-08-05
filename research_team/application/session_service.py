@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 from eventsource import DomainEvent
+from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
@@ -32,11 +33,17 @@ from research_team.application.ports import (
 )
 from research_team.application.summaries import SessionSummary
 from research_team.domain import (
+    AdvanceTip,
     ChangeAutonomy,
     CodingSession,
     CompactConversation,
     CompleteTurn,
     FailTurn,
+    FileDeleted,
+    FileEdited,
+    FileWritten,
+    JoinProject,
+    Project,
     RecordAssistantMessage,
     RecordForkSource,
     RecordToolResult,
@@ -91,6 +98,11 @@ _INHERITED_EVENT_FIELDS = frozenset(
     }
 )
 
+_FILE_EVENT_TYPES = (FileWritten, FileEdited, FileDeleted)
+"""What "inheriting a project's filesystem" copies. Deliberately narrower
+than `fork()`'s replay: a project shares a workspace, not a chat history, so
+`UserMessageSent` and friends never cross into the new stream."""
+
 
 class SessionService:
     """The application's whole surface, over one event store."""
@@ -100,6 +112,7 @@ class SessionService:
         repository: SessionRepository,
         executor: TurnExecutor,
         summaries: SessionSummaries,
+        projects: AggregateRepository[Project],
         *,
         default_system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         context: ContextStrategy | None = None,
@@ -108,6 +121,7 @@ class SessionService:
         self._repository = repository
         self._executor = executor
         self._summaries = summaries
+        self._projects = projects
         # `create_tracer` returns a no-op when OpenTelemetry is not installed,
         # which is the normal case here -- so spans cost a couple of attribute
         # lookups and are thrown away, and nothing has to be conditional.
@@ -129,6 +143,22 @@ class SessionService:
     def default_system_prompt(self) -> str:
         """The prompt new sessions are started with. Existing ones keep their own."""
         return self._default_system_prompt
+
+    @property
+    def projects(self) -> AggregateRepository[Project]:
+        """The `Project` aggregate repository, for callers that need it directly.
+
+        `/project new` has to `create_new` and `save` a `Project` -- neither
+        of which is a session use case -- so it is exposed here rather than
+        left for a caller to reach past this service into its own repository
+        attribute (BACKLOG B8: a second private hop was the trigger for
+        fixing the pattern instead of repeating it).
+        """
+        return self._projects
+
+    async def list_projects(self) -> list[tuple[UUID, str]]:
+        """Every project's id and name, for `/project`'s listing."""
+        return await self._repository.list_projects()
 
     async def close(self) -> None:
         await self._repository.close()
@@ -189,15 +219,120 @@ class SessionService:
         aggregate.execute(
             StartSession(
                 system_prompt=(
-                    system_prompt
-                    if system_prompt is not None
-                    else self._default_system_prompt
+                    system_prompt if system_prompt is not None else self._default_system_prompt
                 ),
                 model_name=self._executor.model_name,
             )
         )
         await self._repository.save(aggregate)
         return session_id
+
+    async def start_in_project(self, project_id: UUID) -> UUID:
+        """Begin a session that shares the project's filesystem.
+
+        Joining is decided by the `Project` aggregate, which rejects a second
+        concurrent session by name. That rejection propagates: a caller
+        finding out the project is busy is the point, and swallowing it here
+        would let two sessions diverge silently.
+
+        Inheritance reuses forking rather than copying. The project stores a
+        pointer -- whose stream, and how far in -- so a new session forks
+        from exactly that point and its filesystem still folds out of one
+        stream. Only files come across; the conversation does not, because a
+        project shares a workspace and not a chat history.
+
+        The new session is created (or forked) before the project is saved as
+        held by it: a project marked held by a session that was never
+        created is a project nothing can take back.
+        """
+        project = await self._projects.load(project_id)
+        session_id = uuid4()
+        project.execute(JoinProject(session_id=session_id))
+
+        state = project.state
+        if state.tip_session_id is None:
+            session = self._repository.create(session_id)
+            session.execute(
+                StartSession(
+                    system_prompt=self._default_system_prompt,
+                    model_name=self._executor.model_name,
+                    project_id=project_id,
+                )
+            )
+            await self._repository.save(session)
+        else:
+            await self._fork_files_from(
+                session_id,
+                source_session_id=state.tip_session_id,
+                at_event=state.tip_at_event,
+                project_id=project_id,
+            )
+
+        await self._projects.save(project)
+        return session_id
+
+    async def _fork_files_from(
+        self,
+        session_id: UUID,
+        *,
+        source_session_id: UUID,
+        at_event: int,
+        project_id: UUID,
+    ) -> None:
+        """Start `session_id`, carrying only the source's file history in.
+
+        Follows the same replay `fork()` uses -- copying each historical
+        event's own fields onto the fresh stream with `create_event`, since
+        these are already-decided facts being replayed rather than new
+        decisions -- but filtered to `_FILE_EVENT_TYPES`. `SessionStarted` is
+        not copied from the source: it is this session's own genuine start,
+        produced through `execute` like any other, carrying *this* session's
+        project_id. Lineage is recorded the same way `fork()` records it, so
+        `forked_from` still answers "whose filesystem is this".
+        """
+        events = await self.history(source_session_id)
+        if not 1 <= at_event <= len(events):
+            raise ValueError(f"cannot inherit at {at_event}: source has {len(events)} events")
+
+        session = self._repository.create(session_id)
+        session.execute(
+            StartSession(
+                system_prompt=self._default_system_prompt,
+                model_name=self._executor.model_name,
+                project_id=project_id,
+            )
+        )
+        for event in events[:at_event]:
+            if isinstance(event, _FILE_EVENT_TYPES):
+                session.create_event(
+                    type(event), **event.model_dump(exclude=set(_INHERITED_EVENT_FIELDS))
+                )
+        session.execute(
+            RecordForkSource(source_session_id=source_session_id, at_event=at_event)
+        )
+        await self._repository.save(session)
+
+    async def release_project(self, session_id: UUID) -> None:
+        """Hand the project's filesystem tip back, if this session holds it.
+
+        A no-op whenever there is nothing to release: a session with no
+        `project_id`, or one whose project is no longer (or never was)
+        actively held by it. That second case is ordinary, not exceptional --
+        a REPL switching away from a session, or resuming an old session
+        that named a project long since handed to someone else, both reach
+        it -- so this stays quiet rather than raising `AdvanceTip`'s
+        "you do not hold this" rejection. That is what lets every
+        session-switch path call this unconditionally, and keeps the
+        rejection from ever escaping a caller's exit/cleanup path.
+        """
+        session = await self._repository.load(session_id)
+        if session.state.project_id is None:
+            return
+        project = await self._projects.load(session.state.project_id)
+        if project.state.active_session_id != session_id:
+            return
+        project.execute(AdvanceTip(session_id=session_id, at_event=session.version))
+        await self._projects.save(project)
 
     async def record_autonomy_change(
         self, session_id: UUID, tool_name: str, level: str
@@ -299,9 +434,7 @@ class SessionService:
         for message in result.messages:
             if message.kind == "tool":
                 aggregate.execute(
-                    RecordToolResult(
-                        message=message.payload, is_error=message.is_error
-                    )
+                    RecordToolResult(message=message.payload, is_error=message.is_error)
                 )
             else:
                 aggregate.execute(RecordAssistantMessage(message=message.payload))
@@ -339,9 +472,7 @@ class SessionService:
             # Whether this was a deliberate stop is an asyncio fact, which the
             # aggregate has no business knowing -- so it is decided here.
             clean.execute(
-                FailTurn.from_error(
-                    error, cancelled=isinstance(error, asyncio.CancelledError)
-                )
+                FailTurn.from_error(error, cancelled=isinstance(error, asyncio.CancelledError))
             )
             await self._repository.save(clean)
         except Exception:
@@ -361,8 +492,6 @@ class SessionService:
             forked.create_event(
                 type(event), **event.model_dump(exclude=set(_INHERITED_EVENT_FIELDS))
             )
-        forked.execute(
-            RecordForkSource(source_session_id=session_id, at_event=at)
-        )
+        forked.execute(RecordForkSource(source_session_id=session_id, at_event=at))
         await self._repository.save(forked)
         return new_id

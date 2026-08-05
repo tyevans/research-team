@@ -6,9 +6,19 @@ swapping any of them is an edit here and nowhere else.
 """
 
 from dataclasses import dataclass
+from uuid import UUID
 
+# Imported for its side effect as much as its names: redstring registers its
+# event types at import time, and the session store may hold them -- the
+# `Document` and `Consolidation` streams live in the same SQLite file as
+# sessions. A read that meets a `DocumentExtracted` without this import raises
+# `EventTypeNotFoundError`, including on the "no project at all" path, where
+# nothing else would have pulled redstring in.
+import redstring.events  # noqa: F401
 from eventsource.observability import Tracer
 from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import BaseTool
+from redstring.llm.adapters.langchain import LangChainLlmProvider
 
 from research_team.application import (
     DEFAULT_SYSTEM_PROMPT,
@@ -29,7 +39,14 @@ from research_team.infrastructure.agent.delegation import (
     DEFAULT_SUBAGENTS,
     DELEGATION_PROMPT,
 )
+from research_team.infrastructure.agent.knowledge_tools import (
+    KNOWLEDGE_PROMPT,
+    build_knowledge_tools,
+)
 from research_team.infrastructure.agent.search import SEARCH_PROMPT, build_search_tool
+from research_team.infrastructure.knowledge.rebuild import rebuild_graph
+from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
+from research_team.infrastructure.knowledge.stores import build_graph_store
 from research_team.infrastructure.persistence import (
     EventStoreSessionRepository,
     SessionSummaryRunner,
@@ -58,6 +75,13 @@ class Application:
     lets someone change autonomy mid-session needs a handle to mutate -- this
     is that handle, whichever adapter (CLI, web) drives it."""
 
+    knowledge: RedstringKnowledge | None
+    """This project's knowledge graph, or None with no project configured.
+
+    No project means no store was opened and no tools were registered -- the
+    same posture `search` has without an instance configured, and what keeps
+    the README's sandbox claim honest for anyone who has not opted in."""
+
     async def start(self) -> None:
         """Open what needs a running event loop to open.
 
@@ -68,6 +92,29 @@ class Application:
         opened *inside* the loop that will use it is opened here.
         """
         await self.summaries.start()
+        if self.knowledge is not None:
+            # `ensure_schema` is the first call that actually talks to a
+            # Neo4j server, so an unreachable one fails here -- at start,
+            # where it can stop the process -- rather than mid-turn.
+            # Idempotent, and a no-op for the in-memory store, which has no
+            # such method.
+            store = self.knowledge.graph_store
+            if hasattr(store, "ensure_schema"):
+                await store.ensure_schema()
+            await rebuild_graph(
+                store,
+                feed=self.knowledge.event_store,
+                project_id=self.knowledge.project_id,
+            )
+
+    def turns_tools(self) -> tuple[BaseTool, ...]:
+        """The tools available to this instance's agent, for tests that assert on them.
+
+        Reaches into the executor rather than tracking a separate copy: the
+        executor's tuple is the one actually bound to the model, so this is
+        what a test needs to check against, not a parallel record that could
+        drift from it."""
+        return tuple(self.service._executor._tools)
 
     async def summaries_caught_up(self) -> None:
         """Wait until the `/sessions` projection has seen everything appended.
@@ -89,6 +136,10 @@ class Application:
         await self.turns.cancel_all()
         await self.summaries.stop()
         await self.service.close()
+        if self.knowledge is not None:
+            store = self.knowledge.graph_store
+            if hasattr(store, "close"):
+                await store.close()
 
 
 def _context_parts(
@@ -136,6 +187,7 @@ def build_application(
     tracer: Tracer | None = None,
     approvals: ApprovalPort | None = None,
     policy: AutonomyPolicy | None = None,
+    project_id: UUID | None = None,
 ) -> Application:
     """Wire everything over one event store.
 
@@ -152,6 +204,11 @@ def build_application(
     strategy, subagents, prompt_suffix = _context_parts(mode, resolved_model, system_prompt)
     resolved_policy = policy if policy is not None else AutonomyPolicy()
 
+    # Opened before the tools below so the knowledge adapter can share this
+    # connection's event store and snapshot store rather than opening its own
+    # (BACKLOG B5: a second `SQLiteSnapshotStore` leaks a non-daemon thread).
+    repository = EventStoreSessionRepository.open(resolved_path)
+
     # Search is the one tool that leaves the process, so it is registered only
     # when an instance is configured -- unset means the agent gets no network
     # tool at all, which is what keeps the README's sandbox claim true for
@@ -164,7 +221,22 @@ def build_application(
         tools = ()
         prompt_suffix += NO_NETWORK_CLAUSE
 
-    repository = EventStoreSessionRepository.open(resolved_path)
+    # The knowledge graph belongs to a project. No project, no tools and no
+    # store -- the same posture search has without an instance configured.
+    if project_id is not None:
+        knowledge = RedstringKnowledge(
+            project_id,
+            store=build_graph_store(config.graph_store()),
+            event_store=repository.store,
+            snapshot_store=repository.snapshot_store,
+            provider=LangChainLlmProvider(resolved_model, model=config.model_name()),
+            domain=config.knowledge_domain(),
+        )
+        tools = (*tools, *build_knowledge_tools(knowledge))
+        prompt_suffix += KNOWLEDGE_PROMPT
+    else:
+        knowledge = None
+
     executor = DeepAgentTurnExecutor(
         resolved_model,
         subagents=subagents,
@@ -180,6 +252,7 @@ def build_application(
         repository,
         executor,
         summaries,
+        repository.projects,
         default_system_prompt=system_prompt + prompt_suffix,
         context=strategy,
         # Resolved once and shared: whether this process exports traces is a
@@ -195,6 +268,7 @@ def build_application(
         context_mode=mode,
         summaries=summaries,
         policy=resolved_policy,
+        knowledge=knowledge,
     )
 
 

@@ -6,6 +6,7 @@ from uuid import UUID
 from eventsource import DomainEvent
 
 from research_team.application import SessionSummary, SummaryHealth, TurnOutcome
+from research_team.application.ports import ActivityDelta, ActivityNote
 from research_team.domain import (
     CodingSession,
     ConversationCompacted,
@@ -17,6 +18,47 @@ from research_team.domain import (
 )
 
 FILE_EVENTS = (FileWritten, FileEdited, FileDeleted)
+
+ACTIVITY_RESULT_WIDTH = 70
+"""Matches what the terminal has always shown for a tool result."""
+
+
+def format_activity(note: ActivityNote) -> str | None:
+    """One terminal line for a note, or None if it is not worth showing.
+
+    Deliberately silent for prose and deltas: the transcript prints the reply
+    when the turn completes, and echoing it token by token into a scrolling
+    terminal would be noise. This is the terminal's presenter for the same
+    notes the web UI renders as content.
+
+    Payloads arrive from message_to_dict, with a nested structure: the actual
+    message data lives under the 'data' key.
+    """
+    if isinstance(note, ActivityDelta):
+        return None
+
+    # Payloads from deep_agent have a nested structure with 'data' key
+    # (from langchain's message_to_dict).
+    data = note.payload["data"]
+
+    calls = data.get("tool_calls") or []
+    if calls:
+        return "· " + ", ".join(
+            f"{call.get('name', '?')}({_first_arg(call.get('args') or {})})" for call in calls
+        )
+    if note.kind == "tool":
+        content = data.get("content", "")
+        lines = str(content).strip().splitlines()
+        return f"  ↳ {lines[0][:ACTIVITY_RESULT_WIDTH]}" if lines else None
+    return None
+
+
+def _first_arg(args: dict) -> str:
+    """Extract the first significant argument from a call's args dict."""
+    for key in ("file_path", "path", "pattern", "command"):
+        if key in args:
+            return str(args[key])
+    return ""
 
 
 def _summary(event: DomainEvent) -> str:
@@ -117,17 +159,12 @@ def format_file_history(events: list[DomainEvent], path: str) -> str:
     return "\n".join(rows) if rows else f"(no history for {path})"
 
 
-def format_state(
-    session: CodingSession, event_count: int, context_mode: str = "full"
-) -> str:
+def format_state(session: CodingSession, event_count: int, context_mode: str = "full") -> str:
     state = session.state
-    compacted = (
-        f"\ncontext  {context_mode}"
-        + (
-            f" ({state.compacted_through} message(s) behind a summary)"
-            if state.compacted_through
-            else ""
-        )
+    compacted = f"\ncontext  {context_mode}" + (
+        f" ({state.compacted_through} message(s) behind a summary)"
+        if state.compacted_through
+        else ""
     )
     return (
         f"session  {state.session_id}\n"
@@ -161,10 +198,7 @@ def format_turn(outcome: TurnOutcome) -> str:
 
 def format_resumed(session: CodingSession) -> str:
     state = session.state
-    return (
-        f"resumed {state.session_id} -- "
-        f"{state.turn_index} turns, {len(state.files)} files"
-    )
+    return f"resumed {state.session_id} -- {state.turn_index} turns, {len(state.files)} files"
 
 
 def format_autonomy(levels: dict[str, str]) -> str:

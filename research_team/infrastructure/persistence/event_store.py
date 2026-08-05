@@ -17,15 +17,40 @@ from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application import FeedEntry
-from research_team.domain import CodingSession
+from research_team.domain import CodingSession, Project
 
 SNAPSHOT_THRESHOLD = 50
+
+
+def build_project_repository(
+    store: SQLiteEventStore,
+    publisher: InMemoryEventBus | None = None,
+    snapshot_store: SQLiteSnapshotStore | None = None,
+) -> AggregateRepository[Project]:
+    """Projects, over the same log and the same snapshot table as sessions.
+
+    Unlike `build_aggregate_repository`, there is no fallback that constructs
+    its own `SQLiteSnapshotStore` here: the only caller is
+    `EventStoreSessionRepository`, which already has one open against this
+    file (BACKLOG B5 -- a second instance leaks a non-daemon thread nothing
+    closes), so this always takes it as given rather than repeating the
+    choice of whether to build one.
+    """
+    return AggregateRepository(
+        store,
+        Project,
+        event_publisher=publisher,
+        snapshot_store=snapshot_store,
+        snapshot_threshold=SNAPSHOT_THRESHOLD,
+        snapshot_mode="background",
+    )
 
 
 def build_aggregate_repository(
     store: SQLiteEventStore,
     db_path: str,
     publisher: InMemoryEventBus | None = None,
+    snapshot_store: SQLiteSnapshotStore | None = None,
 ) -> AggregateRepository[CodingSession]:
     return AggregateRepository(
         store,
@@ -38,7 +63,15 @@ def build_aggregate_repository(
         # Same database file as the event store: the schema that creates the
         # `snapshots` table is applied by the store's connection, so a separate
         # path (or a second ":memory:") would leave the table missing.
-        snapshot_store=SQLiteSnapshotStore(db_path),
+        #
+        # `SQLiteSnapshotStore` has no `close()` and its aiosqlite worker is a
+        # non-daemon thread, so a second instance leaks a thread nothing can
+        # release (BACKLOG B5). A caller that already has one -- the
+        # composition root, for the knowledge graph's consolidator -- passes
+        # it in rather than letting a second get built here.
+        snapshot_store=(
+            snapshot_store if snapshot_store is not None else SQLiteSnapshotStore(db_path)
+        ),
         snapshot_threshold=SNAPSHOT_THRESHOLD,
         # A snapshot is an optimisation for a future read, and the turn that
         # triggers it is the one thing in this application a person is actually
@@ -69,10 +102,13 @@ class EventStoreSessionRepository:
         store: SQLiteEventStore,
         aggregates: AggregateRepository[CodingSession],
         publisher: InMemoryEventBus | None = None,
+        snapshot_store: SQLiteSnapshotStore | None = None,
     ) -> None:
         self._store = store
         self._aggregates = aggregates
         self._publisher = publisher
+        self._snapshot_store = snapshot_store
+        self._projects = build_project_repository(store, publisher, snapshot_store)
         self._appended = asyncio.Event()
         if publisher is not None:
             publisher.subscribe_to_all_events(self._on_published)
@@ -81,9 +117,11 @@ class EventStoreSessionRepository:
     def open(cls, db_path: str) -> "EventStoreSessionRepository":
         store = SQLiteEventStore(db_path)
         publisher = InMemoryEventBus()
-        return cls(
-            store, build_aggregate_repository(store, db_path, publisher), publisher
+        snapshot_store = SQLiteSnapshotStore(db_path)
+        aggregates = build_aggregate_repository(
+            store, db_path, publisher, snapshot_store=snapshot_store
         )
+        return cls(store, aggregates, publisher, snapshot_store=snapshot_store)
 
     @property
     def store(self) -> SQLiteEventStore:
@@ -97,9 +135,54 @@ class EventStoreSessionRepository:
         return self._store
 
     @property
+    def snapshot_store(self) -> SQLiteSnapshotStore | None:
+        """The snapshot store this repository's aggregates use, if any.
+
+        Exposed so a collaborator that needs one of its own -- the knowledge
+        graph's consolidator, at composition -- reuses this one instead of
+        opening a second `SQLiteSnapshotStore` against the same file. A second
+        instance would spin up its own non-daemon aiosqlite worker thread that
+        nothing closes (BACKLOG B5).
+
+        Typed optional because the constructor accepts `None` -- a repository
+        assembled by hand, as some tests do, need not supply one. `open()`,
+        the only path composition uses, always builds and passes one, so for
+        every repository composition sees this is never `None`; the type
+        stays honest about the constructor rather than the narrower guarantee
+        one particular factory happens to provide.
+        """
+        return self._snapshot_store
+
+    @property
     def publisher(self) -> InMemoryEventBus | None:
         """The bus saves are announced on, for subscribers that want live events."""
         return self._publisher
+
+    @property
+    def projects(self) -> AggregateRepository[Project]:
+        """The `Project` aggregate repository, over this same log and file.
+
+        Exposed so a caller -- the REPL's `/project new` -- can `create_new`
+        and `save` a project without opening a second connection or a second
+        snapshot store against the same database.
+        """
+        return self._projects
+
+    async def list_projects(self) -> list[tuple[UUID, str]]:
+        """Every project's id and name, from the creation events.
+
+        Reads the `Project` category directly rather than going through
+        `read_since`/`read_all`: that path is filtered to `CodingSession`
+        events on purpose (this store is shared with `Project` and
+        redstring's own streams), so listing projects needs its own read
+        rather than a weakened session filter.
+        """
+        envelopes = await collect(self._store.read_category("Project"))
+        return [
+            (envelope.event.aggregate_id, envelope.event.name)
+            for envelope in envelopes
+            if type(envelope.event).__name__ == "ProjectCreated"
+        ]
 
     def _on_published(self, event: DomainEvent) -> None:
         """Raise the flag. Deliberately ignores the event itself.
@@ -144,6 +227,14 @@ class EventStoreSessionRepository:
         return await self._store.current_position()
 
     async def read_since(self, position: object | None) -> list[FeedEntry]:
+        """Session events since `position`, in append order.
+
+        Filtered by aggregate type rather than taking the whole feed. This
+        store is shared: redstring's `Document` and `Consolidation` streams
+        live in the same file, and their aggregate ids are document and tenant
+        ids, not sessions. Unfiltered, every one of them would arrive here as a
+        `FeedEntry` claiming to be a session that does not exist.
+        """
         envelopes = await collect(self._store.read_all(from_position=position))
         return [
             FeedEntry(
@@ -152,6 +243,7 @@ class EventStoreSessionRepository:
                 position=envelope.position,
             )
             for envelope in envelopes
+            if envelope.event.aggregate_type == CodingSession.aggregate_type
         ]
 
     def encode_position(self, position: object) -> str:

@@ -34,9 +34,7 @@ async def test_waiting_gives_up_after_the_timeout_when_nothing_is_written(reposi
     await asyncio.wait_for(repository.wait_for_append(timeout=0.05), timeout=2)
 
 
-async def test_a_save_before_the_wait_does_not_leave_a_signal_standing(
-    repository, session_id
-):
+async def test_a_save_before_the_wait_does_not_leave_a_signal_standing(repository, session_id):
     """The signal means "something happened while you were waiting".
 
     A latch left set by an earlier write would make the next wait return

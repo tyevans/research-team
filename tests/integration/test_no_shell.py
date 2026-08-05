@@ -64,9 +64,7 @@ async def test_a_shell_command_cannot_reach_the_real_filesystem(
     )
 
 
-async def test_the_refusal_is_recorded_rather_than_swallowed(
-    build_application, shell_attempt
-):
+async def test_the_refusal_is_recorded_rather_than_swallowed(build_application, shell_attempt):
     """An attempt the log does not mention is an attempt nobody can audit."""
     application = await build_application(model=shell_attempt)
     session_id = await application.service.create_session()

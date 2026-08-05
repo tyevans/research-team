@@ -41,6 +41,13 @@ class SessionStarted(DomainEvent):
     aggregate_type: str = "CodingSession"
     system_prompt: str
     model_name: str
+    project_id: UUID | None = None
+    """The project whose filesystem and knowledge graph this session shares.
+
+    Defaulted rather than required: every session written before projects
+    existed has no such key, and `None` means exactly what its absence meant.
+    This is case 1 of the strategy at the top of this module.
+    """
 
 
 @register_event

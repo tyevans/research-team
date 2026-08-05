@@ -148,9 +148,7 @@ async def test_an_empty_summary_is_refused():
     the next turn can try again.
     """
     session = conversation(20, chars=500)
-    strategy = SummarizingStrategy(
-        summarizer("   "), trigger_tokens=250, keep_messages=6
-    )
+    strategy = SummarizingStrategy(summarizer("   "), trigger_tokens=250, keep_messages=6)
 
     prepared = await strategy.prepare(session)
 
@@ -178,9 +176,7 @@ def interleaved(turns: int, chars: int) -> SessionState:
     messages: list[dict] = []
     for i in range(turns):
         messages.append(message("human", f"do {i}: " + "u" * chars))
-        messages.append(
-            message("ai", "", tool_calls=[{"name": "read_file", "id": f"c{i}"}])
-        )
+        messages.append(message("ai", "", tool_calls=[{"name": "read_file", "id": f"c{i}"}]))
         messages.append(message("tool", "R" * chars, tool_call_id=f"c{i}"))
         messages.append(message("ai", f"done {i}"))
     return SessionState(session_id=uuid4(), messages=messages)
@@ -191,9 +187,7 @@ async def test_the_boundary_never_orphans_a_tool_result():
     answer to a question the model cannot see itself having asked."""
     for keep in range(1, 12):
         session = interleaved(12, chars=400)
-        strategy = SummarizingStrategy(
-            summarizer(), trigger_tokens=100, keep_messages=keep
-        )
+        strategy = SummarizingStrategy(summarizer(), trigger_tokens=100, keep_messages=keep)
 
         prepared = await strategy.prepare(session)
 
@@ -220,9 +214,7 @@ async def test_every_kept_tool_result_still_has_its_call():
     prepared = await strategy.prepare(session)
     tail = prepared.messages[1:]
 
-    answered = {
-        m["data"]["tool_call_id"] for m in tail if m["type"] == "tool"
-    }
+    answered = {m["data"]["tool_call_id"] for m in tail if m["type"] == "tool"}
     asked = {
         call["id"]
         for m in tail

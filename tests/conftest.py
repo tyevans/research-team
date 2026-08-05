@@ -6,6 +6,7 @@ from eventsource import InMemoryEventBus
 from eventsource.adapters.sqlite import SQLiteEventStore
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
+from redstring import FakeLlmProvider
 
 from research_team import composition
 from research_team.application import SessionService
@@ -17,6 +18,37 @@ from research_team.infrastructure.persistence import (
     EventStoreSessionRepository,
     build_aggregate_repository,
 )
+
+#: A canned extraction result: two people and the relationship between them.
+#: Shared by every test that needs `build_graph` to produce *something*
+#: recognisable without caring what text it was fed -- `fake_provider()`
+#: below answers with this regardless of input.
+TWO_PEOPLE = {
+    "entities": [
+        {"name": "Ada Lovelace", "entity_type": "Person"},
+        {"name": "Charles Babbage", "entity_type": "Person"},
+    ],
+    "relationships": [
+        {
+            "source_name": "Ada Lovelace",
+            "target_name": "Charles Babbage",
+            "relationship_type": "WORKED_WITH",
+        }
+    ],
+}
+
+
+def fake_provider(answer: dict = TWO_PEOPLE) -> FakeLlmProvider:
+    """A `FakeLlmProvider` that answers the same regardless of input text.
+
+    `FakeLlmProvider()` with no arguments raises -- it requires exactly one
+    of `script=` or `by_substring=`, deliberately, because a fake with no
+    canned answers cannot answer anything. An empty `by_substring` mapping
+    never matches any text, so every call falls through to `default`, which
+    is redstring's own idiom for "same answer no matter what".
+    """
+    return FakeLlmProvider(by_substring={}, default=answer)
+
 
 SYSTEM_PROMPT = "You are a coding agent."
 MODEL_NAME = "test-model"

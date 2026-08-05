@@ -73,6 +73,12 @@ variable:
 | `AGENT_SERVICE_NAME` | `research-team` | what this process calls itself in a trace |
 | `AGENT_SEARXNG_URL` | *(unset)* | SearXNG base URL; unset means no search tool is registered |
 | `AGENT_SEARXNG_RESULTS` | `5` | how many results reach the model |
+| `AGENT_GRAPH_STORE` | `memory` | what backs the knowledge graph: `memory` or `neo4j` |
+| `AGENT_KNOWLEDGE_DOMAIN` | `auto` | a redstring schema id, or `auto` to have a classifier choose |
+| `AGENT_NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI, when `AGENT_GRAPH_STORE=neo4j` |
+| `AGENT_NEO4J_USER` | `neo4j` | Neo4j username |
+| `AGENT_NEO4J_PASSWORD` | *(unset)* | Neo4j password; required when `AGENT_GRAPH_STORE=neo4j`, no default |
+| `AGENT_NEO4J_DATABASE` | *(unset)* | which database on the server; unset means the server's default |
 
 ## REPL commands
 
@@ -93,6 +99,9 @@ variable:
 | `/new` | start a fresh session |
 | `/autonomy` | current autonomy level for each gated tool |
 | `/autonomy <tool> <level>` | set a gated tool's level: `auto`, `ask`, or `deny` |
+| `/project` | every project, with its id |
+| `/project new <name>` | create a project |
+| `/project use <name>` | start a session that inherits the project's files |
 | `/help` | the command list |
 | `/quit` | exit |
 
@@ -116,6 +125,76 @@ Search runs against a self-hosted SearXNG instance. Most instances ship with
 their JSON API disabled; without `formats: [json]` under `search:` in the
 instance's `settings.yml`, the tool cannot read its response and the failure
 is otherwise mystifying.
+
+## Projects and the knowledge graph
+
+A session is scoped to one conversation. A **project** is scoped to more than
+that: a set of sessions that share a filesystem lineage and a knowledge graph,
+one at a time. Only one session may hold a project at once -- `/project use
+<name>` starts a session that *inherits* the project's files where the last
+session holding it left them, and refuses if another session is already
+holding it. That inheritance is not a new mechanism: it is forking, applied
+across sessions instead of within one, which is why a project's filesystem
+still folds out of a single event stream and time travel still works on it --
+scrubbing or forking a session inside a project behaves exactly as it does
+outside one.
+
+The knowledge graph is the other thing a project's sessions share, and it is
+made of three tools. `remember` commits text to the graph: it runs extraction
+over what it is given and records the entities and relationships that come
+out, permanently -- which is why its docstring asks the agent to pass
+something substantial it actually read, not its own summary of it. `unmerge`
+reverses a consolidation: `remember` also tries to fold entities that look
+like the same thing into one, and prints the id of every merge it makes, so
+the agent -- which has context the matcher does not -- can undo a specific one
+that joined two things that were not, in fact, the same. `graph_search` reads
+the graph back by name. `remember` and `unmerge` are gated like the file
+writes, because both change what every later session in the project sees;
+`graph_search` is not, for the same reason `read_file` is not -- there is
+nothing to approve about a read.
+
+The graph is not a second source of truth. It is a projection folded from the
+same SQLite log the sessions themselves live in -- `redstring`'s
+`GraphProjection` replays a project's knowledge events the way the `/sessions`
+list replays session events -- so it rebuilds whenever a project is opened and
+costs nothing to lose. Extraction itself is not part of that replay: it runs
+once, when `remember` is called, and what it produced is what gets replayed
+thereafter. A project reopened years later reproduces the same graph without
+depending on a live model call, for the same reason a refolded session
+reproduces the same conversation without depending on a live search index.
+
+No project means no knowledge tools and no graph store at all -- the same
+posture `web_search` has without `AGENT_SEARXNG_URL`: nothing is registered,
+so there is nothing to search or remember into.
+
+**This changes the network claim above, and it is worth being exact about
+how.** `remember`'s extraction is not new egress -- it calls the same model
+endpoint every turn already calls, through the same provider. But it does mean
+that whatever text the agent passes to `remember` leaves the process and
+reaches that endpoint, which a reader who took "nothing it writes escapes the
+process" at face value would not expect. Say it plainly: content passed to
+`remember` is sent out to be extracted. And with `AGENT_GRAPH_STORE=neo4j`, the
+graph itself leaves the process too, landing in a database rather than only in
+memory -- a second kind of egress, off by default, and distinct from the
+model call above.
+
+Both graph store backends are real, not just the default. `memory` needs no
+server: it holds the graph in a plain in-process structure and rebuilds it
+from the log at every project open, which is what makes losing it free. `neo4j`
+persists the graph in an actual database and needs `AGENT_NEO4J_PASSWORD` --
+there is no default password, on purpose, because a graph store that silently
+comes up on `neo4j/neo4j` either fails confusingly or, worse, connects to
+somebody's development server. A `neo4j` project reaches the server at
+project *open*, not on the first query, so an unreachable one fails the
+command that opened the project rather than surfacing partway through an
+agent's turn.
+
+`docker-compose.test.yml` starts a Neo4j on port 7688 (not 7687, so a test run
+can never reach one anybody is actually using) for `uv run pytest -m
+integration` to run against locally. Nobody has to start it to commit,
+though: the default `pytest` run deselects `-m integration`, and CI starts its
+own Neo4j service container and runs that suite on every pull request, so the
+`neo4j` backend is exercised against a real server before anything merges.
 
 ## How it works
 

@@ -248,9 +248,7 @@ class SessionSummaryStore:
 
     async def list(self) -> list[SessionSummary]:
         """Every session, newest first -- one indexed query, not a full fold."""
-        found = await self._rows.find(
-            Query(order_by="started_at", order_direction="desc")
-        )
+        found = await self._rows.find(Query(order_by="started_at", order_direction="desc"))
         return [to_summary(row) for row in found]
 
     async def truncate(self) -> None:

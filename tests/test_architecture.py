@@ -16,7 +16,14 @@ PACKAGE = Path(__file__).resolve().parent.parent / "research_team"
 # Innermost first. A layer may import from itself and anything before it.
 LAYERS = ("domain", "application", "infrastructure", "interfaces")
 
-FRAMEWORKS = ("langchain", "langchain_core", "langchain_openai", "deepagents", "eventsource")
+FRAMEWORKS = (
+    "langchain",
+    "langchain_core",
+    "langchain_openai",
+    "deepagents",
+    "eventsource",
+    "redstring",
+)
 
 # The domain is built on the event-sourcing primitives; that is the one
 # framework it is allowed to name. Everything else stays outside.

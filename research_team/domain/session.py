@@ -65,6 +65,8 @@ class SessionState(BaseModel):
 
     system_prompt: str = ""
     model_name: str = ""
+    project_id: UUID | None = None
+    """The project whose filesystem and knowledge graph this session shares."""
     files: dict[str, dict[str, Any]] = Field(default_factory=dict)
     messages: list[dict[str, Any]] = Field(default_factory=list)
     turn_index: int = 0
@@ -109,12 +111,15 @@ def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
     session_id = state.session_id
     match command, state:
         # ---- creation ----
-        case StartSession(system_prompt=prompt, model_name=model), SessionState(
-            status="new"
-        ):
+        case StartSession(
+            system_prompt=prompt, model_name=model, project_id=project_id
+        ), SessionState(status="new"):
             return [
                 SessionStarted(
-                    aggregate_id=session_id, system_prompt=prompt, model_name=model
+                    aggregate_id=session_id,
+                    system_prompt=prompt,
+                    model_name=model,
+                    project_id=project_id,
                 )
             ]
         case StartSession(), _:
@@ -133,20 +138,14 @@ def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
         case RecordToolResult(message=message, is_error=is_error), _:
             call_id = message.get("data", {}).get("tool_call_id")
             if call_id not in outstanding_tool_call_ids(state.messages):
-                raise CommandRejectedError(
-                    f"no outstanding tool call with id {call_id!r}"
-                )
+                raise CommandRejectedError(f"no outstanding tool call with id {call_id!r}")
             return [
-                ToolResultRecorded(
-                    aggregate_id=session_id, message=message, is_error=is_error
-                )
+                ToolResultRecorded(aggregate_id=session_id, message=message, is_error=is_error)
             ]
 
         # ---- turns ----
         case CompleteTurn(), _:
-            return [
-                TurnCompleted(aggregate_id=session_id, turn_index=state.turn_index + 1)
-            ]
+            return [TurnCompleted(aggregate_id=session_id, turn_index=state.turn_index + 1)]
 
         case FailTurn(
             error_type=error_type, error_message=error_message, cancelled=cancelled
@@ -251,11 +250,7 @@ def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
             ]
 
         case ChangeAutonomy(tool_name=tool_name, level=level), _:
-            return [
-                AutonomyChanged(
-                    aggregate_id=session_id, tool_name=tool_name, level=level
-                )
-            ]
+            return [AutonomyChanged(aggregate_id=session_id, tool_name=tool_name, level=level)]
 
     raise CommandRejectedError(f"unhandled command {type(command).__name__}")
 
@@ -268,7 +263,7 @@ def evolve(state: SessionState, event: DomainEvent) -> SessionState:
     still replays instead of failing halfway through.
     """
     match event:
-        case SessionStarted(system_prompt=prompt, model_name=model):
+        case SessionStarted(system_prompt=prompt, model_name=model, project_id=project_id):
             # Replaces state wholesale: this is the creation event, and it is
             # the only one that establishes rather than amends.
             return SessionState(
@@ -276,6 +271,7 @@ def evolve(state: SessionState, event: DomainEvent) -> SessionState:
                 status="started",
                 system_prompt=prompt,
                 model_name=model,
+                project_id=project_id,
             )
 
         case (

@@ -11,7 +11,7 @@ serves any session it is asked about.
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from eventsource import CommandRejectedError
 
@@ -22,8 +22,11 @@ from research_team.application import (
     AutonomyPolicy,
     SessionService,
 )
+from research_team.application.ports import ActivityNote
+from research_team.domain import CreateProject
 from research_team.infrastructure import config
 from research_team.interfaces.cli.formatters import (
+    format_activity,
     format_autonomy,
     format_diff,
     format_file_history,
@@ -61,6 +64,11 @@ Sessions (persisted to SQLite; they survive restarts)
 Autonomy (how much the agent may do without asking)
   /autonomy              every gated tool and its level
   /autonomy <tool> <l>   set one to auto, ask, or deny
+
+Projects (sessions that share a filesystem lineage and a knowledge graph)
+  /project             list every project, with its id
+  /project new <name>  create a project
+  /project use <name>  start a session that inherits the project's files
 
   /help            this message
   /quit            exit
@@ -186,6 +194,72 @@ async def _resolve_session(repl: Repl, argument: str) -> UUID | str:
     return f"no session matching {argument!r}"
 
 
+async def _handle_project(repl: "Repl", argument: str) -> str:
+    """`/project` (list), `/project new <name>` (create), `/project use <name>`.
+
+    Goes through `SessionService`'s own project accessors (`list_projects`,
+    `projects`) rather than a private hop into its repository -- BACKLOG B8
+    flagged that pattern for a proper accessor instead of a third case.
+    """
+    service = repl.service
+    if not argument:
+        projects = await service.list_projects()
+        if not projects:
+            return "no projects yet -- /project new <name> to create one"
+        return "\n".join(f"{name}  {project_id}" for project_id, name in projects)
+
+    sub, _, rest = argument.partition(" ")
+    name = rest.strip()
+
+    if sub == "new":
+        if not name:
+            return "usage: /project new <name>"
+        existing = await service.list_projects()
+        collision = next(
+            (pid for pid, existing_name in existing if existing_name == name), None
+        )
+        if collision is not None:
+            return f"project {name!r} already exists ({collision})"
+        aggregate = service.projects.create_new(uuid4())
+        aggregate.execute(CreateProject(name=name))
+        await service.projects.save(aggregate)
+        return f"created project {name} ({aggregate.aggregate_id})"
+
+    if sub == "use":
+        if not name:
+            return "usage: /project use <name>"
+        existing = await service.list_projects()
+        match = next((pid for pid, existing_name in existing if existing_name == name), None)
+        if match is None:
+            return f"{name!r}: no such project"
+        try:
+            new_session_id = await service.start_in_project(match)
+        except CommandRejectedError as error:
+            # Worded verbatim: it names the session holding the project,
+            # which is the next thing anyone asks.
+            return str(error)
+        await _switch_to(repl, new_session_id)
+        return f"joined project {name}; session {repl.session_id}"
+
+    return "usage: /project [new <name>|use <name>]"
+
+
+async def _switch_to(repl: "Repl", new_session_id: UUID) -> None:
+    """Move the REPL's cursor, releasing any project the outgoing session held.
+
+    Every path that reassigns `repl.session_id` -- `/resume`, `/new`,
+    `/rewind`/`/fork`, `/project use` -- goes through this rather than
+    assigning directly. Without it, a session that held a project keeps
+    "holding" it (per `Project.state.active_session_id`) even after nobody is
+    driving it anymore: `release_project` was previously only called at
+    REPL exit, so switching sessions leaked the project it held with no
+    command able to get it back. `release_project` is a no-op for a session
+    that held nothing, so this is safe to call on every switch.
+    """
+    await repl.service.release_project(repl.session_id)
+    repl.session_id = new_session_id
+
+
 async def handle_command(
     repl: Repl,
     line: str,
@@ -216,10 +290,10 @@ async def handle_command(
         if isinstance(resolved, str):
             return resolved
         session = await service.load(resolved)
-        repl.session_id = resolved
+        await _switch_to(repl, resolved)
         return format_resumed(session)
     if command == "/new":
-        repl.session_id = await service.create_session()
+        await _switch_to(repl, await service.create_session())
         return f"started {repl.session_id}"
     if command == "/diff":
         if not argument:
@@ -245,9 +319,10 @@ async def handle_command(
         if not argument.isdigit():
             return f"usage: {command} <event-number>"
         try:
-            repl.session_id = await service.fork(repl.session_id, int(argument))
+            forked_id = await service.fork(repl.session_id, int(argument))
         except (ValueError, CommandRejectedError) as error:
             return str(error)
+        await _switch_to(repl, forked_id)
         verb = "rewound to" if command == "/rewind" else "forked at"
         return f"{verb} event {argument}; session {repl.session_id}"
     if command == "/autonomy":
@@ -270,6 +345,8 @@ async def handle_command(
     if command == "/rebuild":
         await service.rebuild_summaries()
         return "session list rebuilt from the log"
+    if command == "/project":
+        return await _handle_project(repl, argument)
     if command == "/state":
         events = await service.history(repl.session_id)
         return format_state(
@@ -280,6 +357,13 @@ async def handle_command(
     return f"unknown command {command!r} -- try /help"
 
 
+def _print_activity(note: ActivityNote) -> None:
+    """Format and print a note, or stay silent if there is nothing to show."""
+    line = format_activity(note)
+    if line is not None:
+        print(line)
+
+
 async def run(service: SessionService, policy: AutonomyPolicy | None = None) -> None:
     """Drive a session until the user leaves. The service is closed on the way out.
 
@@ -287,6 +371,7 @@ async def run(service: SessionService, policy: AutonomyPolicy | None = None) -> 
     composition root's job, and a REPL that builds its own would be one more
     place that knows which database and which model the app happens to use.
     """
+    repl: Repl | None = None
     try:
         repl = await Repl.start(service, policy)
         stored = await service.list_sessions()
@@ -303,7 +388,7 @@ async def run(service: SessionService, policy: AutonomyPolicy | None = None) -> 
                 print()
                 return
             try:
-                output = await handle_command(repl, line, on_activity=print)
+                output = await handle_command(repl, line, on_activity=_print_activity)
             except KeyboardInterrupt:
                 # The turn's own events are discarded whole -- the log keeps
                 # the last completed turn rather than a partial one -- but the
@@ -319,4 +404,9 @@ async def run(service: SessionService, policy: AutonomyPolicy | None = None) -> 
             if output:
                 print(output)
     finally:
+        # A no-op for a session that never joined a project. A session that
+        # is never released holds the project forever -- nothing else takes
+        # it back for a terminal that just closes.
+        if repl is not None:
+            await service.release_project(repl.session_id)
         await service.close()

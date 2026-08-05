@@ -123,9 +123,7 @@ async def test_full_mode_sends_the_whole_conversation(build_application):
 # ---------------- elide ----------------
 
 
-async def test_elide_mode_sends_less_than_full_mode(
-    build_application, db_path, elide_soon
-):
+async def test_elide_mode_sends_less_than_full_mode(build_application, db_path, elide_soon):
     """The point of the mode, measured rather than asserted."""
     full = await build_application(model=chatty(10), context_mode="full", db_path=db_path)
     session_id = await full.service.create_session()
@@ -265,4 +263,3 @@ async def test_delegation_guidance_says_when_not_to_delegate(build_application):
 
     assert "not delegate" in prompt, "the prompt must say when to keep the work"
     assert "cannot see each other" in prompt, "the splitting failure must be named"
-

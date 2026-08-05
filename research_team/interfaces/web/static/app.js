@@ -122,6 +122,16 @@ function isTurnEnd(type) {
   return t.indexOf('turn') >= 0 && (t.indexOf('completed') >= 0 || t.indexOf('failed') >= 0);
 }
 
+/* The most recent TurnFailed row, if any -- where catch-up's `discarded`
+ * content (itself index-less) belongs. */
+function lastFailedTurnIndex() {
+  for (let i = state.events.length - 1; i >= 0; i--) {
+    const t = String(state.events[i].type || '').toLowerCase();
+    if (t.indexOf('turn') >= 0 && t.indexOf('failed') >= 0) return state.events[i].index;
+  }
+  return null;
+}
+
 function humanType(type) {
   return String(type || 'Event').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
 }
@@ -331,7 +341,10 @@ const state = {
   loadingSnapshot: false,
   freshIndices: {},
   approvals: {},           // id -> approval view, gated calls waiting on a person
-  approvalDeciding: null   // id of the approval whose POST is in flight
+  approvalDeciding: null,  // id of the approval whose POST is in flight
+  activity: { order: [], byId: {} },  // provisional content for the running turn
+  discarded: {},                      // failed turn index -> provisional content
+  lastEndedAt: null                   // server ms-epoch of the last turn-end frame (see fetchTurnRunning)
 };
 
 let root = null;            // current view element
@@ -421,6 +434,12 @@ function onRoute() {
       state.loadingSnapshot = false;
       state.approvals = {};
       state.approvalDeciding = null;
+      // Leaving the session leaves its provisional content behind too --
+      // otherwise a stale bubble from the old session would flash in the new
+      // one before the first activity frame (or the turn end) replaces it.
+      state.activity = { order: [], byId: {} };
+      state.discarded = {};
+      state.lastEndedAt = null;
       sessionEls = null;
       mountSessionView();
       loadSession();
@@ -612,6 +631,7 @@ function mountSessionView() {
     conversation: slot(root, 'conversation'),
     convMeta: slot(root, 'conv-meta'),
     approvals: slot(root, 'approvals'),
+    activity: slot(root, 'activity'),
     composer: slot(root, 'composer'),
     input: slot(root, 'input'),
     send: slot(root, 'send'),
@@ -638,8 +658,7 @@ function loadSession() {
     api.get('/api/sessions/' + encodeURIComponent(id) + '/events'),
     // A turn may already be running (another tab, or a reload mid-turn). This
     // is advisory, so a failure here must not fail the whole load.
-    api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current')
-      .catch(function () { return null; }),
+    fetchTurnRunning(id).catch(function () { return null; }),
     // A tab that (re)loads mid-approval never saw the ApprovalRequested frame
     // -- this is how it catches up. Advisory like the turn check above.
     api.get('/api/sessions/' + encodeURIComponent(id) + '/approvals')
@@ -655,11 +674,61 @@ function loadSession() {
     renderTimeline();
     if (state.at !== null) loadSnapshot();
     else { state.snapshot = null; renderWorkspace(); renderConversation(); renderScrubBar(); }
+    // A tab that (re)loads mid-turn never saw the activity frames, and they
+    // carry no position for Last-Event-ID to resume from -- this is the only
+    // way it finds out what is provisionally in flight. Best-effort, like the
+    // running/approvals checks above.
+    catchUpActivity(id);
   }).catch(function (e) {
     if (state.sessionId !== id) return;
     state.sessionError = e.message;
     renderSessionError();
   });
+}
+
+/* Best-effort catch-up for provisional content: called from loadSession
+ * (mount, or mid-turn reload) and from connect()'s reconnect handler (an SSE
+ * drop loses these frames outright -- they carry no feed position, so
+ * Last-Event-ID cannot replay them the way it does for the log). Shared
+ * rather than duplicated so both call sites get the same staleness handling. */
+function catchUpActivity(id) {
+  const activitySeqAtRequest = turnEndSeq;
+  api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current/activity')
+    .then(function (body) {
+      if (state.sessionId !== id) return;
+      // Same non-atomicity as /turns/current (see fetchTurnRunning): the
+      // activity buffer's own settle() and the TurnCompleted/TurnFailed
+      // event it settles around are two steps, not one, so `running` here
+      // can still list a turn that, on this connection, already ended --
+      // and turnEndSeq alone does not catch it, because this call can be
+      // triggered BY that very reconciliation (foreignTurnEnded calls
+      // loadSession right after correctly clearing state.activity), so
+      // turnEndSeq does not change between request and response at all.
+      // The frame-based mechanism (onStreamEvent/onActivityFrame) is what
+      // now owns turnRunning correctly, so trust ITS verdict over this
+      // GET's: only accept a positive answer here if something is already
+      // believed to be running by that authoritative path. Callers that
+      // cannot yet be sure (a reconnect, where a turn may have started
+      // entirely during the gap) must resync turnRunning itself first --
+      // see connect()'s reconnect handler, which calls refreshRunning()
+      // before this, precisely so that belief is current by the time this
+      // guard checks it.
+      if (turnEndSeq === activitySeqAtRequest && (state.sending || state.turnRunning)) {
+        (body.running || []).forEach(putActivity);
+      }
+      renderActivity();
+      // The discarded buffer isn't tied to an index server-side (it's just
+      // "the last failed turn's content"), so pin it to that turn's
+      // TurnFailed row here, the same place a live frame would have put it.
+      if (body.discarded && body.discarded.length) {
+        const idx = lastFailedTurnIndex();
+        if (idx !== null) {
+          state.discarded[idx] = body.discarded;
+          renderTimeline();
+        }
+      }
+    })
+    .catch(function () { /* catch-up is best-effort */ });
 }
 
 /* Reconcile "is a turn running" with what this tab is doing. Our own POST owns
@@ -688,6 +757,9 @@ function applyRunning(res) {
     stopTick();
   }
   renderComposer();
+  // A flip either way can change what onActivityFrame was waiting to show (or
+  // hide, if a straggler's optimistic refreshRunning came back negative).
+  renderActivity();
 }
 
 /* Elapsed time is the only thing that moves while a turn runs, so repaint the
@@ -708,6 +780,53 @@ function stopTick() {
   tickTimer = null;
 }
 
+// Bumped every time a TurnCompleted/TurnFailed frame is reconciled (see
+// onStreamEvent). Unlike a GET to /turns/current, a turn-end frame is
+// strictly ordered on this connection and can never be stale -- so every GET
+// against that endpoint (below, and the mount-time one in loadSession) is
+// checked against this, not the other way around.
+let turnEndSeq = 0;
+
+/* GET /turns/current, but distrust a positive answer that names a turn which
+ * started no later than the last turn-end this connection already saw. The
+ * backend clears its "current turn" tracker and emits the
+ * TurnCompleted/TurnFailed event as two separate steps, not atomically -- so
+ * a response can say running:true for tens of milliseconds after this
+ * connection already saw that same turn end, REGARDLESS of when the request
+ * was sent (this is not a narrow in-flight window; the server side itself
+ * lags). That includes the request loadSession() fires on every call, which
+ * foreignTurnEnded triggers right after correctly clearing turnRunning --
+ * without this, that GET would immediately undo it.
+ *
+ * This used to compare turn_index instead of started_at, which is unsound: a
+ * TurnFailed event carries turn_index = state.turn_index + 1 but the session
+ * deliberately does NOT advance state.turn_index on failure ("the turn did
+ * not happen" -- see domain/session.py), so a retry after a failure computes
+ * the exact same turn_index again. Comparing indices made a failed turn
+ * permanently suppress rendering for every retry afterward, since each
+ * retry's /turns/current kept reporting the same "already-ended" index.
+ * started_at does not have this problem: a retry always starts strictly
+ * after the failure it followed, so comparing timestamps (both server-clock,
+ * matching the occurred_at this was set from) tells a genuine new turn apart
+ * from a straggler regardless of how many times turn_index repeats.
+ *
+ * turnEndSeq is kept as a second, cheaper check for the (rarer) true
+ * in-flight case. Only the positive case is ever downgraded -- running:false
+ * is always safe to trust. */
+function fetchTurnRunning(id) {
+  const seqAtRequest = turnEndSeq;
+  return api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current')
+    .then(function (res) {
+      const startedAt = res && res.started_at ? Date.parse(res.started_at) : NaN;
+      if (res && res.running &&
+          (turnEndSeq !== seqAtRequest ||
+           (state.lastEndedAt !== null && !isNaN(startedAt) && startedAt < state.lastEndedAt))) {
+        return { running: false, turn_index: null, started_at: null, elapsed_seconds: null };
+      }
+      return res;
+    });
+}
+
 let runningCheckInFlight = false;
 
 function refreshRunning(announce) {
@@ -715,7 +834,7 @@ function refreshRunning(announce) {
   // Events arrive in bursts; one check at a time is enough.
   if (!id || runningCheckInFlight) return Promise.resolve();
   runningCheckInFlight = true;
-  return api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current')
+  return fetchTurnRunning(id)
     .then(function (res) {
       runningCheckInFlight = false;
       if (state.sessionId !== id) return;
@@ -985,6 +1104,8 @@ function renderTimeline() {
         }, 'fork here'))
     ]);
     list.appendChild(row);
+    const discarded = renderDiscarded(index);
+    if (discarded) list.appendChild(discarded);
   });
 
   const atHead = state.at === null;
@@ -1877,6 +1998,21 @@ function connect() {
       // Approval frames carry no feed position, so Last-Event-ID resumes the
       // log but not these -- reconcile them on every reconnect regardless.
       fetchApprovals(state.sessionId);
+      // Activity frames carry no feed position either, and the buffer's own
+      // design note is explicit that surviving a dropped connection is the
+      // reason it exists at all -- without this, a laptop waking mid-turn
+      // would show a frozen provisional pane for the rest of that turn, the
+      // exact symptom the buffer was built to prevent. refreshRunning() runs
+      // first and is awaited: catchUpActivity's guard trusts turnRunning as
+      // the authoritative belief, but a turn may have started entirely
+      // during the gap, so that belief has to be brought current before the
+      // guard checks it, not after.
+      if (!state.sending) {
+        const id = state.sessionId;
+        refreshRunning().then(function () {
+          if (state.sessionId === id) catchUpActivity(id);
+        });
+      }
     }
   };
   stream.onmessage = function (msg) {
@@ -1905,6 +2041,12 @@ function onStreamEvent(payload) {
   // docstring for why they get no id of their own.
   if (payload.type === 'ApprovalRequested' || payload.type === 'ApprovalSettled') {
     onApprovalFrame(payload);
+    return;
+  }
+  // Provisional turn content rides the same connection but is not a log entry
+  // either -- same reasoning as approvals above, see onActivityFrame.
+  if (payload.type === 'TurnActivity') {
+    onActivityFrame(payload);
     return;
   }
   if (state.route.name === 'tree') {
@@ -1943,14 +2085,53 @@ function onStreamEvent(payload) {
     state.watchedTurn.from_index = index;
   }
 
-  // No narration here on purpose: a turn's frames all arrive together when it
-  // commits, so per-event progress would be a burst at the end, not progress.
+  // Log frames and activity frames are different channels on purpose: this one
+  // is the durable record, arriving in a burst when the turn commits, while
+  // provisional content streams in above via onActivityFrame.
 
-  // TurnCompleted / TurnFailed close a turn. For one we are watching, that
-  // frame IS the completion signal -- no polling, no follow-up request.
-  if (state.turnRunning && !state.sending && isTurnEnd(payload.type)) {
-    foreignTurnEnded(payload);
-    return;
+  // Everything below reconciles a turn ending, and must run only once per
+  // turn -- guard on !known (a genuinely new frame), not on state.turnRunning.
+  // A reconnect can replay an already-known TurnCompleted/TurnFailed, and
+  // unlike turnRunning (which onActivityFrame's refreshRunning() can now flip
+  // from outside this function) known/index is this function's own, so it is
+  // the one guard here immune to that race.
+  if (!known && isTurnEnd(payload.type)) {
+    turnEndSeq++;
+    // Server clock, not the browser's: it is what a racing /turns/current
+    // response's own started_at gets compared against in fetchTurnRunning,
+    // so both sides of that comparison come from the same clock.
+    state.lastEndedAt = payload.occurred_at ? Date.parse(payload.occurred_at) : Date.now();
+    // A turn ending -- ours or one we're only watching -- reconciles whatever
+    // streamed in as activity. On success the real log events (just pushed
+    // above) are the record now, so provisional content is dropped outright:
+    // it would only duplicate what is about to render from state.events. On
+    // failure nothing was appended but the marker itself, so what streamed is
+    // the only trace of the attempt -- keep it, behind a disclosure, on this
+    // row.
+    if (String(payload.type).toLowerCase().indexOf('failed') >= 0) {
+      const provisional = state.activity.order
+        .map(function (id) { return state.activity.byId[id]; })
+        .filter(Boolean);
+      if (provisional.length) state.discarded[index] = provisional;
+    }
+    state.activity = { order: [], byId: {} };
+    renderActivity();
+    renderTimeline();
+
+    // TurnCompleted / TurnFailed close a turn. For one we were watching, that
+    // frame IS the completion signal -- no polling, no follow-up request.
+    // This no longer requires state.turnRunning to already be true:
+    // refreshRunning() (see onActivityFrame) asks the server whether a turn
+    // is running, and the server clears that answer and emits this very
+    // frame in two separate steps, not atomically -- so a response can say
+    // running:true a moment after this frame already said otherwise, wrongly
+    // setting turnRunning true with nothing left to correct it if this branch
+    // stayed conditional on the flag it exists to fix. A turn-end frame for a
+    // turn we didn't start is authoritative regardless of what we believed.
+    if (!state.sending) {
+      foreignTurnEnded(payload);
+      return;
+    }
   }
 
   // A cancel that returned settled:false left the turn unwinding; its closing
@@ -1961,6 +2142,93 @@ function onStreamEvent(payload) {
     renderComposer();
     loadSession();
   }
+}
+
+// Provisional turn content. Not a log entry -- it carries no index, and the
+// events it previews may never be appended at all if the turn fails.
+function onActivityFrame(payload) {
+  if (state.route.name !== 'session' || payload.session_id !== state.sessionId) return;
+  putActivity(payload);
+  // A turn's ordinary log frames only arrive in a burst when it commits (see
+  // the comment in onStreamEvent), so a tab that did not send this turn and
+  // has not polled /turns/current has no other way to learn one is running --
+  // this frame is the only early signal it gets. But activity and log frames
+  // are pumped onto the SSE connection by two independent tasks (app.py's
+  // _sse), so a frame can legitimately straggle in after the turn it belongs
+  // to has already committed -- there is no turn id on the frame to tell the
+  // two cases apart client-side. Rather than trust the frame's mere arrival
+  // (which would resurrect a turn that already ended and leave a provisional
+  // bubble nothing will ever clear), ask the server: refreshRunning() is a
+  // real GET, so a straggler for an ended turn correctly reports not-running
+  // and never flips turnRunning at all. applyRunning() re-renders activity
+  // once the answer is in, whichever way it goes.
+  if (!state.sending && !state.turnRunning) refreshRunning();
+  renderActivity();
+}
+
+// The server already accumulates delta text (each frame's `text` is the full
+// prose so far, not an increment), so the browser stores whole entries rather
+// than appending -- one accumulator, on the side that has to answer the
+// catch-up route anyway. A whole message replaces any accumulated prose under
+// the same message_id, which this overwrite handles for free.
+function putActivity(entry) {
+  const id = entry.message_id;
+  if (!state.activity.byId[id]) state.activity.order.push(id);
+  state.activity.byId[id] = entry;
+}
+
+function renderActivity() {
+  if (!sessionEls || !sessionEls.activity) return;
+  const box = sessionEls.activity;
+  clear(box);
+  // state.turnRunning is documented as "only ever about a turn we did not
+  // start" (see applyRunning) -- the tab that sent the turn tracks it via
+  // state.sending instead, so both must gate this, not turnRunning alone.
+  if ((!state.sending && !state.turnRunning) || !state.activity.order.length) return;
+  state.activity.order.forEach(function (id) {
+    const entry = state.activity.byId[id];
+    if (entry) box.appendChild(renderProvisional(entry));
+  });
+}
+
+/* A whole-message entry's `payload` is raw message_to_dict output -- content
+ * and tool_calls sit under "data", not at the top level (the same nesting
+ * event_summary() unwraps server-side for the timeline, and message_view()
+ * unwraps for /conversation). Mirror that here rather than reading
+ * payload.content directly, which is always undefined. */
+function activityBody(payload) {
+  const data = (payload && payload.data) || {};
+  const calls = Array.isArray(data.tool_calls) ? data.tool_calls : [];
+  if (calls.length) {
+    // Same "→ name, name" shape presenters.py's event_summary() uses for a
+    // tool-calling assistant message, so a provisional bubble reads like the
+    // timeline row it is about to become.
+    return '→ ' + calls.map(function (c) { return (c && c.name) || '?'; }).join(', ');
+  }
+  return contentText(data.content);
+}
+
+function renderProvisional(entry) {
+  // A whole message clears `text` server-side and populates `payload`
+  // instead, so prefer `text` (the delta accumulator) and fall back to the
+  // message content.
+  const body = entry.text || activityBody(entry.payload);
+  return h('div', { class: 'provisional provisional-' + entry.kind }, [
+    h('div', { class: 'provisional-tag', text: 'in progress — not yet recorded' }),
+    h('div', { class: 'provisional-body', text: body })
+  ]);
+}
+
+/* A discarded turn's provisional content: everything that streamed in before
+ * a TurnFailed marker with nothing else to show for it. Ephemeral -- gone on
+ * reload -- which the disclosure's label says plainly. */
+function renderDiscarded(index) {
+  const entries = state.discarded[index];
+  if (!entries || !entries.length) return null;
+  return h('details', { class: 'discarded' }, [
+    h('summary', { text: 'discarded — not recorded' }),
+    entries.map(function (entry) { return renderProvisional(entry); })
+  ]);
 }
 
 function onApprovalFrame(payload) {

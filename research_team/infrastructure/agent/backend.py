@@ -61,8 +61,6 @@ class EventSourcedBackend(StateBackend):
         """
         self._edit_intent = (old_string, new_string, replace_all)
         try:
-            return super().edit(
-                file_path, old_string, new_string, replace_all=replace_all
-            )
+            return super().edit(file_path, old_string, new_string, replace_all=replace_all)
         finally:
             self._edit_intent = None

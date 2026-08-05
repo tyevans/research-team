@@ -25,6 +25,12 @@ DEFAULT_SERVICE_NAME = "research-team"
 
 DEFAULT_SEARXNG_RESULTS = 5
 
+DEFAULT_GRAPH_STORE = "memory"
+DEFAULT_KNOWLEDGE_DOMAIN = "auto"
+
+DEFAULT_NEO4J_URI = "bolt://localhost:7687"
+DEFAULT_NEO4J_USER = "neo4j"
+
 
 def default_db_path() -> str:
     """Where sessions live. Sessions persist across runs and are resumable."""
@@ -143,3 +149,35 @@ def searxng_url() -> str | None:
 def searxng_results() -> int:
     """How many results reach the model. Capped because context is the cost."""
     return int(os.getenv("AGENT_SEARXNG_RESULTS", str(DEFAULT_SEARXNG_RESULTS)))
+
+
+def graph_store() -> str:
+    """What backs the knowledge graph. `memory` needs no server."""
+    return os.getenv("AGENT_GRAPH_STORE", DEFAULT_GRAPH_STORE)
+
+
+def knowledge_domain() -> str:
+    """A redstring schema id, or `auto` to have a classifier choose."""
+    return os.getenv("AGENT_KNOWLEDGE_DOMAIN", DEFAULT_KNOWLEDGE_DOMAIN)
+
+
+def neo4j_uri() -> str:
+    return os.getenv("AGENT_NEO4J_URI", DEFAULT_NEO4J_URI)
+
+
+def neo4j_auth() -> tuple[str, str]:
+    """User and password. Raises when the password is unset.
+
+    No default password. A graph store that silently comes up on `neo4j/neo4j`
+    is one that either fails confusingly or, worse, connects to somebody's
+    development server.
+    """
+    password = os.getenv("AGENT_NEO4J_PASSWORD")
+    if not password:
+        raise ValueError("AGENT_NEO4J_PASSWORD must be set when AGENT_GRAPH_STORE=neo4j")
+    return os.getenv("AGENT_NEO4J_USER", DEFAULT_NEO4J_USER), password
+
+
+def neo4j_database() -> str | None:
+    """Which database within the server. None means the server's default."""
+    return os.getenv("AGENT_NEO4J_DATABASE") or None

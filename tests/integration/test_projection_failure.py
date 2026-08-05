@@ -127,9 +127,7 @@ async def test_a_rebuild_repairs_a_drifted_row(
     assert (await application.service.list_sessions())[0].first_message == ""
 
     # The handler is fixed; the stored row is still wrong.
-    monkeypatch.setattr(
-        read_models.SessionSummaryProjection, "_on_user_message", original
-    )
+    monkeypatch.setattr(read_models.SessionSummaryProjection, "_on_user_message", original)
     await application.summaries.rebuild()
 
     [summary] = await application.service.list_sessions()
@@ -208,9 +206,7 @@ async def test_a_rebuild_clears_the_unhealthy_report(
     await application.summaries_caught_up()
     assert (await application.service.summaries_health()).healthy is False
 
-    monkeypatch.setattr(
-        read_models.SessionSummaryProjection, "_on_user_message", original
-    )
+    monkeypatch.setattr(read_models.SessionSummaryProjection, "_on_user_message", original)
     await application.summaries.rebuild()
 
     health = await application.service.summaries_health()
