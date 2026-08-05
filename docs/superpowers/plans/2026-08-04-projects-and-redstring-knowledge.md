@@ -21,6 +21,43 @@
 - **Adding a field to an existing event requires a default** meaning what its absence meant, plus a case in `tests/infrastructure/test_schema_evolution.py`. This is the documented rule in `research_team/domain/events.py`.
 - Test command throughout: `uv run pytest`.
 
+### `FakeLlmProvider` construction — use this exact pattern
+
+`FakeLlmProvider()` with no arguments **raises**: it requires exactly one of `script=` or `by_substring=`. This is deliberate — a fake with no canned answers cannot answer anything. Every test in this plan that needs extraction uses:
+
+```python
+from redstring import FakeLlmProvider
+
+#: The canned extraction result, in redstring's own extraction schema.
+#: `FakeLlmProvider` validates this against the caller's schema, so a wrong
+#: shape fails loudly rather than silently extracting nothing.
+TWO_PEOPLE = {
+    "entities": [
+        {"name": "Ada Lovelace", "entity_type": "Person"},
+        {"name": "Charles Babbage", "entity_type": "Person"},
+    ],
+    "relationships": [
+        {
+            "source_name": "Ada Lovelace",
+            "target_name": "Charles Babbage",
+            "relationship_type": "WORKED_WITH",
+        }
+    ],
+}
+
+
+def fake_provider(answer=TWO_PEOPLE):
+    """A provider that answers `answer` for any text.
+
+    `by_substring={}` with a `default` is redstring's own idiom for "the same
+    answer regardless of input" — an empty mapping never matches, so every
+    call falls through to the default.
+    """
+    return FakeLlmProvider(by_substring={}, default=answer)
+```
+
+Put this in `tests/conftest.py` (or the nearest shared conftest) once, and import it everywhere rather than repeating the literal. `redstring` also exports `EMPTY` for the "found nothing" payload.
+
 ---
 
 ### Task 1: The `Project` aggregate
@@ -864,26 +901,30 @@ def test_an_unknown_store_is_rejected_by_name():
 
 And `tests/integration/test_neo4j_graph_store.py`, which needs a running server:
 
+This test covers what THIS task delivers — that `build_graph_store("neo4j")` returns a store a real server accepts. It deliberately does not touch `RedstringKnowledge`, which does not exist yet; an adapter-level integration test belongs with the adapter.
+
 ```python
-"""The Neo4j graph store, against a real server.
+"""The Neo4j graph store this project constructs, against a real server.
 
 Deselected by default. Start the server and run it deliberately:
 
     docker compose -f docker-compose.test.yml up -d neo4j
     uv run pytest -m integration tests/integration/test_neo4j_graph_store.py
+
+What this pins is narrow and worth pinning: that the URI, auth and database
+this project reads from the environment produce a store redstring can write
+to and read back. redstring's own suite covers the adapter's behaviour; this
+covers our wiring of it.
 """
 
 import os
 import pytest
 from uuid import uuid4
 
-from eventsource.adapters.sqlite import SQLiteEventStore
-from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
-from redstring import FakeLlmProvider
+from redstring import SourceDocument, build_graph
 
-from research_team.application.knowledge import SourceRef
-from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.knowledge.stores import build_graph_store
+from tests.conftest import fake_provider
 
 pytestmark = pytest.mark.integration
 
@@ -896,34 +937,31 @@ def neo4j_env(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_ingest_and_search_against_a_real_neo4j(tmp_path, neo4j_env):
-    project_id = uuid4()
+async def test_the_configured_store_round_trips_against_a_real_neo4j(neo4j_env):
+    tenant_id = uuid4()
     store = build_graph_store("neo4j")
     await store.ensure_schema()
-    db_path = str(tmp_path / "sessions.db")
     try:
-        adapter = RedstringKnowledge(
-            project_id,
+        await build_graph(
+            SourceDocument(id="notes", text="Ada Lovelace worked with Charles Babbage."),
+            provider=fake_provider(),
             store=store,
-            event_store=SQLiteEventStore(db_path),
-            snapshot_store=SQLiteSnapshotStore(db_path),
-            provider=FakeLlmProvider(),
+            tenant_id=tenant_id,
             domain="encyclopedia_wiki",
-            adjudicate=False,
         )
 
-        report = await adapter.ingest(
-            SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
-        )
-        matches = await adapter.search("lovelace")
+        entities = await store.find_entities(tenant_id)
 
-        assert report.entity_count >= 1
-        assert any("lovelace" in match.name.lower() for match in matches)
+        assert any("lovelace" in entity.name.lower() for entity in entities)
     finally:
-        # Leave no rows behind: the next run shares this database.
-        await store.delete_by_tenant(project_id)
+        # Leave no rows behind: the next run shares this server.
+        await store.delete_by_tenant(tenant_id)
         await store.close()
 ```
+
+If `build_graph` raises `TenantContextNotSetError`, wrap the call in `async with tenant_scope(tenant_id):` from `eventsource.domain.tenant_context` and note it in your report — the adapter in the next task wraps every redstring call that way regardless.
+
+Delete `research_team/infrastructure/knowledge/redstring_adapter.py` if a placeholder version of it exists: this task does not need it, and the next task creates the real one.
 
 Check `pyproject.toml` for how the `integration` marker is registered and deselected by default (the search work established this pattern); if no such marker exists, register it under `[tool.pytest.ini_options]` with `markers` and add `-m "not integration"` to `addopts`.
 
@@ -1122,11 +1160,12 @@ from uuid import uuid4
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from eventsource import collect
-from redstring import FakeLlmProvider, InMemoryGraphStore
+from redstring import InMemoryGraphStore
 from redstring.events.streams import document_stream
 
-from research_team.application.knowledge import SourceRef
+from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
+from tests.conftest import fake_provider
 
 
 def build_adapter(tmp_path, project_id, *, provider=None):
@@ -1137,7 +1176,7 @@ def build_adapter(tmp_path, project_id, *, provider=None):
         store=InMemoryGraphStore(),
         event_store=store,
         snapshot_store=SQLiteSnapshotStore(db_path),
-        provider=provider if provider is not None else FakeLlmProvider(),
+        provider=provider if provider is not None else fake_provider(),
         domain="encyclopedia_wiki",
         adjudicate=False,
     ), store
@@ -1735,7 +1774,9 @@ from uuid import uuid4
 
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
-from redstring import FakeLlmProvider, InMemoryGraphStore
+from redstring import InMemoryGraphStore
+
+from tests.conftest import fake_provider
 
 from research_team.application.knowledge import SourceRef
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
@@ -1754,7 +1795,7 @@ async def test_a_rebuilt_graph_matches_the_one_maintained_by_ingest(tmp_path):
         store=live,
         event_store=event_store,
         snapshot_store=SQLiteSnapshotStore(db_path),
-        provider=FakeLlmProvider(),
+        provider=fake_provider(),
         domain="encyclopedia_wiki",
         adjudicate=False,
     )
@@ -1793,7 +1834,7 @@ async def test_rebuilding_never_calls_the_model(tmp_path):
         store=InMemoryGraphStore(),
         event_store=event_store,
         snapshot_store=SQLiteSnapshotStore(db_path),
-        provider=FakeLlmProvider(),
+        provider=fake_provider(),
         domain="encyclopedia_wiki",
         adjudicate=False,
     )
