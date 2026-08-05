@@ -36,6 +36,25 @@ Do not add mypy in permissive mode as a stepping stone. A gate that starts
 permissive tends to stay permissive, and it costs the honesty of saying
 plainly, as this entry does, that there is no type checking today.
 
+### B4. Two tests flake under machine load
+
+Both surfaced during the projects/redstring work, each failing once and passing
+on an isolated re-run, on a machine running several other projects' containers:
+
+- `tests/interfaces/test_web.py::test_stream_reaches_a_real_browser_over_a_real_socket`
+  — waits up to 10s on a real socket for an SSE frame.
+- A cancel-settle test in `tests/application/test_turn_supervisor.py` with
+  `settle_timeout=0.1`.
+
+Both are wall-clock races against a loaded scheduler, not logic faults, and
+both are testing something worth testing — a real socket and a real timeout
+are the point. The fix is not a longer sleep: it is making the wait
+condition-driven, or making the timeout injectable so the test names its own.
+
+Left alone for now because they pass reliably on an unloaded machine and the
+CI runner is quieter than the machine they flaked on. If CI proves otherwise,
+this moves up.
+
 ## Waiting on redstring
 
 ### B2. Two workarounds to unwind when redstring closes R3 and R4
