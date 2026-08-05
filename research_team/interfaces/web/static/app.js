@@ -303,6 +303,9 @@ const state = {
   tree: null,
   sessionMeta: {},          // id -> row from /api/sessions
   treeError: null,
+  // projects (control surface only -- no graph visualisation here)
+  projects: null,           // /api/projects
+  projectsError: null,
   // session view
   sessionId: null,
   head: null,               // /api/sessions/{id}
@@ -471,8 +474,12 @@ function mountTreeView() {
   clear(app);
   app.appendChild(root);
   root.querySelector('[data-act="new-session"]').addEventListener('click', newSession);
+  root.querySelector('[data-act="new-project"]').addEventListener('click', createProject);
   clear(slot(root, 'tree'));
   slot(root, 'tree').appendChild(h('div', { class: 'empty', text: 'loading sessions…' }));
+  clear(slot(root, 'projects'));
+  slot(root, 'projects').appendChild(h('div', { class: 'empty', text: 'loading projects…' }));
+  loadProjects();
 }
 
 function loadTree() {
@@ -576,6 +583,98 @@ function num(a, b) {
 }
 
 let creatingSession = false;
+
+/* ===================================================================== */
+/* projects (control surface: list, create, join -- no graph view here) */
+/* ===================================================================== */
+
+function loadProjects() {
+  return api.get('/api/projects').then(function (res) {
+    state.projects = Array.isArray(res) ? res : [];
+    state.projectsError = null;
+    if (state.route.name === 'tree') renderProjects();
+  }).catch(function (e) {
+    state.projects = null;
+    state.projectsError = e.message;
+    if (state.route.name === 'tree') renderProjects();
+  });
+}
+
+function renderProjects() {
+  if (!root) return;
+  const box = slot(root, 'projects');
+  if (!box) return;
+  clear(box);
+
+  if (state.projectsError) {
+    box.appendChild(errorBox('Could not load projects', state.projectsError, function () {
+      clear(box);
+      box.appendChild(h('div', { class: 'empty', text: 'retrying…' }));
+      loadProjects();
+    }));
+    return;
+  }
+  if (!state.projects || !state.projects.length) {
+    box.appendChild(emptyState('No projects yet.',
+      'Create one to share a filesystem and knowledge graph across sessions.'));
+    return;
+  }
+  const ul = h('ul', { class: 'tree' });
+  state.projects.forEach(function (p) {
+    const li = h('li');
+    li.appendChild(h('div', { class: 'node' }, [
+      h('div', { class: 'node-top' }, [
+        h('span', { class: 'node-id', text: p.name }),
+        h('span', { class: 'node-msg empty', text: shortId(p.id) })
+      ]),
+      h('button', {
+        class: 'btn btn-sm',
+        onclick: function () { joinProject(p.id); }
+      }, [document.createTextNode('Join')])
+    ]));
+    ul.appendChild(li);
+  });
+  clear(box);
+  box.appendChild(ul);
+}
+
+let creatingProject = false;
+
+function createProject(ev) {
+  if (creatingProject) return;
+  const input = document.getElementById('project-name');
+  const name = input ? input.value.trim() : '';
+  if (!name) { toast('Enter a project name first.', 'bad'); return; }
+  creatingProject = true;
+  const button = ev && ev.currentTarget;
+  if (button) button.disabled = true;
+  api.post('/api/projects', { name: name }).then(function (res) {
+    if (input) input.value = '';
+    toast('Created project ' + (res && res.name || name) + '.', 'good');
+    loadProjects();
+  }).catch(function (e) {
+    toast('Could not create project: ' + e.message, 'bad');
+  }).then(function () {
+    creatingProject = false;
+    if (button && button.isConnected) button.disabled = false;
+  });
+}
+
+let joiningProject = false;
+
+function joinProject(projectId) {
+  if (joiningProject) return;
+  joiningProject = true;
+  api.post('/api/projects/' + encodeURIComponent(projectId) + '/join', {}).then(function (res) {
+    if (res && res.warning) toast('Joined, but ' + res.warning, 'bad');
+    if (res && res.id) go('#/s/' + encodeURIComponent(res.id));
+    else toast('Joined but no session id was returned.', 'bad');
+  }).catch(function (e) {
+    toast('Could not join project: ' + e.message, 'bad');
+  }).then(function () {
+    joiningProject = false;
+  });
+}
 
 function newSession(ev) {
   if (creatingSession) return;
