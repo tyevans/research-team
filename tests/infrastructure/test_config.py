@@ -100,3 +100,13 @@ def test_searxng_url_loses_its_trailing_slash(monkeypatch):
 def test_result_cap_defaults(monkeypatch):
     monkeypatch.delenv("AGENT_SEARXNG_RESULTS", raising=False)
     assert config.searxng_results() == 5
+
+
+def test_graph_store_defaults_to_memory(monkeypatch):
+    monkeypatch.delenv("AGENT_GRAPH_STORE", raising=False)
+    assert config.graph_store() == "memory"
+
+
+def test_knowledge_domain_defaults_to_auto(monkeypatch):
+    monkeypatch.delenv("AGENT_KNOWLEDGE_DOMAIN", raising=False)
+    assert config.knowledge_domain() == "auto"

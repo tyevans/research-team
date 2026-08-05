@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "langchain-openai>=1.4.1",
+    "redstring[llm,neo4j]>=0.1.0",
     "uvicorn[standard]>=0.52.1",
 ]
 
@@ -32,8 +33,11 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-markers = ["live: hits the real model endpoint; deselected by default"]
-addopts = "-m 'not live'"
+markers = [
+    "live: hits the real model endpoint; deselected by default",
+    "integration: hits a real backend service (e.g. Neo4j); deselected by default",
+]
+addopts = "-m 'not live and not integration'"
 
 [tool.ruff]
 line-length = 95
