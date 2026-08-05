@@ -13,6 +13,8 @@ langchain's `when` predicate lives in `infrastructure` instead.
 
 from typing import Literal
 
+from research_team.application.knowledge import REMEMBER_TOOL, UNMERGE_TOOL
+
 Level = Literal["auto", "ask", "deny"]
 """`auto` runs it, `ask` interrupts for a human, `deny` refuses without asking."""
 
@@ -25,6 +27,8 @@ GATED_TOOLS: tuple[str, ...] = (
     "write_file",
     "edit_file",
     "delete_file",
+    REMEMBER_TOOL,
+    UNMERGE_TOOL,
 )
 """What can be gated. Read-only file tools are absent deliberately: they cost
 nothing and escape nothing, and gating them would train people to click

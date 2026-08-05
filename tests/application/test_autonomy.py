@@ -9,7 +9,13 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from research_team.application import GATED_TOOLS, AutonomyPolicy
+from research_team.application import (
+    GATED_TOOLS,
+    GRAPH_SEARCH_TOOL,
+    REMEMBER_TOOL,
+    UNMERGE_TOOL,
+    AutonomyPolicy,
+)
 
 LEVELS = ("auto", "ask", "deny")
 
@@ -107,3 +113,24 @@ def test_levels_never_leak_between_tools(writes):
     untouched = set(GATED_TOOLS) - {tool for tool, _ in writes}
     for tool in untouched:
         assert policy.level_for(tool) == "auto"
+
+
+def test_the_knowledge_writes_are_gated_but_the_read_is_not():
+    """`remember` and `unmerge` write to the graph; `graph_search` only reads
+    it. Gating the read too would make every lookup an interruption, so it
+    must default to `auto` the way the file reads do -- and the writes must
+    actually be settable, which is what distinguishes "gated" from "absent".
+    """
+    policy = AutonomyPolicy(default="ask")
+
+    assert REMEMBER_TOOL in GATED_TOOLS
+    assert UNMERGE_TOOL in GATED_TOOLS
+    assert GRAPH_SEARCH_TOOL not in GATED_TOOLS
+
+    assert policy.level_for(REMEMBER_TOOL) == "ask"
+    assert policy.level_for(UNMERGE_TOOL) == "ask"
+    assert policy.level_for(GRAPH_SEARCH_TOOL) == "auto"
+
+    policy.set(REMEMBER_TOOL, "deny")
+    assert policy.level_for(REMEMBER_TOOL) == "deny"
+    assert policy.level_for(GRAPH_SEARCH_TOOL) == "auto"
