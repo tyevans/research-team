@@ -2919,6 +2919,139 @@ git commit -m "docs: projects and the knowledge graph"
 
 ---
 
+### Task 14: Attach the graph when a project is joined
+
+**Files:**
+- Modify: `research_team/infrastructure/agent/deep_agent.py` (public tools accessor + setter)
+- Create: `research_team/application/knowledge_attachment.py`
+- Modify: `research_team/composition.py`, `research_team/application/session_service.py`, `research_team/interfaces/cli/repl.py`
+- Test: `tests/application/test_knowledge_attachment.py`, plus additions to `tests/interfaces/test_repl_project.py`
+
+**Interfaces:**
+- Produces: `KnowledgeAttachment` with `.current`, `async attach(project_id)`, `async detach()`; `Application.attach_project(project_id)` / `Application.detach_project()`; `DeepAgentTurnExecutor.tools` property and `set_tools(tools)`.
+
+**Why this exists.** Task 10 made `project_id` a *build-time* parameter; Task 12 made project selection a *runtime* action. Both are internally correct and they never met, so in the shipped application `knowledge` is always `None`: `main.py` and `web.py` never pass `project_id`, and `/project use` cannot attach anything to an already-constructed frozen `Application`. The knowledge tools are dead code in the product. This task closes that.
+
+**What makes it tractable:** `create_deep_agent` is called *inside* `_invoke`, per turn, reading `self._tools`. So replacing the executor's tool list between turns is enough — the next turn picks it up. No application rebuild, no dynamic tool binding.
+
+- [ ] **Step 1: Give the executor a public tools surface**
+
+`DeepAgentTurnExecutor` currently exposes `_tools` only. Add:
+
+```python
+    @property
+    def tools(self) -> tuple[BaseTool, ...]:
+        """What this executor will hand the agent on its next turn."""
+        return tuple(self._tools)
+
+    def set_tools(self, tools: Sequence[BaseTool]) -> None:
+        """Replace the tool set for subsequent turns.
+
+        Safe between turns because `_invoke` builds the agent from `_tools` on
+        every pass -- there is no long-lived agent holding a stale list. Not
+        safe *during* a turn, and nothing calls it there: attaching a project
+        happens from the REPL's command loop, which is not inside a turn.
+        """
+        self._tools = list(tools)
+```
+
+Then delete `Application.turns_tools()`'s reach through `service._executor._tools` and have it delegate to the new property — that closes half of BACKLOG B8.
+
+- [ ] **Step 2: Write the failing test for `KnowledgeAttachment`**
+
+Create `tests/application/test_knowledge_attachment.py`. It must prove:
+- before `attach`, `.current` is `None` and the executor's tools do NOT include `remember`;
+- after `attach(project_id)`, `.current` is set and the executor's tools DO include all three knowledge tool names;
+- after `detach()`, the tools are back to exactly the base set (assert equality with the base tuple, not just absence of `remember`);
+- `attach` twice with different project ids leaves exactly one graph attached, and the second one's tenant is the second project.
+
+Use the real `RedstringKnowledge` over an in-memory graph store and `fake_provider()`; do not construct a second `SQLiteSnapshotStore` (B5).
+
+- [ ] **Step 3: Implement `KnowledgeAttachment`**
+
+```python
+class KnowledgeAttachment:
+    """Opens a project's graph on demand, and lends its tools to the executor.
+
+    The graph cannot be wired at construction, because which project a session
+    belongs to is decided at runtime -- long after the application is built.
+    But the executor rebuilds its agent from its tool list on every turn, so
+    attaching later is enough: the next turn sees the tools.
+
+    Holds the base tool set so `detach` can restore it exactly, rather than
+    trying to subtract the knowledge tools back out.
+    """
+```
+
+Constructor takes what building an adapter needs (event store, snapshot store, model, config values) plus the executor and the base tools. `attach` builds the store via `build_graph_store(config.graph_store())`, builds `RedstringKnowledge`, calls `ensure_schema()` if present, calls `rebuild_graph(...)`, then `executor.set_tools([*base, *build_knowledge_tools(knowledge)])`. `detach` closes the store if it has `close()` and restores the base tools.
+
+`attach` must be atomic in effect: if `ensure_schema` or `rebuild_graph` raises, the tools must NOT be swapped in and `.current` must stay `None`. Test that — an unreachable Neo4j must leave the session usable without knowledge rather than half-attached.
+
+- [ ] **Step 4: The session's system prompt must mention the tools**
+
+A session in a project needs `KNOWLEDGE_PROMPT` appended to its system prompt, and the right place is the session's own `SessionStarted` event — that is where the prompt lives in an event-sourced system. Give `SessionService` a `knowledge_prompt: str = ""` constructor argument and have `start_in_project` use `self._default_system_prompt + self._knowledge_prompt`. Composition passes `KNOWLEDGE_PROMPT`.
+
+Test that a session started via `start_in_project` records a system prompt containing the knowledge guidance, and one started normally does not.
+
+- [ ] **Step 5: Wire it through composition and the REPL**
+
+`Application` gains `attach_project` / `detach_project` delegating to the attachment. `/project use` calls `attach_project(match)` after `_switch_to`; `_switch_to` calls `detach_project()` when leaving a project session. Report attachment failure to the user as text — a graph that will not open must not take the REPL down.
+
+Keep `build_application(project_id=...)` working: it is what the existing tests use, and it should now go through the same attachment path rather than a parallel one.
+
+- [ ] **Step 6: Prove the gap is closed**
+
+Add a test that goes through the REPL: `/project new x`, `/project use x`, then assert the executor's tools include `remember`. That test would have failed before this task, which is the point.
+
+- [ ] **Step 7: Run and commit**
+
+`uv run pytest` once, in the foreground, `timeout: 900000`. Then `uv run ruff check . && uv run ruff format --check .`.
+
+---
+
+### Task 15: Project management in the web UI
+
+**Files:**
+- Modify: `research_team/interfaces/web/app.py`, `research_team/interfaces/web/presenters.py`, `research_team/interfaces/web/static/app.js`
+- Test: `tests/interfaces/test_web.py`
+
+**Interfaces:**
+- Produces: `GET /api/projects`, `POST /api/projects`, `POST /api/projects/{project_id}/join`.
+
+**Why this exists.** The spec says projects are "created and selected through the session-management surface that already exists — a `/project` REPL command **and the web UI's session list**." Only the REPL half was ever planned. Today the web UI has no project concept at all: it cannot create, list or join one, so a web user gets neither the shared filesystem nor the graph.
+
+- [ ] **Step 1: Write the failing API tests**
+
+In `tests/interfaces/test_web.py`, following that file's existing client harness:
+- `GET /api/projects` returns `[]` when there are none, and the created project's name and id after a create.
+- `POST /api/projects` with a name creates one; posting the same name again returns a 409 (or the existing conflict convention in that file — follow it) and does NOT create a second.
+- `POST /api/projects/{id}/join` returns a new session id whose `project_id` is that project, and that session inherits the project's filesystem.
+- Joining a project already held returns a conflict naming the holding session, rather than a 500.
+
+- [ ] **Step 2: Implement the routes**
+
+Mirror the existing route style in `app.py` — same error-to-status mapping, same presenter shape. `CommandRejectedError` from a contended join maps to a conflict status, not an unhandled 500.
+
+The join route must go through the same `SessionService.start_in_project` the REPL uses. Do not write a second implementation of joining.
+
+- [ ] **Step 3: Attachment in the web front end**
+
+The web app serves many sessions from one process, so a single process-wide `attach_project` is wrong here in a way it is not for the REPL. Decide and document one of:
+- attach per join and accept that the last join wins (simplest, correct for single-user local use, which is what this app is), or
+- keep a per-session attachment map.
+
+Pick the first unless the tests show it breaks, and write the reasoning into the route's docstring — a future reader will ask why this differs from the REPL.
+
+- [ ] **Step 4: Minimal UI**
+
+In `app.js`, add a projects section to the session list: list projects, a create field, and a join action per project. Match the file's existing DOM and fetch conventions; do not introduce a framework or a second styling approach. Keep it small — this is a control surface, not a graph visualisation (which is deliberately out of scope).
+
+- [ ] **Step 5: Run and commit**
+
+`uv run pytest` once, foreground, `timeout: 900000`. Then ruff.
+
+---
+
 ## Notes for the implementer
 
 **When a redstring or eventsource signature does not match what a task shows,** the library wins — fix the task's code and keep going. Several steps include a verification command for exactly this. What must not change without going back to the spec: the tenant is always the project id, extraction never runs at fold time, and `EntitiesMerged` is never appended by this codebase.
