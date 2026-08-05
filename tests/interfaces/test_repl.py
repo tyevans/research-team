@@ -1,7 +1,7 @@
 from uuid import UUID, uuid4
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage, message_to_dict
 
 from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.domain import FileEdited, FileWritten, SessionStarted, TurnCompleted
@@ -382,28 +382,44 @@ async def test_rebuild_command_rederives_the_session_list(current):
 
 
 def test_tool_calls_format_as_a_bullet_line():
+    msg = AIMessage(
+        content="",
+        id="a1",
+        tool_calls=[
+            {
+                "name": "read_file",
+                "args": {"file_path": "a.py"},
+                "id": "c1",
+                "type": "tool_call",
+            }
+        ],
+    )
     note = ActivityMessage(
         message_id="a1",
         kind="assistant",
-        payload={
-            "tool_calls": [{"name": "read_file", "args": {"file_path": "a.py"}}]
-        },
+        payload=message_to_dict(msg),
     )
     assert format_activity(note) == "· read_file(a.py)"
 
 
 def test_tool_results_format_as_an_indented_first_line():
+    msg = ToolMessage(
+        content="found 3 matches\nline two",
+        tool_call_id="c1",
+        id="t1"
+    )
     note = ActivityMessage(
         message_id="t1",
         kind="tool",
-        payload={"content": "found 3 matches\nline two"},
+        payload=message_to_dict(msg),
     )
     assert format_activity(note) == "  ↳ found 3 matches"
 
 
 def test_plain_prose_prints_nothing():
+    msg = AIMessage(content="hello", id="a1")
     note = ActivityMessage(
-        message_id="a1", kind="assistant", payload={"content": "hello"}
+        message_id="a1", kind="assistant", payload=message_to_dict(msg)
     )
     assert format_activity(note) is None
 

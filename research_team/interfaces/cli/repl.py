@@ -172,14 +172,16 @@ def format_activity(note: ActivityNote) -> str | None:
     when the turn completes, and echoing it token by token into a scrolling
     terminal would be noise. This is the terminal's presenter for the same
     notes the web UI renders as content.
+
+    Payloads arrive from message_to_dict, with a nested structure: the actual
+    message data lives under the 'data' key.
     """
     if isinstance(note, ActivityDelta):
         return None
 
-    # Extract the actual data: payloads from deep_agent have a nested structure
-    # with 'data' key (from langchain's message_to_dict), but test payloads may
-    # be flat dicts.
-    data = note.payload.get("data") or note.payload
+    # Payloads from deep_agent have a nested structure with 'data' key
+    # (from langchain's message_to_dict).
+    data = note.payload["data"]
 
     calls = data.get("tool_calls") or []
     if calls:
