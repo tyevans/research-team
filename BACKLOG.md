@@ -111,6 +111,20 @@ domain name, the confidence disambiguation) make a false pass unlikely in
 practice — which is why it was not worth a fix round on its own. Worth
 correcting the next time that file is touched.
 
+### B8. `turns_tools()` reaches through two private attributes
+
+`Application.turns_tools()` in `research_team/composition.py` reads
+`service._executor._tools` — production code reaching through two layers of
+private state, and it exists to let a test inspect which tools were registered.
+
+It is documented and it works, but this is the kind of accessor that ossifies:
+the next thing that wants the tool list will use it too, and then the
+executor's internals cannot change. The cleaner shape is a public `tools`
+property on the executor, with `turns_tools()` delegating to it.
+
+Deferred because the alternative touches `DeepAgentTurnExecutor`'s public
+surface, which was not this task's business.
+
 ## Waiting on redstring
 
 ### B2. Two workarounds to unwind when redstring closes R3 and R4
