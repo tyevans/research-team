@@ -197,6 +197,10 @@ def create_app(
         try:
             outcome = await turns.run(session_id, body.input, reporter)
         except TurnAlreadyRunning as error:
+            # No activity.settle() here on purpose: this request's own
+            # activity.begin() above raced the supervisor's check and lost --
+            # the buffer it opened belongs to the turn that is actually
+            # running, and that turn's own call to run() owns settling it.
             raise HTTPException(
                 status_code=409,
                 detail="a turn is already running on this session",

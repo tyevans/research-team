@@ -344,7 +344,7 @@ const state = {
   approvalDeciding: null,  // id of the approval whose POST is in flight
   activity: { order: [], byId: {} },  // provisional content for the running turn
   discarded: {},                      // failed turn index -> provisional content
-  lastEndedTurn: null                 // turn_index most recently seen end (see fetchTurnRunning)
+  lastEndedAt: null                   // server ms-epoch of the last turn-end frame (see fetchTurnRunning)
 };
 
 let root = null;            // current view element
@@ -439,7 +439,7 @@ function onRoute() {
       // one before the first activity frame (or the turn end) replaces it.
       state.activity = { order: [], byId: {} };
       state.discarded = {};
-      state.lastEndedTurn = null;
+      state.lastEndedAt = null;
       sessionEls = null;
       mountSessionView();
       loadSession();
@@ -685,8 +685,18 @@ function loadSession() {
         // Same non-atomicity as /turns/current (see fetchTurnRunning): the
         // activity buffer's own settle() and the TurnCompleted/TurnFailed
         // event it settles around are two steps, not one, so `running` here
-        // can still list a turn that, on this connection, already ended.
-        if (turnEndSeq === activitySeqAtRequest) (body.running || []).forEach(putActivity);
+        // can still list a turn that, on this connection, already ended --
+        // and turnEndSeq alone does not catch it, because this call can be
+        // triggered BY that very reconciliation (foreignTurnEnded calls
+        // loadSession right after correctly clearing state.activity), so
+        // turnEndSeq does not change between request and response at all.
+        // The frame-based mechanism (onStreamEvent/onActivityFrame) is what
+        // now owns turnRunning correctly, so trust ITS verdict over this
+        // GET's: only accept a positive answer here if something is already
+        // believed to be running by that authoritative path.
+        if (turnEndSeq === activitySeqAtRequest && (state.sending || state.turnRunning)) {
+          (body.running || []).forEach(putActivity);
+        }
         renderActivity();
         // The discarded buffer isn't tied to an index server-side (it's just
         // "the last failed turn's content"), so pin it to that turn's
@@ -763,26 +773,40 @@ function stopTick() {
 // checked against this, not the other way around.
 let turnEndSeq = 0;
 
-/* GET /turns/current, but distrust a positive answer for the turn we most
- * recently watched end. The backend clears its "current turn" tracker and
- * emits the TurnCompleted/TurnFailed event as two separate steps, not
- * atomically -- so a response can say running:true, naming that exact
- * turn_index, for tens of milliseconds after this connection already saw it
- * end, REGARDLESS of when the request was sent (this is not a narrow
- * in-flight window; the server side itself lags). That includes the request
- * loadSession() fires on every call, which foreignTurnEnded triggers right
- * after correctly clearing turnRunning -- without this, that GET would
- * immediately undo it. turnEndSeq is kept as a second, cheaper check for the
- * (rarer) in-flight case; the turn_index comparison is what actually closes
- * the gap above, since it holds regardless of request timing. Only the
- * positive case is downgraded -- running:false is always safe to trust. */
+/* GET /turns/current, but distrust a positive answer that names a turn which
+ * started no later than the last turn-end this connection already saw. The
+ * backend clears its "current turn" tracker and emits the
+ * TurnCompleted/TurnFailed event as two separate steps, not atomically -- so
+ * a response can say running:true for tens of milliseconds after this
+ * connection already saw that same turn end, REGARDLESS of when the request
+ * was sent (this is not a narrow in-flight window; the server side itself
+ * lags). That includes the request loadSession() fires on every call, which
+ * foreignTurnEnded triggers right after correctly clearing turnRunning --
+ * without this, that GET would immediately undo it.
+ *
+ * This used to compare turn_index instead of started_at, which is unsound: a
+ * TurnFailed event carries turn_index = state.turn_index + 1 but the session
+ * deliberately does NOT advance state.turn_index on failure ("the turn did
+ * not happen" -- see domain/session.py), so a retry after a failure computes
+ * the exact same turn_index again. Comparing indices made a failed turn
+ * permanently suppress rendering for every retry afterward, since each
+ * retry's /turns/current kept reporting the same "already-ended" index.
+ * started_at does not have this problem: a retry always starts strictly
+ * after the failure it followed, so comparing timestamps (both server-clock,
+ * matching the occurred_at this was set from) tells a genuine new turn apart
+ * from a straggler regardless of how many times turn_index repeats.
+ *
+ * turnEndSeq is kept as a second, cheaper check for the (rarer) true
+ * in-flight case. Only the positive case is ever downgraded -- running:false
+ * is always safe to trust. */
 function fetchTurnRunning(id) {
   const seqAtRequest = turnEndSeq;
   return api.get('/api/sessions/' + encodeURIComponent(id) + '/turns/current')
     .then(function (res) {
+      const startedAt = res && res.started_at ? Date.parse(res.started_at) : NaN;
       if (res && res.running &&
           (turnEndSeq !== seqAtRequest ||
-           (typeof res.turn_index === 'number' && res.turn_index === state.lastEndedTurn))) {
+           (state.lastEndedAt !== null && !isNaN(startedAt) && startedAt < state.lastEndedAt))) {
         return { running: false, turn_index: null, started_at: null, elapsed_seconds: null };
       }
       return res;
@@ -2044,7 +2068,10 @@ function onStreamEvent(payload) {
   // the one guard here immune to that race.
   if (!known && isTurnEnd(payload.type)) {
     turnEndSeq++;
-    if (typeof payload.turn_index === 'number') state.lastEndedTurn = payload.turn_index;
+    // Server clock, not the browser's: it is what a racing /turns/current
+    // response's own started_at gets compared against in fetchTurnRunning,
+    // so both sides of that comparison come from the same clock.
+    state.lastEndedAt = payload.occurred_at ? Date.parse(payload.occurred_at) : Date.now();
     // A turn ending -- ours or one we're only watching -- reconciles whatever
     // streamed in as activity. On success the real log events (just pushed
     // above) are the record now, so provisional content is dropped outright:

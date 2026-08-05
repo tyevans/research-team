@@ -42,6 +42,11 @@ def test_a_whole_message_supersedes_its_deltas(session_id):
     entries = activity.current(session_id)
     assert len(entries) == 1
     assert entries[0]["payload"] == {"content": "partial"}
+    # The other half of "replace, don't merge": the browser's renderProvisional
+    # prefers entry.text and only falls back to payload when text is empty, so
+    # a whole message must also reset the accumulated delta text -- otherwise
+    # the superseded "par" would keep winning over the real payload.
+    assert entries[0]["text"] == ""
 
 
 def test_entries_keep_arrival_order(session_id):
