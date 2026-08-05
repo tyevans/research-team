@@ -33,6 +33,7 @@ def test_activity_delta_carries_text_for_one_message():
 
 def test_notes_are_frozen():
     import dataclasses
+
     import pytest
 
     note = ActivityDelta(message_id="a1", text="hel")
