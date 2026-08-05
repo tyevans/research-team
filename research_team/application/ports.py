@@ -48,6 +48,16 @@ class SessionRepository(Protocol):
 
     async def close(self) -> None: ...
 
+    async def list_projects(self) -> list[tuple[UUID, str]]:
+        """Every project's id and name, from the creation events.
+
+        Declared on this port -- rather than reached into as a concrete
+        attribute -- so a caller that only has a `SessionService` (the REPL)
+        can list projects through it instead of a private hop past the
+        service into its repository (BACKLOG B8).
+        """
+        ...
+
 
 @dataclass(frozen=True)
 class SummaryHealth:

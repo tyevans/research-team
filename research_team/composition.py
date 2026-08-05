@@ -252,6 +252,7 @@ def build_application(
         repository,
         executor,
         summaries,
+        repository.projects,
         default_system_prompt=system_prompt + prompt_suffix,
         context=strategy,
         # Resolved once and shared: whether this process exports traces is a

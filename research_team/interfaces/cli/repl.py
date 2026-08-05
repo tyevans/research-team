@@ -24,7 +24,6 @@ from research_team.application import (
 )
 from research_team.domain import CreateProject
 from research_team.infrastructure import config
-from research_team.infrastructure.persistence import EventStoreSessionRepository
 from research_team.interfaces.cli.formatters import (
     format_autonomy,
     format_diff,
@@ -67,7 +66,7 @@ Autonomy (how much the agent may do without asking)
 Projects (sessions that share a filesystem lineage and a knowledge graph)
   /project             list every project, with its id
   /project new <name>  create a project
-  /project use <name>  not available yet -- see /help for why
+  /project use <name>  start a session that inherits the project's files
 
   /help            this message
   /quit            exit
@@ -193,27 +192,16 @@ async def _resolve_session(repl: Repl, argument: str) -> UUID | str:
     return f"no session matching {argument!r}"
 
 
-def _project_repository(repl: "Repl") -> EventStoreSessionRepository:
-    """The repository backing this REPL's service, for the `Project` access
-    the service's own port does not expose.
-
-    Reaches into the service's private attribute rather than widening
-    `SessionService`'s surface for a use case that belongs to project
-    selection, not sessions -- the same trade `turns_tools()` in the
-    composition root makes for a similar reason.
-    """
-    return repl.service._repository  # type: ignore[return-value]
-
-
 async def _handle_project(repl: "Repl", argument: str) -> str:
-    """`/project` (list) and `/project new <name>` (create).
+    """`/project` (list), `/project new <name>` (create), `/project use <name>`.
 
-    `/project use` is not here yet: choosing a project means inheriting its
-    filesystem, and that logic does not exist until the next task.
+    Goes through `SessionService`'s own project accessors (`list_projects`,
+    `projects`) rather than a private hop into its repository -- BACKLOG B8
+    flagged that pattern for a proper accessor instead of a third case.
     """
-    repository = _project_repository(repl)
+    service = repl.service
     if not argument:
-        projects = await repository.list_projects()
+        projects = await service.list_projects()
         if not projects:
             return "no projects yet -- /project new <name> to create one"
         return "\n".join(f"{name}  {project_id}" for project_id, name in projects)
@@ -224,21 +212,34 @@ async def _handle_project(repl: "Repl", argument: str) -> str:
     if sub == "new":
         if not name:
             return "usage: /project new <name>"
-        existing = await repository.list_projects()
+        existing = await service.list_projects()
         collision = next(
             (pid for pid, existing_name in existing if existing_name == name), None
         )
         if collision is not None:
             return f"project {name!r} already exists ({collision})"
-        aggregate = repository.projects.create_new(uuid4())
+        aggregate = service.projects.create_new(uuid4())
         aggregate.execute(CreateProject(name=name))
-        await repository.projects.save(aggregate)
+        await service.projects.save(aggregate)
         return f"created project {name} ({aggregate.aggregate_id})"
 
     if sub == "use":
-        return "/project use is not available yet -- see /help"
+        if not name:
+            return "usage: /project use <name>"
+        existing = await service.list_projects()
+        match = next((pid for pid, existing_name in existing if existing_name == name), None)
+        if match is None:
+            return f"{name!r}: no such project"
+        try:
+            new_session_id = await service.start_in_project(match)
+        except CommandRejectedError as error:
+            # Worded verbatim: it names the session holding the project,
+            # which is the next thing anyone asks.
+            return str(error)
+        repl.session_id = new_session_id
+        return f"joined project {name}; session {repl.session_id}"
 
-    return "usage: /project [new <name>]"
+    return "usage: /project [new <name>|use <name>]"
 
 
 async def handle_command(
@@ -344,6 +345,7 @@ async def run(service: SessionService, policy: AutonomyPolicy | None = None) -> 
     composition root's job, and a REPL that builds its own would be one more
     place that knows which database and which model the app happens to use.
     """
+    repl: Repl | None = None
     try:
         repl = await Repl.start(service, policy)
         stored = await service.list_sessions()
@@ -376,4 +378,9 @@ async def run(service: SessionService, policy: AutonomyPolicy | None = None) -> 
             if output:
                 print(output)
     finally:
+        # A no-op for a session that never joined a project. A session that
+        # is never released holds the project forever -- nothing else takes
+        # it back for a terminal that just closes.
+        if repl is not None:
+            await service.release_project(repl.session_id)
         await service.close()

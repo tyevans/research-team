@@ -54,10 +54,27 @@ async def test_listing_with_no_projects_says_so(current):
     assert "no projects" in output.lower()
 
 
-async def test_project_use_is_not_available_yet(current):
+async def test_project_use_reports_an_unknown_name(current):
+    output = await repl.handle_command(current, "/project use nope")
+
+    assert "nope" in output and "no such project" in output.lower()
+
+
+async def test_project_use_starts_a_session_in_the_project(current):
+    await repl.handle_command(current, "/project new research")
+
     output = await repl.handle_command(current, "/project use research")
 
-    assert "not available" in output.lower()
+    assert "research" in output
+
+
+async def test_a_second_session_cannot_take_a_held_project(current):
+    await repl.handle_command(current, "/project new research")
+    await repl.handle_command(current, "/project use research")
+
+    output = await repl.handle_command(current, "/project use research")
+
+    assert "held by" in output.lower()
 
 
 async def test_project_help_mentions_the_command(current):
