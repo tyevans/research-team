@@ -80,6 +80,14 @@ hang, and only a `faulthandler` dump distinguished "hung" from "finished, then
 could not exit". See the upstream notes for the changes that would make this
 self-diagnosing rather than a day's detective work.
 
+**It also flakes the suite, which is how it will actually reach you.** In
+`tests/infrastructure/test_knowledge_rebuild.py`, two tests build an adapter and
+never close the event store, so their worker threads are still live when a later
+test in the same file runs — and under full-suite load that test intermittently
+fails. It was first reported as "the same class as B4"; it is not. B4 is a socket
+test and a timing test racing the scheduler. This is threads outliving their test
+and contending, which is a different and more tractable problem: close the stores.
+
 *(Original title, for anyone following a link: "`SQLiteSnapshotStore` cannot be
 closed, and its thread outlives the process".)*
 
