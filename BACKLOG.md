@@ -111,19 +111,23 @@ domain name, the confidence disambiguation) make a false pass unlikely in
 practice — which is why it was not worth a fix round on its own. Worth
 correcting the next time that file is touched.
 
-### B8. `turns_tools()` reaches through two private attributes
+### B8. Two accessors reach through private attributes
 
-`Application.turns_tools()` in `research_team/composition.py` reads
-`service._executor._tools` — production code reaching through two layers of
-private state, and it exists to let a test inspect which tools were registered.
+- `Application.turns_tools()` in `research_team/composition.py` reads
+  `service._executor._tools`, so a test can inspect which tools were registered.
+- `_project_repository` in `research_team/interfaces/cli/repl.py` reads
+  `service._repository`, to reach the `Project` aggregate repository.
 
-It is documented and it works, but this is the kind of accessor that ossifies:
-the next thing that wants the tool list will use it too, and then the
-executor's internals cannot change. The cleaner shape is a public `tools`
-property on the executor, with `turns_tools()` delegating to it.
+Each is documented inline and each works. The concern is drift: the second one
+was written *because* the first established the precedent, which is how an
+expedient becomes a convention nobody chose. The cleaner shapes are a public
+`tools` property on the executor, and a real port method for project access
+rather than reaching past `SessionService`.
 
-Deferred because the alternative touches `DeepAgentTurnExecutor`'s public
-surface, which was not this task's business.
+Deferred twice because both alternatives widen a public surface that was not
+the task's business. **If a third case appears, stop and fix the pattern rather
+than adding to it** — at that point it is the codebase's convention whether
+anyone decided so or not.
 
 ## Waiting on redstring
 
