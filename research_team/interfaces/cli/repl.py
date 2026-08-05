@@ -11,7 +11,7 @@ serves any session it is asked about.
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from eventsource import CommandRejectedError
 
@@ -22,7 +22,9 @@ from research_team.application import (
     AutonomyPolicy,
     SessionService,
 )
+from research_team.domain import CreateProject
 from research_team.infrastructure import config
+from research_team.infrastructure.persistence import EventStoreSessionRepository
 from research_team.interfaces.cli.formatters import (
     format_autonomy,
     format_diff,
@@ -61,6 +63,11 @@ Sessions (persisted to SQLite; they survive restarts)
 Autonomy (how much the agent may do without asking)
   /autonomy              every gated tool and its level
   /autonomy <tool> <l>   set one to auto, ask, or deny
+
+Projects (sessions that share a filesystem lineage and a knowledge graph)
+  /project             list every project, with its id
+  /project new <name>  create a project
+  /project use <name>  not available yet -- see /help for why
 
   /help            this message
   /quit            exit
@@ -186,6 +193,54 @@ async def _resolve_session(repl: Repl, argument: str) -> UUID | str:
     return f"no session matching {argument!r}"
 
 
+def _project_repository(repl: "Repl") -> EventStoreSessionRepository:
+    """The repository backing this REPL's service, for the `Project` access
+    the service's own port does not expose.
+
+    Reaches into the service's private attribute rather than widening
+    `SessionService`'s surface for a use case that belongs to project
+    selection, not sessions -- the same trade `turns_tools()` in the
+    composition root makes for a similar reason.
+    """
+    return repl.service._repository  # type: ignore[return-value]
+
+
+async def _handle_project(repl: "Repl", argument: str) -> str:
+    """`/project` (list) and `/project new <name>` (create).
+
+    `/project use` is not here yet: choosing a project means inheriting its
+    filesystem, and that logic does not exist until the next task.
+    """
+    repository = _project_repository(repl)
+    if not argument:
+        projects = await repository.list_projects()
+        if not projects:
+            return "no projects yet -- /project new <name> to create one"
+        return "\n".join(f"{name}  {project_id}" for project_id, name in projects)
+
+    sub, _, rest = argument.partition(" ")
+    name = rest.strip()
+
+    if sub == "new":
+        if not name:
+            return "usage: /project new <name>"
+        existing = await repository.list_projects()
+        collision = next(
+            (pid for pid, existing_name in existing if existing_name == name), None
+        )
+        if collision is not None:
+            return f"project {name!r} already exists ({collision})"
+        aggregate = repository.projects.create_new(uuid4())
+        aggregate.execute(CreateProject(name=name))
+        await repository.projects.save(aggregate)
+        return f"created project {name} ({aggregate.aggregate_id})"
+
+    if sub == "use":
+        return "/project use is not available yet -- see /help"
+
+    return "usage: /project [new <name>]"
+
+
 async def handle_command(
     repl: Repl,
     line: str,
@@ -270,6 +325,8 @@ async def handle_command(
     if command == "/rebuild":
         await service.rebuild_summaries()
         return "session list rebuilt from the log"
+    if command == "/project":
+        return await _handle_project(repl, argument)
     if command == "/state":
         events = await service.history(repl.session_id)
         return format_state(

@@ -17,9 +17,33 @@ from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application import FeedEntry
-from research_team.domain import CodingSession
+from research_team.domain import CodingSession, Project
 
 SNAPSHOT_THRESHOLD = 50
+
+
+def build_project_repository(
+    store: SQLiteEventStore,
+    publisher: InMemoryEventBus | None = None,
+    snapshot_store: SQLiteSnapshotStore | None = None,
+) -> AggregateRepository[Project]:
+    """Projects, over the same log and the same snapshot table as sessions.
+
+    Unlike `build_aggregate_repository`, there is no fallback that constructs
+    its own `SQLiteSnapshotStore` here: the only caller is
+    `EventStoreSessionRepository`, which already has one open against this
+    file (BACKLOG B5 -- a second instance leaks a non-daemon thread nothing
+    closes), so this always takes it as given rather than repeating the
+    choice of whether to build one.
+    """
+    return AggregateRepository(
+        store,
+        Project,
+        event_publisher=publisher,
+        snapshot_store=snapshot_store,
+        snapshot_threshold=SNAPSHOT_THRESHOLD,
+        snapshot_mode="background",
+    )
 
 
 def build_aggregate_repository(
@@ -84,6 +108,7 @@ class EventStoreSessionRepository:
         self._aggregates = aggregates
         self._publisher = publisher
         self._snapshot_store = snapshot_store
+        self._projects = build_project_repository(store, publisher, snapshot_store)
         self._appended = asyncio.Event()
         if publisher is not None:
             publisher.subscribe_to_all_events(self._on_published)
@@ -132,6 +157,32 @@ class EventStoreSessionRepository:
     def publisher(self) -> InMemoryEventBus | None:
         """The bus saves are announced on, for subscribers that want live events."""
         return self._publisher
+
+    @property
+    def projects(self) -> AggregateRepository[Project]:
+        """The `Project` aggregate repository, over this same log and file.
+
+        Exposed so a caller -- the REPL's `/project new` -- can `create_new`
+        and `save` a project without opening a second connection or a second
+        snapshot store against the same database.
+        """
+        return self._projects
+
+    async def list_projects(self) -> list[tuple[UUID, str]]:
+        """Every project's id and name, from the creation events.
+
+        Reads the `Project` category directly rather than going through
+        `read_since`/`read_all`: that path is filtered to `CodingSession`
+        events on purpose (this store is shared with `Project` and
+        redstring's own streams), so listing projects needs its own read
+        rather than a weakened session filter.
+        """
+        envelopes = await collect(self._store.read_category("Project"))
+        return [
+            (envelope.event.aggregate_id, envelope.event.name)
+            for envelope in envelopes
+            if type(envelope.event).__name__ == "ProjectCreated"
+        ]
 
     def _on_published(self, event: DomainEvent) -> None:
         """Raise the flag. Deliberately ignores the event itself.
