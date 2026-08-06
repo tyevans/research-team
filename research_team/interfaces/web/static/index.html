@@ -60,6 +60,12 @@
       </div>
       <div class="view-head-actions">
         <input type="text" id="project-name" class="input" placeholder="project name">
+        <!-- Options are filled from /api/workflows, whose labels say what each
+             preset produces and where it stops. A workflow is chosen once, so
+             creation is the moment to choose it. -->
+        <select id="project-workflow" class="input" title="Workflow this project runs">
+          <option value="">no workflow</option>
+        </select>
         <button class="btn" data-act="new-project">Create project</button>
       </div>
     </div>

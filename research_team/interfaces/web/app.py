@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 from eventsource import CommandRejectedError, OptimisticLockError
@@ -30,7 +31,8 @@ from research_team.application import (
     build_fork_tree,
 )
 from research_team.application.corpus_spans import quote
-from research_team.domain import CreateProject
+from research_team.domain import CreateProject, ProjectState, SelectWorkflow
+from research_team.domain.project import current_stage_of
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.interfaces.web.activity import TurnActivity
@@ -39,13 +41,16 @@ from research_team.interfaces.web.presenters import (
     event_rows,
     feed_event,
     file_history,
+    preset_view,
     project_view,
     session_view,
     source_text_view,
     source_view,
+    stage_view,
     summary_view,
     tree_view,
 )
+from research_team.workflows import PRESETS
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +82,12 @@ class JoinOptions(BaseModel):
     """Whether a join may end the session currently holding the project."""
 
     take_over: bool = False
+
+
+class WorkflowChoice(BaseModel):
+    """Which preset a project runs. Chosen once; `decide` refuses a second."""
+
+    preset_id: str
 
 
 class Decision(BaseModel):
@@ -121,6 +132,36 @@ def create_app(
         prompt = body.system_prompt if body else None
         return {"id": str(await service.create_session(prompt))}
 
+    def _workflow_of(state: ProjectState) -> dict[str, Any]:
+        """Which preset a project runs and where it stands in it, both nullable.
+
+        Two absences, kept distinct. No preset selected is the ordinary case
+        and answers `None` for both. A preset id this build does not ship --
+        a project started against a preset since renamed or removed -- still
+        reports the workflow, because the id is the only honest thing to say,
+        but reports no stage: resolving a position needs the stage list, and
+        inventing one would be worse than admitting the gap. Neither is a
+        server error, so neither raises; a listing that 500s because one row
+        names an unknown preset is a listing nobody can use to fix it.
+        """
+        if state.preset_id is None:
+            return {"workflow": None, "stage": None}
+        preset = PRESETS.get(state.preset_id)
+        if preset is None:
+            return {
+                "workflow": {
+                    "id": state.preset_id,
+                    "name": state.preset_id,
+                    "version": state.preset_version,
+                },
+                "stage": None,
+            }
+        stage = current_stage_of(state, preset)
+        return {
+            "workflow": {"id": preset.id, "name": preset.name, "version": preset.version},
+            "stage": stage_view(preset, stage) if stage is not None else None,
+        }
+
     @app.get("/api/projects")
     async def list_projects():
         projects = await service.list_projects()
@@ -133,9 +174,25 @@ def create_app(
                     name,
                     active_session_id=state.active_session_id,
                     tip_at_event=state.tip_at_event,
+                    **_workflow_of(state),
                 )
             )
         return rows
+
+    @app.get("/api/workflows")
+    async def list_workflows():
+        """The presets on offer, in recommendation order.
+
+        Order is the recommendation, and it is load-bearing: whichever pure
+        methodology a user picks they inherit that tradition's structural
+        defect, and knowing which defect to tolerate takes exactly the
+        expertise they came here without. The hybrid is first because it is
+        the one that does not require that judgement.
+
+        Static: presets are code in `research_team/workflows/`, validated at
+        import, so there is nothing to load and nothing that can fail here.
+        """
+        return [preset_view(preset) for preset in PRESETS.values()]
 
     @app.post("/api/projects")
     async def create_project(body: NewProject):
@@ -215,6 +272,44 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no project {project_id}") from error
         if state.status == "new":
             raise HTTPException(status_code=404, detail=f"no project {project_id}")
+
+    @app.get("/api/projects/{project_id}/workflow")
+    async def get_workflow(project_id: UUID):
+        """Which workflow this project runs, and the stage it is at."""
+        await _require_project(project_id)
+        return _workflow_of(await service.project_state(project_id))
+
+    @app.post("/api/projects/{project_id}/workflow")
+    async def select_workflow(project_id: UUID, body: WorkflowChoice):
+        """Bind a project to a preset. Once only -- a second is the domain's 409.
+
+        Goes through the aggregate the way `create_project` does, rather than
+        adding a use case to `SessionService`: there is no cross-front-end
+        convention to enforce here (unlike project names, which are only
+        unique because that route says so), so the one rule that exists is
+        already in `decide` and reaching it directly keeps it that way.
+
+        A re-selection is relayed with the domain's own message because that
+        message names the preset already running. "Already selected" would
+        leave the user knowing they cannot choose without knowing what they
+        chose -- and re-selection is refused precisely because a run's audit
+        trail is gated by one preset's stage list, so what that list is is the
+        first thing they need.
+        """
+        await _require_project(project_id)
+        preset = PRESETS.get(body.preset_id)
+        if preset is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no workflow {body.preset_id!r}; try one of {', '.join(PRESETS)}",
+            )
+        project = await service.projects.load(project_id)
+        try:
+            project.execute(SelectWorkflow(preset=preset))
+        except CommandRejectedError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        await service.projects.save(project)
+        return _workflow_of(project.state)
 
     def _reader(project_id: UUID) -> ProjectCorpusReader:
         """This project's corpus, through the same port the agent's tools use.

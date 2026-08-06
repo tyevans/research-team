@@ -510,6 +510,7 @@ const state = {
   // projects (control surface only -- no graph visualisation here)
   projects: null,           // /api/projects
   projectsError: null,
+  workflows: [],            // /api/workflows -- static presets, no error state
   // session view
   sessionId: null,
   head: null,               // /api/sessions/{id}
@@ -693,6 +694,7 @@ function mountTreeView() {
   app.appendChild(root);
   root.querySelector('[data-act="new-session"]').addEventListener('click', newSession);
   root.querySelector('[data-act="new-project"]').addEventListener('click', createProject);
+  loadWorkflows();
   clear(slot(root, 'tree'));
   slot(root, 'tree').appendChild(h('div', { class: 'empty', text: 'loading sessions…' }));
   clear(slot(root, 'projects'));
@@ -806,6 +808,38 @@ let creatingSession = false;
 /* projects (control surface: list, create, join -- no graph view here) */
 /* ===================================================================== */
 
+/* The workflow choice sits on the create row because a project may only
+ * choose once -- the aggregate refuses a second selection, since a run's
+ * audit trail is gated by one preset's stage list. Creation is therefore the
+ * moment the choice is free, and offering it later would mostly be offering
+ * something that will be refused. Projects created before this existed keep a
+ * "no workflow" chip; giving them one is the stage rail's job, not this row's.
+ *
+ * Option text is the server's `label`, not the preset name: what a preset
+ * produces and where it stops is the actual choice, and a bare list of three
+ * methodology names only means something to someone who has read the
+ * research. */
+function loadWorkflows() {
+  return api.get('/api/workflows').then(function (res) {
+    state.workflows = Array.isArray(res) ? res : [];
+    renderWorkflowOptions();
+  }).catch(function () {
+    // A failure here costs the choice, not the page: creating a project
+    // without a workflow stays legal, and the select keeps its one option.
+    state.workflows = [];
+  });
+}
+
+function renderWorkflowOptions() {
+  const select = document.getElementById('project-workflow');
+  if (!select) return;
+  clear(select);
+  select.appendChild(h('option', { value: '', text: 'no workflow' }));
+  state.workflows.forEach(function (w) {
+    select.appendChild(h('option', { value: w.id, text: w.label, title: w.description }));
+  });
+}
+
 function loadProjects() {
   return api.get('/api/projects').then(function (res) {
     state.projects = Array.isArray(res) ? res : [];
@@ -870,7 +904,8 @@ function renderProjects() {
         held
           ? h('span', { class: 'chip chip-held', title: 'held by session ' + held },
               ['held by ' + shortId(held)])
-          : h('span', { class: 'chip', text: 'free' })
+          : h('span', { class: 'chip', text: 'free' }),
+        workflowChip(p)
       ]),
       h('div', { class: 'node-actions' }, actions.concat([
         h('button', {
@@ -886,23 +921,66 @@ function renderProjects() {
   box.appendChild(ul);
 }
 
+/* One chip, showing the preset and how far through it this project is.
+ * "4 of 15" rather than the stage id alone: the id is precise and says
+ * nothing about progress, which is the thing a list is being scanned for. */
+function workflowChip(project) {
+  if (!project.workflow) {
+    return h('span', {
+      class: 'chip',
+      title: 'No workflow selected. Projects choose one when they are created.'
+    }, ['no workflow']);
+  }
+  const stage = project.stage;
+  const text = stage
+    ? project.workflow.name + ' · ' + stage.index + '/' + stage.of
+    : project.workflow.name;
+  const title = stage
+    ? 'Stage ' + stage.index + ' of ' + stage.of + ': ' + stage.name +
+      ' (' + stage.id + ')'
+    // No stage means the preset is not one this build ships, so there is no
+    // stage list to place the project in. Say that rather than guess.
+    : 'Workflow ' + project.workflow.id + ' is not available in this build';
+  return h('span', { class: 'chip', title: title }, [text]);
+}
+
 let creatingProject = false;
 
 function createProject(ev) {
   if (creatingProject) return;
   const input = document.getElementById('project-name');
+  const select = document.getElementById('project-workflow');
   const name = input ? input.value.trim() : '';
+  const presetId = select ? select.value : '';
   if (!name) { toast('Enter a project name first.', 'bad'); return; }
   creatingProject = true;
   const button = ev && ev.currentTarget;
   if (button) button.disabled = true;
   api.post('/api/projects', { name: name }).then(function (res) {
     if (input) input.value = '';
-    toast('Created project ' + (res && res.name || name) + '.', 'good');
-    loadProjects();
+    const created = res && res.id;
+    if (!presetId || !created) {
+      toast('Created project ' + (res && res.name || name) + '.', 'good');
+      return;
+    }
+    // Two calls, and the second can fail on its own. The project still
+    // exists when it does, so the toast says exactly that rather than
+    // "could not create" -- a user told creation failed would try again and
+    // hit the duplicate-name 409.
+    return api.post('/api/projects/' + encodeURIComponent(created) + '/workflow',
+                    { preset_id: presetId })
+      .then(function (w) {
+        toast('Created project ' + (res.name || name) + ' running ' +
+              (w && w.workflow ? w.workflow.name : presetId) + '.', 'good');
+      })
+      .catch(function (e) {
+        toast('Created project ' + (res.name || name) +
+              ', but its workflow was not set: ' + e.message, 'bad');
+      });
   }).catch(function (e) {
     toast('Could not create project: ' + e.message, 'bad');
   }).then(function () {
+    loadProjects();
     creatingProject = false;
     if (button && button.isConnected) button.disabled = false;
   });

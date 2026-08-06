@@ -10,6 +10,12 @@ dependencies = [
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "langchain-openai>=1.4.1",
+    # Course artifacts carry YAML frontmatter, so something has to read it back.
+    # Already present transitively (langchain, uvicorn, redstring all pull it),
+    # and named here because `application/artifacts.py` imports it directly --
+    # an undeclared dependency works right up until the day one of those three
+    # drops it.
+    "pyyaml>=6.0",
     "redstring[llm,neo4j]>=0.2.0",
     "trafilatura>=2.2.0",
     "uvicorn[standard]>=0.52.1",

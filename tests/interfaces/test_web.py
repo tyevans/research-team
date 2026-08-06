@@ -915,12 +915,16 @@ async def test_list_projects_starts_empty_then_shows_a_created_one(client):
     listed = (await client.get("/api/projects")).json()
     # A fresh project is held by nobody and has no tip: exactly the state a
     # row needs to offer "open" rather than a join that would be rejected.
+    # No workflow either -- creating and choosing one are separate decisions,
+    # and the aggregate refuses a second choice, so nothing may be assumed.
     assert listed == [
         {
             "id": created["id"],
             "name": "atlas",
             "active_session_id": None,
             "tip_at_event": 0,
+            "workflow": None,
+            "stage": None,
         }
     ]
 
@@ -1430,3 +1434,125 @@ async def test_a_dropped_source_is_gone_from_both_routes(app_and_client):
 
     assert listing.json() == []
     assert reading.status_code == 404
+
+
+# ---------------- workflows ----------------
+
+
+async def test_the_workflow_list_says_what_each_preset_produces_and_where_it_stops(client):
+    """The list is the whole basis for the choice, so it carries the consequences.
+
+    A preset that stops before the production half yields a design and not
+    materials, and someone who expected materials finding out at the end is
+    the failure this endpoint exists to prevent.
+    """
+    body = (await client.get("/api/workflows")).json()
+
+    by_id = {row["id"]: row for row in body}
+    assert set(by_id) == {"hybrid.default", "ubd.pure", "addie.pure"}
+    assert by_id["ubd.pure"]["produces"] == "design"
+    assert by_id["hybrid.default"]["produces"] == "materials"
+    assert by_id["ubd.pure"]["terminates_at"]["spine"] < 8
+    assert all(row["label"] for row in body)
+
+
+async def test_the_recommended_preset_is_listed_first(client):
+    """Order is the recommendation. Whichever pure methodology a user picks,
+    they inherit that tradition's structural defect, and knowing which defect
+    to tolerate needs the expertise they came here without."""
+    body = (await client.get("/api/workflows")).json()
+    assert body[0]["id"] == "hybrid.default"
+
+
+async def test_selecting_a_workflow_puts_the_project_at_the_presets_first_stage(client):
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await client.post(
+        f"/api/projects/{project_id}/workflow", json={"preset_id": "ubd.pure"}
+    )
+    assert response.status_code == 200
+
+    body = (await client.get(f"/api/projects/{project_id}/workflow")).json()
+    assert body["workflow"]["id"] == "ubd.pure"
+    # No event records entering a stage nobody advanced to, so "the first
+    # stage" is resolved from the preset rather than read off the log.
+    assert body["stage"]["index"] == 1
+    assert body["stage"]["of"] == 6
+
+
+async def test_a_project_row_carries_its_workflow_and_stage(client):
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    await client.post(f"/api/projects/{project_id}/workflow", json={"preset_id": "ubd.pure"})
+
+    [row] = (await client.get("/api/projects")).json()
+
+    assert row["workflow"]["id"] == "ubd.pure"
+    assert row["workflow"]["name"] == "Understanding by Design (unit plan)"
+    assert row["stage"]["index"] == 1
+
+
+async def test_a_project_with_no_workflow_reports_neither(client):
+    await client.post("/api/projects", json={"name": "atlas"})
+
+    [row] = (await client.get("/api/projects")).json()
+
+    assert row["workflow"] is None
+    assert row["stage"] is None
+
+
+async def test_selecting_a_second_workflow_is_a_409_naming_the_first(client):
+    """The domain's refusal names the running preset, and that name is the
+    whole value of it -- "already selected" leaves the user with no idea what
+    they are already running."""
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    await client.post(f"/api/projects/{project_id}/workflow", json={"preset_id": "ubd.pure"})
+
+    response = await client.post(
+        f"/api/projects/{project_id}/workflow", json={"preset_id": "addie.pure"}
+    )
+
+    assert response.status_code == 409
+    assert "ubd.pure" in response.json()["detail"]
+
+    # The refusal changed nothing, which is the half an error code cannot say.
+    body = (await client.get(f"/api/projects/{project_id}/workflow")).json()
+    assert body["workflow"]["id"] == "ubd.pure"
+
+
+async def test_an_unknown_preset_is_a_404_naming_the_ones_that_exist(client):
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await client.post(
+        f"/api/projects/{project_id}/workflow", json={"preset_id": "tyler.pure"}
+    )
+
+    assert response.status_code == 404
+    assert "hybrid.default" in response.json()["detail"]
+
+
+async def test_an_unknown_project_is_a_404_on_both_workflow_routes(client):
+    missing = uuid4()
+
+    assert (await client.get(f"/api/projects/{missing}/workflow")).status_code == 404
+    post = await client.post(
+        f"/api/projects/{missing}/workflow", json={"preset_id": "ubd.pure"}
+    )
+    assert post.status_code == 404
+
+
+async def test_a_deleted_project_refuses_a_workflow(client):
+    """409 rather than 404: a tombstone is not an absence.
+
+    The project is still there and still readable -- that is what retiring
+    means here -- so the honest answer is the domain's, which says it was
+    deleted. Joining a deleted project relays the same refusal the same way.
+    """
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    await client.delete(f"/api/projects/{project_id}")
+
+    response = await client.post(
+        f"/api/projects/{project_id}/workflow", json={"preset_id": "ubd.pure"}
+    )
+
+    assert response.status_code == 409
+    assert "deleted" in response.json()["detail"]
