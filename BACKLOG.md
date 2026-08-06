@@ -182,7 +182,183 @@ raise. If it needs closing, the cheap version is a logged warning when a session
 carrying a `project_id` releases and finds itself not the holder — enough to leave
 a trace without turning a shutdown path into a failure path.
 
+### B17. The browser offers only approve and reject, though `edit` works end to end
+
+`research_team/interfaces/web/static/app.js`, `renderApproval`. `ApprovalPort`
+accepts an `edit` decision, `DeepAgentTurnExecutor._apply` records it and
+translates it into langchain's `edited_action`, and the HTTP route takes it —
+but the only buttons rendered are Approve and Reject, so the one decision that
+lets a person correct a tool call instead of refusing it is unreachable from
+the UI.
+
+Found while surveying the approval surface for course-design gate review. Not
+fixed on the spot because the gate work will rewrite this renderer anyway, and
+adding a third button now would be written twice.
+
+## Knowledge and corpus
+
+Found while researching course-design workflows
+(`docs/research/course-design/research-intake.md`). All five are the same
+shape: the graph path is well built and correctly bounded, and the gap is
+*beneath* it — there is no corpus layer under the graph.
+
+### B12. An ingested document's text is never kept, so nothing can cite it
+
+`research_team/infrastructure/knowledge/redstring_adapter.py:117` builds a
+`SourceDocument`, passes it to `build_graph`, and the text goes no further.
+`DocumentExtracted` carries `source_id`, `model_version`, `entities` and
+`relationships` — and no text. After `remember`, the system holds a graph
+*about* a document and no copy of the document.
+
+This is why provenance cannot currently be more than a claim. Any workflow that
+wants "every instructional claim cites its source" — and every instructional
+design methodology wants exactly that — needs the source to still exist and be
+addressable. Verified against redstring 0.2.0 by introspecting `model_fields`.
+
+The fix is ours, not upstream: a `SourceDocumentStored` event on a
+research-team stream, which fits the existing pattern (one SQLite file, the log
+is truth, the store is derived) and needs no redstring schema change. It also
+strengthens the property `rebuild.py` rests on — today the log is the only copy
+of anything, and the text is not in it.
+
+### B13. Chunk offsets are computed and then discarded
+
+Same file. redstring's `Chunk` carries `start_char`/`end_char`, so offsets
+*are* computed during chunking — but `Entity` carries only `source_id` and
+`source_text`, and `DocumentExtracted` carries entities rather than chunks. The
+offsets never leave the chunker.
+
+So span-level anchoring is impossible today even once B12 is fixed and the text
+is retained: a claim can name its document but cannot point at the sentence it
+came from. Recorded separately from B12 because the two have different fixes —
+B12 is ours, this one needs either a redstring change or our own chunking pass
+alongside the corpus layer.
+
+### B14. `SourceDocument`'s citation fields are left unset
+
+`redstring_adapter.py:117-121` constructs a `SourceDocument` without `uri`,
+`title`, or `published_at` — which are exactly the fields a citation needs.
+They are available on the library's model and simply never populated.
+
+The cheapest of these five to close and worth doing before any bulk ingest,
+because a document ingested without them cannot be given them later without
+re-ingesting.
+
+### B15. Consolidation can silently merge contradictory claims
+
+Two sources disagreeing about the same thing — one SME saying the escalation
+threshold is 24 hours, another saying 48 — are likely to be consolidated into a
+single entity, because both mention the same concept and the adjudicator is
+looking for the same concept. The contradiction disappears rather than
+surfacing.
+
+`unmerge` exists and reverses it, but only if the agent notices, and the whole
+failure mode is that nothing looks wrong. In procedural domains an apparent
+contradiction is usually an *unstated conditional* — the two experts are each
+right under conditions neither stated — so the interesting output is not "which
+is correct" but "what were the two of them each assuming".
+
+Wants a first-class contradiction record with a "both true in different
+contexts" resolution state, and an escalation rather than an auto-resolve.
+
+### B16. Bulk ingest reports no progress
+
+`build_graph` takes no progress callback, and `build_knowledge_tools`
+(`research_team/infrastructure/agent/knowledge_tools.py`) takes no
+`ActivityReporter`. One document is tolerable. Forty documents behind a single
+opaque `await`, in a UI that streams token-level deltas for everything else, is
+not.
+
+Blocking for corpus construction at any real scale, which is the only reason it
+is not filed as a nicety.
+
+## Security and multi-tenancy
+
+Found while researching course-design workflows
+(`docs/research/course-design/exposure-and-redaction.md`). Deferred as a group
+because there is no user system and no RBAC: with a single local operator there
+is no principal to withhold anything from, so all of this is long-term
+importance rather than present risk. Recorded now because one item (B19) closes
+a door permanently.
+
+### B18. There is no authentication, so there is no author/learner boundary
+
+There is no authentication anywhere in `research_team/interfaces/web/app.py` —
+no user, no session identity, no authorization check on any of the routes. Every
+surface is fully open to anyone who can reach the port.
+
+That is fine for a local single-user tool and becomes the blocking issue the
+moment anything is shared with a learner. Recorded here mainly so the surface
+list does not have to be rediscovered — content reaches a browser through the
+file route, scrub-to-event-N, `/files/history` (which ignores the scrub point),
+diffs, the session view, and the SSE stream, whose approval and activity
+channels bypass the presenter layer entirely (`app.py:592-593`) and can be
+replayed via `Last-Event-ID`.
+
+**Filtering these is not the fix, and this is the part worth not rediscovering.**
+The agent's prose reasoning carries whatever the files carry — it discusses
+answers and rationales while authoring them — and it is served in full by
+`session_view` (`presenters.py:156`). Filtering that is a semantic
+classification problem in which every false negative is permanent and public.
+Allow-by-default is the wrong posture regardless of how well it is implemented.
+
+The shape when it is picked up: two surfaces, not one filtered surface. The
+console stays maximally transparent; learner delivery is a separate
+deny-by-default reader over an explicit publication allowlist with pinned
+revisions, whose stored bytes have never contained a withheld field at any
+event index. A cosmetic "presenter mode" for screen-shares is fine if it is
+labelled cosmetic and leaves the API untouched.
+
+Until then, any answer-withholding in the renderer is a presentation
+affordance and must not be described as security.
+
+### B19. Nothing in the event log can be erased
+
+The event store has no delete operation at all. Snapshots hold folded plaintext
+every 50 events, `SessionSummaryRow.first_message` caches a copy, and
+redstring's `Document` and `Consolidation` streams live in the same SQLite
+file. So once sensitive source material — an SME transcript naming individuals
+and judging their performance, a confidential internal document, a ticket
+carrying customer data — is ingested, there is no supported way to remove it.
+
+Of the four standard remedies, none is free here:
+
+- **Crypto-shredding is disqualified specifically by this design.** `FileEdited`
+  is delta-encoded (`domain/events.py:160-164`), so a shredded revision leaves
+  every later revision of that path undefined. Time travel breaks, not just the
+  shredded event.
+- **Forgettable payloads** (log holds a reference, bytes live in a deletable
+  store) are right for *corpus* documents and wrong for *authored files*,
+  because applying them to files would replace the log-as-sole-truth property
+  the whole system rests on.
+- **Stream rewriting** is the only coherent remedy and must rewrite in place,
+  because `SessionForkedFrom.at_event` is positional.
+- **Tombstones** record intent and erase nothing.
+
+**So the control belongs at intake**, where a human gate already exists and
+where the exclusion record already has somewhere to say what was withheld and
+why.
+
+**The one part with a deadline:** pseudonymize identifiers at intake and keep
+the mapping in a sidecar outside the event store. It costs a convention, it
+survives contact with redstring's entity extraction and consolidation —
+deleting one sidecar line erases a person from the graph without touching an
+event — and it is the only item on this list that becomes impossible the moment
+the first real transcript is ingested.
+
 ## Waiting on redstring
+
+### B20. `Relationship` carries no provenance at all
+
+redstring 0.2.0's `Relationship` model has neither `source_id` nor
+`source_text`, where `Entity` has both. Verified by introspection.
+
+Instructional claims are overwhelmingly relational — this control mitigates
+that risk, step B follows step A, this failure mode has that cause — so the
+part of the graph carrying the most instructional content is the part carrying
+the least provenance. Worth filing upstream alongside R3 and R4; our corpus
+layer (B12) can carry document-level provenance regardless, but cannot
+retroactively tell us which sentence produced a given edge.
 
 ### B2. Two workarounds to unwind when redstring closes R3 and R4
 
