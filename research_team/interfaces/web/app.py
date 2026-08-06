@@ -390,7 +390,9 @@ def create_app(
         try:
             await service.ensure_project_attached(session_id)
         except Exception:  # noqa: BLE001 -- a turn without the graph beats no turn
-            logger.warning("could not attach knowledge graph for %s", session_id, exc_info=True)
+            logger.warning(
+                "could not attach knowledge graph for %s", session_id, exc_info=True
+            )
         reporter = None
         if activity is not None:
             activity.begin(session_id)

@@ -106,7 +106,9 @@ def test_only_the_active_session_may_advance_the_tip():
 
 
 def _created(project_id, name="research"):
-    return evolve(initial_state(project_id), ProjectCreated(aggregate_id=project_id, name=name))
+    return evolve(
+        initial_state(project_id), ProjectCreated(aggregate_id=project_id, name=name)
+    )
 
 
 def test_deleting_a_free_project_emits_project_deleted():
