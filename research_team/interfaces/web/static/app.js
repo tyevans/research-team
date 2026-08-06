@@ -270,13 +270,207 @@ function renderCode(text) {
   return pre;
 }
 
+/* --- markdown ------------------------------------------------------------
+ * A small block+inline renderer for the file viewer. It builds DOM nodes
+ * directly rather than assembling HTML, so file contents -- which are written
+ * by tools and models, not by us -- can never become markup. It covers what
+ * the docs in this repo actually use; anything it does not recognise falls
+ * through as literal text, which is the safe failure for a *viewer*. */
+
+function isMarkdownPath(path) {
+  return /\.(md|markdown|mdown|mkd)$/i.test(path || '');
+}
+
+function renderMarkdown(text) {
+  const box = h('div', { class: 'md' });
+  const lines = splitLines(text);
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (!line.trim()) { i++; continue; }
+
+    // fenced code -- opening fence wins over every inline rule inside it
+    const fence = /^\s*(```+|~~~+)\s*([^\s`]*)/.exec(line);
+    if (fence) {
+      const marker = fence[1][0];
+      const body = [];
+      i++;
+      while (i < lines.length &&
+             !new RegExp('^\\s*' + marker + '{' + fence[1].length + ',}\\s*$').test(lines[i])) {
+        body.push(lines[i]); i++;
+      }
+      i++; // consume closing fence (or run off the end, which is fine)
+      const pre = h('pre', { class: 'md-code' }, [h('code', { text: body.join('\n') })]);
+      if (fence[2]) pre.dataset.lang = fence[2];
+      box.appendChild(pre);
+      continue;
+    }
+
+    const heading = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+    if (heading) {
+      box.appendChild(mdInline(h('h' + heading[1].length, { class: 'md-h' }), heading[2]));
+      i++; continue;
+    }
+
+    if (/^\s*(([-*_])\s*)\2{2,}\s*$/.test(line)) {
+      box.appendChild(h('hr', { class: 'md-hr' })); i++; continue;
+    }
+
+    if (/^\s*>/.test(line)) {
+      const quoted = [];
+      while (i < lines.length && (/^\s*>/.test(lines[i]) || (quoted.length && lines[i].trim()))) {
+        quoted.push(lines[i].replace(/^\s*>\s?/, '')); i++;
+      }
+      box.appendChild(h('blockquote', { class: 'md-quote' }, [renderMarkdown(quoted.join('\n'))]));
+      continue;
+    }
+
+    // table: a header row followed by a delimiter row of dashes
+    if (line.indexOf('|') !== -1 && i + 1 < lines.length &&
+        /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(lines[i + 1]) && lines[i + 1].indexOf('-') !== -1) {
+      const table = h('table', { class: 'md-table' });
+      const thead = h('thead');
+      thead.appendChild(mdRow(splitTableRow(line), 'th'));
+      table.appendChild(thead);
+      const tbody = h('tbody');
+      i += 2;
+      while (i < lines.length && lines[i].indexOf('|') !== -1 && lines[i].trim()) {
+        tbody.appendChild(mdRow(splitTableRow(lines[i]), 'td')); i++;
+      }
+      table.appendChild(tbody);
+      box.appendChild(table);
+      continue;
+    }
+
+    if (/^\s*([-*+]|\d+[.)])\s+/.test(line)) {
+      const consumed = mdList(lines, i, box);
+      i = consumed;
+      continue;
+    }
+
+    // paragraph: runs until a blank line or the start of another block
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !isBlockStart(lines[i])) {
+      para.push(lines[i].trim()); i++;
+    }
+    box.appendChild(mdInline(h('p', { class: 'md-p' }), para.join(' ')));
+  }
+
+  if (!box.firstChild) box.appendChild(h('div', { class: 'empty', text: '(empty file)' }));
+  return box;
+}
+
+function isBlockStart(line) {
+  return /^\s*(#{1,6}\s|>|```|~~~|([-*+]|\d+[.)])\s)/.test(line) ||
+         /^\s*(([-*_])\s*)\2{2,}\s*$/.test(line);
+}
+
+function splitTableRow(line) {
+  return line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|')
+    .map(function (c) { return c.trim(); });
+}
+
+function mdRow(cells, tag) {
+  const tr = h('tr');
+  cells.forEach(function (c) { tr.appendChild(mdInline(h(tag), c)); });
+  return tr;
+}
+
+/* Lists are indentation-nested. Returns the index of the first line after the
+ * list so the caller can carry on from there. */
+function mdList(lines, start, box) {
+  const first = /^(\s*)([-*+]|\d+[.)])\s+/.exec(lines[start]);
+  const baseIndent = first[1].length;
+  const ordered = /\d/.test(first[2]);
+  const list = h(ordered ? 'ol' : 'ul', { class: 'md-list' });
+  let i = start;
+
+  while (i < lines.length) {
+    const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]);
+    if (!m) {
+      // a blank line only ends the list if the next line is not a deeper
+      // continuation of it
+      if (!lines[i].trim() && i + 1 < lines.length &&
+          /^(\s*)([-*+]|\d+[.)])\s+/.test(lines[i + 1]) &&
+          /^(\s*)/.exec(lines[i + 1])[1].length >= baseIndent) { i++; continue; }
+      break;
+    }
+    const indent = m[1].length;
+    if (indent < baseIndent) break;
+    // a switch between bullets and numbers at this level starts a new list
+    // rather than continuing this one
+    if (indent === baseIndent && /\d/.test(m[2]) !== ordered) break;
+    if (indent > baseIndent) { i = mdList(lines, i, list.lastChild || list); continue; }
+
+    const li = h('li', { class: 'md-li' });
+    const task = /^\[([ xX])\]\s+(.*)$/.exec(m[3]);
+    if (task) {
+      li.appendChild(h('span', { class: 'md-task', text: task[1] === ' ' ? '☐' : '☑' }));
+      mdInline(li, ' ' + task[2]);
+    } else {
+      mdInline(li, m[3]);
+    }
+    list.appendChild(li);
+    i++;
+  }
+
+  box.appendChild(list);
+  return i;
+}
+
+/* Inline spans. One pass, longest-match-first, appending into `parent`. */
+const MD_INLINE = [
+  { re: /^`([^`]+)`/,                    make: function (m) { return h('code', { class: 'md-inline-code', text: m[1] }); } },
+  { re: /^!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/, make: function (m) { return mdLink(m[2], m[1] || m[2], true); } },
+  { re: /^\[([^\]]+)\]\(([^)\s]+)[^)]*\)/,  make: function (m) { return mdLink(m[2], m[1], false); } },
+  { re: /^<((?:https?|mailto):[^>\s]+)>/, make: function (m) { return mdLink(m[1], m[1], false); } },
+  { re: /^\*\*([^*]+)\*\*|^__([^_]+)__/,  make: function (m) { return mdInline(h('strong'), m[1] || m[2]); } },
+  { re: /^\*([^*]+)\*|^_([^_]+)_/,        make: function (m) { return mdInline(h('em'), m[1] || m[2]); } },
+  { re: /^~~([^~]+)~~/,                   make: function (m) { return mdInline(h('del'), m[1]); } }
+];
+
+function mdInline(parent, text) {
+  let buf = '';
+  let i = 0;
+  function flush() { if (buf) { parent.appendChild(document.createTextNode(buf)); buf = ''; } }
+
+  while (i < text.length) {
+    if (text[i] === '\\' && i + 1 < text.length) { buf += text[i + 1]; i += 2; continue; }
+    let hit = null;
+    const rest = text.slice(i);
+    for (let r = 0; r < MD_INLINE.length; r++) {
+      const m = MD_INLINE[r].re.exec(rest);
+      if (m) { hit = { m: m, make: MD_INLINE[r].make }; break; }
+    }
+    if (hit) { flush(); parent.appendChild(hit.make(hit.m)); i += hit.m[0].length; continue; }
+    buf += text[i]; i++;
+  }
+  flush();
+  return parent;
+}
+
+/* Only http(s) and mailto become real links; anything else (including
+ * javascript: and data:) renders as plain text carrying its own target. */
+function mdLink(href, label, isImage) {
+  if (/^(https?:|mailto:)/i.test(href)) {
+    return h('a', {
+      class: 'md-link', href: href, target: '_blank', rel: 'noopener noreferrer',
+      title: href
+    }, [(isImage ? '🖼 ' : '') + label]);
+  }
+  return h('span', { class: 'md-link-inert', text: label, title: href });
+}
+
 /* ===================================================================== */
 /* api                                                                   */
 /* ===================================================================== */
 
 const api = {
   get: function (path) { return request('GET', path, null); },
-  post: function (path, body) { return request('POST', path, body === undefined ? {} : body); }
+  post: function (path, body) { return request('POST', path, body === undefined ? {} : body); },
+  del: function (path) { return request('DELETE', path, null); }
 };
 
 function request(method, path, body) {
@@ -330,6 +524,7 @@ const state = {
   // the prose around it is what the conversation is actually saying.
   toolOpen: {},
   fileTab: 'content',       // 'content' | 'history'
+  fileRender: 'rendered',   // 'rendered' | 'source' -- markdown files only
   fileContent: null,
   fileContentAt: undefined, // the scrub point fileContent was fetched for
   fileHistory: null,
@@ -644,16 +839,46 @@ function renderProjects() {
   }
   const ul = h('ul', { class: 'tree' });
   state.projects.forEach(function (p) {
+    const held = p.active_session_id;
     const li = h('li');
+    // A held project offers two honest choices instead of one that fails:
+    // go to whoever holds it, or end that session and take the project on.
+    // "Join" was only ever correct for a free project.
+    const actions = held
+      ? [
+          h('button', {
+            class: 'btn btn-sm',
+            title: 'Open the session currently holding this project',
+            onclick: function () { go('#/s/' + encodeURIComponent(held)); }
+          }, [document.createTextNode('Resume')]),
+          h('button', {
+            class: 'btn btn-sm btn-accent',
+            title: 'End the holding session, then start a new one from its work',
+            onclick: function () { takeOverProject(p); }
+          }, [document.createTextNode('New session')])
+        ]
+      : [
+          h('button', {
+            class: 'btn btn-sm btn-accent',
+            onclick: function () { joinProject(p.id); }
+          }, [document.createTextNode('Open')])
+        ];
     li.appendChild(h('div', { class: 'node' }, [
       h('div', { class: 'node-top' }, [
         h('span', { class: 'node-id', text: p.name }),
-        h('span', { class: 'node-msg empty', text: shortId(p.id) })
+        h('span', { class: 'node-msg empty', text: shortId(p.id) }),
+        held
+          ? h('span', { class: 'chip chip-held', title: 'held by session ' + held },
+              ['held by ' + shortId(held)])
+          : h('span', { class: 'chip', text: 'free' })
       ]),
-      h('button', {
-        class: 'btn btn-sm',
-        onclick: function () { joinProject(p.id); }
-      }, [document.createTextNode('Join')])
+      h('div', { class: 'node-actions' }, actions.concat([
+        h('button', {
+          class: 'btn btn-sm btn-danger',
+          title: 'Retire this project',
+          onclick: function () { deleteProject(p); }
+        }, [document.createTextNode('Delete')])
+      ]))
     ]));
     ul.appendChild(li);
   });
@@ -685,10 +910,52 @@ function createProject(ev) {
 
 let joiningProject = false;
 
-function joinProject(projectId) {
+/* Deleting retires a project: it stops accepting sessions and leaves the
+ * list. The confirmation says what survives, because "delete" in most tools
+ * means the work goes too, and here it does not -- the sessions keep their
+ * logs, their files and their history. */
+let deletingProject = false;
+
+function deleteProject(project) {
+  if (deletingProject) return;
+  const held = project.active_session_id;
+  const lines = ['Delete project "' + project.name + '"?', ''];
+  if (held) {
+    lines.push('Session ' + shortId(held) + ' is still holding it and will be ended first.');
+  }
+  lines.push('Its sessions keep their own logs, files and history — they just');
+  lines.push('cannot rejoin. The knowledge graph\'s contents are left in place.');
+  if (!window.confirm(lines.join('\n'))) return;
+
+  deletingProject = true;
+  api.del('/api/projects/' + encodeURIComponent(project.id) +
+          (held ? '?release_holder=true' : ''))
+    .then(function () {
+      toast('Deleted project ' + project.name + '.', 'good');
+      loadProjects();
+    })
+    .catch(function (e) { toast('Could not delete project: ' + e.message, 'bad'); })
+    .then(function () { deletingProject = false; });
+}
+
+/* Taking over ends someone else's session, so it asks first -- and says what
+ * it will do, since "end that and start fresh" is not obviously the same
+ * thing as "join". The holder's work is not lost: releasing it is exactly
+ * what advances the project's tip, which the new session then inherits. */
+function takeOverProject(project) {
+  const holder = shortId(project.active_session_id);
+  const ok = window.confirm(
+    'End session ' + holder + ' and start a new one in ' + project.name + '?\n\n' +
+    'Its files carry over to the new session. Its conversation does not.'
+  );
+  if (ok) joinProject(project.id, true);
+}
+
+function joinProject(projectId, takeOver) {
   if (joiningProject) return;
   joiningProject = true;
-  api.post('/api/projects/' + encodeURIComponent(projectId) + '/join', {}).then(function (res) {
+  api.post('/api/projects/' + encodeURIComponent(projectId) + '/join',
+           { take_over: !!takeOver }).then(function (res) {
     if (res && res.warning) toast('Joined, but ' + res.warning, 'bad');
     if (res && res.id) go('#/s/' + encodeURIComponent(res.id));
     else toast('Joined but no session id was returned.', 'bad');
@@ -750,9 +1017,99 @@ function mountSessionView() {
   sessionEls.input.addEventListener('input', function () {
     if (state.turnNote) { state.turnNote = null; renderComposer(); }
   });
+  setUpPaneToggles();
   sessionEls.timeline.appendChild(h('div', { class: 'empty', text: 'loading event log…' }));
   renderComposer();
 }
+
+/* --- collapsible panes --------------------------------------------------
+ * Three panes on one screen means each is narrower than it wants to be, and
+ * which one you need is a function of what you are doing -- reading a diff,
+ * following the log, or talking. Collapsing is per-pane, sticky across
+ * reloads, and refuses to hide the last open pane (a view with nothing in it
+ * has no way back except a toggle you can no longer see). */
+const PANE_STORAGE_KEY = 'rt.collapsedPanes';
+const PANE_RAIL = '34px';
+
+function loadCollapsedPanes() {
+  try {
+    const raw = window.localStorage.getItem(PANE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter(function (n) { return typeof n === 'string'; }) : [];
+  } catch (e) {
+    return []; // private mode, disabled storage, or junk left by an older build
+  }
+}
+
+function saveCollapsedPanes(names) {
+  try { window.localStorage.setItem(PANE_STORAGE_KEY, JSON.stringify(names)); } catch (e) { /* not worth failing over */ }
+}
+
+function setUpPaneToggles() {
+  const panes = root.querySelectorAll('[data-pane]');
+  for (let i = 0; i < panes.length; i++) {
+    const pane = panes[i];
+    pane.querySelector('[data-act="collapse"]').addEventListener('click', function () {
+      togglePane(pane.dataset.pane);
+    });
+  }
+  applyCollapsedPanes();
+}
+
+function togglePane(name) {
+  const collapsed = loadCollapsedPanes();
+  const at = collapsed.indexOf(name);
+  if (at === -1) {
+    const panes = root.querySelectorAll('[data-pane]');
+    if (collapsed.length >= panes.length - 1) {
+      toast('At least one pane has to stay open.', 'bad');
+      return;
+    }
+    collapsed.push(name);
+  } else {
+    collapsed.splice(at, 1);
+  }
+  saveCollapsedPanes(collapsed);
+  applyCollapsedPanes();
+}
+
+function applyCollapsedPanes() {
+  if (!root) return;
+  const grid = root.querySelector('.panes');
+  if (!grid) return;
+  const collapsed = loadCollapsedPanes();
+  const panes = root.querySelectorAll('[data-pane]');
+  const widths = [];
+  for (let i = 0; i < panes.length; i++) {
+    const pane = panes[i];
+    const isCollapsed = collapsed.indexOf(pane.dataset.pane) !== -1;
+    pane.classList.toggle('collapsed', isCollapsed);
+    const button = pane.querySelector('[data-act="collapse"]');
+    button.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+    button.title = isCollapsed ? 'Expand this pane' : 'Collapse this pane';
+    button.textContent = isCollapsed ? '▸' : '◂';
+    // The rail is a fixed track rather than a min-width so the space it gives
+    // up goes to the open panes, which is the entire point of collapsing.
+    widths.push(isCollapsed ? PANE_RAIL : (pane.dataset.pane === 'workspace'
+      ? 'minmax(320px, 1.5fr)'
+      : 'minmax(280px, 1.05fr)'));
+  }
+  // Only the three-column layout has its tracks driven from here. The
+  // narrower breakpoints reflow the panes themselves (two columns, then a
+  // single stack), and an inline grid-template would silently outrank those
+  // media queries -- so below 1180px this hands the columns back to the
+  // stylesheet, which sizes collapsed panes with its own :has() rules.
+  if (window.matchMedia('(min-width: 1181px)').matches) {
+    grid.style.gridTemplateColumns = widths.join(' ');
+  } else {
+    grid.style.removeProperty('grid-template-columns');
+  }
+}
+
+// Crossing a breakpoint changes who owns the columns, so recompute there.
+window.addEventListener('resize', function () {
+  if (state.route.name === 'session') applyCollapsedPanes();
+});
 
 function loadSession() {
   const id = state.sessionId;
@@ -1104,7 +1461,37 @@ function renderScrubBar() {
       (state.loadingSnapshot ? '  …folding' : '')));
   }
 
+  // Project state belongs here because it changes what typing into this
+  // session means: whether the work lands somewhere the next session will
+  // see, and whether the agent can reach the graph its prompt promises.
+  const head = state.head || {};
+  if (head.project_id) {
+    const attached = head.knowledge_attached;
+    bar.appendChild(h('span', {
+      class: 'scrub-project' + (head.holds_project ? '' : ' stale-hold'),
+      title: head.holds_project
+        ? 'This session holds the project. End it to pass its files on.'
+        : 'Another session has taken this project over; work here no longer reaches it.'
+    }, [
+      h('span', { class: 'chip', text: 'project ' + shortId(head.project_id) }),
+      h('span', {
+        class: 'chip ' + (attached ? 'chip-ok' : 'chip-warn'),
+        title: attached
+          ? 'The knowledge graph is attached; remember/graph_search are available.'
+          : 'No knowledge graph attached — the agent has no remember/graph_search here.'
+      }, [attached ? 'graph on' : 'graph off']),
+      head.holds_project ? null : h('span', { class: 'chip chip-warn', text: 'not held' })
+    ]));
+  }
+
   const actions = h('div', { class: 'scrub-actions' });
+  if (!isHistorical() && head.project_id && head.holds_project) {
+    actions.appendChild(h('button', {
+      class: 'btn btn-sm',
+      title: 'Hand this session\'s files back to the project and stop working here',
+      onclick: function (e) { endSession(e.currentTarget); }
+    }, 'End session'));
+  }
   if (isHistorical()) {
     actions.appendChild(h('button', {
       class: 'btn btn-sm',
@@ -1116,6 +1503,32 @@ function renderScrubBar() {
     }, 'Back to live'));
   }
   bar.appendChild(actions);
+}
+
+/* Ending a session is the other half of joining a project, and the only way
+ * work done here reaches the next session: releasing advances the project's
+ * tip. Named "End session" rather than "Release" because that is the thing
+ * the user is trying to do; the lease is an implementation detail of it. */
+function endSession(button) {
+  const head = state.head || {};
+  if (!window.confirm(
+    'End this session and hand its files back to the project?\n\n' +
+    'The log stays readable and forkable. The project becomes free, and the ' +
+    'next session in it starts from this one\'s files.'
+  )) return;
+  if (button) button.disabled = true;
+  api.post('/api/sessions/' + encodeURIComponent(state.route.id) + '/release', {})
+    .then(function (res) {
+      if (res && res.released) {
+        toast('Session ended. ' + shortId(head.project_id) + ' is free.', 'good');
+        loadProjects();
+        go('#/');
+      } else {
+        toast('This session is not in a project.', 'bad');
+      }
+    })
+    .catch(function (e) { toast('Could not end session: ' + e.message, 'bad'); })
+    .then(function () { if (button && button.isConnected) button.disabled = false; });
 }
 
 function eventAt(index) {
@@ -1452,8 +1865,13 @@ function renderFileView() {
     return;
   }
 
+  const markdown = isMarkdownPath(state.openPath);
   const head = h('div', { class: 'file-view-head' }, [
     h('span', { class: 'fv-path', text: state.openPath, title: state.openPath }),
+    markdown && state.fileTab === 'content' ? h('div', { class: 'tabs' }, [
+      renderModeButton('rendered', 'rendered'),
+      renderModeButton('source', 'source')
+    ]) : null,
     h('div', { class: 'tabs' }, [
       tabButton('content', 'contents'),
       tabButton('history', 'history')
@@ -1482,9 +1900,11 @@ function renderFileView() {
     // The server folds the file to the scrub point for us; while a newer point
     // is in flight the previous contents stay up, dimmed, rather than flashing.
     const stale = state.fileContentAt !== state.at;
-    const code = renderCode(state.fileContent);
-    if (stale) code.classList.add('stale');
-    box.appendChild(code);
+    const view = (markdown && state.fileRender !== 'source')
+      ? renderMarkdown(state.fileContent)
+      : renderCode(state.fileContent);
+    if (stale) view.classList.add('stale');
+    box.appendChild(view);
     return;
   }
 
@@ -1537,6 +1957,19 @@ function renderRevision(rev, i, all) {
   }
   wrap.appendChild(body);
   return wrap;
+}
+
+/* Rendered/source is a view toggle, not a tab: it needs no refetch, since
+ * both modes render the contents already in hand. */
+function renderModeButton(id, label) {
+  return h('button', {
+    class: 'tab' + ((state.fileRender || 'rendered') === id ? ' active' : ''),
+    onclick: function () {
+      if ((state.fileRender || 'rendered') === id) return;
+      state.fileRender = id;
+      renderFileView();
+    }
+  }, label);
 }
 
 function tabButton(id, label) {
@@ -1764,10 +2197,21 @@ function renderMessage(m, index) {
   ]));
 
   if (text) {
-    wrap.appendChild(h('div', {
-      class: 'msg-body' + (role === 'tool' ? ' mono' : ''),
-      text: role === 'tool' ? truncate(text, 4000) : text
-    }));
+    // The model writes markdown, so assistant turns are rendered as markdown.
+    // Tool results are not: they are data, and their value is being shown
+    // byte-for-byte. User messages stay literal for the same reason -- what
+    // was typed is what was sent. An errored turn also stays literal, since
+    // a raw failure is easier to read than a half-parsed one.
+    if (role === 'assistant' && !errored) {
+      const body = h('div', { class: 'msg-body' });
+      body.appendChild(renderMarkdown(text));
+      wrap.appendChild(body);
+    } else {
+      wrap.appendChild(h('div', {
+        class: 'msg-body' + (role === 'tool' ? ' mono' : ''),
+        text: role === 'tool' ? truncate(text, 4000) : text
+      }));
+    }
   } else if (!calls.length) {
     wrap.appendChild(h('div', { class: 'msg-body mono', text: '(no content)' }));
   }

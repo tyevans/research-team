@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -906,7 +907,16 @@ async def test_list_projects_starts_empty_then_shows_a_created_one(client):
     assert created["id"]
 
     listed = (await client.get("/api/projects")).json()
-    assert listed == [{"id": created["id"], "name": "atlas"}]
+    # A fresh project is held by nobody and has no tip: exactly the state a
+    # row needs to offer "open" rather than a join that would be rejected.
+    assert listed == [
+        {
+            "id": created["id"],
+            "name": "atlas",
+            "active_session_id": None,
+            "tip_at_event": 0,
+        }
+    ]
 
 
 async def test_creating_a_project_with_a_taken_name_does_not_create_a_second(client):
@@ -996,6 +1006,180 @@ async def test_joining_an_already_held_project_names_the_holder(client):
 
     assert second_join.status_code == 409
     assert holder_session_id in second_join.json()["detail"]
+
+
+async def test_releasing_a_session_frees_its_project_for_the_next_one(client):
+    """The loop the web app could not close: finish here, start fresh there.
+
+    Before `POST /api/sessions/{id}/release` this took a REPL, or a restart:
+    the browser had no verb that gave a project back, so the second join in
+    this test could only ever be the 409 above.
+    """
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    first = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
+
+    release = await client.post(f"/api/sessions/{first}/release")
+    assert release.status_code == 200
+    assert release.json() == {"released": True, "project_id": project_id}
+
+    listed = (await client.get("/api/projects")).json()
+    assert listed[0]["active_session_id"] is None
+
+    second = await client.post(f"/api/projects/{project_id}/join")
+    assert second.status_code == 200
+    assert second.json()["id"] != first
+
+
+async def test_releasing_a_session_in_no_project_is_not_an_error(client):
+    session_id = (await client.post("/api/sessions")).json()["id"]
+
+    response = await client.post(f"/api/sessions/{session_id}/release")
+
+    assert response.status_code == 200
+    assert response.json() == {"released": False, "project_id": None}
+
+
+async def test_release_advances_the_tip_so_the_next_session_inherits(client, service):
+    """Releasing is how work travels between sessions, not just cleanup.
+
+    `release_project` advances the project's tip; a UI that only ever joined
+    would fork every new session from a tip that never moved, silently losing
+    everything the previous session wrote.
+    """
+    from uuid import UUID as _UUID
+
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    first = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
+
+    session = await service.load(_UUID(first))
+    session.execute(WriteFile(path="/atlas.py", file_data={"content": "shared content\n"}))
+    await service._repository.save(session)
+
+    assert (await client.post(f"/api/sessions/{first}/release")).status_code == 200
+
+    second = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
+    body = (
+        await client.get(f"/api/sessions/{second}/files", params={"path": "/atlas.py"})
+    ).json()
+    assert body["content"] == "shared content\n"
+
+
+async def test_taking_over_a_held_project_ends_the_holder_and_starts_fresh(client):
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    first = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
+
+    second = await client.post(f"/api/projects/{project_id}/join", json={"take_over": True})
+
+    assert second.status_code == 200
+    assert second.json()["id"] != first
+    listed = (await client.get("/api/projects")).json()
+    assert listed[0]["active_session_id"] == second.json()["id"]
+
+
+async def test_a_session_reports_whether_it_still_holds_its_project(client):
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    first = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
+
+    assert (await client.get(f"/api/sessions/{first}")).json()["holds_project"] is True
+
+    await client.post(f"/api/projects/{project_id}/join", json={"take_over": True})
+
+    # The fact the UI needs to stop offering this session as the live one.
+    assert (await client.get(f"/api/sessions/{first}")).json()["holds_project"] is False
+
+
+async def test_deleting_a_project_removes_it_from_the_listing(client):
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await client.delete(f"/api/projects/{project_id}")
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted": True, "project_id": project_id}
+    assert (await client.get("/api/projects")).json() == []
+
+
+async def test_a_deleted_project_cannot_be_joined(client):
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    await client.delete(f"/api/projects/{project_id}")
+
+    join = await client.post(f"/api/projects/{project_id}/join")
+
+    assert join.status_code == 409
+    assert "deleted" in join.json()["detail"]
+
+
+async def test_deleting_a_held_project_needs_the_holder_released_first(client):
+    """The 409 names the holder, so the UI can offer the thing that fixes it."""
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    holder = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
+
+    refused = await client.delete(f"/api/projects/{project_id}")
+    assert refused.status_code == 409
+    assert holder in refused.json()["detail"]
+    assert len((await client.get("/api/projects")).json()) == 1
+
+    accepted = await client.delete(f"/api/projects/{project_id}?release_holder=true")
+    assert accepted.status_code == 200
+    assert (await client.get("/api/projects")).json() == []
+
+
+async def test_deleting_a_project_leaves_its_sessions_readable(client, service):
+    """Deletion retires the project, not the work done inside it."""
+    from uuid import UUID as _UUID
+
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    session_id = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
+    session = await service.load(_UUID(session_id))
+    session.execute(WriteFile(path="/atlas.py", file_data={"content": "kept\n"}))
+    await service._repository.save(session)
+
+    await client.delete(f"/api/projects/{project_id}?release_holder=true")
+
+    body = (await client.get(f"/api/sessions/{session_id}")).json()
+    assert body["id"] == session_id
+    assert any(f["path"] == "/atlas.py" for f in body["files"])
+    file_body = (
+        await client.get(f"/api/sessions/{session_id}/files", params={"path": "/atlas.py"})
+    ).json()
+    assert file_body["content"] == "kept\n"
+
+
+async def test_a_deleted_projects_name_can_be_used_again(client):
+    first = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    await client.delete(f"/api/projects/{first}")
+
+    again = await client.post("/api/projects", json={"name": "atlas"})
+
+    assert again.status_code == 200
+    assert again.json()["id"] != first
+
+
+async def test_deleting_an_unknown_project_is_a_404(client):
+    response = await client.delete(f"/api/projects/{uuid4()}")
+
+    assert response.status_code == 404
+
+
+async def test_a_turn_reattaches_the_sessions_own_knowledge_graph(app_and_client):
+    """The bug behind "the agent says it has no knowledge graph".
+
+    Attaching only at join meant any later turn ran with whatever graph was
+    attached last -- or none, after a restart -- even though the session's
+    recorded prompt promises `remember`/`graph_search`/`unmerge`. Detaching
+    here stands in for that drift; the turn has to put it back.
+    """
+    application, client = app_and_client
+
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    session_id = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
+
+    await application.service.detach_project()
+    assert "remember" not in {tool.name for tool in application.turns_tools()}
+
+    response = await client.post(f"/api/sessions/{session_id}/turns", json={"input": "hi"})
+    assert response.status_code == 200
+
+    assert "remember" in {tool.name for tool in application.turns_tools()}
 
 
 # ---------------- turn activity ----------------

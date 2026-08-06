@@ -39,12 +39,14 @@ from research_team.domain import (
     CodingSession,
     CompactConversation,
     CompleteTurn,
+    DeleteProject,
     FailTurn,
     FileDeleted,
     FileEdited,
     FileWritten,
     JoinProject,
     Project,
+    ProjectState,
     RecordAssistantMessage,
     RecordForkSource,
     RecordToolResult,
@@ -173,6 +175,35 @@ class SessionService:
     async def list_projects(self) -> list[tuple[UUID, str]]:
         """Every project's id and name, for `/project`'s listing."""
         return await self._repository.list_projects()
+
+    async def project_state(self, project_id: UUID) -> ProjectState:
+        """One project's folded state: who holds it, and where its tip is.
+
+        A read for front ends. "Held by another session" is the single fact
+        that decides what a user can do with a project next, and a UI that
+        cannot see it can only offer an action and let it fail.
+        """
+        return (await self._projects.load(project_id)).state
+
+    async def delete_project(self, project_id: UUID) -> None:
+        """Retire a project: no more joins, and gone from every listing.
+
+        A tombstone, not an erasure -- see `ProjectDeleted`. What this does
+        *not* touch is deliberate: the sessions that were in the project keep
+        their streams, their files and their readable history, because those
+        live on the session's own stream and were never the project's to
+        delete. The knowledge graph's data is left in place too; dropping a
+        tenant's contents is a destructive, unreplayable act, and nothing
+        here asks for it.
+
+        Rejects a project still held by a session. Releasing is the caller's
+        move to make, because releasing advances the tip -- a write to the
+        holder's session -- and deletion doing that silently would hide a
+        real change behind an unrelated verb.
+        """
+        project = await self._projects.load(project_id)
+        project.execute(DeleteProject())
+        await self._projects.save(project)
 
     async def close(self) -> None:
         await self._repository.close()
@@ -373,6 +404,37 @@ class SessionService:
         attached (a front end showing state, a test asserting on it).
         """
         return self._attachment.current if self._attachment is not None else None
+
+    @property
+    def attached_project_id(self) -> UUID | None:
+        """Which project's graph is attached right now, or None."""
+        return self._attachment.attached_project_id if self._attachment is not None else None
+
+    async def ensure_project_attached(self, session_id: UUID) -> bool:
+        """Make `session_id`'s own project the attached one. Returns whether it is.
+
+        A session's recorded `SessionStarted` prompt describes
+        `remember`/`graph_search`/`unmerge` whenever it belongs to a project,
+        so the executor has to have those tools every time that session takes
+        a turn -- not only on the one request that happened to join. The REPL
+        gets this from `switch_session`, which detaches and re-attaches on
+        every switch; a front end with no single "current session" has no
+        such moment, and needs to ask per turn instead.
+
+        Attaching is skipped when the right graph is already attached, so the
+        common case costs a comparison rather than reopening a graph. Returns
+        False for a session in no project, and for a project whose graph would
+        not open -- the caller decides whether that is worth reporting, since
+        a turn without knowledge tools is degraded but not broken.
+        """
+        session = await self._repository.load(session_id)
+        project_id = session.state.project_id
+        if project_id is None:
+            return False
+        if self.attached_project_id == project_id:
+            return True
+        await self.attach_project(project_id)
+        return self.attached_project_id == project_id
 
     async def attach_project(self, project_id: UUID) -> None:
         """Open `project_id`'s knowledge graph and give the executor its tools.

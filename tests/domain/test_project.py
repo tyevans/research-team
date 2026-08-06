@@ -6,8 +6,10 @@ from eventsource import CommandRejectedError
 from research_team.domain.project import (
     AdvanceTip,
     CreateProject,
+    DeleteProject,
     JoinProject,
     ProjectCreated,
+    ProjectDeleted,
     ProjectTipAdvanced,
     SessionJoinedProject,
     decide,
@@ -101,6 +103,63 @@ def test_only_the_active_session_may_advance_the_tip():
 
     with pytest.raises(CommandRejectedError, match="does not hold"):
         decide(AdvanceTip(session_id=uuid4(), at_event=3), state)
+
+
+def _created(project_id, name="research"):
+    return evolve(
+        initial_state(project_id), ProjectCreated(aggregate_id=project_id, name=name)
+    )
+
+
+def test_deleting_a_free_project_emits_project_deleted():
+    project_id = uuid4()
+
+    events = decide(DeleteProject(), _created(project_id))
+
+    assert [type(e) for e in events] == [ProjectDeleted]
+    assert events[0].aggregate_id == project_id
+
+
+def test_a_deleted_project_keeps_what_it_was():
+    """A tombstone, not an erasure: the history is still the truth."""
+    project_id, session_id = uuid4(), uuid4()
+    state = _created(project_id, name="atlas")
+    for event in (
+        SessionJoinedProject(aggregate_id=project_id, session_id=session_id, inherited_at=0),
+        ProjectTipAdvanced(aggregate_id=project_id, session_id=session_id, at_event=4),
+        ProjectDeleted(aggregate_id=project_id),
+    ):
+        state = evolve(state, event)
+
+    assert state.status == "deleted"
+    assert state.name == "atlas"
+    assert state.member_session_ids == [session_id]
+    assert state.tip_session_id == session_id
+    assert state.tip_at_event == 4
+
+
+def test_a_held_project_cannot_be_deleted_until_it_is_released():
+    project_id, holder = uuid4(), uuid4()
+    state = evolve(
+        _created(project_id),
+        SessionJoinedProject(aggregate_id=project_id, session_id=holder, inherited_at=0),
+    )
+
+    with pytest.raises(CommandRejectedError, match=str(holder)):
+        decide(DeleteProject(), state)
+
+
+def test_a_deleted_project_refuses_everything_afterwards():
+    project_id = uuid4()
+    state = evolve(_created(project_id), ProjectDeleted(aggregate_id=project_id))
+
+    with pytest.raises(CommandRejectedError, match="already deleted"):
+        decide(DeleteProject(), state)
+    # The one that matters: a join would hand out a lineage nothing maintains.
+    with pytest.raises(CommandRejectedError, match="has been deleted"):
+        decide(JoinProject(session_id=uuid4()), state)
+    with pytest.raises(CommandRejectedError, match="has been deleted"):
+        decide(AdvanceTip(session_id=uuid4(), at_event=1), state)
 
 
 def test_evolve_ignores_unknown_events():
