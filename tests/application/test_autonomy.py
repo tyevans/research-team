@@ -16,13 +16,24 @@ from research_team.application import (
     UNMERGE_TOOL,
     AutonomyPolicy,
 )
+from research_team.application.autonomy import TOOL_FLOORS
 
 LEVELS = ("auto", "ask", "deny")
 
 
-def test_defaults_to_auto_so_existing_behaviour_is_unchanged():
+def test_defaults_to_auto_for_every_tool_that_declares_no_floor():
+    """The baseline is still permissive, and the exceptions are exactly the
+    tools that asked to be exceptions.
+
+    Written against `TOOL_FLOORS` rather than against a hardcoded list so that
+    adding a floor is a one-line change here too -- but deliberately not
+    written as "whatever the floor says", which would pass no matter what the
+    policy did. The floors themselves are pinned in `test_fetch.py`.
+    """
     policy = AutonomyPolicy()
     for tool in GATED_TOOLS:
+        if tool in TOOL_FLOORS:
+            continue
         assert policy.level_for(tool) == "auto"
 
 
@@ -106,13 +117,19 @@ def test_level_for_returns_the_last_level_set(writes):
     )
 )
 def test_levels_never_leak_between_tools(writes):
-    """A tool nobody wrote to still reads the default."""
+    """A tool nobody wrote to still reads its own default.
+
+    The property under test is isolation, not the value: writing to any set of
+    tools must leave every other tool exactly where it started, whether that
+    is the policy default or a floor.
+    """
     policy = AutonomyPolicy()
+    untouched = set(GATED_TOOLS) - {tool for tool, _ in writes}
+    before = {tool: policy.level_for(tool) for tool in untouched}
     for tool, level in writes:
         policy.set(tool, level)
-    untouched = set(GATED_TOOLS) - {tool for tool, _ in writes}
     for tool in untouched:
-        assert policy.level_for(tool) == "auto"
+        assert policy.level_for(tool) == before[tool]
 
 
 def test_the_knowledge_writes_are_gated_but_the_read_is_not():

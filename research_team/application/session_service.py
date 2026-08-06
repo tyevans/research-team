@@ -59,15 +59,18 @@ DEFAULT_SYSTEM_PROMPT = (
     "Use the provided file tools to read and write code. "
     "There is no shell."
 )
-"""Framework-free by construction: whether *network* belongs on the end of
-this depends on whether a search tool was actually registered, which is a
-composition-root decision. Appending "and no network" unconditionally would
-tell the model a lie on any install with search configured, and a model told
-it has no network will not use a tool it was just given."""
+"""Framework-free by construction: which network tools exist is a
+composition-root decision. Saying anything about them unconditionally would
+tell the model a lie on some installs, and a model told it has no network will
+not use a tool it was just given."""
 
-NO_NETWORK_CLAUSE = " There is no network."
-"""What composition appends when no search tool is registered. Kept here,
-next to the prompt it modifies, rather than duplicated at the call site."""
+NO_SEARCH_CLAUSE = " You cannot search the web, though you can read a page you have a URL for."
+"""What composition appends when no SearXNG instance is configured.
+
+Says what is missing rather than "there is no network", which stopped being
+true when `fetch` became unconditional. The distinction matters to the model:
+without search it cannot *find* a page, but it can still read one a person
+pastes into the conversation, and a model told it is offline will not try."""
 
 
 @dataclass(frozen=True)

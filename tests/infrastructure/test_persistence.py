@@ -6,9 +6,10 @@ from eventsource import StreamId
 from eventsource.ports.positions import ExpectedVersion
 from langchain_core.messages import AIMessage
 
-from research_team.application.session_service import NO_NETWORK_CLAUSE
+from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.domain import StartSession
 from research_team.domain.project import ProjectCreated
+from research_team.infrastructure.agent.fetch import FETCH_PROMPT
 from research_team.infrastructure.persistence import (
     SNAPSHOT_THRESHOLD,
     EventStoreSessionRepository,
@@ -66,10 +67,11 @@ async def test_reopening_keeps_the_stored_system_prompt(fake_model, db_path, bui
         model=fake_model, db_path=db_path, system_prompt="DIFFERENT"
     )
     session = await reopened.load(session_id)
-    # Composition appends a capability clause (no search configured here) to
-    # whatever system_prompt it is given -- so the stored value is the first
-    # process's prompt plus its suffix, not "DIFFERENT" plus the second's.
-    assert session.state.system_prompt == "ORIGINAL" + NO_NETWORK_CLAUSE
+    # Composition appends capability clauses (fetch always, and "no search"
+    # because none is configured here) to whatever system_prompt it is given --
+    # so the stored value is the first process's prompt plus its suffix, not
+    # "DIFFERENT" plus the second's.
+    assert session.state.system_prompt == "ORIGINAL" + FETCH_PROMPT + NO_SEARCH_CLAUSE
 
 
 async def test_files_survive_a_reopen(fake_model, db_path, build_service, repository):

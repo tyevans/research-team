@@ -32,7 +32,7 @@ from research_team.application import (
     SessionService,
     TurnSupervisor,
 )
-from research_team.application.session_service import NO_NETWORK_CLAUSE
+from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import DeepAgentTurnExecutor, build_model
 from research_team.infrastructure.agent.compaction import SummarizingStrategy
@@ -40,6 +40,7 @@ from research_team.infrastructure.agent.delegation import (
     DEFAULT_SUBAGENTS,
     DELEGATION_PROMPT,
 )
+from research_team.infrastructure.agent.fetch import FETCH_PROMPT, build_fetch_tool
 from research_team.infrastructure.agent.knowledge_tools import (
     KNOWLEDGE_PROMPT,
     build_knowledge_tools,
@@ -221,17 +222,27 @@ def build_application(
     # (BACKLOG B5: a second `SQLiteSnapshotStore` leaks a non-daemon thread).
     repository = EventStoreSessionRepository.open(resolved_path)
 
-    # Search is the one tool that leaves the process, so it is registered only
-    # when an instance is configured -- unset means the agent gets no network
-    # tool at all, which is what keeps the README's sandbox claim true for
-    # anyone who has not opted in.
+    # Two tools leave the process, and they are withheld differently because
+    # there are two different things to withhold them with.
+    #
+    # `fetch` is registered unconditionally: there is no instance to leave
+    # unconfigured, and a research agent that can see five snippets and never
+    # read a page is not much of one. Its floor of `ask` is the switch instead
+    # -- present and discoverable, but it cannot reach anything until a person
+    # says so once. See `TOOL_FLOORS`.
+    #
+    # `web_search` keeps its configuration switch: an instance is a real thing
+    # someone has to stand up, and "unset means absent" is a stronger promise
+    # than any gate, so there is no reason to trade it for one.
+    tools: tuple[BaseTool, ...] = (build_fetch_tool(),)
+    prompt_suffix += FETCH_PROMPT
+
     searxng = config.searxng_url()
     if searxng is not None:
-        tools = (build_search_tool(searxng, limit=config.searxng_results()),)
+        tools += (build_search_tool(searxng, limit=config.searxng_results()),)
         prompt_suffix += SEARCH_PROMPT
     else:
-        tools = ()
-        prompt_suffix += NO_NETWORK_CLAUSE
+        prompt_suffix += NO_SEARCH_CLAUSE
 
     if project_id is not None:
         # A `project_id=` at build time scopes the whole application to that

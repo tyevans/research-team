@@ -5,11 +5,16 @@ user message, every model reply, every tool call, and every file the agent write
 a single ordered event stream, and all state is derived by folding that stream.
 
 The agent's filesystem is purely virtual and it has no shell, so nothing it
-*writes* escapes the process. Network egress is a real, documented exception:
-a web search tool exists, gated per-tool, and absent unless configured. With
-no `AGENT_SEARXNG_URL` set, no search tool is registered at all --
-`tests/integration/test_no_network.py` pins that. Replay stays pure even with
-search in the picture, because a search result is recorded as an ordinary
+*writes* escapes the process. Network egress is a real, documented exception,
+and there are two tools with two different switches in front of them.
+`web_search` is absent unless configured: with no `AGENT_SEARXNG_URL` set, no
+search tool is registered at all. `fetch`, which reads one web page, has no
+instance to leave unconfigured, so it is always registered and gated instead
+— it defaults to `ask`, meaning it cannot reach anything until a person
+approves that call. So a default install has one tool that could leave the
+process and no way for it to do so unattended.
+`tests/integration/test_no_network.py` pins both halves of that. Replay stays
+pure even with these in the picture, because a result is recorded as an ordinary
 tool-result event: refolding the log replays the results the agent actually
 saw rather than fetching new ones, so a session refolded years later
 reproduces exactly, even if the SearXNG instance is long gone. The log itself
@@ -474,7 +479,7 @@ Full design: `docs/superpowers/specs/2026-08-01-event-sourced-coding-agent-desig
 uv run pytest
 ```
 
-338 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
+634 tests, no network. `tests/` mirrors the source layout -- `tests/domain`,
 `tests/application`, `tests/infrastructure`, `tests/interfaces`, plus
 `tests/integration` for the cross-layer ones.
 
