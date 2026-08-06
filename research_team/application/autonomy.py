@@ -22,10 +22,16 @@ LEVELS: tuple[Level, ...] = ("auto", "ask", "deny")
 
 SEARCH_TOOL = "web_search"
 FETCH_TOOL = "fetch"
+ADVANCE_STAGE_TOOL = "advance_stage"
+"""Defined here rather than beside its tool because a workflow application port
+does not exist -- there is nothing above `domain.workflow` for the name to live
+in, and the tool module importing this is the same direction `corpus_read` and
+`knowledge` already point."""
 
 GATED_TOOLS: tuple[str, ...] = (
     SEARCH_TOOL,
     FETCH_TOOL,
+    ADVANCE_STAGE_TOOL,
     "write_file",
     "edit_file",
     "delete_file",
@@ -39,11 +45,20 @@ through approvals without reading them."""
 STRICTNESS: tuple[Level, ...] = ("auto", "ask", "deny")
 """The levels in increasing order, so two of them can be compared."""
 
-TOOL_FLOORS: dict[str, Level] = {FETCH_TOOL: "ask"}
+TOOL_FLOORS: dict[str, Level] = {FETCH_TOOL: "ask", ADVANCE_STAGE_TOOL: "ask"}
 """The least autonomy a tool gets when nobody has said otherwise.
 
-Only `fetch` has one, and it is what lets that tool be registered
-unconditionally. Search is opt-in by configuration -- no SearXNG instance, no
+`advance_stage` has one for a different reason than the others: it is not
+dangerous, it *is* the review gate. A stage boundary is where a person is
+supposed to look at what was produced before the run builds on it, and the
+approval path this floor puts in front of the tool -- interrupt, announce,
+prompt, recorded decision -- is exactly that review, already built. Without the
+floor a default-`auto` policy would let a run cross every gate in a workflow
+without anyone seeing it, which is the silent-progress failure the whole
+staging design exists to prevent.
+
+`fetch`'s floor is what lets that tool be registered unconditionally.
+Search is opt-in by configuration -- no SearXNG instance, no
 tool -- but fetch has no instance to configure and would otherwise be a network
 tool present in a default install with nothing standing in front of it. A floor
 of `ask` means it is there, discoverable, and cannot leave the process until a

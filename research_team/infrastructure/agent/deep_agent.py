@@ -1,10 +1,11 @@
 """The `TurnExecutor` port, implemented with deepagents and langchain."""
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from deepagents import create_deep_agent
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.tools import BaseTool
@@ -34,6 +35,28 @@ from research_team.infrastructure.agent.messages import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Middleware for one turn, resolved when that turn's agent is built.
+#:
+#: A plain sequence would be wrong for anything that depends on where the run
+#: stands, because this executor rebuilds its agent on every pass and a
+#: workflow stage can change between two of them. It takes the session rather
+#: than closing over one so that a single executor can serve many.
+MiddlewareProvider = Callable[[CodingSession], Awaitable[Sequence[AgentMiddleware]]]
+
+#: Extra tools for one turn, resolved when that turn's agent is built.
+#:
+#: The sibling of `MiddlewareProvider`, and it exists for the same reason plus
+#: one more. `set_tools` covers a tool set that changes when a project is
+#: attached; this covers one that changes when the *project* does, with no
+#: attachment event to hang it off -- selecting a workflow is an HTTP call that
+#: writes an event and returns, and a tool registered only at attach time would
+#: be missing for the entire session that chose it.
+#:
+#: `StageMiddleware` can only filter down, so anything a stage might permit has
+#: to be registered here at creation. A tool resolved per turn and a middleware
+#: resolved per turn from the same fold is what keeps those two consistent.
+ToolProvider = Callable[[CodingSession], Awaitable[Sequence[BaseTool]]]
 
 
 def build_model() -> BaseChatModel:
@@ -161,10 +184,23 @@ class DeepAgentTurnExecutor:
         tools: Sequence[BaseTool] = (),
         policy: AutonomyPolicy | None = None,
         approvals: ApprovalPort | None = None,
+        middleware: Sequence[AgentMiddleware] = (),
+        middleware_provider: MiddlewareProvider | None = None,
+        tools_provider: ToolProvider | None = None,
     ) -> None:
         self._model = model
         self._subagents = list(subagents)
         self._tools = list(tools)
+        # Two ways in, because middleware divides cleanly into two kinds.
+        # `middleware` is for anything true of this executor for its whole
+        # life; `middleware_provider` is for anything true only of the turn
+        # about to run -- which is what stage enforcement is, since the stage
+        # is folded from the event log and moves while the executor does not.
+        # Both default to nothing, so an executor wired without a workflow
+        # builds precisely the agent it built before any of this existed.
+        self._middleware = list(middleware)
+        self._middleware_provider = middleware_provider
+        self._tools_provider = tools_provider
         # An all-`auto` policy is the default so that wiring a supervisor is
         # opt-in: without one, nothing is gated and the executor behaves
         # exactly as it did before interrupts existed.
@@ -177,7 +213,14 @@ class DeepAgentTurnExecutor:
 
     @property
     def tools(self) -> tuple[BaseTool, ...]:
-        """What this executor will hand the agent on its next turn."""
+        """The registered tool set: what every turn starts from.
+
+        Not the whole of what the next turn gets. A `tools_provider` adds what
+        the run's own state implies -- today, the workflow gate -- and that
+        cannot be reported here, because it depends on a session this property
+        has not been given. A caller asking what a *particular* turn was bound
+        has to watch the model, which is what the tests do.
+        """
         return tuple(self._tools)
 
     def set_tools(self, tools: Sequence[BaseTool]) -> None:
@@ -232,9 +275,11 @@ class DeepAgentTurnExecutor:
 
         Kept as a separate seam so tests can force a mid-turn failure.
         """
+        middleware = [*self._middleware, *await self._resolved_middleware(session)]
+        turn_tools = [*self._tools, *await self._resolved_tools(session)]
         agent = create_deep_agent(
             model=self._model,
-            tools=self._tools or None,
+            tools=turn_tools or None,
             backend=EventSourcedBackend(session),
             system_prompt=system_prompt,
             interrupt_on=interrupt_config(self._policy),
@@ -247,6 +292,12 @@ class DeepAgentTurnExecutor:
             # same event log as everything else -- delegated work stays as
             # auditable as work the main agent does itself.
             subagents=self._subagents or None,
+            # Ahead of the tail deepagents appends, so anything here runs
+            # *outside* `HumanInTheLoopMiddleware`: a stage narrows the tool
+            # list first, and the gate then poses approvals over what survived.
+            # The reverse order would gate calls the stage was going to forbid
+            # anyway, which is a human asked to rule on a non-question.
+            middleware=middleware,
         )
         run_config = {
             "configurable": {"thread_id": f"{session.aggregate_id}:{session.state.turn_index}"}
@@ -283,6 +334,45 @@ class DeepAgentTurnExecutor:
                 return final
             decisions = await self._settle(session, interrupts)
             payload = Command(resume={"decisions": decisions})
+
+    async def _resolved_middleware(self, session: CodingSession) -> Sequence[AgentMiddleware]:
+        """Whatever the provider says applies to this turn, or nothing.
+
+        Asked on every pass because that is the only place the answer can come
+        from. There is no graph state to read it out of: `_invoke` builds a
+        `MemorySaver()` inline and the `thread_id` embeds `turn_index`, so the
+        checkpoint is discarded the moment the turn ends. A stage therefore has
+        to be reconstructed from the event log each time an agent is built.
+
+        That is the design rather than a workaround, and the temptation to
+        "fix" it by adding a durable checkpointer is the thing this paragraph
+        exists to head off: a checkpointer holding stage would be a second
+        record of where a run stands, sitting beside the log that already
+        holds it, with nothing keeping the two honest. One source of truth,
+        folded fresh, costs a replay per turn and cannot drift.
+        """
+        if self._middleware_provider is None:
+            return ()
+        return await self._middleware_provider(session)
+
+    async def _resolved_tools(self, session: CodingSession) -> Sequence[BaseTool]:
+        """Whatever tools this turn gets on top of the registered set, or none.
+
+        Kept separate from `set_tools` because the two answer different
+        questions. `set_tools` is what a project attachment swaps in, and it
+        persists until something swaps it back; this is what the *state of the
+        run* implies right now, and there is no event to hang it off -- a
+        workflow is chosen by an HTTP call that appends to the log and returns,
+        with nothing to notify an executor holding a stale list.
+
+        Resolved on every pass for the same reason the middleware is, and
+        deliberately from the same fold: `StageMiddleware` filters down over
+        what was registered at agent creation, so a tool that a stage might
+        permit and this did not supply is a tool no stage can ever expose.
+        """
+        if self._tools_provider is None:
+            return ()
+        return await self._tools_provider(session)
 
     async def _settle(self, session: CodingSession, interrupts: Sequence[Any]) -> list[dict]:
         """One decision per interrupted call, in the order they were requested.
