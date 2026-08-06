@@ -44,6 +44,21 @@ class ProjectTipAdvanced(DomainEvent):
     at_event: int
 
 
+@register_event
+class ProjectDeleted(DomainEvent):
+    """The project is retired: it accepts no more joins and is not listed.
+
+    A fact appended to the stream, not a row removed from one. The log is
+    append-only, and the project id is redstring's `tenant_id` and the anchor
+    of a filesystem lineage -- sessions that recorded it keep their own
+    streams, their own files, and their own readable history. Erasing the
+    project would leave those pointing at nothing, and would rewrite a past
+    that other aggregates already referenced.
+    """
+
+    aggregate_type: str = "Project"
+
+
 @dataclass(frozen=True)
 class CreateProject:
     name: str
@@ -60,14 +75,19 @@ class AdvanceTip:
     at_event: int
 
 
-ProjectCommand = CreateProject | JoinProject | AdvanceTip
+@dataclass(frozen=True)
+class DeleteProject:
+    pass
+
+
+ProjectCommand = CreateProject | JoinProject | AdvanceTip | DeleteProject
 
 
 class ProjectState(BaseModel):
     """Everything derivable from the project's event stream."""
 
     project_id: UUID
-    status: Literal["new", "created"] = "new"
+    status: Literal["new", "created", "deleted"] = "new"
     name: str = ""
     member_session_ids: list[UUID] = Field(default_factory=list)
     active_session_id: UUID | None = None
@@ -96,6 +116,24 @@ def decide(command: ProjectCommand, state: ProjectState) -> list[DomainEvent]:
 
         case _, ProjectState(status="new"):
             raise CommandRejectedError("project not created")
+
+        # Ordered before the rest: a deleted project answers nothing but
+        # "deleted". Joining it would hand out a filesystem lineage that is
+        # no longer maintained, and advancing its tip would keep writing to
+        # a project that has been retired.
+        case DeleteProject(), ProjectState(status="deleted"):
+            raise CommandRejectedError("project already deleted")
+        case _, ProjectState(status="deleted"):
+            raise CommandRejectedError("project has been deleted")
+
+        # Held means a session is still driving it. Releasing first is the
+        # caller's job, and it is a separate decision -- releasing advances
+        # the tip, which is a write to that session's project state, not
+        # something deletion should do behind the caller's back.
+        case DeleteProject(), ProjectState(active_session_id=holder) if holder is not None:
+            raise CommandRejectedError(f"project is held by session {holder}")
+        case DeleteProject(), _:
+            return [ProjectDeleted(aggregate_id=project_id)]
 
         case JoinProject(session_id=session_id), ProjectState(active_session_id=None):
             return [
@@ -137,6 +175,12 @@ def evolve(state: ProjectState, event: DomainEvent) -> ProjectState:
                     "active_session_id": session_id,
                 }
             )
+
+        case ProjectDeleted():
+            # Everything else is kept: what the project was, who was in it,
+            # and where its tip stood are still the truth about a project
+            # that existed. Only its status changes.
+            return state.model_copy(update={"status": "deleted"})
 
         case ProjectTipAdvanced(session_id=session_id, at_event=at):
             return state.model_copy(

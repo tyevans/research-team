@@ -71,8 +71,10 @@
   <section class="view view-session">
     <div class="scrub-bar" data-slot="scrubbar"></div>
     <div class="panes">
-      <section class="pane pane-timeline" aria-label="Event timeline">
+      <section class="pane pane-timeline" data-pane="timeline" aria-label="Event timeline">
         <header class="pane-head">
+          <button type="button" class="pane-toggle" data-act="collapse"
+                  aria-expanded="true" title="Collapse this pane">&#9666;</button>
           <h2>Event log</h2>
           <span class="pane-meta" data-slot="timeline-meta"></span>
         </header>
@@ -80,8 +82,10 @@
         <div class="activity" data-slot="activity"></div>
       </section>
 
-      <section class="pane pane-workspace" aria-label="Workspace">
+      <section class="pane pane-workspace" data-pane="workspace" aria-label="Workspace">
         <header class="pane-head">
+          <button type="button" class="pane-toggle" data-act="collapse"
+                  aria-expanded="true" title="Collapse this pane">&#9666;</button>
           <h2>Workspace</h2>
           <span class="pane-meta" data-slot="workspace-meta"></span>
         </header>
@@ -91,8 +95,10 @@
         </div>
       </section>
 
-      <section class="pane pane-conversation" aria-label="Conversation">
+      <section class="pane pane-conversation" data-pane="conversation" aria-label="Conversation">
         <header class="pane-head">
+          <button type="button" class="pane-toggle" data-act="collapse"
+                  aria-expanded="true" title="Collapse this pane">&#9666;</button>
           <h2>Conversation</h2>
           <span class="pane-meta" data-slot="conv-meta"></span>
         </header>

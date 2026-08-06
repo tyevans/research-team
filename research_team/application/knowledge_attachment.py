@@ -58,6 +58,17 @@ class KnowledgeAttachment:
         self.current: Any | None = None
         """The attached graph, or None with no project attached."""
 
+        self.attached_project_id: UUID | None = None
+        """Which project `current` belongs to, or None with nothing attached.
+
+        Tracked because "a graph is attached" and "*this session's* graph is
+        attached" are different questions, and only the second is useful to a
+        front end serving several sessions from one process. Without it, such
+        a caller can only re-attach unconditionally (reopening a graph it
+        already has) or not at all (running a turn against whichever project
+        was attached last).
+        """
+
     async def attach(self, project_id: UUID) -> None:
         """Open `project_id`'s graph and swap its tools into the executor.
 
@@ -70,6 +81,7 @@ class KnowledgeAttachment:
         previous = self.current
         self._executor.set_tools([*self._base_tools, *tools])
         self.current = knowledge
+        self.attached_project_id = project_id
         if previous is not None:
             # Attaching over an existing attachment (rare -- one project per
             # session in practice) closes what it replaces rather than
@@ -88,3 +100,4 @@ class KnowledgeAttachment:
             await self._close_graph(self.current)
         self._executor.set_tools(self._base_tools)
         self.current = None
+        self.attached_project_id = None

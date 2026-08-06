@@ -112,14 +112,29 @@ def _revision_counts(events: list[DomainEvent]) -> dict[str, int]:
 
 
 def session_view(
-    session: CodingSession, events: list[DomainEvent], *, at: int | None = None
+    session: CodingSession,
+    events: list[DomainEvent],
+    *,
+    at: int | None = None,
+    holds_project: bool | None = None,
+    knowledge_attached: bool | None = None,
 ) -> dict[str, Any]:
-    """A session's full state. `at` marks a scrubbed view rather than HEAD."""
+    """A session's full state. `at` marks a scrubbed view rather than HEAD.
+
+    `holds_project` and `knowledge_attached` are process facts, not log
+    facts, so they are passed in rather than derived here. They are reported
+    on the session because they are what the *user* needs to know before
+    typing: whether this session still owns the project's filesystem, and
+    whether the agent can actually reach the graph its prompt promises it.
+    None means the caller did not ask.
+    """
     state = session.state
     revisions = _revision_counts(events if at is None else events[:at])
     return {
         "id": str(state.session_id),
         "project_id": str(state.project_id) if state.project_id else None,
+        "holds_project": holds_project,
+        "knowledge_attached": knowledge_attached,
         "system_prompt": state.system_prompt,
         "model_name": state.model_name,
         "turn_index": state.turn_index,
@@ -185,9 +200,26 @@ def tree_view(nodes: list[ForkNode]) -> list[dict[str, Any]]:
     ]
 
 
-def project_view(project_id: UUID, name: str) -> dict[str, Any]:
-    """One row of `/api/projects`: just enough to list and join by."""
-    return {"id": str(project_id), "name": name}
+def project_view(
+    project_id: UUID,
+    name: str,
+    *,
+    active_session_id: UUID | None = None,
+    tip_at_event: int = 0,
+) -> dict[str, Any]:
+    """One row of `/api/projects`: enough to list, join, and see who holds it.
+
+    The holder is part of the row because it decides what the row can offer.
+    A list that cannot see it has only one button to show -- join -- and no
+    way to know that pressing it will fail, or that ending the holding
+    session is what the user actually wants.
+    """
+    return {
+        "id": str(project_id),
+        "name": name,
+        "active_session_id": str(active_session_id) if active_session_id else None,
+        "tip_at_event": tip_at_event,
+    }
 
 
 def feed_event(session_id: UUID, event: DomainEvent, index: int | None) -> dict[str, Any]:

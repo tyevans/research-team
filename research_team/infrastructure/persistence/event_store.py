@@ -176,12 +176,24 @@ class EventStoreSessionRepository:
         events on purpose (this store is shared with `Project` and
         redstring's own streams), so listing projects needs its own read
         rather than a weakened session filter.
+
+        Deleted projects are left out. Deletion is a tombstone event on the
+        same stream rather than a removal, so the creation event is still
+        there, and filtering here is what makes "deleted" mean "gone" to
+        every caller that lists -- including the duplicate-name check, which
+        is why a deleted project's name becomes free to reuse.
         """
         envelopes = await collect(self._store.read_category("Project"))
+        deleted = {
+            envelope.event.aggregate_id
+            for envelope in envelopes
+            if type(envelope.event).__name__ == "ProjectDeleted"
+        }
         return [
             (envelope.event.aggregate_id, envelope.event.name)
             for envelope in envelopes
             if type(envelope.event).__name__ == "ProjectCreated"
+            and envelope.event.aggregate_id not in deleted
         ]
 
     def _on_published(self, event: DomainEvent) -> None:

@@ -7,6 +7,7 @@ whole reason the application layer stopped holding a "current session".
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -41,6 +42,8 @@ from research_team.interfaces.web.presenters import (
     tree_view,
 )
 
+logger = logging.getLogger(__name__)
+
 STATIC_DIR = Path(__file__).parent / "static"
 
 KEEPALIVE_SECONDS = 15.0
@@ -63,6 +66,12 @@ class NewFork(BaseModel):
 
 class NewProject(BaseModel):
     name: str
+
+
+class JoinOptions(BaseModel):
+    """Whether a join may end the session currently holding the project."""
+
+    take_over: bool = False
 
 
 class Decision(BaseModel):
@@ -109,7 +118,18 @@ def create_app(
     @app.get("/api/projects")
     async def list_projects():
         projects = await service.list_projects()
-        return [project_view(project_id, name) for project_id, name in projects]
+        rows = []
+        for project_id, name in projects:
+            state = await service.project_state(project_id)
+            rows.append(
+                project_view(
+                    project_id,
+                    name,
+                    active_session_id=state.active_session_id,
+                    tip_at_event=state.tip_at_event,
+                )
+            )
+        return rows
 
     @app.post("/api/projects")
     async def create_project(body: NewProject):
@@ -134,8 +154,77 @@ def create_app(
         await service.projects.save(aggregate)
         return project_view(aggregate.aggregate_id, body.name)
 
+    @app.delete("/api/projects/{project_id}")
+    async def delete_project(project_id: UUID, release_holder: bool = False):
+        """Retire a project. `release_holder` ends the session still driving it.
+
+        The holder is not released implicitly: releasing advances the tip,
+        which writes to that session, and a delete that quietly did so would
+        make a destructive-sounding verb do an unrelated write. Asking for it
+        explicitly keeps both halves visible -- and gives the UI something to
+        put in its confirmation prompt rather than a bare 409 to relay.
+        """
+        # An id nothing was ever written under raises from the repository
+        # rather than folding to an empty state, so "no such project" arrives
+        # two different ways and both have to become the same 404.
+        try:
+            state = await service.project_state(project_id)
+        except Exception as error:
+            raise HTTPException(status_code=404, detail=f"no project {project_id}") from error
+        if state.status == "new":
+            raise HTTPException(status_code=404, detail=f"no project {project_id}")
+        holder = state.active_session_id
+        if holder is not None:
+            if not release_holder:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"project is held by session {holder}; end that session first",
+                )
+            if turns.is_running(holder):
+                raise HTTPException(
+                    status_code=409,
+                    detail="the holding session has a turn running; cancel it first",
+                )
+            await service.release_project(holder)
+        try:
+            await service.delete_project(project_id)
+        except CommandRejectedError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if service.attached_project_id == project_id:
+            await service.detach_project()
+        return {"deleted": True, "project_id": str(project_id)}
+
+    @app.post("/api/sessions/{session_id}/release")
+    async def release_session(session_id: UUID):
+        """Finish with this session, handing its work back to its project.
+
+        The counterpart the web app never had. Releasing is not tidying up
+        after yourself: `release_project` is what advances the project's tip
+        to this session's latest event, so it is also the *only* way work
+        done here reaches the next session in the project. Without it a
+        project stays held by a session nobody is driving, and its filesystem
+        stays frozen at whatever the previous release left behind.
+
+        Detaching is conditional on this being the attached project, because
+        one process serves many browser sessions: releasing session A must
+        not pull the graph out from under a turn running in session B.
+        """
+        session = await _load(session_id)
+        project_id = session.state.project_id
+        if project_id is None:
+            return {"released": False, "project_id": None}
+        if turns.is_running(session_id):
+            raise HTTPException(
+                status_code=409,
+                detail="a turn is still running on this session; cancel it first",
+            )
+        await service.release_project(session_id)
+        if service.attached_project_id == project_id:
+            await service.detach_project()
+        return {"released": True, "project_id": str(project_id)}
+
     @app.post("/api/projects/{project_id}/join")
-    async def join_project(project_id: UUID):
+    async def join_project(project_id: UUID, body: JoinOptions | None = None):
         """Start a session that inherits `project_id`'s filesystem, and attach its graph.
 
         Goes through `SessionService.start_in_project` -- the same use case
@@ -156,7 +245,24 @@ def create_app(
         joining a different project will change the tools the first tab's
         turns run with; that is a known, accepted limitation of this design,
         not an oversight.
+
+        Taking over: a project held by a session the user has finished with
+        is the ordinary case, not an error -- "end this and start fresh" is
+        the single most common thing to want from a project, and before
+        `take_over` the web app could only report the 409 and offer no way
+        out of it. It is spelled as an explicit flag rather than done
+        silently because releasing the holder advances the tip, which is a
+        write to somebody else's session; a plain join stays a plain join.
         """
+        if body is not None and body.take_over:
+            state = await service.project_state(project_id)
+            if state.active_session_id is not None:
+                if turns.is_running(state.active_session_id):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="the holding session has a turn running; cancel it first",
+                    )
+                await service.release_project(state.active_session_id)
         try:
             session_id = await service.start_in_project(project_id)
         except CommandRejectedError as error:
@@ -209,7 +315,19 @@ def create_app(
     @app.get("/api/sessions/{session_id}")
     async def get_session(session_id: UUID):
         session = await _load(session_id)
-        return session_view(session, await service.history(session_id))
+        project_id = session.state.project_id
+        holds = None
+        if project_id is not None:
+            state = await service.project_state(project_id)
+            holds = state.active_session_id == session_id
+        return session_view(
+            session,
+            await service.history(session_id),
+            holds_project=holds,
+            knowledge_attached=(
+                None if project_id is None else service.attached_project_id == project_id
+            ),
+        )
 
     @app.get("/api/sessions/{session_id}/events")
     async def get_events(session_id: UUID):
@@ -261,6 +379,18 @@ def create_app(
                 status_code=409,
                 detail="a turn is already running on this session",
             )
+        # Re-attach per turn rather than only at join. One process serves
+        # every browser session, so by the time this session takes a turn the
+        # attached graph may belong to a project joined in another tab -- or,
+        # after a restart, to nothing at all. A session whose recorded prompt
+        # promises knowledge tools has to get them on every turn, not just the
+        # request that happened to join. A no-op for a session in no project,
+        # and for a graph that will not open: knowledge is degraded then, and
+        # the turn is still worth running.
+        try:
+            await service.ensure_project_attached(session_id)
+        except Exception:  # noqa: BLE001 -- a turn without the graph beats no turn
+            logger.warning("could not attach knowledge graph for %s", session_id, exc_info=True)
         reporter = None
         if activity is not None:
             activity.begin(session_id)
