@@ -11,9 +11,12 @@ from uuid import UUID
 from eventsource import DomainEvent
 
 from research_team.application import ForkNode, SessionSummary
+from research_team.application.corpus_read import StoredDocument
+from research_team.application.corpus_spans import Span
 from research_team.domain import (
     CodingSession,
     ConversationCompacted,
+    DocumentRecord,
     FileDeleted,
     FileEdited,
     FileWritten,
@@ -232,4 +235,43 @@ def feed_event(session_id: UUID, event: DomainEvent, index: int | None) -> dict[
     return {
         "session_id": str(session_id),
         **event_row(index if index is not None else 0, event),
+    }
+
+
+def source_view(summary: DocumentRecord) -> dict[str, Any]:
+    """One row of `/api/projects/{id}/sources`: what a source is, not what it says.
+
+    No `text` key, and that absence is the contract rather than an oversight.
+    A corpus can hold hundreds of papers; a listing that inlined even a
+    snippet of each would cost more to render than reading the one document
+    the caller actually wanted.
+    """
+    return {
+        "source_id": summary.source_id,
+        "char_count": summary.char_count,
+        # The digest is what lets a caller prove a quote came from the bytes
+        # on record rather than from a document that has since been revised.
+        "sha256": summary.sha256,
+        "uri": summary.uri,
+        "title": summary.title,
+        "published_at": summary.published_at,
+        "note": summary.note,
+    }
+
+
+def source_text_view(document: StoredDocument, span: Span) -> dict[str, Any]:
+    """One source's text, with the offsets that make a quote from it checkable.
+
+    `start` and `end` are read off `span` -- what was actually returned --
+    rather than off the request, which is only a guess and may have asked for
+    more than the document has. A citation built on requested offsets looks
+    verifiable and is not, which is the failure this whole layer exists to
+    prevent. `char_count` stays the whole document's, so a caller can tell a
+    partial read from a complete one without a second request.
+    """
+    return {
+        **source_view(document.record),
+        "text": span.text,
+        "start": span.start,
+        "end": span.end,
     }

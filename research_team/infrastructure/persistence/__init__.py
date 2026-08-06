@@ -4,9 +4,14 @@ from research_team.infrastructure.persistence.event_store import (
     SNAPSHOT_THRESHOLD,
     EventStoreSessionRepository,
     build_aggregate_repository,
+    build_corpus_repository,
     build_project_repository,
 )
 from research_team.infrastructure.persistence.read_models import (
+    CorpusDocumentRow,
+    CorpusProjection,
+    CorpusRunner,
+    CorpusStore,
     SessionSummaryProjection,
     SessionSummaryRow,
     SessionSummaryRunner,
@@ -15,11 +20,16 @@ from research_team.infrastructure.persistence.read_models import (
 
 __all__ = [
     "SNAPSHOT_THRESHOLD",
+    "CorpusDocumentRow",
+    "CorpusProjection",
+    "CorpusRunner",
+    "CorpusStore",
     "EventStoreSessionRepository",
     "SessionSummaryProjection",
     "SessionSummaryRow",
     "SessionSummaryRunner",
     "SessionSummaryStore",
     "build_aggregate_repository",
+    "build_corpus_repository",
     "build_project_repository",
 ]

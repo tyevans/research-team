@@ -14,6 +14,7 @@ from redstring import InMemoryGraphStore
 
 from research_team.application.knowledge_attachment import KnowledgeAttachment
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
+from research_team.infrastructure.persistence.event_store import build_corpus_repository
 from tests.conftest import fake_provider
 
 
@@ -57,6 +58,9 @@ def _build(repository, *, fails: bool = False):
             event_store=repository.store,
             snapshot_store=repository.snapshot_store,
             provider=fake_provider(),
+            corpus=build_corpus_repository(
+                repository.store, snapshot_store=repository.snapshot_store
+            ),
             domain="auto",
         )
         tools = tuple(_FakeTool(name) for name in KNOWLEDGE_TOOL_NAMES)

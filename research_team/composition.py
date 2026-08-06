@@ -36,6 +36,10 @@ from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import DeepAgentTurnExecutor, build_model
 from research_team.infrastructure.agent.compaction import SummarizingStrategy
+from research_team.infrastructure.agent.corpus_tools import (
+    CORPUS_PROMPT,
+    build_corpus_tools,
+)
 from research_team.infrastructure.agent.delegation import (
     DEFAULT_SUBAGENTS,
     DELEGATION_PROMPT,
@@ -50,9 +54,12 @@ from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.knowledge.stores import build_graph_store
 from research_team.infrastructure.persistence import (
+    CorpusRunner,
     EventStoreSessionRepository,
     SessionSummaryRunner,
+    build_corpus_repository,
 )
+from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.telemetry import build_tracer
 
 
@@ -69,6 +76,14 @@ class Application:
 
     summaries: SessionSummaryRunner
     """Keeps `/sessions` following the log. Idle until `start()`."""
+
+    corpus: CorpusRunner
+    """Keeps the corpus table following the log. Idle until `start()`.
+
+    A field rather than something reached through the service, because the
+    corpus is read by two callers that share nothing else: the agent, through
+    the tools attached with a project, and the web layer, which lists and
+    reads any project's sources without attaching anything."""
 
     policy: AutonomyPolicy
     """Per-tool autonomy levels for this instance, mutable after construction.
@@ -120,6 +135,7 @@ class Application:
         -- so an unreachable Neo4j fails here, at start, rather than mid-turn.
         """
         await self.summaries.start()
+        await self.corpus.start()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
@@ -141,6 +157,16 @@ class Application:
         """
         await self.summaries.caught_up()
 
+    async def corpus_caught_up(self) -> None:
+        """Wait until the corpus projection has seen everything appended.
+
+        The same seam `summaries_caught_up` provides, for the same reason: a
+        `remember` commits to the log and the table follows, so a caller that
+        stores a document and immediately lists it would otherwise be racing
+        the projection.
+        """
+        await self.corpus.caught_up()
+
     async def close(self) -> None:
         """Stop anything still running, then let go of the store.
 
@@ -151,6 +177,7 @@ class Application:
         """
         await self.turns.cancel_all()
         await self.summaries.stop()
+        await self.corpus.stop()
         await self.service.close()
         await self.detach_project()
 
@@ -253,7 +280,15 @@ def build_application(
         # same way `start_in_project`'s per-session prompt does. Otherwise a
         # session it creates has `remember` on the executor and no idea the
         # tool exists.
-        prompt_suffix += KNOWLEDGE_PROMPT
+        prompt_suffix += KNOWLEDGE_PROMPT + CORPUS_PROMPT
+
+    resolved_tracer = tracer if tracer is not None else build_tracer()
+    # Built here rather than beside `summaries` below because `open_graph`
+    # closes over it: the corpus tools are attached with a project, and the
+    # thing they read has to exist by the time that callable is defined.
+    corpus = CorpusRunner(
+        repository.store, resolved_path, repository.publisher, resolved_tracer
+    )
 
     executor = DeepAgentTurnExecutor(
         resolved_model,
@@ -291,9 +326,19 @@ def build_application(
             event_store=repository.store,
             snapshot_store=repository.snapshot_store,
             provider=LangChainLlmProvider(resolved_model, model=config.model_name()),
+            corpus=build_corpus_repository(
+                repository.store, snapshot_store=repository.snapshot_store
+            ),
             domain=config.knowledge_domain(),
         )
-        return knowledge, build_knowledge_tools(knowledge)
+        # Both tool sets travel back through the one channel `KnowledgeAttachment`
+        # already has. A second callable for the corpus would need its own copy of
+        # the atomicity guarantee -- a failed attach leaves the executor's tools
+        # untouched -- and two half-attached states are exactly what that
+        # guarantee exists to rule out. The corpus reader needs nothing closed,
+        # so `close_graph` stays about the graph.
+        reader = ProjectCorpusReader(corpus, target_project_id)
+        return knowledge, build_knowledge_tools(knowledge) + build_corpus_tools(reader)
 
     async def close_graph(knowledge: RedstringKnowledge) -> None:
         store = knowledge.graph_store
@@ -307,7 +352,6 @@ def build_application(
         close_graph=close_graph,
     )
 
-    resolved_tracer = tracer if tracer is not None else build_tracer()
     summaries = SessionSummaryRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
@@ -326,7 +370,7 @@ def build_application(
         # A session started in a project gets this appended to its prompt
         # (Task 14/Step 4); one started plainly does not, so it never hears
         # about tools it was not given.
-        knowledge_prompt=KNOWLEDGE_PROMPT,
+        knowledge_prompt=KNOWLEDGE_PROMPT + CORPUS_PROMPT,
         # The service owns the attachment: `/project use` calls
         # `service.attach_project` directly, so it lives where the REPL
         # already reaches rather than behind a second accessor on `Application`.
@@ -338,6 +382,7 @@ def build_application(
         turns=TurnSupervisor(service),
         context_mode=mode,
         summaries=summaries,
+        corpus=corpus,
         policy=resolved_policy,
         _initial_project_id=project_id,
     )

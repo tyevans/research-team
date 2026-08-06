@@ -1,8 +1,9 @@
 """The HTTP adapter, exercised over ASGI with no network and no real model."""
 
 import asyncio
+import hashlib
 import json
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -12,10 +13,13 @@ from research_team.application.ports import ActivityMessage
 from research_team.composition import build_application as _build_application
 from research_team.domain import (
     DeleteFile,
+    DropSourceDocument,
     SendUserMessage,
     StartSession,
+    StoreSourceDocument,
     WriteFile,
 )
+from research_team.infrastructure.persistence import build_corpus_repository
 from research_team.interfaces.web import TurnActivity, create_app
 
 
@@ -35,7 +39,9 @@ async def _started(**kwargs):
 @pytest.fixture
 async def app_and_client(db_path, fake_model):
     application = await _started(model=fake_model, db_path=db_path)
-    api = create_app(application.service, application.feed, application.turns)
+    api = create_app(
+        application.service, application.feed, application.turns, corpus=application.corpus
+    )
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield application, client
@@ -1247,3 +1253,180 @@ async def test_activity_frames_ride_the_stream_without_an_id(repository, session
     assert payload["message_id"] == "a1"
     # Not a log entry: no id line precedes the data, unlike a logged event.
     assert "\nid:" not in frames[0]
+
+
+# ---------------- corpus ----------------
+
+
+async def _project_with_sources(application, client, *documents) -> str:
+    """A project holding `documents`, with the corpus projection caught up.
+
+    Stores through the `Corpus` aggregate rather than through `remember`,
+    because `remember` runs an extraction and these tests are about the read
+    path. The projection follows the log asynchronously, so the wait is what
+    makes the assertions deterministic rather than timing-dependent.
+    """
+    created = await client.post("/api/projects", json={"name": f"corpus-{uuid4()}"})
+    assert created.status_code == 200
+    project_id = created.json()["id"]
+
+    corpus = build_corpus_repository(
+        application.service._repository.store,
+        application.service._repository.publisher,
+        snapshot_store=application.service._repository.snapshot_store,
+    )
+    aggregate = await corpus.load_or_create(UUID(project_id))
+    for command in documents:
+        aggregate.execute(command)
+    await corpus.save(aggregate)
+    await application.corpus_caught_up()
+    return project_id
+
+
+async def test_listing_sources_reports_metadata_and_never_text(app_and_client):
+    application, client = app_and_client
+    project_id = await _project_with_sources(
+        application,
+        client,
+        StoreSourceDocument(
+            source_id="s1",
+            text="Ada Lovelace worked with Charles Babbage.",
+            uri="https://example.test/ada",
+            title="Ada Lovelace",
+            published_at="1843-07-10",
+            note="for the timeline",
+        ),
+        StoreSourceDocument(source_id="s2", text="Grace Hopper."),
+    )
+
+    response = await client.get(f"/api/projects/{project_id}/sources")
+
+    assert response.status_code == 200
+    rows = response.json()
+    assert [row["source_id"] for row in rows] == ["s1", "s2"]
+    assert rows[0]["char_count"] == 41
+    assert rows[0]["uri"] == "https://example.test/ada"
+    assert rows[0]["title"] == "Ada Lovelace"
+    assert rows[0]["published_at"] == "1843-07-10"
+    assert rows[0]["note"] == "for the timeline"
+    # The digest describes the bytes, so a quote can be checked against the
+    # document it claims to come from even after that source is revised.
+    assert (
+        rows[0]["sha256"]
+        == hashlib.sha256(b"Ada Lovelace worked with Charles Babbage.").hexdigest()
+    )
+    # The contract that makes a listing affordable for a corpus of hundreds.
+    assert all("text" not in row for row in rows)
+
+
+async def test_listing_sources_of_an_empty_corpus_is_an_empty_list(app_and_client):
+    """An existing project with nothing stored is empty, not missing."""
+    _, client = app_and_client
+    created = await client.post("/api/projects", json={"name": f"bare-{uuid4()}"})
+    project_id = created.json()["id"]
+
+    response = await client.get(f"/api/projects/{project_id}/sources")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_reading_a_source_returns_its_text_and_citation(app_and_client):
+    application, client = app_and_client
+    project_id = await _project_with_sources(
+        application,
+        client,
+        StoreSourceDocument(
+            source_id="s1",
+            text="Ada Lovelace worked with Charles Babbage.",
+            title="Ada Lovelace",
+        ),
+    )
+
+    response = await client.get(f"/api/projects/{project_id}/sources/s1")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source_id"] == "s1"
+    assert body["text"] == "Ada Lovelace worked with Charles Babbage."
+    assert body["title"] == "Ada Lovelace"
+    assert body["char_count"] == 41
+    assert body["start"] == 0
+    assert body["end"] == 41
+
+
+async def test_reading_a_range_reports_the_offsets_it_actually_returned(app_and_client):
+    """The offsets describe the text in the response, not the text requested."""
+    application, client = app_and_client
+    project_id = await _project_with_sources(
+        application,
+        client,
+        StoreSourceDocument(source_id="s1", text="Ada Lovelace worked with Charles Babbage."),
+    )
+
+    response = await client.get(
+        f"/api/projects/{project_id}/sources/s1", params={"start": 4, "end": 12}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["text"] == "Lovelace"
+    assert (body["start"], body["end"]) == (4, 12)
+    assert body["char_count"] == 41, "the whole document's size, not the range's"
+
+
+async def test_a_range_past_the_end_is_clamped_rather_than_refused(app_and_client):
+    application, client = app_and_client
+    project_id = await _project_with_sources(
+        application,
+        client,
+        StoreSourceDocument(source_id="s1", text="Ada Lovelace."),
+    )
+
+    response = await client.get(
+        f"/api/projects/{project_id}/sources/s1", params={"start": 4, "end": 9_000}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["end"] == 13
+
+
+async def test_an_unknown_source_is_a_404(app_and_client):
+    application, client = app_and_client
+    project_id = await _project_with_sources(
+        application,
+        client,
+        StoreSourceDocument(source_id="s1", text="Ada Lovelace."),
+    )
+
+    response = await client.get(f"/api/projects/{project_id}/sources/nope")
+
+    assert response.status_code == 404
+    assert "nope" in response.json()["detail"]
+
+
+async def test_an_unknown_project_is_a_404_on_both_routes(client):
+    unknown = uuid4()
+
+    listing = await client.get(f"/api/projects/{unknown}/sources")
+    reading = await client.get(f"/api/projects/{unknown}/sources/s1")
+
+    assert listing.status_code == 404
+    assert reading.status_code == 404
+
+
+async def test_a_dropped_source_is_gone_from_both_routes(app_and_client):
+    """Dropped means unreadable. The row survives for the audit, not for callers."""
+    application, client = app_and_client
+    project_id = await _project_with_sources(
+        application,
+        client,
+        StoreSourceDocument(source_id="s1", text="Ada Lovelace."),
+        DropSourceDocument(source_id="s1", reason="superseded by the 1843 notes"),
+    )
+
+    listing = await client.get(f"/api/projects/{project_id}/sources")
+    reading = await client.get(f"/api/projects/{project_id}/sources/s1")
+
+    assert listing.json() == []
+    assert reading.status_code == 404

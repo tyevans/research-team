@@ -29,7 +29,10 @@ from research_team.application import (
     TurnSupervisor,
     build_fork_tree,
 )
+from research_team.application.corpus_spans import quote
 from research_team.domain import CreateProject
+from research_team.infrastructure.persistence import CorpusRunner
+from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.presenters import (
@@ -38,6 +41,8 @@ from research_team.interfaces.web.presenters import (
     file_history,
     project_view,
     session_view,
+    source_text_view,
+    source_view,
     summary_view,
     tree_view,
 )
@@ -89,6 +94,7 @@ def create_app(
     lifespan=None,
     approvals: WebApprovals | None = None,
     activity: TurnActivity | None = None,
+    corpus: CorpusRunner | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -193,6 +199,71 @@ def create_app(
         if service.attached_project_id == project_id:
             await service.detach_project()
         return {"deleted": True, "project_id": str(project_id)}
+
+    async def _require_project(project_id: UUID) -> None:
+        """404 unless `project_id` names a project that exists.
+
+        Checked before touching the corpus so that "no such project" and "that
+        project has no sources" stay different answers. Without it an unknown
+        id would list empty and read 404, which reads as a project that exists
+        and happens to be bare -- and the caller's next move (store something)
+        would be the wrong one.
+        """
+        try:
+            state = await service.project_state(project_id)
+        except Exception as error:
+            raise HTTPException(status_code=404, detail=f"no project {project_id}") from error
+        if state.status == "new":
+            raise HTTPException(status_code=404, detail=f"no project {project_id}")
+
+    def _reader(project_id: UUID) -> ProjectCorpusReader:
+        """This project's corpus, through the same port the agent's tools use.
+
+        Built per request rather than held, because it is two attributes over
+        a shared runner and binding the project is the entire point -- a
+        long-lived one would have to take the project as an argument again,
+        which is what the port refuses so that no caller can read another
+        project's sources.
+
+        503 rather than 404 when nothing was wired: an application assembled
+        without a corpus read model is a valid thing to serve (as with
+        `approvals` and `activity`), and the caller needs to know the server
+        cannot answer rather than that the project has nothing.
+        """
+        if corpus is None:
+            raise HTTPException(status_code=503, detail="no corpus read model is configured")
+        return ProjectCorpusReader(corpus, project_id)
+
+    @app.get("/api/projects/{project_id}/sources")
+    async def list_sources(project_id: UUID):
+        """Every source this project has stored. Metadata only, never text."""
+        reader = _reader(project_id)
+        await _require_project(project_id)
+        return [source_view(summary) for summary in await reader.list_documents()]
+
+    @app.get("/api/projects/{project_id}/sources/{source_id}")
+    async def read_source(
+        project_id: UUID, source_id: str, start: int | None = None, end: int | None = None
+    ):
+        """One source's text, or a character range of it, with its real offsets.
+
+        The range is clamped rather than validated: `quote` returns what the
+        document actually has for the range asked, and the response reports
+        those offsets. A caller guessing past the end of a document is the
+        ordinary case -- it is how you page through one -- so answering with
+        the last characters and honest offsets is more useful than a 422 that
+        makes the caller compute the bound it was asking the server for.
+        """
+        reader = _reader(project_id)
+        await _require_project(project_id)
+        document = await reader.read_document(source_id)
+        if document is None:
+            raise HTTPException(
+                status_code=404, detail=f"no source {source_id!r} in project {project_id}"
+            )
+        text = document.text
+        span = quote(text, start or 0, len(text) if end is None else end)
+        return source_text_view(document, span)
 
     @app.post("/api/sessions/{session_id}/release")
     async def release_session(session_id: UUID):

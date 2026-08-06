@@ -17,21 +17,31 @@ from uuid import uuid4
 
 import aiosqlite
 import pytest
+from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 
 from research_team.domain import (
     CodingSession,
     ConversationCompacted,
+    Project,
     SendUserMessage,
     SessionStarted,
     StartSession,
     ToolCallDecided,
     TurnFailed,
+    current_stage_of,
 )
+from research_team.infrastructure.persistence.event_store import build_project_repository
+from research_team.workflows import hybrid_default
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
 
 async def _write_old_event(
-    db_path: str, session_id, version: int, event_type: str, payload: dict
+    db_path: str,
+    session_id,
+    version: int,
+    event_type: str,
+    payload: dict,
+    aggregate_type: str = "CodingSession",
 ) -> None:
     """Insert an event exactly as an older build would have left it.
 
@@ -45,7 +55,7 @@ async def _write_old_event(
             (
                 str(uuid4()),
                 str(session_id),
-                "CodingSession",
+                aggregate_type,
                 event_type,
                 version,
                 datetime.now(UTC).isoformat(),
@@ -286,3 +296,113 @@ async def test_a_before_validator_can_reshape_an_old_payload(repository, started
     events = await repository.events_for(started)
 
     assert events[-1].error_message == "written by the old shape"
+
+
+async def test_a_project_written_before_workflows_existed_still_loads(
+    repository, started, db_path
+):
+    """`ProjectState` grew four workflow fields; every stored project predates them.
+
+    The events did not change shape here -- the *state* did, which is the case
+    the module docstring's rule 1 covers from the other side. An old project's
+    stream simply has no `WorkflowSelected` in it, so the defaults have to mean
+    "runs no workflow" rather than crash or, worse, imply a preset.
+
+    Depends on `started` only to guarantee the tables exist; schema init
+    happens on first save and nothing else here calls it.
+    """
+    project_id = uuid4()
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=1,
+        event_type="ProjectCreated",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "Project",
+            "aggregate_version": 1,
+            "name": "atlas",
+        },
+        aggregate_type="Project",
+    )
+
+    project = await repository.projects.load(project_id)
+
+    assert project.state.name == "atlas"
+    assert project.state.preset_id is None
+    assert project.state.preset_version is None
+    assert project.state.current_stage is None
+    assert project.state.stage_history == []
+    assert current_stage_of(project.state, hybrid_default) is None
+
+
+async def test_an_old_project_snapshot_without_workflow_fields_still_loads(
+    store, repository, started, db_path
+):
+    """The riskier half: projects are snapshotted, and a snapshot *is* the state.
+
+    A stored snapshot is a serialized `ProjectState` from whenever it was
+    taken, and unlike an event it is not reconstructed field by field from a
+    stream -- it is handed to the model whole. So a snapshot written before
+    these fields existed is the payload most likely to stop validating, and it
+    is loaded in preference to replaying, which means the failure would be
+    silent until some specific old project was opened.
+
+    Written at the schema version the library currently reads, deliberately:
+    at a *mismatched* version it would be ignored and the aggregate replayed
+    from events, which would pass this test while proving nothing. The
+    snapshot's `name` differs from the creation event's for the same reason --
+    it is the only thing here that distinguishes "the snapshot was loaded"
+    from "the snapshot was skipped and the stream replayed cleanly". Without
+    it this test passed against a repository that never read the snapshot.
+
+    Builds its own project repository because the shared `repository` fixture
+    is assembled without a snapshot store, and `build_project_repository` has
+    no fallback that invents one. `SQLiteSnapshotStore` opens per-operation
+    connections and needs no closing.
+    """
+    project_id = uuid4()
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=1,
+        event_type="ProjectCreated",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "Project",
+            "aggregate_version": 1,
+            "name": "atlas",
+        },
+        aggregate_type="Project",
+    )
+    async with aiosqlite.connect(db_path) as connection:
+        await connection.execute(
+            "INSERT INTO snapshots (aggregate_id, aggregate_type, version,"
+            " schema_version, state, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                str(project_id),
+                "Project",
+                1,
+                Project.schema_version,
+                json.dumps(
+                    {
+                        "project_id": str(project_id),
+                        "status": "created",
+                        "name": "atlas-from-snapshot",
+                        "member_session_ids": [],
+                        "active_session_id": None,
+                        "tip_session_id": None,
+                        "tip_at_event": 0,
+                    }
+                ),
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+        await connection.commit()
+
+    projects = build_project_repository(store, snapshot_store=SQLiteSnapshotStore(db_path))
+    project = await projects.load(project_id)
+
+    assert project.state.name == "atlas-from-snapshot"
+    assert project.state.preset_id is None
+    assert project.state.stage_history == []

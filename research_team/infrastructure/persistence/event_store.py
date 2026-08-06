@@ -17,7 +17,7 @@ from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application import FeedEntry
-from research_team.domain import CodingSession, Project
+from research_team.domain import CodingSession, Corpus, Project
 
 SNAPSHOT_THRESHOLD = 50
 
@@ -39,6 +39,32 @@ def build_project_repository(
     return AggregateRepository(
         store,
         Project,
+        event_publisher=publisher,
+        snapshot_store=snapshot_store,
+        snapshot_threshold=SNAPSHOT_THRESHOLD,
+        snapshot_mode="background",
+    )
+
+
+def build_corpus_repository(
+    store: SQLiteEventStore,
+    publisher: InMemoryEventBus | None = None,
+    snapshot_store: SQLiteSnapshotStore | None = None,
+) -> AggregateRepository[Corpus]:
+    """A project's corpus, over the same log as its sessions and its project.
+
+    Shares the project's UUID and is kept apart by `aggregate_type`, which the
+    repository puts into the `StreamId` for us -- so the corpus of project P
+    is addressed by P and nothing has to invent or store a second id.
+
+    Snapshots are on, at the same threshold as everywhere else. That is only
+    affordable because `CorpusState` holds no text (see `domain/corpus.py`);
+    were the fold to keep the documents, each snapshot would be a copy of the
+    whole corpus.
+    """
+    return AggregateRepository(
+        store,
+        Corpus,
         event_publisher=publisher,
         snapshot_store=snapshot_store,
         snapshot_threshold=SNAPSHOT_THRESHOLD,
