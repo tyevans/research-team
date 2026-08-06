@@ -119,6 +119,7 @@ def session_view(
     revisions = _revision_counts(events if at is None else events[:at])
     return {
         "id": str(state.session_id),
+        "project_id": str(state.project_id) if state.project_id else None,
         "system_prompt": state.system_prompt,
         "model_name": state.model_name,
         "turn_index": state.turn_index,
@@ -182,6 +183,11 @@ def tree_view(nodes: list[ForkNode]) -> list[dict[str, Any]]:
         {**summary_view(node.session), "children": tree_view(list(node.children))}
         for node in nodes
     ]
+
+
+def project_view(project_id: UUID, name: str) -> dict[str, Any]:
+    """One row of `/api/projects`: just enough to list and join by."""
+    return {"id": str(project_id), "name": name}
 
 
 def feed_event(session_id: UUID, event: DomainEvent, index: int | None) -> dict[str, Any]:

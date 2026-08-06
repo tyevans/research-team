@@ -155,3 +155,30 @@ async def test_release_project_is_a_no_op_for_a_session_that_is_not_the_holder(
 
     project = await service.projects.load(project_id)
     assert project.state.active_session_id == second
+
+
+async def test_a_session_started_in_a_project_records_the_knowledge_prompt(
+    service, project_id
+):
+    """The system prompt a session ran under is recorded in its own
+    `SessionStarted` event -- the right home for it in an event-sourced
+    system, since a session resumed later must run under the prompt it
+    actually started with, not whatever the process's default happens to be
+    today.
+    """
+    session_id = await service.start_in_project(project_id)
+
+    session = await service.load(session_id)
+
+    assert "knowledge graph" in session.state.system_prompt.lower()
+
+
+async def test_a_plain_session_does_not_mention_the_knowledge_graph(service):
+    """No project, no knowledge tools -- so the prompt must not describe
+    tools the session was never given.
+    """
+    session_id = await service.create_session()
+
+    session = await service.load(session_id)
+
+    assert "knowledge graph" not in session.state.system_prompt.lower()

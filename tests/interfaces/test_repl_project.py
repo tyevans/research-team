@@ -60,6 +60,26 @@ async def test_project_use_reports_an_unknown_name(current):
     assert "nope" in output and "no such project" in output.lower()
 
 
+async def test_project_use_attaches_the_knowledge_graph(build_application, fake_model):
+    """The gap Task 14 closes: `/project use` must make `remember` reachable.
+
+    Goes through a whole `Application`, not just a `SessionService`, because
+    the tools live on the executor `build_application` wires -- the same
+    object `/project use` has to reach through the service to swap. Before
+    this task, nothing called `attach_project` at all: `build_application`
+    only ever attached a graph when given `project_id=` at construction, and
+    `/project use` had no way to attach one to an application already built.
+    """
+    application = await build_application(model=fake_model)
+    current = await repl.Repl.start(application.service)
+
+    await repl.handle_command(current, "/project new research")
+    await repl.handle_command(current, "/project use research")
+
+    names = {tool.name for tool in application.turns_tools()}
+    assert "remember" in names
+
+
 async def test_project_use_starts_a_session_in_the_project(current):
     """Assert wording only a successful join produces.
 
@@ -137,3 +157,43 @@ async def test_exiting_the_repl_releases_a_held_project(
     project_id = (await other_service.list_projects())[0][0]
     joined = await other_service.start_in_project(project_id)
     assert joined is not None
+
+
+async def test_resuming_a_project_session_reattaches_its_knowledge_graph(
+    build_application, fake_model
+):
+    """`/resume` into a project session must not leave it without the graph
+    its own recorded prompt describes.
+
+    `_switch_to` detaches unconditionally on every switch (whatever was
+    attached belonged to the outgoing session), so a session resumed back
+    into a project needs its own re-attach -- otherwise the model is told
+    about `remember`/`graph_search`/`unmerge` by its `SessionStarted` prompt
+    while the executor no longer has them. Reattaching must not re-acquire
+    the project's filesystem lease: that is `/project use`'s job (via
+    `start_in_project`'s `JoinProject`), not a side effect of merely looking
+    at an old session again, or every `/resume` into a project would fight
+    over who holds it.
+    """
+    application = await build_application(model=fake_model)
+    current = await repl.Repl.start(application.service)
+
+    await repl.handle_command(current, "/project new research")
+    await repl.handle_command(current, "/project use research")
+    project_session_id = current.session_id
+
+    # Switch away: this detaches the graph and releases the lease (the
+    # project has no holder afterwards -- `/new` never joins one).
+    await repl.handle_command(current, "/new")
+    assert "remember" not in {tool.name for tool in application.turns_tools()}
+
+    output = await repl.handle_command(current, f"/resume {project_session_id}")
+
+    assert "error" not in output.lower()
+    names = {tool.name for tool in application.turns_tools()}
+    assert "remember" in names
+
+    # Resuming looked at the session, it did not take the project back.
+    project_id = (await application.service.list_projects())[0][0]
+    project = await application.service.projects.load(project_id)
+    assert project.state.active_session_id is None

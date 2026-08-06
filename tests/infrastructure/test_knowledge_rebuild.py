@@ -9,11 +9,17 @@ from redstring import project as fold_into
 from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.infrastructure.knowledge import rebuild
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
-from tests.infrastructure.test_redstring_adapter import build_adapter
+
+# `build_adapter` is a pytest fixture defined in test_redstring_adapter; importing
+# it into this module's namespace is how pytest shares fixtures across files.
+from tests.infrastructure.test_redstring_adapter import build_adapter  # noqa: F401
 
 
 @pytest.mark.asyncio
-async def test_a_rebuilt_graph_matches_the_one_maintained_by_ingest(tmp_path):
+async def test_a_rebuilt_graph_matches_the_one_maintained_by_ingest(
+    tmp_path,
+    build_adapter,  # noqa: F811
+):
     """The store is a projection. Rebuilding it must not change what it holds."""
     project_id = uuid4()
     adapter, event_store, _ = build_adapter(tmp_path, project_id)
@@ -47,7 +53,7 @@ async def test_rebuilding_an_empty_project_yields_an_empty_graph(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_rebuilding_never_calls_the_model(tmp_path):
+async def test_rebuilding_never_calls_the_model(tmp_path, build_adapter):  # noqa: F811
     """Replay purity: extraction is recorded, never recomputed.
 
     `rebuild_graph` accepts no provider, and neither `GraphProjection` nor

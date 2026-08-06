@@ -28,6 +28,12 @@ from research_team.application.knowledge import (
     MergeRecord,
     SourceRef,
 )
+from research_team.application.knowledge_attachment import (
+    CloseGraph,
+    KnowledgeAttachment,
+    OpenGraph,
+    TurnExecutorTools,
+)
 from research_team.application.live_feed import LiveFeed
 from research_team.application.ports import (
     ActivityReporter,
@@ -76,6 +82,7 @@ __all__ = [
     "ApprovalRequest",
     "AutonomyPolicy",
     "Cancellation",
+    "CloseGraph",
     "Compaction",
     "ContextStrategy",
     "ElideToolResults",
@@ -84,12 +91,14 @@ __all__ = [
     "ForkNode",
     "FullHistory",
     "IngestReport",
+    "KnowledgeAttachment",
     "KnowledgeError",
     "KnowledgePort",
     "Level",
     "LiveFeed",
     "Match",
     "MergeRecord",
+    "OpenGraph",
     "PreparedContext",
     "RecordedMessage",
     "RunningTurn",
@@ -103,6 +112,7 @@ __all__ = [
     "TurnAlreadyRunning",
     "TurnCancelled",
     "TurnExecutor",
+    "TurnExecutorTools",
     "TurnOutcome",
     "TurnResult",
     "TurnSupervisor",

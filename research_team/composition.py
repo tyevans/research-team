@@ -27,6 +27,7 @@ from research_team.application import (
     ContextStrategy,
     ElideToolResults,
     FullHistory,
+    KnowledgeAttachment,
     LiveFeed,
     SessionService,
     TurnSupervisor,
@@ -75,12 +76,36 @@ class Application:
     lets someone change autonomy mid-session needs a handle to mutate -- this
     is that handle, whichever adapter (CLI, web) drives it."""
 
-    knowledge: RedstringKnowledge | None
-    """This project's knowledge graph, or None with no project configured.
+    _initial_project_id: UUID | None = None
+    """`project_id`, if `build_application` was given one. Attached in
+    `start()` rather than at construction, because attaching talks to a
+    store and building is deliberately synchronous."""
 
-    No project means no store was opened and no tools were registered -- the
-    same posture `search` has without an instance configured, and what keeps
-    the README's sandbox claim honest for anyone who has not opted in."""
+    @property
+    def knowledge(self) -> RedstringKnowledge | None:
+        """This instance's currently attached knowledge graph, or None.
+
+        Not a fixed field: which project is attached can change after
+        construction, now that a REPL can `/project use` into one. Reads
+        through the service, which is what actually owns the attachment --
+        so this and `service.current_knowledge` can never disagree.
+        """
+        return self.service.current_knowledge
+
+    async def attach_project(self, project_id: UUID) -> None:
+        """Open `project_id`'s graph and give the executor its tools.
+
+        Thin delegation: the service owns the attachment and its atomicity
+        guarantee (a failure here must leave `knowledge` at None and the
+        executor's tools unchanged), because the REPL calls the same method
+        on the service directly -- this exists so the build-time
+        `project_id=` path below has one path to go through as well, not two.
+        """
+        await self.service.attach_project(project_id)
+
+    async def detach_project(self) -> None:
+        """Close whatever graph is attached and restore the tools without it."""
+        await self.service.detach_project()
 
     async def start(self) -> None:
         """Open what needs a running event loop to open.
@@ -89,32 +114,21 @@ class Application:
         adapters and wires them, nothing more -- because the web entrypoint
         constructs it before uvicorn has a loop, and an aiosqlite connection
         made on one loop cannot be used from another. Anything that has to be
-        opened *inside* the loop that will use it is opened here.
+        opened *inside* the loop that will use it is opened here, including
+        attaching `_initial_project_id`, if `build_application` was given one
+        -- so an unreachable Neo4j fails here, at start, rather than mid-turn.
         """
         await self.summaries.start()
-        if self.knowledge is not None:
-            # `ensure_schema` is the first call that actually talks to a
-            # Neo4j server, so an unreachable one fails here -- at start,
-            # where it can stop the process -- rather than mid-turn.
-            # Idempotent, and a no-op for the in-memory store, which has no
-            # such method.
-            store = self.knowledge.graph_store
-            if hasattr(store, "ensure_schema"):
-                await store.ensure_schema()
-            await rebuild_graph(
-                store,
-                feed=self.knowledge.event_store,
-                project_id=self.knowledge.project_id,
-            )
+        if self._initial_project_id is not None:
+            await self.attach_project(self._initial_project_id)
 
     def turns_tools(self) -> tuple[BaseTool, ...]:
         """The tools available to this instance's agent, for tests that assert on them.
 
-        Reaches into the executor rather than tracking a separate copy: the
-        executor's tuple is the one actually bound to the model, so this is
-        what a test needs to check against, not a parallel record that could
-        drift from it."""
-        return tuple(self.service._executor._tools)
+        Reaches into the executor's public `tools` property rather than a
+        parallel copy: the executor's tuple is the one actually bound to the
+        model, so this is what a test needs to check against."""
+        return self.service._executor.tools
 
     async def summaries_caught_up(self) -> None:
         """Wait until the `/sessions` projection has seen everything appended.
@@ -132,14 +146,12 @@ class Application:
         Cancelling first means an in-flight turn unwinds into a recorded
         failure rather than being abandoned mid-write. The projection stops
         before the store it reads through does, for the same reason.
+        `detach_project` is safe to call whether or not anything is attached.
         """
         await self.turns.cancel_all()
         await self.summaries.stop()
         await self.service.close()
-        if self.knowledge is not None:
-            store = self.knowledge.graph_store
-            if hasattr(store, "close"):
-                await store.close()
+        await self.detach_project()
 
 
 def _context_parts(
@@ -221,21 +233,16 @@ def build_application(
         tools = ()
         prompt_suffix += NO_NETWORK_CLAUSE
 
-    # The knowledge graph belongs to a project. No project, no tools and no
-    # store -- the same posture search has without an instance configured.
     if project_id is not None:
-        knowledge = RedstringKnowledge(
-            project_id,
-            store=build_graph_store(config.graph_store()),
-            event_store=repository.store,
-            snapshot_store=repository.snapshot_store,
-            provider=LangChainLlmProvider(resolved_model, model=config.model_name()),
-            domain=config.knowledge_domain(),
-        )
-        tools = (*tools, *build_knowledge_tools(knowledge))
+        # A `project_id=` at build time scopes the whole application to that
+        # project, not just sessions started through `start_in_project` --
+        # `create_session` on an application built this way still gets the
+        # knowledge tools (Task 14's `_initial_project_id` path, attached at
+        # `start()`), so its default prompt has to describe them too, the
+        # same way `start_in_project`'s per-session prompt does. Otherwise a
+        # session it creates has `remember` on the executor and no idea the
+        # tool exists.
         prompt_suffix += KNOWLEDGE_PROMPT
-    else:
-        knowledge = None
 
     executor = DeepAgentTurnExecutor(
         resolved_model,
@@ -244,6 +251,51 @@ def build_application(
         policy=resolved_policy,
         approvals=approvals,
     )
+
+    async def open_graph(
+        target_project_id: UUID,
+    ) -> tuple[RedstringKnowledge, tuple[BaseTool, ...]]:
+        """Build one project's `RedstringKnowledge` and bring its store current.
+
+        Raises before anything is returned if either step fails -- an
+        unreachable Neo4j or a replay `KnowledgeError` -- which is what lets
+        `KnowledgeAttachment.attach` stay atomic: nothing here is handed back
+        for it to wire in until both have actually succeeded. The store this
+        opened is closed on that path rather than left to leak.
+        """
+        store = build_graph_store(config.graph_store())
+        try:
+            # `ensure_schema` is the first call that actually talks to a
+            # Neo4j server; a no-op for the in-memory store, which has none.
+            if hasattr(store, "ensure_schema"):
+                await store.ensure_schema()
+            await rebuild_graph(store, feed=repository.store, project_id=target_project_id)
+        except Exception:
+            if hasattr(store, "close"):
+                await store.close()
+            raise
+        knowledge = RedstringKnowledge(
+            target_project_id,
+            store=store,
+            event_store=repository.store,
+            snapshot_store=repository.snapshot_store,
+            provider=LangChainLlmProvider(resolved_model, model=config.model_name()),
+            domain=config.knowledge_domain(),
+        )
+        return knowledge, build_knowledge_tools(knowledge)
+
+    async def close_graph(knowledge: RedstringKnowledge) -> None:
+        store = knowledge.graph_store
+        if hasattr(store, "close"):
+            await store.close()
+
+    attachment = KnowledgeAttachment(
+        executor,
+        tools,
+        open_graph=open_graph,
+        close_graph=close_graph,
+    )
+
     resolved_tracer = tracer if tracer is not None else build_tracer()
     summaries = SessionSummaryRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
@@ -260,6 +312,14 @@ def build_application(
         # decisions live. The projection gets the same instance, so a turn and
         # the read-model work it causes are read off one trace rather than two.
         tracer=resolved_tracer,
+        # A session started in a project gets this appended to its prompt
+        # (Task 14/Step 4); one started plainly does not, so it never hears
+        # about tools it was not given.
+        knowledge_prompt=KNOWLEDGE_PROMPT,
+        # The service owns the attachment: `/project use` calls
+        # `service.attach_project` directly, so it lives where the REPL
+        # already reaches rather than behind a second accessor on `Application`.
+        attachment=attachment,
     )
     return Application(
         service=service,
@@ -268,7 +328,7 @@ def build_application(
         context_mode=mode,
         summaries=summaries,
         policy=resolved_policy,
-        knowledge=knowledge,
+        _initial_project_id=project_id,
     )
 
 

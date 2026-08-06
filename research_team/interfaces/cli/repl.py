@@ -238,13 +238,14 @@ async def _handle_project(repl: "Repl", argument: str) -> str:
             # Worded verbatim: it names the session holding the project,
             # which is the next thing anyone asks.
             return str(error)
-        await _switch_to(repl, new_session_id)
-        return f"joined project {name}; session {repl.session_id}"
+        warning = await _switch_to(repl, new_session_id)
+        joined = f"joined project {name}; session {repl.session_id}"
+        return f"{joined}\n{warning}" if warning else joined
 
     return "usage: /project [new <name>|use <name>]"
 
 
-async def _switch_to(repl: "Repl", new_session_id: UUID) -> None:
+async def _switch_to(repl: "Repl", new_session_id: UUID) -> str | None:
     """Move the REPL's cursor, releasing any project the outgoing session held.
 
     Every path that reassigns `repl.session_id` -- `/resume`, `/new`,
@@ -255,9 +256,40 @@ async def _switch_to(repl: "Repl", new_session_id: UUID) -> None:
     REPL exit, so switching sessions leaked the project it held with no
     command able to get it back. `release_project` is a no-op for a session
     that held nothing, so this is safe to call on every switch.
+
+    Detaching the knowledge graph belongs here for the same reason: whatever
+    is attached belongs to the session being left, not the one about to
+    start. `detach_project` is a no-op when nothing is attached, so this is
+    safe on every switch.
+
+    The incoming session's own `project_id` -- not whether it holds the
+    project's filesystem lease -- decides whether to attach a graph.
+    `/resume` can land on an old session that belongs to a project without
+    that session being the project's current holder; its recorded
+    `SessionStarted` prompt still describes `remember`/`graph_search`/
+    `unmerge`, so the executor must have them regardless of who holds the
+    lease. That is why this calls `attach_project`, never `JoinProject` --
+    attaching the graph and taking the lease are different things, and
+    issuing `JoinProject` here would reacquire a lease `/resume` has no
+    business taking, reopening the leak Task 12 closed. `/project use`
+    reaches this too, through the session `start_in_project` already gave a
+    `project_id`, so it needs no separate attach call of its own.
+
+    Returns a warning to show the user if attaching failed -- the switch and
+    the detach above still happened, so the session is never left unusable
+    over a graph that would not open, only without knowledge tools.
     """
     await repl.service.release_project(repl.session_id)
+    await repl.service.detach_project()
     repl.session_id = new_session_id
+    session = await repl.service.load(new_session_id)
+    if session.state.project_id is None:
+        return None
+    try:
+        await repl.service.attach_project(session.state.project_id)
+    except Exception as error:  # noqa: BLE001 -- report, do not take the REPL down
+        return f"knowledge graph unavailable: {error}"
+    return None
 
 
 async def handle_command(
@@ -290,8 +322,9 @@ async def handle_command(
         if isinstance(resolved, str):
             return resolved
         session = await service.load(resolved)
-        await _switch_to(repl, resolved)
-        return format_resumed(session)
+        warning = await _switch_to(repl, resolved)
+        resumed = format_resumed(session)
+        return f"{resumed}\n{warning}" if warning else resumed
     if command == "/new":
         await _switch_to(repl, await service.create_session())
         return f"started {repl.session_id}"
@@ -322,9 +355,10 @@ async def handle_command(
             forked_id = await service.fork(repl.session_id, int(argument))
         except (ValueError, CommandRejectedError) as error:
             return str(error)
-        await _switch_to(repl, forked_id)
+        warning = await _switch_to(repl, forked_id)
         verb = "rewound to" if command == "/rewind" else "forked at"
-        return f"{verb} event {argument}; session {repl.session_id}"
+        forked = f"{verb} event {argument}; session {repl.session_id}"
+        return f"{forked}\n{warning}" if warning else forked
     if command == "/autonomy":
         if not argument:
             return format_autonomy(repl.policy.levels())

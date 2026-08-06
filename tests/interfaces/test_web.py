@@ -893,6 +893,111 @@ async def test_rebuild_endpoint_rederives_the_session_list(client, service):
     assert [row["id"] for row in listed] == [str(session_id)]
 
 
+# ---------------- projects ----------------
+
+
+async def test_list_projects_starts_empty_then_shows_a_created_one(client):
+    assert (await client.get("/api/projects")).json() == []
+
+    response = await client.post("/api/projects", json={"name": "atlas"})
+    assert response.status_code == 200
+    created = response.json()
+    assert created["name"] == "atlas"
+    assert created["id"]
+
+    listed = (await client.get("/api/projects")).json()
+    assert listed == [{"id": created["id"], "name": "atlas"}]
+
+
+async def test_creating_a_project_with_a_taken_name_does_not_create_a_second(client):
+    first = await client.post("/api/projects", json={"name": "atlas"})
+    assert first.status_code == 200
+
+    second = await client.post("/api/projects", json={"name": "atlas"})
+    assert second.status_code == 409
+
+    listed = (await client.get("/api/projects")).json()
+    # The proof that matters: still exactly one project, not just an error
+    # response for the second attempt.
+    assert len(listed) == 1
+    assert listed[0]["id"] == first.json()["id"]
+
+
+async def test_joining_a_project_starts_a_session_that_inherits_its_files(client, service):
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    first_join = await client.post(f"/api/projects/{project_id}/join")
+    assert first_join.status_code == 200
+    first_session_id = first_join.json()["id"]
+    assert first_join.json()["project_id"] == project_id
+
+    # Put a known file on the first holder's stream directly -- deterministic,
+    # unlike relying on the fake model to decide to write one -- then hand the
+    # project's tip back so a second join has something to inherit.
+    from uuid import UUID as _UUID
+
+    session = await service.load(_UUID(first_session_id))
+    session.execute(WriteFile(path="/atlas.py", file_data={"content": "shared content\n"}))
+    await service._repository.save(session)
+    await service.release_project(_UUID(first_session_id))
+
+    second_join = await client.post(f"/api/projects/{project_id}/join")
+    assert second_join.status_code == 200
+    second_session_id = second_join.json()["id"]
+    assert second_session_id != first_session_id
+
+    second_body = (await client.get(f"/api/sessions/{second_session_id}")).json()
+    assert second_body["project_id"] == project_id
+    assert any(f["path"] == "/atlas.py" for f in second_body["files"])
+
+    file_body = (
+        await client.get(
+            f"/api/sessions/{second_session_id}/files", params={"path": "/atlas.py"}
+        )
+    ).json()
+    # The assertion that actually proves inheritance: the byte content of the
+    # file on the *second* session matches what was written on the first.
+    assert file_body["content"] == "shared content\n"
+
+
+async def test_joining_a_project_attaches_the_knowledge_tools(app_and_client):
+    """The web-route counterpart of Task 14's REPL fix.
+
+    `application.turns_tools()` is the surface the executor actually reads
+    from on the next turn -- the same surface
+    `test_project_use_attaches_the_knowledge_graph` asserts on for the REPL.
+    Before `POST /api/projects/{id}/join`, no project is attached, so the
+    knowledge tools must be absent; asserting that first is what lets this
+    test fail if the join route stops calling `attach_project`.
+    """
+    application, client = app_and_client
+
+    names_before = {tool.name for tool in application.turns_tools()}
+    assert "remember" not in names_before
+    assert "graph_search" not in names_before
+    assert "unmerge" not in names_before
+
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    join = await client.post(f"/api/projects/{project_id}/join")
+    assert join.status_code == 200
+
+    names_after = {tool.name for tool in application.turns_tools()}
+    assert "remember" in names_after
+    assert "graph_search" in names_after
+    assert "unmerge" in names_after
+
+
+async def test_joining_an_already_held_project_names_the_holder(client):
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    first_join = await client.post(f"/api/projects/{project_id}/join")
+    holder_session_id = first_join.json()["id"]
+
+    second_join = await client.post(f"/api/projects/{project_id}/join")
+
+    assert second_join.status_code == 409
+    assert holder_session_id in second_join.json()["detail"]
+
+
 # ---------------- turn activity ----------------
 
 

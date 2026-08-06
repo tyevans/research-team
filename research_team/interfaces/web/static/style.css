@@ -860,6 +860,17 @@ pre.code .ln {
 }
 .composer textarea:focus { border-color: var(--accent-dim); outline: none; }
 .composer textarea:disabled { opacity: .55; }
+
+/* --- plain text input (project name, etc) ------------------------------ */
+.input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 5px 9px;
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+.input:focus { border-color: var(--accent-dim); outline: none; }
 .composer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .composer-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .composer-hint {

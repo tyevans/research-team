@@ -11,27 +11,47 @@ from research_team.infrastructure.knowledge.redstring_adapter import RedstringKn
 from tests.conftest import fake_provider
 
 
-def build_adapter(tmp_path, project_id, *, provider=None):
-    db_path = str(tmp_path / "sessions.db")
-    store = SQLiteEventStore(db_path)
-    snapshot_store = SQLiteSnapshotStore(db_path)
-    return (
-        RedstringKnowledge(
-            project_id,
-            store=InMemoryGraphStore(),
-            event_store=store,
-            snapshot_store=snapshot_store,
-            provider=provider if provider is not None else fake_provider(),
-            domain="encyclopedia_wiki",
-            adjudicate=False,
-        ),
-        store,
-        snapshot_store,
-    )
+@pytest.fixture
+async def build_adapter():
+    """Factory fixture for a `RedstringKnowledge` over a real `SQLiteEventStore`.
+
+    `SQLiteEventStore` holds a long-lived `aiosqlite` connection with a
+    non-daemon worker thread (BACKLOG B5); it must be closed or that thread
+    lingers past the test. Some tests call this factory only once, but it is
+    shaped to support more -- every `SQLiteEventStore` it opens is tracked and
+    closed in teardown, so nothing here can be forgotten by a future test
+    that calls it twice. `SQLiteSnapshotStore` opens per-operation
+    connections and needs no closing.
+    """
+    opened_event_stores = []
+
+    def _build(tmp_path, project_id, *, provider=None):
+        db_path = str(tmp_path / "sessions.db")
+        store = SQLiteEventStore(db_path)
+        snapshot_store = SQLiteSnapshotStore(db_path)
+        opened_event_stores.append(store)
+        return (
+            RedstringKnowledge(
+                project_id,
+                store=InMemoryGraphStore(),
+                event_store=store,
+                snapshot_store=snapshot_store,
+                provider=provider if provider is not None else fake_provider(),
+                domain="encyclopedia_wiki",
+                adjudicate=False,
+            ),
+            store,
+            snapshot_store,
+        )
+
+    yield _build
+
+    for store in opened_event_stores:
+        await store.close()
 
 
 @pytest.mark.asyncio
-async def test_ingest_reports_what_it_extracted(tmp_path):
+async def test_ingest_reports_what_it_extracted(tmp_path, build_adapter):
     project_id = uuid4()
     adapter, _, _ = build_adapter(tmp_path, project_id)
 
@@ -45,7 +65,7 @@ async def test_ingest_reports_what_it_extracted(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_ingest_appends_the_extraction_to_the_document_stream(tmp_path):
+async def test_ingest_appends_the_extraction_to_the_document_stream(tmp_path, build_adapter):
     """The event is the record; the graph is derived from it."""
     project_id = uuid4()
     adapter, store, _ = build_adapter(tmp_path, project_id)
@@ -61,7 +81,7 @@ async def test_ingest_appends_the_extraction_to_the_document_stream(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_blank_source_id_is_rejected(tmp_path):
+async def test_a_blank_source_id_is_rejected(tmp_path, build_adapter):
     project_id = uuid4()
     adapter, _, _ = build_adapter(tmp_path, project_id)
 
@@ -70,7 +90,7 @@ async def test_a_blank_source_id_is_rejected(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_an_oversized_document_is_refused_before_extraction(tmp_path):
+async def test_an_oversized_document_is_refused_before_extraction(tmp_path, build_adapter):
     from research_team.infrastructure.knowledge.redstring_adapter import (
         MAX_DOCUMENT_CHARS,
     )
@@ -86,7 +106,7 @@ async def test_an_oversized_document_is_refused_before_extraction(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_reconsolidate_is_scoped_to_one_documents_entities(tmp_path):
+async def test_reconsolidate_is_scoped_to_one_documents_entities(tmp_path, build_adapter):
     """`reconsolidate(source_id)` acts on exactly that document's entities.
 
     Asserted directly, by capturing what `_consolidate` is actually handed:
@@ -147,7 +167,9 @@ async def test_reconsolidate_is_scoped_to_one_documents_entities(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_merge_entities_rejects_absorbing_an_already_merged_entity(tmp_path):
+async def test_merge_entities_rejects_absorbing_an_already_merged_entity(
+    tmp_path, build_adapter
+):
     """`merge_entities` is the explicit path -- it still enforces redstring's
 
     own invariant that an absorbed entity cannot be merged again, and that
@@ -173,7 +195,7 @@ async def test_merge_entities_rejects_absorbing_an_already_merged_entity(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_reconsolidating_an_unknown_source_is_an_error(tmp_path):
+async def test_reconsolidating_an_unknown_source_is_an_error(tmp_path, build_adapter):
     project_id = uuid4()
     adapter, _, _ = build_adapter(tmp_path, project_id)
 
@@ -182,7 +204,7 @@ async def test_reconsolidating_an_unknown_source_is_an_error(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_provider_failure_records_nothing(tmp_path):
+async def test_a_provider_failure_records_nothing(tmp_path, build_adapter):
     """Nothing is appended, and the caller gets an error it can render."""
 
     class Failing:
@@ -200,7 +222,7 @@ async def test_a_provider_failure_records_nothing(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_search_finds_an_ingested_entity_by_substring(tmp_path):
+async def test_search_finds_an_ingested_entity_by_substring(tmp_path, build_adapter):
     project_id = uuid4()
     adapter, _, _ = build_adapter(tmp_path, project_id)
     await adapter.ingest(
@@ -214,7 +236,7 @@ async def test_search_finds_an_ingested_entity_by_substring(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_search_caps_at_the_limit(tmp_path):
+async def test_search_caps_at_the_limit(tmp_path, build_adapter):
     """Distinguish "capped correctly" from "returned nothing": both entities
     match "a" (Ada Lovelace, Charles Babbage), so an uncapped search returns
     two -- only a working cap brings it down to exactly one."""
@@ -231,7 +253,7 @@ async def test_search_caps_at_the_limit(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_search_rejects_a_limit_below_one(tmp_path):
+async def test_search_rejects_a_limit_below_one(tmp_path, build_adapter):
     project_id = uuid4()
     adapter, _, _ = build_adapter(tmp_path, project_id)
 
@@ -240,7 +262,7 @@ async def test_search_rejects_a_limit_below_one(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_search_of_a_blank_query_returns_nothing(tmp_path):
+async def test_search_of_a_blank_query_returns_nothing(tmp_path, build_adapter):
     project_id = uuid4()
     adapter, _, _ = build_adapter(tmp_path, project_id)
     await adapter.ingest(
@@ -251,7 +273,7 @@ async def test_search_of_a_blank_query_returns_nothing(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_undo_merge_rejects_an_unknown_id(tmp_path):
+async def test_undo_merge_rejects_an_unknown_id(tmp_path, build_adapter):
     project_id = uuid4()
     adapter, _, _ = build_adapter(tmp_path, project_id)
 
@@ -260,7 +282,7 @@ async def test_undo_merge_rejects_an_unknown_id(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_undo_merge_reverses_an_explicit_merge(tmp_path):
+async def test_undo_merge_reverses_an_explicit_merge(tmp_path, build_adapter):
     project_id = uuid4()
     adapter, _, _ = build_adapter(tmp_path, project_id)
     await adapter.ingest(
@@ -280,7 +302,7 @@ async def test_undo_merge_reverses_an_explicit_merge(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_merges_are_remembered_across_restarts(tmp_path):
+async def test_merges_are_remembered_across_restarts(tmp_path, build_adapter):
     """Undo is durable only when both stores are passed; assert it, don't assume.
 
     The boolean alone is a claim about durability, not proof of it, so this

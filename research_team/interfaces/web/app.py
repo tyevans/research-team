@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from eventsource import CommandRejectedError, OptimisticLockError
 from fastapi import FastAPI, HTTPException, Request
@@ -28,12 +28,14 @@ from research_team.application import (
     TurnSupervisor,
     build_fork_tree,
 )
+from research_team.domain import CreateProject
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.presenters import (
     event_rows,
     feed_event,
     file_history,
+    project_view,
     session_view,
     summary_view,
     tree_view,
@@ -57,6 +59,10 @@ class NewTurn(BaseModel):
 
 class NewFork(BaseModel):
     at: int
+
+
+class NewProject(BaseModel):
+    name: str
 
 
 class Decision(BaseModel):
@@ -99,6 +105,71 @@ def create_app(
     async def create_session(body: NewSession | None = None):
         prompt = body.system_prompt if body else None
         return {"id": str(await service.create_session(prompt))}
+
+    @app.get("/api/projects")
+    async def list_projects():
+        projects = await service.list_projects()
+        return [project_view(project_id, name) for project_id, name in projects]
+
+    @app.post("/api/projects")
+    async def create_project(body: NewProject):
+        """Create a project by name. A name collision is a 409, not a second project.
+
+        Mirrors `/project new` in the REPL: check-then-create over
+        `list_projects` rather than letting the aggregate itself reject a
+        duplicate name, because `Project` has no notion of "the project
+        called X" -- names are only unique by convention of this list, and
+        that convention is enforced here, the one place both front ends
+        share through `SessionService`.
+        """
+        existing = await service.list_projects()
+        collision = next((pid for pid, name in existing if name == body.name), None)
+        if collision is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"project {body.name!r} already exists ({collision})",
+            )
+        aggregate = service.projects.create_new(uuid4())
+        aggregate.execute(CreateProject(name=body.name))
+        await service.projects.save(aggregate)
+        return project_view(aggregate.aggregate_id, body.name)
+
+    @app.post("/api/projects/{project_id}/join")
+    async def join_project(project_id: UUID):
+        """Start a session that inherits `project_id`'s filesystem, and attach its graph.
+
+        Goes through `SessionService.start_in_project` -- the same use case
+        the REPL's `/project use` calls -- so joining is decided in exactly
+        one place: the `Project` aggregate. A project already held raises
+        `CommandRejectedError` naming the holding session, which this maps to
+        409 rather than letting it become an unhandled 500.
+
+        Attachment design: unlike the REPL, this process serves many browser
+        sessions at once through one `TurnSupervisor` and (if wired) one
+        `KnowledgeAttachment`, so there is no single "current session" whose
+        project should stay attached. A per-session attachment map would
+        preserve REPL-like isolation between browser tabs, but this app is a
+        local single-user tool -- the spec never asks it to serve concurrent
+        untrusted users -- so the simpler answer is taken: attach here,
+        accept that the most recent join wins process-wide, and say so
+        plainly rather than build isolation nothing asked for. A second tab
+        joining a different project will change the tools the first tab's
+        turns run with; that is a known, accepted limitation of this design,
+        not an oversight.
+        """
+        try:
+            session_id = await service.start_in_project(project_id)
+        except CommandRejectedError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        try:
+            await service.attach_project(project_id)
+        except Exception as error:  # noqa: BLE001 -- report, do not fail the join
+            return {
+                "id": str(session_id),
+                "project_id": str(project_id),
+                "warning": str(error),
+            }
+        return {"id": str(session_id), "project_id": str(project_id), "warning": None}
 
     @app.get("/api/health")
     async def health():
