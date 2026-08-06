@@ -60,9 +60,10 @@ _INTAKE = GenerateStage(
     generator=Generator(role="corpus router", prompt_ref="prompts/tyler/intake"),
     checks=(
         Check(
-            check="provenance", params={"type": "SourceClaim", "must_cite": "SourceDocument"}
+            check="shared.provenance",
+            params={"type": "SourceClaim", "must_cite": "SourceDocument"},
         ),
-        Check(check="contradiction_escalation", params={"no_auto_resolve": True}),
+        Check(check="shared.contradiction_escalation", params={"no_auto_resolve": True}),
     ),
 )
 
@@ -97,9 +98,10 @@ _FRAMING = DecideStage(
     ),
     checks=(
         Check(
-            check="required_field_nondegenerate",
+            check="shared.required_field_nondegenerate",
             params={
-                "field": "GapStatement.business_metric",
+                "type": "GapStatement",
+                "field": "business_metric",
                 "reject_if": ["empty", "unmeasurable"],
             },
         ),
@@ -138,13 +140,16 @@ _SOURCES = GenerateStage(
         # A source with near-zero claims is a finding, not a silence. This is
         # what makes single-source design detectable rather than invisible.
         Check(
-            check="source_starvation",
+            check="shared.source_starvation",
             params={
                 "routes": ["learner", "contemporary_life", "discipline"],
                 "min_claims_each": 1,
             },
         ),
-        Check(check="required_field_nondegenerate", params={"field": "known_bias_statement"}),
+        Check(
+            check="shared.required_field_nondegenerate",
+            params={"field": "known_bias_statement"},
+        ),
     ),
     gate=RubricGate(
         reviewer_role="sme", presents=("SourceDossier.*", "checks.source_starvation")
@@ -179,7 +184,9 @@ _CANDIDATES = GenerateStage(
         over_generate_factor=5,
     ),
     checks=(
-        Check(check="provenance", params={"type": "Intent", "must_cite": "SourceDossier"}),
+        Check(
+            check="shared.provenance", params={"type": "Intent", "must_cite": "SourceDossier"}
+        ),
     ),
 )
 
@@ -212,24 +219,29 @@ _PHILOSOPHY = ScreenStage(
     ),
     checks=(
         Check(
-            check="verdict_citation",
-            params={"ledger": "philosophy", "on_retrieval_failure": "force_verdict_contested"},
+            check="shared.verdict_citation",
+            params={
+                "ledger": "VerdictLedger.philosophy",
+                "on_retrieval_failure": "force_verdict_contested",
+            },
         ),
         Check(
-            check="criterion_doc_authored",
+            check="tyler.criterion_doc_authored",
             params={
                 "doc": "tyler.philosophy_statement",
                 "require_human_signature": True,
                 "forbid_derivation_from": "SourceClaim",
             },
         ),
-        Check(check="exclusion_ledger", params={"no_silent_drops": True}),
+        Check(check="shared.exclusion_ledger", params={"no_silent_drops": True}),
         Check(
-            check="self_review_separation",
+            check="shared.self_review_separation",
             params={"generator_stage": "tyler.step1b.candidates"},
         ),
         Check(
-            check="prune_ratio", params={"expected_range": [0.15, 0.40]}, severity="advisory"
+            check="shared.prune_ratio",
+            params={"expected_range": [0.15, 0.40]},
+            severity="advisory",
         ),
     ),
     gate=LedgerGate(
@@ -270,10 +282,10 @@ _PSYCHOLOGY = ScreenStage(
         criterion_doc="tyler.learning_theory_statement",
     ),
     checks=(
-        Check(check="verdict_citation", params={"ledger": "psychology"}),
-        Check(check="exclusion_ledger", params={"no_silent_drops": True}),
+        Check(check="shared.verdict_citation", params={"ledger": "VerdictLedger.psychology"}),
+        Check(check="shared.exclusion_ledger", params={"no_silent_drops": True}),
         Check(
-            check="prerequisite_satisfied",
+            check="shared.prerequisite_satisfied",
             params={"for": "Intent", "required_from": "ContextProfile.entry_state"},
         ),
     ),
@@ -315,21 +327,32 @@ _INTENT_SPEC = SpecifyStage(
         # will understand that" stem; `skill` takes ADDIE's verb denylist.
         # One `Intent` schema cannot satisfy both without picking a side.
         Check(
-            check="format_conformance",
-            params={"subtype": "understanding", "stem": "Students will understand that"},
+            check="shared.format_conformance",
+            params={
+                "type": "Intent.understanding",
+                "stem": "Students will understand that",
+            },
         ),
         Check(
-            check="format_conformance",
+            check="shared.format_conformance",
             params={
-                "subtype": "skill",
+                "type": "Intent.skill",
                 "verb_denylist": ["understand", "be aware of", "appreciate"],
             },
         ),
         Check(
-            check="matrix_density",
+            check="shared.matrix_density",
             params={"matrix": "behaviour_x_content", "no_empty_rows": True},
         ),
-        Check(check="budget", params={"dimension": "intent_count"}, severity="advisory"),
+        Check(
+            check="shared.budget",
+            params={
+                "dimension": "count",
+                "type": "Intent",
+                "source": "ContextProfile.max_intents",
+            },
+            severity="advisory",
+        ),
     ),
     gate=RubricGate(
         reviewer_role="sme", presents=("Intent.*", "CoverageMatrix.behaviour_x_content")
@@ -378,7 +401,7 @@ _EVIDENCE = SpecifyStage(
     ),
     checks=(
         Check(
-            check="matrix_density",
+            check="shared.matrix_density",
             params={
                 "matrix": "intent_x_evidence",
                 "no_empty_rows": True,
@@ -387,7 +410,7 @@ _EVIDENCE = SpecifyStage(
         ),
         # A transfer goal needs a task, not a quiz.
         Check(
-            check="coverage",
+            check="shared.coverage",
             params={
                 "from": {"subtype": "transfer_goal"},
                 "to": {"subtype": "performance_task"},
@@ -395,12 +418,31 @@ _EVIDENCE = SpecifyStage(
             },
         ),
         Check(
-            check="format_conformance",
+            check="shared.format_conformance",
             params={
-                "schema": "ext/ubd/grasps",
-                "all_fields_nonempty": True,
-                "reject_generic": True,
+                "type": "EvidenceSpec.performance_task",
+                "required_fields": [
+                    "goal",
+                    "role",
+                    "audience",
+                    "situation",
+                    "product",
+                    "standards",
+                ],
             },
+        ),
+        Check(
+            # The other half of what `reject_generic` reached for, and a
+            # different question: the binding above asks whether the field is
+            # there, this asks whether it says anything.
+            check="shared.required_field_nondegenerate",
+            params={
+                "type": "EvidenceSpec.performance_task",
+                "field": "situation",
+                "reject_if": ["empty", "duplicate", "generic"],
+                "generic_phrases": ["a real-world scenario", "as appropriate", "various"],
+            },
+            severity="advisory",
         ),
     ),
     gate=RubricGate(
@@ -456,7 +498,7 @@ _LEARNING_PLAN = SpecifyStage(
         # The single highest-value check in the whole comparison: it catches
         # an all-acquisition plan, which is what an unchecked generator writes.
         Check(
-            check="taxonomy_distribution",
+            check="shared.taxonomy_distribution",
             params={
                 "type": "Experience",
                 "dimension": "amt",
@@ -464,16 +506,16 @@ _LEARNING_PLAN = SpecifyStage(
             },
         ),
         Check(
-            check="vocabulary_coverage",
+            check="shared.vocabulary_coverage",
             params={
                 "dimension": "whereto",
                 "vocab": ["W", "H", "E", "R", "E2", "T", "O"],
                 "min_each": 1,
             },
         ),
-        Check(check="orphan", params={"type": "Experience", "must_link_to": "Intent"}),
+        Check(check="shared.orphan", params={"type": "Experience", "must_link_to": "Intent"}),
         Check(
-            check="budget",
+            check="shared.budget",
             params={"dimension": "duration", "source": "ContextProfile.time_budget"},
         ),
     ),
@@ -517,11 +559,13 @@ _ORGANIZATION = MatrixStage(
         criterion_doc="tyler.organization_criteria",
     ),
     checks=(
-        Check(check="recurrence", params={"type": "Sequence.thread", "min_recurrences": 3}),
+        Check(
+            check="shared.recurrence", params={"type": "Sequence.thread", "min_occurrences": 3}
+        ),
         # Sequence, not mere continuity. Without the escalation descriptor a
         # topic that recurs three times at the same level looks like a spiral.
         Check(
-            check="required_field_nondegenerate",
+            check="shared.required_field_nondegenerate",
             params={
                 "field": "escalation_descriptor",
                 "per": "thread_recurrence",
@@ -529,8 +573,8 @@ _ORGANIZATION = MatrixStage(
             },
         ),
         Check(
-            check="matrix_density",
-            params={"matrix": "thread_x_thread", "min_contact_points": 1},
+            check="shared.matrix_density",
+            params={"matrix": "thread_x_thread", "no_empty_rows": True},
             severity="advisory",
         ),
     ),
@@ -574,7 +618,8 @@ _STORYBOARD = SpecifyStage(
     ),
     checks=(
         Check(
-            check="provenance", params={"type": "ProductionSpec", "must_cite": "SourceClaim"}
+            check="shared.provenance",
+            params={"type": "ProductionSpec", "must_cite": "SourceClaim"},
         ),
     ),
     gate=RubricGate(reviewer_role="sme", presents=("ProductionSpec.*",)),
@@ -608,11 +653,11 @@ _BUILD = ProduceStage(
     critic=Critic(role="QA", prompt_ref="prompts/addie/qa", criterion_doc="addie.qa_criteria"),
     checks=(
         Check(
-            check="provenance",
+            check="shared.provenance",
             params={"type": "Build.content_claim", "must_cite": "SourceClaim"},
         ),
         Check(
-            check="change_scope",
+            check="addie.change_scope",
             params={
                 "maturity": "beta",
                 "permitted": ["cosmetic", "verification"],
@@ -620,7 +665,7 @@ _BUILD = ProduceStage(
             },
         ),
         Check(
-            check="change_scope",
+            check="addie.change_scope",
             params={
                 "maturity": "gold",
                 "permitted": ["packaging"],
@@ -723,8 +768,13 @@ _OUTCOMES = GenerateStage(
     checks=(
         # Tyler's contribution here is localization: a defect is attributed to
         # an objective, an experience or the organization, not to "the course".
-        Check(check="provenance", params={"type": "RevisionProposal", "must_cite": "Intent"}),
-        Check(check="recurrence", params={"type": "OutcomeEvidence", "min_occurrences": 2}),
+        Check(
+            check="shared.provenance",
+            params={"type": "RevisionProposal", "must_cite": "Intent"},
+        ),
+        Check(
+            check="shared.recurrence", params={"type": "OutcomeEvidence", "min_occurrences": 2}
+        ),
     ),
     gate=RubricGate(
         reviewer_role="sponsor", presents=("OutcomeEvidence.*", "RevisionProposal.*")
