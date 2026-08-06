@@ -1041,7 +1041,14 @@ pre.code .ln {
   padding: 5px 9px;
   font-family: var(--mono);
   font-size: var(--t-sm);
+  /* Stated rather than inherited: a `<select>` takes the browser's field
+     colour, not the page's, so on this dark background it would render
+     near-black on near-black. */
+  color: var(--fg);
 }
+/* A workflow label says what the preset produces and where it stops, which is
+   longer than a project name and must not push the button off the row. */
+select.input { max-width: 22rem; }
 .input:focus { border-color: var(--accent-dim); outline: none; }
 .composer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .composer-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }

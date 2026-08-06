@@ -22,8 +22,11 @@ from research_team.domain import (
     FileWritten,
     SessionForkedFrom,
     SessionStarted,
+    StageAdvanced,
     TurnFailed,
+    WorkflowSelected,
 )
+from research_team.domain.workflow import Preset, Stage
 
 FILE_EVENTS = (FileWritten, FileEdited, FileDeleted)
 
@@ -50,6 +53,14 @@ def event_summary(event: DomainEvent) -> str:
             f"first {event.through_index} messages now behind a summary "
             f"({event.strategy}{saved})"
         )
+    if isinstance(event, WorkflowSelected):
+        return f"{event.preset_id} v{event.preset_version}"
+    if isinstance(event, StageAdvanced):
+        # Both ends of the move, and the reason. A preset has up to fifteen
+        # stages, so "now at X" does not say what was left; and the rationale
+        # is what a reviewer scrolling the log is actually looking for, since
+        # it is the only record of why the gate was crossed.
+        return f"{event.from_stage} → {event.to_stage}: {event.gate_decision}"
     if isinstance(event, SessionForkedFrom):
         return f"from {str(event.source_session_id)[:8]} at event {event.at_event}"
     if isinstance(event, TurnFailed):
@@ -203,12 +214,67 @@ def tree_view(nodes: list[ForkNode]) -> list[dict[str, Any]]:
     ]
 
 
+def preset_label(preset: Preset) -> str:
+    """One line for a `<select>` option: what this preset makes, and where it stops.
+
+    A dropdown of three methodology names is only meaningful to someone who
+    has read three research reports; what a preset produces and which stage it
+    ends on is meaningful to everyone, and it is the fact people are actually
+    choosing between. The two are joined here rather than assembled in the
+    browser so the wording has one home and can carry this reasoning with it.
+    """
+    return f"{preset.name} -- produces {preset.produces}, ending at {preset.stages[-1].name}"
+
+
+def preset_view(preset: Preset) -> dict[str, Any]:
+    """One row of `/api/workflows`, as a choice rather than as a name.
+
+    `terminates_at` is the field that earns this endpoint. A preset stopping
+    below spine position 8 has no production half, so it yields a design and
+    not materials -- and someone who expected materials discovering that at
+    the end of a long run is the exact failure surfacing it up front prevents.
+    `has_value_filter` is reported for the same reason from the other
+    direction: ADDIE never asks whether the thing should be taught at all,
+    which is a defensible assumption and an indefensible surprise.
+    """
+    last = preset.stages[-1]
+    return {
+        "id": preset.id,
+        "name": preset.name,
+        "version": preset.version,
+        "description": preset.description,
+        "produces": preset.produces,
+        "stage_count": len(preset.stages),
+        "terminates_at": {"id": last.id, "name": last.name, "spine": preset.terminal_spine},
+        "has_value_filter": preset.has_value_filter,
+        "label": preset_label(preset),
+    }
+
+
+def stage_view(preset: Preset, stage: Stage) -> dict[str, Any]:
+    """Where a project stands, placed in its preset rather than merely named.
+
+    "4 of 15" is what a chip can show and a person can read; the namespaced id
+    is precise and says nothing about progress. Both are carried because the
+    id is what every other surface keys on.
+    """
+    ids = [each.id for each in preset.stages]
+    return {
+        "id": stage.id,
+        "name": stage.name,
+        "index": ids.index(stage.id) + 1,
+        "of": len(ids),
+    }
+
+
 def project_view(
     project_id: UUID,
     name: str,
     *,
     active_session_id: UUID | None = None,
     tip_at_event: int = 0,
+    workflow: dict[str, Any] | None = None,
+    stage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One row of `/api/projects`: enough to list, join, and see who holds it.
 
@@ -216,12 +282,20 @@ def project_view(
     A list that cannot see it has only one button to show -- join -- and no
     way to know that pressing it will fail, or that ending the holding
     session is what the user actually wants.
+
+    `workflow` and `stage` are passed in rather than derived, because
+    resolving a stage needs the preset and this module holds no registry --
+    and a project can name a preset this build does not ship, which is the
+    caller's problem to answer rather than a reason to fail a listing. Both
+    are `None` for every project written before workflows existed.
     """
     return {
         "id": str(project_id),
         "name": name,
         "active_session_id": str(active_session_id) if active_session_id else None,
         "tip_at_event": tip_at_event,
+        "workflow": workflow,
+        "stage": stage,
     }
 
 
