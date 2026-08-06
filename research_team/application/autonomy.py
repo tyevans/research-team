@@ -21,9 +21,11 @@ Level = Literal["auto", "ask", "deny"]
 LEVELS: tuple[Level, ...] = ("auto", "ask", "deny")
 
 SEARCH_TOOL = "web_search"
+FETCH_TOOL = "fetch"
 
 GATED_TOOLS: tuple[str, ...] = (
     SEARCH_TOOL,
+    FETCH_TOOL,
     "write_file",
     "edit_file",
     "delete_file",
@@ -34,6 +36,24 @@ GATED_TOOLS: tuple[str, ...] = (
 nothing and escape nothing, and gating them would train people to click
 through approvals without reading them."""
 
+STRICTNESS: tuple[Level, ...] = ("auto", "ask", "deny")
+"""The levels in increasing order, so two of them can be compared."""
+
+TOOL_FLOORS: dict[str, Level] = {FETCH_TOOL: "ask"}
+"""The least autonomy a tool gets when nobody has said otherwise.
+
+Only `fetch` has one, and it is what lets that tool be registered
+unconditionally. Search is opt-in by configuration -- no SearXNG instance, no
+tool -- but fetch has no instance to configure and would otherwise be a network
+tool present in a default install with nothing standing in front of it. A floor
+of `ask` means it is there, discoverable, and cannot leave the process until a
+person says so.
+
+A floor, not an override: it raises the default and never lowers it, so a
+policy built to deny everything is not read as "except fetch". An explicit
+`set()` still wins in both directions -- someone who turns fetch to `auto` for a
+research session meant it."""
+
 
 class AutonomyPolicy:
     """Per-tool autonomy levels, mutable at any time."""
@@ -43,10 +63,19 @@ class AutonomyPolicy:
         self._levels: dict[str, Level] = {}
 
     def level_for(self, tool_name: str) -> Level:
-        """The level for a tool. Ungated tools are always `auto`."""
+        """The level for a tool. Ungated tools are always `auto`.
+
+        An explicit setting is the answer whenever there is one. Otherwise the
+        answer is the stricter of this policy's default and the tool's floor,
+        so `TOOL_FLOORS` can raise a permissive default without overriding a
+        deliberately restrictive one.
+        """
         if tool_name not in GATED_TOOLS:
             return "auto"
-        return self._levels.get(tool_name, self._default)
+        if tool_name in self._levels:
+            return self._levels[tool_name]
+        floor = TOOL_FLOORS.get(tool_name, "auto")
+        return max(self._default, floor, key=STRICTNESS.index)
 
     def set(self, tool_name: str, level: Level) -> None:
         if level not in LEVELS:
