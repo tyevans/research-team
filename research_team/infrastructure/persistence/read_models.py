@@ -1,19 +1,27 @@
-"""The `/sessions` list, kept as a table instead of recomputed from the log.
+"""Tables kept alongside the log, because folding it per request does not scale.
 
-`summarize_sessions` folds every event in the database into rows. That is the
-clearest possible statement of what a summary *is*, and it stays where it is --
-but running it per request costs the whole log every time, which grows without
-bound while the answer barely changes.
+Two of them, for two different reasons.
 
-So the same fold runs here instead, once per event, into a row that is written
-down. The definition has not moved; only how often it is applied. The two are
-held together by a test that feeds identical events through both and compares.
+`/sessions` came first. `summarize_sessions` folds every event in the database
+into rows, which is the clearest possible statement of what a summary *is*, and
+it stays where it is -- but running it per request costs the whole log every
+time, which grows without bound while the answer barely changes. So the same
+fold runs here instead, once per event, into a row that is written down. The
+definition has not moved; only how often it is applied. The two are held
+together by a test that feeds identical events through both and compares.
+
+The corpus table is the opposite case: there is no fold it replaces, because
+`CorpusState` deliberately never holds document text. Snapshots are taken every
+50 events and folding whole documents into aggregate state would put entire
+corpora into each one, so the aggregate keeps an index and the text stays in
+the event payload. That trade is only payable if something can read the payload
+back, and this is that something.
 """
 
 import asyncio
 import json
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import aiosqlite
 from eventsource import (
@@ -40,11 +48,14 @@ from pydantic import Field, field_validator
 
 from research_team.application import SessionSummary, SummaryHealth
 from research_team.domain import (
+    DocumentRecord,
     FileDeleted,
     FileEdited,
     FileWritten,
     SessionForkedFrom,
     SessionStarted,
+    SourceDocumentDropped,
+    SourceDocumentStored,
     TurnCompleted,
     TurnFailed,
     UserMessageSent,
@@ -434,3 +445,399 @@ class SessionSummaryRunner:
         if self._summaries is not None:
             await self._summaries.close()
             self._summaries = None
+
+
+CORPUS_NAMESPACE = UUID("6f1f5f8e-0c4a-5c8f-9b3a-7d2f4c9e1a60")
+"""Namespace for deriving a row id from `(project_id, source_id)`.
+
+A read model has one `id` and a corpus document is keyed by two things, so the
+id is a uuid5 of both rather than a surrogate. Derived rather than random
+because the projection must be able to find the row for a source it has never
+seen in this process -- after a restart, or halfway through a rebuild -- and
+looking it up by a random id it would first have to store is circular.
+"""
+
+
+class CorpusDocumentRow(ReadModel):
+    """One source document, text and all. `project_id` is the corpus's stream id.
+
+    A `Corpus` shares its UUID with its `Project` and is a distinct stream by
+    `StreamId(aggregate_id, "Corpus")`, so the event's `aggregate_id` is the
+    project id and is stored under that name -- calling it `corpus_id` here
+    would invent a second identifier for the thing callers already hold.
+
+    This is the one place in the system that stores document text, which is
+    the whole point: `CorpusState` gave it up so snapshots would stay small,
+    and the text has to live somewhere readable or the trade bought nothing.
+
+    `dropped_reason` is kept on the row rather than deleting it, mirroring the
+    aggregate. A drop is a judgement someone made and the row is where that
+    judgement stays legible; `get` and `list` filter it out, so a dropped
+    document is unreadable without being unaccounted for.
+    """
+
+    __table_name__ = "corpus_documents"
+
+    project_id: UUID
+    source_id: str
+    text: str
+    sha256: str
+    char_count: int
+    uri: str | None = None
+    title: str | None = None
+    published_at: str | None = None
+    note: str | None = None
+    fetched_at: str | None = None
+    dropped_reason: str | None = None
+
+    @staticmethod
+    def row_id(project_id: UUID, source_id: str) -> UUID:
+        """The row id for a source in a project.
+
+        Source ids are chosen per project -- `"s1"`, a URL, a filename -- and
+        will collide across them. Keying on the pair means one project's
+        re-ingest cannot overwrite another's document.
+        """
+        return uuid5(CORPUS_NAMESPACE, f"{project_id}:{source_id}")
+
+
+def to_record(row: CorpusDocumentRow) -> DocumentRecord:
+    """Present a stored row as the aggregate's own no-text shape.
+
+    Reusing `DocumentRecord` rather than defining a listing type here makes the
+    no-text guarantee structural: there is no field for text to arrive in, so a
+    listing cannot start carrying corpora by accident. It also keeps the table
+    and the fold saying the same thing about a document, which is the property
+    a rebuild depends on.
+    """
+    return DocumentRecord(
+        source_id=row.source_id,
+        sha256=row.sha256,
+        char_count=row.char_count,
+        uri=row.uri,
+        title=row.title,
+        published_at=row.published_at,
+        note=row.note,
+        dropped_reason=row.dropped_reason,
+    )
+
+
+class CorpusProjection(DeclarativeProjection):
+    """Applies corpus events to their row, one event at a time.
+
+    Both handlers are idempotent by overwrite rather than by increment: there
+    is no counter here, so replaying from a checkpoint that is behind
+    re-derives exactly the same row instead of accumulating. That is why a
+    rebuild is safe to reach for.
+    """
+
+    def __init__(
+        self,
+        rows: ReadModelRepository[CorpusDocumentRow],
+        checkpoint_repo=None,
+        dlq_repo=None,
+        tracer=None,
+    ) -> None:
+        self._rows = rows
+        super().__init__(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+            retry_policy=LOCAL_RETRY_POLICY,
+            tracer=tracer,
+        )
+
+    @handles(SourceDocumentStored)
+    async def _on_stored(self, event: SourceDocumentStored) -> None:
+        """Write the document, superseding whatever the source held before.
+
+        The existing row is loaded and mutated rather than replaced wholesale,
+        so the repository's version counter keeps climbing instead of resetting
+        -- and `dropped_reason` is cleared explicitly, because storing asserts
+        presence and a live document explaining why it is absent is nonsense.
+        """
+        row_id = CorpusDocumentRow.row_id(event.aggregate_id, event.source_id)
+        fields = {
+            "project_id": event.aggregate_id,
+            "source_id": event.source_id,
+            "text": event.text,
+            "sha256": event.sha256,
+            "char_count": len(event.text),
+            "uri": event.uri,
+            "title": event.title,
+            "published_at": event.published_at,
+            "note": event.note,
+            "fetched_at": event.fetched_at,
+            "dropped_reason": None,
+        }
+        existing = await self._rows.get(row_id)
+        if existing is None:
+            await self._rows.save(CorpusDocumentRow(id=row_id, **fields))
+            return
+        for name, value in fields.items():
+            setattr(existing, name, value)
+        await self._rows.save(existing)
+
+    @handles(SourceDocumentDropped)
+    async def _on_dropped(self, event: SourceDocumentDropped) -> None:
+        row = await self._require(event.aggregate_id, event.source_id)
+        row.dropped_reason = event.reason
+        await self._rows.save(row)
+
+    async def _require(self, project_id: UUID, source_id: str) -> CorpusDocumentRow:
+        """The row for a source, which must already exist.
+
+        The aggregate rejects dropping a source it does not hold, so a missing
+        row cannot come from a legitimate stream: it means events arrived out
+        of order or the table was truncated under a checkpoint that survived.
+        Inventing a row would hide exactly the drift worth knowing about.
+        """
+        row = await self._rows.get(CorpusDocumentRow.row_id(project_id, source_id))
+        if row is None:
+            raise LookupError(f"no corpus row for {source_id!r} in project {project_id}")
+        return row
+
+
+class CorpusStore:
+    """The corpus table, its projection, and the connection they share.
+
+    Mirrors `SessionSummaryStore`: opening it applies the model's own DDL, so
+    there is no migration step to run and forget.
+    """
+
+    def __init__(
+        self,
+        connection: aiosqlite.Connection,
+        rows: ReadModelRepository[CorpusDocumentRow],
+        projection: CorpusProjection,
+    ) -> None:
+        self._connection = connection
+        self._rows = rows
+        self.projection = projection
+
+    @classmethod
+    async def open(
+        cls, db_path: str, checkpoint_repo=None, dlq_repo=None, tracer=None
+    ) -> "CorpusStore":
+        connection = await aiosqlite.connect(db_path)
+        await connection.executescript(
+            generate_full_schema(CorpusDocumentRow, dialect="sqlite")
+        )
+        # The generated schema indexes `deleted_at` and nothing else. Every
+        # read here is by project, and a corpus is the one table expected to
+        # grow into the millions of characters, so the scan is worth avoiding.
+        await connection.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_corpus_documents_project "
+            f"ON {CorpusDocumentRow.table_name()}(project_id)"
+        )
+        await connection.commit()
+        rows = SQLiteReadModelRepository(connection, CorpusDocumentRow, tracer)
+        return cls(connection, rows, CorpusProjection(rows, checkpoint_repo, dlq_repo, tracer))
+
+    async def get(self, project_id: UUID, source_id: str) -> CorpusDocumentRow | None:
+        """One document with its text, or None if it is unknown or dropped.
+
+        Returns the row rather than a separate shape. `/sessions` converts
+        because `SessionSummary` already existed as the application's own
+        vocabulary; nothing here predates the row, and inventing a twin of it
+        would be a second thing to keep in sync for no gain.
+
+        A dropped source answers None rather than raising: it is a document
+        somebody excluded, and the caller asking for it wants to hear that it
+        is not available, not to handle an exception for an ordinary state.
+        """
+        row = await self._rows.get(CorpusDocumentRow.row_id(project_id, source_id))
+        if row is None or row.project_id != project_id or row.dropped_reason is not None:
+            return None
+        return row
+
+    async def list(self, project_id: UUID) -> list[DocumentRecord]:
+        """Every live document in a project, by source id, without their text.
+
+        Selects columns explicitly instead of going through the repository,
+        which would load whole rows -- and a row here is an entire document.
+        Listing a corpus of a hundred papers would pull every one of them
+        through memory to render a table of titles.
+        """
+        columns = ("source_id", "sha256", "char_count", "uri", "title", "published_at", "note")
+        cursor = await self._connection.execute(
+            f"SELECT {', '.join(columns)} FROM {CorpusDocumentRow.table_name()} "
+            "WHERE project_id = ? AND dropped_reason IS NULL AND deleted_at IS NULL "
+            "ORDER BY source_id",
+            (str(project_id),),
+        )
+        try:
+            return [
+                DocumentRecord(**dict(zip(columns, row, strict=True)))
+                for row in await cursor.fetchall()
+            ]
+        finally:
+            await cursor.close()
+
+    async def truncate(self) -> None:
+        """Empty the table, for a rebuild to fill again.
+
+        Deletes rather than soft-deletes, for the reason `SessionSummaryStore`
+        gives: a soft-deleted row would linger invisibly and collide with the
+        row the replay is about to write for the same document.
+        """
+        await self._connection.execute(f"DELETE FROM {CorpusDocumentRow.table_name()}")
+        await self._connection.commit()
+
+    async def close(self) -> None:
+        await self._connection.close()
+
+
+class CorpusRunner:
+    """Keeps the corpus table following the log, and answers from it.
+
+    A second runner rather than a second projection on `SessionSummaryRunner`,
+    which was the first thing tried. That class can technically carry another
+    subscription -- `SubscriptionManager` holds many, and `InMemoryEventBus`
+    broadcasts to every subscriber, so there is no competing-consumer hazard --
+    but two things make it the wrong home.
+
+    The first is the port. `SessionSummaryRunner` satisfies `SessionSummaries`,
+    whose documented subject is the `/sessions` list, and whose `health()`,
+    `rebuild()` and `projection_name` are all singular. Making any of them
+    answer for two projections is how a port stops meaning anything, and the
+    web layer already calls all three.
+
+    The second is `rebuild()`, and it is the one that decides it. Rebuilding is
+    a manual repair that stops the manager, truncates a table, resets a
+    checkpoint and starts again. Sharing a manager would mean repairing
+    `/sessions` also stopped corpus reads, and would put the corpus table one
+    editing mistake away from being truncated by a repair that had nothing to
+    do with it. Two tables that can fail independently have to be repairable
+    independently.
+
+    What sharing would actually have bought is smaller than it looks: the two
+    projections write to different tables through different connections either
+    way, and SQLite serialises writers at the file level regardless, so the
+    duplication avoided is an engine and two repositories that are keyed by
+    projection name anyway.
+    """
+
+    def __init__(
+        self,
+        store: SQLiteEventStore,
+        db_path: str,
+        bus: InMemoryEventBus,
+        tracer=None,
+    ):
+        self._store = store
+        self._db_path = db_path
+        self._bus = bus
+        self._tracer = tracer
+        self._corpus: CorpusStore | None = None
+        self._manager: SubscriptionManager | None = None
+        self._subscription = None
+        self._checkpoints: SQLCheckpointRepository | None = None
+        self._dlq: SQLDLQRepository | None = None
+
+    @property
+    def projection_name(self) -> str:
+        """The subscription's name, which is also its checkpoint and DLQ key."""
+        return CorpusProjection.__name__
+
+    async def start(self) -> None:
+        """Open the table and start following the log.
+
+        Same shape as `SessionSummaryRunner.start`, including touching the
+        event store first: it creates the `projection_checkpoints` table on
+        first connection rather than at construction, so reaching for
+        checkpoints before anything has used the store finds no table at all.
+        """
+        if self._manager is not None:
+            return
+        await self._store.current_position()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        self._checkpoints = SQLCheckpointRepository(engine)
+        self._dlq = SQLDLQRepository(engine)
+        self._corpus = await CorpusStore.open(
+            self._db_path, self._checkpoints, self._dlq, self._tracer
+        )
+        self._manager = SubscriptionManager(
+            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
+        )
+        self._subscription = await self._manager.subscribe(
+            self._corpus.projection, SubscriptionConfig(start_from="checkpoint")
+        )
+        results = await self._manager.start()
+        failures = {name: err for name, err in results.items() if err is not None}
+        if failures:
+            raise RuntimeError(f"the corpus projection failed to start: {failures}")
+
+    async def failures(self, limit: int = 100) -> list[DLQEntry]:
+        """Events this projection could not process.
+
+        A non-empty list means a document is missing or stale in the table
+        while the log still holds it -- which reads downstream as a source that
+        cannot be quoted, not as an error.
+        """
+        if self._dlq is None:
+            return []
+        return await self._dlq.get_failed_events(
+            projection_name=self.projection_name, limit=limit
+        )
+
+    async def get(self, project_id: UUID, source_id: str) -> CorpusDocumentRow | None:
+        if self._corpus is None:
+            raise RuntimeError("the corpus projection has not been started")
+        return await self._corpus.get(project_id, source_id)
+
+    async def list(self, project_id: UUID) -> list[DocumentRecord]:
+        if self._corpus is None:
+            raise RuntimeError("the corpus projection has not been started")
+        return await self._corpus.list(project_id)
+
+    async def rebuild(self) -> None:
+        """Throw the table away and derive it again from the log.
+
+        Safe precisely because this table holds no original information: every
+        byte of every document is in the event that put it there. Dropping the
+        checkpoint alongside the rows is the part that matters -- rows without
+        the checkpoint would leave the subscription resuming over an empty
+        table, which is worse than the drift being repaired.
+        """
+        if self._manager is None or self._corpus is None:
+            raise RuntimeError("the corpus projection has not been started")
+        await self._manager.stop()
+        for entry in await self.failures(limit=1000):
+            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
+        await self._corpus.truncate()
+        await self._checkpoints.reset_checkpoint(self.projection_name)
+        self._manager = None
+        self._subscription = None
+        await self._corpus.close()
+        self._corpus = None
+        await self.start()
+        await self.caught_up()
+
+    async def caught_up(self, timeout: float = 10.0) -> None:
+        """Block until the projection has seen everything appended so far.
+
+        Load-bearing beyond tests, unlike the `/sessions` equivalent: `remember`
+        stores a document and then wants to read it back to extract from it, and
+        the gap between the append and the row is exactly where that would find
+        nothing.
+        """
+        if self._manager is None:
+            return
+        target = await self._store.current_position()
+        if target is None:
+            return
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            reached = self._subscription.last_processed_position
+            if reached is not None and not reached < target:
+                return
+            await asyncio.sleep(0.01)
+        raise TimeoutError(f"the corpus projection did not reach {target} within {timeout}s")
+
+    async def stop(self) -> None:
+        if self._manager is not None:
+            await self._manager.stop()
+            self._manager = None
+        if self._corpus is not None:
+            await self._corpus.close()
+            self._corpus = None

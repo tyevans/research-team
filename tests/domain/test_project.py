@@ -1,9 +1,11 @@
+import re
 from uuid import uuid4
 
 import pytest
 from eventsource import CommandRejectedError
 
 from research_team.domain.project import (
+    AdvanceStage,
     AdvanceTip,
     CreateProject,
     DeleteProject,
@@ -11,11 +13,16 @@ from research_team.domain.project import (
     ProjectCreated,
     ProjectDeleted,
     ProjectTipAdvanced,
+    SelectWorkflow,
     SessionJoinedProject,
+    StageAdvanced,
+    WorkflowSelected,
+    current_stage_of,
     decide,
     evolve,
     initial_state,
 )
+from research_team.workflows import hybrid_default, ubd_pure
 
 
 def test_creating_a_project_emits_project_created():
@@ -169,3 +176,247 @@ def test_evolve_ignores_unknown_events():
     )
 
     assert evolve(state, ProjectCreated(aggregate_id=project_id, name="other")) is not None
+
+
+# --- workflows ---------------------------------------------------------------
+#
+# Stage lives on `Project` rather than on a session because a run outspans any
+# one session: `start_in_project` forks the filesystem from the project tip and
+# deliberately does not carry the conversation, so a session-scoped record of
+# stage would be lost at exactly the moment a run continues. Real presets are
+# used throughout rather than fixtures -- `Preset` validates on construction
+# and a minimal well-formed one is more code than importing a shipped one, and
+# a rule that only holds against a toy preset is not worth having.
+
+
+def _with_workflow(project_id, preset=hybrid_default):
+    state = _created(project_id)
+    return evolve(
+        state,
+        WorkflowSelected(
+            aggregate_id=project_id, preset_id=preset.id, preset_version=preset.version
+        ),
+    )
+
+
+def test_selecting_a_workflow_emits_workflow_selected():
+    project_id = uuid4()
+
+    [event] = decide(SelectWorkflow(preset=hybrid_default), _created(project_id))
+
+    assert isinstance(event, WorkflowSelected)
+    assert event.preset_id == "hybrid.default"
+    assert event.preset_version == hybrid_default.version
+
+
+def test_a_selected_workflow_leaves_the_project_at_the_presets_first_stage():
+    project_id = uuid4()
+
+    state = _with_workflow(project_id)
+
+    assert state.preset_id == "hybrid.default"
+    assert state.current_stage is None
+    assert current_stage_of(state, hybrid_default).id == "tyler.step0.intake"
+
+
+def test_selecting_a_second_workflow_is_rejected_naming_the_current_one():
+    """The refusal names what the caller will ask about next, as `JoinProject` does."""
+    state = _with_workflow(uuid4())
+
+    with pytest.raises(CommandRejectedError, match=re.escape("hybrid.default")):
+        decide(SelectWorkflow(preset=ubd_pure), state)
+
+
+def test_advancing_moves_to_the_next_stage_in_the_preset():
+    project_id = uuid4()
+    state = _with_workflow(project_id)
+
+    [event] = decide(
+        AdvanceStage(
+            preset=hybrid_default,
+            to_stage="hybrid.step1.framing",
+            decided_by="human",
+            gate_decision="approve",
+        ),
+        state,
+    )
+
+    assert isinstance(event, StageAdvanced)
+    assert event.from_stage == "tyler.step0.intake"
+    assert event.to_stage == "hybrid.step1.framing"
+    assert event.decided_by == "human"
+    assert event.gate_decision == "approve"
+
+    state = evolve(state, event)
+    assert state.current_stage == "hybrid.step1.framing"
+    assert state.stage_history == ["hybrid.step1.framing"]
+    assert current_stage_of(state, hybrid_default).id == "hybrid.step1.framing"
+
+
+def test_advancing_to_a_stage_the_preset_does_not_have_is_rejected():
+    state = _with_workflow(uuid4())
+
+    with pytest.raises(CommandRejectedError, match=re.escape("ubd.stage1.desired_results")):
+        decide(
+            AdvanceStage(
+                preset=hybrid_default,
+                to_stage="ubd.stage1.desired_results",
+                decided_by="human",
+                gate_decision="approve",
+            ),
+            state,
+        )
+
+
+def test_advancing_out_of_order_is_rejected():
+    """Skipping is the failure this whole aggregate exists to prevent."""
+    state = _with_workflow(uuid4())
+
+    with pytest.raises(CommandRejectedError, match=re.escape("hybrid.step1.framing")):
+        decide(
+            AdvanceStage(
+                preset=hybrid_default,
+                to_stage="tyler.step1b.candidates",
+                decided_by="human",
+                gate_decision="approve",
+            ),
+            state,
+        )
+
+
+def test_advancing_backwards_is_rejected():
+    project_id = uuid4()
+    state = evolve(
+        _with_workflow(project_id),
+        StageAdvanced(
+            aggregate_id=project_id,
+            from_stage="tyler.step0.intake",
+            to_stage="hybrid.step1.framing",
+            decided_by="human",
+            gate_decision="approve",
+        ),
+    )
+
+    with pytest.raises(CommandRejectedError, match=re.escape("tyler.step0.intake")):
+        decide(
+            AdvanceStage(
+                preset=hybrid_default,
+                to_stage="tyler.step0.intake",
+                decided_by="human",
+                gate_decision="approve",
+            ),
+            state,
+        )
+
+
+def test_advancing_past_the_final_stage_is_rejected():
+    project_id = uuid4()
+    state = _with_workflow(project_id)
+    for earlier, later in zip(
+        [stage.id for stage in hybrid_default.stages],
+        [stage.id for stage in hybrid_default.stages[1:]],
+        strict=False,
+    ):
+        state = evolve(
+            state,
+            StageAdvanced(
+                aggregate_id=project_id,
+                from_stage=earlier,
+                to_stage=later,
+                decided_by="human",
+                gate_decision="approve",
+            ),
+        )
+
+    assert state.current_stage == "hybrid.step10.outcomes"
+    with pytest.raises(CommandRejectedError, match="final stage"):
+        decide(
+            AdvanceStage(
+                preset=hybrid_default,
+                to_stage="anything",
+                decided_by="human",
+                gate_decision="approve",
+            ),
+            state,
+        )
+
+
+def test_advancing_before_a_workflow_is_selected_is_rejected():
+    with pytest.raises(CommandRejectedError, match="no workflow"):
+        decide(
+            AdvanceStage(
+                preset=hybrid_default,
+                to_stage="hybrid.step1.framing",
+                decided_by="human",
+                gate_decision="approve",
+            ),
+            _created(uuid4()),
+        )
+
+
+def test_advancing_against_a_different_preset_than_the_project_runs_is_rejected():
+    """The command carries the preset, so the two can disagree; they must not.
+
+    Validating order needs the stage list, and the domain will not reach for a
+    registry to find it. That makes the caller's preset an input the aggregate
+    has to check against its own record rather than trust.
+    """
+    state = _with_workflow(uuid4())
+
+    with pytest.raises(CommandRejectedError, match=re.escape("ubd.pure")):
+        decide(
+            AdvanceStage(
+                preset=ubd_pure,
+                to_stage="ubd.step1.context",
+                decided_by="human",
+                gate_decision="approve",
+            ),
+            state,
+        )
+
+
+def test_a_deleted_project_refuses_workflow_commands_too():
+    """The `status="deleted"` guard sits above everything; these inherit it free."""
+    project_id = uuid4()
+    state = evolve(_with_workflow(project_id), ProjectDeleted(aggregate_id=project_id))
+
+    with pytest.raises(CommandRejectedError, match="has been deleted"):
+        decide(SelectWorkflow(preset=hybrid_default), state)
+    with pytest.raises(CommandRejectedError, match="has been deleted"):
+        decide(
+            AdvanceStage(
+                preset=hybrid_default,
+                to_stage="hybrid.step1.framing",
+                decided_by="human",
+                gate_decision="approve",
+            ),
+            state,
+        )
+
+
+def test_workflow_commands_before_creation_are_rejected():
+    with pytest.raises(CommandRejectedError, match="not created"):
+        decide(SelectWorkflow(preset=hybrid_default), initial_state(uuid4()))
+
+
+def test_a_project_with_no_workflow_has_no_current_stage():
+    assert current_stage_of(_created(uuid4()), hybrid_default) is None
+
+
+def test_selecting_a_workflow_keeps_everything_else_about_the_project():
+    project_id, session_id = uuid4(), uuid4()
+    state = evolve(
+        _created(project_id, name="atlas"),
+        SessionJoinedProject(aggregate_id=project_id, session_id=session_id, inherited_at=0),
+    )
+
+    state = evolve(
+        state,
+        WorkflowSelected(
+            aggregate_id=project_id, preset_id="hybrid.default", preset_version="1"
+        ),
+    )
+
+    assert state.name == "atlas"
+    assert state.active_session_id == session_id
+    assert state.member_session_ids == [session_id]

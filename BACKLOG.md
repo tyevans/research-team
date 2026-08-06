@@ -195,54 +195,38 @@ Found while surveying the approval surface for course-design gate review. Not
 fixed on the spot because the gate work will rewrite this renderer anyway, and
 adding a third button now would be written twice.
 
+### B21. `list_projects` scans the whole `Project` category on every call
+
+`research_team/infrastructure/persistence/event_store.py`. Filtering deleted
+projects out of the listing needs the set of deleted ids, and the set is built
+by reading the entire `Project` category each time the list is asked for. The
+result is correct and the cost is invisible at present scale -- a handful of
+projects, each with a handful of events.
+
+It is recorded rather than fixed because the fix is a read model, not a tweak,
+and adding a third projection to carry a list that currently fits in memory
+would be paying the projection's whole price (a runner, a table, a rebuild
+path, an eventual-consistency surface) to avoid a scan nobody can feel yet.
+
+The trigger to revisit is projects accumulating events rather than projects
+accumulating: the scan is O(events in the category), not O(projects), so a
+long-lived project makes every listing slower even if there is only one.
+
+Found in review of the corpus-layer work; the scan predates it.
+
 ## Knowledge and corpus
 
 Found while researching course-design workflows
-(`docs/research/course-design/research-intake.md`). All five are the same
-shape: the graph path is well built and correctly bounded, and the gap is
-*beneath* it — there is no corpus layer under the graph.
+(`docs/research/course-design/research-intake.md`). Five entries originally,
+all the same shape: the graph path is well built and correctly bounded, and
+the gap was *beneath* it — there was no corpus layer under the graph.
 
-### B12. An ingested document's text is never kept, so nothing can cite it
-
-`research_team/infrastructure/knowledge/redstring_adapter.py:117` builds a
-`SourceDocument`, passes it to `build_graph`, and the text goes no further.
-`DocumentExtracted` carries `source_id`, `model_version`, `entities` and
-`relationships` — and no text. After `remember`, the system holds a graph
-*about* a document and no copy of the document.
-
-This is why provenance cannot currently be more than a claim. Any workflow that
-wants "every instructional claim cites its source" — and every instructional
-design methodology wants exactly that — needs the source to still exist and be
-addressable. Verified against redstring 0.2.0 by introspecting `model_fields`.
-
-The fix is ours, not upstream: a `SourceDocumentStored` event on a
-research-team stream, which fits the existing pattern (one SQLite file, the log
-is truth, the store is derived) and needs no redstring schema change. It also
-strengthens the property `rebuild.py` rests on — today the log is the only copy
-of anything, and the text is not in it.
-
-### B13. Chunk offsets are computed and then discarded
-
-Same file. redstring's `Chunk` carries `start_char`/`end_char`, so offsets
-*are* computed during chunking — but `Entity` carries only `source_id` and
-`source_text`, and `DocumentExtracted` carries entities rather than chunks. The
-offsets never leave the chunker.
-
-So span-level anchoring is impossible today even once B12 is fixed and the text
-is retained: a claim can name its document but cannot point at the sentence it
-came from. Recorded separately from B12 because the two have different fixes —
-B12 is ours, this one needs either a redstring change or our own chunking pass
-alongside the corpus layer.
-
-### B14. `SourceDocument`'s citation fields are left unset
-
-`redstring_adapter.py:117-121` constructs a `SourceDocument` without `uri`,
-`title`, or `published_at` — which are exactly the fields a citation needs.
-They are available on the library's model and simply never populated.
-
-The cheapest of these five to close and worth doing before any bulk ingest,
-because a document ingested without them cannot be given them later without
-re-ingesting.
+Three of them (retained source text, span-addressable offsets, and the unset
+citation fields) are closed by the corpus layer: documents are now stored on
+a `Corpus` stream before extraction, spans are derived deterministically from
+the retained text rather than depending on offsets redstring discards, and
+`uri`/`title`/`published_at` are populated. What remains below are the two
+that the corpus layer does not answer.
 
 ### B15. Consolidation can silently merge contradictory claims
 

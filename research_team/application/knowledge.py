@@ -33,6 +33,20 @@ class SourceRef:
     text: str
     note: str | None = None
     """Why the agent thought this was worth remembering. Provenance only."""
+    uri: str | None = None
+    """Where the content came from. Unset for text the caller typed or pasted."""
+    title: str | None = None
+    published_at: str | None = None
+    """When the source says it was published, as the source wrote it.
+
+    A string rather than a date because that is what the caller has: `fetch`
+    returns whatever the page's metadata claimed, and pages claim dates in
+    every format there is. Parsing here would force every caller to guess at
+    a format before it could hand over what it already read, and would make
+    an unreadable date an error at the boundary -- rejecting the document
+    over the one field that matters least. The adapter parses what it can and
+    keeps the rest verbatim, so an unparseable date costs precision, not the
+    document."""
 
 
 @dataclass(frozen=True)
@@ -77,7 +91,15 @@ class KnowledgePort(Protocol):
     """Committing to the graph, reading it back, and reversing a merge."""
 
     async def ingest(self, source: SourceRef) -> IngestReport:
-        """Extract `source`, record it, and consolidate what it found."""
+        """Keep `source`'s text, extract it, and consolidate what it found.
+
+        Keeping the text is part of the contract, not an implementation
+        detail: everything downstream that cites a source has to be able to
+        go back and check that the source says it, and an implementation
+        that only built a graph would make every such citation unfalsifiable.
+        It happens first, so a failed extraction still leaves the text --
+        re-extracting is cheap and re-fetching may be impossible.
+        """
         ...
 
     async def search(self, query: str, *, limit: int = 10) -> list[Match]:

@@ -17,9 +17,13 @@ get wrong:
    here as well would apply the merge twice.
 """
 
+import hashlib
+from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from eventsource import collect
+from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain.tenant_context import tenant_scope
 from eventsource.ports.positions import ExpectedVersion
 from eventsource.ports.snapshots import SnapshotStore
@@ -43,9 +47,41 @@ from research_team.application.knowledge import (
     MergeRecord,
     SourceRef,
 )
+from research_team.domain import Corpus, StoreSourceDocument
 
 #: Longest document accepted in one `remember`. Roughly a long article.
 MAX_DOCUMENT_CHARS = 200_000
+
+
+def _parse_published_at(raw: str | None) -> datetime | None:
+    """Read a source's publication date, or give up quietly.
+
+    redstring wants a `datetime`; sources supply prose. ISO-8601 is what
+    structured metadata actually emits (`article:published_time`, JSON-LD,
+    sitemaps), so it is the only format worth accepting -- a date-guessing
+    library would turn ambiguity into confident wrong answers, and a wrong
+    date on a citation is worse than an absent one.
+
+    Anything else returns None and the caller keeps the raw string in the
+    document's metadata: the date is still there for a human reading the
+    citation, it just cannot be sorted or filtered on. Refusing the ingest
+    over it would trade the whole document for one field.
+
+    redstring rejects a naive datetime outright, so a bare `YYYY-MM-DD` --
+    the most common thing a source publishes -- is read as UTC. That is a
+    guess of up to a day either way, which no citation cares about, and the
+    alternative is discarding every date that came without a zone.
+    """
+    if raw is None:
+        return None
+    candidate = raw.strip()
+    if not candidate:
+        return None
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 class RedstringKnowledge:
@@ -63,6 +99,7 @@ class RedstringKnowledge:
         event_store: AggregateStore,
         snapshot_store: SnapshotStore,
         provider: LlmProvider,
+        corpus: AggregateRepository[Corpus],
         domain: str = "auto",
         adjudicate: bool = True,
     ) -> None:
@@ -70,6 +107,12 @@ class RedstringKnowledge:
         self._store = store
         self._event_store = event_store
         self._provider = provider
+        # Required rather than optional. "After `remember`, the text still
+        # exists" is a guarantee, and an optional collaborator that silently
+        # no-ops when a composition root forgets it is a guarantee only until
+        # someone forgets. There are few construction sites and they all have
+        # a repository to hand.
+        self._corpus = corpus
         self._domain = AUTO if domain == "auto" else domain
         # Both stores, deliberately. With either omitted the consolidator
         # substitutes an in-memory log and `undo` becomes session-only --
@@ -114,11 +157,22 @@ class RedstringKnowledge:
                 f"source_id."
             )
 
+        metadata: dict[str, Any] = {}
+        if source.note:
+            metadata["note"] = source.note
+        published_at = _parse_published_at(source.published_at)
+        if source.published_at and published_at is None:
+            metadata["published_at"] = source.published_at
+
         document = SourceDocument(
             id=source.source_id,
             text=source.text,
-            metadata={"note": source.note} if source.note else {},
+            uri=source.uri,
+            title=source.title,
+            published_at=published_at,
+            metadata=metadata,
         )
+        await self._store_document(source)
         try:
             async with tenant_scope(self._project_id):
                 report = await build_graph(
@@ -161,6 +215,48 @@ class RedstringKnowledge:
             merges=tuple(merges),
             consolidation_failures=failures,
         )
+
+    async def _store_document(self, source: SourceRef) -> None:
+        """Keep the text before extracting it, and only if it is new bytes.
+
+        **Before, deliberately.** The two writes cannot be made one -- they are
+        different aggregates over the same log -- so one of them is exposed to
+        a crash in between, and the choice is which. A document stored without
+        a graph is repaired by extracting it again, which costs model calls and
+        nothing else. A graph without its document is not repairable at any
+        price: the text is gone, and every claim the graph makes about it
+        becomes uncheckable -- which is the whole reason this layer exists.
+        So the cheap failure is the one left possible.
+
+        The same reasoning decides what happens when extraction then fails: the
+        stored document stays and the error propagates. Rolling it back would
+        discard text the user already paid to fetch in order to restore a
+        consistency nothing needs -- `reconsolidate` and a second `remember`
+        both work fine against a document whose graph is missing, and the
+        alternative failure mode is a user watching their source disappear
+        because a model endpoint was down.
+
+        Identical bytes under the same `source_id` are skipped rather than
+        re-stored: nothing about the corpus would differ afterwards, and the
+        log would carry a revision that revised nothing. Identical bytes under
+        a *different* id are stored -- two URIs legitimately serve one document
+        and each needs its own citable record (see `domain/corpus.py`).
+        """
+        corpus = await self._corpus.load_or_create(self._project_id)
+        digest = hashlib.sha256(source.text.encode("utf-8")).hexdigest()
+        if corpus.state.by_digest.get(digest) == source.source_id:
+            return
+        corpus.execute(
+            StoreSourceDocument(
+                source_id=source.source_id,
+                text=source.text,
+                uri=source.uri,
+                title=source.title,
+                published_at=source.published_at,
+                note=source.note,
+            )
+        )
+        await self._corpus.save(corpus)
 
     async def _consolidate(self, entities) -> tuple[list[MergeRecord], int]:
         """Resolve each extracted entity, one at a time.

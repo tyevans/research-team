@@ -1,13 +1,15 @@
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from eventsource import collect
+from eventsource import StreamId, collect
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from redstring import InMemoryGraphStore, document_stream
 
 from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
+from research_team.infrastructure.persistence.event_store import build_corpus_repository
 from tests.conftest import fake_provider
 
 
@@ -37,6 +39,7 @@ async def build_adapter():
                 event_store=store,
                 snapshot_store=snapshot_store,
                 provider=provider if provider is not None else fake_provider(),
+                corpus=build_corpus_repository(store, snapshot_store=snapshot_store),
                 domain="encyclopedia_wiki",
                 adjudicate=False,
             ),
@@ -204,8 +207,12 @@ async def test_reconsolidating_an_unknown_source_is_an_error(tmp_path, build_ada
 
 
 @pytest.mark.asyncio
-async def test_a_provider_failure_records_nothing(tmp_path, build_adapter):
-    """Nothing is appended, and the caller gets an error it can render."""
+async def test_a_provider_failure_records_no_extraction(tmp_path, build_adapter):
+    """No extraction is appended, and the caller gets an error it can render.
+
+    The corpus write is a separate guarantee and deliberately does survive
+    this -- see `test_the_document_survives_a_failed_extraction`.
+    """
 
     class Failing:
         async def complete(self, *args, **kwargs):
@@ -347,6 +354,9 @@ async def test_merges_are_remembered_across_restarts(tmp_path, build_adapter):
             event_store=restarted_event_store,
             snapshot_store=snapshot_store,
             provider=fake_provider(),
+            corpus=build_corpus_repository(
+                restarted_event_store, snapshot_store=snapshot_store
+            ),
             domain="encyclopedia_wiki",
             adjudicate=False,
         )
@@ -355,3 +365,233 @@ async def test_merges_are_remembered_across_restarts(tmp_path, build_adapter):
         assert record.merge_id == merge.merge_id
     finally:
         await restarted_event_store.close()
+
+
+@pytest.fixture
+def captured_documents(monkeypatch):
+    """Records every `SourceDocument` the adapter hands to `build_graph`.
+
+    The citation fields are asserted against the document rather than the
+    `IngestReport`, which carries none of them and so would pass whether or
+    not they were ever set -- the exact bug these tests exist to catch.
+    """
+    from research_team.infrastructure.knowledge import redstring_adapter
+
+    documents = []
+    real_build_graph = redstring_adapter.build_graph
+
+    async def recording_build_graph(document, **kwargs):
+        documents.append(document)
+        return await real_build_graph(document, **kwargs)
+
+    monkeypatch.setattr(redstring_adapter, "build_graph", recording_build_graph)
+    return documents
+
+
+@pytest.mark.asyncio
+async def test_citation_fields_reach_the_source_document(
+    tmp_path, build_adapter, captured_documents
+):
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+
+    await adapter.ingest(
+        SourceRef(
+            source_id="notes",
+            text="Ada Lovelace worked with Charles Babbage.",
+            uri="https://example.test/ada",
+            title="Ada Lovelace",
+            published_at="1843-07-10",
+        )
+    )
+
+    document = captured_documents[0]
+    assert document.uri == "https://example.test/ada"
+    assert document.title == "Ada Lovelace"
+    assert document.published_at == datetime(1843, 7, 10, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_a_source_without_citation_fields_leaves_them_unset(
+    tmp_path, build_adapter, captured_documents
+):
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+    )
+
+    document = captured_documents[0]
+    assert document.uri is None
+    assert document.title is None
+    assert document.published_at is None
+    assert "published_at" not in document.metadata
+
+
+@pytest.mark.asyncio
+async def test_an_unparseable_date_is_kept_verbatim_rather_than_dropped(
+    tmp_path, build_adapter, captured_documents
+):
+    """An unreadable date must not cost us the document, nor the string itself."""
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+
+    report = await adapter.ingest(
+        SourceRef(
+            source_id="notes",
+            text="Ada Lovelace worked with Charles Babbage.",
+            published_at="sometime last spring",
+        )
+    )
+
+    assert report.entity_count >= 1
+    document = captured_documents[0]
+    assert document.published_at is None
+    assert document.metadata["published_at"] == "sometime last spring"
+
+
+@pytest.mark.asyncio
+async def test_a_timestamp_with_a_zone_is_accepted(
+    tmp_path, build_adapter, captured_documents
+):
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+
+    await adapter.ingest(
+        SourceRef(
+            source_id="notes",
+            text="Ada Lovelace worked with Charles Babbage.",
+            published_at="2026-08-05T12:30:00Z",
+        )
+    )
+
+    assert captured_documents[0].published_at == datetime(2026, 8, 5, 12, 30, tzinfo=UTC)
+
+
+def _corpus_events(store, project_id):
+    """The corpus stream's events, read directly rather than via a projection.
+
+    The read model for the corpus is built in a separate workstream; reading
+    the log keeps these assertions independent of it, and the log is the
+    thing B12 is actually about -- a projection could be rebuilt, a missing
+    event could not.
+    """
+    return collect(store.read_stream(StreamId(project_id, "Corpus")))
+
+
+@pytest.mark.asyncio
+async def test_ingest_keeps_the_source_text(tmp_path, build_adapter):
+    """After `remember` the system holds the document, not just a graph about it.
+
+    The guarantee the corpus layer exists to provide: extraction used to be
+    handed the text and drop it, leaving a graph whose every claim named a
+    source nothing could produce.
+    """
+    project_id = uuid4()
+    adapter, store, _ = build_adapter(tmp_path, project_id)
+
+    await adapter.ingest(
+        SourceRef(
+            source_id="notes",
+            text="Ada Lovelace worked with Charles Babbage.",
+            uri="https://example.test/ada",
+            title="Ada Lovelace",
+            published_at="sometime last spring",
+            note="for the timeline",
+        )
+    )
+
+    envelopes = await _corpus_events(store, project_id)
+    assert len(envelopes) == 1
+    stored = envelopes[0].event
+    assert type(stored).__name__ == "SourceDocumentStored"
+    assert stored.source_id == "notes"
+    assert stored.text == "Ada Lovelace worked with Charles Babbage."
+    assert stored.uri == "https://example.test/ada"
+    assert stored.title == "Ada Lovelace"
+    # Verbatim, unlike redstring's `published_at`: the corpus event is the
+    # archival copy, so it keeps what the source said even when it is prose.
+    assert stored.published_at == "sometime last spring"
+    assert stored.note == "for the timeline"
+
+
+@pytest.mark.asyncio
+async def test_the_document_survives_a_failed_extraction(tmp_path, build_adapter):
+    """Store first, extract second -- and a failed extraction keeps the text."""
+
+    class Failing:
+        async def complete(self, *args, **kwargs):
+            raise RuntimeError("endpoint down")
+
+    project_id = uuid4()
+    adapter, store, _ = build_adapter(tmp_path, project_id, provider=Failing())
+
+    with pytest.raises(KnowledgeError):
+        await adapter.ingest(SourceRef(source_id="notes", text="Ada Lovelace."))
+
+    envelopes = await _corpus_events(store, project_id)
+    assert [e.event.text for e in envelopes] == ["Ada Lovelace."]
+    extraction = document_stream(tenant_id=project_id, source_id="notes")
+    assert await collect(store.read_stream(extraction)) == []
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_stored_when_the_document_is_refused(tmp_path, build_adapter):
+    """The size and id guards run before the corpus write, not after."""
+    from research_team.infrastructure.knowledge.redstring_adapter import (
+        MAX_DOCUMENT_CHARS,
+    )
+
+    project_id = uuid4()
+    adapter, store, _ = build_adapter(tmp_path, project_id)
+
+    with pytest.raises(KnowledgeError):
+        await adapter.ingest(SourceRef(source_id="huge", text="x" * (MAX_DOCUMENT_CHARS + 1)))
+    with pytest.raises(KnowledgeError):
+        await adapter.ingest(SourceRef(source_id="  ", text="Ada Lovelace."))
+
+    assert await _corpus_events(store, project_id) == []
+
+
+@pytest.mark.asyncio
+async def test_re_ingesting_identical_bytes_stores_one_document(tmp_path, build_adapter):
+    project_id = uuid4()
+    adapter, store, _ = build_adapter(tmp_path, project_id)
+    source = SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+
+    await adapter.ingest(source)
+    await adapter.ingest(source)
+
+    envelopes = await _corpus_events(store, project_id)
+    assert len(envelopes) == 1
+
+
+@pytest.mark.asyncio
+async def test_re_ingesting_changed_bytes_records_the_revision(tmp_path, build_adapter):
+    """Same id, new text is a revision -- both versions stay in the log."""
+    project_id = uuid4()
+    adapter, store, _ = build_adapter(tmp_path, project_id)
+
+    await adapter.ingest(SourceRef(source_id="notes", text="Ada Lovelace."))
+    await adapter.ingest(SourceRef(source_id="notes", text="Ada Lovelace and Babbage."))
+
+    envelopes = await _corpus_events(store, project_id)
+    assert [e.event.text for e in envelopes] == [
+        "Ada Lovelace.",
+        "Ada Lovelace and Babbage.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_identical_bytes_under_a_new_id_are_stored_separately(tmp_path, build_adapter):
+    """Two URIs can legitimately serve one document, and each needs its own record."""
+    project_id = uuid4()
+    adapter, store, _ = build_adapter(tmp_path, project_id)
+    text = "Ada Lovelace worked with Charles Babbage."
+
+    await adapter.ingest(SourceRef(source_id="mirror-a", text=text))
+    await adapter.ingest(SourceRef(source_id="mirror-b", text=text))
+
+    envelopes = await _corpus_events(store, project_id)
+    assert [e.event.source_id for e in envelopes] == ["mirror-a", "mirror-b"]
