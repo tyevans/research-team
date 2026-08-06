@@ -746,6 +746,28 @@ pre.code .ln {
 .disc-caret { color: var(--k-compaction); }
 .disc-body { padding-top: 2px; }
 
+/* A collapsed tool run: one quiet line, the height of a single message head,
+ * so a twelve-call detour costs the same vertical space as a sentence. */
+.run { margin: 0; }
+.run > .disc-head {
+  padding: 3px 10px;
+  border-left: 2px solid var(--k-tool);
+  border-radius: 0 3px 3px 0;
+  background: var(--bg-raise);
+}
+.run > .disc-head .disc-caret { color: var(--k-tool); }
+.run > .disc-body:not([hidden]) { padding: 4px 0 0 10px; }
+.run-msgs { display: flex; flex-direction: column; gap: 6px; }
+.run-label {
+  display: flex; align-items: center; gap: 6px;
+  min-width: 0; overflow: hidden;
+}
+.run-label b { color: var(--k-tool); font-weight: 600; }
+.run-names {
+  color: var(--fg-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 .calls { display: flex; flex-direction: column; gap: 3px; padding: 6px 10px 8px; }
 .call {
   font-family: var(--mono);

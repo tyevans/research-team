@@ -325,6 +325,10 @@ const state = {
   openPath: null,
   timelineCol: 0,           // grid column with the tab stop: 0 event, 1 fork
   compactionOpen: { summary: true, messages: false },
+  // Which tool runs the reader has opened, keyed by the index of the first
+  // message in the run. Collapsed is the default: a run is machinery, and
+  // the prose around it is what the conversation is actually saying.
+  toolOpen: {},
   fileTab: 'content',       // 'content' | 'history'
   fileContent: null,
   fileContentAt: undefined, // the scrub point fileContent was fetched for
@@ -1579,9 +1583,9 @@ function renderConversation() {
   const through = compacted;
   if (through > 0) {
     conv.appendChild(renderCompaction(v, messages.slice(0, through), through));
-    messages.slice(through).forEach(function (m) { conv.appendChild(renderMessage(m)); });
+    appendMessages(conv, messages.slice(through), through);
   } else {
-    messages.forEach(function (m) { conv.appendChild(renderMessage(m)); });
+    appendMessages(conv, messages, 0);
   }
   box.appendChild(conv);
   if (stick) box.scrollTop = box.scrollHeight;
@@ -1628,12 +1632,18 @@ function renderCompaction(v, hidden, through) {
       state.compactionOpen.messages = !openMessages;
       renderConversation();
     },
-    h('div', { class: 'compaction-msgs' }, hidden.map(renderMessage))));
+    compactionMsgs(hidden)));
 
   wrap.appendChild(h('div', { class: 'compaction-boundary' },
     h('span', { text: 'context boundary · everything below is sent verbatim' })));
 
   return wrap;
+}
+
+function compactionMsgs(hidden) {
+  const box = h('div', { class: 'compaction-msgs' });
+  appendMessages(box, hidden, 0);
+  return box;
 }
 
 function disclosure(label, open, toggle, body) {
@@ -1655,7 +1665,90 @@ function disclosure(label, open, toggle, body) {
   return wrap;
 }
 
-function renderMessage(m) {
+/* --- tool runs ----------------------------------------------------------
+ * A turn that reads six files and greps twice is eight messages of machinery
+ * around one sentence of reasoning. Rendered flat, the machinery buries the
+ * sentence. So consecutive machinery collapses into one line that says what
+ * ran, and opens on demand. Prose is never what gets hidden: an assistant
+ * message that says something stays visible, and only its call list folds. */
+
+function msgCalls(m) {
+  return Array.isArray(m && m.tool_calls) ? m.tool_calls : [];
+}
+
+/* Pure machinery: a tool result, or a wordless assistant turn that only
+ * dispatched calls. Anything with prose in it is not machinery. */
+function isToolActivity(m) {
+  const role = (m && m.role) || 'assistant';
+  if (role === 'tool') return true;
+  return role === 'assistant' && msgCalls(m).length > 0 && !contentText(m && m.content);
+}
+
+function appendMessages(conv, messages, offset) {
+  let i = 0;
+  while (i < messages.length) {
+    if (!isToolActivity(messages[i])) {
+      conv.appendChild(renderMessage(messages[i], offset + i));
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j < messages.length && isToolActivity(messages[j])) j += 1;
+    conv.appendChild(renderToolRun(messages.slice(i, j), offset + i));
+    i = j;
+  }
+}
+
+/* "Read ×3, Bash, Grep" -- the names in the order they first ran, so the
+ * summary reads as a trace of the run and not as an alphabetised inventory. */
+function toolTally(messages) {
+  const order = [];
+  const counts = {};
+  let total = 0;
+  messages.forEach(function (m) {
+    msgCalls(m).forEach(function (c) {
+      const name = (c && c.name) || 'tool';
+      if (!counts[name]) { counts[name] = 0; order.push(name); }
+      counts[name] += 1;
+      total += 1;
+    });
+  });
+  return {
+    total: total,
+    label: order.map(function (n) {
+      return counts[n] > 1 ? n + ' ×' + counts[n] : n;
+    }).join(', ')
+  };
+}
+
+function renderToolRun(messages, index) {
+  const key = 'run:' + index;
+  const open = !!state.toolOpen[key];
+  const tally = toolTally(messages);
+  const errored = messages.some(function (m) { return !!(m && m.is_error); });
+
+  // Results arrive as their own messages, so a run with no calls in it at all
+  // is possible on a replay that starts mid-turn. Count messages instead.
+  const count = tally.total || messages.length;
+
+  const label = h('span', { class: 'run-label' }, [
+    h('b', { text: plural(count, 'tool call') }),
+    tally.label ? h('span', { class: 'run-names', text: ' · ' + tally.label }) : null,
+    errored ? h('span', { class: 'chip chip-fail', text: 'error' }) : null
+  ]);
+
+  const body = h('div', { class: 'run-msgs' });
+  messages.forEach(function (m, k) { body.appendChild(renderMessage(m, index + k)); });
+
+  const wrap = disclosure(label, open, function () {
+    state.toolOpen[key] = !open;
+    renderConversation();
+  }, body);
+  wrap.classList.add('run');
+  return wrap;
+}
+
+function renderMessage(m, index) {
   const role = (m && m.role) || 'assistant';
   const errored = !!(m && m.is_error);
   const calls = Array.isArray(m && m.tool_calls) ? m.tool_calls : [];
@@ -1688,7 +1781,24 @@ function renderMessage(m) {
         arg ? h('span', { class: 'arg', text: '  ' + arg }) : null
       ]));
     });
-    wrap.appendChild(box);
+    // A message that also said something keeps its own fold, so the prose is
+    // what you see first. Inside a run the fold is already above us.
+    if (isToolActivity(m)) {
+      wrap.appendChild(box);
+    } else {
+      const key = 'calls:' + index;
+      const open = !!state.toolOpen[key];
+      const tally = toolTally([m]);
+      wrap.appendChild(disclosure(
+        h('span', { class: 'run-label' }, [
+          h('b', { text: plural(calls.length, 'tool call') }),
+          tally.label ? h('span', { class: 'run-names', text: ' · ' + tally.label }) : null
+        ]),
+        open,
+        function () { state.toolOpen[key] = !open; renderConversation(); },
+        box
+      ));
+    }
   }
   return wrap;
 }
