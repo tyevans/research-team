@@ -499,7 +499,13 @@ _TRYOUT = FieldStage(
         Out(artifact_type=A.OUTCOME_EVIDENCE, subtype="tryout", cardinality="1"),
         Out(artifact_type=A.DEFECT_LOG, cardinality="1"),
     ),
-    gate=FieldGate(reviewer_role="learner", presents=("Build.alpha",)),
+    gate=FieldGate(
+        reviewer_role="learner",
+        presents=("Build.alpha",),
+        # Between Alpha and Beta: this is what promotes a build out of
+        # alpha, so alpha is what the learners must be shown.
+        gates_promotion_from="alpha",
+    ),
     amendments=Amendments(emits_to=("addie.v1.build",)),
 )
 

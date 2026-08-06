@@ -243,49 +243,100 @@ def test_the_run_can_still_be_stopped(preset: Preset) -> None:
 # --- the boundary of this file's claim ---------------------------------------
 
 
-@pytest.mark.parametrize("preset_id", ["hybrid.default", "addie.pure"])
-def test_the_formative_tryout_gates_promotion_out_of_alpha(preset_id: str) -> None:
-    """A regression pin for one instance, and honestly nothing more than that.
+@ALL_PRESETS
+def test_a_field_gate_presents_the_rung_it_gates(preset: Preset) -> None:
+    """The rung you show is the rung you gate promotion out of.
 
-    The research puts ADDIE's formative tryout "between Alpha and Beta": it
-    gates promotion *out of alpha*, so alpha is what it must put in front of
-    the learners. `hybrid.default` presented `Build.beta`, which lets
-    substantive change arrive after the rung where the ladder is supposed to
-    have stopped accepting it -- the entire discipline the maturity gate
-    encodes.
+    This is the guard that closed the `Build.beta` class. A field stage sitting
+    on a ladder now states which rung it sits above, and the entry it presents
+    has to agree -- so `Build.beta` on a stage declaring
+    `gates_promotion_from="alpha"` is a contradiction between two facts in the
+    same object rather than a judgement only an ADDIE reader could make.
 
-    Pinned by value because no structural property reaches it; see the test
-    below. A pin catches this stage regressing and catches nothing else, which
-    is the correct claim to make for it.
+    Only rung-valued qualifiers are compared. A field gate may legitimately
+    present other things alongside the build -- a defect log, a criterion
+    document -- and those have no rung to agree with.
     """
-    preset = PRESETS[preset_id]
-    tryout = next(stage for stage in preset.stages if stage.id == "addie.v2.tryout")
-    assert tryout.gate.presents == ("Build.alpha",)
+    mismatched: list[str] = []
+    for stage, gate in gates(preset):
+        expected = getattr(gate, "gates_promotion_from", None)
+        if expected is None:
+            continue
+        for entry in gate.presents:
+            parts = entry.split(".")
+            if len(parts) < 2 or parts[0] not in ARTIFACT_TYPES:
+                continue
+            qualifier = parts[1]
+            if qualifier in rungs_for(preset, parts[0]) and qualifier != expected:
+                mismatched.append(
+                    f"{stage.id} presents {entry} but gates promotion from {expected!r}"
+                )
+    assert mismatched == [], f"{preset.id}: {sorted(mismatched)}"
 
 
-def test_no_structural_guard_here_would_catch_the_wrong_rung() -> None:
-    """The acceptance criterion, stated as an assertion so it cannot rot.
+@ALL_PRESETS
+def test_a_gated_rung_is_one_some_ladder_declares(preset: Preset) -> None:
+    """`gates_promotion_from="alfa"` names nothing and would silence the guard above.
 
-    `Build.beta` on the formative tryout satisfies **every** structural
-    property this file checks: `Build` is a real `ArtifactType`, `beta` is a
-    real rung of the real ladder on `addie.v1.build`, that stage really
-    produces `Build`, and the gate really shows something. The error is *which*
-    correct-looking rung was named, and nothing in the preset encodes which
-    rung a field stage sits below -- so there is nothing here to contradict.
+    The comparison is only as good as the rung name it compares against: a
+    misspelled one matches no qualifier, so every entry skips the rung branch
+    and the check passes on a stage it is no longer protecting.
+    """
+    dangling: list[str] = []
+    for stage, gate in gates(preset):
+        expected = getattr(gate, "gates_promotion_from", None)
+        if expected is None:
+            continue
+        ladders = {
+            rung.name
+            for other in preset.stages
+            for rung in getattr(getattr(other, "gate", None), "rungs", ()) or ()
+        }
+        if expected not in ladders:
+            dangling.append(f"{stage.id} gates promotion from unknown rung {expected!r}")
+    assert dangling == [], f"{preset.id}: {sorted(dangling)}"
 
-    This test asserts the gap rather than the fix, so that if someone later
-    makes the class reachable, this fails and forces the docstrings above to be
-    rewritten instead of quietly overclaiming.
 
-    Closing it needs a schema change, not a cleverer test: a `FieldGate` would
-    have to declare the rung it gates promotion out of --
-    `gates_promotion_from: "alpha"` -- at which point "the rung you present is
-    the rung you gate" becomes a structural property. That is a domain
-    decision and is deliberately not taken here.
+def test_what_is_still_uncatchable_here() -> None:
+    """The successor to this file's blind-spot test, narrowed to what survives.
+
+    The original said no structural guard could catch the wrong rung. That is
+    no longer true -- `gates_promotion_from` closed it -- and this is the
+    rewrite that replaces it rather than a pin left behind after its reason
+    expired.
+
+    What the guards now catch: a presented rung disagreeing with the gated
+    rung, and a gated rung no ladder declares. Between them, `Build.beta` on
+    the formative tryout is a contradiction in every preset that has one.
+
+    What remains out of reach, and is a narrower gap than before: **a field
+    stage that sits on a ladder and simply does not say so.** `gates_promotion_from`
+    defaults to `None`, and `None` legitimately means "this stage answers to no
+    rung" -- Tyler's achievement data, UbD's post-delivery student work. So an
+    omission and a genuine absence are the same value, and nothing distinguishes
+    a tryout that forgot to declare its rung from a field stage that never had
+    one. Closing *that* would mean inferring intent from stage shape, which
+    would fire on the honest cases too.
+
+    The residue is therefore: the first field stage added below a ladder can
+    still present the wrong rung, until someone sets the field. Every stage that
+    sets it is protected from then on. That is a real improvement over a
+    by-value pin, and it is not total, and this docstring is where the
+    difference is written down.
+
+    This test deliberately asserts nothing about `addie.v2.tryout`'s values.
+    Those are the structural guards' job now, and duplicating them here would
+    leave a pin that fires alongside the real guard and makes it unclear which
+    one is doing the work.
     """
     preset = PRESETS["hybrid.default"]
-    head, qualifier = "Build", "beta"
+    tryout = next(stage for stage in preset.stages if stage.id == "addie.v2.tryout")
 
-    assert head in ARTIFACT_TYPES
-    assert qualifier in rungs_for(preset, head)
-    assert head in produced_types(preset)
+    # The residue, demonstrated rather than described: strip the declaration and
+    # the wrong rung sails through, because `None` is also what an honest "this
+    # stage answers to no ladder" looks like.
+    undeclared = tryout.gate.model_copy(
+        update={"gates_promotion_from": None, "presents": ("Build.beta",)}
+    )
+    assert undeclared.gates_promotion_from is None
+    assert "beta" in rungs_for(preset, "Build")  # a real rung, so nothing objects

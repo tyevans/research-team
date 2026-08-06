@@ -804,7 +804,13 @@ _TRYOUT = FieldStage(
     # here is executable: the input is two or three people who are not in the
     # pipeline. Marked unsatisfied rather than skipped, so a course that has
     # never met a learner carries that on its face.
-    gate=FieldGate(reviewer_role="learner", presents=("Build.alpha",)),
+    gate=FieldGate(
+        reviewer_role="learner",
+        presents=("Build.alpha",),
+        # Between Alpha and Beta: this is what promotes a build out of
+        # alpha, so alpha is what the learners must be shown.
+        gates_promotion_from="alpha",
+    ),
     amendments=Amendments(emits_to=("addie.v1.build",)),
 )
 
