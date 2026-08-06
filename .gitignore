@@ -15,3 +15,14 @@ wheels/
 # mutmut copies sources and tests here to mutate them; pytest and ruff
 # would otherwise collect the copies and fail on the duplicates.
 mutants/
+
+# Local configuration. `.env` holds real values -- including
+# AGENT_NEO4J_PASSWORD, which has no default and must not be committed.
+# `.env.example` is the committed template; keep the two in step.
+.env
+.env.*
+!.env.example
+
+# Worktrees live here. Only the worktrees -- the rest of `.claude/` is
+# settings and agents somebody may well want tracked.
+.claude/worktrees/
