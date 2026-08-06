@@ -67,7 +67,8 @@ _INTAKE = GenerateStage(
     generator=Generator(role="domain mapper", prompt_ref="prompts/ubd/intake"),
     checks=(
         Check(
-            check="provenance", params={"type": "SourceClaim", "must_cite": "SourceDocument"}
+            check="shared.provenance",
+            params={"type": "SourceClaim", "must_cite": "SourceDocument"},
         ),
     ),
 )
@@ -151,15 +152,29 @@ _DESIRED_RESULTS = GenerateStage(
     ),
     checks=(
         Check(
-            check="format_conformance",
-            params={"subtype": "understanding", "stem": "Students will understand that"},
+            check="shared.format_conformance",
+            params={
+                "type": "Intent.understanding",
+                "stem": "Students will understand that",
+            },
         ),
         Check(
-            check="format_conformance",
-            params={"subtype": "essential_question", "reject_if": "single_fact_answerable"},
+            check="shared.format_conformance",
+            params={
+                "type": "Intent.essential_question",
+                # The single-fact rejection, as far as it goes mechanically:
+                # these interrogative stems can only have a fact for an answer.
+                # It does not catch a fluent question that is nonetheless
+                # closed -- that is the critic's job -- but it does catch the
+                # ones a generator actually produces.
+                "reject_if": [
+                    r"^\s*(What year|What date|Who was|Who is|When did|When was"
+                    r"|How many|How much)\b"
+                ],
+            },
         ),
         Check(
-            check="coverage",
+            check="shared.coverage",
             params={
                 "from": {"subtype": "understanding"},
                 "to": {"subtype": "essential_question"},
@@ -167,7 +182,9 @@ _DESIRED_RESULTS = GenerateStage(
             },
         ),
         Check(
-            check="prune_ratio", params={"expected_range": [0.15, 0.40]}, severity="advisory"
+            check="shared.prune_ratio",
+            params={"expected_range": [0.15, 0.40]},
+            severity="advisory",
         ),
     ),
     # Mandatory and human, with no automated substitute. "In need of
@@ -215,7 +232,7 @@ _EVIDENCE = SpecifyStage(
     ),
     checks=(
         Check(
-            check="matrix_density",
+            check="shared.matrix_density",
             params={
                 "matrix": "intent_x_evidence",
                 "no_empty_rows": True,
@@ -223,7 +240,7 @@ _EVIDENCE = SpecifyStage(
             },
         ),
         Check(
-            check="coverage",
+            check="shared.coverage",
             params={
                 "from": {"subtype": "transfer_goal"},
                 "to": {"subtype": "performance_task"},
@@ -231,7 +248,7 @@ _EVIDENCE = SpecifyStage(
             },
         ),
         Check(
-            check="vocabulary_coverage",
+            check="shared.vocabulary_coverage",
             params={
                 "type": "Criteria",
                 "vocab": ["impact", "content", "quality", "process"],
@@ -289,7 +306,7 @@ _LEARNING_PLAN = SpecifyStage(
     ),
     checks=(
         Check(
-            check="taxonomy_distribution",
+            check="shared.taxonomy_distribution",
             params={
                 "type": "Experience",
                 "dimension": "amt",
@@ -297,23 +314,23 @@ _LEARNING_PLAN = SpecifyStage(
             },
         ),
         Check(
-            check="vocabulary_coverage",
+            check="shared.vocabulary_coverage",
             params={
                 "dimension": "whereto",
                 "vocab": ["W", "H", "E", "R", "E2", "T", "O"],
                 "min_each": 1,
             },
         ),
-        Check(check="orphan", params={"type": "Experience", "must_link_to": "Intent"}),
+        Check(check="shared.orphan", params={"type": "Experience", "must_link_to": "Intent"}),
         # W must come early: a plan that never tells the learner where it is
         # going has a hook and no destination.
         Check(
-            check="ordering",
-            params={"element": "W", "position_percentile_max": 0.25},
+            check="shared.ordering",
+            params={"element": "W", "position_percentile": 0.25},
             severity="advisory",
         ),
         Check(
-            check="budget",
+            check="shared.budget",
             params={"dimension": "duration", "source": "ContextProfile.time_budget"},
         ),
     ),
@@ -346,8 +363,8 @@ _ORGANIZATION = MatrixStage(
     generator=Generator(role="instructional planner", prompt_ref="prompts/ubd/sequence"),
     checks=(
         Check(
-            check="prerequisite_satisfied",
-            params={"for": "performance_task", "required_from": "Intent.subtype.skill"},
+            check="shared.prerequisite_satisfied",
+            params={"for": "EvidenceSpec.performance_task", "required_from": "Intent.skill"},
         ),
     ),
     gate=RubricGate(reviewer_role="instructor", presents=("Sequence.event_order",)),

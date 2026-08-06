@@ -305,3 +305,102 @@ async def test_a_workflow_selected_after_the_project_was_attached_still_gets_the
 
     await application.service.run_turn(session_id, "hello again")
     assert ADVANCE_STAGE_TOOL in model.last_bound
+
+
+# --- checks at the boundary ---------------------------------------------------
+
+
+async def test_the_approval_carries_what_the_checks_found(build_application):
+    """The point of running checks on exit: the reviewer sees them first.
+
+    A finding discovered a stage later is a finding that arrived after the
+    decision it was evidence for, which is the same as no finding at all.
+    """
+    approvals = ScriptedApprovals(ApprovalDecision("approve"))
+    application = await build_application(model=_advancing_model(), approvals=approvals)
+    project_id = await _project(application)
+    session_id = await _in_project(application, project_id)
+
+    await application.service.run_turn(session_id, "are we done here?")
+
+    context = approvals.seen[0].context
+    assert context is not None
+    assert context["stage"] == "tyler.step0.intake"
+    assert context["blocked"] is False
+    assert isinstance(context["findings"], list)
+
+
+async def test_the_findings_are_written_as_an_artifact_too(build_application):
+    """A gate decision is a moment; the artifact is the record of it."""
+    approvals = ScriptedApprovals(ApprovalDecision("approve"))
+    application = await build_application(model=_advancing_model(), approvals=approvals)
+    project_id = await _project(application)
+    session_id = await _in_project(application, project_id)
+
+    await application.service.run_turn(session_id, "are we done here?")
+
+    session = await application.service.load(session_id)
+    path = approvals.seen[0].context["findings_artifact"]
+    assert path == "/course/00-check-findings.md"
+    assert "tyler.step0.intake" in session.state.files[path]["content"]
+
+
+async def test_an_ordinary_gated_tool_carries_no_context(build_application):
+    """Every other tool's approval is exactly what it was before this existed."""
+    policy = AutonomyPolicy()
+    policy.set("write_file", "ask")
+    approvals = ScriptedApprovals(ApprovalDecision("approve"))
+    model = ToolRecordingChatModel(
+        responses=[
+            AIMessage(
+                content="",
+                id="a1",
+                tool_calls=[
+                    {
+                        "name": "write_file",
+                        "args": {"file_path": "/notes.md", "content": "hi"},
+                        "id": "t1",
+                    }
+                ],
+            ),
+            AIMessage(content="written", id="a2"),
+        ]
+    )
+    application = await build_application(model=model, approvals=approvals, policy=policy)
+    project_id = await _project(application)
+    session_id = await _in_project(application, project_id)
+
+    await application.service.run_turn(session_id, "write a note")
+
+    assert [request.context for request in approvals.seen] == [None]
+
+
+async def test_a_project_with_no_workflow_is_not_reviewed(build_application):
+    """There is no stage to check, and inventing one would be the gate
+    making things up."""
+    policy = AutonomyPolicy()
+    policy.set("write_file", "ask")
+    approvals = ScriptedApprovals(ApprovalDecision("approve"))
+    model = ToolRecordingChatModel(
+        responses=[
+            AIMessage(
+                content="",
+                id="a1",
+                tool_calls=[
+                    {
+                        "name": "write_file",
+                        "args": {"file_path": "/notes.md", "content": "hi"},
+                        "id": "t1",
+                    }
+                ],
+            ),
+            AIMessage(content="written", id="a2"),
+        ]
+    )
+    application = await build_application(model=model, approvals=approvals, policy=policy)
+    project_id = await _project(application, workflow=False)
+    session_id = await _in_project(application, project_id)
+
+    await application.service.run_turn(session_id, "write a note")
+
+    assert approvals.seen[0].context is None

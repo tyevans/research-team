@@ -19,7 +19,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage
 
 from research_team.application import ApprovalDecision, AutonomyPolicy
-from research_team.application.ports import ActivityDelta
+from research_team.application.ports import ActivityDelta, GateReview
 from research_team.domain import CodingSession, StartSession
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 from research_team.infrastructure.agent.search import build_search_tool
@@ -295,3 +295,72 @@ async def test_a_gated_tool_the_stage_hides_is_never_bound():
     await _run(executor, _session())
     assert "web_search" not in model.last_bound
     assert approvals.seen == []
+
+
+# --- the gate reviewer -------------------------------------------------------
+
+
+def _gated_executor(approvals: Any, reviewer: Any) -> DeepAgentTurnExecutor:
+    policy = AutonomyPolicy()
+    policy.set("web_search", "ask")
+    return DeepAgentTurnExecutor(
+        _searching_model(),
+        tools=(_search_tool(),),
+        policy=policy,
+        approvals=approvals,
+        gate_reviewer=reviewer,
+    )
+
+
+async def test_the_reviewers_context_reaches_the_approval():
+    async def reviewer(session: CodingSession, name: str, args: dict) -> GateReview:
+        return GateReview(context={"stage": "s.one", "findings": []})
+
+    approvals = ScriptedApprovals(ApprovalDecision("approve"))
+    await _run(_gated_executor(approvals, reviewer), _session())
+    assert approvals.seen[0].context == {"stage": "s.one", "findings": []}
+
+
+async def test_a_refusal_settles_the_call_without_asking_anybody():
+    """An invariant failure is not a judgement, so there is nobody to put it to."""
+
+    async def reviewer(session: CodingSession, name: str, args: dict) -> GateReview:
+        return GateReview(context={}, refusal="a harness invariant failed")
+
+    approvals = ScriptedApprovals(ApprovalDecision("approve"))
+    await _run(_gated_executor(approvals, reviewer), _session())
+    assert approvals.seen == []
+
+
+async def test_a_refusal_is_recorded_as_the_harness_deciding():
+    """Not `policy`, which permitted the call, and not `human`, who never saw it."""
+
+    async def reviewer(session: CodingSession, name: str, args: dict) -> GateReview:
+        return GateReview(context={}, refusal="a harness invariant failed")
+
+    session = _session()
+    await _run(_gated_executor(ScriptedApprovals(), reviewer), session)
+    [decided] = [
+        event
+        for event in session.uncommitted_events
+        if type(event).__name__ == "ToolCallDecided"
+    ]
+    assert (decided.decision, decided.decided_by) == ("reject", "harness")
+
+
+async def test_a_reviewer_that_raises_still_lets_the_approval_be_posed():
+    """A bug in the advice must not cost a call the model already earned."""
+
+    async def reviewer(session: CodingSession, name: str, args: dict) -> GateReview:
+        raise RuntimeError("the reviewer is broken")
+
+    approvals = ScriptedApprovals(ApprovalDecision("approve"))
+    await _run(_gated_executor(approvals, reviewer), _session())
+    assert [request.tool_name for request in approvals.seen] == ["web_search"]
+    assert approvals.seen[0].context is None
+
+
+async def test_no_reviewer_means_no_context_and_no_change():
+    approvals = ScriptedApprovals(ApprovalDecision("approve"))
+    await _run(_gated_executor(approvals, None), _session())
+    assert approvals.seen[0].context is None
