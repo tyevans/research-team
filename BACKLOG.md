@@ -42,18 +42,31 @@ Both surfaced during the projects/redstring work, each failing once and passing
 on an isolated re-run, on a machine running several other projects' containers:
 
 - `tests/interfaces/test_web.py::test_stream_reaches_a_real_browser_over_a_real_socket`
-  — waits up to 10s on a real socket for an SSE frame.
+  — waits up to 10s on a real socket for an SSE frame, on **hardcoded port
+  8749**. The load sensitivity is real, but the sharper cause found since is
+  the fixed port: any two concurrent runs of that file collide deterministically,
+  and the second one fails with a `CancelledError` out of httpx that names
+  nothing about ports. It cost a regression hunt during the corpus work before
+  `ss -ltnp` showed a sibling pytest holding the port. Binding port 0 and
+  reading back the assigned port would remove the whole class.
 - A cancel-settle test in `tests/application/test_turn_supervisor.py` with
-  `settle_timeout=0.1`.
+  `settle_timeout=0.1`. **Measured since, and worse than this entry first
+  said:** it failed roughly one run in three on an otherwise quiet machine
+  during the workflow-engine work, in a branch that touches neither the
+  supervisor nor its test. 0.1s is not a margin, it is a coin toss with a
+  bias, and "passes reliably when unloaded" below is simply not true of this
+  one.
 
 Both are wall-clock races against a loaded scheduler, not logic faults, and
 both are testing something worth testing — a real socket and a real timeout
 are the point. The fix is not a longer sleep: it is making the wait
 condition-driven, or making the timeout injectable so the test names its own.
 
-Left alone for now because they pass reliably on an unloaded machine and the
-CI runner is quieter than the machine they flaked on. If CI proves otherwise,
-this moves up.
+The socket test does pass reliably once nothing else holds its port. The
+cancel-settle test does not, and on the measurement above it is the more
+urgent of the two: a suite that fails a third of the time on one test trains
+people to re-run rather than read, which is how a real failure gets waved
+through.
 
 ### B5. An unclosed `SQLiteEventStore` blocks interpreter shutdown
 

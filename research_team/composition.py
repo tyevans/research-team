@@ -5,6 +5,7 @@ deepagents, and the environment are chosen and wired to the ports -- so
 swapping any of them is an edit here and nowhere else.
 """
 
+import logging
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -32,7 +33,11 @@ from research_team.application import (
     SessionService,
     TurnSupervisor,
 )
+from research_team.application.artifacts import stage_artifact_instructions
+from research_team.application.autonomy import ADVANCE_STAGE_TOOL
 from research_team.application.session_service import NO_SEARCH_CLAUSE
+from research_team.domain import CodingSession, ProjectState, current_stage_of
+from research_team.domain.workflow import Preset
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import DeepAgentTurnExecutor, build_model
 from research_team.infrastructure.agent.compaction import SummarizingStrategy
@@ -50,6 +55,14 @@ from research_team.infrastructure.agent.knowledge_tools import (
     build_knowledge_tools,
 )
 from research_team.infrastructure.agent.search import SEARCH_PROMPT, build_search_tool
+from research_team.infrastructure.agent.stage_middleware import (
+    StageMiddleware,
+    managed_tools_for,
+)
+from research_team.infrastructure.agent.workflow_tools import (
+    WORKFLOW_PROMPT,
+    build_workflow_tools,
+)
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.knowledge.stores import build_graph_store
@@ -60,7 +73,11 @@ from research_team.infrastructure.persistence import (
     build_corpus_repository,
 )
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
+from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
 from research_team.infrastructure.telemetry import build_tracer
+from research_team.workflows import PRESETS
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -290,12 +307,149 @@ def build_application(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
 
+    async def running_workflow(
+        session: CodingSession,
+    ) -> tuple[UUID, ProjectState, Preset] | None:
+        """The workflow this session's run is under, or None if there is none.
+
+        None is the answer for a session outside a project and for a project
+        that never selected a workflow -- which is every project written before
+        workflows existed. Those runs get exactly the agent they got before:
+        no gate tool, no middleware, nothing to reason about.
+
+        Folded off the `Project` aggregate on every turn rather than held
+        anywhere, for the reason `_resolved_middleware` sets out at length: the
+        checkpointer is per-turn, so the event log is the only place where
+        "where does this run stand" survives, and it is deliberately the only
+        place. A replay per turn is the price of not having two answers.
+
+        Shared by the two callers below so they cannot disagree. A turn where
+        the gate tool is bound but the stage filter is absent, or the reverse,
+        would be a run gated by half a workflow -- and the failure would look
+        like a model behaving oddly rather than like a wiring fault.
+        """
+        project_id = session.state.project_id
+        if project_id is None:
+            return None
+        state = (await repository.projects.load(project_id)).state
+        if state.preset_id is None:
+            return None
+        preset = PRESETS.get(state.preset_id)
+        if preset is None:
+            # A preset that was shipped when the run started and has since been
+            # renamed or withdrawn. Gating on a preset we do not have would
+            # mean inventing one; running ungated is at least the behaviour the
+            # project had before it chose, and it is visible in the log.
+            logger.warning(
+                "project %s runs unknown workflow %s; no stage gate applied",
+                project_id,
+                state.preset_id,
+            )
+            return None
+        if state.preset_version != preset.version:
+            # Gated by what is installed, not by what was selected. Editing a
+            # preset is expected -- they are content -- and refusing to run
+            # would strand every project mid-flight on an edit. The event log
+            # keeps `preset_version`, so a later reader can still tell which
+            # revision each stage was actually decided under.
+            logger.info(
+                "project %s selected %s v%s; running under installed v%s",
+                project_id,
+                preset.id,
+                state.preset_version,
+                preset.version,
+            )
+        return project_id, state, preset
+
+    async def workflow_tools(session: CodingSession) -> tuple[BaseTool, ...]:
+        """`advance_stage`, for a run that has a workflow to advance through.
+
+        Registered per turn rather than with the project's other tools, which
+        is the awkward-looking half of this and the load-bearing half. A
+        workflow is selected by `POST /api/projects/{id}/workflow`: it appends
+        an event and returns, with no attachment to hang a tool registration
+        off. Bound at attach time instead, the gate would be missing for the
+        whole of the session that chose the workflow -- which is every session,
+        the first time.
+
+        Bound to one project through `ProjectWorkflow`, so the tool cannot be
+        pointed at another run. The preset comes from the same fold the stage
+        filter uses, so the stage the model is held to and the stage list the
+        tool advances along are always the same list.
+        """
+        running = await running_workflow(session)
+        if running is None:
+            return ()
+        project_id, _, preset = running
+        return build_workflow_tools(
+            ProjectWorkflow(repository.projects, project_id), preset=preset
+        )
+
+    async def stage_middleware(session: CodingSession) -> tuple[StageMiddleware, ...]:
+        """The stage gate for this turn, or nothing at all.
+
+        `managed_tools_for` takes the union across *every* stage rather than
+        the current stage's list, because the middleware is a denylist: the
+        executor registers all of them once at agent creation -- `factory.py`
+        rejects a tool that was not -- and the gate withdraws what this stage
+        does not claim. Narrowing this to one stage would leave the next
+        stage's tools permanently visible.
+
+        `advance_stage` is subtracted from that union, which is the deliberate
+        answer to "should the gate tool be available in every stage". It should.
+        A stage is a gate because leaving it *requires a human*, not because
+        the model cannot ask -- `TOOL_FLOORS` floors this tool at `ask`, so
+        every crossing is an interrupt somebody has to answer, in every stage,
+        including the ones whose preset declares no `gate` of its own. Hiding
+        it per stage would buy nothing (the human is already in the way) and
+        cost the run its only way forward: a stage that claims a tool list, as
+        `hybrid.step1.framing` does, would be enterable and not leavable.
+
+        Subtracted here rather than in `StageMiddleware` because the middleware
+        takes `managed_tools` as an argument precisely so this decision belongs
+        to the caller -- the mechanism is "hide what the stage does not claim",
+        and which tools are exempt from that is policy. Doing it here also
+        means the exemption survives a preset that names `advance_stage` in
+        some stage's `tools`, which would otherwise pull it into the managed
+        set and hide it from every stage that did not.
+
+        The instructions are the stage's artifact block -- which files it owes,
+        at which paths, with which frontmatter -- derived from the stage's own
+        declared outputs, so a preset edit cannot leave the prompt describing
+        files nothing looks for. `WORKFLOW_PROMPT` joins it because a bound
+        tool nobody explained is a tool the model calls at the wrong moment:
+        it says the gate asks a human, and that advancing is for when this
+        stage's outputs exist, not for when the model has run out to say.
+        """
+        running = await running_workflow(session)
+        if running is None:
+            return ()
+        project_id, state, preset = running
+        stage = current_stage_of(state, preset)
+        if stage is None:
+            logger.warning(
+                "project %s is at stage %s, which %s does not define; no stage gate applied",
+                project_id,
+                state.current_stage,
+                preset.id,
+            )
+            return ()
+        return (
+            StageMiddleware(
+                stage,
+                managed_tools=managed_tools_for(preset.stages) - {ADVANCE_STAGE_TOOL},
+                instructions=stage_artifact_instructions(preset, stage) + WORKFLOW_PROMPT,
+            ),
+        )
+
     executor = DeepAgentTurnExecutor(
         resolved_model,
         subagents=subagents,
         tools=tools,
         policy=resolved_policy,
         approvals=approvals,
+        middleware_provider=stage_middleware,
+        tools_provider=workflow_tools,
     )
 
     async def open_graph(
