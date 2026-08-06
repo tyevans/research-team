@@ -389,6 +389,39 @@ def run_checks(bindings: Iterable[Check], context: CheckContext) -> list[Finding
 
 # --- shared helpers ---------------------------------------------------------
 
+_INSTRUMENT_RULE = """When emptiness is a pass and when it is a finding.
+
+Every check here can be handed nothing to look at, and the two honest answers
+are not interchangeable. The rule, which every check in this module follows:
+
+**A check reports when the instrument it was handed is missing. A check passes
+when only its domain is empty.**
+
+The instrument is what the *binding* supplies or points at -- a ceiling to
+measure against, a candidate pool to compute a ratio over, a vocabulary, a
+ledger, a criterion document. If it is absent the check has no opinion, and
+saying so is the only truthful result: a budget nobody could evaluate must not
+be indistinguishable from a budget that was met. `budget`, `prune_ratio`,
+`source_starvation`, `taxonomy_distribution`, `vocabulary_coverage`,
+`ordering`, `matrix_density`, `exclusion_ledger` and `contradiction_escalation`
+all report in this case.
+
+The domain is the set of artifacts a universal quantifies over. "Every intent
+has an experience" is *true* of zero intents, and that is not a weasel -- it is
+what the sentence means. `coverage`, `orphan`, `recurrence` and `provenance`
+therefore pass on an empty domain. The question those checks are not being
+asked is whether the stage should have produced artifacts at all; that is the
+stage's declared outputs, and answering it here would put the same
+finding in four places and still miss the types nothing is bound to.
+
+The two ledger checks moved from the second category to the first, because for
+them the distinction collapses: `exclusion_ledger` and
+`contradiction_escalation` exist specifically to detect *disappearance*, and an
+absent ledger is the disappearance rather than an empty domain over which
+something is vacuously true. An empty page saying "nothing was cut" and no page
+at all look identical downstream, and only one of them is a claim anybody made.
+"""
+
 #: What a check hands back before `run_check` dresses it as a `Finding`:
 #: message, affected ids, suggested edit. Checks are spared repeating the name
 #: and severity they cannot choose anyway.
@@ -885,15 +918,31 @@ def _exclusion_ledger(context: CheckContext, params: ExclusionParams) -> list[Re
     A survivor counts as accounting for a candidate if it *is* that candidate or
     links to it, so a screen may either retain the artifact or produce a
     refined one that cites its origin.
+
+    A missing ledger is reported rather than passed -- see `_INSTRUMENT_RULE`.
+    The ledger is this check's instrument, and without one nothing records what
+    was cut, which from the output alone is indistinguishable from a screen
+    that cut nothing. Returning clean there is the reassuring-direction failure
+    the check exists to catch.
     """
     if not params.no_silent_drops:
         return []
+    ledgers = _select(context, params.ledger)
+    if not ledgers:
+        return [
+            (
+                f"no {params.ledger.describe()} is present, so nothing records "
+                "what this stage cut",
+                (),
+                "write the exclusion ledger, empty and explicit if nothing was cut",
+            )
+        ]
     survivors = _select(context, params.survivors)
     accounted = {artifact.id for artifact in survivors}
     for artifact in survivors:
         accounted |= _adjacent(context, artifact.id)
     listed: dict[str, Any] = {}
-    for ledger in _select(context, params.ledger):
+    for ledger in ledgers:
         for entry in _entries(ledger, params.entries_field):
             candidate = entry.get(params.id_field)
             if isinstance(candidate, str):
@@ -1547,11 +1596,27 @@ def _contradiction_escalation(
     with no escalation target is a finding, and so is an entry with neither --
     that one is a contradiction logged and then forgotten, which is the same
     outcome as never having noticed.
+
+    A missing log is reported rather than passed -- see `_INSTRUMENT_RULE`. "No
+    contradictions were found" and "nobody looked" are the same empty page, and
+    the second is the common one: consolidation merges disagreeing claims
+    quietly, so the absence of a log is weak evidence of agreement and strong
+    evidence of nothing having checked.
     """
     if not params.no_auto_resolve:
         return []
+    logs = _select(context, params.type)
+    if not logs:
+        return [
+            (
+                f"no {params.type.describe()} is present, so a contradiction "
+                "found here and one never looked for read the same",
+                (),
+                "write the contradiction log, empty and explicit if none were found",
+            )
+        ]
     results: list[Result] = []
-    for log in _select(context, params.type):
+    for log in logs:
         for index, entry in enumerate(_entries(log, params.entries_field)):
             where = entry.get("id", index)
             escalated = not _blank(entry.get(params.escalation_field))

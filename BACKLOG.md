@@ -50,23 +50,30 @@ on an isolated re-run, on a machine running several other projects' containers:
   `ss -ltnp` showed a sibling pytest holding the port. Binding port 0 and
   reading back the assigned port would remove the whole class.
 - A cancel-settle test in `tests/application/test_turn_supervisor.py` with
-  `settle_timeout=0.1`. **Measured since, and worse than this entry first
-  said:** it failed roughly one run in three on an otherwise quiet machine
-  during the workflow-engine work, in a branch that touches neither the
-  supervisor nor its test. 0.1s is not a margin, it is a coin toss with a
-  bias, and "passes reliably when unloaded" below is simply not true of this
-  one.
+  `settle_timeout=0.1`. **Measured properly since, after two wrong readings
+  of it.** It was first recorded here as failing ~1 run in 3 on a quiet
+  machine; that figure was taken while other suites were running and is not
+  right. A controlled trial on the same code gives 10/10 passing on an idle
+  box and 6/6 under one concurrent suite, with failures appearing only under
+  heavy load (two or more suites, one of them another project's).
+
+  Both wrong readings pointed the same way, which is the useful part: a
+  0.1s timeout produces failures whose cause is invisible in the failure
+  itself, so whoever meets it reaches for the nearest story. Once it cost an
+  afternoon deciding whether a branch had broken the turn path; the branch
+  was fine and the answer needed a same-code A/B against `main` under matched
+  load to establish. That is far too much ceremony to attribute one test.
 
 Both are wall-clock races against a loaded scheduler, not logic faults, and
 both are testing something worth testing — a real socket and a real timeout
 are the point. The fix is not a longer sleep: it is making the wait
 condition-driven, or making the timeout injectable so the test names its own.
 
-The socket test does pass reliably once nothing else holds its port. The
-cancel-settle test does not, and on the measurement above it is the more
-urgent of the two: a suite that fails a third of the time on one test trains
-people to re-run rather than read, which is how a real failure gets waved
-through.
+Neither is urgent on its failure rate. Both are urgent on their
+*diagnosability*: a hardcoded port and a 0.1s deadline each fail in a way
+that names nothing about the real cause, so each one costs an investigation
+every time somebody new meets it. Make the port ephemeral and the timeout
+injectable, and both become tests that either pass or say why.
 
 ### B5. An unclosed `SQLiteEventStore` blocks interpreter shutdown
 
@@ -226,6 +233,33 @@ accumulating: the scan is O(events in the category), not O(projects), so a
 long-lived project makes every listing slower even if there is only one.
 
 Found in review of the corpus-layer work; the scan predates it.
+
+### B22. `self_review_separation` is called a harness invariant and bound like an option
+
+`research_team/application/checks.py` describes it as an invariant -- a critic
+must not be the generator whose work it screens, because self-screening yields
+near-100% pass rates and the failure is invisible in the output. Every preset
+then binds it only at Tyler's screen stages, and not at the other stages that
+have both a generator and a critic. Consistent across `hybrid.py`, `ubd.py` and
+`addie.py`, so it is a pattern rather than a slip.
+
+Nothing is currently wrong: the stages it guards are the ones where the
+model's authority is most concentrated. But an invariant that each preset
+author has to remember to bind is not an invariant, it is a convention with a
+strong docstring, and the next preset written by someone who has not read that
+docstring will not have it anywhere.
+
+**The fix is probably not more bindings.** If it is genuinely an invariant,
+`stage_exit` should assert it for every stage that declares both a generator
+and a critic, whether or not the preset asked -- the same way the corpus layer
+prevents a lost document structurally rather than by asking authors to
+remember. That turns a per-preset obligation into a property of the engine,
+and it removes the failure mode where the check is absent exactly where nobody
+thought to look.
+
+Found in review of the check library and deferred because it changes the
+contract between presets and the engine, which is a decision worth making
+deliberately rather than inside a review round.
 
 ## Knowledge and corpus
 

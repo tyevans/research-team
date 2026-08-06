@@ -55,6 +55,14 @@ _INTAKE = GenerateStage(
     outputs=(
         Out(artifact_type=A.SOURCE_CLAIM, cardinality="1..n"),
         Out(artifact_type=A.OPEN_QUESTION, cardinality="0..n"),
+        # B15's home. Consolidation merges disagreeing claims quietly -- two
+        # SMEs giving different escalation thresholds become one node -- so the
+        # contradiction has to have somewhere to be recorded before anything
+        # downstream can be asked to adjudicate it. `0..n` because a corpus
+        # with no disagreements is a real outcome; the file is still written,
+        # empty and explicit, which is what makes "none found" a claim rather
+        # than a silence.
+        Out(artifact_type=A.CONTESTED_QUEUE, cardinality="0..n"),
     ),
     tools=("list_sources", "read_source", "graph_search"),
     generator=Generator(role="corpus router", prompt_ref="prompts/tyler/intake"),
@@ -63,7 +71,13 @@ _INTAKE = GenerateStage(
             check="shared.provenance",
             params={"type": "SourceClaim", "must_cite": "SourceDocument"},
         ),
-        Check(check="shared.contradiction_escalation", params={"no_auto_resolve": True}),
+        Check(
+            check="shared.contradiction_escalation",
+            # Naming the type is what makes the check bite: on the default
+            # filter it matches every artifact, finds no entries on any of
+            # them, and reports nothing.
+            params={"type": "ContestedQueue", "no_auto_resolve": True},
+        ),
     ),
 )
 
@@ -105,6 +119,19 @@ _FRAMING = DecideStage(
                 "reject_if": ["empty", "unmeasurable"],
             },
         ),
+        # The mechanism behind the halt. A recommendation that never names
+        # `non_training` has not considered not building a course, and the
+        # pipeline is structurally biased toward producing its own output --
+        # so the counterweight has to be a check rather than a hope that the
+        # generator raises the possibility unprompted.
+        Check(
+            check="shared.vocabulary_coverage",
+            params={
+                "type": "InterventionRecommendation",
+                "dimension": "options_considered",
+                "vocab": ["training", "non_training", "hybrid"],
+            },
+        ),
     ),
     # ADDIE's A1 grafted onto Tyler's front end. This is the halt point, and
     # the only cheap one: everything after it has sunk cost behind it.
@@ -125,7 +152,15 @@ _SOURCES = GenerateStage(
             artifact_type=A.CONTEXT_PROFILE, cardinality="1", from_stage="hybrid.step1.framing"
         ),
     ),
-    outputs=(Out(artifact_type=A.SOURCE_DOSSIER, cardinality="1..n"),),
+    outputs=(
+        Out(artifact_type=A.SOURCE_DOSSIER, cardinality="1..n"),
+        # Where ADDIE's expert-gap machinery lands in the hybrid. Tyler's third
+        # source is discipline specialists -- experts explaining their field in
+        # prose -- which is exactly the substrate the flag reads, so this is the
+        # host even though the stage came from Tyler rather than ADDIE.
+        # `0..n`: a corpus with no detectable gaps is a legitimate result.
+        Out(artifact_type=A.RISK_REGISTER, subtype="expert_gap_flag", cardinality="0..n"),
+    ),
     tools=("list_sources", "read_source", "graph_search"),
     generator=Generator(
         role="three disjoint analysts (learner / world / discipline)",
@@ -150,9 +185,24 @@ _SOURCES = GenerateStage(
             check="shared.required_field_nondegenerate",
             params={"field": "known_bias_statement"},
         ),
+        # ADDIE's one genuinely model-based check, grafted onto Tyler's source
+        # analysis: where did the expert stop explaining? It reports a
+        # `critic_gate` finding rather than a verdict, because a graph query
+        # cannot answer it and a keyword proxy would find the opposite of the
+        # target -- expert gaps are where the prose reads smoothly.
+        Check(
+            check="addie.expert_gap_flag",
+            params={"quote_span_required": True},
+            severity="advisory",
+        ),
     ),
     gate=RubricGate(
-        reviewer_role="sme", presents=("SourceDossier.*", "checks.source_starvation")
+        reviewer_role="sme",
+        presents=(
+            "SourceDossier.*",
+            "RiskRegister.expert_gap_flag",
+            "checks.source_starvation",
+        ),
     ),
 )
 
@@ -233,7 +283,17 @@ _PHILOSOPHY = ScreenStage(
                 "forbid_derivation_from": "SourceClaim",
             },
         ),
-        Check(check="shared.exclusion_ledger", params={"no_silent_drops": True}),
+        Check(
+            check="shared.exclusion_ledger",
+            # Naming the ledger type is what makes the check bite: left
+            # to its default filter it matches every artifact, finds no
+            # entries on any of them, and reports nothing.
+            params={
+                "candidates": "Intent.candidate",
+                "ledger": "Exclusion",
+                "no_silent_drops": True,
+            },
+        ),
         Check(
             check="shared.self_review_separation",
             params={"generator_stage": "tyler.step1b.candidates"},
@@ -283,7 +343,17 @@ _PSYCHOLOGY = ScreenStage(
     ),
     checks=(
         Check(check="shared.verdict_citation", params={"ledger": "VerdictLedger.psychology"}),
-        Check(check="shared.exclusion_ledger", params={"no_silent_drops": True}),
+        Check(
+            check="shared.exclusion_ledger",
+            # Naming the ledger type is what makes the check bite: left
+            # to its default filter it matches every artifact, finds no
+            # entries on any of them, and reports nothing.
+            params={
+                "candidates": "Intent.candidate",
+                "ledger": "Exclusion",
+                "no_silent_drops": True,
+            },
+        ),
         Check(
             check="shared.prerequisite_satisfied",
             params={"for": "Intent", "required_from": "ContextProfile.entry_state"},
@@ -417,6 +487,19 @@ _EVIDENCE = SpecifyStage(
                 "min": 1,
             },
         ),
+        # A rubric may draw on the criterion types it has use for, but an
+        # `impact` criterion is not optional: a performance judged only on its
+        # process has stopped assessing transfer, which is the documented
+        # common failure of rubrics written against a task rather than a goal.
+        Check(
+            check="shared.vocabulary_coverage",
+            params={
+                "type": "Criteria",
+                "vocab": ["impact", "content", "quality", "process"],
+                "min_required": ["impact"],
+            },
+            severity="advisory",
+        ),
         Check(
             check="shared.format_conformance",
             params={
@@ -514,6 +597,13 @@ _LEARNING_PLAN = SpecifyStage(
             },
         ),
         Check(check="shared.orphan", params={"type": "Experience", "must_link_to": "Intent"}),
+        # W must come early: a plan that never tells the learner where it is
+        # going has a hook and no destination.
+        Check(
+            check="shared.ordering",
+            params={"element": "W", "position_percentile": 0.25},
+            severity="advisory",
+        ),
         Check(
             check="shared.budget",
             params={"dimension": "duration", "source": "ContextProfile.time_budget"},
@@ -714,7 +804,7 @@ _TRYOUT = FieldStage(
     # here is executable: the input is two or three people who are not in the
     # pipeline. Marked unsatisfied rather than skipped, so a course that has
     # never met a learner carries that on its face.
-    gate=FieldGate(reviewer_role="learner", presents=("Build.beta",)),
+    gate=FieldGate(reviewer_role="learner", presents=("Build.alpha",)),
     amendments=Amendments(emits_to=("addie.v1.build",)),
 )
 

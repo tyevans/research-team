@@ -1438,3 +1438,78 @@ def test_a_matrix_that_was_never_built_is_a_finding_not_a_malformed_binding() ->
     findings = run_check(bind("shared.matrix_density", matrix="intent_x_evidence"), context())
     assert len(findings) == 1
     assert "never checked" in findings[0].message
+
+
+# --- when emptiness is a pass and when it is a finding ------------------------
+#
+# The rule is stated in `checks._INSTRUMENT_RULE`: a check reports when the
+# instrument it was handed is missing, and passes when only its domain is
+# empty. These pin both halves, because the inconsistency they replaced was not
+# a decision anybody made -- it was a coincidence of who wrote which check.
+
+
+def test_a_missing_exclusion_ledger_is_a_finding_not_a_clean_pass() -> None:
+    """The reassuring-direction failure this library exists to prevent.
+
+    An empty page saying "nothing was cut" and no page at all look identical
+    downstream, and only one of them is a claim somebody made.
+    """
+    findings = run_check(
+        bind(
+            "shared.exclusion_ledger",
+            candidates="Intent",
+            survivors="Intent",
+            ledger="Exclusion",
+        ),
+        context(artifact("i1")),
+    )
+    assert len(findings) == 1
+    assert "nothing records" in findings[0].message
+
+
+def test_a_missing_contradiction_log_is_a_finding_not_a_clean_pass() -> None:
+    findings = run_check(
+        bind("shared.contradiction_escalation", type="ContestedQueue"),
+        context(artifact("i1")),
+    )
+    assert len(findings) == 1
+
+
+def test_an_empty_ledger_that_exists_still_passes_when_nothing_was_cut() -> None:
+    """The fix must not make "we cut nothing, explicitly" impossible to say."""
+    graph = context(
+        artifact("led", ArtifactType.EXCLUSION, fields={"entries": []}),
+    )
+    assert (
+        run_check(
+            bind(
+                "shared.exclusion_ledger",
+                candidates="Intent",
+                survivors="Intent",
+                ledger="Exclusion",
+            ),
+            graph,
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        bind("shared.coverage", **{"from": "Intent", "to": "Experience"}),
+        bind("shared.orphan", type="Intent", must_link_to="Experience"),
+        bind("shared.recurrence", type="Intent", min_occurrences=2),
+        bind("shared.provenance", type="Intent"),
+    ],
+    ids=["coverage", "orphan", "recurrence", "provenance"],
+)
+def test_a_universal_over_an_empty_domain_passes(binding: Check) -> None:
+    """ "Every intent has an experience" is true of zero intents.
+
+    That is what the sentence means, not a loophole. Whether the stage should
+    have produced intents at all is its declared outputs' question; answering it
+    here would put one finding in four places and still miss every type nothing
+    is bound to.
+    """
+    assert run_check(binding, context()) == []

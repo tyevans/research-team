@@ -62,6 +62,14 @@ _GAP = DecideStage(
         Out(artifact_type=A.SOURCE_CLAIM, cardinality="0..n"),
         Out(artifact_type=A.GAP_STATEMENT, cardinality="1"),
         Out(artifact_type=A.INTERVENTION_RECOMMENDATION, cardinality="1"),
+        # B15's home. Consolidation merges disagreeing claims quietly -- two
+        # SMEs giving different escalation thresholds become one node -- so the
+        # contradiction has to have somewhere to be recorded before anything
+        # downstream can be asked to adjudicate it. `0..n` because a corpus
+        # with no disagreements is a real outcome; the file is still written,
+        # empty and explicit, which is what makes "none found" a claim rather
+        # than a silence.
+        Out(artifact_type=A.CONTESTED_QUEUE, cardinality="0..n"),
         Out(artifact_type=A.OPEN_QUESTION, cardinality="0..n"),
         # Planned backward from Level 4 and authored here, because an
         # evaluation plan written after the course is a plan written to be
@@ -98,7 +106,10 @@ _GAP = DecideStage(
                 "vocab": ["training", "non_training", "hybrid"],
             },
         ),
-        Check(check="shared.contradiction_escalation", params={"no_auto_resolve": True}),
+        Check(
+            check="shared.contradiction_escalation",
+            params={"type": "ContestedQueue", "no_auto_resolve": True},
+        ),
     ),
     gate=DecisionGate(
         reviewer_role="sponsor",
