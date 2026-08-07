@@ -127,6 +127,14 @@ async def stored_page(corpus: CorpusReadPort, url: str, max_chars: int) -> str |
     optimisation on this path, and an optimisation that can break the
     operation it accelerates is not one -- a Neo4j outage should cost a
     redundant fetch, not the page.
+
+    Checked before the memo, which has a consequence worth knowing: after a
+    `refresh=True` read of a page that is also in the corpus, the next plain
+    call hits the corpus again and returns the older stored copy, not the
+    fresh one -- the fresh read is visible only on the turn that asked for
+    it, until something re-stores it. That follows from "corpus before
+    memo" and is intended, but it is the one place the ordering surprises a
+    reader.
     """
     target = normalize_url(url)
     try:

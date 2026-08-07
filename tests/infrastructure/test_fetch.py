@@ -19,7 +19,7 @@ from research_team.infrastructure.agent.fetch import (
     build_fetch_tool,
     format_page,
 )
-from research_team.infrastructure.agent.recall import Recall
+from research_team.infrastructure.agent.recall import Recall, normalize_url
 
 ARTICLE = (
     "<html><head><title>Incident severity</title></head><body>"
@@ -201,11 +201,17 @@ def test_an_explicit_setting_overrides_the_floor_in_both_directions():
 
 
 class _StubCorpus:
-    """A `CorpusReadPort` over a fixed set of documents."""
+    """A `CorpusReadPort` over a fixed set of documents.
 
-    def __init__(self, documents=(), error=None):
+    `drop_on_read` names a source id that is listed but comes back `None`
+    from `read_document` -- the state a real corpus is in for one instant
+    between a delete landing and a listing that predates it.
+    """
+
+    def __init__(self, documents=(), error=None, drop_on_read=None):
         self._documents = list(documents)
         self._error = error
+        self._drop_on_read = drop_on_read
         self.reads: list[str] = []
 
     async def list_documents(self):
@@ -217,6 +223,8 @@ class _StubCorpus:
         if self._error:
             raise self._error
         self.reads.append(source_id)
+        if source_id == self._drop_on_read:
+            return None
         for document in self._documents:
             if document.record.source_id == source_id:
                 return document
@@ -267,7 +275,9 @@ async def test_a_corpus_hit_comes_back_citable():
 
     text = await fetch.ainvoke({"url": "https://ex.example/sev"})
 
-    assert "s1@0-" in text
+    assert "s1@0-12 of 12 chars" in text
+    body = text.split("\n\n")[-1]
+    assert len(body) == 12 - 0
 
 
 @pytest.mark.asyncio
@@ -317,9 +327,49 @@ async def test_refresh_reaches_the_network_past_both():
 
 
 @pytest.mark.asyncio
-async def test_a_dropped_or_absent_page_still_reaches_the_network():
+async def test_refresh_also_bypasses_a_memo_hit_and_repopulates_it():
+    """The corpus case above is satisfied even if `refresh` only bypassed the
+    corpus: with no `corpus=`, the first call warms the memo from the
+    network, so a `refresh` that skipped just the corpus check but still
+    honoured the memo would still show one network call. This isolates the
+    memo: two plain-network reads are expected, and the second (refreshed)
+    read must still land in the memo -- `recall.put` sits outside the `if not
+    refresh:` guard, so a later refactor that moved it inside would go
+    unnoticed without this assertion.
+    """
+    calls: list[int] = []
+    recall = Recall()
+    fetch = build_fetch_tool(client=_client(_counting(calls)), recall=recall)
+
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+    await fetch.ainvoke({"url": "https://ex.example/sev", "refresh": True})
+
+    assert len(calls) == 2
+    assert recall.get("https://ex.example/sev", key=normalize_url("https://ex.example/sev"))
+
+
+@pytest.mark.asyncio
+async def test_a_page_not_in_the_corpus_still_reaches_the_network():
+    """Covers the `match is None` branch of `stored_page`: nothing in the
+    corpus has this URI at all.
+    """
     calls: list[int] = []
     corpus = _StubCorpus([_stored("s1", "https://ex.example/other")])
+    fetch = build_fetch_tool(client=_client(_counting(calls)), corpus=corpus)
+
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_page_dropped_between_listing_and_reading_still_reaches_the_network():
+    """Covers the `document is None` branch of `stored_page`: the record is
+    listed, matches by URI, and then a delete lands before `read_document`
+    runs -- the one window `_StubCorpus.drop_on_read` exists to reproduce.
+    """
+    calls: list[int] = []
+    corpus = _StubCorpus([_stored("s1", "https://ex.example/sev")], drop_on_read="s1")
     fetch = build_fetch_tool(client=_client(_counting(calls)), corpus=corpus)
 
     await fetch.ainvoke({"url": "https://ex.example/sev"})
