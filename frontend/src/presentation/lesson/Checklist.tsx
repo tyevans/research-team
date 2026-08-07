@@ -4,7 +4,7 @@ import type { AttemptsApi } from '@application/lesson/use-attempts.ts'
 import type { ComponentBlock } from '@domain/lesson/document.ts'
 import { readChecklist } from '@domain/lesson/widgets.ts'
 
-import { Prose } from './LessonDocument.tsx'
+import { Prose } from './widgets.tsx'
 
 export const Checklist = ({
   block,

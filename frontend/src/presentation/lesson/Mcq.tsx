@@ -4,7 +4,7 @@ import type { AttemptsApi } from '@application/lesson/use-attempts.ts'
 import type { ComponentBlock } from '@domain/lesson/document.ts'
 import { readMcq } from '@domain/lesson/widgets.ts'
 
-import { CmpButton, Prose, VerdictPanel } from './LessonDocument.tsx'
+import { CmpButton, Prose, VerdictPanel } from './widgets.tsx'
 
 export const Mcq = ({ block, attempts }: { block: ComponentBlock; attempts: AttemptsApi }) => {
   const mcq = readMcq(block)

@@ -1,4 +1,3 @@
-import clsx from 'clsx'
 import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
@@ -7,8 +6,6 @@ import { errorMessage } from '@application/ports/errors.ts'
 import { queryKeys } from '@application/queries/keys.ts'
 import { currentView, type SessionStore } from '@application/session/session-store.ts'
 import { useContainer } from '@app/container-context.tsx'
-import { activityBody } from '@domain/activity/activity.ts'
-import { TurnState } from '@domain/session/turn.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { compactedThrough } from '@domain/session/session.ts'
 import { findFile } from '@domain/workspace/workspace-file.ts'
@@ -16,18 +13,20 @@ import type { EventIndex } from '@domain/session/event-index.ts'
 import { shortId, type SessionId } from '@domain/shared/identifier.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
 
-import { Button, ErrorBox } from '../common/primitives.tsx'
+import { ErrorBox } from '../common/primitives.tsx'
 import { plural } from '../formatting/format.ts'
 import { sessionHref, treeHref } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
+import { ActivityFeed } from './ActivityFeed.tsx'
 import { Approvals } from './Approvals.tsx'
 import { Composer } from './Composer.tsx'
 import { Conversation } from './Conversation.tsx'
 import { FileList } from './FileList.tsx'
 import { FileView } from './FileView.tsx'
 import { ScrubBar } from './ScrubBar.tsx'
+import { Pane } from './Pane.tsx'
 import { Timeline } from './Timeline.tsx'
-import { usePanes, type PaneName } from './use-panes.ts'
+import { usePanes } from './use-panes.ts'
 import { useSessionStream } from './use-session-stream.ts'
 
 export const SessionView = ({
@@ -288,75 +287,3 @@ const MissingHere = ({ path, at }: { path: FilePath; at: number | null }) => (
     {`${path.value} does not exist as of event ${at ?? 'HEAD'}.`}
   </div>
 )
-
-/** Provisional content for the turn in flight.
- *
- * Gated on the turn state as well as on having entries: the tab that *sent* the
- * turn tracks it as `sending` while a tab only watching tracks it as
- * `watching`, and a bubble outliving both is one nothing would ever clear. */
-const ActivityFeed = ({ store }: { store: SessionStore }) => {
-  const turn = store((state) => state.turn)
-  const activity = store((state) => state.activity)
-
-  if (!TurnState.isBusy(turn) || activity.size === 0) return null
-
-  return (
-    <div className="activity">
-      {[...activity.values()].map((entry) => (
-        <div key={entry.messageId} className={`provisional provisional-${entry.kind}`}>
-          <div className="provisional-tag">in progress — not yet recorded</div>
-          <div className="provisional-body">{activityBody(entry)}</div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-const Pane = ({
-  name,
-  title,
-  label,
-  meta,
-  panes,
-  children,
-  footer,
-  bodyClassName,
-  raw = false,
-}: {
-  name: PaneName
-  title: string
-  label: string
-  meta: string
-  panes: ReturnType<typeof usePanes>
-  children: React.ReactNode
-  footer?: React.ReactNode
-  bodyClassName?: string
-  /** The child already renders its own `.pane-body` (it needs the scroll
-   *  container to stick to the bottom), so this pane must not add a second. */
-  raw?: boolean
-}) => {
-  const collapsed = panes.isCollapsed(name)
-  return (
-    <section
-      className={clsx('pane', `pane-${name}`, collapsed && 'collapsed')}
-      data-pane={name}
-      aria-label={label}
-    >
-      <header className="pane-head">
-        <Button
-          tone="ghost"
-          className="pane-toggle"
-          aria-expanded={!collapsed}
-          title={collapsed ? 'Expand this pane' : 'Collapse this pane'}
-          onClick={() => panes.toggle(name)}
-        >
-          {collapsed ? '▸' : '◂'}
-        </Button>
-        <h2>{title}</h2>
-        <span className="pane-meta">{meta}</span>
-      </header>
-      {raw ? children : <div className={clsx('pane-body', bodyClassName)}>{children}</div>}
-      {footer}
-    </section>
-  )
-}

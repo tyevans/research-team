@@ -4,7 +4,7 @@ import type { AttemptsApi } from '@application/lesson/use-attempts.ts'
 import type { ComponentBlock } from '@domain/lesson/document.ts'
 import { activeBlank, clozeBlanks, readCloze } from '@domain/lesson/widgets.ts'
 
-import { CmpButton, VerdictPanel } from './LessonDocument.tsx'
+import { CmpButton, VerdictPanel } from './widgets.tsx'
 
 export const Cloze = ({ block, attempts }: { block: ComponentBlock; attempts: AttemptsApi }) => {
   const cloze = readCloze(block)

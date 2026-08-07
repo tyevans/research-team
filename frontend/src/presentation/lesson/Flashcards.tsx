@@ -4,7 +4,7 @@ import type { AttemptsApi } from '@application/lesson/use-attempts.ts'
 import type { ComponentBlock } from '@domain/lesson/document.ts'
 import { readFlashcards } from '@domain/lesson/widgets.ts'
 
-import { CmpButton, Prose } from './LessonDocument.tsx'
+import { CmpButton, Prose } from './widgets.tsx'
 
 export const Flashcards = ({
   block,
