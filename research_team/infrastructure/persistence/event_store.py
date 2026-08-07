@@ -19,6 +19,7 @@ from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application import FeedEntry
 from research_team.domain import CodingSession, Corpus, Project
+from research_team.domain.auto_research import AutoResearchRun
 from research_team.domain.topic import Topic
 
 SNAPSHOT_THRESHOLD = 50
@@ -41,6 +42,32 @@ def build_project_repository(
     return AggregateRepository(
         store,
         Project,
+        event_publisher=publisher,
+        snapshot_store=snapshot_store,
+        snapshot_threshold=SNAPSHOT_THRESHOLD,
+        snapshot_mode="background",
+    )
+
+
+def build_auto_research_repository(
+    store: SQLiteEventStore,
+    publisher: InMemoryEventBus | None = None,
+    snapshot_store: SQLiteSnapshotStore | None = None,
+) -> AggregateRepository[AutoResearchRun]:
+    """Autonomous runs, over the same log as the sessions whose turns they drive.
+
+    Published like everything else, which is what puts a run's rounds on the
+    live feed without a second channel: a browser watching a project sees
+    `AutoRoundStarted` arrive the same way it sees a turn's events.
+
+    Snapshots at the usual threshold. A long run appends three events per
+    round, so a fold is cheap for a while and not forever, and `AutoRunState`
+    holds counters and ids -- the one unbounded field is `topics_seen`, which
+    is bounded in practice by `MAX_OPEN_TOPICS`.
+    """
+    return AggregateRepository(
+        store,
+        AutoResearchRun,
         event_publisher=publisher,
         snapshot_store=snapshot_store,
         snapshot_threshold=SNAPSHOT_THRESHOLD,

@@ -151,6 +151,23 @@ def searxng_results() -> int:
     return int(os.getenv("AGENT_SEARXNG_RESULTS", str(DEFAULT_SEARXNG_RESULTS)))
 
 
+def auto_research_over_http() -> bool:
+    """Whether the web UI may start an autonomous run. Off unless asked.
+
+    The one switch in front of the loop, and it is configuration rather than a
+    gate for the reason `AGENT_SEARXNG_URL` is: "unset means the route is not
+    there" is a stronger promise than any check inside a route that exists.
+
+    Off by default because of what the run is and where the port is. There is
+    no authentication on any route (BACKLOG B18), and this is the only one that
+    would spend an hour of model time on behalf of whoever called it -- every
+    other route reads the log or runs one turn somebody is waiting on. The REPL
+    has no equivalent switch and needs none: somebody is at the terminal, which
+    is the property this variable is standing in for.
+    """
+    return os.getenv("AGENT_AUTO_RESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def graph_store() -> str:
     """What backs the knowledge graph. `memory` needs no server."""
     return os.getenv("AGENT_GRAPH_STORE", DEFAULT_GRAPH_STORE)

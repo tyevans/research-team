@@ -471,6 +471,53 @@ async def test_max_rounds_bounds_a_run_whose_rounds_keep_producing(runs):
     assert report.rounds == 4
 
 
+async def test_a_cancelled_run_stops_between_rounds_and_records_why(runs):
+    """`cancelled` is a reason in the log, not a run that simply goes quiet.
+
+    Asked between rounds rather than during one, so the round in flight
+    finishes: the alternative abandons a turn mid-write and leaves the stream
+    with no stop event at all.
+    """
+    queue = FakeQueue(attention())
+    stop_after = []
+
+    async def work(topic_id, why):
+        stop_after.append(topic_id)
+        return RoundOutcome(findings=1)
+
+    report = await AutoResearchDriver(runs, FakeTopics(), queue, run_round=work).run(
+        uuid4(),
+        uuid4(),
+        budget=Budget(max_rounds=50, quiet_rounds=50),
+        cancelled=lambda: bool(stop_after),
+    )
+
+    assert report.reason == "cancelled"
+    assert report.rounds == 1
+    assert report.unexamined_topics == 1
+    assert not report.finished_cleanly
+
+
+async def test_a_run_can_be_named_before_it_starts(runs):
+    """So a caller that starts one in the background can report on it at once."""
+    named = uuid4()
+
+    report = await AutoResearchDriver(
+        runs, FakeTopics(), FakeQueue(), run_round=_never_called
+    ).run(uuid4(), uuid4(), run_id=named)
+
+    assert report.run_id == named
+
+
+async def test_a_run_that_starts_cancelled_does_no_work(runs):
+    report = await AutoResearchDriver(
+        runs, FakeTopics(), FakeQueue(attention()), run_round=_never_called
+    ).run(uuid4(), uuid4(), cancelled=lambda: True)
+
+    assert report.reason == "cancelled"
+    assert report.rounds == 0
+
+
 async def test_the_report_only_calls_a_run_clean_when_nothing_is_outstanding():
     stopped_early = RunReport(
         run_id=uuid4(), reason="max_rounds", rounds=4, findings=1, unexamined_topics=2

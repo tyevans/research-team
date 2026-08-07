@@ -144,14 +144,31 @@ class AutoResearchDriver:
         budget: Budget | None = None,
         autonomy_snapshot: dict[str, Any] | None = None,
         read_only: bool = True,
+        run_id: UUID | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> RunReport:
         """Work the queue, and return how it ended.
 
         The autonomy policy is snapshotted into the start event because it is
         mutable mid-turn: without it, "was this run allowed to do that" stops
         being answerable the moment anyone changes a level.
+
+        `run_id` is accepted rather than always minted here so a caller can
+        name the run *before* it starts. A front end that starts a run in the
+        background has to answer "how is it going" from the moment the request
+        returns, and a report that only carries the id at the end leaves the
+        first status call with nothing to fold.
+
+        `cancelled` is asked once per round, in the same place the budget is.
+        `cancelled` is one of `StopReason`'s values and until now had no
+        producer, which made stopping a run something only the process dying
+        could do -- and that leaves the stream with no stop event at all, so a
+        later reader cannot tell an abandoned run from one still going. Asked
+        between rounds rather than during one because a turn is atomic: there
+        is nothing to interrupt inside a round that would not throw the
+        round's work away.
         """
-        run = self._runs.create_new(uuid4())
+        run = self._runs.create_new(run_id or uuid4())
         run.execute(
             StartRun(
                 run_id=run.aggregate_id,
@@ -170,6 +187,9 @@ class AutoResearchDriver:
             exhausted = run.state.exhausted()
             if exhausted is not None:
                 return await self._stop(run, exhausted, project_id)
+
+            if cancelled is not None and cancelled():
+                return await self._stop(run, "cancelled", project_id)
 
             queue = await self._queue.evaluate(project_id)
             if not queue:
