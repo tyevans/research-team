@@ -139,6 +139,10 @@
         <a class="btn btn-quiet" data-slot="course-session" hidden>Open holding session</a>
       </div>
     </div>
+    <!-- A run works the project's topic queue, not the workflow's stages, so
+         this sits above the course rather than inside it -- and renders even
+         when the project has no workflow and the panes below have nothing. -->
+    <section class="run-panel" data-slot="run-panel" aria-label="Autonomous research"></section>
     <div class="course-findings" data-slot="course-findings"></div>
     <div class="panes course-panes">
       <section class="pane pane-rail" aria-label="Stage rail">
