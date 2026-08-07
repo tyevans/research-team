@@ -331,7 +331,7 @@ def render_review(review: StageReview, preset: Preset) -> str:
                     finding.check,
                     finding.severity,
                     finding.message,
-                    ", ".join(finding.affected_artifact_ids),
+                    ", ".join(finding.cites),
                     finding.suggested_edit or "",
                 )
             )
@@ -397,7 +397,7 @@ def gate_context(review: StageReview, artifact_path: str) -> dict[str, Any]:
                 "check": finding.check,
                 "severity": finding.severity,
                 "message": finding.message,
-                "affected_artifact_ids": list(finding.affected_artifact_ids),
+                "cites": list(finding.cites),
                 "suggested_edit": finding.suggested_edit,
             }
             for finding in review.findings

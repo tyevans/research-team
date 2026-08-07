@@ -14,6 +14,7 @@ The properties worth defending, and the reason each has its own test:
   status produces nothing at all.
 """
 
+from dataclasses import replace
 from uuid import uuid4
 
 import pytest
@@ -108,9 +109,9 @@ def test_open_sub_questions_are_blocking_and_clear_when_resolved():
     state = run(opened(), AddSubQuestion(key="a", question="q?"))
     attention = attention_for(state, facts())
 
-    [finding] = [f for f in attention.findings if f.trigger == "topic.unanswered"]
-    assert finding.is_blocking
-    assert finding.evidence == ("a",)
+    [finding] = [f for f in attention.findings if f.check == "topic.unanswered"]
+    assert finding.severity == "blocking"
+    assert finding.cites == ("a",)
 
     state = run(state, ResolveSubQuestion(key="a", answer="yes"))
     assert "topic.unanswered" not in triggers_of(state, facts())
@@ -134,10 +135,10 @@ def test_coverage_counts_live_sources_only():
     corpus = facts(live={"s1"}, dropped={"s2", "s3"})
 
     [finding] = [
-        f for f in attention_for(state, corpus).findings if f.trigger == "topic.low_coverage"
+        f for f in attention_for(state, corpus).findings if f.check == "topic.low_coverage"
     ]
 
-    assert "1 live source" in finding.summary
+    assert "1 live source" in finding.message
 
 
 def test_coverage_is_satisfied_at_the_bound_and_the_bound_is_a_parameter():
@@ -158,11 +159,11 @@ def test_a_dropped_linked_source_is_blocking():
     corpus = facts(live=set(), dropped={"s1"})
 
     [finding] = [
-        f for f in attention_for(state, corpus).findings if f.trigger == "topic.source_dropped"
+        f for f in attention_for(state, corpus).findings if f.check == "topic.source_dropped"
     ]
 
-    assert finding.is_blocking
-    assert finding.evidence == ("s1",)
+    assert finding.severity == "blocking"
+    assert finding.cites == ("s1",)
 
 
 def test_a_source_that_changed_after_the_last_look_is_blocking():
@@ -172,10 +173,10 @@ def test_a_source_that_changed_after_the_last_look_is_blocking():
     [finding] = [
         f
         for f in attention_for(state, corpus).findings
-        if f.trigger == "topic.source_superseded"
+        if f.check == "topic.source_superseded"
     ]
 
-    assert finding.evidence == ("s1",)
+    assert finding.cites == ("s1",)
 
 
 def test_a_source_unchanged_since_the_last_look_is_quiet():
@@ -193,11 +194,11 @@ def test_material_arriving_after_the_last_look_is_reported_with_its_ids():
     corpus = facts(live={"s1", "s2"}, stored_at={"s1": "p1", "s2": "p3"})
 
     [finding] = [
-        f for f in attention_for(state, corpus).findings if f.trigger == "topic.new_material"
+        f for f in attention_for(state, corpus).findings if f.check == "topic.new_material"
     ]
 
     # s1 predates the look; s2 arrived after it.
-    assert finding.evidence == ("s2",)
+    assert finding.cites == ("s2",)
 
 
 def test_material_already_linked_is_not_new():
@@ -214,11 +215,11 @@ def test_the_evidence_sample_is_bounded_but_the_count_is_not():
     corpus = facts(live=many, stored_at=dict.fromkeys(many, "p1"))
 
     [finding] = [
-        f for f in attention_for(state, corpus).findings if f.trigger == "topic.new_material"
+        f for f in attention_for(state, corpus).findings if f.check == "topic.new_material"
     ]
 
-    assert "50 source(s)" in finding.summary
-    assert len(finding.evidence) == 10
+    assert "50 source(s)" in finding.message
+    assert len(finding.cites) == 10
 
 
 # ---------------- contests ----------------
@@ -268,9 +269,9 @@ def test_thrash_is_advisory_rather_than_blocking():
     )
 
     [finding] = [
-        f for f in attention_for(state, facts()).findings if f.trigger == "topic.rework_thrash"
+        f for f in attention_for(state, facts()).findings if f.check == "topic.rework_thrash"
     ]
-    assert not finding.is_blocking
+    assert finding.severity == "advisory"
 
 
 # ---------------- status and acknowledgement ----------------
@@ -396,8 +397,8 @@ def test_a_trigger_with_no_implementation_reports_a_human_gate_rather_than_passi
 
     [finding] = gate.evaluate(opened(), facts())
 
-    assert "human" in finding.summary
-    assert finding.trigger == "topic.responsive"
+    assert "human" in finding.message
+    assert finding.check == "topic.responsive"
 
 
 def test_binding_a_trigger_does_not_mutate_the_registered_one():
@@ -408,9 +409,61 @@ def test_binding_a_trigger_does_not_mutate_the_registered_one():
     assert original.params.get("minimum") is None
 
 
+def test_a_trigger_cannot_disagree_with_the_severity_it_was_registered_under():
+    """Severity belongs to the registration, not to the run.
+
+    The reason triggers return `(message, cites, suggested_edit)` rather than
+    assembled findings: a trigger that built its own could quietly contradict
+    the severity it is bound at, and any fixed-severity guarantee over it would
+    be unenforceable.
+    """
+    quiet = Trigger(
+        name="topic.example",
+        severity="advisory",
+        describes="something worth a look",
+        run=lambda state, corpus, params: [("noticed", ("s1",), None)],
+    )
+
+    [finding] = quiet.evaluate(opened(), facts())
+    assert finding.severity == "advisory"
+
+    [louder] = replace(quiet, severity="blocking").evaluate(opened(), facts())
+    assert louder.severity == "blocking"
+    assert louder.message == "noticed"
+
+
+def test_an_unimplemented_trigger_blocks_rather_than_reading_as_nearly_clean():
+    """A check nobody ran is not a check that passed.
+
+    `human_gate` counts toward `is_blocked` for that reason -- otherwise a topic
+    whose only outstanding item is one nothing can decide would rank as almost
+    settled.
+    """
+    gate = Trigger(
+        name="topic.responsive",
+        severity="advisory",
+        describes="the answer may not address the question",
+        run=None,
+    )
+
+    attention = attention_for(opened(), facts(), triggers=[gate])
+
+    assert attention.findings[0].severity == "human_gate"
+    assert attention.is_blocked
+
+
+def test_findings_are_the_check_librarys_own_type():
+    """One `Finding`, not two that agree until they quietly stop."""
+    from research_team.application.findings import Finding as CheckFinding
+
+    attention = attention_for(opened(), facts())
+
+    assert all(isinstance(f, CheckFinding) for f in attention.findings)
+
+
 def test_a_finding_carries_no_score():
     """No numbers nobody can re-derive. Severity is the whole ranking."""
-    finding = Finding(trigger="t", severity="advisory", summary="s")
+    finding = Finding(check="t", severity="advisory", message="s")
 
     assert not hasattr(finding, "score")
     assert not hasattr(finding, "priority")

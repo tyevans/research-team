@@ -324,27 +324,29 @@ Deliberate -- the driver and its stop conditions are the part worth reviewing
 first, and an endpoint would have shipped an unattended loop reachable from a
 port with no authentication in front of it (B18).
 
-### B26. The topic trigger registry should merge with the check library
+### B26. Two registries share a type; the bindings are still separate
 
-`application/topic_attention.py` deliberately mirrors the check library's
-contract -- named and namespaced, parameterized, `Finding` lists rather than
-scores, severity per binding, `run=None` for gaps that cannot be honestly
-automated -- and does **not** import it. That was written while the check
-library was still unmerged on `feat/check-library`, where importing it would
-have coupled two reviews together.
+**Half done.** `topic_attention.py` now produces `findings.Finding` -- one type,
+not two that agree until they quietly stop -- and its triggers return
+`(message, cites, suggested_edit)` the way `CheckFn` does, so severity is the
+registry's to stamp rather than something a trigger can contradict. The join
+renamed `Finding.affected_artifact_ids` to `cites`, because a trigger cites
+source ids and sub-question keys and neither is an artifact.
 
-**It has since merged, so the reason has expired and this is now live work.**
-The two registries should be one with two namespaces. Several existing checks
-(`provenance`, `orphan`, `coverage`, `exclusion_ledger`) bind directly to
-topics with different parameters, and two registries that agree today are the
-shape that drifts tomorrow.
+**What is deliberately not done, and why.** The two `run` signatures stay
+separate. A check reads a `CheckContext` of artifacts, links and matrices; a
+trigger reads folded topic state and a corpus snapshot. They share a contract
+and an output, not an input, and forcing one signature would hand every check
+arguments it does not use to make a table look tidy.
 
-The join is not free, and the shape of it is the decision worth making
-deliberately: `checks.py` runs over `/course` artifacts and a graph, and the
-topic triggers run over folded aggregate state and a corpus snapshot. They
-share a contract and a `Finding`, not an input. Unifying the *types* and
-leaving two `run` signatures is probably right; forcing one signature would
-make every check take arguments it does not use.
+**What is left, and is real.** Presets cannot bind topic triggers. `checks.py`
+has a parameter model per check, `problems()` validation, and a binding syntax
+preset authors already use; the topic registry has a plain `params: dict` and
+`Trigger.bind(**params)`. So a preset can say a stage wants `coverage` at three
+and cannot say a project wants `topic.low_coverage` at three. Closing that means
+giving triggers pydantic parameter models and a binding site in the preset
+schema -- worth doing when a second project wants different thresholds, and not
+before, since today there is exactly one caller and it takes the defaults.
 
 ### B27. Staleness is per-corpus, not global
 

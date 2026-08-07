@@ -64,7 +64,7 @@ def attention(topic_id=None, triggers=("topic.never_investigated",), evidence=()
     return TopicAttention(
         topic_id=topic_id or uuid4(),
         findings=tuple(
-            Finding(trigger=t, severity="blocking", summary=t, evidence=tuple(evidence))
+            Finding(check=t, severity="blocking", message=t, cites=tuple(evidence))
             for t in triggers
         ),
     )

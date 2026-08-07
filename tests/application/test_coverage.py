@@ -146,14 +146,14 @@ def test_an_empty_row_is_reported_with_the_row_as_the_affected_artifact():
     matrix = relational([("i1", "e1"), ("i1", "e2")])
     (finding,) = matrix_density(matrix, no_empty_rows=True)
     assert finding.check == "matrix_density"
-    assert finding.affected_artifact_ids == ("i2",)
+    assert finding.cites == ("i2",)
     assert finding.suggested_edit is not None
 
 
 def test_an_empty_column_in_a_relational_matrix_reads_as_an_orphan():
     matrix = relational([("i1", "e1"), ("i2", "e1")])
     (finding,) = matrix_density(matrix, no_empty_columns=True)
-    assert finding.affected_artifact_ids == ("e2",)
+    assert finding.cites == ("e2",)
     assert "orphan" in finding.message
 
 
@@ -169,7 +169,7 @@ def test_an_empty_column_in_an_intrinsic_matrix_is_not_called_an_orphan():
 def test_an_intrinsic_empty_row_names_no_artifact_because_none_exists():
     matrix = intrinsic([("o1", "interprets", "energy"), ("o2", "interprets", "cells")])
     (finding,) = matrix_density(matrix, no_empty_rows=True)
-    assert finding.affected_artifact_ids == ()
+    assert finding.cites == ()
     assert "applies" in finding.message
 
 
@@ -182,7 +182,7 @@ def test_a_fully_dense_grid_is_reported_as_inflation():
     matrix = relational([("i1", "e1"), ("i1", "e2"), ("i2", "e1"), ("i2", "e2")])
     (finding,) = matrix_density(matrix, max_cell_density=0.8)
     assert "1.00" in finding.message
-    assert finding.affected_artifact_ids == ()
+    assert finding.cites == ()
 
 
 def test_density_at_the_ceiling_passes():
@@ -218,7 +218,7 @@ def test_the_adapter_reads_the_params_the_presets_actually_ship():
     findings = matrix_density_check(
         matrix, params={"matrix": "intent_x_evidence", "no_empty_rows": True}
     )
-    assert [f.affected_artifact_ids for f in findings] == [("i2",)]
+    assert [f.cites for f in findings] == [("i2",)]
 
 
 def test_the_adapter_refuses_a_matrix_it_was_not_pointed_at():
@@ -302,7 +302,7 @@ def reference_orphan(columns, links):
 
 
 def _affected(findings):
-    return {ids[0] for finding in findings for ids in [finding.affected_artifact_ids] if ids}
+    return {ids[0] for finding in findings for ids in [finding.cites] if ids}
 
 
 ids = st.lists(
