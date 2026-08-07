@@ -48,6 +48,7 @@ from research_team.application.knowledge import (
     SourceRef,
 )
 from research_team.domain import Corpus, StoreSourceDocument
+from research_team.infrastructure.persistence.retry import with_retry
 
 #: Longest document accepted in one `remember`. Roughly a long article.
 MAX_DOCUMENT_CHARS = 200_000
@@ -241,23 +242,37 @@ class RedstringKnowledge:
         log would carry a revision that revised nothing. Identical bytes under
         a *different* id are stored -- two URIs legitimately serve one document
         and each needs its own citable record (see `domain/corpus.py`).
+
+        Two `remember` calls in one assistant message run concurrently, so two
+        stores into one project's corpus is an ordinary event. Both would load
+        at the same version and the second would lose the compare-and-swap --
+        and because `remember` catches `KnowledgeError` and nothing else, that
+        `OptimisticLockError` used to escape the tool and fail the entire turn,
+        naming the *project* (a corpus shares its project's UUID) for a fault
+        that was nothing to do with the project. The load and the digest check
+        are inside the retried body precisely so the second attempt decides
+        against what the winner wrote.
         """
-        corpus = await self._corpus.load_or_create(self._project_id)
-        digest = hashlib.sha256(source.text.encode("utf-8")).hexdigest()
-        if corpus.state.by_digest.get(digest) == source.source_id:
-            return
-        corpus.execute(
-            StoreSourceDocument(
-                corpus_id=self._project_id,
-                source_id=source.source_id,
-                text=source.text,
-                uri=source.uri,
-                title=source.title,
-                published_at=source.published_at,
-                note=source.note,
+
+        async def store() -> None:
+            corpus = await self._corpus.load_or_create(self._project_id)
+            digest = hashlib.sha256(source.text.encode("utf-8")).hexdigest()
+            if corpus.state.by_digest.get(digest) == source.source_id:
+                return
+            corpus.execute(
+                StoreSourceDocument(
+                    corpus_id=self._project_id,
+                    source_id=source.source_id,
+                    text=source.text,
+                    uri=source.uri,
+                    title=source.title,
+                    published_at=source.published_at,
+                    note=source.note,
+                )
             )
-        )
-        await self._corpus.save(corpus)
+            await self._corpus.save(corpus)
+
+        await with_retry(store, what=f"storing {source.source_id!r}")
 
     async def _consolidate(self, entities) -> tuple[list[MergeRecord], int]:
         """Resolve each extracted entity, one at a time.

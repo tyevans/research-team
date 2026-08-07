@@ -602,3 +602,41 @@ async def test_identical_bytes_under_a_new_id_are_stored_separately(tmp_path, bu
 
     envelopes = await _corpus_events(store, project_id)
     assert [e.event.source_id for e in envelopes] == ["mirror-a", "mirror-b"]
+
+
+# --- concurrent ingest ------------------------------------------------------
+#
+# The model puts several tool calls in one assistant message and the executor
+# runs them concurrently, so two `remember` calls land in the same moment. Both
+# reach `_store_document`, both load the corpus at the same version, and the
+# second save loses the compare-and-swap.
+#
+# What made this worth a fix rather than a shrug is where the error surfaced.
+# `remember` catches `KnowledgeError` and nothing else, so an
+# `OptimisticLockError` escaped the tool, escaped the executor, and was
+# recorded as a `TurnFailed` -- the whole turn discarded because two of its
+# tool calls were merely simultaneous. And because a corpus shares its
+# project's UUID, the message named the *project*, which is why this reads as
+# a project-level fault in the UI when nothing about the project was wrong.
+
+
+@pytest.mark.asyncio
+async def test_two_ingests_at_once_do_not_lose_one_to_a_lock_error(tmp_path, build_adapter):
+    """Two `remember` calls in one assistant message must both land."""
+    import asyncio
+
+    project_id = uuid4()
+    adapter, store, snapshot_store = build_adapter(tmp_path, project_id)
+
+    reports = await asyncio.gather(
+        adapter.ingest(SourceRef(source_id="a", text="Ada Lovelace wrote a program.")),
+        adapter.ingest(SourceRef(source_id="b", text="Grace Hopper built a compiler.")),
+    )
+
+    assert len(reports) == 2
+    # Both documents are in the corpus. A lost write here means a source the
+    # user paid to fetch is silently absent, which is the failure the corpus
+    # layer exists to prevent.
+    corpus = build_corpus_repository(store, snapshot_store=snapshot_store)
+    state = (await corpus.load(project_id)).state
+    assert sorted(state.documents) == ["a", "b"]
