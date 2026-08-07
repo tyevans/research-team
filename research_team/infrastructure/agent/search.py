@@ -14,7 +14,7 @@ import httpx
 from langchain_core.tools import BaseTool, tool
 
 from research_team.application import SEARCH_TOOL
-from research_team.infrastructure.agent.recall import Recall, describe_age
+from research_team.infrastructure.agent.recall import Recall, Recalled, describe_age
 
 TIMEOUT = httpx.Timeout(10.0)
 
@@ -60,7 +60,7 @@ def format_results(payload: object, limit: int) -> str:
     return "\n\n".join(blocks)
 
 
-def format_recalled(recalled, query: str) -> str:
+def format_recalled(recalled: Recalled, query: str) -> str:
     """An earlier result set, labelled with when and for what.
 
     Names the query that produced the entry rather than the one just asked,
@@ -107,10 +107,17 @@ def build_search_tool(
             response.raise_for_status()
             payload = response.json()
             results = format_results(payload, limit)
-            if recall is not None:
-                # Only a result set is remembered. A transport failure cached
-                # for an hour turns one outage into an hour of them, and the
-                # retry that would have succeeded never happens.
+            if recall is not None and results is not _MALFORMED_PAYLOAD:
+                # Only a genuine result set is remembered -- and "No results."
+                # counts as one; it's an answer, not a failure. A 200 with a
+                # malformed body (a proxy error page serialized as JSON, say)
+                # doesn't raise, so `format_results` returns this sentinel by
+                # identity rather than a fresh string each time; caching it
+                # would serve the same "not a results object" message back as
+                # a *recalled* answer for up to an hour, and the retry that
+                # would have succeeded never happens -- the same failure this
+                # transport-error guard exists to prevent, reached by a path
+                # that never raises.
                 recall.put(query, results)
             return results
         except ValueError:

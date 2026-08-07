@@ -266,6 +266,26 @@ async def test_a_failed_search_is_not_remembered():
 
 
 @pytest.mark.asyncio
+async def test_a_malformed_payload_is_not_remembered():
+    """A 200 with valid JSON that isn't a results object (a proxy error page
+    serialized as JSON, say) doesn't raise -- `format_results` returns the
+    malformed-payload message instead. That message must not be cached and
+    served back as a recalled answer; the retry that would have succeeded
+    never happens otherwise.
+    """
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(200, json=[])
+
+    tool = build_search_tool("http://searx.local", client=_client(handler), recall=Recall())
+    await tool.ainvoke({"query": "q"})
+    await tool.ainvoke({"query": "q"})
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_without_a_recall_every_search_reaches_the_instance():
     calls: list[int] = []
     tool = build_search_tool("http://searx.local", client=_client(_counting_handler(calls)))
