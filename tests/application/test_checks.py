@@ -114,7 +114,7 @@ def test_coverage_reports_the_uncovered_artifact_not_a_count() -> None:
         ),
         graph,
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("i2",)]
+    assert [finding.cites for finding in findings] == [("i2",)]
     assert findings[0].suggested_edit
 
 
@@ -147,7 +147,7 @@ def test_coverage_respects_a_subtype_filter() -> None:
         ),
         graph,
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("i1",)]
+    assert [finding.cites for finding in findings] == [("i1",)]
 
 
 def test_orphan_reports_the_artifact_serving_nothing() -> None:
@@ -160,7 +160,7 @@ def test_orphan_reports_the_artifact_serving_nothing() -> None:
         ),
         graph,
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("e1",)]
+    assert [finding.cites for finding in findings] == [("e1",)]
 
 
 ID = st.text(alphabet="abcde", min_size=1, max_size=3)
@@ -212,9 +212,7 @@ def test_orphan_is_coverage_with_the_ends_swapped(graph: CheckContext) -> None:
         ),
         graph,
     )
-    assert {finding.affected_artifact_ids for finding in covered} == {
-        finding.affected_artifact_ids for finding in orphans
-    }
+    assert {finding.cites for finding in covered} == {finding.cites for finding in orphans}
 
 
 @given(graphs(), st.integers(min_value=0, max_value=4))
@@ -247,7 +245,7 @@ def test_coverage_only_ever_names_artifacts_that_exist(graph: CheckContext) -> N
         ),
         graph,
     ):
-        assert set(finding.affected_artifact_ids) <= known
+        assert set(finding.cites) <= known
 
 
 # --- provenance -------------------------------------------------------------
@@ -261,7 +259,7 @@ def test_provenance_rejects_an_empty_list_and_accepts_the_flag() -> None:
         artifact("c", INTENT, provenance=({"inferred_not_in_source": True},)),
     )
     findings = run_check(bind("shared.provenance", type={"artifact_type": "Intent"}), graph)
-    assert [finding.affected_artifact_ids for finding in findings] == [("a",)]
+    assert [finding.cites for finding in findings] == [("a",)]
 
 
 def test_provenance_rejects_an_entry_that_is_neither_a_citation_nor_a_flag() -> None:
@@ -339,7 +337,7 @@ def test_an_unreadable_ceiling_is_a_finding_not_a_silence() -> None:
         graph,
     )
     assert len(findings) == 1
-    assert findings[0].affected_artifact_ids == ()
+    assert findings[0].cites == ()
 
 
 # --- format conformance -----------------------------------------------------
@@ -359,7 +357,7 @@ def test_format_conformance_enforces_a_stem() -> None:
         ),
         graph,
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("b",)]
+    assert [finding.cites for finding in findings] == [("b",)]
 
 
 def test_format_conformance_rejects_denied_verbs_whole_word() -> None:
@@ -377,7 +375,7 @@ def test_format_conformance_rejects_denied_verbs_whole_word() -> None:
         ),
         graph,
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("a",)]
+    assert [finding.cites for finding in findings] == [("a",)]
 
 
 def test_format_conformance_requires_declared_fields() -> None:
@@ -428,7 +426,7 @@ def test_taxonomy_distribution_names_the_missing_class() -> None:
     )
     assert len(findings) == 1
     assert "T" in findings[0].message
-    assert findings[0].affected_artifact_ids == ()
+    assert findings[0].cites == ()
 
 
 def test_taxonomy_distribution_flags_an_item_claiming_too_many_classes() -> None:
@@ -444,7 +442,7 @@ def test_taxonomy_distribution_flags_an_item_claiming_too_many_classes() -> None
         ),
         graph,
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("a",)]
+    assert [finding.cites for finding in findings] == [("a",)]
 
 
 def test_vocabulary_coverage_requires_every_letter_somewhere() -> None:
@@ -506,7 +504,7 @@ def test_exclusion_ledger_catches_a_candidate_that_simply_vanished() -> None:
         ),
         graph,
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("c1",)]
+    assert [finding.cites for finding in findings] == [("c1",)]
 
 
 def test_exclusion_ledger_rejects_a_blank_reason() -> None:
@@ -754,7 +752,7 @@ def test_required_field_rejects_empty_duplicate_and_generic() -> None:
         ),
         graph,
     )
-    flagged = {item for finding in findings for item in finding.affected_artifact_ids}
+    flagged = {item for finding in findings for item in finding.cites}
     assert flagged == {"a", "b", "c", "d"}
 
 
@@ -798,7 +796,7 @@ def test_recurrence_catches_the_intent_taught_once() -> None:
         ),
         _recurring({"i1": 1, "i2": 3}),
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("i1",)]
+    assert [finding.cites for finding in findings] == [("i1",)]
 
 
 def test_recurrence_can_count_by_a_field_instead_of_by_link() -> None:
@@ -816,7 +814,7 @@ def test_recurrence_can_count_by_a_field_instead_of_by_link() -> None:
         ),
         graph,
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("c",)]
+    assert [finding.cites for finding in findings] == [("c",)]
 
 
 @given(
@@ -834,7 +832,7 @@ def test_recurrence_fires_for_exactly_the_under_counted(
         ),
         _recurring(counts),
     )
-    flagged = {item for finding in findings for item in finding.affected_artifact_ids}
+    flagged = {item for finding in findings for item in finding.cites}
     assert flagged == {name for name, count in counts.items() if count < minimum}
 
 
@@ -854,9 +852,7 @@ def test_recurrence_at_one_agrees_with_orphan(counts: dict[str, int]) -> None:
         ),
         graph,
     )
-    assert {finding.affected_artifact_ids for finding in recurring} == {
-        finding.affected_artifact_ids for finding in orphans
-    }
+    assert {finding.cites for finding in recurring} == {finding.cites for finding in orphans}
 
 
 # --- ordering and prerequisites ---------------------------------------------
@@ -880,7 +876,7 @@ def test_ordering_requires_the_element_early_in_the_sequence() -> None:
         ),
         graph,
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("late",)]
+    assert [finding.cites for finding in findings] == [("late",)]
 
 
 def test_ordering_reports_an_element_that_never_appears() -> None:
@@ -895,7 +891,7 @@ def test_ordering_reports_an_element_that_never_appears() -> None:
         ),
         graph,
     )
-    assert findings[0].affected_artifact_ids == ()
+    assert findings[0].cites == ()
 
 
 def test_prerequisite_must_exist_and_come_first() -> None:
@@ -945,7 +941,7 @@ def test_source_starvation_reports_the_source_nothing_drew_on() -> None:
         ),
         graph,
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("d2",)]
+    assert [finding.cites for finding in findings] == [("d2",)]
 
 
 def test_a_contradiction_resolved_without_a_named_human_is_a_finding() -> None:
@@ -1125,7 +1121,7 @@ def test_a_dotted_string_carries_the_subtype() -> None:
         bind("shared.orphan", type="EvidenceSpec.performance_task", must_link_to="Intent"),
         graph,
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("t1",)]
+    assert [finding.cites for finding in findings] == [("t1",)]
 
 
 def test_the_shorthand_still_rejects_a_type_that_does_not_exist() -> None:
@@ -1313,7 +1309,7 @@ def test_an_item_must_match_the_taxonomy_of_the_objective_it_serves() -> None:
         ),
         graph,
     )
-    assert findings[0].affected_artifact_ids == ("item", "obj")
+    assert findings[0].cites == ("item", "obj")
 
 
 def test_vocabulary_can_require_a_mandatory_subset_only() -> None:
@@ -1350,7 +1346,7 @@ def test_a_flat_spiral_is_caught_within_its_thread_and_not_across_threads() -> N
         ),
         graph,
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("a1", "a2")]
+    assert [finding.cites for finding in findings] == [("a1", "a2")]
 
 
 def test_an_unmeasurable_business_metric_is_one_with_no_number_in_it() -> None:
@@ -1369,7 +1365,7 @@ def test_an_unmeasurable_business_metric_is_one_with_no_number_in_it() -> None:
         ),
         graph,
     )
-    assert [finding.affected_artifact_ids for finding in findings] == [("g1",)]
+    assert [finding.cites for finding in findings] == [("g1",)]
 
 
 def test_starvation_counts_named_routes_not_only_documents() -> None:

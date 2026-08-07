@@ -407,10 +407,10 @@ def test_the_gate_context_is_json_shaped_primitives_only():
         "check",
         "severity",
         "message",
-        "affected_artifact_ids",
+        "cites",
         "suggested_edit",
     }
-    assert isinstance(context["findings"][0]["affected_artifact_ids"], list)
+    assert isinstance(context["findings"][0]["cites"], list)
 
 
 def test_the_gate_context_says_when_the_harness_refused():

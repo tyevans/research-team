@@ -6,16 +6,17 @@ a score. Attention is *computed on read* from a topic's folded state plus what
 the corpus currently holds -- nothing here is stored, and no topic carries a
 needs-attention flag.
 
-**This declares a second `Finding`, and that is a debt rather than a design**
-(BACKLOG B26). `application/findings.py` exists precisely so that both sides of
-the check library name one type instead of two that agree until they quietly
-stop, and this is the second one. It was written while the check library was
-unmerged and importing it would have coupled two reviews; that reason has since
-expired. What has not gone away is the mismatch that makes the join a decision
-rather than a rename: a check's finding cites `affected_artifact_ids`, and a
-trigger's cites source ids and sub-question keys, which are not artifacts.
-Generalising that field changes a public type on the merged library, so it
-belongs in its own change.
+**One `Finding`, shared with the check library.** This module briefly declared
+its own, written while the check library was unmerged; `findings.py` exists
+precisely to stop that, and the two are now one type. The join cost one field
+name -- `affected_artifact_ids` became `cites`, because a trigger cites source
+ids and sub-question keys and neither is an artifact.
+
+The *registries* stay separate, and that is not a deferral. A check reads a
+`CheckContext` of artifacts, links and matrices; a trigger reads folded topic
+state and a corpus snapshot. They share a contract and an output type, not an
+input, and forcing one signature would hand every check arguments it does not
+use in order to make a table look tidy.
 
 **Why computed rather than stored.** A stored flag is written by one code path
 and read by another, and it goes stale the moment an event arrives that nobody
@@ -58,12 +59,10 @@ Two things are deliberately *not* here:
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Literal
 from uuid import UUID
 
+from research_team.application.findings import Finding, FindingSeverity
 from research_team.domain.topic import TopicState
-
-Severity = Literal["blocking", "advisory"]
 
 DEFAULT_MIN_SOURCES = 2
 """How many live sources a topic wants before its coverage stops being a finding.
@@ -81,6 +80,14 @@ Two in a row with nothing recorded between them is a loop that has stopped
 learning, which is the thing an autonomous run needs told.
 """
 
+
+BLOCKING_SEVERITIES: frozenset[str] = frozenset({"invariant", "blocking", "human_gate"})
+"""Severities that stop a topic being worked, out of `FindingSeverity`'s five.
+
+`advisory` is worth a look and does not block. `critic_gate` is deliberately
+absent: it names a model call this library will not make, and no trigger here
+produces one -- listing it would imply a path that does not exist.
+"""
 
 POSITION_WIDTH = 12
 
@@ -105,27 +112,6 @@ def corpus_position(version: int) -> str:
     these; they are compared and nothing else.
     """
     return f"{max(version, 0):0{POSITION_WIDTH}d}"
-
-
-@dataclass(frozen=True)
-class Finding:
-    """One reason a topic wants attention.
-
-    `evidence` carries the ids of the events or sources that raised it, which is
-    the difference between a reason and a citation. "This topic is stale" is a
-    claim; "this topic is stale because source `s3` was dropped" is checkable,
-    and it is what an autonomous run puts in its round record to justify picking
-    this topic over another.
-    """
-
-    trigger: str
-    severity: Severity
-    summary: str
-    evidence: tuple[str, ...] = ()
-
-    @property
-    def is_blocking(self) -> bool:
-        return self.severity == "blocking"
 
 
 @dataclass(frozen=True)
@@ -165,7 +151,19 @@ class CorpusFacts:
         )
 
 
-TriggerFn = Callable[[TopicState, CorpusFacts, dict], list[Finding]]
+RawFinding = tuple[str, tuple[str, ...], str | None]
+"""`(message, cites, suggested_edit)`, before the registry stamps a severity."""
+
+TriggerFn = Callable[[TopicState, CorpusFacts, dict], list[RawFinding]]
+"""What a trigger returns: `(message, cites, suggested_edit)` per finding.
+
+Tuples rather than assembled `Finding`s, matching `CheckFn`, and for the reason
+that shape exists: severity belongs to the *registration*, not to the run. A
+trigger that built its own findings could quietly disagree with the severity it
+was registered under, and `fixed_severity`-style guarantees would be
+unenforceable. Here a trigger says what is wrong and the registry says how much
+it matters.
+"""
 
 
 @dataclass(frozen=True)
@@ -180,7 +178,7 @@ class Trigger:
     """
 
     name: str
-    severity: Severity
+    severity: FindingSeverity
     describes: str
     run: TriggerFn | None = None
     params: dict = field(default_factory=dict)
@@ -190,21 +188,37 @@ class Trigger:
         return replace(self, params={**self.params, **params})
 
     def evaluate(self, state: TopicState, corpus: CorpusFacts) -> list[Finding]:
+        """Run this trigger and stamp its findings with the registered severity."""
         if self.run is None:
+            # `human_gate` rather than this trigger's own severity: the
+            # vocabulary from `findings.py` has a value for exactly this, and
+            # it says the useful thing -- no run can clear it, because no
+            # automated substitute exists at all.
             return [
                 Finding(
-                    trigger=self.name,
-                    severity=self.severity,
-                    summary=f"{self.describes} -- needs a human; nothing here decides it",
+                    check=self.name,
+                    severity="human_gate",
+                    message=f"{self.describes} -- needs a human; nothing here decides it",
                 )
             ]
-        return self.run(state, corpus, self.params)
+        return [
+            Finding(
+                check=self.name,
+                severity=self.severity,
+                message=message,
+                cites=cites,
+                suggested_edit=suggested_edit,
+            )
+            for message, cites, suggested_edit in self.run(state, corpus, self.params)
+        ]
 
 
 # ---------------- the triggers ----------------
 
 
-def _never_investigated(state: TopicState, corpus: CorpusFacts, params: dict) -> list[Finding]:
+def _never_investigated(
+    state: TopicState, corpus: CorpusFacts, params: dict
+) -> list[RawFinding]:
     """Action: look at it. A topic nobody has opened is the cheapest win there is.
 
     Distinct from `low_coverage` on purpose: a topic can have sources attached
@@ -212,31 +226,18 @@ def _never_investigated(state: TopicState, corpus: CorpusFacts, params: dict) ->
     """
     if state.investigations > 0:
         return []
-    return [
-        Finding(
-            trigger="topic.never_investigated",
-            severity="blocking",
-            summary="never investigated",
-        )
-    ]
+    return [("never investigated", (), None)]
 
 
-def _unanswered(state: TopicState, corpus: CorpusFacts, params: dict) -> list[Finding]:
+def _unanswered(state: TopicState, corpus: CorpusFacts, params: dict) -> list[RawFinding]:
     """Action: answer one of the open sub-questions, or close it as out of scope."""
     open_keys = state.open_sub_questions
     if not open_keys:
         return []
-    return [
-        Finding(
-            trigger="topic.unanswered",
-            severity="blocking",
-            summary=f"{len(open_keys)} open sub-question(s)",
-            evidence=tuple(sorted(open_keys)),
-        )
-    ]
+    return [(f"{len(open_keys)} open sub-question(s)", tuple(sorted(open_keys)), None)]
 
 
-def _low_coverage(state: TopicState, corpus: CorpusFacts, params: dict) -> list[Finding]:
+def _low_coverage(state: TopicState, corpus: CorpusFacts, params: dict) -> list[RawFinding]:
     """Action: find more sources, or record that the topic is answerable from these.
 
     Counts *live* links only. A topic resting on three sources, two of which
@@ -247,17 +248,10 @@ def _low_coverage(state: TopicState, corpus: CorpusFacts, params: dict) -> list[
     live = [s for s in state.source_ids if s in corpus.live_source_ids]
     if len(live) >= minimum:
         return []
-    return [
-        Finding(
-            trigger="topic.low_coverage",
-            severity="advisory",
-            summary=f"{len(live)} live source(s), wants {minimum}",
-            evidence=tuple(sorted(live)),
-        )
-    ]
+    return [(f"{len(live)} live source(s), wants {minimum}", tuple(sorted(live)), None)]
 
 
-def _source_dropped(state: TopicState, corpus: CorpusFacts, params: dict) -> list[Finding]:
+def _source_dropped(state: TopicState, corpus: CorpusFacts, params: dict) -> list[RawFinding]:
     """Action: unlink it and reassess whatever rested on it.
 
     The corpus records a drop with a reason rather than deleting the row, which
@@ -269,16 +263,15 @@ def _source_dropped(state: TopicState, corpus: CorpusFacts, params: dict) -> lis
     if not dropped:
         return []
     return [
-        Finding(
-            trigger="topic.source_dropped",
-            severity="blocking",
-            summary=f"{len(dropped)} linked source(s) dropped from the corpus",
-            evidence=tuple(dropped),
+        (
+            f"{len(dropped)} linked source(s) dropped from the corpus",
+            tuple(dropped),
+            "Unlink them and reassess whatever rested on them.",
         )
     ]
 
 
-def _new_material(state: TopicState, corpus: CorpusFacts, params: dict) -> list[Finding]:
+def _new_material(state: TopicState, corpus: CorpusFacts, params: dict) -> list[RawFinding]:
     """Action: read the new documents and link or dismiss them.
 
     The highest-value trigger, and pure bookkeeping: a document arrived after
@@ -297,16 +290,17 @@ def _new_material(state: TopicState, corpus: CorpusFacts, params: dict) -> list[
         return []
     sample = params.get("sample", 10)
     return [
-        Finding(
-            trigger="topic.new_material",
-            severity="advisory",
-            summary=f"{len(unseen)} source(s) arrived since the last look",
-            evidence=tuple(unseen[:sample]),
+        (
+            f"{len(unseen)} source(s) arrived since the last look",
+            tuple(unseen[:sample]),
+            None,
         )
     ]
 
 
-def _source_superseded(state: TopicState, corpus: CorpusFacts, params: dict) -> list[Finding]:
+def _source_superseded(
+    state: TopicState, corpus: CorpusFacts, params: dict
+) -> list[RawFinding]:
     """Action: re-read the source; whatever rested on the old bytes may not hold.
 
     Supersession is a first-class corpus behaviour -- re-storing a `source_id`
@@ -324,16 +318,15 @@ def _source_superseded(state: TopicState, corpus: CorpusFacts, params: dict) -> 
     if not changed:
         return []
     return [
-        Finding(
-            trigger="topic.source_superseded",
-            severity="blocking",
-            summary=f"{len(changed)} linked source(s) changed since the last look",
-            evidence=tuple(changed),
+        (
+            f"{len(changed)} linked source(s) changed since the last look",
+            tuple(changed),
+            "Re-read them; whatever rested on the old bytes may not hold.",
         )
     ]
 
 
-def _contested(state: TopicState, corpus: CorpusFacts, params: dict) -> list[Finding]:
+def _contested(state: TopicState, corpus: CorpusFacts, params: dict) -> list[RawFinding]:
     """Action: adjudicate, or record the conditional under which both hold.
 
     Tracks contradictions someone already recorded. Detecting them is semantic
@@ -343,16 +336,15 @@ def _contested(state: TopicState, corpus: CorpusFacts, params: dict) -> list[Fin
     if not unresolved:
         return []
     return [
-        Finding(
-            trigger="topic.contested",
-            severity="blocking",
-            summary=f"{len(unresolved)} unresolved contradiction(s)",
-            evidence=tuple(sorted(unresolved)),
+        (
+            f"{len(unresolved)} unresolved contradiction(s)",
+            tuple(sorted(unresolved)),
+            None,
         )
     ]
 
 
-def _rework_thrash(state: TopicState, corpus: CorpusFacts, params: dict) -> list[Finding]:
+def _rework_thrash(state: TopicState, corpus: CorpusFacts, params: dict) -> list[RawFinding]:
     """Action: stop looking at this and change what you are asking.
 
     The counter-measure to an autonomous run re-reading the same material every
@@ -369,12 +361,10 @@ def _rework_thrash(state: TopicState, corpus: CorpusFacts, params: dict) -> list
     if state.findings > state.findings_at_last_investigation:
         return []
     return [
-        Finding(
-            trigger="topic.rework_thrash",
-            severity="advisory",
-            summary=(
-                f"{state.investigations} look(s) with nothing recorded since the last one"
-            ),
+        (
+            f"{state.investigations} look(s) with nothing recorded since the last one",
+            (),
+            "Change what you are asking; re-reading the same material is not working.",
         )
     ]
 
@@ -456,11 +446,17 @@ class TopicAttention:
 
     @property
     def is_blocked(self) -> bool:
-        return any(finding.is_blocking for finding in self.findings)
+        """Whether anything here stops the topic being usefully worked.
+
+        `human_gate` counts. A trigger that has no implementation is not a
+        trigger that passed, and treating it as advisory would let the queue
+        rank a topic as nearly-clean on the strength of a check nobody ran.
+        """
+        return any(finding.severity in BLOCKING_SEVERITIES for finding in self.findings)
 
     @property
     def triggers(self) -> tuple[str, ...]:
-        return tuple(finding.trigger for finding in self.findings)
+        return tuple(finding.check for finding in self.findings)
 
     @property
     def evidence(self) -> tuple[str, ...]:
@@ -471,7 +467,7 @@ class TopicAttention:
         """
         seen: list[str] = []
         for finding in self.findings:
-            for item in finding.evidence:
+            for item in finding.cites:
                 if item not in seen:
                     seen.append(item)
         return tuple(seen)
@@ -508,7 +504,12 @@ def attention_for(
     # Blocking before advisory, then by trigger name so the order is stable
     # across runs -- an unstable order makes two identical evaluations look
     # like a change.
-    collected.sort(key=lambda finding: (0 if finding.is_blocking else 1, finding.trigger))
+    collected.sort(
+        key=lambda finding: (
+            0 if finding.severity in BLOCKING_SEVERITIES else 1,
+            finding.check,
+        )
+    )
     return TopicAttention(topic_id=state.topic_id, findings=tuple(collected))
 
 

@@ -334,7 +334,7 @@ def _absence_finding(
             check="matrix_density",
             severity=severity,
             message=message,
-            affected_artifact_ids=(key,),
+            cites=(key,),
             suggested_edit=edit,
         )
 

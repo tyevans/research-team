@@ -20,7 +20,7 @@ nobody re-reads. `test_no_check_reaches_for_a_model` asserts this rather than
 trusting it.
 
 **Findings, never a score.** A check returns a list of
-`{check, severity, message, affected_artifact_ids, suggested_edit}` and an empty
+`{check, severity, message, cites, suggested_edit}` and an empty
 list is a pass. No aggregate, no percentage. This is not stylistic restraint:
 UbD's Design Standards are deliberately written as consider-questions producing
 commentary, and rolling them into a number would turn the artifact into
@@ -371,7 +371,7 @@ def run_check(binding: Check, context: CheckContext) -> list[Finding]:
             check=spec.name,
             severity=severity,
             message=message,
-            affected_artifact_ids=affected,
+            cites=affected,
             suggested_edit=suggestion,
         )
         for message, affected, suggestion in spec.run(context, params)
@@ -1716,7 +1716,7 @@ def _matrix_density(context: CheckContext, params: MatrixDensityParams) -> list[
             )
         ]
     return [
-        (finding.message, finding.affected_artifact_ids, finding.suggested_edit)
+        (finding.message, finding.cites, finding.suggested_edit)
         for finding in matrix_density(
             matrix,
             no_empty_rows=params.no_empty_rows,
