@@ -32,6 +32,7 @@ from research_team.domain.topic import (
     RecordFinding,
     Topic,
 )
+from research_team.infrastructure.persistence.retry import with_retry
 
 
 class RepositoryTopics(TopicPort):
@@ -101,14 +102,28 @@ class RepositoryTopics(TopicPort):
     async def record_finding(
         self, topic_id: UUID, summary: str, source_ids: list[str]
     ) -> None:
-        topic = await self._load(topic_id)
-        topic.execute(RecordFinding(summary=summary, source_ids=list(source_ids)))
-        await self._topics.save(topic)
+        async def record() -> None:
+            topic = await self._load(topic_id)
+            topic.execute(RecordFinding(summary=summary, source_ids=list(source_ids)))
+            await self._topics.save(topic)
+
+        await with_retry(record, what=f"recording a finding on {topic_id}")
 
     async def link_source(self, topic_id: UUID, source_id: str, note: str = "") -> None:
-        topic = await self._load(topic_id)
-        topic.execute(LinkSource(source_id=source_id, note=note))
-        await self._topics.save(topic)
+        """Link a source, retrying if a concurrent write to this topic wins.
+
+        The reload is inside the retry, which matters more here than it looks:
+        `decide` refuses a source already linked, so the second attempt has to
+        see the winner's link to refuse correctly. A retry that replayed the
+        command against the state loaded the first time would link twice.
+        """
+
+        async def link() -> None:
+            topic = await self._load(topic_id)
+            topic.execute(LinkSource(source_id=source_id, note=note))
+            await self._topics.save(topic)
+
+        await with_retry(link, what=f"linking {source_id!r} to {topic_id}")
 
     async def _load(self, topic_id: UUID) -> Topic:
         """The topic, or an error the agent can act on.

@@ -232,3 +232,59 @@ async def test_there_is_no_tool_for_closing_a_topic():
     names = set(tools_for(FakeTopics()))
 
     assert not {name for name in names if "close" in name or "status" in name}
+
+
+# --- concurrent writes to one topic ----------------------------------------
+#
+# The same race the corpus had, for the same reason: several tool calls arrive
+# in one assistant message and run concurrently. Two findings recorded against
+# one topic both load it at the same version, and the second save loses the
+# compare-and-swap. `record_finding` raises `TopicError` and nothing else, so
+# the `OptimisticLockError` escaped the tool and failed the whole turn.
+
+
+@pytest.mark.asyncio
+async def test_two_findings_recorded_at_once_both_land(tmp_path):
+    """Neither finding may be lost, and neither may fail the turn."""
+    import asyncio
+
+    from eventsource.adapters.sqlite import SQLiteEventStore
+    from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
+
+    from research_team.infrastructure.agent.topic_tools import RepositoryTopics
+    from research_team.infrastructure.persistence import build_topic_repository
+
+    db_path = str(tmp_path / "sessions.db")
+    store = SQLiteEventStore(db_path)
+    snapshot_store = SQLiteSnapshotStore(db_path)
+    try:
+        topics = build_topic_repository(store, snapshot_store=snapshot_store)
+        project_id = uuid4()
+        port = RepositoryTopics(topics, None, project_id)
+
+        # Opened straight through the aggregate: `open_topic` consults the
+        # queue projection for its cap, and this test is about the writes.
+        from research_team.domain.topic import OpenTopic
+
+        topic = topics.create_new(uuid4())
+        topic.execute(
+            OpenTopic(
+                topic_id=topic.aggregate_id,
+                project_id=project_id,
+                question="How long is the escalation window?",
+                rationale="the SMEs disagree",
+            )
+        )
+        await topics.save(topic)
+        topic_id = topic.aggregate_id
+
+        await asyncio.gather(
+            port.record_finding(topic_id, "one SME says 24 hours", ["a"]),
+            port.record_finding(topic_id, "another says 48", ["b"]),
+        )
+
+        state = (await topics.load(topic_id)).state
+        assert state.findings == 2
+    finally:
+        await snapshot_store.close()
+        await store.close()
