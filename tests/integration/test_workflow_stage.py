@@ -48,7 +48,7 @@ def _model() -> ToolRecordingChatModel:
 async def _project(application, *, workflow: bool, advance: bool = False):
     project_id = uuid4()
     project = application.service.projects.create_new(project_id)
-    project.execute(CreateProject(name="course"))
+    project.execute(CreateProject(project_id=project_id, name="course"))
     if workflow:
         project.execute(SelectWorkflow(preset=hybrid_default))
         if advance:

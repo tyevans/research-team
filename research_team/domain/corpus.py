@@ -47,6 +47,8 @@ from uuid import UUID
 from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
 from pydantic import BaseModel, Field
 
+from research_team.domain.targeting import ChecksCommandTarget
+
 
 @register_event
 class SourceDocumentStored(DomainEvent):
@@ -85,6 +87,11 @@ class SourceDocumentDropped(DomainEvent):
 
 @dataclass(frozen=True)
 class StoreSourceDocument:
+    #: Which corpus to store into. Storing is what brings a corpus into
+    #: existence, so this is the one command whose target cannot be read back
+    #: off the state -- there is no state yet. Every later command takes its
+    #: id from the fold of this one's event.
+    corpus_id: UUID
     source_id: str
     text: str
     uri: str | None = None
@@ -120,7 +127,14 @@ class DocumentRecord(BaseModel):
 class CorpusState(BaseModel):
     """Everything derivable from the corpus's event stream."""
 
-    corpus_id: UUID
+    corpus_id: UUID | None = None
+    """None before the corpus exists. Set by the fold of its first event.
+
+    Optional because `initial_state()` takes no arguments (eventsource 0.12):
+    the value before any event is one value for the aggregate *type*, and an
+    id is not part of it.
+    """
+
     status: Literal["new", "created"] = "new"
     documents: dict[str, DocumentRecord] = Field(default_factory=dict)
     by_digest: dict[str, str] = Field(default_factory=dict)
@@ -131,8 +145,8 @@ class CorpusState(BaseModel):
     """
 
 
-def initial_state(aggregate_id: UUID) -> CorpusState:
-    return CorpusState(corpus_id=aggregate_id)
+def initial_state() -> CorpusState:
+    return CorpusState()
 
 
 def decide(command: CorpusCommand, state: CorpusState) -> list[DomainEvent]:
@@ -149,7 +163,9 @@ def decide(command: CorpusCommand, state: CorpusState) -> list[DomainEvent]:
         case StoreSourceDocument(), _:
             return [
                 SourceDocumentStored(
-                    aggregate_id=corpus_id,
+                    # From the command, not the state: this is the creation
+                    # command, so on a fresh corpus `state.corpus_id` is None.
+                    aggregate_id=command.corpus_id,
                     source_id=command.source_id,
                     text=command.text,
                     sha256=hashlib.sha256(command.text.encode("utf-8")).hexdigest(),
@@ -215,6 +231,9 @@ def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
             )
             return state.model_copy(
                 update={
+                    # The event is where the id enters the state: `decide` reads
+                    # it back off `state` for every command but the first.
+                    "corpus_id": event.aggregate_id,
                     "status": "created",
                     "documents": {**state.documents, event.source_id: record},
                     "by_digest": by_digest,
@@ -246,7 +265,7 @@ def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
             return state
 
 
-class Corpus(DeciderAggregate[CorpusState, CorpusCommand]):
+class Corpus(ChecksCommandTarget, DeciderAggregate[CorpusState, CorpusCommand]):
     """The imperative shell. Holds no rules -- it delegates all three.
 
     Mirrors `Project`'s shape exactly: the class attributes bind directly to
@@ -255,6 +274,7 @@ class Corpus(DeciderAggregate[CorpusState, CorpusCommand]):
     """
 
     aggregate_type = "Corpus"
+    target_field = "corpus_id"
 
     initial_state = staticmethod(initial_state)
     decide = staticmethod(decide)

@@ -69,7 +69,11 @@ async def _write_old_event(
 async def started(repository, session_id, db_path):
     """A session with only its creation event, written normally."""
     session = repository.create(session_id)
-    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+        )
+    )
     await repository.save(session)
     return session_id
 
@@ -188,7 +192,11 @@ async def test_a_schema_version_bump_falls_back_to_replay(repository, session_id
     fatal, so a future bump is a performance decision and not a gamble.
     """
     session = repository.create(session_id)
-    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+        )
+    )
     for index in range(60):  # comfortably past the snapshot threshold
         session.execute(
             SendUserMessage(message={"type": "human", "data": {"content": str(index)}})
@@ -400,9 +408,13 @@ async def test_an_old_project_snapshot_without_workflow_fields_still_loads(
         )
         await connection.commit()
 
-    projects = build_project_repository(store, snapshot_store=SQLiteSnapshotStore(db_path))
-    project = await projects.load(project_id)
+    snapshots = SQLiteSnapshotStore(db_path)
+    try:
+        projects = build_project_repository(store, snapshot_store=snapshots)
+        project = await projects.load(project_id)
 
-    assert project.state.name == "atlas-from-snapshot"
-    assert project.state.preset_id is None
-    assert project.state.stage_history == []
+        assert project.state.name == "atlas-from-snapshot"
+        assert project.state.preset_id is None
+        assert project.state.stage_history == []
+    finally:
+        await snapshots.close()

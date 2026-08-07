@@ -15,7 +15,11 @@ from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
 async def test_a_local_save_wakes_a_waiting_reader(repository, session_id):
     session = repository.create(session_id)
-    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+        )
+    )
 
     # A long timeout, so returning quickly can only mean the save signalled.
     waiting = asyncio.create_task(repository.wait_for_append(timeout=30.0))
@@ -42,7 +46,11 @@ async def test_a_save_before_the_wait_does_not_leave_a_signal_standing(repositor
     dressed up as a push feed.
     """
     session = repository.create(session_id)
-    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+        )
+    )
     await repository.save(session)
 
     with_stale_signal = asyncio.create_task(repository.wait_for_append(timeout=0.3))
@@ -55,7 +63,11 @@ async def test_a_save_before_the_wait_does_not_leave_a_signal_standing(repositor
 async def test_a_position_survives_a_round_trip_through_text(repository, session_id):
     """Positions are opaque, but they still have to fit in an SSE event id."""
     session = repository.create(session_id)
-    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+        )
+    )
     await repository.save(session)
     position = await repository.latest_position()
 

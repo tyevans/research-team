@@ -27,9 +27,9 @@ from research_team.workflows import hybrid_default, ubd_pure
 
 def test_creating_a_project_emits_project_created():
     project_id = uuid4()
-    state = initial_state(project_id)
+    state = initial_state()
 
-    [event] = decide(CreateProject(name="research"), state)
+    [event] = decide(CreateProject(project_id=project_id, name="research"), state)
 
     assert isinstance(event, ProjectCreated)
     assert event.aggregate_id == project_id
@@ -38,16 +38,14 @@ def test_creating_a_project_emits_project_created():
 
 def test_a_project_cannot_be_created_twice():
     project_id = uuid4()
-    state = evolve(
-        initial_state(project_id), ProjectCreated(aggregate_id=project_id, name="research")
-    )
+    state = evolve(initial_state(), ProjectCreated(aggregate_id=project_id, name="research"))
 
     with pytest.raises(CommandRejectedError, match="already created"):
-        decide(CreateProject(name="research"), state)
+        decide(CreateProject(project_id=project_id, name="research"), state)
 
 
 def test_commands_before_creation_are_rejected():
-    state = initial_state(uuid4())
+    state = initial_state()
 
     with pytest.raises(CommandRejectedError, match="not created"):
         decide(JoinProject(session_id=uuid4()), state)
@@ -55,7 +53,7 @@ def test_commands_before_creation_are_rejected():
 
 def test_a_session_joins_and_inherits_the_current_tip():
     project_id, first, second = uuid4(), uuid4(), uuid4()
-    state = initial_state(project_id)
+    state = initial_state()
     for event in (
         ProjectCreated(aggregate_id=project_id, name="research"),
         SessionJoinedProject(aggregate_id=project_id, session_id=first, inherited_at=0),
@@ -73,7 +71,7 @@ def test_a_session_joins_and_inherits_the_current_tip():
 
 def test_a_second_concurrent_session_is_rejected_by_name():
     project_id, holder = uuid4(), uuid4()
-    state = initial_state(project_id)
+    state = initial_state()
     for event in (
         ProjectCreated(aggregate_id=project_id, name="research"),
         SessionJoinedProject(aggregate_id=project_id, session_id=holder, inherited_at=0),
@@ -86,7 +84,7 @@ def test_a_second_concurrent_session_is_rejected_by_name():
 
 def test_advancing_the_tip_releases_the_project():
     project_id, session_id = uuid4(), uuid4()
-    state = initial_state(project_id)
+    state = initial_state()
     for event in (
         ProjectCreated(aggregate_id=project_id, name="research"),
         SessionJoinedProject(aggregate_id=project_id, session_id=session_id, inherited_at=0),
@@ -101,7 +99,7 @@ def test_advancing_the_tip_releases_the_project():
 
 def test_only_the_active_session_may_advance_the_tip():
     project_id, holder = uuid4(), uuid4()
-    state = initial_state(project_id)
+    state = initial_state()
     for event in (
         ProjectCreated(aggregate_id=project_id, name="research"),
         SessionJoinedProject(aggregate_id=project_id, session_id=holder, inherited_at=0),
@@ -113,9 +111,7 @@ def test_only_the_active_session_may_advance_the_tip():
 
 
 def _created(project_id, name="research"):
-    return evolve(
-        initial_state(project_id), ProjectCreated(aggregate_id=project_id, name=name)
-    )
+    return evolve(initial_state(), ProjectCreated(aggregate_id=project_id, name=name))
 
 
 def test_deleting_a_free_project_emits_project_deleted():
@@ -171,9 +167,7 @@ def test_a_deleted_project_refuses_everything_afterwards():
 
 def test_evolve_ignores_unknown_events():
     project_id = uuid4()
-    state = evolve(
-        initial_state(project_id), ProjectCreated(aggregate_id=project_id, name="r")
-    )
+    state = evolve(initial_state(), ProjectCreated(aggregate_id=project_id, name="r"))
 
     assert evolve(state, ProjectCreated(aggregate_id=project_id, name="other")) is not None
 
@@ -396,7 +390,7 @@ def test_a_deleted_project_refuses_workflow_commands_too():
 
 def test_workflow_commands_before_creation_are_rejected():
     with pytest.raises(CommandRejectedError, match="not created"):
-        decide(SelectWorkflow(preset=hybrid_default), initial_state(uuid4()))
+        decide(SelectWorkflow(preset=hybrid_default), initial_state())
 
 
 def test_a_project_with_no_workflow_has_no_current_stage():

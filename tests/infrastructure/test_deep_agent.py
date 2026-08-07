@@ -107,7 +107,11 @@ class ProviderSpy:
 
 def _session() -> CodingSession:
     session = CodingSession(uuid4())
-    session.execute(StartSession(system_prompt="be brief", model_name="fake"))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt="be brief", model_name="fake"
+        )
+    )
     return session
 
 

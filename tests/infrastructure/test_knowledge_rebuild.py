@@ -2,9 +2,9 @@ import inspect
 from uuid import uuid4
 
 import pytest
+from eventsource import ReplayFailedError, ReplayFailure, replay
 from eventsource.adapters.sqlite import SQLiteEventStore
 from redstring import GraphProjection, InMemoryGraphStore
-from redstring import project as fold_into
 
 from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.infrastructure.knowledge import rebuild
@@ -57,8 +57,8 @@ async def test_rebuilding_never_calls_the_model(tmp_path, build_adapter):  # noq
     """Replay purity: extraction is recorded, never recomputed.
 
     `rebuild_graph` accepts no provider, and neither `GraphProjection` nor
-    redstring's `project()` -- the only two redstring calls this module makes,
-    the latter imported here as `fold_into` -- accept one either, so there is
+    `eventsource.replay` -- the only two library calls this module makes --
+    accept one either, so there is
     genuinely nowhere in this path a provider could be reached. A
     raising-provider stub can't be "wired in" because there is no seam to wire
     it into; the strongest test available is pinning that absence
@@ -67,7 +67,7 @@ async def test_rebuilding_never_calls_the_model(tmp_path, build_adapter):  # noq
     """
     assert "provider" not in inspect.signature(rebuild.rebuild_graph).parameters
     assert "provider" not in inspect.signature(GraphProjection.__init__).parameters
-    assert "provider" not in inspect.signature(fold_into).parameters
+    assert "provider" not in inspect.signature(replay).parameters
 
     project_id = uuid4()
     adapter, event_store, _ = build_adapter(tmp_path, project_id)
@@ -82,21 +82,35 @@ async def test_rebuilding_never_calls_the_model(tmp_path, build_adapter):  # noq
 
 @pytest.mark.asyncio
 async def test_a_failed_replay_is_refused_rather_than_served_partial(tmp_path, monkeypatch):
-    """`report.failed` is a count (R4); a non-zero count must raise, not be ignored."""
+    """A strict replay's refusal must reach the caller as `KnowledgeError`.
 
-    class _FakeReport:
-        applied = 3
-        failed = 1
+    The refusal now names the offending event. That is the half of R4 we could
+    never implement ourselves: the old count told an operator that three events
+    failed and gave them no way to find one. So the assertion is on the event
+    type and the underlying error reaching the message, not merely on raising.
+    """
+    failure = ReplayFailure(
+        position=None,
+        event_id=uuid4(),
+        event_type="DocumentExtracted",
+        projection="GraphProjection",
+        error=ValueError("poison"),
+    )
 
-    async def _fake_project(feed, projections, **kwargs):
-        return _FakeReport()
+    async def _fake_replay(feed, projections, **kwargs):
+        assert kwargs["strict"] is True, "a partial graph must never be served"
+        raise ReplayFailedError(failure=failure)
 
-    monkeypatch.setattr(rebuild, "fold_into", _fake_project)
+    monkeypatch.setattr(rebuild, "replay", _fake_replay)
 
     project_id = uuid4()
     event_store = SQLiteEventStore(str(tmp_path / "sessions.db"))
     try:
-        with pytest.raises(KnowledgeError, match="1"):
+        with pytest.raises(KnowledgeError) as caught:
             await rebuild_graph(InMemoryGraphStore(), feed=event_store, project_id=project_id)
     finally:
         await event_store.close()
+
+    assert "DocumentExtracted" in str(caught.value)
+    assert "poison" in str(caught.value)
+    assert isinstance(caught.value.__cause__, ReplayFailedError)

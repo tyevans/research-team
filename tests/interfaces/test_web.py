@@ -317,7 +317,11 @@ async def test_sse_frames_each_event_as_a_data_line(repository, session_id):
 
     feed = LiveFeed(repository, poll_interval=0.01)
     aggregate = repository.create(session_id)
-    aggregate.execute(StartSession(system_prompt="prompt", model_name="test-model"))
+    aggregate.execute(
+        StartSession(
+            session_id=aggregate.aggregate_id, system_prompt="prompt", model_name="test-model"
+        )
+    )
     await repository.save(aggregate)
 
     frames: list[str] = []
@@ -815,7 +819,11 @@ async def test_each_frame_carries_the_cursor_that_follows_it(repository, session
 
     feed = LiveFeed(repository, poll_interval=0.01)
     aggregate = repository.create(session_id)
-    aggregate.execute(StartSession(system_prompt="prompt", model_name="test-model"))
+    aggregate.execute(
+        StartSession(
+            session_id=aggregate.aggregate_id, system_prompt="prompt", model_name="test-model"
+        )
+    )
     await repository.save(aggregate)
 
     task, frames = await _watch(feed)
@@ -838,7 +846,11 @@ async def test_reconnecting_with_a_cursor_delivers_what_was_missed(repository, s
 
     feed = LiveFeed(repository, poll_interval=0.01)
     aggregate = repository.create(session_id)
-    aggregate.execute(StartSession(system_prompt="prompt", model_name="test-model"))
+    aggregate.execute(
+        StartSession(
+            session_id=aggregate.aggregate_id, system_prompt="prompt", model_name="test-model"
+        )
+    )
     await repository.save(aggregate)
 
     task, frames = await _watch(feed)
@@ -866,7 +878,11 @@ async def test_an_unplaceable_cursor_falls_back_to_the_live_end(repository, sess
 
     feed = LiveFeed(repository, poll_interval=0.01)
     aggregate = repository.create(session_id)
-    aggregate.execute(StartSession(system_prompt="prompt", model_name="test-model"))
+    aggregate.execute(
+        StartSession(
+            session_id=aggregate.aggregate_id, system_prompt="prompt", model_name="test-model"
+        )
+    )
     await repository.save(aggregate)  # already in the log, must not be replayed
 
     task, frames = await _watch(feed, resume_from="junk-from-another-database")
@@ -1265,6 +1281,11 @@ async def test_activity_frames_ride_the_stream_without_an_id(repository, session
 async def _project_with_sources(application, client, *documents) -> str:
     """A project holding `documents`, with the corpus projection caught up.
 
+    Takes document *specs* -- keyword dicts -- rather than built commands,
+    because `StoreSourceDocument` names the corpus it targets and this helper
+    is what decides which corpus that is. A caller cannot name an id the helper
+    has not created yet.
+
     Stores through the `Corpus` aggregate rather than through `remember`,
     because `remember` runs an extraction and these tests are about the read
     path. The projection follows the log asynchronously, so the wait is what
@@ -1280,8 +1301,14 @@ async def _project_with_sources(application, client, *documents) -> str:
         snapshot_store=application.service._repository.snapshot_store,
     )
     aggregate = await corpus.load_or_create(UUID(project_id))
-    for command in documents:
-        aggregate.execute(command)
+    for spec in documents:
+        # A dict is a store spec this helper addresses; anything else is
+        # already a command (a drop), which names no corpus and needs none.
+        aggregate.execute(
+            StoreSourceDocument(corpus_id=UUID(project_id), **spec)
+            if isinstance(spec, dict)
+            else spec
+        )
     await corpus.save(aggregate)
     await application.corpus_caught_up()
     return project_id
@@ -1292,15 +1319,15 @@ async def test_listing_sources_reports_metadata_and_never_text(app_and_client):
     project_id = await _project_with_sources(
         application,
         client,
-        StoreSourceDocument(
-            source_id="s1",
-            text="Ada Lovelace worked with Charles Babbage.",
-            uri="https://example.test/ada",
-            title="Ada Lovelace",
-            published_at="1843-07-10",
-            note="for the timeline",
-        ),
-        StoreSourceDocument(source_id="s2", text="Grace Hopper."),
+        {
+            "source_id": "s1",
+            "text": "Ada Lovelace worked with Charles Babbage.",
+            "uri": "https://example.test/ada",
+            "title": "Ada Lovelace",
+            "published_at": "1843-07-10",
+            "note": "for the timeline",
+        },
+        {"source_id": "s2", "text": "Grace Hopper."},
     )
 
     response = await client.get(f"/api/projects/{project_id}/sources")
@@ -1340,11 +1367,11 @@ async def test_reading_a_source_returns_its_text_and_citation(app_and_client):
     project_id = await _project_with_sources(
         application,
         client,
-        StoreSourceDocument(
-            source_id="s1",
-            text="Ada Lovelace worked with Charles Babbage.",
-            title="Ada Lovelace",
-        ),
+        {
+            "source_id": "s1",
+            "text": "Ada Lovelace worked with Charles Babbage.",
+            "title": "Ada Lovelace",
+        },
     )
 
     response = await client.get(f"/api/projects/{project_id}/sources/s1")
@@ -1365,7 +1392,7 @@ async def test_reading_a_range_reports_the_offsets_it_actually_returned(app_and_
     project_id = await _project_with_sources(
         application,
         client,
-        StoreSourceDocument(source_id="s1", text="Ada Lovelace worked with Charles Babbage."),
+        {"source_id": "s1", "text": "Ada Lovelace worked with Charles Babbage."},
     )
 
     response = await client.get(
@@ -1384,7 +1411,7 @@ async def test_a_range_past_the_end_is_clamped_rather_than_refused(app_and_clien
     project_id = await _project_with_sources(
         application,
         client,
-        StoreSourceDocument(source_id="s1", text="Ada Lovelace."),
+        {"source_id": "s1", "text": "Ada Lovelace."},
     )
 
     response = await client.get(
@@ -1400,7 +1427,7 @@ async def test_an_unknown_source_is_a_404(app_and_client):
     project_id = await _project_with_sources(
         application,
         client,
-        StoreSourceDocument(source_id="s1", text="Ada Lovelace."),
+        {"source_id": "s1", "text": "Ada Lovelace."},
     )
 
     response = await client.get(f"/api/projects/{project_id}/sources/nope")
@@ -1425,7 +1452,7 @@ async def test_a_dropped_source_is_gone_from_both_routes(app_and_client):
     project_id = await _project_with_sources(
         application,
         client,
-        StoreSourceDocument(source_id="s1", text="Ada Lovelace."),
+        {"source_id": "s1", "text": "Ada Lovelace."},
         DropSourceDocument(source_id="s1", reason="superseded by the 1843 notes"),
     )
 

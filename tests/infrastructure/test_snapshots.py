@@ -24,7 +24,11 @@ async def _grow_past_threshold(session: CodingSession) -> None:
 
 async def test_save_does_not_wait_for_the_snapshot_it_triggers(aggregates, session_id):
     session = aggregates.create_new(session_id)
-    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+        )
+    )
     await _grow_past_threshold(session)
 
     await aggregates.save(session)
@@ -37,7 +41,11 @@ async def test_save_does_not_wait_for_the_snapshot_it_triggers(aggregates, sessi
 
 async def test_the_backgrounded_snapshot_still_gets_written(aggregates, session_id):
     session = aggregates.create_new(session_id)
-    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+        )
+    )
     await _grow_past_threshold(session)
     await aggregates.save(session)
 
@@ -58,7 +66,11 @@ async def test_closing_waits_for_snapshots_still_in_flight(repository, session_i
     before it releases.
     """
     session = repository.create(session_id)
-    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+        )
+    )
     await _grow_past_threshold(session)
     await repository.save(session)
     assert repository.pending_snapshot_count > 0

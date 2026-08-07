@@ -6,7 +6,11 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "deepagents>=0.7.1,<0.8",
-    "eventsource-py[sqlite]>=0.10.0",
+    # Capped below the next minor, as redstring caps it. Both libraries are
+    # pre-1.0 with a stated no-shim policy, so a minor is where the breaking
+    # renames land -- 0.12.0 alone carried four. An uncapped floor means a
+    # resolver is free to pick the release that breaks us.
+    "eventsource-py[sqlite]>=0.12.0,<0.13",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "langchain-openai>=1.4.1",
@@ -16,7 +20,7 @@ dependencies = [
     # an undeclared dependency works right up until the day one of those three
     # drops it.
     "pyyaml>=6.0",
-    "redstring[llm,neo4j]>=0.2.0",
+    "redstring[llm,neo4j]>=0.3.0,<0.4",
     "trafilatura>=2.2.0",
     "uvicorn[standard]>=0.52.1",
 ]
@@ -26,7 +30,7 @@ dependencies = [
 # a default install stays light and a developer with no collector pays nothing.
 # `uv sync --extra tracing`, then AGENT_TRACING=1.
 tracing = [
-    "eventsource-py[telemetry]>=0.10.0",
+    "eventsource-py[telemetry]>=0.12.0,<0.13",
     "opentelemetry-exporter-otlp-proto-http>=1.0,<2.0",
 ]
 

@@ -30,7 +30,7 @@ async def project_id(service):
     the same accessor `/project new` uses at the REPL.
     """
     aggregate = service.projects.create_new(uuid4())
-    aggregate.execute(CreateProject(name="research"))
+    aggregate.execute(CreateProject(project_id=aggregate.aggregate_id, name="research"))
     await service.projects.save(aggregate)
     return aggregate.aggregate_id
 

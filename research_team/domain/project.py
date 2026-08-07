@@ -17,6 +17,7 @@ from uuid import UUID
 from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
 from pydantic import BaseModel, Field
 
+from research_team.domain.targeting import ChecksCommandTarget
 from research_team.domain.workflow import Preset, Stage
 
 
@@ -96,6 +97,10 @@ class StageAdvanced(DomainEvent):
 
 @dataclass(frozen=True)
 class CreateProject:
+    #: Which project to create. The one command whose target cannot be read
+    #: back off the state, there being no state yet; every later command takes
+    #: its id from the fold of `ProjectCreated`.
+    project_id: UUID
     name: str
 
 
@@ -145,7 +150,14 @@ ProjectCommand = (
 class ProjectState(BaseModel):
     """Everything derivable from the project's event stream."""
 
-    project_id: UUID
+    project_id: UUID | None = None
+    """None before the project exists. Set by the fold of `ProjectCreated`.
+
+    Optional because `initial_state()` takes no arguments (eventsource 0.12):
+    the value before any event is one value for the aggregate *type*, and an
+    id is not part of it.
+    """
+
     status: Literal["new", "created", "deleted"] = "new"
     name: str = ""
     member_session_ids: list[UUID] = Field(default_factory=list)
@@ -174,8 +186,8 @@ class ProjectState(BaseModel):
     there, so there is no decision to record."""
 
 
-def initial_state(aggregate_id: UUID) -> ProjectState:
-    return ProjectState(project_id=aggregate_id)
+def initial_state() -> ProjectState:
+    return ProjectState()
 
 
 def current_stage_of(state: ProjectState, preset: Preset) -> Stage | None:
@@ -201,8 +213,10 @@ def decide(command: ProjectCommand, state: ProjectState) -> list[DomainEvent]:
     """
     project_id = state.project_id
     match command, state:
-        case CreateProject(name=name), ProjectState(status="new"):
-            return [ProjectCreated(aggregate_id=project_id, name=name)]
+        case CreateProject(project_id=new_id, name=name), ProjectState(status="new"):
+            # From the command, not the state: this is the creation command,
+            # so on a fresh project `state.project_id` is None.
+            return [ProjectCreated(aggregate_id=new_id, name=name)]
         case CreateProject(), _:
             raise CommandRejectedError("project already created")
 
@@ -323,7 +337,9 @@ def evolve(state: ProjectState, event: DomainEvent) -> ProjectState:
     """
     match event:
         case ProjectCreated(name=name):
-            return ProjectState(project_id=state.project_id, status="created", name=name)
+            # The event is where the id enters the state: `decide` reads it
+            # back off `state` for every command but the first.
+            return ProjectState(project_id=event.aggregate_id, status="created", name=name)
 
         case SessionJoinedProject(session_id=session_id):
             return state.model_copy(
@@ -363,7 +379,7 @@ def evolve(state: ProjectState, event: DomainEvent) -> ProjectState:
             return state
 
 
-class Project(DeciderAggregate[ProjectState, ProjectCommand]):
+class Project(ChecksCommandTarget, DeciderAggregate[ProjectState, ProjectCommand]):
     """The imperative shell. Holds no rules -- it delegates all three.
 
     Everything the library needs from an aggregate (replay, snapshots, version
@@ -375,6 +391,7 @@ class Project(DeciderAggregate[ProjectState, ProjectCommand]):
     """
 
     aggregate_type = "Project"
+    target_field = "project_id"
 
     initial_state = staticmethod(initial_state)
     decide = staticmethod(decide)

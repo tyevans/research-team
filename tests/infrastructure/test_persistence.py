@@ -145,9 +145,9 @@ async def test_sessions_are_isolated_from_each_other(
     assert (await repository.load(second)).state.messages == []
 
 
-def test_aggregate_repository_snapshots_are_configured(store, db_path):
+def test_aggregate_repository_snapshots_are_configured(store, snapshot_store):
     """Snapshotting is what keeps loads cheap as a session's log grows."""
-    aggregates = build_aggregate_repository(store, db_path)
+    aggregates = build_aggregate_repository(store, snapshot_store=snapshot_store)
     assert aggregates.snapshot_threshold == SNAPSHOT_THRESHOLD == 50
     assert aggregates.has_snapshot_support
 
@@ -158,7 +158,9 @@ async def test_read_since_ignores_events_from_other_aggregate_types(tmp_path):
     try:
         session_id = uuid4()
         session = repository.create(session_id)
-        session.execute(StartSession(system_prompt="p", model_name="m"))
+        session.execute(
+            StartSession(session_id=session.aggregate_id, system_prompt="p", model_name="m")
+        )
         await repository.save(session)
 
         project_id = uuid4()

@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 from eventsource import InMemoryEventBus
 from eventsource.adapters.sqlite import SQLiteEventStore
+from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from redstring import FakeLlmProvider
@@ -125,9 +126,23 @@ def publisher() -> InMemoryEventBus:
 
 
 @pytest.fixture
-def aggregates(store, db_path, publisher):
+async def snapshot_store(db_path) -> SQLiteSnapshotStore:
+    """Closed on teardown.
+
+    Since eventsource 0.12 a snapshot store holds one connection for its
+    lifetime, backed by a non-daemon aiosqlite thread. Left open, that thread
+    outlives the test's event loop and surfaces much later as an unrelated
+    test's `RuntimeError: Event loop is closed`.
+    """
+    opened = SQLiteSnapshotStore(db_path)
+    yield opened
+    await opened.close()
+
+
+@pytest.fixture
+def aggregates(store, publisher, snapshot_store):
     """The raw `eventsource` aggregate repository, for tests that need it."""
-    return build_aggregate_repository(store, db_path, publisher)
+    return build_aggregate_repository(store, publisher, snapshot_store=snapshot_store)
 
 
 @pytest.fixture
@@ -143,7 +158,13 @@ def session_id():
 @pytest.fixture
 def session(aggregates, session_id) -> CodingSession:
     aggregate = aggregates.create_new(session_id)
-    aggregate.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    aggregate.execute(
+        StartSession(
+            session_id=aggregate.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+        )
+    )
     return aggregate
 
 

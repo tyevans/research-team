@@ -248,6 +248,7 @@ class RedstringKnowledge:
             return
         corpus.execute(
             StoreSourceDocument(
+                corpus_id=self._project_id,
                 source_id=source.source_id,
                 text=source.text,
                 uri=source.uri,

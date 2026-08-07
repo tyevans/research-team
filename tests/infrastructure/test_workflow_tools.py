@@ -40,9 +40,7 @@ from research_team.workflows import hybrid_default, ubd_pure
 
 
 def _created(project_id: UUID) -> ProjectState:
-    return evolve(
-        initial_state(project_id), ProjectCreated(aggregate_id=project_id, name="research")
-    )
+    return evolve(initial_state(), ProjectCreated(aggregate_id=project_id, name="research"))
 
 
 def _with_workflow(project_id: UUID, preset: Preset = hybrid_default) -> ProjectState:

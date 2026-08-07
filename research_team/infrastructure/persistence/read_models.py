@@ -45,6 +45,7 @@ from eventsource.application.subscriptions.retry import RetryConfig
 from eventsource.ports.dlq import DLQEntry
 from eventsource.ports.readmodels import Query, ReadModelRepository
 from pydantic import Field, field_validator
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.application import SessionSummary, SummaryHealth
 from research_team.domain import (
@@ -302,6 +303,7 @@ class SessionSummaryRunner:
         self._subscription = None
         self._checkpoints: SQLCheckpointRepository | None = None
         self._dlq: SQLDLQRepository | None = None
+        self._engine: AsyncEngine | None = None
 
     @property
     def projection_name(self) -> str:
@@ -326,6 +328,10 @@ class SessionSummaryRunner:
         # anything has used the store finds no table at all.
         await self._store.current_position()
         engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        # Held so `stop()` can dispose it. An engine keeps a connection pool,
+        # and each pooled aiosqlite connection is backed by a non-daemon
+        # thread; closing the store's own connection does not touch them.
+        self._engine = engine
         self._checkpoints = SQLCheckpointRepository(engine)
         self._dlq = SQLDLQRepository(engine)
         self._summaries = await SessionSummaryStore.open(
@@ -445,6 +451,9 @@ class SessionSummaryRunner:
         if self._summaries is not None:
             await self._summaries.close()
             self._summaries = None
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None
 
 
 CORPUS_NAMESPACE = UUID("6f1f5f8e-0c4a-5c8f-9b3a-7d2f4c9e1a60")
@@ -733,6 +742,7 @@ class CorpusRunner:
         self._subscription = None
         self._checkpoints: SQLCheckpointRepository | None = None
         self._dlq: SQLDLQRepository | None = None
+        self._engine: AsyncEngine | None = None
 
     @property
     def projection_name(self) -> str:
@@ -751,6 +761,8 @@ class CorpusRunner:
             return
         await self._store.current_position()
         engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        # Held so `stop()` can dispose it -- see `SessionSummaryRunner.start`.
+        self._engine = engine
         self._checkpoints = SQLCheckpointRepository(engine)
         self._dlq = SQLDLQRepository(engine)
         self._corpus = await CorpusStore.open(
@@ -841,3 +853,6 @@ class CorpusRunner:
         if self._corpus is not None:
             await self._corpus.close()
             self._corpus = None
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None

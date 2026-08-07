@@ -40,7 +40,11 @@ def test_a_message_without_an_id_is_not_reported():
 
 async def test_running_a_turn_reports_whole_messages(aggregates, session_id):
     session = aggregates.create_new(session_id)
-    session.execute(StartSession(system_prompt="be brief", model_name="fake"))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt="be brief", model_name="fake"
+        )
+    )
     model = ToolAwareFakeChatModel(responses=[AIMessage(content="the reply", id="a1")])
     executor = DeepAgentTurnExecutor(model)
 
@@ -60,7 +64,11 @@ async def test_running_a_turn_reports_whole_messages(aggregates, session_id):
 
 async def test_prose_is_reported_as_a_delta(aggregates, session_id):
     session = aggregates.create_new(session_id)
-    session.execute(StartSession(system_prompt="be brief", model_name="fake"))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt="be brief", model_name="fake"
+        )
+    )
     model = ToolAwareFakeChatModel(
         responses=[AIMessage(content="the streamed reply", id="a1")]
     )
@@ -87,7 +95,11 @@ async def test_the_durable_record_is_identical_with_and_without_a_reporter(
 
     async def run(reporter):
         session = aggregates.create_new(session_id)
-        session.execute(StartSession(system_prompt="be brief", model_name="fake"))
+        session.execute(
+            StartSession(
+                session_id=session.aggregate_id, system_prompt="be brief", model_name="fake"
+            )
+        )
         model = ToolAwareFakeChatModel(responses=[AIMessage(content="the reply", id="a1")])
         executor = DeepAgentTurnExecutor(model)
         return await executor.execute(
@@ -107,7 +119,11 @@ async def test_the_durable_record_is_identical_with_and_without_a_reporter(
 async def test_a_raising_reporter_does_not_fail_the_turn(aggregates, session_id):
     """A minute of model work is not worth discarding because a browser feed raised."""
     session = aggregates.create_new(session_id)
-    session.execute(StartSession(system_prompt="be brief", model_name="fake"))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt="be brief", model_name="fake"
+        )
+    )
     model = ToolAwareFakeChatModel(responses=[AIMessage(content="the reply", id="a1")])
     executor = DeepAgentTurnExecutor(model)
 

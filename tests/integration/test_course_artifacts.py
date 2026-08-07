@@ -78,7 +78,7 @@ def _writes(stage_id: str, call_id: str, cited: bool = True) -> list[AIMessage]:
 async def _project(application):
     project_id = uuid4()
     project = application.service.projects.create_new(project_id)
-    project.execute(CreateProject(name="course"))
+    project.execute(CreateProject(project_id=project_id, name="course"))
     project.execute(SelectWorkflow(preset=hybrid_default))
     await application.service.projects.save(project)
     return project_id
