@@ -436,6 +436,77 @@ def test_an_unknown_type_is_not_reported_as_a_problem():
     assert validation_report(parse_document("```component:from-the-future\nx: 1\n```\n")) == ""
 
 
+# --- knowing when to reach for one -----------------------------------------
+#
+# A syntax reference alone is a grammar with no occasion. These pin the other
+# half: that a stage writing an assessment artifact is told which components an
+# assessment is made of, and -- just as importantly -- that a stage writing a
+# source claim is told nothing, because 2kB of widget syntax in an intake
+# stage's prompt is 2kB of noise it will never act on.
+
+
+def test_a_stage_that_writes_no_component_bearing_artifact_gets_no_guidance():
+    from research_team.application.components import component_guidance
+    from research_team.domain.workflow import ArtifactType, StageOutput
+
+    outputs = (StageOutput(artifact_type=ArtifactType.SOURCE_CLAIM, cardinality="1..n"),)
+    assert component_guidance(outputs) == ""
+
+
+def test_an_evidence_stage_is_pointed_at_the_assessment_components():
+    from research_team.application.components import component_guidance
+    from research_team.domain.workflow import ArtifactType, StageOutput
+
+    outputs = (
+        StageOutput(
+            artifact_type=ArtifactType.EVIDENCE_SPEC,
+            subtype="assessment_item",
+            cardinality="1..n",
+        ),
+    )
+    guidance = component_guidance(outputs)
+
+    assert "EvidenceSpec" in guidance
+    assert "mcq" in guidance
+    # The deck belongs in a learning plan, not in the evidence an assessment is.
+    assert "flashcards" not in guidance.split("### mcq")[0]
+
+
+def test_a_learning_plan_is_pointed_at_practice_rather_than_assessment():
+    from research_team.application.components import component_guidance
+    from research_team.domain.workflow import ArtifactType, StageOutput
+
+    outputs = (StageOutput(artifact_type=ArtifactType.EXPERIENCE, cardinality="1..n"),)
+    guidance = component_guidance(outputs)
+
+    assert "Experience" in guidance
+    assert "flashcards" in guidance and "checklist" in guidance
+
+
+def test_guidance_carries_the_syntax_reference_so_the_two_arrive_together():
+    """Knowing a component fits and not knowing how to write one is no better
+    than the reverse, so they are one block or neither."""
+    from research_team.application.components import component_guidance
+    from research_team.domain.workflow import ArtifactType, StageOutput
+
+    outputs = (StageOutput(artifact_type=ArtifactType.BUILD, cardinality="1"),)
+    guidance = component_guidance(outputs)
+
+    assert "```component:mcq" in guidance
+    assert "block scalar" in guidance
+
+
+def test_every_component_named_in_the_map_is_actually_registered():
+    """The map is prose handed to a model; an unregistered name in it would be
+    an instruction to write a component that renders as a code block."""
+    from research_team.application.components import COMPONENTS_FOR, REGISTRY
+
+    for artifact, names in COMPONENTS_FOR.items():
+        assert names, f"{artifact} maps to nothing; drop the entry instead"
+        for name in names:
+            assert name in REGISTRY, f"{artifact} names unregistered {name!r}"
+
+
 def test_the_generated_reference_covers_every_registered_type():
     """The reference is generated so it cannot drift from the schemas.
 

@@ -363,6 +363,23 @@ with a bad body renders its own source next to a panel naming the fields. A
 lesson that shows eleven widgets and one error panel is worth far more than a
 stack trace, so nothing in the parse path raises.
 
+**How the agent knows to use them.** Not from a general instruction — from its
+own stage. A stage's guidance is derived from the artifact types it declares,
+so `addie.d2.assessment_design`, which writes an `EvidenceSpec (assessment_item)`,
+is told an assessment item is made of `mcq` and `cloze`, and shown the syntax
+for those two only; `addie.v1.build` gets the whole registry, because ADDIE's
+Development phase is where components are authored. Ten of the hybrid preset's
+fifteen stages are told nothing at all, which is the point: an intake stage
+writing source claims has no use for widget syntax, and a prompt that carries
+it anyway teaches the model that most of its instructions do not apply to it.
+The mapping is `COMPONENTS_FOR`, from the design's §3.8 table.
+
+Two consequences worth knowing. A session driving no preset gets no component
+guidance — components are how a *course artifact* becomes something a learner
+can do, and a session with no workflow is not writing one. And subagents get
+their own scoped prompt, so a delegated task that should produce a component
+needs to say so.
+
 Design notes are in `docs/research/course-design/markdown-components.md`;
 `widget-horizons.md` beside it ranks the types not yet built.
 

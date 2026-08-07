@@ -87,6 +87,7 @@ from typing import Any, ClassVar, Literal
 import yaml
 
 from research_team.application.artifacts import parse_frontmatter
+from research_team.domain.workflow import ArtifactType
 
 COMPONENT_PREFIX = "component:"
 """What makes an info string a component rather than a language tag."""
@@ -514,13 +515,19 @@ REGISTRY: dict[str, ComponentType] = {
 }
 
 
-def component_reference() -> str:
+def component_reference(only: Iterable[str] | None = None) -> str:
     """The authoring reference, generated from the registry for the prompt.
 
     Generated rather than written so it cannot drift from the schemas it
     describes -- the failure mode being a model authoring faithfully to a
     description that stopped being true two edits ago.
+
+    `only` narrows it to the types a caller has just said are appropriate.
+    Showing a stage the syntax for two components it was told to use, plus two
+    it was told not to, invites exactly the choice the guidance was trying to
+    make for it.
     """
+    wanted = list(REGISTRY.values()) if only is None else [REGISTRY[n] for n in only]
     lines = [
         "Interactive components are fenced blocks with a YAML body. The info",
         "string is `component:<type>`. Rules that matter:",
@@ -535,7 +542,7 @@ def component_reference() -> str:
         "component costs that block and nothing else.",
         "",
     ]
-    for component in REGISTRY.values():
+    for component in wanted:
         lines += [f"### {component.name}", "", component.summary, "", component.example, ""]
     return "\n".join(lines)
 
@@ -548,6 +555,86 @@ components are how a *course artifact* becomes something a learner can do
 rather than only read, and a session driving no preset is not writing one. The
 same reasoning puts `WORKFLOW_PROMPT` there.
 """
+
+
+COMPONENTS_FOR: Mapping[ArtifactType, tuple[str, ...]] = {
+    # UbD Stage 2 evidence, and ADDIE's assessment items: the components that
+    # have a right answer. A deck is not evidence of anything.
+    ArtifactType.EVIDENCE_SPEC: ("mcq", "cloze"),
+    # UbD Stage 3's learning plan and ADDIE's treatment: practice, not
+    # assessment. Recall and procedure, where being wrong costs nothing.
+    ArtifactType.EXPERIENCE: ("flashcards", "cloze", "checklist"),
+    # ADDIE Development. §3.8: "the whole catalog; this is where components get
+    # authored." The one stage that should reach for anything.
+    ArtifactType.BUILD: tuple(REGISTRY),
+    # Organising experiences: a sequence a learner or facilitator works
+    # through is a checklist, and `ordering` is not registered yet.
+    ArtifactType.SEQUENCE: ("checklist",),
+    # Implementation: the facilitator's run-of-show.
+    ArtifactType.MONITORING_PLAN: ("checklist",),
+}
+"""Which components belong in which artifact, from the design's §3.8 table.
+
+Keyed by artifact type rather than by framework stage, because a stage's
+*outputs* are what this codebase actually declares -- so the guidance a stage
+receives is derived from the preset, the same way its paths and its frontmatter
+already are, and adding an output to a stage updates its component guidance
+with it rather than leaving the two to drift.
+
+Deliberately partial. `Rubric`, `Criteria` and `TaxonomySelection` all have a
+natural component in §3.8 and none of it is registered yet, so they are absent
+rather than mapped to an approximation: telling a model to express a rubric as
+a checklist would get a rubric-shaped checklist, which is worse than prose.
+"""
+
+
+def component_guidance(outputs: Iterable[Any]) -> str:
+    """What to tell a stage about components, or nothing at all.
+
+    Nothing is the common case and it is the point. A stage writing source
+    claims has no use for two kilobytes of widget syntax, and a prompt that
+    carries it anyway teaches the model that most of its instructions do not
+    apply to it -- which is a habit that costs far more than the tokens.
+
+    When a stage *does* write a component-bearing artifact, the occasion and
+    the syntax arrive together: knowing that an assessment item wants an `mcq`
+    is useless without knowing how to write one, and knowing how to write one
+    is useless without knowing when.
+    """
+    fits: dict[str, tuple[str, ...]] = {}
+    for output in outputs:
+        names = COMPONENTS_FOR.get(output.artifact_type)
+        if not names:
+            continue
+        label = output.artifact_type.value
+        if getattr(output, "subtype", None):
+            label = f"{label} ({output.subtype})"
+        fits[label] = names
+    if not fits:
+        return ""
+
+    lines = [
+        "",
+        "",
+        "## Interactive components in this stage's artifacts",
+        "",
+        "These outputs are read by a learner, not only by a reviewer. Where one",
+        "of them would be better done than read, write the component rather than",
+        "describing it in prose:",
+        "",
+    ]
+    lines += [f"- **{label}** — {', '.join(names)}" for label, names in fits.items()]
+    lines += [
+        "",
+        "Prose is still right for explanation. A component earns its place when",
+        "the learner should *do* something -- recall it, decide it, work through",
+        "it -- not when they should understand it.",
+        "",
+        # Narrowed to what this stage was just told fits, in registry order so
+        # the reference reads the same wherever it appears.
+        component_reference(only=[n for n in REGISTRY if any(n in v for v in fits.values())]),
+    ]
+    return "\n".join(lines)
 
 
 # --- parsing --------------------------------------------------------------

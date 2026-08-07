@@ -39,7 +39,7 @@ from research_team.application import (
 )
 from research_team.application.artifacts import stage_artifact_instructions
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
-from research_team.application.components import COMPONENT_PROMPT
+from research_team.application.components import component_guidance
 from research_team.application.ports import GateReview
 from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.application.stage_exit import (
@@ -530,7 +530,11 @@ def build_application(
                 instructions=(
                     stage_artifact_instructions(preset, stage)
                     + WORKFLOW_PROMPT
-                    + COMPONENT_PROMPT
+                    # Derived from this stage's declared outputs, so a stage
+                    # writing source claims is told nothing about widgets and a
+                    # stage writing assessment items is told which ones an
+                    # assessment is made of. Empty for most stages, by design.
+                    + component_guidance(stage.outputs)
                 ),
             ),
         )

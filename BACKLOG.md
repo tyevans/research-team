@@ -403,6 +403,27 @@ survives a content edit that keeps the id, and nothing survives an author
 rewriting the item. The parser already warns on a derived id and on a duplicate
 one, which is the input that decision needs.
 
+### B31. A subagent sent to write assessment items will write prose
+
+Component guidance is derived from the stage's declared outputs and delivered
+through `StageMiddleware`, which wraps the *caller's* model call. A subagent
+spawned through `task` gets `delegation.py`'s own system prompt and none of
+that, so a stage that delegates "draft the assessment items for module 3" gets
+back prose that no renderer will turn into anything, and the caller has to
+notice and redo it.
+
+Not fixed here because the fix is a choice, not an oversight. Either the
+delegation prompt gains the same derived guidance (which means the subagent
+system prompt stops being static, and every delegation pays for guidance most
+of them do not need), or the stage prompt tells the model to include the
+component requirements *in the task it writes* (cheaper, and consistent with
+`delegation.py`'s existing "it cannot see this conversation; give it everything
+it needs"). The second is probably right, and it is a prompt change nobody
+should make without watching a real delegated authoring turn first.
+
+Worth noticing early: the failure is silent and looks like a model that ignored
+its instructions, because the instructions genuinely were not there.
+
 ### B29. The parse is not cached, though the cache key is exact
 
 `GET .../files/parsed` re-parses the file on every request, and the attempt
