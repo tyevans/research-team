@@ -76,6 +76,7 @@ variable:
 | `AGENT_TRACING` | unset | set to `1` to export OpenTelemetry traces (needs the `tracing` extra) |
 | `AGENT_OTLP_ENDPOINT` | `http://localhost:4318/v1/traces` | where traces are sent |
 | `AGENT_SERVICE_NAME` | `research-team` | what this process calls itself in a trace |
+| `AGENT_AUTO_RESEARCH` | *(unset)* | set to `1` to expose the autonomous-run routes over HTTP; unset means they are absent |
 | `AGENT_SEARXNG_URL` | *(unset)* | SearXNG base URL; unset means no search tool is registered |
 | `AGENT_SEARXNG_RESULTS` | `5` | how many results reach the model |
 | `AGENT_GRAPH_STORE` | `memory` | what backs the knowledge graph: `memory` or `neo4j` |
@@ -107,6 +108,7 @@ variable:
 | `/project` | every project, with its id |
 | `/project new <name>` | create a project |
 | `/project use <name>` | start a session that inherits the project's files |
+| `/research [n]` | work this project's topic queue autonomously, optionally capped at `n` rounds |
 | `/help` | the command list |
 | `/quit` | exit |
 
@@ -200,6 +202,58 @@ integration` to run against locally. Nobody has to start it to commit,
 though: the default `pytest` run deselects `-m integration`, and CI starts its
 own Neo4j service container and runs that suite on every pull request, so the
 `neo4j` backend is exercised against a real server before anything merges.
+
+## Autonomous research
+
+A **run** works a project's topic queue without anybody typing. One round is
+one topic and one turn: the queue is asked what wants attention, the most
+urgent topic is claimed, a turn is run scoped to that topic and told why it was
+raised, and what the turn appended to the topic's stream is counted.
+
+From the terminal, inside a project:
+
+```
+> /project use atlas
+> /research          # until the queue empties or the budget stops it
+> /research 5        # the same, capped at five rounds
+```
+
+Ctrl-C asks the run to stop after the round it is in, rather than killing it:
+an abandoned round leaves a turn half-written and a run with no stop event.
+
+Over HTTP the same thing is off unless asked for, because there is no
+authentication in front of the port (see B18) and this is the only route that
+would spend an hour of model time on behalf of whoever called it:
+
+```bash
+AGENT_AUTO_RESEARCH=1 uv run web.py
+curl -X POST localhost:8000/api/projects/$PID/auto-research -d '{"max_rounds": 5}' \
+     -H 'content-type: application/json'   # 202, with the run and session ids
+curl localhost:8000/api/projects/$PID/auto-research           # folded status
+curl -X POST localhost:8000/api/projects/$PID/auto-research/cancel
+```
+
+Without the variable those three routes are absent and answer 404 -- not 403,
+which would tell an unauthenticated caller that there is a research loop here.
+
+**A run cannot decide it is finished, and this is the point.** Every stop
+reason is a fold of the run's own stream or of the queue: `queue_empty`,
+`max_rounds`, `no_new_findings` (three consecutive rounds that appended
+nothing), `error_rate` (three consecutive failed turns), `cancelled`. There is
+no `agent_decided_it_was_done`, because a model asked whether it has finished
+says yes fluently, and a loop that believes it terminates early and reports
+success. For the same reason, progress is counted by folding the topic before
+and after the turn rather than by reading the reply: a round that describes a
+breakthrough and records nothing is an empty round.
+
+**A default run is read-only.** `fetch` floors at `ask`, so an unattended loop
+that tried to reach the network would deadlock on an approval nobody is there
+to answer -- which is the security posture working rather than a limitation to
+route around. Most of the value is there anyway, since coverage, contradiction,
+linkage and staleness are all questions about material already in hand. The run
+records the autonomy policy it started under, and `read_only` is read off that
+policy rather than asserted: someone who has set `fetch` to `auto` gets a run
+that says so on its own stream.
 
 ## How it works
 

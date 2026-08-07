@@ -5,7 +5,12 @@ from uuid import UUID
 
 from eventsource import DomainEvent
 
-from research_team.application import SessionSummary, SummaryHealth, TurnOutcome
+from research_team.application import (
+    RunReport,
+    SessionSummary,
+    SummaryHealth,
+    TurnOutcome,
+)
 from research_team.application.ports import ActivityDelta, ActivityNote
 from research_team.domain import (
     CodingSession,
@@ -199,6 +204,37 @@ def format_turn(outcome: TurnOutcome) -> str:
 def format_resumed(session: CodingSession) -> str:
     state = session.state
     return f"resumed {state.session_id} -- {state.turn_index} turns, {len(state.files)} files"
+
+
+def format_run_report(report: RunReport) -> str:
+    """How an autonomous run ended, in the counts the log can back up.
+
+    Leads with the reason rather than the work, because the reason is what
+    decides whether the work is finished: `queue_empty` with nothing
+    outstanding is the only ending that means done, and every other reason
+    means the run stopped with work still in front of it. `finished_cleanly`
+    is the report's own judgement of that, so this does not restate it.
+    """
+    verdict = "finished" if report.finished_cleanly else "stopped"
+    parts = [
+        f"{verdict}: {report.reason}",
+        f"{report.rounds} round(s)",
+        f"{report.findings} finding(s)",
+    ]
+    if report.unexamined_topics:
+        parts.append(f"{report.unexamined_topics} topic(s) still want attention")
+    return f"run {str(report.run_id)[:8]} -- " + ", ".join(parts)
+
+
+def format_round(rounds: int, findings: int, topic: str | None) -> str:
+    """One progress line, printed when a run's fold has moved on.
+
+    In the same register as the activity notes a turn already prints: a round
+    is a turn with a reason attached, and giving it its own visual language
+    would make one program look like two.
+    """
+    working = f" -- on topic {topic[:8]}" if topic else ""
+    return f"· round {rounds} ({findings} finding(s) so far){working}"
 
 
 def format_autonomy(levels: dict[str, str]) -> str:

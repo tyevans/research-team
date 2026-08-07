@@ -927,6 +927,14 @@ const state = {
   course: null,             // /api/projects/{id}/course
   courseError: null,
   openStage: null,          // which rail row is expanded, by stage id
+  // autonomous research, on the course view's project
+  run: null,                // folded GET .../auto-research, or null when none
+  runError: null,           // a real failure -- 404 "nothing running" is not one
+  runOff: false,            // this instance was not wired for runs: say so once
+  runStarting: false,       // POST .../auto-research in flight
+  runCancelling: false,     // POST .../auto-research/cancel in flight
+  runGone: false,           // a watched run left the live route without an ending we saw
+  runMaxRounds: '',         // the optional cap, as typed; empty means the domain's own
   // session view
   sessionId: null,
   head: null,               // /api/sessions/{id}
@@ -1047,6 +1055,7 @@ function onRoute() {
   // Nothing scheduled against the previous view should fire against this one.
   clearTimeout(treeRefreshTimer); treeRefreshTimer = null;
   clearTimeout(freshSweepTimer); freshSweepTimer = null;
+  stopRunPoll();
   stopTick();
   if (next.name === 'session') {
     if (changedSession) {
@@ -1100,8 +1109,17 @@ function onRoute() {
     sessionEls = null;
     state.course = null;
     state.courseError = null;
+    // A run belongs to the project, not to this visit of the page, so the
+    // panel starts empty and asks the server what is actually in flight.
+    state.run = null;
+    state.runError = null;
+    state.runOff = false;
+    state.runStarting = false;
+    state.runCancelling = false;
+    state.runGone = false;
     mountCourseView();
     loadCourse();
+    loadRun();
   } else {
     state.sessionId = null;
     sessionEls = null;
@@ -1378,7 +1396,16 @@ function renderProjects() {
                 go('#/p/' + encodeURIComponent(p.id) + '/course');
               }
             }, [document.createTextNode('Course')])
-          : null,
+          // Without a preset there is no rail, but a run is about the topic
+          // queue and not the workflow -- so the same page is still worth
+          // opening, and this says what is actually on it.
+          : h('button', {
+              class: 'btn btn-sm',
+              title: 'Run research over this project’s topic queue',
+              onclick: function () {
+                go('#/p/' + encodeURIComponent(p.id) + '/course');
+              }
+            }, [document.createTextNode('Research')]),
         h('button', {
           class: 'btn btn-sm btn-danger',
           title: 'Retire this project',
@@ -1576,6 +1603,7 @@ function renderCourse() {
   const artifactBox = slot(root, 'artifacts');
   clear(railBox); clear(artifactBox);
   clear(slot(root, 'course-findings'));
+  renderRunPanel();
 
   if (state.courseError) {
     // The two 409s -- no workflow, or one this build does not ship -- are the
@@ -1611,6 +1639,366 @@ function renderCourse() {
   renderCourseFindings(course);
   renderStageRail(course, railBox);
   renderCourseArtifacts(course, artifactBox);
+}
+
+/* ===================================================================== */
+/* autonomous research                                                   */
+/* ===================================================================== */
+
+/* A run works this project's topic queue without anybody typing: one round is
+ * one topic and one turn. The panel's job is to make two things impossible to
+ * confuse -- a run that is going, and a run that has stopped -- and to keep
+ * "stopped" from reading as "finished". A run cannot decide it is done; every
+ * ending here is a fold of its own stream or of the queue, and only one of
+ * them means the work in front of it ran out. */
+
+/* Keyed by the closed `StopReason` set. `tone` drives the colour, and it is
+ * `done` for exactly one reason on purpose: the others all describe a run that
+ * stopped with topics still on the queue, which is not success and must not
+ * be dressed as it. */
+const STOP_REASONS = {
+  queue_empty: {
+    tone: 'done',
+    label: 'queue empty',
+    text: 'The queue had nothing left to claim. This is the only ending that ' +
+          'means the work in front of the run ran out.'
+  },
+  max_rounds: {
+    tone: 'short',
+    label: 'round cap reached',
+    text: 'It spent the rounds it was given. The queue was not empty when it stopped.'
+  },
+  budget_exhausted: {
+    tone: 'short',
+    label: 'budget spent',
+    text: 'Its budget ran out before the queue did.'
+  },
+  no_new_findings: {
+    tone: 'short',
+    label: 'went quiet',
+    text: 'Consecutive rounds recorded nothing, so it stopped rather than keep ' +
+          'spending. Quiet is not the same as finished -- the topics it went ' +
+          'quiet on are still on the queue.'
+  },
+  error_rate: {
+    tone: 'bad',
+    label: 'too many failures',
+    text: 'Consecutive turns failed. Nothing here says the remaining work is done; ' +
+          'it says the run could not do it.'
+  },
+  cancelled: {
+    tone: 'short',
+    label: 'cancelled',
+    text: 'Somebody asked it to stop, and it stopped after the round it was in. ' +
+          'Whatever was still queued is still queued.'
+  }
+};
+
+function stopReason(reason) {
+  return STOP_REASONS[reason] || {
+    tone: 'short',
+    label: String(reason || 'unknown'),
+    // A reason this build does not know is still a reason it stopped, and the
+    // safe reading of an unrecognised ending is the un-finished one.
+    text: 'This build does not recognise that ending, so treat it as a run that ' +
+          'stopped rather than one that finished.'
+  };
+}
+
+/* A run with no status at all is the 202 body -- ids only, no fold yet. It has
+ * begun, so it counts as live: the alternative is one frame of "ended, reason
+ * unknown" between starting a run and the first poll. */
+function runIsLive(run) {
+  return !!run && (run.status === undefined || run.status === 'running' || run.status === 'new');
+}
+
+let runPollTimer = null;
+
+function startRunPoll() {
+  if (runPollTimer) return;
+  runPollTimer = setInterval(loadRun, 2000);
+}
+
+function stopRunPoll() {
+  if (!runPollTimer) return;
+  clearInterval(runPollTimer);
+  runPollTimer = null;
+}
+
+/* 404 means one of two unrelated things and they are told apart by the detail
+ * text, because that is all the server gives: either nothing is running on
+ * this project (ordinary, and the state the panel spends most of its life in)
+ * or the routes are absent entirely because `AGENT_AUTO_RESEARCH` is unset.
+ * The second is worth saying once and never asking about again -- polling a
+ * feature that is switched off is just noise on somebody's log.
+ *
+ * Matched on "not enabled" rather than on the variable's name: the GET says
+ * only that much, and just the POST spells out what to set. */
+function saysDisabled(message) {
+  return /not enabled|AGENT_AUTO_RESEARCH/.test(String(message || ''));
+}
+function loadRun() {
+  const id = state.route.id;
+  if (state.runOff) { stopRunPoll(); return; }
+  api.get('/api/projects/' + encodeURIComponent(id) + '/auto-research').then(function (res) {
+    if (state.route.name !== 'course' || state.route.id !== id) return;
+    state.run = res;
+    state.runError = null;
+    if (runIsLive(res)) startRunPoll(); else stopRunPoll();
+    renderRunPanel();
+  }).catch(function (e) {
+    if (state.route.name !== 'course' || state.route.id !== id) return;
+    if (e.status === 404) {
+      if (saysDisabled(e.message)) {
+        state.runOff = true;
+        state.run = null;
+        stopRunPoll();
+      } else if (runIsLive(state.run)) {
+        // A run we were watching is gone from a route that only answers about
+        // the live one. It ended, and this page did not see with what reason.
+        // Saying that is the honest reading; clearing back to "no run" would
+        // quietly retract an ending nobody got to read.
+        state.runGone = true;
+        state.runError = null;
+        stopRunPoll();
+      } else {
+        state.run = null;
+        state.runError = null;
+        stopRunPoll();
+      }
+    } else {
+      state.runError = e.message;
+    }
+    renderRunPanel();
+  });
+}
+
+function startRun() {
+  const id = state.route.id;
+  const body = {};
+  const typed = String(state.runMaxRounds || '').trim();
+  // Sending nothing is a real choice, not a missing value: it means the run is
+  // under the domain's own budget rather than one typed into a browser.
+  if (typed) {
+    const rounds = parseInt(typed, 10);
+    if (isNaN(rounds) || rounds < 1) {
+      toast('Max rounds must be a whole number of at least 1.', 'bad');
+      return;
+    }
+    body.max_rounds = rounds;
+  }
+  state.runStarting = true;
+  state.runError = null;
+  state.runGone = false;
+  renderRunPanel();
+  api.post('/api/projects/' + encodeURIComponent(id) + '/auto-research', body)
+    .then(function (res) {
+      if (state.route.name !== 'course' || state.route.id !== id) return;
+      state.runStarting = false;
+      // 202: what came back is a run that has *begun*, with no counters on it
+      // yet. The first poll is what turns this into something worth reading.
+      state.run = res;
+      startRunPoll();
+      renderRunPanel();
+      loadRun();
+    }).catch(function (e) {
+      if (state.route.name !== 'course' || state.route.id !== id) return;
+      state.runStarting = false;
+      if (e.status === 404 && saysDisabled(e.message)) state.runOff = true;
+      else state.runError = e.message;
+      renderRunPanel();
+    });
+}
+
+function cancelRun() {
+  const id = state.route.id;
+  state.runCancelling = true;
+  renderRunPanel();
+  api.post('/api/projects/' + encodeURIComponent(id) + '/auto-research/cancel', {})
+    .then(function (res) {
+      if (state.route.name !== 'course' || state.route.id !== id) return;
+      state.runCancelling = false;
+      // Still running when this returns: cancelling asks the round in flight to
+      // finish, because abandoning it would leave a half-written turn. So the
+      // poll stays on and the panel keeps saying "running" until it is not.
+      if (res && res.cancelled) toast('Asked the run to stop after this round.');
+      renderRunPanel();
+      loadRun();
+    }).catch(function (e) {
+      if (state.route.name !== 'course' || state.route.id !== id) return;
+      state.runCancelling = false;
+      state.runError = e.message;
+      renderRunPanel();
+    });
+}
+
+function renderRunPanel() {
+  if (!root) return;
+  const box = slot(root, 'run-panel');
+  if (!box) return;
+  clear(box);
+
+  if (state.runOff) {
+    box.appendChild(h('div', { class: 'run-off' }, [
+      h('strong', { text: 'Autonomous research is off on this instance. ' }),
+      'Start the server with AGENT_AUTO_RESEARCH=1 to expose it. It is off by ' +
+      'default because nothing authenticates this port, and this is the one ' +
+      'route that would spend an hour of model time for whoever called it.'
+    ]));
+    return;
+  }
+
+  const run = state.run;
+  const live = runIsLive(run) && !state.runGone;
+
+  const head = h('div', { class: 'run-head' }, [
+    h('h3', { class: 'run-title', text: 'Autonomous research' }),
+    !run ? h('span', { class: 'chip', text: 'no run' })
+         : state.runGone ? h('span', { class: 'chip chip-run-short', text: 'ended' })
+         : runStatusChip(run),
+    run && run.read_only
+      ? h('span', { class: 'chip chip-readonly', title:
+          'This run is under a policy that floors fetch at ask, so it works ' +
+          'from material already in hand rather than deadlocking on an ' +
+          'approval nobody is there to answer.' }, ['read-only'])
+      : null,
+    h('span', { class: 'run-spacer' }),
+    // The rounds are turns on that session, so it is where everything the
+    // agent actually said is readable. Counters here are only the shape of it.
+    run && run.session_id
+      ? h('a', {
+          class: 'btn btn-sm',
+          href: '#/s/' + encodeURIComponent(run.session_id),
+          title: 'The run’s rounds are turns on this session'
+        }, ['Open the run’s session'])
+      : null
+  ]);
+  box.appendChild(head);
+
+  if (!run) {
+    box.appendChild(h('p', { class: 'sub run-sub', text:
+      'A run works this project’s topic queue on its own: one round is one ' +
+      'topic and one turn. Leave the cap empty to run under the domain’s own budget.' }));
+    box.appendChild(h('div', { class: 'run-actions' }, [
+      h('input', {
+        type: 'number', min: '1', class: 'input run-rounds',
+        placeholder: 'max rounds (optional)',
+        value: state.runMaxRounds,
+        oninput: function (e) { state.runMaxRounds = e.target.value; }
+      }),
+      h('button', {
+        class: 'btn btn-accent',
+        disabled: state.runStarting,
+        onclick: startRun
+      }, [state.runStarting ? 'Starting…' : 'Start a run'])
+    ]));
+  } else {
+    box.appendChild(runCounters(run));
+    if (live) {
+      box.appendChild(h('div', { class: 'run-actions' }, [
+        h('button', {
+          class: 'btn btn-quiet',
+          disabled: state.runCancelling,
+          title: 'Asks the run to stop after the round it is in; it is not killed',
+          onclick: cancelRun
+        }, [state.runCancelling ? 'Asking it to stop…' : 'Stop after this round'])
+      ]));
+    } else {
+      box.appendChild(runEnding(run));
+    }
+  }
+
+  if (state.runError) {
+    box.appendChild(h('p', { class: 'run-note bad', text: state.runError }));
+  }
+}
+
+function runStatusChip(run) {
+  if (run.status === 'running') return h('span', { class: 'chip chip-current', text: 'running' });
+  if (run.status === 'new') return h('span', { class: 'chip chip-current', text: 'starting' });
+  if (run.status === 'stopped') {
+    const reason = stopReason(run.stop_reason);
+    return h('span', { class: 'chip chip-run-' + reason.tone, text: 'stopped' });
+  }
+  // No status at all is the 202 body: a run that has begun and not been folded.
+  return h('span', { class: 'chip chip-current', text: 'starting' });
+}
+
+function runCounters(run) {
+  const cap = run.budget && run.budget.max_rounds
+    ? String(run.budget.max_rounds)
+    : '∞';
+  const cells = [
+    runCell('rounds', String(run.rounds === undefined ? 0 : run.rounds) + ' / ' + cap,
+      'Rounds worked, against the cap this run started under'),
+    runCell('turns', String(run.turns === undefined ? 0 : run.turns),
+      'One turn per round'),
+    // Counted by folding the topic before and after the turn, not by reading
+    // the reply -- a round that describes a breakthrough and records nothing
+    // is an empty round.
+    runCell('findings', String(run.findings === undefined ? 0 : run.findings),
+      'Appended to topic streams, folded rather than claimed'),
+    runCell('quiet rounds',
+      String(run.quiet_rounds || 0) +
+      (run.budget && run.budget.quiet_rounds ? ' / ' + run.budget.quiet_rounds : ''),
+      'Consecutive rounds that recorded nothing; enough of them stop the run'),
+    runCell('failures', String(run.failures || 0),
+      'Consecutive failed turns; enough of them stop the run')
+  ];
+  const kids = [h('div', { class: 'run-cells' }, cells)];
+  kids.push(h('div', { class: 'run-working' }, run.working_on
+    ? [h('span', { class: 'muted', text: 'working on ' }),
+       h('span', { class: 'run-topic', text: run.working_on })]
+    : [h('span', { class: 'muted', text:
+        runIsLive(run) && !state.runGone
+          ? 'between rounds — no topic claimed right now'
+          : 'no topic in flight' })]));
+  return h('div', { class: 'run-body' }, kids);
+}
+
+function runCell(label, value, title) {
+  return h('div', { class: 'run-cell', title: title }, [
+    h('span', { class: 'run-cell-value', text: value }),
+    h('span', { class: 'run-cell-label', text: label })
+  ]);
+}
+
+/* How a run ended, said in words rather than left as an enum value. The tone
+ * is the load-bearing part: a reader who skims a green box takes away "done",
+ * and only one of these endings has earned that. */
+function runEnding(run) {
+  const reason = state.runGone && !run.stop_reason
+    ? {
+        tone: 'short',
+        label: 'ending not seen',
+        head: 'It ended; this page did not see how.',
+        text: 'The run left the live route between polls, so this page never ' +
+              'read why it stopped. Its rounds are turns on its session, and ' +
+              'the stop is recorded on its own stream there.'
+      }
+    : stopReason(run.stop_reason);
+  return h('div', { class: 'run-ending run-ending-' + reason.tone }, [
+    h('div', { class: 'run-ending-head' }, [
+      h('span', { class: 'chip chip-run-' + reason.tone, text: reason.label }),
+      h('span', { text: reason.head || (reason.tone === 'done'
+        ? 'Nothing left on the queue.'
+        : 'Stopped with work still in front of it.') })
+    ]),
+    h('p', { class: 'run-ending-text', text: reason.text }),
+    h('div', { class: 'run-actions' }, [
+      h('input', {
+        type: 'number', min: '1', class: 'input run-rounds',
+        placeholder: 'max rounds (optional)',
+        value: state.runMaxRounds,
+        oninput: function (e) { state.runMaxRounds = e.target.value; }
+      }),
+      h('button', {
+        class: 'btn',
+        disabled: state.runStarting,
+        onclick: startRun
+      }, [state.runStarting ? 'Starting…' : 'Start another run'])
+    ])
+  ]);
 }
 
 /* What the current stage's own checks say, right now. Only the current

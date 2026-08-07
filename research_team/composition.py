@@ -26,16 +26,19 @@ from research_team.application import (
     DEFAULT_SYSTEM_PROMPT,
     ApprovalPort,
     AutonomyPolicy,
+    AutoResearchDriver,
     ContextStrategy,
     ElideToolResults,
     FullHistory,
     KnowledgeAttachment,
     LiveFeed,
+    ResearchSupervisor,
     SessionService,
+    TopicRoundRunner,
     TurnSupervisor,
 )
 from research_team.application.artifacts import stage_artifact_instructions
-from research_team.application.autonomy import ADVANCE_STAGE_TOOL
+from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
 from research_team.application.components import COMPONENT_PROMPT
 from research_team.application.ports import GateReview
 from research_team.application.session_service import NO_SEARCH_CLAUSE
@@ -48,6 +51,7 @@ from research_team.application.stage_exit import (
 )
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import CodingSession, ProjectState, current_stage_of
+from research_team.domain.auto_research import Budget
 from research_team.domain.commands import WriteFile
 from research_team.domain.workflow import Preset
 from research_team.infrastructure import config
@@ -93,6 +97,7 @@ from research_team.infrastructure.persistence import (
     EventStoreSessionRepository,
     SessionSummaryRunner,
     TopicRunner,
+    build_auto_research_repository,
     build_corpus_repository,
     build_topic_repository,
 )
@@ -132,6 +137,15 @@ class Application:
     A field for the same reason `corpus` is one: the queue is read by the
     agent through the tools attached with a project, and by anything driving an
     autonomous run, which shares nothing else with a session."""
+
+    research: ResearchSupervisor
+    """Autonomous runs over this instance's topic queues.
+
+    A field rather than something built where it is used, because a run needs
+    four things that only this module holds together -- the run repository, the
+    topic repository, the queue projection and the turn supervisor -- and both
+    front ends want the same one. Two supervisors over one database would each
+    believe they held the only run on a project."""
 
     policy: AutonomyPolicy
     """Per-tool autonomy levels for this instance, mutable after construction.
@@ -233,7 +247,13 @@ class Application:
         failure rather than being abandoned mid-write. The projection stops
         before the store it reads through does, for the same reason.
         `detach_project` is safe to call whether or not anything is attached.
+
+        Runs stop before turns do, and that order is the point: a run asked to
+        stop finishes the round it is in, and a turn cancelled underneath it
+        would make that round a recorded failure rather than the last one. The
+        wait is bounded by whatever the in-flight turn takes.
         """
+        await self.research.stop_all()
         await self.turns.cancel_all()
         await self.summaries.stop()
         await self.corpus.stop()
@@ -666,14 +686,73 @@ def build_application(
         # already reaches rather than behind a second accessor on `Application`.
         attachment=attachment,
     )
+    turns = TurnSupervisor(service)
+    runs = build_auto_research_repository(
+        repository.store, repository.publisher, snapshot_store=repository.snapshot_store
+    )
+    topic_repository = build_topic_repository(
+        repository.store, repository.publisher, snapshot_store=repository.snapshot_store
+    )
+
+    async def start_run(
+        run_id: UUID,
+        run_project_id: UUID,
+        session_id: UUID,
+        budget: Budget | None,
+        cancelled,
+    ):
+        """One autonomous run: a driver, bound to one session's turns.
+
+        Built per run rather than once, because `run_round` closes over the
+        session the rounds are turns on. The driver itself holds no state, so
+        there is nothing to share by keeping one around.
+
+        Rounds go through `turns` rather than straight to the service, which
+        is what makes "one turn at a time per session" cover an autonomous run
+        as well as a person typing: a `/turns` POST arriving mid-run is refused
+        with the 409 it would get from any other second turn, rather than
+        interleaving with a round.
+
+        `read_only` is read from the policy rather than asserted. The default
+        is a read-only run because `fetch` floors at `ask` and an unattended
+        approval deadlocks -- but someone who has set `fetch` to `auto` has a
+        run that can leave the process, and recording `read_only=True` over
+        that would put a false claim in the audit trail of the one kind of run
+        that most needs a true one. The policy is read here and never written,
+        which is what keeps `TOOL_FLOORS` a floor rather than a suggestion.
+        """
+        return await AutoResearchDriver(
+            runs,
+            topic_repository,
+            topics.queue,
+            run_round=TopicRoundRunner(
+                topic_repository,
+                lambda prompt: turns.run(session_id, prompt),
+            ),
+            # The queue is a projection, so the look a round just recorded is
+            # not in the table the next round reads until it catches up.
+            # Without this the run is handed back the topic it has just
+            # finished, which looks exactly like a loop that cannot learn.
+            settle=topics.caught_up,
+        ).run(
+            run_project_id,
+            session_id,
+            budget=budget,
+            run_id=run_id,
+            cancelled=cancelled,
+            autonomy_snapshot=resolved_policy.levels(),
+            read_only=resolved_policy.level_for(FETCH_TOOL) != "auto",
+        )
+
     return Application(
         service=service,
         feed=LiveFeed(repository),
-        turns=TurnSupervisor(service),
+        turns=turns,
         context_mode=mode,
         summaries=summaries,
         corpus=corpus,
         topics=topics,
+        research=ResearchSupervisor(start_run, runs),
         policy=resolved_policy,
         _initial_project_id=project_id,
     )

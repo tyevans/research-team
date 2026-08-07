@@ -20,6 +20,7 @@ from research_team.application.course import (
     StageProgress,
 )
 from research_team.application.findings import Finding
+from research_team.application.research_supervisor import ActiveRun
 from research_team.domain import (
     CodingSession,
     ConversationCompacted,
@@ -33,6 +34,7 @@ from research_team.domain import (
     TurnFailed,
     WorkflowSelected,
 )
+from research_team.domain.auto_research import AutoRunState
 from research_team.domain.workflow import Preset, Stage
 
 FILE_EVENTS = (FileWritten, FileEdited, FileDeleted)
@@ -460,4 +462,44 @@ def source_text_view(document: StoredDocument, span: Span) -> dict[str, Any]:
         "text": span.text,
         "start": span.start,
         "end": span.end,
+    }
+
+
+def run_view(run: ActiveRun, state: AutoRunState | None = None) -> dict[str, Any]:
+    """One autonomous run: what it is, and -- if folded -- how it is going.
+
+    Two arguments because the two halves come from different places and one of
+    them is optional. The ids are process-local knowledge, available the
+    instant a run starts; the counters are a fold of its stream, which the
+    route that starts a run has no reason to pay for and the route that
+    reports on one always does.
+
+    `session_id` is here rather than left for the caller to look up because it
+    is where the run's actual work is visible: the rounds are turns on that
+    session, and a browser given only a run id would have nothing to open.
+    """
+    view: dict[str, Any] = {
+        "run_id": str(run.run_id),
+        "project_id": str(run.project_id),
+        "session_id": str(run.session_id),
+    }
+    if state is None:
+        return view
+    return {
+        **view,
+        "status": state.status,
+        "rounds": state.rounds,
+        "turns": state.turns,
+        "findings": state.findings,
+        "stop_reason": state.stop_reason,
+        # Named for what it is: a topic whose round began and has not ended,
+        # which is the topic being worked right now.
+        "working_on": str(state.in_flight_topic) if state.in_flight_topic else None,
+        "quiet_rounds": state.consecutive_quiet_rounds,
+        "failures": state.consecutive_failures,
+        "budget": {
+            "max_rounds": state.budget.max_rounds,
+            "quiet_rounds": state.budget.quiet_rounds,
+        },
+        "read_only": state.read_only,
     }

@@ -1895,3 +1895,119 @@ async def test_an_attempt_is_graded_against_the_file_as_it_was(client, service):
 
     assert now.json()["correct"] is True
     assert then.json()["correct"] is False
+
+
+# ---------------- autonomous research ----------------
+
+
+@pytest.fixture
+async def research_client(db_path, fake_model):
+    """A client whose app was wired *with* a research supervisor.
+
+    Separate from `client` because the default app is deliberately built
+    without one: `AGENT_AUTO_RESEARCH` gates the wiring in `web.py`, and the
+    unwired case is a behaviour these tests check rather than a setup detail.
+    """
+    application = await _started(model=fake_model, db_path=db_path)
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        research=application.research,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as http:
+        yield application, http
+    await application.close()
+
+
+async def test_the_run_routes_are_absent_unless_the_instance_was_wired_for_them(client):
+    """404 rather than 403: a refusal announces the loop to whoever asked."""
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await client.post(f"/api/projects/{project_id}/auto-research", json={})
+
+    assert response.status_code == 404
+    assert "AGENT_AUTO_RESEARCH" in response.json()["detail"]
+
+
+async def test_starting_a_run_answers_with_its_ids_before_it_has_finished(research_client):
+    application, http = research_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await http.post(f"/api/projects/{project_id}/auto-research", json={})
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["project_id"] == project_id
+    # The run works turns on a session, and the caller is told which -- that
+    # is where everything the agent actually said is visible.
+    assert UUID(body["session_id"])
+    await application.research.wait(UUID(project_id))
+
+
+async def test_a_started_run_reports_its_own_fold(research_client):
+    application, http = research_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    started = await http.post(
+        f"/api/projects/{project_id}/auto-research", json={"max_rounds": 2}
+    )
+
+    status = await http.get(f"/api/projects/{project_id}/auto-research")
+
+    # Either the run is still in flight and reports its counters, or it has
+    # already drained an empty queue -- both are folds of the same stream, and
+    # which one this lands on is a race with a run that has nothing to do.
+    if status.status_code == 200:
+        assert status.json()["run_id"] == started.json()["run_id"]
+        assert status.json()["budget"]["max_rounds"] == 2
+    else:
+        assert status.status_code == 404
+    await application.research.wait(UUID(project_id))
+
+
+async def test_asking_about_a_project_with_no_run_is_a_404(research_client):
+    _, http = research_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await http.get(f"/api/projects/{project_id}/auto-research")
+
+    assert response.status_code == 404
+
+
+async def test_cancelling_nothing_reports_that_nothing_was_running(research_client):
+    _, http = research_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await http.post(f"/api/projects/{project_id}/auto-research/cancel")
+
+    assert response.status_code == 200
+    assert response.json() == {"cancelled": False, "run": None}
+
+
+async def test_a_finished_run_puts_its_session_away(research_client):
+    """Or the second run on a project is refused by a session nobody is driving.
+
+    This route starts the session the run works in, so nothing else will ever
+    release it. Releasing is also what advances the project's tip, which is how
+    anything a run wrote reaches the session that comes after it.
+    """
+    application, http = research_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    first = await http.post(f"/api/projects/{project_id}/auto-research", json={})
+    await application.research.wait(UUID(project_id))
+
+    assert first.status_code == 202
+    held = (await application.service.project_state(UUID(project_id))).active_session_id
+    assert held is None
+    second = await http.post(f"/api/projects/{project_id}/auto-research", json={})
+    assert second.status_code == 202
+    await application.research.wait(UUID(project_id))
+
+
+async def test_a_run_on_an_unknown_project_is_a_404(research_client):
+    _, http = research_client
+    response = await http.post(f"/api/projects/{uuid4()}/auto-research", json={})
+    assert response.status_code == 404

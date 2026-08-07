@@ -316,13 +316,28 @@ count is not what makes an approval meaningful, the scope is. And not the loop
 lowering `TOOL_FLOORS` itself, ever -- a loop that can edit its own permissions
 makes the floors advisory for everything else too.
 
-### B25. There is no HTTP surface for starting a run
+### B25. A run's rounds are not narrated to a browser
 
-`AutoResearchDriver` is wired into no interface. Starting a run is a POST that
-does not exist, and there is nothing that streams a run's rounds to a browser.
-Deliberate -- the driver and its stop conditions are the part worth reviewing
-first, and an endpoint would have shipped an unattended loop reachable from a
-port with no authentication in front of it (B18).
+**Mostly done.** Both front ends can start a run: `/research [n]` in the REPL,
+and `POST /api/projects/{id}/auto-research` (plus its status and cancel
+routes) over HTTP. The authentication objection that held the endpoint back is
+answered the way `web_search` answers it -- the routes are wired only when
+`AGENT_AUTO_RESEARCH` is set, so an install that has not opted in has no route
+rather than a route that refuses.
+
+**What is left is narration, and it is the same gap `/turns` already has.** A
+run's events reach the live feed like any others, so a browser watching the
+project sees each round land -- but a round *is* a turn, and a turn is atomic,
+so nothing arrives while one is running. The web UI can therefore show a run's
+history and its counters and cannot show the round in flight. Closing that
+needs the second channel `on_activity` already gives the REPL, which is the
+work described at the end of "What the live feed can and cannot show" rather
+than anything about runs specifically.
+
+There is also no listing of a project's past runs. `GET .../auto-research`
+answers about the run in flight only, because "every run this project has ever
+done" is a projection nobody has built and a stream scan there would be the
+read that quietly gets slower for a year.
 
 ### B26. Two registries share a type; the bindings are still separate
 

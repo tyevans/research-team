@@ -20,10 +20,13 @@ from research_team.application import (
     ApprovalDecision,
     ApprovalRequest,
     AutonomyPolicy,
+    ResearchSupervisor,
+    RunAlreadyActive,
     SessionService,
 )
 from research_team.application.ports import ActivityNote
 from research_team.domain import CreateProject
+from research_team.domain.auto_research import Budget
 from research_team.infrastructure import config
 from research_team.interfaces.cli.formatters import (
     format_activity,
@@ -33,6 +36,8 @@ from research_team.interfaces.cli.formatters import (
     format_files,
     format_log,
     format_resumed,
+    format_round,
+    format_run_report,
     format_sessions,
     format_state,
     format_summary_health,
@@ -69,6 +74,10 @@ Projects (sessions that share a filesystem lineage and a knowledge graph)
   /project             list every project, with its id
   /project new <name>  create a project
   /project use <name>  start a session that inherits the project's files
+
+Autonomous research (works this project's topic queue, one topic per turn)
+  /research            run until the queue empties or the budget stops it
+  /research <n>        the same, capped at n rounds
 
   /help            this message
   /quit            exit
@@ -146,14 +155,26 @@ class Repl:
     its own is honest rather than broken: `/autonomy` still reports and sets,
     it simply governs nothing."""
 
+    research: ResearchSupervisor | None = None
+    """The supervisor autonomous runs go through, when one was wired.
+
+    Optional for the reason `policy` has a default: a REPL built over a bare
+    `SessionService` in a test has no composition root behind it, and
+    `/research` says so rather than the constructor demanding something most
+    callers do not have."""
+
     @classmethod
     async def start(
-        cls, service: SessionService, policy: AutonomyPolicy | None = None
+        cls,
+        service: SessionService,
+        policy: AutonomyPolicy | None = None,
+        research: ResearchSupervisor | None = None,
     ) -> "Repl":
         return cls(
             service,
             await service.create_session(),
             policy if policy is not None else AutonomyPolicy(),
+            research,
         )
 
 
@@ -243,6 +264,77 @@ async def _handle_project(repl: "Repl", argument: str) -> str:
         return f"{joined}\n{warning}" if warning else joined
 
     return "usage: /project [new <name>|use <name>]"
+
+
+RESEARCH_POLL_SECONDS = 1.0
+"""How often `/research` refolds the run to see whether a round has landed.
+
+Polling rather than a subscription because the alternative is a second channel
+carrying what the log already has -- the same argument the web feed makes for
+reading the store rather than the bus. A round is a whole turn, so a second is
+already far finer than the thing being watched.
+"""
+
+
+async def _handle_research(repl: "Repl", argument: str) -> str:
+    """`/research [rounds]`: work this session's project queue until it stops.
+
+    Refuses outside a project, because there is no queue to work: topics
+    belong to a project, and a session without one has no tools to record
+    findings with either.
+
+    Runs through the supervisor rather than awaiting the driver directly, so
+    that Ctrl-C can ask the run to stop between rounds instead of abandoning
+    it mid-turn -- and so the terminal can print each round as it lands rather
+    than going quiet for however long the whole run takes.
+    """
+    if repl.research is None:
+        return "autonomous runs are not wired into this REPL"
+    session = await repl.service.load(repl.session_id)
+    project_id = session.state.project_id
+    if project_id is None:
+        return "no project -- /project use <name> first; topics belong to a project"
+    budget = None
+    if argument:
+        if not argument.isdigit() or int(argument) < 1:
+            return "usage: /research [max-rounds]"
+        rounds = int(argument)
+        budget = Budget(max_rounds=rounds, max_turns=rounds * 2)
+
+    try:
+        run = repl.research.start(project_id, repl.session_id, budget=budget)
+    except RunAlreadyActive as error:
+        return str(error)
+    print(f"run {str(run.run_id)[:8]} started on project {project_id}")
+    print("(ctrl-c asks it to stop after the round it is in)")
+
+    # One waiter for the whole loop rather than one per poll: awaiting the run
+    # again each second would leave a wrapper future behind on every tick, and
+    # a failure would then be raised into each of them.
+    waiter = asyncio.ensure_future(repl.research.wait(project_id))
+    seen = -1
+    try:
+        while True:
+            done, _ = await asyncio.wait({waiter}, timeout=RESEARCH_POLL_SECONDS)
+            state = await repl.research.state(run.run_id)
+            if state is not None and state.rounds != seen:
+                seen = state.rounds
+                if state.rounds:
+                    topic = str(state.in_flight_topic) if state.in_flight_topic else None
+                    print(format_round(state.rounds, state.findings, topic))
+            if done:
+                report = waiter.result()
+                break
+    except KeyboardInterrupt:
+        # Asked, not killed: the round in flight finishes and records its
+        # stop, which is what makes `cancelled` a reason in the log rather
+        # than a run that simply goes quiet.
+        repl.research.cancel(project_id)
+        print("\n(stopping after this round)")
+        report = await waiter
+    if report is None:
+        return "the run ended without reporting"
+    return format_run_report(report)
 
 
 async def _switch_to(repl: "Repl", new_session_id: UUID) -> str | None:
@@ -381,6 +473,8 @@ async def handle_command(
         return "session list rebuilt from the log"
     if command == "/project":
         return await _handle_project(repl, argument)
+    if command == "/research":
+        return await _handle_research(repl, argument)
     if command == "/state":
         events = await service.history(repl.session_id)
         return format_state(
@@ -398,7 +492,11 @@ def _print_activity(note: ActivityNote) -> None:
         print(line)
 
 
-async def run(service: SessionService, policy: AutonomyPolicy | None = None) -> None:
+async def run(
+    service: SessionService,
+    policy: AutonomyPolicy | None = None,
+    research: ResearchSupervisor | None = None,
+) -> None:
     """Drive a session until the user leaves. The service is closed on the way out.
 
     The service is passed in rather than built here: choosing adapters is the
@@ -407,7 +505,7 @@ async def run(service: SessionService, policy: AutonomyPolicy | None = None) -> 
     """
     repl: Repl | None = None
     try:
-        repl = await Repl.start(service, policy)
+        repl = await Repl.start(service, policy, research)
         stored = await service.list_sessions()
         print(f"session {repl.session_id}")
         print(f"database {config.default_db_path()}")
