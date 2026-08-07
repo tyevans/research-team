@@ -17,10 +17,12 @@ class StubKnowledge:
         self._matches = list(matches)
         self._error = error
         self.undone = []
+        self.ingested = []
 
     async def ingest(self, source):
         if self._error:
             raise self._error
+        self.ingested.append(source)
         return self._report
 
     async def search(self, query, *, limit=10):
@@ -143,3 +145,60 @@ async def test_unmerge_rejects_a_malformed_id_without_calling_the_port():
 
     assert knowledge.undone == []
     assert "not a valid merge id" in result
+
+
+@pytest.mark.asyncio
+async def test_remember_carries_the_provenance_fetch_returned():
+    """`fetch` leads every page with `url:`, `title:` and `date:`. Those are
+    the only record of where the text came from, and a corpus that drops them
+    cannot recognise a page it already holds -- which is the whole reason
+    `DocumentRecord.uri` exists.
+    """
+    report = IngestReport(
+        source_id="s1",
+        entity_count=1,
+        relationship_count=0,
+        domain=None,
+        domain_confidence=None,
+    )
+    knowledge = StubKnowledge(report=report)
+    tools = tools_by_name(knowledge)
+
+    await tools["remember"].ainvoke(
+        {
+            "text": "body",
+            "source_id": "s1",
+            "uri": "https://ex.example/a",
+            "title": "A page",
+            "published_at": "2026-01-02",
+        }
+    )
+
+    (source,) = knowledge.ingested
+    assert source.uri == "https://ex.example/a"
+    assert source.title == "A page"
+    assert source.published_at == "2026-01-02"
+
+
+@pytest.mark.asyncio
+async def test_remember_without_provenance_stores_none_not_empty_string():
+    """Absent provenance and blank provenance must not be the same value. A
+    corpus row holding `""` for its uri looks like a page fetched from
+    nowhere; `None` says plainly that none was given.
+    """
+    report = IngestReport(
+        source_id="s1",
+        entity_count=1,
+        relationship_count=0,
+        domain=None,
+        domain_confidence=None,
+    )
+    knowledge = StubKnowledge(report=report)
+    tools = tools_by_name(knowledge)
+
+    await tools["remember"].ainvoke({"text": "body", "source_id": "s1"})
+
+    (source,) = knowledge.ingested
+    assert source.uri is None
+    assert source.title is None
+    assert source.published_at is None

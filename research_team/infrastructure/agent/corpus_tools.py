@@ -98,7 +98,7 @@ def format_document(document: StoredDocument, span: Span) -> str:
     return "\n\n".join(parts)
 
 
-def _bounded(text: str, start: int | None, end: int | None, max_chars: int) -> Span:
+def bounded(text: str, start: int | None, end: int | None, max_chars: int) -> Span:
     """The requested range, clamped to the document and capped at `max_chars`.
 
     The cap is applied by chunking the requested range and taking its first
@@ -106,6 +106,11 @@ def _bounded(text: str, start: int | None, end: int | None, max_chars: int) -> S
     sentence or word boundary. A response that stops mid-word invites the model
     to complete it from memory, which is the specific failure this whole layer
     exists to prevent.
+
+    Public because `fetch` returns corpus hits through `format_document` too,
+    and two implementations of the offset contract would eventually disagree
+    -- which is the exact failure this module's docstring says is worse than
+    having no offsets at all.
     """
     span = quote(text, start or 0, len(text) if end is None else end)
     if len(span.text) <= max_chars:
@@ -158,7 +163,7 @@ def build_corpus_tools(
             return f"Could not read the corpus: {error}"
         if document is None:
             return f"No source {source_id!r} in this project's corpus. {await _available()}"
-        return format_document(document, _bounded(document.text, start, end, max_chars))
+        return format_document(document, bounded(document.text, start, end, max_chars))
 
     return (list_sources, read_source)
 

@@ -14,6 +14,7 @@ import httpx
 from langchain_core.tools import BaseTool, tool
 
 from research_team.application import SEARCH_TOOL
+from research_team.infrastructure.agent.recall import Recall, Recalled, describe_age, query_key
 
 TIMEOUT = httpx.Timeout(10.0)
 
@@ -59,21 +60,46 @@ def format_results(payload: object, limit: int) -> str:
     return "\n\n".join(blocks)
 
 
+def format_recalled(recalled: Recalled, query: str) -> str:
+    """An earlier result set, labelled with when and for what.
+
+    Names the query that produced the entry rather than the one just asked,
+    because normalization means they need not be identical. A model that can
+    see the difference can ask again; one that cannot would take results for a
+    neighbouring question as answering its own.
+    """
+    asked = "" if recalled.asked == query else f" for {recalled.asked!r}"
+    return (
+        f"[recalled -- searched{asked} {describe_age(recalled.age_seconds)} in this "
+        f"process, not a fresh search]\n\n{recalled.text}"
+    )
+
+
 def build_search_tool(
     base_url: str,
     *,
     limit: int = 5,
     client: httpx.AsyncClient | None = None,
+    recall: Recall | None = None,
 ) -> BaseTool:
     """A `web_search` tool against one SearXNG instance.
 
     `client` is injectable so tests can stub the transport; nothing in the
-    suite touches the real network.
+    suite touches the real network. `recall` is optional so callers that don't
+    want the behavior (or Task 6's wiring, before it lands) still get a tool
+    that works.
     """
 
     @tool(SEARCH_TOOL)
     async def web_search(query: str) -> str:
         """Search the web. Returns titles, URLs, and short snippets."""
+        if recall is not None:
+            # Keyed explicitly rather than through `Recall`'s default, which
+            # would key on the bare normalized query and collide with `fetch`'s
+            # URL keys. See `query_key`.
+            remembered = recall.get(query, key=query_key(query))
+            if remembered is not None:
+                return format_recalled(remembered, query)
         owned = client is None
         http = client or httpx.AsyncClient(timeout=TIMEOUT)
         try:
@@ -83,7 +109,20 @@ def build_search_tool(
             )
             response.raise_for_status()
             payload = response.json()
-            return format_results(payload, limit)
+            results = format_results(payload, limit)
+            if recall is not None and results is not _MALFORMED_PAYLOAD:
+                # Only a genuine result set is remembered -- and "No results."
+                # counts as one; it's an answer, not a failure. A 200 with a
+                # malformed body (a proxy error page serialized as JSON, say)
+                # doesn't raise, so `format_results` returns this sentinel by
+                # identity rather than a fresh string each time; caching it
+                # would serve the same "not a results object" message back as
+                # a *recalled* answer for up to an hour, and the retry that
+                # would have succeeded never happens -- the same failure this
+                # transport-error guard exists to prevent, reached by a path
+                # that never raises.
+                recall.put(query, results, key=query_key(query))
+            return results
         except ValueError:
             # Not JSON. Overwhelmingly the default-settings case, and worth
             # naming precisely -- the model cannot fix it, but the person
@@ -101,9 +140,11 @@ def build_search_tool(
 SEARCH_PROMPT = (
     "\n\nYou can search the web with the `web_search` tool. What it returns is "
     "a snapshot at the moment you searched, recorded permanently in this "
-    "session's log -- not a live view you can refresh by asking again. If a "
-    "search is refused, that refusal is your answer for this turn; retrying "
-    "the same query will not change it.\n\n"
+    "session's log -- not a live view you can refresh by asking again. Asking "
+    "the same question twice returns the first answer, marked as recalled and "
+    "naming the query it came from; if that query is not the one you meant, "
+    "ask a different one rather than the same one again. If a search is "
+    "refused, that refusal is your answer for this turn.\n\n"
     "Search when your own knowledge is stale or thin for the question at "
     "hand, not reflexively on every question you could plausibly answer "
     "yourself -- each search is a real request against a real instance, not a "
