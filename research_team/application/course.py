@@ -236,9 +236,7 @@ def _summarize_provenance(raw: Any) -> ProvenanceSummary | None:
             )
             continue
         unreadable += 1
-    return ProvenanceSummary(
-        sources=tuple(sources), inferred=inferred, unreadable=unreadable
-    )
+    return ProvenanceSummary(sources=tuple(sources), inferred=inferred, unreadable=unreadable)
 
 
 def _slot(

@@ -1665,9 +1665,7 @@ async def test_a_written_artifact_shows_up_with_the_provenance_it_claims(client,
     assert slot["present"] is True
     assert slot["has_frontmatter"] is True
     assert slot["missing_fields"] == []
-    assert slot["provenance"]["sources"] == [
-        {"source_id": "doc-1", "start": 0, "end": 40}
-    ]
+    assert slot["provenance"]["sources"] == [{"source_id": "doc-1", "start": 0, "end": 40}]
     assert slot["provenance"]["empty"] is False
     assert slot["provenance"]["inferred"] is False
 
