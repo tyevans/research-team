@@ -1,8 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
+import { useEffect } from 'react'
+
 import { queryKeys } from '@application/queries/keys.ts'
 import type { ConnectionState } from '@application/ports/event-stream.ts'
 import { useContainer } from '@app/container-context.tsx'
+
+import { useStream } from './StreamProvider.tsx'
 
 const LABELS: Readonly<Record<ConnectionState, string>> = {
   connecting: 'connecting',
@@ -32,6 +36,7 @@ export const ConnectionBadge = ({ state }: { state: ConnectionState }) => (
 export const DriftBadge = () => {
   const { health } = useContainer()
   const queryClient = useQueryClient()
+  const stream = useStream()
 
   const { data } = useQuery({
     queryKey: queryKeys.health(),
@@ -50,6 +55,17 @@ export const DriftBadge = () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.sessions() })
     },
   })
+
+  // A projection does not drift on a schedule, but a reconnect is exactly when
+  // it might have: the connection dropped because something restarted, and a
+  // projection that did not come back with it is what this badge is for.
+  useEffect(
+    () =>
+      stream.onReconnect(() => {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.health() })
+      }),
+    [queryClient, stream],
+  )
 
   if (!data || data.healthy) return null
 

@@ -30,9 +30,14 @@ const queryClient = new QueryClient({
 })
 
 // A failure nobody handled is still worth telling somebody about; silently
-// swallowing it is how a page ends up looking merely slow.
+// swallowing it is how a page ends up looking merely slow. Both channels,
+// because a render that throws and a promise that rejects are equally invisible
+// to a reader watching a pane that simply stopped updating.
 window.addEventListener('unhandledrejection', (event) => {
   notify(`Unexpected error: ${errorMessage(event.reason)}`, 'bad')
+})
+window.addEventListener('error', (event) => {
+  if (event.message) notify(`UI error: ${event.message}`, 'bad')
 })
 
 const root = document.getElementById('root')

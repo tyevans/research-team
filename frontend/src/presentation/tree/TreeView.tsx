@@ -8,7 +8,8 @@ import { useContainer } from '@app/container-context.tsx'
 import { Button } from '../common/primitives.tsx'
 import { sessionHref } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
-import { NewProjectForm, ProjectList } from './ProjectList.tsx'
+import { NewProjectForm } from './NewProjectForm.tsx'
+import { ProjectList } from './ProjectList.tsx'
 import { SessionTree } from './SessionTree.tsx'
 
 export const TreeView = () => {
