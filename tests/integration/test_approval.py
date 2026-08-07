@@ -64,8 +64,15 @@ def searches(monkeypatch) -> Searches:
     recorder = Searches()
     monkeypatch.setenv("AGENT_SEARXNG_URL", "http://searx.local")
 
-    def build(base_url: str, *, limit: int = 5, client=None):
-        return build_search_tool(base_url, limit=limit, client=recorder.client())
+    def build(base_url: str, *, limit: int = 5, client=None, recall=None):
+        # Mirrors `build_search_tool`'s signature rather than taking `**kwargs`,
+        # and forwards `recall` rather than dropping it: a stub that silently
+        # ignores an argument the real builder honours stops testing the thing
+        # it stands in for, and the divergence surfaces as a passing suite over
+        # code that behaves differently in production.
+        return build_search_tool(
+            base_url, limit=limit, client=recorder.client(), recall=recall
+        )
 
     monkeypatch.setattr(composition, "build_search_tool", build)
     return recorder
