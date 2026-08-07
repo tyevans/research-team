@@ -59,7 +59,11 @@ from research_team.infrastructure.agent.delegation import (
     DEFAULT_SUBAGENTS,
     DELEGATION_PROMPT,
 )
-from research_team.infrastructure.agent.fetch import FETCH_PROMPT, build_fetch_tool
+from research_team.infrastructure.agent.fetch import (
+    FETCH_CORPUS_PROMPT,
+    FETCH_PROMPT,
+    build_fetch_tool,
+)
 from research_team.infrastructure.agent.knowledge_tools import (
     KNOWLEDGE_PROMPT,
     build_knowledge_tools,
@@ -339,7 +343,7 @@ def build_application(
         # same way `start_in_project`'s per-session prompt does. Otherwise a
         # session it creates has `remember` on the executor and no idea the
         # tool exists.
-        prompt_suffix += KNOWLEDGE_PROMPT + CORPUS_PROMPT + TOPICS_PROMPT
+        prompt_suffix += KNOWLEDGE_PROMPT + CORPUS_PROMPT + FETCH_CORPUS_PROMPT + TOPICS_PROMPT
 
     resolved_tracer = tracer if tracer is not None else build_tracer()
     # Built here rather than beside `summaries` below because `open_graph`
@@ -634,7 +638,7 @@ def build_application(
         # A session started in a project gets this appended to its prompt
         # (Task 14/Step 4); one started plainly does not, so it never hears
         # about tools it was not given.
-        knowledge_prompt=KNOWLEDGE_PROMPT + CORPUS_PROMPT,
+        knowledge_prompt=KNOWLEDGE_PROMPT + CORPUS_PROMPT + FETCH_CORPUS_PROMPT,
         # The service owns the attachment: `/project use` calls
         # `service.attach_project` directly, so it lives where the REPL
         # already reaches rather than behind a second accessor on `Application`.

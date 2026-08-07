@@ -14,7 +14,7 @@ import httpx
 from langchain_core.tools import BaseTool, tool
 
 from research_team.application import SEARCH_TOOL
-from research_team.infrastructure.agent.recall import Recall, Recalled, describe_age
+from research_team.infrastructure.agent.recall import Recall, Recalled, describe_age, query_key
 
 TIMEOUT = httpx.Timeout(10.0)
 
@@ -94,7 +94,10 @@ def build_search_tool(
     async def web_search(query: str) -> str:
         """Search the web. Returns titles, URLs, and short snippets."""
         if recall is not None:
-            remembered = recall.get(query)
+            # Keyed explicitly rather than through `Recall`'s default, which
+            # would key on the bare normalized query and collide with `fetch`'s
+            # URL keys. See `query_key`.
+            remembered = recall.get(query, key=query_key(query))
             if remembered is not None:
                 return format_recalled(remembered, query)
         owned = client is None
@@ -118,7 +121,7 @@ def build_search_tool(
                 # would have succeeded never happens -- the same failure this
                 # transport-error guard exists to prevent, reached by a path
                 # that never raises.
-                recall.put(query, results)
+                recall.put(query, results, key=query_key(query))
             return results
         except ValueError:
             # Not JSON. Overwhelmingly the default-settings case, and worth

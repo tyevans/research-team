@@ -12,6 +12,8 @@ from research_team.infrastructure.agent.recall import (
     describe_age,
     normalize_query,
     normalize_url,
+    query_key,
+    url_key,
 )
 
 
@@ -87,6 +89,35 @@ def test_a_query_string_distinguishes_urls():
     assert normalize_url("https://ex.example/s?q=1") != normalize_url(
         "https://ex.example/s?q=2"
     )
+
+
+# ---- normalization is total ----
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://host:port/x", "http://host:99999/x", "http://host:-1/x"],
+)
+def test_a_malformed_port_is_returned_rather_than_raised(url: str):
+    """`urlsplit(...).port` raises `ValueError` on a port that is not a number
+    in range, and this is applied to text the model wrote -- a `fetch` URL, and
+    every `uri` in the corpus. A raise here costs the whole turn; a string that
+    matches nothing costs one redundant request.
+    """
+    assert normalize_url(url)
+
+
+# ---- one store, two kinds of request ----
+
+
+def test_a_url_keys_differently_as_a_query_than_as_a_page():
+    """A bare URL pasted as a search query normalizes to the same string as
+    that URL does. One keyspace for both tools would let a `web_search` answer
+    a later `fetch` with its snippet list, presented as the page.
+    """
+    url = "https://arxiv.org/abs/2401.00001"
+    assert normalize_query(url) == normalize_url(url)
+    assert query_key(url) != url_key(url)
 
 
 # ---- the store ----

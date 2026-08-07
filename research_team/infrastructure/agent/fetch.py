@@ -25,7 +25,12 @@ from trafilatura.metadata import extract_metadata
 from research_team.application.autonomy import FETCH_TOOL
 from research_team.application.corpus_read import CorpusReadError, CorpusReadPort
 from research_team.infrastructure.agent.corpus_tools import bounded, format_document
-from research_team.infrastructure.agent.recall import Recall, describe_age, normalize_url
+from research_team.infrastructure.agent.recall import (
+    Recall,
+    describe_age,
+    normalize_url,
+    url_key,
+)
 
 TIMEOUT = httpx.Timeout(15.0)
 
@@ -197,7 +202,7 @@ def build_fetch_tool(
                 if found is not None:
                     return found
             if recall is not None:
-                remembered = recall.get(url, key=normalize_url(url))
+                remembered = recall.get(url, key=url_key(url))
                 if remembered is not None:
                     return (
                         f"[recalled -- read {describe_age(remembered.age_seconds)} in "
@@ -229,7 +234,7 @@ def build_fetch_tool(
                 # would turn one outage into an hour of them, and remembering
                 # UNREADABLE would pin "this renders in the browser" for an
                 # hour after a deploy fixed it.
-                recall.put(url, text, key=normalize_url(url))
+                recall.put(url, text, key=url_key(url))
             return text
         except httpx.HTTPStatusError as error:
             # The status is the actionable part: 404 means the URL is wrong,
@@ -262,14 +267,27 @@ FETCH_PROMPT = (
     "Fetch when a search snippet is not enough to make a claim you would be "
     "willing to cite, and not to confirm something the snippet already said "
     "plainly.\n\n"
-    "You do not have to track what you have already read. A page this project "
-    "has stored comes back from the corpus, with the offsets that make it "
-    "quotable; a page read earlier in this process comes back as it was, "
-    "marked as recalled and dated. Both say so plainly. If a page is expected "
-    "to have changed since -- a changelog, a status page, a document revised "
-    "during this run -- pass `refresh=True` and it will be read again. Do not "
-    "pass it merely to be sure.\n\n"
-    "When a fetched page is worth keeping, pass it to `remember` along with "
-    "the `url:`, `title:` and `date:` lines printed above it. That is what "
-    "lets a later session recognise the page instead of fetching it again."
+    "You do not have to track what you have already read. A page read earlier "
+    "in this process comes back as it was, marked as recalled and dated. If a "
+    "page is expected to have changed since -- a changelog, a status page, a "
+    "document revised during this run -- pass `refresh=True` and it will be "
+    "read again. Do not pass it merely to be sure."
 )
+
+
+FETCH_CORPUS_PROMPT = (
+    "\n\nA page this project has already stored comes back from the corpus "
+    "rather than the network, with the offsets that make it quotable, and says "
+    "so plainly. When a fetched page is worth keeping, pass it to `remember` "
+    "along with the `url:`, `title:` and `date:` lines printed above it. That "
+    "is what lets a later session recognise the page instead of fetching it "
+    "again."
+)
+"""The part of the `fetch` prompt that only holds inside a project.
+
+Split out of `FETCH_PROMPT` because that one is appended to every session,
+while the corpus and `remember` exist only once a project is attached. A
+project-less session told that its reads come back from the corpus has been
+told something false about the tool it is holding, and would look for a
+`remember` it does not have.
+"""

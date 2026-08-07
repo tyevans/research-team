@@ -19,7 +19,18 @@ from research_team.infrastructure.agent.fetch import (
     build_fetch_tool,
     format_page,
 )
-from research_team.infrastructure.agent.recall import Recall, normalize_url
+from research_team.infrastructure.agent.recall import Recall, url_key
+from research_team.infrastructure.agent.search import build_search_tool
+
+SEARCH_PAYLOAD = {
+    "results": [
+        {
+            "title": "A paper",
+            "url": "https://arxiv.org/abs/2401.00001",
+            "content": "Abstract.",
+        }
+    ]
+}
 
 ARTICLE = (
     "<html><head><title>Incident severity</title></head><body>"
@@ -345,7 +356,7 @@ async def test_refresh_also_bypasses_a_memo_hit_and_repopulates_it():
     await fetch.ainvoke({"url": "https://ex.example/sev", "refresh": True})
 
     assert len(calls) == 2
-    assert recall.get("https://ex.example/sev", key=normalize_url("https://ex.example/sev"))
+    assert recall.get("https://ex.example/sev", key=url_key("https://ex.example/sev"))
 
 
 @pytest.mark.asyncio
@@ -437,3 +448,47 @@ async def test_a_project_less_fetch_still_works():
     text = await fetch.ainvoke({"url": "https://ex.example/sev"})
     assert len(calls) == 1
     assert "revenue critical path" in text
+
+
+@pytest.mark.asyncio
+async def test_one_document_with_a_malformed_uri_does_not_break_every_fetch():
+    """`uri` is free text the model supplies through `remember`, and
+    `stored_page` normalizes every one of them on every call. A port that is
+    not a number used to raise out of `urlsplit`, so a single stored document
+    poisoned `fetch` for that project permanently.
+    """
+    calls: list[int] = []
+    corpus = _StubCorpus([_stored("s1", "http://host:port/x")])
+    fetch = build_fetch_tool(client=_client(_counting(calls)), corpus=corpus)
+
+    text = await fetch.ainvoke({"url": "https://ex.example/sev"})
+
+    assert len(calls) == 1
+    assert "revenue critical path" in text
+
+
+@pytest.mark.asyncio
+async def test_a_search_for_a_url_and_a_fetch_of_it_do_not_share_an_entry():
+    """`normalize_query` and `normalize_url` agree on a bare URL, so one
+    keyspace would let `web_search`'s snippet list come back from `fetch`
+    labelled as the page -- no `url:` header, no body -- and the reverse.
+    """
+    url = "https://arxiv.org/abs/2401.00001"
+    recall = Recall()
+    search = build_search_tool(
+        "https://searx.example",
+        client=_client(lambda request: httpx.Response(200, json=SEARCH_PAYLOAD)),
+        recall=recall,
+    )
+    fetch = build_fetch_tool(client=_client(_html_response), recall=recall)
+
+    searched = await search.ainvoke({"query": url})
+    fetched = await fetch.ainvoke({"url": url})
+
+    assert "A paper" in searched
+    assert "A paper" not in fetched
+    assert f"url: {url}" in fetched
+
+    searched_again = await search.ainvoke({"query": url})
+    assert "A paper" in searched_again
+    assert "revenue critical path" not in searched_again

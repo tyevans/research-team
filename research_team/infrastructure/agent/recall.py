@@ -79,13 +79,45 @@ def normalize_url(url: str) -> str:
     case-sensitive on any server that says they are, and folding one would
     merge two genuinely different pages -- which is the same failure as
     merging two search queries, arriving through a different door.
+
+    Total, because both callers hand it text the model wrote: the URL passed
+    to `fetch`, and every `uri` in the corpus, which `remember` accepts as free
+    text. `urlsplit(...).port` raises `ValueError` on a port that is not a
+    number in range, so one stored document with `uri="http://host:port/x"`
+    would otherwise raise on every `fetch` in that project forever. A string
+    this malformed matches nothing, which is the right outcome; returning it
+    unparsed costs a redundant request, while raising costs the whole turn.
     """
-    parts = urlsplit(url.strip())
-    host = parts.hostname or ""
-    port = parts.port
+    trimmed = url.strip()
+    try:
+        parts = urlsplit(trimmed)
+        host = parts.hostname or ""
+        port = parts.port
+    except ValueError:
+        return trimmed
     if port is not None and _DEFAULT_PORTS.get(parts.scheme.lower()) != str(port):
         host = f"{host}:{port}"
     return urlunsplit((parts.scheme.lower(), host, parts.path or "/", parts.query, ""))
+
+
+def query_key(request: str) -> str:
+    """The memo key for a search query.
+
+    One `Recall` serves two tools, so the kind of request has to be part of
+    the key. Without it the keyspaces overlap wherever a normalized query and
+    a normalized URL can be the same string -- which is exactly the case of a
+    bare URL pasted as a query, something models do routinely. `web_search`
+    would then answer a later `fetch` of that URL with its snippet list,
+    labelled as the page, with no `url:` header and no body: a wrong answer
+    wearing a right one's label, which is the failure this whole module is
+    built to avoid.
+    """
+    return f"q:{normalize_query(request)}"
+
+
+def url_key(url: str) -> str:
+    """The memo key for a fetched page. See `query_key` for why it is prefixed."""
+    return f"u:{normalize_url(url)}"
 
 
 def describe_age(seconds: float) -> str:

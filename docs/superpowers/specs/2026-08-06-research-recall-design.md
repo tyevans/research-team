@@ -163,11 +163,24 @@ replaces a base tool with the same name; `detach` restores the base set exactly,
 as it already does.
 
 This touches shared machinery, but it is one rule stated in one place, and it
-makes the leak structurally impossible instead of dependent on someone
-remembering to clear a holder. The attachment already knows precisely when a
-project is live and when it is not — that is its entire job — so a project-scoped
-`fetch` existing exactly across that window is the property it is already built
-to provide.
+removes the failure mode the resolver had: there is no holder to clear, so
+there is nothing to forget to clear, and `detach` restores the base set exactly
+without having to know that a corpus-aware `fetch` was ever composed. The
+attachment already knows precisely when a project is live and when it is not —
+that is its entire job — so a project-scoped `fetch` existing exactly across
+that window is the property it is already built to provide.
+
+What this does not fix is when that window closes. `detach` is correct;
+`SessionService.ensure_project_attached` simply does not call it for a session
+that belongs to no project — it returns `False` and leaves whatever was
+attached in place. So in a front end serving several sessions from one
+executor, a project-less session takes its turn still holding the previously
+attached project's tools, and its `fetch` reads that project's corpus.
+`list_sources` and `read_source` already leak by exactly this path; shadowing
+puts `fetch` on the same footing as the tools beside it rather than opening a
+new hole. Closing it means teaching `ensure_project_attached` that "no project"
+is a state to enter and not merely a case to decline, which changes behaviour
+for every attached tool and belongs to its own change.
 
 The base `fetch` keeps working unchanged for sessions with no project: it
 consults the memo and the network, and skips the corpus because there isn't one.
