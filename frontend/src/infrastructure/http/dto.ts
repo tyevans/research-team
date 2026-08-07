@@ -1,0 +1,336 @@
+import { z } from 'zod'
+
+/** The wire shapes, exactly as `presenters.py` writes them.
+ *
+ * Deliberately verbatim — snake_case, nullables and all. This module is the
+ * only place in the application allowed to look like the backend; mapping into
+ * domain types happens next door in `mappers.ts`. Keeping the two apart is what
+ * makes a backend rename a one-file change rather than a rename across every
+ * component that reads the field.
+ *
+ * Unknown keys pass through rather than failing: the console must keep working
+ * against a backend that has grown a field it does not read yet.
+ */
+
+/** A nullable that also tolerates the key being absent entirely. Several of
+ *  these fields are populated by `getattr(event, name, None)` server-side, and
+ *  a few endpoints omit rather than null them. */
+const maybe = <T extends z.ZodTypeAny>(schema: T) => schema.nullish().transform((v) => v ?? null)
+
+export const logEntryDto = z.object({
+  index: z.number(),
+  type: z.string(),
+  occurred_at: z.string(),
+  summary: maybe(z.string()),
+  path: maybe(z.string()),
+  turn_index: maybe(z.number()),
+  is_error: maybe(z.boolean()),
+  cancelled: maybe(z.boolean()),
+})
+export type LogEntryDto = z.infer<typeof logEntryDto>
+
+export const messageDto = z.object({
+  role: z.string(),
+  content: z.unknown(),
+  tool_calls: z
+    .array(z.object({ name: z.string(), args: z.record(z.unknown()).default({}) }))
+    .default([]),
+  is_error: z.boolean().default(false),
+})
+
+export const workspaceFileDto = z.object({
+  path: z.string(),
+  size: z.number(),
+  revisions: z.number().default(0),
+})
+
+export const sessionDto = z.object({
+  id: z.string(),
+  project_id: maybe(z.string()),
+  holds_project: maybe(z.boolean()),
+  knowledge_attached: maybe(z.boolean()),
+  system_prompt: maybe(z.string()),
+  model_name: maybe(z.string()),
+  turn_index: z.number().default(0),
+  failed_turns: z.number().default(0),
+  forked_from: maybe(z.string()),
+  forked_at: maybe(z.number()),
+  event_count: z.number().default(0),
+  compacted_through: maybe(z.number()),
+  compaction_summary: maybe(z.string()),
+  at: maybe(z.number()),
+  files: z.array(workspaceFileDto).default([]),
+  messages: z.array(messageDto).default([]),
+})
+
+export const sessionSummaryDto = z.object({
+  id: z.string(),
+  started_at: maybe(z.string()),
+  turns: maybe(z.number()),
+  files: maybe(z.number()),
+  first_message: maybe(z.string()),
+  forked_from: maybe(z.string()),
+  forked_at: maybe(z.number()),
+  failed_turns: maybe(z.number()),
+})
+
+/** The fork tree is recursive, so its schema needs an explicit type: inference
+ *  cannot see through `z.lazy`. Input and output are declared separately
+ *  because `maybe()` transforms make them genuinely different shapes. */
+export type ForkNodeDto = z.infer<typeof sessionSummaryDto> & { children: ForkNodeDto[] }
+
+export const forkNodeDto: z.ZodType<ForkNodeDto, z.ZodTypeDef, unknown> = sessionSummaryDto.extend({
+  children: z.lazy(() => z.array(forkNodeDto)).default([]),
+})
+
+export const fileRevisionDto = z.object({
+  index: z.number(),
+  type: z.string(),
+  occurred_at: z.string(),
+  content: maybe(z.string()),
+  old_string: maybe(z.string()),
+  new_string: maybe(z.string()),
+  replace_all: maybe(z.boolean()),
+})
+
+/** `/files` answers an object; older shapes answered the bare string. Accepting
+ *  both costs one union and removes a class of "undefined contents" bug. */
+export const fileContentDto = z.union([
+  z.object({ content: z.string() }).transform((body) => body.content),
+  z.string(),
+])
+
+export const componentErrorDto = z.object({
+  path: maybe(z.string()),
+  message: z.string(),
+})
+
+export const documentBlockDto = z.union([
+  z.object({ kind: z.literal('markdown'), text: z.string().default('') }),
+  z.object({
+    kind: z.literal('component'),
+    id: z.string(),
+    type: z.string().default(''),
+    data: z.record(z.unknown()).default({}),
+    raw: z.string().default(''),
+    lang: maybe(z.string()),
+    unknown: z.boolean().default(false),
+    errors: z.array(componentErrorDto).default([]),
+    withheld: z.array(z.string()).default([]),
+  }),
+])
+
+export const lessonDocumentDto = z.object({
+  blocks: z.array(documentBlockDto).default([]),
+})
+
+export const itemProgressDto = z.object({
+  path: z.string().optional(),
+  component_id: z.string().optional(),
+  attempts: z.number().default(0),
+  correct: z.boolean().default(false),
+  best_score: z.number().default(0),
+  last_score: z.number().default(0),
+  checked: z.array(z.number()).default([]),
+})
+
+export const progressDto = z.object({
+  scope: z.string().optional(),
+  path: maybe(z.string()),
+  items: z.record(itemProgressDto).default({}),
+})
+
+export const verdictDto = z.object({
+  correct: z.boolean().default(false),
+  score: maybe(z.number()),
+  feedback: z.array(z.string()).default([]),
+  rationale: maybe(z.string()),
+  correct_options: z.array(z.number()).default([]),
+  blanks: z
+    .array(
+      z.object({
+        blank: z.number(),
+        correct: z.boolean().default(false),
+        answer: z.string().default(''),
+      }),
+    )
+    .default([]),
+  progress: itemProgressDto.nullish().transform((v) => v ?? null),
+})
+
+export const turnResultDto = z.object({
+  turn_index: maybe(z.number()),
+  from_index: maybe(z.number()),
+  to_index: maybe(z.number()),
+})
+
+export const runningTurnDto = z.object({
+  running: z.boolean().default(false),
+  turn_index: maybe(z.number()),
+  started_at: maybe(z.string()),
+  elapsed_seconds: maybe(z.number()),
+})
+
+export const activityEntryDto = z.object({
+  session_id: z.string(),
+  message_id: z.string(),
+  kind: z.string().default('message'),
+  text: maybe(z.string()),
+  payload: z.unknown(),
+})
+
+export const activityDto = z.object({
+  running: z.array(activityEntryDto).default([]),
+  discarded: z.array(activityEntryDto).default([]),
+})
+
+export const approvalDto = z.object({
+  id: z.string(),
+  session_id: z.string(),
+  tool_name: z.string(),
+  description: maybe(z.string()),
+  args: z.unknown(),
+})
+
+export const workflowRefDto = z.object({
+  id: z.string(),
+  name: z.string(),
+  version: z.union([z.string(), z.number()]).nullish().transform((v) => v ?? null),
+})
+
+export const stageRefDto = z.object({
+  id: z.string(),
+  name: z.string(),
+  index: z.number(),
+  of: z.number(),
+})
+
+export const projectDto = z.object({
+  id: z.string(),
+  name: z.string(),
+  active_session_id: maybe(z.string()),
+  tip_at_event: z.number().default(0),
+  workflow: workflowRefDto.nullish().transform((v) => v ?? null),
+  stage: stageRefDto.nullish().transform((v) => v ?? null),
+})
+
+export const presetDto = z.object({
+  id: z.string(),
+  name: z.string(),
+  version: z.union([z.string(), z.number()]).nullish().transform((v) => v ?? null),
+  description: z.string().default(''),
+  produces: z.string().default(''),
+  stage_count: z.number().default(0),
+  terminates_at: z.object({ id: z.string(), name: z.string(), spine: z.number() }),
+  has_value_filter: z.boolean().default(false),
+  label: z.string(),
+})
+
+export const provenanceDto = z.object({
+  sources: z
+    .array(
+      z.object({
+        source_id: z.string(),
+        start: maybe(z.number()),
+        end: maybe(z.number()),
+      }),
+    )
+    .default([]),
+  inferred: z.boolean().default(false),
+  unreadable: z.number().default(0),
+  empty: z.boolean().default(false),
+})
+
+export const artifactSlotDto = z.object({
+  path: z.string(),
+  artifact_type: z.string(),
+  subtype: maybe(z.string()),
+  cardinality: z.string().default(''),
+  stage_id: z.string().default(''),
+  present: z.boolean().default(false),
+  has_frontmatter: z.boolean().default(false),
+  missing_fields: z.array(z.string()).default([]),
+  provenance: provenanceDto.nullish().transform((v) => v ?? null),
+  body_chars: z.number().default(0),
+})
+
+export const findingDto = z.object({
+  check: z.string(),
+  severity: z.string(),
+  message: z.string(),
+  cites: z.array(z.string()).default([]),
+  suggested_edit: maybe(z.string()),
+})
+
+export const stageProgressDto = z.object({
+  index: z.number(),
+  id: z.string(),
+  name: z.string(),
+  kind: z.string().default(''),
+  spine: z.number().default(0),
+  scope_level: z.string().default(''),
+  status: z.string().default('todo'),
+  outputs: z.array(artifactSlotDto).default([]),
+  gate_decisions: z.array(z.string()).default([]),
+  reviewer_role: maybe(z.string()),
+  findings_report: maybe(z.string()),
+})
+
+export const courseDto = z.object({
+  project_name: z.string().default(''),
+  holding_session_id: maybe(z.string()),
+  preset: z.object({
+    id: z.string(),
+    name: z.string(),
+    version: z.union([z.string(), z.number()]).nullish().transform((v) => v ?? null),
+  }),
+  position: maybe(z.number()),
+  stage_count: z.number().default(0),
+  stages: z.array(stageProgressDto).default([]),
+  live_findings: z.array(findingDto).default([]),
+  unimplemented_checks: z.array(z.string()).default([]),
+})
+
+export const runDto = z.object({
+  run_id: z.string(),
+  project_id: z.string(),
+  session_id: z.string(),
+  // Everything below is absent on the 202 body: a run that has begun and has
+  // not been folded yet.
+  status: z.string().optional(),
+  rounds: z.number().optional(),
+  turns: z.number().optional(),
+  findings: z.number().optional(),
+  stop_reason: maybe(z.string()).optional(),
+  working_on: maybe(z.string()).optional(),
+  quiet_rounds: z.number().optional(),
+  failures: z.number().optional(),
+  budget: z
+    .object({ max_rounds: maybe(z.number()), quiet_rounds: maybe(z.number()) })
+    .optional(),
+  read_only: z.boolean().optional(),
+})
+
+export const healthDto = z.object({
+  summaries: z.object({
+    healthy: z.boolean().default(true),
+    following: z.boolean().default(true),
+    failed_events: z.number().default(0),
+  }),
+})
+
+/** The live frames, as four separate schemas rather than one union.
+ *
+ * They cannot be a discriminated union: three have a literal `type`, but a log
+ * frame's `type` is an open set of domain event names and could be any string —
+ * so no schema can express "everything else". The reader dispatches on the
+ * `type` field first and then parses with exactly one of these, which is both
+ * what a union would have compiled to and considerably easier to read. */
+export const frameEnvelopeDto = z.object({ type: z.string() })
+export const approvalRequestedFrameDto = approvalDto
+export const approvalSettledFrameDto = z.object({ id: z.string(), session_id: z.string() })
+export const activityFrameDto = activityEntryDto
+export const logFrameDto = logEntryDto.extend({ session_id: z.string() })
+
+export const idDto = z.object({ id: z.string() })
+export const okDto = z.unknown()

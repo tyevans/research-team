@@ -1,0 +1,142 @@
+/* The course view: stage rail, artifacts, provenance and findings. */
+
+/* ---------------------------------------------------------------- course
+ *
+ * The rail's whole job is to make three states distinguishable at a glance --
+ * left behind, standing here, not yet reached -- so status is carried by the
+ * dot's fill as well as its colour. Colour alone would collapse for a
+ * red/green reader on exactly the axis the pane exists to show.
+ *
+ * Missing artifacts are dimmed rather than hidden or reddened. Hidden loses
+ * the gap the view exists to surface; red calls it a failure, which is a
+ * verdict, and verdicts here belong to the check library. */
+
+/* Scrolls as a page, unlike the session view whose panes scroll separately:
+ * a rail and its artifact list are read together and top to bottom. */
+.view-course { overflow: auto; padding: 26px 28px 60px; }
+.course-panes {
+  flex: 0 0 auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 14px;
+}
+.course-panes .pane { border: 1px solid var(--line); border-radius: var(--radius); }
+.course-panes .pane-body { overflow: visible; }
+
+.rail { list-style: none; margin: 0; padding: 0; }
+
+.rail-item { border-bottom: 1px solid var(--line-soft); }
+.rail-item:last-child { border-bottom: none; }
+
+.rail-row {
+  display: grid;
+  grid-template-columns: 14px 22px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.rail-row:hover { background: var(--bg-hover); }
+.rail-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+.rail-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--fg-faint);
+}
+.rail-done    { background: var(--k-file);   border-color: var(--k-file); }
+.rail-current { background: var(--accent);   border-color: var(--accent);
+                box-shadow: 0 0 0 3px rgba(226, 164, 87, .18); }
+.rail-upcoming { background: transparent; }
+.rail-unknown { background: var(--k-failure); border-color: var(--k-failure); }
+
+.rail-index { font-family: var(--mono); font-size: var(--t-xs); color: var(--fg-faint); }
+.rail-name  { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-count { font-family: var(--mono); font-size: var(--t-xs); color: var(--fg-dim); }
+/* Written < declared. Not an error -- a stage in progress is expected to be
+ * short -- so it is marked, not alarmed. */
+.rail-short { color: var(--accent); }
+
+.chip-done    { color: var(--k-file);  border-color: #24402c; background: #131f17; }
+.chip-current { color: var(--accent);  border-color: var(--accent-dim); background: #241d10; }
+.chip-upcoming { color: var(--fg-faint); }
+.chip-unknown { color: var(--k-failure); border-color: #45272a; background: #241417; }
+
+.rail-detail {
+  padding: 4px 10px 12px 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px dashed var(--line-soft);
+}
+.rail-meta-row { display: flex; flex-wrap: wrap; gap: 10px; font-size: var(--t-sm); }
+.rail-gate, .rail-report { font-size: var(--t-sm); }
+.rail-outputs { list-style: none; margin: 0; padding: 0; }
+
+.artifacts { list-style: none; margin: 0; padding: 0; }
+
+.artifact {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.artifact:last-child { border-bottom: none; }
+.artifact-missing { opacity: .62; }
+
+.artifact-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.artifact-name { font-family: var(--mono); font-size: var(--t-sm); }
+.artifact-type { font-size: var(--t-sm); color: var(--fg-dim); }
+.artifact-card { font-family: var(--mono); font-size: var(--t-xs); }
+
+.chip-present { color: var(--k-file); border-color: #24402c; background: #131f17; }
+.chip-missing { color: var(--fg-faint); }
+/* Claimed inference is not a defect: it is the honest half of the provenance
+ * contract, and it must not wear the colour that "claims nothing" wears. */
+.chip-inferred { color: var(--k-message); border-color: #24365a; background: #111a2a; }
+.chip-bad { color: var(--k-failure); border-color: #45272a; background: #241417; }
+
+.artifact-note { font-size: var(--t-sm); color: var(--fg-dim); }
+.artifact-note.bad { color: var(--k-failure); }
+
+.artifact-prov {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: var(--t-sm);
+}
+.prov-src { font-family: var(--mono); font-size: var(--t-xs); color: var(--k-message); }
+
+.course-findings { margin: 0 0 10px; }
+.findings-head { font-size: var(--t-sm); color: var(--fg-dim); margin: 0 0 4px; font-weight: 500; }
+.findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+
+.finding {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 5px 8px;
+  border-left: 2px solid var(--line);
+  background: var(--bg-panel-2);
+  font-size: var(--t-sm);
+}
+/* An invariant fails invisibly -- there is nothing for a human to look at and
+ * no judgement to make -- so it is the one that gets the loud edge. */
+.finding-invariant { border-left-color: var(--k-failure); }
+.finding-blocking  { border-left-color: var(--accent); }
+.finding-advisory  { border-left-color: var(--line); }
+/* Not defects, and styled so they cannot be mistaken for any: these mark work
+ * no run can clear by itself, waiting on a person or on a critic pass. */
+.finding-human_gate  { border-left-color: var(--k-session); }
+.finding-critic_gate { border-left-color: var(--k-compaction); }
+.finding-check { font-family: var(--mono); font-size: var(--t-xs); color: var(--fg-dim); }
+.finding-msg { flex: 1 1 340px; }
+.finding-fix { color: var(--fg-dim); }
+
+.chip-invariant { color: var(--k-failure); border-color: #45272a; background: #241417; }
+.chip-blocking  { color: var(--accent); border-color: var(--accent-dim); background: #241d10; }
+.chip-advisory  { color: var(--fg-dim); }
+.chip-human_gate  { color: var(--k-session); border-color: #3a3060; background: #1a1630; }
+.chip-critic_gate { color: var(--k-compaction); border-color: #2b3a42; background: #121b20; }

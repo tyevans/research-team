@@ -26,3 +26,11 @@ mutants/
 # Worktrees live here. Only the worktrees -- the rest of `.claude/` is
 # settings and agents somebody may well want tracked.
 .claude/worktrees/
+
+# --- frontend ---------------------------------------------------------------
+# Installed packages and tool caches. The *built* console is deliberately not
+# here: `research_team/interfaces/web/static/` is what `uv run web.py` serves,
+# so committing it is what keeps the web UI working without a Node toolchain.
+node_modules/
+frontend/.vite/
+*.tsbuildinfo

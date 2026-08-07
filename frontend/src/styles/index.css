@@ -1,0 +1,24 @@
+/* The stylesheet, as one import per concern.
+
+   Order is load-bearing in exactly one place: tokens come first, because
+   everything below is written in terms of them. The rest are independent and
+   are listed in the order a reader meets them on screen. */
+
+@import './tokens.css';
+@import './base.css';
+@import './shell.css';
+@import './tree.css';
+@import './panes.css';
+@import './timeline.css';
+@import './workspace.css';
+@import './markdown.css';
+@import './diff.css';
+@import './conversation.css';
+@import './composer.css';
+@import './states.css';
+@import './responsive.css';
+@import './course.css';
+@import './components.css';
+
+/* Last, so it can correct the structural differences above. */
+@import './structure.css';

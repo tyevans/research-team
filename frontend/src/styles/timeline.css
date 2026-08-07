@@ -1,0 +1,118 @@
+/* The event log: one row per event, coloured by kind. */
+
+/* --- timeline ---------------------------------------------------------- */
+.timeline { display: flex; flex-direction: column; outline: none; }
+.timeline:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
+
+.ev {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line-soft);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  position: relative;
+  outline: none;
+}
+/* The row itself is the tab stop, so it needs a visible focus ring. */
+.ev:focus-visible, .head-marker:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.ev > .ev-cell:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 46px 8px 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 6px 4px 4px;
+}
+/* Overlaid rather than laid out, so the action costs the log no width. The
+   grid roles are unaffected -- ARIA structure does not depend on positioning. */
+.ev-cell-act {
+  position: absolute;
+  right: 6px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+}
+.ev:hover { background: var(--bg-panel-2); }
+.ev.selected { background: var(--bg-raise); }
+.ev.selected::before {
+  content: "";
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 2px; background: var(--accent);
+}
+.ev.future { opacity: 0.34; }
+.ev.fresh { animation: flash 1.1s ease-out; }
+@keyframes flash { from { background: #2a2210 } to { background: transparent } }
+
+.ev-idx { text-align: right; color: var(--fg-faint); font-size: var(--t-xs); font-variant-numeric: tabular-nums; }
+.ev-rail { align-self: stretch; position: relative; }
+.ev-rail::before {
+  content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px;
+  background: var(--line);
+}
+.ev-rail::after {
+  content: ""; position: absolute; left: 0; top: 6px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--kind, var(--fg-faint));
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.ev-main { min-width: 0; }
+.ev-type {
+  color: var(--kind, var(--fg-dim));
+  font-size: var(--t-xs);
+  letter-spacing: 0.03em;
+}
+.ev-summary {
+  color: var(--fg);
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ev-path { color: var(--k-file); }
+.ev.is-error .ev-summary { color: var(--k-failure); }
+.ev-time { color: var(--fg-faint); font-size: var(--t-xs); font-variant-numeric: tabular-nums; }
+/* Kept in the layout (visibility, not display) so rows do not reflow on hover,
+   and revealed on focus-within so keyboard users can see what they reached. */
+.ev-fork { visibility: hidden; }
+.ev:hover .ev-fork,
+.ev.selected .ev-fork,
+.ev:focus-within .ev-fork { visibility: visible; }
+/* the overlay would otherwise sit on top of the timestamp */
+.ev:hover .ev-time,
+.ev.selected .ev-time,
+.ev:focus-within .ev-time { visibility: hidden; }
+.ev-fork:focus-visible { visibility: visible; outline: 2px solid var(--accent); }
+.ev-strategy { color: var(--k-compaction); }
+
+.k-session  { --kind: var(--k-session); }
+.k-message  { --kind: var(--k-message); }
+.k-tool     { --kind: var(--k-tool); }
+.k-file     { --kind: var(--k-file); }
+.k-turn     { --kind: var(--k-turn); }
+.k-failure  { --kind: var(--k-failure); }
+/* housekeeping, not activity: quieter than anything the agent did */
+.k-compaction { --kind: var(--k-compaction); }
+.k-compaction .ev-summary { color: var(--fg-dim); }
+/* a cancelled turn is part of the turn lifecycle, not a crash */
+.k-cancelled { --kind: var(--k-turn); }
+.k-cancelled .ev-summary { color: var(--fg-dim); font-style: italic; }
+.k-other    { --kind: var(--fg-faint); }
+
+.head-marker {
+  display: flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+  border-bottom: 1px solid var(--line-soft);
+  cursor: pointer;
+  outline: none;
+}
+.head-marker > .ev-cell:first-child { flex: 1 1 auto; padding: 5px 10px 5px 58px; }
+.head-marker:hover { background: var(--bg-panel-2); color: var(--fg-dim); }
+.head-marker.selected { color: var(--k-file); }

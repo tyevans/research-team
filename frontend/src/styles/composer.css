@@ -1,0 +1,98 @@
+/* The turn composer, its hint line, and plain text inputs. */
+
+/* --- composer ---------------------------------------------------------- */
+.composer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  background: var(--bg-panel);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.composer textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 46px;
+  max-height: 180px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 7px 9px;
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+}
+.composer textarea:focus { border-color: var(--accent-dim); outline: none; }
+.composer textarea:disabled { opacity: .55; }
+
+/* --- plain text input (project name, etc) ------------------------------ */
+.input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 5px 9px;
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  /* Stated rather than inherited: a `<select>` takes the browser's field
+     colour, not the page's, so on this dark background it would render
+     near-black on near-black. */
+  color: var(--fg);
+}
+/* A workflow label says what the preset produces and where it stops, which is
+   longer than a project name and must not push the button off the row. */
+select.input { max-width: 22rem; }
+.input:focus { border-color: var(--accent-dim); outline: none; }
+.composer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.composer-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.composer-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+  overflow: hidden;
+}
+.composer-hint > .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-hint.busy { color: var(--accent); }
+.composer-hint.warn { color: var(--k-failure); }
+/* a cancellation is an outcome, not a fault -- never red */
+.composer-hint.calm { color: var(--fg-dim); }
+
+/* Cancel: available, but never louder than the primary action. */
+.btn-quiet {
+  background: transparent;
+  border-color: #3a2b2c;
+  color: var(--del-fg);
+}
+.btn-quiet:hover:not(:disabled) { background: #24151700; background: #241517; border-color: #543336; }
+
+/* the "turn 3 · events 14–21" jump chip */
+.turn-range {
+  flex: 0 0 auto;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.turn-range:hover { color: var(--accent); border-color: var(--accent-dim); background: #221a10; }
+
+.spinner {
+  display: inline-block;
+  width: 8px; height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  border-top-color: transparent;
+  animation: spin .7s linear infinite;
+  vertical-align: -1px;
+}
+@keyframes spin { to { transform: rotate(360deg) } }

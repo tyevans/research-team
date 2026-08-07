@@ -111,3 +111,45 @@ jobs:
       # `live` stays deselected: it hits a real model endpoint, which this
       # runner has no way to reach.
       - run: uv run pytest -m "integration and not live"
+
+  console:
+    name: frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # `ci` rather than `install`: the lockfile is committed, and a resolution
+      # that drifts between this gate and a developer's machine is a bug.
+      - run: npm ci
+        working-directory: frontend
+
+      - run: npm run typecheck
+        working-directory: frontend
+
+      - run: npm run lint
+        working-directory: frontend
+
+      - run: npm test
+        working-directory: frontend
+
+      # The built console is committed, because that is what `uv run web.py`
+      # serves and requiring a Node toolchain to run the web UI would be a
+      # regression. Committed output can go stale, so this is the gate: rebuild,
+      # and fail if the result differs from what the commit carries.
+      - name: the committed build matches src/
+        run: |
+          npm run build
+          if ! git diff --quiet -- ../research_team/interfaces/web/static; then
+            echo "::error::The committed console is stale. Run 'npm run build' in frontend/ and commit the result."
+            git --no-pager diff --stat -- ../research_team/interfaces/web/static
+            exit 1
+          fi
+        working-directory: frontend

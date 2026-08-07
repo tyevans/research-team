@@ -3,6 +3,13 @@
 Read out of the working tree at `research_team/interfaces/web/` and `research_team/application/` on
 branch `main`. Line numbers are as of the current checkout; treat them as pointers, not contracts.
 
+> **Note added when the console was rewritten.** Every `app.js:NNN` pointer
+> below refers to the hand-written `static/app.js` this document was read out
+> of. That file no longer exists: the console is now a TypeScript application
+> under `frontend/`, built into `static/`. The findings still hold — the
+> behaviour was ported deliberately — but the pointers do not. `frontend/README.md`
+> maps the old concerns onto the new layers.
+
 ---
 
 ## 1. What the web UI is today
