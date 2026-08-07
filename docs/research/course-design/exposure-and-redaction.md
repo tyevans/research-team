@@ -1,5 +1,12 @@
 # Exposure Surfaces and Redaction
 
+> **Note added when the console was rewritten.** Every `app.js:NNN` pointer
+> below refers to the hand-written `static/app.js` this document was read out
+> of. That file no longer exists: the console is now a TypeScript application
+> under `frontend/`, built into `static/`. The findings still hold — the
+> behaviour was ported deliberately — but the pointers do not. `frontend/README.md`
+> maps the old concerns onto the new layers.
+
 **Status: findings for the backlog, not a v1 design.** This system has no user
 system and no RBAC. There is therefore no "learner" principal, and any
 author/learner boundary is blocked on authentication that does not exist —

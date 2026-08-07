@@ -1,0 +1,38 @@
+/* The handful of rules the component tree needs that the original markup did
+   not.
+
+   Kept in their own file rather than folded into the others so the boundary
+   stays visible: everything else in this directory is the original design,
+   preserved rule-for-rule, and these are the additions that pay for rendering
+   it as components instead of as hand-built DOM. */
+
+/* A markdown block inside a parsed document used to be unwrapped into its
+   container, so the document's padding and `:first-child` heading rules applied
+   across the whole thing. A component renders a wrapper instead, so the wrapper
+   is made to disappear from layout rather than the rules being duplicated. */
+.doc > .md-unwrapped {
+  display: contents;
+}
+
+/* A diff is grouped into hunks so each elision can be labelled once. The
+   grouping is structural only — the rows must lay out exactly as they did when
+   they were siblings. */
+.diff > .diff-hunk {
+  display: contents;
+}
+
+/* React renders the pane toggle through the shared button component, which
+   carries `.btn`. The original was a bare element, so the button chrome is
+   removed back off it here rather than forking the component. */
+.pane-head .btn.pane-toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  min-width: 0;
+}
+
+/* The root the application mounts into replaces the old `<main id="app">` as
+   the flex child, so it has to carry the same growth. */
+#root {
+  display: contents;
+}

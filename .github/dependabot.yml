@@ -1,0 +1,77 @@
+# Dependency updates.
+#
+# The console currently reports zero advisories from `npm audit`. Nothing about
+# that is durable — it is a statement about today's advisory database, not about
+# the code — and the way it decays is silently. This is the mechanism that turns
+# that decay into a pull request instead of a surprise.
+#
+# Weekly rather than daily: a queue of open bumps nobody reviews is worse than a
+# slightly older lockfile, because it trains everyone to ignore the queue.
+#
+# Grouped rather than one PR per package, for the same reason. A group that
+# fails CI is one investigation; fifteen PRs that each fail CI are fifteen.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # The toolchain moves together and breaks together — a typescript-eslint
+      # bump that needs a matching eslint bump is not reviewable in isolation.
+      toolchain:
+        patterns:
+          - '@typescript-eslint/*'
+          - 'typescript-eslint'
+          - 'eslint'
+          - 'eslint-*'
+          - '@eslint/*'
+          - 'prettier'
+          - 'typescript'
+          - 'vite'
+          - 'vitest'
+          - '@vitest/*'
+          - '@vitejs/*'
+      testing:
+        patterns:
+          - '@testing-library/*'
+          - 'jsdom'
+      # React and its types are one decision.
+      react:
+        patterns:
+          - 'react'
+          - 'react-dom'
+          - '@types/react'
+          - '@types/react-dom'
+      runtime:
+        dependency-type: production
+        exclude-patterns:
+          - 'react'
+          - 'react-dom'
+
+  # Actions are pinned to commit SHAs in `ci.yml`, which is the right default
+  # and also means a tag moving does nothing for us. Dependabot is how those
+  # pins get advanced deliberately rather than never.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns:
+          - '*'
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      python:
+        patterns:
+          - '*'

@@ -1,0 +1,95 @@
+/* Design tokens: the palette, the type scale and the spacing rhythm.
+
+   One accent (amber); event kinds carry the only other colour in the UI, so
+   the log reads as a legend for itself. Every other file here consumes these
+   and defines none of its own -- a second literal hex would be a second
+   palette, discoverable only by looking at both. */
+
+/* research-team — developer console
+   Dark, dense, monospace-forward. One accent (amber); event kinds carry the
+   only other colour in the UI, so the log reads as a legend for itself. */
+
+:root {
+  --bg: #0b0d10;
+  --bg-panel: #111418;
+  --bg-panel-2: #15191e;
+  --bg-raise: #1b2027;
+  --bg-hover: #1e242c;
+  --line: #232a33;
+  --line-soft: #1a2027;
+
+  --fg: #d7dee7;
+  --fg-dim: #8a95a3;
+  --fg-faint: #5c6673;
+
+  --accent: #e2a457;
+  --accent-dim: #7a5a2c;
+  --accent-fg: #17120a;
+
+  --k-session: #a78bfa;
+  --k-message: #6ba7f5;
+  --k-tool: #e2a457;
+  --k-file: #5ec98a;
+  --k-turn: #7e8b9b;
+  --k-failure: #f4736b;
+  --k-compaction: #5f7d8c;
+
+  --add-fg: #82d9a4;
+  --add-bg: #0f2418;
+  --del-fg: #f08d86;
+  --del-bg: #2a1315;
+
+  --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
+
+  /* type scale, 1.2 minor third off 13px */
+  --t-xs: 10.5px;
+  --t-sm: 12px;
+  --t-md: 13px;
+  --t-lg: 15.5px;
+  --t-xl: 19px;
+  --t-2xl: 23px;
+
+  --radius: 5px;
+  --topbar-h: 44px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: var(--t-md);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: var(--accent-dim);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

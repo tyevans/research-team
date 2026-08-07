@@ -1,0 +1,604 @@
+/* Interactive lesson components: flashcards, mcq, cloze, checklist, verdicts. */
+
+/* ---------------------------------------------------------------------------
+   interactive components
+
+   A component is a quiet inset in the prose, not a card floating over it: the
+   file viewer is a reading surface first, and a widget that shouted would make
+   a lesson look like a form. Hence one hairline border, a slightly raised
+   panel, and a small monospace label naming the type -- the same vocabulary
+   the event log uses to name itself.
+
+   Colour is borrowed rather than invented. `--k-file` green already means "a
+   thing that landed" and `--k-failure` red already means "a thing that broke",
+   so correct and incorrect read correctly to anyone who has looked at the log,
+   and the palette stays at one accent. Neither is ever the *only* signal: a
+   ✓/✕ glyph and a word ("Correct" / "Not quite") carry the same meaning for a
+   reader who cannot separate the two hues.
+   --------------------------------------------------------------------------- */
+
+.cmp {
+  margin: 18px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel-2);
+  overflow: hidden;
+}
+
+.cmp-kind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-panel);
+}
+.cmp-kind-name {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.cmp-withheld {
+  font-size: var(--t-xs);
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+  border-radius: 3px;
+  padding: 0 5px;
+  cursor: help;
+}
+
+.cmp-body {
+  padding: 12px;
+}
+.cmp-title {
+  margin: 0 0 10px;
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+.cmp-prose {
+  padding: 0;
+  font-size: inherit;
+}
+.cmp-prose > :first-child {
+  margin-top: 0;
+}
+.cmp-prose > :last-child {
+  margin-bottom: 0;
+}
+.cmp-prompt {
+  margin-bottom: 12px;
+}
+.cmp-empty {
+  color: var(--fg-faint);
+  font-style: italic;
+}
+
+.cmp-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.cmp-count {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--fg-faint);
+}
+.cmp-count.complete {
+  color: var(--k-file);
+}
+.cmp-hint {
+  font-size: var(--t-sm);
+  color: var(--fg-faint);
+}
+
+.cmp-btn {
+  font: inherit;
+  font-size: var(--t-sm);
+  padding: 4px 11px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-raise);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.cmp-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.cmp-btn.primary {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+.cmp-btn.primary:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.cmp-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* Focus is never removed anywhere here: every one of these is operable from
+   the keyboard, and a flashcard you can tab to but not see is not operable. */
+.cmp-btn:focus-visible,
+.flash-card:focus-visible,
+.cloze-input:focus-visible,
+.cmp input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- flashcards --- */
+
+.flash-card {
+  position: relative;
+  min-height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 22px 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raise);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.flash-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-dim);
+}
+.flash-card.flipped {
+  background: var(--bg-panel);
+  border-color: var(--accent-dim);
+}
+.flash-side {
+  position: absolute;
+  top: 6px;
+  left: 10px;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.flash-text {
+  font-size: var(--t-lg);
+}
+
+/* --- multiple choice --- */
+
+.mcq-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mcq-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  cursor: pointer;
+}
+.mcq-option:hover {
+  background: var(--bg-hover);
+}
+.mcq-option.picked {
+  border-color: var(--accent-dim);
+}
+.mcq-option input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+  flex: none;
+}
+.mcq-text {
+  flex: 1;
+}
+.mcq-mark {
+  font-weight: 700;
+  flex: none;
+}
+.mcq-option.right {
+  border-color: #2f5a41;
+  background: var(--add-bg);
+}
+.mcq-option.right .mcq-mark {
+  color: var(--add-fg);
+}
+.mcq-option.wrong {
+  border-color: #5a2f31;
+  background: var(--del-bg);
+}
+.mcq-option.wrong .mcq-mark {
+  color: var(--del-fg);
+}
+
+/* --- cloze --- */
+
+/* Not `pre-wrap`: the text comes out of a YAML block scalar, so it carries the
+   author's soft wraps, and markdown reads those as spaces rather than as line
+   breaks. Preserving them would break the passage at whatever column the
+   author's editor happened to use. */
+.cloze-text {
+  line-height: 2.4;
+  margin: 0;
+}
+.cloze-slot {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.cloze-input {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-bottom: 2px solid var(--accent-dim);
+  border-radius: 3px 3px 0 0;
+  background: var(--bg-raise);
+  color: var(--fg);
+}
+.cloze-input:disabled {
+  opacity: 0.8;
+}
+.cloze-slot.right .cloze-input {
+  border-bottom-color: var(--add-fg);
+  color: var(--add-fg);
+}
+.cloze-slot.wrong .cloze-input {
+  border-bottom-color: var(--del-fg);
+  color: var(--del-fg);
+}
+.cloze-input::placeholder {
+  color: var(--fg-faint);
+  font-style: italic;
+  opacity: 1;
+}
+/* The right answer, shown beside the wrong one rather than replacing it, so
+   the learner can see what they wrote next to what was wanted. */
+.cloze-answer {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--add-fg);
+  background: var(--add-bg);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+/* --- checklist --- */
+
+.check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.check-item {
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.check-item:last-child {
+  border-bottom: 0;
+}
+.check-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  cursor: pointer;
+}
+.check-label input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+  flex: none;
+}
+.check-text {
+  flex: 1;
+}
+/* Struck through and dimmed, not hidden: the value of a checklist afterwards
+   is seeing the whole procedure with the done parts marked. */
+.check-item.done .check-text {
+  color: var(--fg-faint);
+  text-decoration: line-through;
+}
+.check-req {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+  border-radius: 3px;
+  padding: 0 4px;
+  flex: none;
+}
+.check-note {
+  margin: 2px 0 4px 27px;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
+/* --- verdicts --- */
+
+/* Reserved while empty so that a verdict appearing does not shove the buttons
+   the learner just used out from under the pointer. */
+.cmp-verdict-slot {
+  min-height: 8px;
+}
+
+/* What a returning learner has already earned. Deliberately quieter than a
+   verdict -- it is a note about the past, not a response to anything they just
+   did -- and, like every other correct/incorrect signal here, it carries a
+   glyph and words rather than leaning on hue alone. */
+.cmp-earlier {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: var(--t-sm);
+  color: var(--fg-faint);
+}
+.cmp-earlier .verdict-mark {
+  color: var(--add-fg);
+}
+
+/* A checklist that promised "saved as you go" and did not has to say so. */
+.cmp-hint-error {
+  color: var(--del-fg);
+}
+
+.cmp-verdict {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  background: var(--bg-panel);
+}
+.cmp-verdict.right {
+  border-left-color: var(--add-fg);
+}
+.cmp-verdict.wrong {
+  border-left-color: var(--del-fg);
+}
+.verdict-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.verdict-mark {
+  font-weight: 700;
+}
+.cmp-verdict.right .verdict-mark,
+.cmp-verdict.right .verdict-word {
+  color: var(--add-fg);
+}
+.cmp-verdict.wrong .verdict-mark,
+.cmp-verdict.wrong .verdict-word {
+  color: var(--del-fg);
+}
+.verdict-word {
+  font-weight: 600;
+}
+.verdict-score {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+}
+.verdict-feedback {
+  margin-top: 7px;
+  color: var(--fg);
+}
+.verdict-why {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line-soft);
+}
+.verdict-why-label {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-faint);
+  margin-bottom: 4px;
+}
+
+/* --- degradation --- */
+
+/* A component that did not parse still shows its own source, because an author
+   told "options: required field missing" and not shown the block has to go
+   find it. The document around it renders normally. */
+.cmp-broken {
+  border-color: #45272a;
+}
+.cmp-broken .cmp-kind {
+  background: var(--del-bg);
+}
+.cmp-broken-tag {
+  font-size: var(--t-xs);
+  color: var(--del-fg);
+}
+.cmp-error-list {
+  margin: 10px 12px;
+  padding-left: 18px;
+  font-size: var(--t-sm);
+}
+.cmp-error-list li {
+  margin-bottom: 3px;
+}
+.cmp-error-path {
+  color: var(--accent);
+  margin-right: 6px;
+}
+.cmp-broken .md-code {
+  margin: 0 12px 12px;
+}
+.cmp-error {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid #45272a;
+  background: var(--del-bg);
+  color: var(--del-fg);
+  font-size: var(--t-sm);
+}
+/* An unknown type is not an error: it is a labelled code block, which is
+   exactly what an unrecognised fence has always rendered as here. */
+.cmp-unknown {
+  border-left: 3px solid var(--line);
+}
+
+/* -------------------------------------------------- autonomous research
+ *
+ * Only one ending gets the green edge, and it is not the common one. Every
+ * other stop reason describes a run that quit with topics still queued, so
+ * they share the neutral treatment: not alarming, and not congratulatory
+ * either, because a panel that looks satisfied is the one people believe. */
+
+.run-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.run-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.run-title {
+  margin: 0;
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+.run-spacer {
+  flex: 1 1 auto;
+}
+.run-sub {
+  margin: 0;
+}
+
+.run-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.run-rounds {
+  width: 190px;
+}
+
+.run-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.run-cells {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.run-cell {
+  display: flex;
+  flex-direction: column;
+}
+.run-cell-value {
+  font-family: var(--mono);
+  font-size: var(--t-md);
+}
+.run-cell-label {
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.run-working {
+  font-size: var(--t-sm);
+}
+.run-topic {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.run-ending {
+  border-left: 2px solid var(--line);
+  background: var(--bg-panel-2);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.run-ending-done {
+  border-left-color: var(--k-file);
+}
+.run-ending-short {
+  border-left-color: var(--fg-faint);
+}
+.run-ending-bad {
+  border-left-color: var(--k-failure);
+}
+.run-ending-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--t-sm);
+}
+.run-ending-text {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
+.chip-run-done {
+  color: var(--k-file);
+  border-color: #24402c;
+  background: #131f17;
+}
+.chip-run-short {
+  color: var(--fg-dim);
+}
+.chip-run-bad {
+  color: var(--k-failure);
+  border-color: #45272a;
+  background: #241417;
+}
+.chip-readonly {
+  color: var(--k-message);
+  border-color: #24365a;
+  background: #111a2a;
+}
+
+.run-off {
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+.run-note {
+  margin: 0;
+  font-size: var(--t-sm);
+}
+.run-note.bad {
+  color: var(--k-failure);
+}
+
+@media (max-width: 900px) {
+  .course-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001s !important;
+    transition: none !important;
+  }
+}

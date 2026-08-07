@@ -1,168 +1,20 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en" data-theme="dark">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>research-team</title>
-<link rel="stylesheet" href="/static/style.css">
-<link rel="icon" href="data:,">
-</head>
-<body>
-
-<header class="topbar">
-  <a class="brand" href="#/">
-    <span class="brand-mark"></span>
-    <span class="brand-name">research&#8209;team</span>
-  </a>
-  <nav class="crumbs" id="crumbs"></nav>
-  <div class="topbar-right">
-    <!-- Hidden while the session list is trustworthy, which is almost always.
-         A wrong row looks exactly like a right one, so this is the only thing
-         that would tell you otherwise. -->
-    <span class="drift" id="drift" hidden role="status" aria-live="polite">
-      <span class="conn-dot"></span><span class="drift-label"></span>
-      <button type="button" class="drift-fix" id="drift-fix">rebuild</button>
-    </span>
-    <span class="conn" id="conn" data-state="init" title="event stream"
-          role="status" aria-live="polite" aria-atomic="true">
-      <span class="conn-dot"></span><span class="conn-label">connecting</span>
-    </span>
-  </div>
-</header>
-
-<div id="toasts" class="toasts" aria-live="polite"></div>
-
-<main id="app">
-  <div class="boot">loading&#8230;</div>
-</main>
-
-<!-- ------------------------------------------------------------------ -->
-<!-- Templates. Cloned by app.js; kept here so structure is inspectable. -->
-<!-- ------------------------------------------------------------------ -->
-
-<template id="tpl-tree-view">
-  <section class="view view-tree">
-    <div class="view-head">
-      <div>
-        <h1>Sessions</h1>
-        <p class="sub">Every session is an event log. Forks branch from an event index.</p>
-      </div>
-      <div class="view-head-actions">
-        <button class="btn btn-accent" data-act="new-session">New session</button>
-      </div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>research-team</title>
+    <link rel="icon" href="data:," />
+    <script type="module" crossorigin src="/static/assets/app-Cktx6VJU.js"></script>
+    <link rel="modulepreload" crossorigin href="/static/assets/rolldown-runtime-CbXtAM7H.js">
+    <link rel="modulepreload" crossorigin href="/static/assets/react-JpUjoF33.js">
+    <link rel="modulepreload" crossorigin href="/static/assets/vendor-Dtp5finE.js">
+    <link rel="modulepreload" crossorigin href="/static/assets/text-Cf3fMs9t.js">
+    <link rel="stylesheet" crossorigin href="/static/assets/index-W1nUdJ8N.css">
+  </head>
+  <body>
+    <div id="root">
+      <div class="boot">loading&#8230;</div>
     </div>
-    <div class="tree-wrap" data-slot="tree"></div>
-
-    <div class="view-head">
-      <div>
-        <h2>Projects</h2>
-        <p class="sub">A project is a shared filesystem and knowledge graph. One session holds it at a time.</p>
-      </div>
-      <div class="view-head-actions">
-        <input type="text" id="project-name" class="input" placeholder="project name">
-        <!-- Options are filled from /api/workflows, whose labels say what each
-             preset produces and where it stops. A workflow is chosen once, so
-             creation is the moment to choose it. -->
-        <select id="project-workflow" class="input" title="Workflow this project runs">
-          <option value="">no workflow</option>
-        </select>
-        <button class="btn" data-act="new-project">Create project</button>
-      </div>
-    </div>
-    <div class="tree-wrap" data-slot="projects"></div>
-  </section>
-</template>
-
-<template id="tpl-session-view">
-  <section class="view view-session">
-    <div class="scrub-bar" data-slot="scrubbar"></div>
-    <div class="panes">
-      <section class="pane pane-timeline" data-pane="timeline" aria-label="Event timeline">
-        <header class="pane-head">
-          <button type="button" class="pane-toggle" data-act="collapse"
-                  aria-expanded="true" title="Collapse this pane">&#9666;</button>
-          <h2>Event log</h2>
-          <span class="pane-meta" data-slot="timeline-meta"></span>
-        </header>
-        <div class="pane-body" data-slot="timeline"></div>
-        <div class="activity" data-slot="activity"></div>
-      </section>
-
-      <section class="pane pane-workspace" data-pane="workspace" aria-label="Workspace">
-        <header class="pane-head">
-          <button type="button" class="pane-toggle" data-act="collapse"
-                  aria-expanded="true" title="Collapse this pane">&#9666;</button>
-          <h2>Workspace</h2>
-          <span class="pane-meta" data-slot="workspace-meta"></span>
-        </header>
-        <div class="pane-body pane-body-split">
-          <div class="files" data-slot="files"></div>
-          <div class="file-view" data-slot="fileview"></div>
-        </div>
-      </section>
-
-      <section class="pane pane-conversation" data-pane="conversation" aria-label="Conversation">
-        <header class="pane-head">
-          <button type="button" class="pane-toggle" data-act="collapse"
-                  aria-expanded="true" title="Collapse this pane">&#9666;</button>
-          <h2>Conversation</h2>
-          <span class="pane-meta" data-slot="conv-meta"></span>
-        </header>
-        <div class="pane-body" data-slot="conversation"></div>
-        <div class="approvals" data-slot="approvals"></div>
-        <form class="composer" data-slot="composer">
-          <textarea rows="2" placeholder="Send a turn&#8230;  (Ctrl+Enter)" data-slot="input"></textarea>
-          <div class="composer-row">
-            <span class="composer-hint" data-slot="composer-hint"></span>
-            <div class="composer-actions">
-              <button type="button" class="btn btn-quiet" data-slot="cancel" hidden>Cancel turn</button>
-              <button type="submit" class="btn btn-accent" data-slot="send">Send turn</button>
-            </div>
-          </div>
-        </form>
-      </section>
-    </div>
-  </section>
-</template>
-
-<!-- The run seen whole. Two panes rather than one list, because the rail
-     answers "where are we" and the artifact list answers "what is there",
-     and a reader scanning for one should not have to read the other. -->
-<template id="tpl-course-view">
-  <section class="view view-course">
-    <div class="view-head">
-      <div>
-        <h1 data-slot="course-title">Course</h1>
-        <p class="sub" data-slot="course-sub"></p>
-      </div>
-      <div class="view-head-actions">
-        <a class="btn btn-quiet" data-slot="course-session" hidden>Open holding session</a>
-      </div>
-    </div>
-    <!-- A run works the project's topic queue, not the workflow's stages, so
-         this sits above the course rather than inside it -- and renders even
-         when the project has no workflow and the panes below have nothing. -->
-    <section class="run-panel" data-slot="run-panel" aria-label="Autonomous research"></section>
-    <div class="course-findings" data-slot="course-findings"></div>
-    <div class="panes course-panes">
-      <section class="pane pane-rail" aria-label="Stage rail">
-        <header class="pane-head">
-          <h2>Stages</h2>
-          <span class="pane-meta" data-slot="rail-meta"></span>
-        </header>
-        <div class="pane-body" data-slot="rail"></div>
-      </section>
-      <section class="pane pane-artifacts" aria-label="Artifacts">
-        <header class="pane-head">
-          <h2>Artifacts</h2>
-          <span class="pane-meta" data-slot="artifacts-meta"></span>
-        </header>
-        <div class="pane-body" data-slot="artifacts"></div>
-      </section>
-    </div>
-  </section>
-</template>
-
-<script src="/static/app.js"></script>
-</body>
+  </body>
 </html>

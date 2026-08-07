@@ -1,0 +1,6 @@
+# Build output, and the committed copy of it under the Python package.
+dist
+coverage
+../research_team/interfaces/web/static
+node_modules
+package-lock.json

@@ -1,0 +1,21 @@
+/* Scrollbars, and anything else the document owns before a component does. */
+
+/* scrollbars ------------------------------------------------------------ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2b333d transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2b333d;
+  border-radius: 5px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #39434f;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

@@ -45,6 +45,20 @@ write), per-file provenance with real diffs of each recorded edit, and the fork
 lineage as a tree. New events reach every open browser over SSE. Both front ends share one
 SQLite database, so a session started in the terminal opens in the browser.
 
+The console is a standalone TypeScript application under `frontend/`, built and
+committed into the directory the server mounts -- so `uv run web.py` serves it
+with no Node toolchain in the picture. Working on it needs one:
+
+```bash
+cd frontend
+npm install
+npm run dev      # http://localhost:5173, proxying /api to the server above
+npm run build    # rebuilds what web.py serves; commit the result
+```
+
+`frontend/README.md` has the layering and the three files that carry most of
+the subtlety.
+
 From the REPL you get a prompt. Type anything to send it to the agent as a turn; type a
 `/`-command to inspect or manipulate the event log.
 
@@ -432,7 +446,7 @@ research_team/
                                  slow turn are read off the same trace
                    config.py     the only module that reads the environment
   interfaces/      cli/          the REPL: parsing, dispatch, formatting
-                   web/          FastAPI routes + presenters, and the SPA
+                   web/          FastAPI routes + presenters, and the built console
   composition.py   the one place that picks concrete adapters and wires them
 ```
 

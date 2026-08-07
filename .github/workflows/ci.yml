@@ -111,3 +111,78 @@ jobs:
       # `live` stays deselected: it hits a real model endpoint, which this
       # runner has no way to reach.
       - run: uv run pytest -m "integration and not live"
+
+  console:
+    name: frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # `.nvmrc` rather than a literal, so a developer's `nvm use` and this
+          # runner cannot disagree about which Node the build ran on.
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # `ci` rather than `install`: the lockfile is committed, and a resolution
+      # that drifts between this gate and a developer's machine is a bug.
+      - run: npm ci
+        working-directory: frontend
+
+      # Each check is its own step rather than one `npm run verify`, so the
+      # failing box in the pull request names what broke without anyone opening
+      # the log. `verify` runs the same list locally, in the same order.
+      - name: prettier --check
+        run: npm run format:check
+        working-directory: frontend
+
+      - name: eslint
+        run: npm run lint
+        working-directory: frontend
+
+      - name: tsc --noEmit
+        run: npm run typecheck
+        working-directory: frontend
+
+      - name: vitest
+        run: npm run test:coverage
+        working-directory: frontend
+
+      # The built console is committed, because that is what `uv run web.py`
+      # serves and requiring a Node toolchain to run the web UI would be a
+      # regression. Committed output can go stale, so this is the gate: rebuild,
+      # and fail if the result differs from what the commit carries.
+      #
+      # `status --porcelain`, not `diff`: the output is content-hashed
+      # filenames, so a change can arrive purely as a new file alongside
+      # unchanged ones — and `git diff` does not see untracked files. That gate
+      # would pass on a commit whose console is missing a chunk.
+      - name: the committed build matches src/
+        run: |
+          npm run build
+          drift="$(git status --porcelain -- ../research_team/interfaces/web/static)"
+          if [ -n "$drift" ]; then
+            echo "::error::The committed console is stale. Run 'npm run build' in frontend/ and commit the result."
+            echo "$drift"
+            exit 1
+          fi
+        working-directory: frontend
+
+      # After the build, because it measures the build. A dependency's weight is
+      # a fact about the shipped artefact, not about `package.json`.
+      - name: bundle budget
+        run: npm run size
+        working-directory: frontend
+
+      # Advisories are published against versions already installed, so this can
+      # fail on a pull request that changed nothing — which is the point, and
+      # why the bar is `high` rather than `low`: at that level the interruption
+      # is rare enough to be worth stopping for. Dependabot (`dependabot.yml`)
+      # is what raises the fix; this is what makes ignoring it impossible.
+      - name: npm audit
+        run: npm audit --audit-level=high
+        working-directory: frontend
