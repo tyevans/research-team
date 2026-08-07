@@ -18,13 +18,7 @@ import { clockTime, fullTime } from '../formatting/format.ts'
  * The whole log for the path, not a fold to the scrub point: a revision list
  * that stopped where the reader is standing would hide the very edits they
  * scrubbed back to understand. */
-export const FileHistory = ({
-  sessionId,
-  path,
-}: {
-  sessionId: SessionId
-  path: FilePath
-}) => {
+export const FileHistory = ({ sessionId, path }: { sessionId: SessionId; path: FilePath }) => {
   const { workspace } = useContainer()
   const [closed, setClosed] = useState<ReadonlySet<number>>(new Set())
 

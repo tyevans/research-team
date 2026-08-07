@@ -1,4 +1,5 @@
 import js from '@eslint/js'
+import prettier from 'eslint-config-prettier'
 import reactHooks from 'eslint-plugin-react-hooks'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
@@ -19,7 +20,18 @@ export default tseslint.config(
     languageOptions: {
       globals: globals.browser,
       parserOptions: {
-        projectService: true,
+        projectService: {
+          // The build tooling sits outside `tsconfig.json` on purpose — that
+          // config is the browser's, and application code must not be able to
+          // see `process` or `fs`. These files are still linted, against an
+          // inferred program rather than a named project.
+          allowDefaultProject: [
+            'eslint.config.js',
+            'vite.config.ts',
+            'scripts/*.mjs',
+            'scripts/*.ts',
+          ],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -47,8 +59,20 @@ export default tseslint.config(
         'error',
         {
           patterns: [
-            { group: ['react', 'react-dom', 'zustand', '@tanstack/*'], message: 'The domain layer must not depend on a framework.' },
-            { group: ['@infrastructure/*', '@presentation/*', '@app/*', '../../infrastructure/*', '../../presentation/*'], message: 'The domain layer must not depend on an outer layer.' },
+            {
+              group: ['react', 'react-dom', 'zustand', '@tanstack/*'],
+              message: 'The domain layer must not depend on a framework.',
+            },
+            {
+              group: [
+                '@infrastructure/*',
+                '@presentation/*',
+                '@app/*',
+                '../../infrastructure/*',
+                '../../presentation/*',
+              ],
+              message: 'The domain layer must not depend on an outer layer.',
+            },
           ],
         },
       ],
@@ -65,7 +89,10 @@ export default tseslint.config(
         'error',
         {
           patterns: [
-            { group: ['@presentation/*'], message: 'The application layer must not depend on the UI.' },
+            {
+              group: ['@presentation/*'],
+              message: 'The application layer must not depend on the UI.',
+            },
           ],
         },
       ],
@@ -80,4 +107,28 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-member-access': 'off',
     },
   },
+
+  /** The build tooling runs in Node, not in the browser, and is the one place
+   *  in this repository allowed to say `process`. It is linted rather than
+   *  ignored: a size gate that throws on its own bug reports a passing build.
+   *
+   *  These files sit outside `tsconfig.json` on purpose — that config is the
+   *  browser's, and application code must not be able to see `process` or `fs`
+   *  — so they are linted against an inferred program. For the `.js` among
+   *  them that means no type information at all, and a type-aware rule asking
+   *  for it errors rather than degrading, hence `disableTypeChecked`. */
+  {
+    files: ['vite.config.ts', 'scripts/**/*.ts'],
+    languageOptions: { globals: globals.node },
+  },
+  {
+    files: ['**/*.js', '**/*.mjs'],
+    ...tseslint.configs.disableTypeChecked,
+    languageOptions: { globals: globals.node },
+  },
+
+  /** Last, so it wins: formatting is Prettier's job and nothing here should
+   *  have an opinion about it. Two tools disagreeing about a line break is a
+   *  loop a developer has to break by hand, every time. */
+  prettier,
 )

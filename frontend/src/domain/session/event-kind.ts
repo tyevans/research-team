@@ -8,14 +8,7 @@
  * failure.
  */
 export type EventKind =
-  | 'compaction'
-  | 'failure'
-  | 'session'
-  | 'tool'
-  | 'file'
-  | 'message'
-  | 'turn'
-  | 'other'
+  'compaction' | 'failure' | 'session' | 'tool' | 'file' | 'message' | 'turn' | 'other'
 
 const RULES: ReadonlyArray<readonly [fragment: string, kind: EventKind]> = [
   ['compact', 'compaction'],

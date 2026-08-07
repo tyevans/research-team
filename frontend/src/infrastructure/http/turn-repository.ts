@@ -39,10 +39,7 @@ export class HttpTurnRepository implements TurnRepository {
   }
 
   async current(id: SessionId): Promise<RunningTurn> {
-    const result = await this.http.get(
-      `/api/sessions/${seg(id)}/turns/current`,
-      dto.runningTurnDto,
-    )
+    const result = await this.http.get(`/api/sessions/${seg(id)}/turns/current`, dto.runningTurnDto)
     return {
       running: result.running,
       turnIndex: result.turn_index,
@@ -73,11 +70,7 @@ export class HttpApprovalRepository implements ApprovalRepository {
     return rows.map(toApproval)
   }
 
-  async decide(
-    id: SessionId,
-    approvalId: ApprovalId,
-    decision: ApprovalDecision,
-  ): Promise<void> {
+  async decide(id: SessionId, approvalId: ApprovalId, decision: ApprovalDecision): Promise<void> {
     await this.http.post(
       `/api/sessions/${seg(id)}/approvals/${seg(approvalId)}`,
       { type: decision },

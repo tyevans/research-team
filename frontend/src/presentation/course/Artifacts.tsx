@@ -97,10 +97,7 @@ const ProvenanceRow = ({
         </Chip>
       ) : null}
       {provenance.unreadable > 0 ? (
-        <Chip
-          tone="bad"
-          title="Entries that are neither a source span nor the inference flag."
-        >
+        <Chip tone="bad" title="Entries that are neither a source span nor the inference flag.">
           {provenance.unreadable} unreadable
         </Chip>
       ) : null}

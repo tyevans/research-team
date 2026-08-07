@@ -5,7 +5,13 @@ import type { ComponentBlock, DocumentBlock, LessonDocument } from '@domain/less
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Approval } from '@domain/approval/approval.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
-import type { Course, StageProgress, ArtifactSlot, Provenance, Finding } from '@domain/project/course.ts'
+import type {
+  Course,
+  StageProgress,
+  ArtifactSlot,
+  Provenance,
+  Finding,
+} from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
@@ -169,7 +175,6 @@ export const toVerdict = (raw: Dto<typeof dto.verdictDto>): Verdict => ({
   })),
   progress: raw.progress ? toItemProgress(raw.progress) : null,
 })
-
 
 /** A turn reports exactly where it landed. Both bounds or nothing: a range with
  *  one end is not a range, and the caller's fallback ("turn complete", no chip)

@@ -12,12 +12,7 @@ import type { ForkNode, SessionProjection, SessionSummary } from '@domain/sessio
 import type { TurnRange } from '@domain/session/turn.ts'
 import type { FileRevision } from '@domain/workspace/workspace-file.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
-import type {
-  ApprovalId,
-  ComponentId,
-  ProjectId,
-  SessionId,
-} from '@domain/shared/identifier.ts'
+import type { ApprovalId, ComponentId, ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 /** The ports this application depends on, stated in domain terms.
  *

@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 
 import type { ConnectionState, FeedFrame } from '@application/ports/event-stream.ts'
 import { useContainer } from '@app/container-context.tsx'

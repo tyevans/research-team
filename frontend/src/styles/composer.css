@@ -23,8 +23,13 @@
   font-size: var(--t-sm);
   line-height: 1.5;
 }
-.composer textarea:focus { border-color: var(--accent-dim); outline: none; }
-.composer textarea:disabled { opacity: .55; }
+.composer textarea:focus {
+  border-color: var(--accent-dim);
+  outline: none;
+}
+.composer textarea:disabled {
+  opacity: 0.55;
+}
 
 /* --- plain text input (project name, etc) ------------------------------ */
 .input {
@@ -41,10 +46,25 @@
 }
 /* A workflow label says what the preset produces and where it stops, which is
    longer than a project name and must not push the button off the row. */
-select.input { max-width: 22rem; }
-.input:focus { border-color: var(--accent-dim); outline: none; }
-.composer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.composer-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+select.input {
+  max-width: 22rem;
+}
+.input:focus {
+  border-color: var(--accent-dim);
+  outline: none;
+}
+.composer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
 .composer-hint {
   flex: 1 1 auto;
   min-width: 0;
@@ -56,11 +76,21 @@ select.input { max-width: 22rem; }
   color: var(--fg-faint);
   overflow: hidden;
 }
-.composer-hint > .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer-hint.busy { color: var(--accent); }
-.composer-hint.warn { color: var(--k-failure); }
+.composer-hint > .txt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-hint.busy {
+  color: var(--accent);
+}
+.composer-hint.warn {
+  color: var(--k-failure);
+}
 /* a cancellation is an outcome, not a fault -- never red */
-.composer-hint.calm { color: var(--fg-dim); }
+.composer-hint.calm {
+  color: var(--fg-dim);
+}
 
 /* Cancel: available, but never louder than the primary action. */
 .btn-quiet {
@@ -68,7 +98,11 @@ select.input { max-width: 22rem; }
   border-color: #3a2b2c;
   color: var(--del-fg);
 }
-.btn-quiet:hover:not(:disabled) { background: #24151700; background: #241517; border-color: #543336; }
+.btn-quiet:hover:not(:disabled) {
+  background: #24151700;
+  background: #241517;
+  border-color: #543336;
+}
 
 /* the "turn 3 · events 14–21" jump chip */
 .turn-range {
@@ -83,16 +117,25 @@ select.input { max-width: 22rem; }
   cursor: pointer;
   white-space: nowrap;
 }
-.turn-range:hover { color: var(--accent); border-color: var(--accent-dim); background: #221a10; }
+.turn-range:hover {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: #221a10;
+}
 
 .spinner {
   display: inline-block;
-  width: 8px; height: 8px;
+  width: 8px;
+  height: 8px;
   margin-right: 6px;
   border-radius: 50%;
   border: 1.5px solid var(--accent);
   border-top-color: transparent;
-  animation: spin .7s linear infinite;
+  animation: spin 0.7s linear infinite;
   vertical-align: -1px;
 }
-@keyframes spin { to { transform: rotate(360deg) } }
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

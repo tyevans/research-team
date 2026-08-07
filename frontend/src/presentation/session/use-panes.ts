@@ -27,12 +27,8 @@ const THREE_COLUMN = '(min-width: 1181px)'
  * no longer see. */
 export const usePanes = () => {
   const { preferences } = useContainer()
-  const [collapsed, setCollapsed] = useState<readonly string[]>(() =>
-    preferences.collapsedPanes(),
-  )
-  const [wide, setWide] = useState(
-    () => window.matchMedia?.(THREE_COLUMN).matches ?? true,
-  )
+  const [collapsed, setCollapsed] = useState<readonly string[]>(() => preferences.collapsedPanes())
+  const [wide, setWide] = useState(() => window.matchMedia?.(THREE_COLUMN).matches ?? true)
 
   // Crossing the breakpoint changes who owns the columns, so recompute there.
   useEffect(() => {
@@ -60,10 +56,7 @@ export const usePanes = () => {
     [preferences],
   )
 
-  const isCollapsed = useCallback(
-    (name: PaneName) => collapsed.includes(name),
-    [collapsed],
-  )
+  const isCollapsed = useCallback((name: PaneName) => collapsed.includes(name), [collapsed])
 
   const gridTemplateColumns = wide
     ? PANES.map((pane) =>

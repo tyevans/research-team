@@ -35,9 +35,7 @@ export class HttpSessionRepository implements SessionRepository {
     // between them here rather than at the call site is what lets every caller
     // above take a ScrubPoint and stop caring.
     const path =
-      at.kind === 'head'
-        ? `/api/sessions/${seg(id)}`
-        : `/api/sessions/${seg(id)}/at/${at.at}`
+      at.kind === 'head' ? `/api/sessions/${seg(id)}` : `/api/sessions/${seg(id)}/at/${at.at}`
     return toSession(await this.http.get(path, dto.sessionDto))
   }
 

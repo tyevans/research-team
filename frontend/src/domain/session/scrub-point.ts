@@ -13,8 +13,7 @@ import type { EventIndex } from './event-index.ts'
  * cannot be misread as "not loaded yet".
  */
 export type ScrubPoint =
-  | { readonly kind: 'head' }
-  | { readonly kind: 'historical'; readonly at: EventIndex }
+  { readonly kind: 'head' } | { readonly kind: 'historical'; readonly at: EventIndex }
 
 const HEAD: ScrubPoint = Object.freeze({ kind: 'head' as const })
 
@@ -31,8 +30,7 @@ export const ScrubPoint = {
       ? { kind: 'historical', at: at as EventIndex }
       : HEAD,
 
-  toNullable: (point: ScrubPoint): number | null =>
-    point.kind === 'historical' ? point.at : null,
+  toNullable: (point: ScrubPoint): number | null => (point.kind === 'historical' ? point.at : null),
 
   isHistorical: (point: ScrubPoint): point is { kind: 'historical'; at: EventIndex } =>
     point.kind === 'historical',

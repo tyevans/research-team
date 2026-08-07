@@ -99,7 +99,9 @@ describe('ScrubPoint', () => {
   it('compares by value, so a re-render does not read as a move', () => {
     expect(ScrubPoint.equals(ScrubPoint.head(), ScrubPoint.head())).toBe(true)
     expect(ScrubPoint.equals(ScrubPoint.at(EventIndex(2)), ScrubPoint.at(EventIndex(2)))).toBe(true)
-    expect(ScrubPoint.equals(ScrubPoint.at(EventIndex(2)), ScrubPoint.at(EventIndex(3)))).toBe(false)
+    expect(ScrubPoint.equals(ScrubPoint.at(EventIndex(2)), ScrubPoint.at(EventIndex(3)))).toBe(
+      false,
+    )
     expect(ScrubPoint.equals(ScrubPoint.head(), ScrubPoint.at(EventIndex(1)))).toBe(false)
   })
 })

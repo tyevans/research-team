@@ -52,7 +52,10 @@ export class HttpProjectRepository implements ProjectRepository {
       { take_over: takeOver },
       z.object({
         id: z.string(),
-        warning: z.string().nullish().transform((v) => v ?? null),
+        warning: z
+          .string()
+          .nullish()
+          .transform((v) => v ?? null),
       }),
     )
     return { sessionId: SessionId(result.id), warning: result.warning }
@@ -85,8 +88,7 @@ export class ResearchDisabledError extends Error {
 
 /** Matched on "not enabled" rather than on the variable name: the GET says only
  *  that much, and only the POST spells out what to set. */
-const saysDisabled = (message: string): boolean =>
-  /not enabled|AGENT_AUTO_RESEARCH/.test(message)
+const saysDisabled = (message: string): boolean => /not enabled|AGENT_AUTO_RESEARCH/.test(message)
 
 export class HttpResearchRepository implements ResearchRepository {
   constructor(private readonly http: HttpClient) {}

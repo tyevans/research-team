@@ -50,7 +50,9 @@ export const contentText = (content: unknown): string => {
  * and it is never what gets folded away. */
 export const isToolActivity = (message: Message): boolean => {
   if (message.role === 'tool') return true
-  return message.role === 'assistant' && message.toolCalls.length > 0 && !contentText(message.content)
+  return (
+    message.role === 'assistant' && message.toolCalls.length > 0 && !contentText(message.content)
+  )
 }
 
 /** The first argument worth showing beside a call name in one line.
@@ -106,6 +108,7 @@ const describe = (value: unknown): string => {
 }
 
 export const truncate = (value: unknown, limit: number): string => {
-  const text = typeof value === 'string' ? value : value === null || value === undefined ? '' : describe(value)
+  const text =
+    typeof value === 'string' ? value : value === null || value === undefined ? '' : describe(value)
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text
 }

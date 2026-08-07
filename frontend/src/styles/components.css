@@ -36,7 +36,7 @@
 .cmp-kind-name {
   font-family: var(--mono);
   font-size: var(--t-xs);
-  letter-spacing: .06em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--fg-faint);
 }
@@ -49,13 +49,31 @@
   cursor: help;
 }
 
-.cmp-body { padding: 12px; }
-.cmp-title { margin: 0 0 10px; font-size: var(--t-lg); font-weight: 600; }
-.cmp-prose { padding: 0; font-size: inherit; }
-.cmp-prose > :first-child { margin-top: 0; }
-.cmp-prose > :last-child { margin-bottom: 0; }
-.cmp-prompt { margin-bottom: 12px; }
-.cmp-empty { color: var(--fg-faint); font-style: italic; }
+.cmp-body {
+  padding: 12px;
+}
+.cmp-title {
+  margin: 0 0 10px;
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+.cmp-prose {
+  padding: 0;
+  font-size: inherit;
+}
+.cmp-prose > :first-child {
+  margin-top: 0;
+}
+.cmp-prose > :last-child {
+  margin-bottom: 0;
+}
+.cmp-prompt {
+  margin-bottom: 12px;
+}
+.cmp-empty {
+  color: var(--fg-faint);
+  font-style: italic;
+}
 
 .cmp-controls {
   display: flex;
@@ -64,9 +82,18 @@
   gap: 8px;
   margin-top: 12px;
 }
-.cmp-count { font-family: var(--mono); font-size: var(--t-sm); color: var(--fg-faint); }
-.cmp-count.complete { color: var(--k-file); }
-.cmp-hint { font-size: var(--t-sm); color: var(--fg-faint); }
+.cmp-count {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--fg-faint);
+}
+.cmp-count.complete {
+  color: var(--k-file);
+}
+.cmp-hint {
+  font-size: var(--t-sm);
+  color: var(--fg-faint);
+}
 
 .cmp-btn {
   font: inherit;
@@ -78,10 +105,22 @@
   color: var(--fg-dim);
   cursor: pointer;
 }
-.cmp-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
-.cmp-btn.primary { border-color: var(--accent-dim); color: var(--accent); }
-.cmp-btn.primary:hover:not(:disabled) { background: var(--accent); color: var(--accent-fg); }
-.cmp-btn:disabled { opacity: .45; cursor: default; }
+.cmp-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.cmp-btn.primary {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+.cmp-btn.primary:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.cmp-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 /* Focus is never removed anywhere here: every one of these is operable from
    the keyboard, and a flashcard you can tab to but not see is not operable. */
 .cmp-btn:focus-visible,
@@ -106,10 +145,18 @@
   border-radius: var(--radius);
   background: var(--bg-raise);
   cursor: pointer;
-  transition: background .12s ease, border-color .12s ease;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
-.flash-card:hover { background: var(--bg-hover); border-color: var(--accent-dim); }
-.flash-card.flipped { background: var(--bg-panel); border-color: var(--accent-dim); }
+.flash-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-dim);
+}
+.flash-card.flipped {
+  background: var(--bg-panel);
+  border-color: var(--accent-dim);
+}
 .flash-side {
   position: absolute;
   top: 6px;
@@ -118,13 +165,19 @@
   font-size: var(--t-xs);
   color: var(--fg-faint);
   text-transform: uppercase;
-  letter-spacing: .06em;
+  letter-spacing: 0.06em;
 }
-.flash-text { font-size: var(--t-lg); }
+.flash-text {
+  font-size: var(--t-lg);
+}
 
 /* --- multiple choice --- */
 
-.mcq-options { display: flex; flex-direction: column; gap: 6px; }
+.mcq-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .mcq-option {
   display: flex;
   align-items: flex-start;
@@ -135,15 +188,38 @@
   background: var(--bg-panel);
   cursor: pointer;
 }
-.mcq-option:hover { background: var(--bg-hover); }
-.mcq-option.picked { border-color: var(--accent-dim); }
-.mcq-option input { margin-top: 3px; accent-color: var(--accent); flex: none; }
-.mcq-text { flex: 1; }
-.mcq-mark { font-weight: 700; flex: none; }
-.mcq-option.right { border-color: #2f5a41; background: var(--add-bg); }
-.mcq-option.right .mcq-mark { color: var(--add-fg); }
-.mcq-option.wrong { border-color: #5a2f31; background: var(--del-bg); }
-.mcq-option.wrong .mcq-mark { color: var(--del-fg); }
+.mcq-option:hover {
+  background: var(--bg-hover);
+}
+.mcq-option.picked {
+  border-color: var(--accent-dim);
+}
+.mcq-option input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+  flex: none;
+}
+.mcq-text {
+  flex: 1;
+}
+.mcq-mark {
+  font-weight: 700;
+  flex: none;
+}
+.mcq-option.right {
+  border-color: #2f5a41;
+  background: var(--add-bg);
+}
+.mcq-option.right .mcq-mark {
+  color: var(--add-fg);
+}
+.mcq-option.wrong {
+  border-color: #5a2f31;
+  background: var(--del-bg);
+}
+.mcq-option.wrong .mcq-mark {
+  color: var(--del-fg);
+}
 
 /* --- cloze --- */
 
@@ -151,8 +227,15 @@
    author's soft wraps, and markdown reads those as spaces rather than as line
    breaks. Preserving them would break the passage at whatever column the
    author's editor happened to use. */
-.cloze-text { line-height: 2.4; margin: 0; }
-.cloze-slot { display: inline-flex; align-items: baseline; gap: 4px; }
+.cloze-text {
+  line-height: 2.4;
+  margin: 0;
+}
+.cloze-slot {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
 .cloze-input {
   font-family: var(--mono);
   font-size: var(--t-sm);
@@ -163,10 +246,22 @@
   background: var(--bg-raise);
   color: var(--fg);
 }
-.cloze-input:disabled { opacity: .8; }
-.cloze-slot.right .cloze-input { border-bottom-color: var(--add-fg); color: var(--add-fg); }
-.cloze-slot.wrong .cloze-input { border-bottom-color: var(--del-fg); color: var(--del-fg); }
-.cloze-input::placeholder { color: var(--fg-faint); font-style: italic; opacity: 1; }
+.cloze-input:disabled {
+  opacity: 0.8;
+}
+.cloze-slot.right .cloze-input {
+  border-bottom-color: var(--add-fg);
+  color: var(--add-fg);
+}
+.cloze-slot.wrong .cloze-input {
+  border-bottom-color: var(--del-fg);
+  color: var(--del-fg);
+}
+.cloze-input::placeholder {
+  color: var(--fg-faint);
+  font-style: italic;
+  opacity: 1;
+}
 /* The right answer, shown beside the wrong one rather than replacing it, so
    the learner can see what they wrote next to what was wanted. */
 .cloze-answer {
@@ -180,15 +275,38 @@
 
 /* --- checklist --- */
 
-.check-list { list-style: none; margin: 0; padding: 0; }
-.check-item { padding: 5px 0; border-bottom: 1px solid var(--line-soft); }
-.check-item:last-child { border-bottom: 0; }
-.check-label { display: flex; align-items: flex-start; gap: 9px; cursor: pointer; }
-.check-label input { margin-top: 3px; accent-color: var(--accent); flex: none; }
-.check-text { flex: 1; }
+.check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.check-item {
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.check-item:last-child {
+  border-bottom: 0;
+}
+.check-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  cursor: pointer;
+}
+.check-label input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+  flex: none;
+}
+.check-text {
+  flex: 1;
+}
 /* Struck through and dimmed, not hidden: the value of a checklist afterwards
    is seeing the whole procedure with the done parts marked. */
-.check-item.done .check-text { color: var(--fg-faint); text-decoration: line-through; }
+.check-item.done .check-text {
+  color: var(--fg-faint);
+  text-decoration: line-through;
+}
 .check-req {
   font-family: var(--mono);
   font-size: var(--t-xs);
@@ -208,7 +326,9 @@
 
 /* Reserved while empty so that a verdict appearing does not shove the buttons
    the learner just used out from under the pointer. */
-.cmp-verdict-slot { min-height: 8px; }
+.cmp-verdict-slot {
+  min-height: 8px;
+}
 
 /* What a returning learner has already earned. Deliberately quieter than a
    verdict -- it is a note about the past, not a response to anything they just
@@ -222,10 +342,14 @@
   font-size: var(--t-sm);
   color: var(--fg-faint);
 }
-.cmp-earlier .verdict-mark { color: var(--add-fg); }
+.cmp-earlier .verdict-mark {
+  color: var(--add-fg);
+}
 
 /* A checklist that promised "saved as you go" and did not has to say so. */
-.cmp-hint-error { color: var(--del-fg); }
+.cmp-hint-error {
+  color: var(--del-fg);
+}
 
 .cmp-verdict {
   margin-top: 12px;
@@ -235,21 +359,50 @@
   border-left-width: 3px;
   background: var(--bg-panel);
 }
-.cmp-verdict.right { border-left-color: var(--add-fg); }
-.cmp-verdict.wrong { border-left-color: var(--del-fg); }
-.verdict-head { display: flex; align-items: baseline; gap: 8px; }
-.verdict-mark { font-weight: 700; }
-.cmp-verdict.right .verdict-mark, .cmp-verdict.right .verdict-word { color: var(--add-fg); }
-.cmp-verdict.wrong .verdict-mark, .cmp-verdict.wrong .verdict-word { color: var(--del-fg); }
-.verdict-word { font-weight: 600; }
-.verdict-score { font-family: var(--mono); font-size: var(--t-xs); color: var(--fg-faint); }
-.verdict-feedback { margin-top: 7px; color: var(--fg); }
-.verdict-why { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line-soft); }
+.cmp-verdict.right {
+  border-left-color: var(--add-fg);
+}
+.cmp-verdict.wrong {
+  border-left-color: var(--del-fg);
+}
+.verdict-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.verdict-mark {
+  font-weight: 700;
+}
+.cmp-verdict.right .verdict-mark,
+.cmp-verdict.right .verdict-word {
+  color: var(--add-fg);
+}
+.cmp-verdict.wrong .verdict-mark,
+.cmp-verdict.wrong .verdict-word {
+  color: var(--del-fg);
+}
+.verdict-word {
+  font-weight: 600;
+}
+.verdict-score {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+}
+.verdict-feedback {
+  margin-top: 7px;
+  color: var(--fg);
+}
+.verdict-why {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line-soft);
+}
 .verdict-why-label {
   font-family: var(--mono);
   font-size: var(--t-xs);
   text-transform: uppercase;
-  letter-spacing: .06em;
+  letter-spacing: 0.06em;
   color: var(--fg-faint);
   margin-bottom: 4px;
 }
@@ -259,13 +412,31 @@
 /* A component that did not parse still shows its own source, because an author
    told "options: required field missing" and not shown the block has to go
    find it. The document around it renders normally. */
-.cmp-broken { border-color: #45272a; }
-.cmp-broken .cmp-kind { background: var(--del-bg); }
-.cmp-broken-tag { font-size: var(--t-xs); color: var(--del-fg); }
-.cmp-error-list { margin: 10px 12px; padding-left: 18px; font-size: var(--t-sm); }
-.cmp-error-list li { margin-bottom: 3px; }
-.cmp-error-path { color: var(--accent); margin-right: 6px; }
-.cmp-broken .md-code { margin: 0 12px 12px; }
+.cmp-broken {
+  border-color: #45272a;
+}
+.cmp-broken .cmp-kind {
+  background: var(--del-bg);
+}
+.cmp-broken-tag {
+  font-size: var(--t-xs);
+  color: var(--del-fg);
+}
+.cmp-error-list {
+  margin: 10px 12px;
+  padding-left: 18px;
+  font-size: var(--t-sm);
+}
+.cmp-error-list li {
+  margin-bottom: 3px;
+}
+.cmp-error-path {
+  color: var(--accent);
+  margin-right: 6px;
+}
+.cmp-broken .md-code {
+  margin: 0 12px 12px;
+}
 .cmp-error {
   margin-top: 10px;
   padding: 8px 10px;
@@ -277,7 +448,9 @@
 }
 /* An unknown type is not an error: it is a labelled code block, which is
    exactly what an unrecognised fence has always rendered as here. */
-.cmp-unknown { border-left: 3px solid var(--line); }
+.cmp-unknown {
+  border-left: 3px solid var(--line);
+}
 
 /* -------------------------------------------------- autonomous research
  *
@@ -297,22 +470,64 @@
   gap: 8px;
 }
 
-.run-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.run-title { margin: 0; font-size: var(--t-sm); font-weight: 600; }
-.run-spacer { flex: 1 1 auto; }
-.run-sub { margin: 0; }
+.run-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.run-title {
+  margin: 0;
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+.run-spacer {
+  flex: 1 1 auto;
+}
+.run-sub {
+  margin: 0;
+}
 
-.run-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.run-rounds { width: 190px; }
+.run-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.run-rounds {
+  width: 190px;
+}
 
-.run-body { display: flex; flex-direction: column; gap: 6px; }
-.run-cells { display: flex; gap: 18px; flex-wrap: wrap; }
-.run-cell { display: flex; flex-direction: column; }
-.run-cell-value { font-family: var(--mono); font-size: var(--t-md); }
-.run-cell-label { font-size: var(--t-xs); color: var(--fg-dim); }
+.run-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.run-cells {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.run-cell {
+  display: flex;
+  flex-direction: column;
+}
+.run-cell-value {
+  font-family: var(--mono);
+  font-size: var(--t-md);
+}
+.run-cell-label {
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
 
-.run-working { font-size: var(--t-sm); }
-.run-topic { font-family: var(--mono); font-size: var(--t-xs); }
+.run-working {
+  font-size: var(--t-sm);
+}
+.run-topic {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
 
 .run-ending {
   border-left: 2px solid var(--line);
@@ -322,26 +537,68 @@
   flex-direction: column;
   gap: 6px;
 }
-.run-ending-done { border-left-color: var(--k-file); }
-.run-ending-short { border-left-color: var(--fg-faint); }
-.run-ending-bad { border-left-color: var(--k-failure); }
-.run-ending-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
-                   font-size: var(--t-sm); }
-.run-ending-text { margin: 0; font-size: var(--t-sm); color: var(--fg-dim); }
+.run-ending-done {
+  border-left-color: var(--k-file);
+}
+.run-ending-short {
+  border-left-color: var(--fg-faint);
+}
+.run-ending-bad {
+  border-left-color: var(--k-failure);
+}
+.run-ending-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--t-sm);
+}
+.run-ending-text {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
 
-.chip-run-done  { color: var(--k-file); border-color: #24402c; background: #131f17; }
-.chip-run-short { color: var(--fg-dim); }
-.chip-run-bad   { color: var(--k-failure); border-color: #45272a; background: #241417; }
-.chip-readonly  { color: var(--k-message); border-color: #24365a; background: #111a2a; }
+.chip-run-done {
+  color: var(--k-file);
+  border-color: #24402c;
+  background: #131f17;
+}
+.chip-run-short {
+  color: var(--fg-dim);
+}
+.chip-run-bad {
+  color: var(--k-failure);
+  border-color: #45272a;
+  background: #241417;
+}
+.chip-readonly {
+  color: var(--k-message);
+  border-color: #24365a;
+  background: #111a2a;
+}
 
-.run-off { font-size: var(--t-sm); color: var(--fg-dim); }
-.run-note { margin: 0; font-size: var(--t-sm); }
-.run-note.bad { color: var(--k-failure); }
+.run-off {
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+.run-note {
+  margin: 0;
+  font-size: var(--t-sm);
+}
+.run-note.bad {
+  color: var(--k-failure);
+}
 
 @media (max-width: 900px) {
-  .course-panes { grid-template-columns: minmax(0, 1fr); }
+  .course-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * { animation-duration: .001s !important; transition: none !important; }
+  * {
+    animation-duration: 0.001s !important;
+    transition: none !important;
+  }
 }

@@ -75,16 +75,13 @@ export const useAttempts = (
     })
   }, [progress.data])
 
-  const write = useCallback(
-    (id: ComponentId, change: (previous: AttemptState) => AttemptState) => {
-      setAttempts((current) => {
-        const next = new Map(current)
-        next.set(id, change(current.get(id) ?? freshAttempt()))
-        return next
-      })
-    },
-    [],
-  )
+  const write = useCallback((id: ComponentId, change: (previous: AttemptState) => AttemptState) => {
+    setAttempts((current) => {
+      const next = new Map(current)
+      next.set(id, change(current.get(id) ?? freshAttempt()))
+      return next
+    })
+  }, [])
 
   const stateFor = useCallback(
     (block: ComponentBlock) => attempts.get(block.id) ?? freshAttempt(),

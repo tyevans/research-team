@@ -33,14 +33,7 @@ interface TimelineProps {
  * instead of being hidden from assistive technology — which is what a listbox
  * would have forced.
  */
-export const Timeline = ({
-  log,
-  scrub,
-  fresh,
-  discarded,
-  onSelect,
-  onFork,
-}: TimelineProps) => {
+export const Timeline = ({ log, scrub, fresh, discarded, onSelect, onFork }: TimelineProps) => {
   const [column, setColumn] = useState<Column>(0)
   const selectedRef = useRef<HTMLDivElement | null>(null)
 

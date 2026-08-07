@@ -6,19 +6,74 @@ over `/api` and knows nothing else about it.
 ```bash
 npm install
 npm run dev      # http://localhost:5173, proxying /api to 127.0.0.1:8000
-npm run build    # → ../research_team/interfaces/web/static
-npm test
-npm run lint
-npm run typecheck
+npm run verify   # everything CI runs, in CI's order
 ```
 
 `npm run dev` expects the API server to be up (`uv run web.py` in the repo
 root). Point it somewhere else with `RT_API_URL`.
 
-The build lands in the directory the Python server already mounts at `/static`,
-so `uv run web.py` serves the built console with no extra step — and the built
-assets are committed for exactly that reason. Rebuild and commit them with any
-change under `src/`.
+## The pipeline
+
+`npm run verify` is the whole gate, and `.github/workflows/ci.yml` runs the same
+list as separate steps — separate only so a red box in a pull request names what
+broke without anyone opening the log. If `verify` passes locally, CI passes.
+
+| step   | command                        | what it is for                                                                                                                                                                         |
+| ------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| format | `npm run format:check`         | Prettier owns formatting outright; ESLint's opinions about it are switched off in `eslint.config.js` so the two can never disagree. `npm run format` fixes.                            |
+| lint   | `npm run lint`                 | The layer boundaries, mainly. `no-restricted-imports` is the load-bearing rule: the domain may not import a framework or an outer layer.                                               |
+| types  | `npm run typecheck`            | Two configs. `tsconfig.json` is the browser's and cannot see `node` types, which is what stops application code reaching for `process`; `tsconfig.node.json` covers the build tooling. |
+| tests  | `npm run test:coverage`        | Two vitest projects — `app` in jsdom, `build` in Node — with coverage floors per layer.                                                                                                |
+| build  | `npm run build`                | Into `../research_team/interfaces/web/static`.                                                                                                                                         |
+| size   | `npm run size`                 | The bundle budget.                                                                                                                                                                     |
+| audit  | `npm audit --audit-level=high` | Runs in CI. Dependabot raises the fixes.                                                                                                                                               |
+
+Note that `npm run build` no longer type-checks on its own — `verify` sequences
+the two, and having `build` do it as well meant paying for it twice.
+
+### Why the build output is committed
+
+It lands in the directory the Python server already mounts at `/static`, so
+`uv run web.py` serves the console with no Node toolchain anywhere in the
+picture. Requiring one to run the web UI would be a regression.
+
+The cost is that the committed copy can go stale, so CI rebuilds and fails if
+the result differs from what the commit carries. Rebuild and commit with any
+change under `src/`. Two consequences follow from output being in the history:
+
+- **The bundle is split by how often each part moves** (`manualChunks` in
+  `vite.config.ts`), not by what it does. Unsplit, editing one component
+  rewrites 460 kB of the diff; split, a dependency-free change touches only
+  `app-*.js`.
+- **`build.target` and `sourcemap` are stated rather than inherited.** A
+  toolchain upgrade should not silently change the syntax level of a file
+  already committed, and a source map would add two megabytes to the history
+  per change for a debugging aid the dev server provides for free.
+
+### The bundle budget
+
+`scripts/check-size.mjs` fails the build when a chunk crosses its gzipped limit,
+and — just as importantly — when a chunk appears that no budget covers. A
+dependency never announces that it cost 300 kB; it announces that it solved a
+problem, and the cost shows up months later as a console that takes a second to
+paint. Raising a limit is a legitimate change. Raising it in the same commit
+that consumed it, with no note about what was bought, is what this catches.
+
+### Coverage floors
+
+Ratchets, not targets: each sits just under what the suite reaches today, so the
+gate catches a layer losing its tests or a module arriving without any. They
+differ by layer because one number would be either a lie about the domain or an
+impossible bar for the views — the domain is held near total, and the
+presentation layer's floor is low and _visible_ rather than absent, which is the
+honest way to carry that debt.
+
+### Two configs, one fact
+
+The path aliases are declared twice, for `tsc` and for Vite, because the two
+read different files. `scripts/build-config.test.ts` asserts the two agree —
+drift there is quiet and unpleasant, since code type-checks and lints and then
+fails at run time with a bare import error.
 
 ## Layers
 

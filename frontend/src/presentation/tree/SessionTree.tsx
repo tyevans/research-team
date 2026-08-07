@@ -107,9 +107,7 @@ const SessionNode = ({
         <span className={node.firstMessage ? 'node-msg' : 'node-msg empty'}>
           {node.firstMessage ? truncate(node.firstMessage, 120) : 'no messages yet'}
         </span>
-        {node.forkedAt !== null ? (
-          <Chip tone="fork">forked @ event {node.forkedAt}</Chip>
-        ) : null}
+        {node.forkedAt !== null ? <Chip tone="fork">forked @ event {node.forkedAt}</Chip> : null}
         {failed ? <Chip tone="fail">{plural(failed, 'failed turn')}</Chip> : null}
       </div>
       <div className="node-stats">

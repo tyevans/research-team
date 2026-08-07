@@ -78,8 +78,8 @@ export const RunPanel = ({ projectId }: { projectId: ProjectId }) => {
       <div className="run-off">
         <strong>Autonomous research is off on this instance. </strong>
         Start the server with AGENT_AUTO_RESEARCH=1 to expose it. It is off by default because
-        nothing authenticates this port, and this is the one route that would spend an hour of
-        model time for whoever called it.
+        nothing authenticates this port, and this is the one route that would spend an hour of model
+        time for whoever called it.
       </div>
     )
   }

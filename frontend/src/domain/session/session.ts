@@ -58,10 +58,8 @@ export interface ForkNode extends SessionSummary {
  * briefly mid-turn, and the larger is always the honest answer: a log shorter
  * than the count is one this tab has not caught up with, and a count shorter
  * than the log cannot happen. */
-export const totalEvents = (
-  declared: number | null | undefined,
-  fetched: number,
-): number => (typeof declared === 'number' ? Math.max(declared, fetched) : fetched)
+export const totalEvents = (declared: number | null | undefined, fetched: number): number =>
+  typeof declared === 'number' ? Math.max(declared, fetched) : fetched
 
 /** How many leading messages sit behind the compaction boundary.
  *

@@ -59,10 +59,7 @@ export const entryAt = (log: readonly LogEntry[], index: EventIndex): LogEntry |
  *
  * Returns the same array reference when the frame was already known, so a
  * reconnect that replays a hundred frames costs no renders. */
-export const appendEntry = (
-  log: readonly LogEntry[],
-  entry: LogEntry,
-): readonly LogEntry[] => {
+export const appendEntry = (log: readonly LogEntry[], entry: LogEntry): readonly LogEntry[] => {
   if (log.some((known) => known.index === entry.index)) return log
   return [...log, entry].sort((a, b) => a.index - b.index)
 }

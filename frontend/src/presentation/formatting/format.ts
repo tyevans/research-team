@@ -1,4 +1,11 @@
-import { differenceInDays, differenceInHours, differenceInMinutes, differenceInSeconds, isValid, parseISO } from 'date-fns'
+import {
+  differenceInDays,
+  differenceInHours,
+  differenceInMinutes,
+  differenceInSeconds,
+  isValid,
+  parseISO,
+} from 'date-fns'
 
 /** Display formatting. Not domain — these choices are about a reader's eye, and
  *  they change when the layout does.

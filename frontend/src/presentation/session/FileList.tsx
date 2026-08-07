@@ -57,9 +57,7 @@ export const FileList = ({
     if (!target.path.equals(open)) onOpen(target.path)
     else if (event.key === 'Enter') onReopen()
 
-    list.current
-      ?.querySelector('.file-row.selected')
-      ?.scrollIntoView({ block: 'nearest' })
+    list.current?.querySelector('.file-row.selected')?.scrollIntoView({ block: 'nearest' })
   }
 
   return (

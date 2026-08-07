@@ -253,9 +253,7 @@ export const SessionView = ({
               <Approvals
                 approvals={state.approvals}
                 deciding={state.deciding}
-                onDecide={(approval, decision) =>
-                  void store.getState().decide(approval, decision)
-                }
+                onDecide={(approval, decision) => void store.getState().decide(approval, decision)}
               />
               <Composer
                 turn={state.turn}
@@ -270,11 +268,7 @@ export const SessionView = ({
             </>
           }
         >
-          <Conversation
-            view={view}
-            error={state.snapshotError}
-            historicalAt={historicalAt}
-          />
+          <Conversation view={view} error={state.snapshotError} historicalAt={historicalAt} />
         </Pane>
       </div>
     </section>

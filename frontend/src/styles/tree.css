@@ -3,7 +3,10 @@
 /* ======================================================================= */
 /* tree view                                                               */
 /* ======================================================================= */
-.view-tree { overflow: auto; padding: 26px 28px 60px; }
+.view-tree {
+  overflow: auto;
+  padding: 26px 28px 60px;
+}
 
 .view-head {
   display: flex;
@@ -19,19 +22,33 @@
   font-weight: 600;
   letter-spacing: -0.02em;
 }
-.view-head .sub { margin: 4px 0 0; color: var(--fg-dim); font-size: var(--t-sm); }
+.view-head .sub {
+  margin: 4px 0 0;
+  color: var(--fg-dim);
+  font-size: var(--t-sm);
+}
 
-.tree-wrap { max-width: 1100px; margin: 0 auto; }
+.tree-wrap {
+  max-width: 1100px;
+  margin: 0 auto;
+}
 
-ul.tree, ul.tree ul { list-style: none; margin: 0; padding: 0; }
+ul.tree,
+ul.tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
 ul.tree ul {
   margin-left: 15px;
   padding-left: 17px;
   border-left: 1px solid var(--line);
 }
-ul.tree li { position: relative; }
+ul.tree li {
+  position: relative;
+}
 ul.tree ul > li::before {
-  content: "";
+  content: '';
   position: absolute;
   left: -17px;
   top: 21px;
@@ -41,7 +58,7 @@ ul.tree ul > li::before {
 }
 /* mask the trunk below the last child */
 ul.tree ul > li:last-child::after {
-  content: "";
+  content: '';
   position: absolute;
   left: -18px;
   top: 22px;
@@ -60,9 +77,14 @@ ul.tree ul > li:last-child::after {
   padding: 9px 12px;
   margin: 5px 0;
   cursor: pointer;
-  transition: border-color .12s, background .12s;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
 }
-.node:hover { background: var(--bg-panel-2); border-color: #34404e; }
+.node:hover {
+  background: var(--bg-panel-2);
+  border-color: #34404e;
+}
 .node-top {
   display: flex;
   align-items: baseline;
@@ -84,7 +106,10 @@ ul.tree ul > li:last-child::after {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.node-msg.empty { color: var(--fg-faint); font-style: italic; }
+.node-msg.empty {
+  color: var(--fg-faint);
+  font-style: italic;
+}
 .node-stats {
   display: flex;
   gap: 10px;
@@ -94,7 +119,10 @@ ul.tree ul > li:last-child::after {
   color: var(--fg-faint);
   flex-wrap: wrap;
 }
-.node-stats b { color: var(--fg-dim); font-weight: 600; }
+.node-stats b {
+  color: var(--fg-dim);
+  font-weight: 600;
+}
 
 .chip {
   font-family: var(--mono);
@@ -105,10 +133,30 @@ ul.tree ul > li:last-child::after {
   color: var(--fg-dim);
   white-space: nowrap;
 }
-.chip-fork { color: var(--k-session); border-color: #3a3060; background: #1a1630; }
-.chip-fail { color: var(--k-failure); border-color: #45272a; background: #241417; }
+.chip-fork {
+  color: var(--k-session);
+  border-color: #3a3060;
+  background: #1a1630;
+}
+.chip-fail {
+  color: var(--k-failure);
+  border-color: #45272a;
+  background: #241417;
+}
 /* project/lease state: "someone else has this" and "the agent cannot reach
  * its graph" are both things you want to notice before typing, not after */
-.chip-held { color: var(--accent); border-color: var(--accent-dim); background: #241d10; }
-.chip-ok   { color: var(--k-file); border-color: #24402c; background: #131f17; }
-.chip-warn { color: var(--k-failure); border-color: #45272a; background: #241417; }
+.chip-held {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: #241d10;
+}
+.chip-ok {
+  color: var(--k-file);
+  border-color: #24402c;
+  background: #131f17;
+}
+.chip-warn {
+  color: var(--k-failure);
+  border-color: #45272a;
+  background: #241417;
+}

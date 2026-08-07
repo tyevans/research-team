@@ -47,9 +47,7 @@ describe('usePanes', () => {
     // A view with nothing in it has no way back except a toggle you can no
     // longer see.
     expect(result.current.isCollapsed('conversation')).toBe(false)
-    expect(useToasts.getState().toasts.at(-1)?.message).toBe(
-      'At least one pane has to stay open.',
-    )
+    expect(useToasts.getState().toasts.at(-1)?.message).toBe('At least one pane has to stay open.')
   })
 
   it('persists the choice so a reload keeps the layout', () => {

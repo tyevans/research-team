@@ -31,10 +31,8 @@ export type ActivityBuffer = ReadonlyMap<MessageId, ActivityEntry>
 
 export const emptyActivity = (): ActivityBuffer => new Map()
 
-export const putActivity = (
-  buffer: ActivityBuffer,
-  entry: ActivityEntry,
-): ActivityBuffer => new Map(buffer).set(entry.messageId, entry)
+export const putActivity = (buffer: ActivityBuffer, entry: ActivityEntry): ActivityBuffer =>
+  new Map(buffer).set(entry.messageId, entry)
 
 export const activityEntries = (buffer: ActivityBuffer): readonly ActivityEntry[] => [
   ...buffer.values(),

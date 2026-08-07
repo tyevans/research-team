@@ -195,7 +195,10 @@ export const approvalDto = z.object({
 export const workflowRefDto = z.object({
   id: z.string(),
   name: z.string(),
-  version: z.union([z.string(), z.number()]).nullish().transform((v) => v ?? null),
+  version: z
+    .union([z.string(), z.number()])
+    .nullish()
+    .transform((v) => v ?? null),
 })
 
 export const stageRefDto = z.object({
@@ -217,7 +220,10 @@ export const projectDto = z.object({
 export const presetDto = z.object({
   id: z.string(),
   name: z.string(),
-  version: z.union([z.string(), z.number()]).nullish().transform((v) => v ?? null),
+  version: z
+    .union([z.string(), z.number()])
+    .nullish()
+    .transform((v) => v ?? null),
   description: z.string().default(''),
   produces: z.string().default(''),
   stage_count: z.number().default(0),
@@ -282,7 +288,10 @@ export const courseDto = z.object({
   preset: z.object({
     id: z.string(),
     name: z.string(),
-    version: z.union([z.string(), z.number()]).nullish().transform((v) => v ?? null),
+    version: z
+      .union([z.string(), z.number()])
+      .nullish()
+      .transform((v) => v ?? null),
   }),
   position: maybe(z.number()),
   stage_count: z.number().default(0),
@@ -305,9 +314,7 @@ export const runDto = z.object({
   working_on: maybe(z.string()).optional(),
   quiet_rounds: z.number().optional(),
   failures: z.number().optional(),
-  budget: z
-    .object({ max_rounds: maybe(z.number()), quiet_rounds: maybe(z.number()) })
-    .optional(),
+  budget: z.object({ max_rounds: maybe(z.number()), quiet_rounds: maybe(z.number()) }).optional(),
   read_only: z.boolean().optional(),
 })
 

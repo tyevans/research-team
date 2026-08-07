@@ -89,14 +89,7 @@ const CurrentView = ({
 }) => {
   switch (route.name) {
     case 'session':
-      return (
-        <SessionView
-          store={store}
-          sessionId={route.id}
-          at={route.at}
-          path={route.path}
-        />
-      )
+      return <SessionView store={store} sessionId={route.id} at={route.at} path={route.path} />
     case 'course':
       return <CourseView key={route.id} projectId={route.id} onLoaded={onCourse} />
     default:

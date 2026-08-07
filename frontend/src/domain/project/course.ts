@@ -23,7 +23,11 @@ export interface Course {
   /** An artifact is only readable through a session — that is where the file
    *  viewer lives. `null` says plainly that there is nothing to open it in. */
   readonly holdingSessionId: SessionId | null
-  readonly preset: { readonly id: string; readonly name: string; readonly version: string | number | null }
+  readonly preset: {
+    readonly id: string
+    readonly name: string
+    readonly version: string | number | null
+  }
   /** `null` when the project's recorded stage is not part of this preset. */
   readonly position: number | null
   readonly stageCount: number
@@ -93,12 +97,7 @@ export interface SourceSpan {
 }
 
 export type FindingSeverity =
-  | 'invariant'
-  | 'blocking'
-  | 'advisory'
-  | 'human_gate'
-  | 'critic_gate'
-  | (string & {})
+  'invariant' | 'blocking' | 'advisory' | 'human_gate' | 'critic_gate' | (string & {})
 
 export interface Finding {
   readonly check: string

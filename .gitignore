@@ -34,3 +34,4 @@ mutants/
 node_modules/
 frontend/.vite/
 *.tsbuildinfo
+frontend/coverage/

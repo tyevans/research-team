@@ -72,7 +72,9 @@ export const readCloze = (block: ComponentBlock): Cloze => ({
 })
 
 export const clozeBlanks = (cloze: Cloze): readonly Extract<ClozeSegment, { kind: 'blank' }>[] =>
-  cloze.segments.filter((segment): segment is Extract<ClozeSegment, { kind: 'blank' }> => segment.kind === 'blank')
+  cloze.segments.filter(
+    (segment): segment is Extract<ClozeSegment, { kind: 'blank' }> => segment.kind === 'blank',
+  )
 
 /** The blank a one-at-a-time passage will accept input into next: the first
  *  that has nothing typed in it. Every blank is open once they are all filled,

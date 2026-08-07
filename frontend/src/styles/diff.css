@@ -1,20 +1,38 @@
 /* Revision history and unified diffs. */
 
 /* --- history / diff ---------------------------------------------------- */
-.rev { border-bottom: 1px solid var(--line); }
+.rev {
+  border-bottom: 1px solid var(--line);
+}
 .rev-head {
-  display: flex; align-items: baseline; gap: 9px;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
   padding: 6px 12px;
   background: var(--bg-panel-2);
   font-family: var(--mono);
   font-size: var(--t-sm);
   cursor: pointer;
 }
-.rev-head:hover { background: var(--bg-raise); }
-.rev-idx { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
-.rev-type { color: var(--kind, var(--fg-dim)); font-size: var(--t-xs); }
-.rev-time { margin-left: auto; color: var(--fg-faint); font-size: var(--t-xs); }
-.rev-body { border-top: 1px solid var(--line-soft); }
+.rev-head:hover {
+  background: var(--bg-raise);
+}
+.rev-idx {
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+.rev-type {
+  color: var(--kind, var(--fg-dim));
+  font-size: var(--t-xs);
+}
+.rev-time {
+  margin-left: auto;
+  color: var(--fg-faint);
+  font-size: var(--t-xs);
+}
+.rev-body {
+  border-top: 1px solid var(--line-soft);
+}
 
 .diff {
   margin: 0;
@@ -24,12 +42,33 @@
   overflow-x: auto;
   white-space: pre;
 }
-.diff .dl { display: block; padding: 0 12px 0 0; }
-.diff .dl .sig { display: inline-block; width: 22px; text-align: center; user-select: none; opacity: .8; }
-.diff .add { background: var(--add-bg); color: var(--add-fg); }
-.diff .del { background: var(--del-bg); color: var(--del-fg); }
-.diff .ctx { color: var(--fg-dim); }
-.diff .skip { color: var(--fg-faint); background: var(--bg-panel-2); font-style: italic; }
+.diff .dl {
+  display: block;
+  padding: 0 12px 0 0;
+}
+.diff .dl .sig {
+  display: inline-block;
+  width: 22px;
+  text-align: center;
+  user-select: none;
+  opacity: 0.8;
+}
+.diff .add {
+  background: var(--add-bg);
+  color: var(--add-fg);
+}
+.diff .del {
+  background: var(--del-bg);
+  color: var(--del-fg);
+}
+.diff .ctx {
+  color: var(--fg-dim);
+}
+.diff .skip {
+  color: var(--fg-faint);
+  background: var(--bg-panel-2);
+  font-style: italic;
+}
 
 .rev-note {
   padding: 6px 12px;

@@ -32,8 +32,7 @@ export const ProjectList = () => {
   })
 
   const remove = useMutation({
-    mutationFn: ({ project }: { project: Project }) =>
-      projects.delete(project.id, isHeld(project)),
+    mutationFn: ({ project }: { project: Project }) => projects.delete(project.id, isHeld(project)),
     onSuccess: (_result, { project }) => notify(`Deleted project ${project.name}.`, 'good'),
     onError: (error) => notify(`Could not delete project: ${errorMessage(error)}`, 'bad'),
     onSettled: invalidate,

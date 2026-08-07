@@ -26,9 +26,7 @@ export const Approvals = ({
           <span>wants to run</span>
           <b>{approval.toolName}</b>
         </div>
-        {approval.description ? (
-          <div className="approval-desc">{approval.description}</div>
-        ) : null}
+        {approval.description ? <div className="approval-desc">{approval.description}</div> : null}
         <div className="approval-args">{safeJson(approval.args)}</div>
         <div className="approval-actions">
           <Button

@@ -282,7 +282,9 @@ export const createSessionStore = (deps: SessionStoreDeps): SessionStore =>
       set({ turn: TurnState.idle() })
 
       if (isCancellation(entry)) {
-        setNote(turnNote('calm', 'the turn running elsewhere was cancelled — its events were discarded'))
+        setNote(
+          turnNote('calm', 'the turn running elsewhere was cancelled — its events were discarded'),
+        )
       } else if (isTurnFailedType(entry.type)) {
         setNote(turnNote('warn', 'the turn running elsewhere failed'))
       } else {

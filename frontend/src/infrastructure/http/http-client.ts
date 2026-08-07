@@ -96,7 +96,9 @@ const formatIssues = (error: z.ZodError): string =>
  *  a 404 nobody can reproduce. */
 export const seg = (value: string | number): string => encodeURIComponent(String(value))
 
-export const query = (params: Readonly<Record<string, string | number | null | undefined>>): string => {
+export const query = (
+  params: Readonly<Record<string, string | number | null | undefined>>,
+): string => {
   const search = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
     if (value === null || value === undefined) continue

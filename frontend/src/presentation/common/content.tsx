@@ -18,11 +18,13 @@ import { isEmptyMarkdown, renderMarkdown } from '@infrastructure/rendering/markd
 export const Markdown = ({ source, className }: { source: string; className?: string }) => {
   const html = useMemo(() => renderMarkdown(source), [source])
   if (isEmptyMarkdown(source)) {
-    return <div className={clsx('md', className)}><div className="empty">(empty file)</div></div>
+    return (
+      <div className={clsx('md', className)}>
+        <div className="empty">(empty file)</div>
+      </div>
+    )
   }
-  return (
-    <div className={clsx('md', className)} dangerouslySetInnerHTML={{ __html: html }} />
-  )
+  return <div className={clsx('md', className)} dangerouslySetInnerHTML={{ __html: html }} />
 }
 
 /** A file's contents, with line numbers. Text, never markup — the value of a
@@ -32,7 +34,7 @@ export const CodeBlock = ({ text, className }: { text: string; className?: strin
   if (lines.length === 0) {
     return (
       <pre className={clsx('code', className)}>
-        <span className="dl skip">  (empty file)</span>
+        <span className="dl skip"> (empty file)</span>
       </pre>
     )
   }
@@ -61,7 +63,7 @@ export const DiffView = ({ before, after }: { before: string; after: string }) =
   if (!diff.hasChanges) {
     return (
       <pre className="diff">
-        <span className="dl skip">  (no textual change)</span>
+        <span className="dl skip"> (no textual change)</span>
       </pre>
     )
   }

@@ -1,14 +1,20 @@
 /* Empty states, error boxes and toasts. */
 
 /* --- empty / error states ---------------------------------------------- */
-.empty, .error-box {
+.empty,
+.error-box {
   padding: 22px 18px;
   font-family: var(--mono);
   font-size: var(--t-sm);
   color: var(--fg-faint);
   line-height: 1.7;
 }
-.empty strong { display: block; color: var(--fg-dim); font-weight: 600; margin-bottom: 3px; }
+.empty strong {
+  display: block;
+  color: var(--fg-dim);
+  font-weight: 600;
+  margin-bottom: 3px;
+}
 .error-box {
   color: var(--k-failure);
   margin: 12px;
@@ -17,8 +23,13 @@
   background: #1a1113;
   border-radius: var(--radius);
 }
-.error-box strong { display: block; margin-bottom: 4px; }
-.error-box .btn { margin-top: 9px; }
+.error-box strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.error-box .btn {
+  margin-top: 9px;
+}
 
 /* --- toasts ------------------------------------------------------------ */
 .toasts {
@@ -42,10 +53,20 @@
   font-family: var(--mono);
   font-size: var(--t-sm);
   color: var(--fg);
-  box-shadow: 0 6px 20px rgba(0,0,0,.5);
-  animation: toast-in .16s ease-out;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  animation: toast-in 0.16s ease-out;
   overflow-wrap: anywhere;
 }
-.toast.bad { border-left-color: var(--k-failure); color: #f6b4af; }
-.toast.good { border-left-color: var(--k-file); }
-@keyframes toast-in { from { opacity: 0; transform: translateY(-5px) } }
+.toast.bad {
+  border-left-color: var(--k-failure);
+  color: #f6b4af;
+}
+.toast.good {
+  border-left-color: var(--k-file);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+}

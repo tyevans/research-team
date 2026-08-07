@@ -117,7 +117,16 @@ describe('summariesAsForest', () => {
   it('renders a flat list as roots, for when the tree projection has drifted', () => {
     // A truthful degradation; "no sessions yet" would be a lie.
     const forest = summariesAsForest([
-      { id: 'a', startedAt: null, turns: null, files: null, firstMessage: null, forkedFrom: null, forkedAt: null, failedTurns: null },
+      {
+        id: 'a',
+        startedAt: null,
+        turns: null,
+        files: null,
+        firstMessage: null,
+        forkedFrom: null,
+        forkedAt: null,
+        failedTurns: null,
+      },
     ] as never)
     expect(forest[0]?.children).toEqual([])
   })

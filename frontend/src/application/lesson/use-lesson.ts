@@ -2,7 +2,11 @@ import { useQuery } from '@tanstack/react-query'
 
 import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
-import { hasComponents, type ComponentAudience, type LessonDocument } from '@domain/lesson/document.ts'
+import {
+  hasComponents,
+  type ComponentAudience,
+  type LessonDocument,
+} from '@domain/lesson/document.ts'
 import type { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
 import type { SessionId } from '@domain/shared/identifier.ts'
@@ -37,9 +41,7 @@ export const useLesson = (
   const { lessons } = useContainer()
 
   const query = useQuery({
-    queryKey: path
-      ? queryKeys.lesson(sessionId, path, audience, at)
-      : ['lesson', 'none'],
+    queryKey: path ? queryKeys.lesson(sessionId, path, audience, at) : ['lesson', 'none'],
     queryFn: () => lessons.parse(sessionId, path!, audience, at),
     enabled: enabled && path !== null && path.isMarkdown,
     retry: false,

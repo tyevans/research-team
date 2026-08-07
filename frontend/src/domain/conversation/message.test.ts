@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { contentText, isToolActivity, safeJson, summariseArgs, truncate, type Message } from './message.ts'
+import {
+  contentText,
+  isToolActivity,
+  safeJson,
+  summariseArgs,
+  truncate,
+  type Message,
+} from './message.ts'
 
 const message = (over: Partial<Message>): Message => ({
   role: 'assistant',
@@ -47,7 +54,9 @@ describe('isToolActivity', () => {
     // The prose is what the conversation is actually saying, and it is never
     // what gets folded away.
     expect(
-      isToolActivity(message({ content: 'Reading it now.', toolCalls: [{ name: 'Read', args: {} }] })),
+      isToolActivity(
+        message({ content: 'Reading it now.', toolCalls: [{ name: 'Read', args: {} }] }),
+      ),
     ).toBe(false)
   })
 

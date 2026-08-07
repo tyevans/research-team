@@ -57,13 +57,7 @@ export const Composer = ({
         }}
       />
       <div className="composer-row">
-        <Hint
-          turn={turn}
-          note={note}
-          scrub={scrub}
-          onRecheck={onRecheck}
-          onJumpTo={onJumpTo}
-        />
+        <Hint turn={turn} note={note} scrub={scrub} onRecheck={onRecheck} onJumpTo={onJumpTo} />
         <div className="composer-actions">
           {busy ? (
             <button

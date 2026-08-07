@@ -61,9 +61,9 @@ describe('activityBody', () => {
   it('reads a whole message out of the nesting it actually arrives in', () => {
     // A whole-message entry clears `text` and populates `payload`, whose
     // content sits under `data` — reading `payload.content` is always undefined.
-    expect(
-      activityBody(entry('a', { payload: { type: 'ai', data: { content: 'Done.' } } })),
-    ).toBe('Done.')
+    expect(activityBody(entry('a', { payload: { type: 'ai', data: { content: 'Done.' } } }))).toBe(
+      'Done.',
+    )
   })
 
   it('summarises a tool-calling message the way the timeline row will', () => {

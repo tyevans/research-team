@@ -2,7 +2,10 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "lib": ["ES2023"],
-    "types": ["node"]
+    "types": ["node", "vitest/globals"]
   },
-  "include": ["vite.config.ts"]
+  // The build tooling, and the tests that check the build tooling. They read
+  // config files off disk, so they need `node` types that application code
+  // deliberately cannot see.
+  "include": ["vite.config.ts", "scripts/**/*.ts"]
 }

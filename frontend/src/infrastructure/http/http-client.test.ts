@@ -6,7 +6,10 @@ import { ApiError, ContractError } from '@application/ports/errors.ts'
 import { HttpClient, query, seg } from './http-client.ts'
 
 const respond = (body: string, init: ResponseInit = {}) =>
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 200, ...init })))
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(body, { status: 200, ...init })),
+  )
 
 const schema = z.object({ id: z.string() })
 

@@ -69,12 +69,14 @@ const defaultSessions = (): SessionRepository => ({
   release: vi.fn(async () => true),
 })
 
-const makeStore = (over: {
-  sessions?: Partial<SessionRepository>
-  turns?: Partial<TurnRepository>
-  approvals?: Partial<ApprovalRepository>
-  now?: () => number
-} = {}): { store: SessionStore; notify: ReturnType<typeof vi.fn> } => {
+const makeStore = (
+  over: {
+    sessions?: Partial<SessionRepository>
+    turns?: Partial<TurnRepository>
+    approvals?: Partial<ApprovalRepository>
+    now?: () => number
+  } = {},
+): { store: SessionStore; notify: ReturnType<typeof vi.fn> } => {
   const notify = vi.fn()
   const store = createSessionStore({
     sessions: { ...defaultSessions(), ...over.sessions },
@@ -374,10 +376,12 @@ describe('session store — approvals', () => {
     const { store, notify } = makeStore({ approvals: { decide } })
     await store.getState().open(SESSION, ScrubPoint.head())
 
-    await store.getState().decide(
-      { id: 'a1' as never, sessionId: SESSION, toolName: 'fetch', description: null, args: {} },
-      'approve',
-    )
+    await store
+      .getState()
+      .decide(
+        { id: 'a1' as never, sessionId: SESSION, toolName: 'fetch', description: null, args: {} },
+        'approve',
+      )
     expect(notify).not.toHaveBeenCalled()
   })
 })

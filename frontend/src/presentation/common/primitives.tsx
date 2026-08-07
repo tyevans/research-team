@@ -30,7 +30,11 @@ export const Chip = ({
   tone?: string
   title?: string
   children: ReactNode
-}) => <span className={clsx('chip', tone && `chip-${tone}`)} title={title}>{children}</span>
+}) => (
+  <span className={clsx('chip', tone && `chip-${tone}`)} title={title}>
+    {children}
+  </span>
+)
 
 export const EmptyState = ({ title, detail }: { title: string; detail?: ReactNode }) => (
   <div className="empty">
@@ -39,9 +43,7 @@ export const EmptyState = ({ title, detail }: { title: string; detail?: ReactNod
   </div>
 )
 
-export const Loading = ({ what }: { what: string }) => (
-  <div className="empty">loading {what}…</div>
-)
+export const Loading = ({ what }: { what: string }) => <div className="empty">loading {what}…</div>
 
 export const ErrorBox = ({
   title,
