@@ -13,7 +13,7 @@ from eventsource import OptimisticLockError
 from hypothesis import given
 from hypothesis import strategies as st
 
-from research_team.infrastructure.persistence.retry import MAX_ATTEMPTS, with_retry
+from research_team.application.retry import MAX_ATTEMPTS, with_retry
 
 
 def _lock_error() -> OptimisticLockError:

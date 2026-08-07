@@ -783,7 +783,11 @@ function renderChecklist(block) {
         h('input', {
           type: 'checkbox',
           checked: checked,
-          onchange: function () { ui.ticked[i] = !checked; renderFileView(); }
+          onchange: function () {
+            ui.ticked[i] = !checked;
+            renderFileView();
+            if (block.data.persist === true) saveChecklist(block);
+          }
         }),
         h('span', { class: 'check-text', text: String(item.text === undefined ? '' : item.text) }),
         item.required === true ? h('span', { class: 'check-req', text: 'required' }) : null
@@ -801,21 +805,66 @@ function renderChecklist(block) {
       text: done + ' of ' + total + ' done'
         + (required.length ? ' · ' + doneRequired + '/' + required.length + ' required' : '')
     }),
-    // Ticks live in the page and nowhere else until there is a learner-state
-    // aggregate to put them in. Saying so beats a checklist that silently
-    // forgets between reloads.
     block.data.persist === true
-      ? h('span', { class: 'cmp-hint', text: 'not saved between visits yet' })
+      ? h('span', {
+          class: 'cmp-hint' + (ui.saveError ? ' cmp-hint-error' : ''),
+          text: ui.saveError ? 'not saved: ' + ui.saveError : 'saved as you go'
+        })
       : null
   ]));
   return box;
+}
+
+/* Send the whole set of ticks, not the one that changed.
+ *
+ * Absolute state means a dropped request costs one stale render rather than a
+ * box that is ticked in the log and clear on the screen forever -- and the next
+ * tick repairs it. The failure is surfaced in the hint rather than swallowed,
+ * because a checklist that says "saved as you go" and did not is worse than one
+ * that never promised. */
+function saveChecklist(block) {
+  const ui = componentState(block);
+  const id = state.sessionId, path = state.openPath, at = state.at;
+  const items = block.data.items || [];
+  const checked = [];
+  items.forEach(function (_, i) { if (ui.ticked[i]) checked.push(i); });
+  const body = { path: path, component_id: block.id, checked: checked };
+  if (at !== null) body.at = at;
+  return api.post('/api/sessions/' + encodeURIComponent(id) + '/progress/checklist', body)
+    .then(function () {
+      if (state.sessionId !== id || state.openPath !== path) return;
+      if (!ui.saveError) return;
+      ui.saveError = null;
+      renderFileView();
+    })
+    .catch(function (e) {
+      if (state.sessionId !== id || state.openPath !== path) return;
+      ui.saveError = e.message;
+      renderFileView();
+    });
 }
 
 /* --- attempts --- */
 
 function verdictPanel(block, ui) {
   if (ui.error) return h('div', { class: 'cmp-error', role: 'alert', text: ui.error });
-  if (!ui.verdict) return h('div', { class: 'cmp-verdict-slot', 'aria-live': 'polite' });
+  if (!ui.verdict) {
+    const slot = h('div', { class: 'cmp-verdict-slot', 'aria-live': 'polite' });
+    // What a returning learner is owed: that they have met this and got it
+    // right. Not a reconstructed verdict -- the record holds scores, not the
+    // author's feedback text, and inventing a panel from a score would put
+    // words in their mouth. Answering again re-earns the real one.
+    if (ui.previouslyCorrect) {
+      slot.appendChild(h('div', { class: 'cmp-earlier' }, [
+        h('span', { class: 'verdict-mark', text: '✓' }),
+        h('span', {
+          text: 'You answered this correctly'
+            + (ui.attempts > 1 ? ' after ' + ui.attempts + ' tries' : '') + ' before.'
+        })
+      ]));
+    }
+    return slot;
+  }
 
   const v = ui.verdict;
   const panel = h('div', {
@@ -856,6 +905,13 @@ function submitAttempt(block, response) {
       if (state.sessionId !== id || state.openPath !== path) return;
       ui.busy = false;
       ui.verdict = verdict;
+      // The server counts attempts, not the client: a reload, a second tab and
+      // a retry all go through it, and a client-side tally would disagree with
+      // the log the moment any of those happened.
+      if (verdict.progress) {
+        ui.attempts = verdict.progress.attempts;
+        ui.previouslyCorrect = verdict.progress.correct === true;
+      }
       renderFileView();
     })
     .catch(function (e) {
@@ -3140,11 +3196,23 @@ function loadParsed() {
     + '?path=' + encodePath(path)
     + '&view=' + encodeURIComponent(view)
     + (at === null ? '' : '&at=' + at);
-  return api.get(url).then(function (doc) {
+  // Progress is fetched beside the parse rather than after it: they are one
+  // render, and sequencing them would flash an unanswered document before
+  // filling in answers the learner already gave.
+  const progressUrl = '/api/sessions/' + encodeURIComponent(id) + '/progress'
+    + '?path=' + encodePath(path);
+  return Promise.all([
+    api.get(url),
+    // A progress read that fails must not cost the document. The lesson is
+    // still perfectly readable without it; the answers just start blank.
+    api.get(progressUrl).catch(function () { return { items: {} }; })
+  ]).then(function (both) {
+    const doc = both[0];
     if (state.sessionId !== id || state.openPath !== path || state.at !== at) return;
     if (state.componentView !== view) return;   // toggled while in flight
     state.fileParsed = doc;
     state.fileParsedAt = at;
+    restoreProgress(path, (both[1] && both[1].items) || {});
     renderFileView();
   }).catch(function () {
     if (state.sessionId !== id || state.openPath !== path) return;
@@ -3152,6 +3220,28 @@ function loadParsed() {
     // error banner over a document that displays perfectly well would be noise.
     state.fileParsed = null;
     renderFileView();
+  });
+}
+
+/* Fold the server's record of what this learner has done back into the
+ * per-block UI state, so a reload shows the checklist they ticked and marks the
+ * items they have already got right.
+ *
+ * Deliberately does *not* reconstruct a verdict panel. The stored record holds
+ * counts and scores, not the feedback text -- and inventing a panel out of a
+ * score would put words in the author's mouth. What it restores is the part
+ * that is unambiguous: which boxes are ticked, and whether this item has been
+ * answered correctly before. Re-answering re-earns the real verdict. */
+function restoreProgress(path, items) {
+  Object.keys(items).forEach(function (componentId) {
+    const record = items[componentId];
+    const ui = state.components[path + '#' + componentId]
+      || (state.components[path + '#' + componentId] =
+            { picked: [], typed: {}, ticked: {}, card: 0, flipped: false,
+              verdict: null, busy: false, error: null });
+    ui.attempts = record.attempts || 0;
+    ui.previouslyCorrect = record.correct === true;
+    (record.checked || []).forEach(function (i) { ui.ticked[i] = true; });
   });
 }
 

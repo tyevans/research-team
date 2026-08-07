@@ -47,8 +47,8 @@ from research_team.application.knowledge import (
     MergeRecord,
     SourceRef,
 )
+from research_team.application.retry import with_retry
 from research_team.domain import Corpus, StoreSourceDocument
-from research_team.infrastructure.persistence.retry import with_retry
 
 #: Longest document accepted in one `remember`. Roughly a long article.
 MAX_DOCUMENT_CHARS = 200_000

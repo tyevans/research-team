@@ -6,6 +6,7 @@ from research_team.infrastructure.persistence.event_store import (
     build_aggregate_repository,
     build_auto_research_repository,
     build_corpus_repository,
+    build_learner_progress_repository,
     build_project_repository,
     build_topic_repository,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "build_aggregate_repository",
     "build_auto_research_repository",
     "build_corpus_repository",
+    "build_learner_progress_repository",
     "build_project_repository",
     "build_topic_repository",
 ]

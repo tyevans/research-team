@@ -99,6 +99,7 @@ from research_team.infrastructure.persistence import (
     TopicRunner,
     build_auto_research_repository,
     build_corpus_repository,
+    build_learner_progress_repository,
     build_topic_repository,
 )
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
@@ -689,6 +690,13 @@ def build_application(
         # `service.attach_project` directly, so it lives where the REPL
         # already reaches rather than behind a second accessor on `Application`.
         attachment=attachment,
+        # Learner progress rides the same log and the same snapshot table as
+        # everything else, keyed by the session it belongs to. Wired here
+        # rather than defaulted inside the service, because which store an
+        # aggregate lands in is exactly the decision this root exists to make.
+        progress=build_learner_progress_repository(
+            repository.store, repository.publisher, snapshot_store=repository.snapshot_store
+        ),
     )
     turns = TurnSupervisor(service)
     runs = build_auto_research_repository(

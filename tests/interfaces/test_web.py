@@ -2011,3 +2011,180 @@ async def test_a_run_on_an_unknown_project_is_a_404(research_client):
     _, http = research_client
     response = await http.post(f"/api/projects/{uuid4()}/auto-research", json={})
     assert response.status_code == 404
+
+
+# ---------------- learner progress (B28) ----------------
+#
+# An attempt used to be graded and then forgotten: a reload lost every answer,
+# `persist: true` was accepted and ignored, and the sequence of attempts on one
+# item existed nowhere. These pin the other half -- that the verdict the learner
+# was shown is also a fact the log holds.
+
+CHECKLIST_LESSON = """\
+# Runbook
+
+```component:checklist
+id: triage
+persist: true
+items:
+  - text: "Page the on-call"
+  - text: "Open an incident channel"
+  - text: "Declare a severity"
+```
+
+```component:checklist
+id: ephemeral
+items:
+  - text: "Stretch"
+```
+"""
+
+
+async def test_an_attempt_is_remembered(client, service):
+    session_id = await _with_lesson(service)
+
+    marked = await client.post(
+        f"/api/sessions/{session_id}/attempts",
+        json={"path": LESSON_PATH, "component_id": "sev-1", "response": 1},
+    )
+    assert marked.status_code == 200
+    # The verdict still comes back unchanged; progress rides alongside it.
+    assert marked.json()["correct"] is True
+    assert marked.json()["progress"]["attempts"] == 1
+
+    progress = await client.get(
+        f"/api/sessions/{session_id}/progress", params={"path": LESSON_PATH}
+    )
+    assert progress.json()["items"]["sev-1"]["correct"] is True
+
+
+async def test_three_attempts_are_three_attempts_and_the_best_one_is_kept(client, service):
+    session_id = await _with_lesson(service)
+
+    for response in (0, 0, 1):
+        await client.post(
+            f"/api/sessions/{session_id}/attempts",
+            json={"path": LESSON_PATH, "component_id": "sev-1", "response": response},
+        )
+
+    item = (
+        await client.get(f"/api/sessions/{session_id}/progress", params={"path": LESSON_PATH})
+    ).json()["items"]["sev-1"]
+    assert item["attempts"] == 3
+    assert item["correct"] is True
+    assert item["best_score"] == 1.0
+
+
+async def test_being_wrong_after_being_right_does_not_lose_the_completion(client, service):
+    session_id = await _with_lesson(service)
+
+    for response in (1, 0):
+        await client.post(
+            f"/api/sessions/{session_id}/attempts",
+            json={"path": LESSON_PATH, "component_id": "sev-1", "response": response},
+        )
+
+    item = (
+        await client.get(f"/api/sessions/{session_id}/progress", params={"path": LESSON_PATH})
+    ).json()["items"]["sev-1"]
+    assert item["correct"] is True
+    assert item["last_score"] == 0.0
+
+
+async def test_a_session_nobody_has_answered_anything_in_reports_nothing(client, service):
+    """The ordinary case for every course before its first learner, and not a
+    404 -- a client that has to handle "no progress stream yet" as an error
+    handles it wrong somewhere."""
+    session_id = await _with_lesson(service)
+
+    progress = await client.get(f"/api/sessions/{session_id}/progress")
+    assert progress.status_code == 200
+    assert progress.json()["items"] == {}
+
+
+async def test_progress_for_the_whole_session_keys_by_path_and_id(client, service):
+    """Ids are only unique within a document, so the unnarrowed shape has to
+    carry the path or two lessons' `sev-1` would collide."""
+    session_id = await _with_lesson(service)
+    session = await service.load(UUID(session_id))
+    session.execute(WriteFile(path="/other.md", file_data={"content": LESSON}))
+    await service._repository.save(session)
+
+    for path in (LESSON_PATH, "/other.md"):
+        await client.post(
+            f"/api/sessions/{session_id}/attempts",
+            json={"path": path, "component_id": "sev-1", "response": 1},
+        )
+
+    body = (await client.get(f"/api/sessions/{session_id}/progress")).json()
+    assert body["scope"] == "session"
+    assert set(body["items"]) == {f"{LESSON_PATH}#sev-1", "/other.md#sev-1"}
+
+
+# --- checklists, which is what `persist: true` was promising ---------------
+
+
+async def test_a_persisting_checklist_remembers_its_boxes(client, service):
+    session_id = await _with_lesson(service, content=CHECKLIST_LESSON, path="/r.md")
+
+    saved = await client.post(
+        f"/api/sessions/{session_id}/progress/checklist",
+        json={"path": "/r.md", "component_id": "triage", "checked": [2, 0]},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["checked"] == [0, 2]
+
+    reloaded = await client.get(
+        f"/api/sessions/{session_id}/progress", params={"path": "/r.md"}
+    )
+    assert reloaded.json()["items"]["triage"]["checked"] == [0, 2]
+
+
+async def test_unticking_a_box_sticks(client, service):
+    session_id = await _with_lesson(service, content=CHECKLIST_LESSON, path="/r.md")
+
+    for checked in ([0, 1], [1]):
+        await client.post(
+            f"/api/sessions/{session_id}/progress/checklist",
+            json={"path": "/r.md", "component_id": "triage", "checked": checked},
+        )
+
+    reloaded = await client.get(
+        f"/api/sessions/{session_id}/progress", params={"path": "/r.md"}
+    )
+    assert reloaded.json()["items"]["triage"]["checked"] == [1]
+
+
+async def test_a_checklist_that_did_not_ask_to_persist_is_refused(client, service):
+    """`persist` is honoured rather than assumed, so a client cannot quietly
+    accumulate state the author never opted into."""
+    session_id = await _with_lesson(service, content=CHECKLIST_LESSON, path="/r.md")
+
+    refused = await client.post(
+        f"/api/sessions/{session_id}/progress/checklist",
+        json={"path": "/r.md", "component_id": "ephemeral", "checked": [0]},
+    )
+    assert refused.status_code == 400
+    assert "persist" in refused.json()["detail"]
+
+
+async def test_a_box_that_is_not_on_the_checklist_is_refused(client, service):
+    session_id = await _with_lesson(service, content=CHECKLIST_LESSON, path="/r.md")
+
+    refused = await client.post(
+        f"/api/sessions/{session_id}/progress/checklist",
+        json={"path": "/r.md", "component_id": "triage", "checked": [9]},
+    )
+    assert refused.status_code == 400
+    assert "9" in refused.json()["detail"]
+
+
+async def test_checklist_state_cannot_be_posted_to_an_mcq(client, service):
+    session_id = await _with_lesson(service)
+
+    refused = await client.post(
+        f"/api/sessions/{session_id}/progress/checklist",
+        json={"path": LESSON_PATH, "component_id": "sev-1", "checked": [0]},
+    )
+    assert refused.status_code == 400
+    assert "mcq" in refused.json()["detail"]
