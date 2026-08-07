@@ -23,6 +23,14 @@ from langchain_core.tools import BaseTool, tool
 from trafilatura.metadata import extract_metadata
 
 from research_team.application.autonomy import FETCH_TOOL
+from research_team.application.corpus_read import CorpusReadError, CorpusReadPort
+from research_team.infrastructure.agent.corpus_tools import bounded, format_document
+from research_team.infrastructure.agent.recall import (
+    Recall,
+    describe_age,
+    normalize_url,
+    url_key,
+)
 
 TIMEOUT = httpx.Timeout(15.0)
 
@@ -110,11 +118,62 @@ def _citation(html: str, url: str) -> str:
     return "\n".join(lines)
 
 
+async def stored_page(corpus: CorpusReadPort, url: str, max_chars: int) -> str | None:
+    """This page as the corpus already holds it, or None.
+
+    Matched on `normalize_url` rather than on the stored string, so a URL that
+    differs only in scheme case, a default port or a fragment is recognised as
+    the same page. Scanning `list_documents` is O(corpus) per call; a corpus
+    holds hundreds of records at most and the scan is a local read-model
+    query, so an index would be machinery bought against a cost nobody has
+    measured.
+
+    A storage failure returns None rather than propagating. The corpus is an
+    optimisation on this path, and an optimisation that can break the
+    operation it accelerates is not one -- a Neo4j outage should cost a
+    redundant fetch, not the page.
+
+    Checked before the memo, which has a consequence worth knowing: after a
+    `refresh=True` read of a page that is also in the corpus, the next plain
+    call hits the corpus again and returns the older stored copy, not the
+    fresh one -- the fresh read is visible only on the turn that asked for
+    it, until something re-stores it. That follows from "corpus before
+    memo" and is intended, but it is the one place the ordering surprises a
+    reader.
+    """
+    target = normalize_url(url)
+    try:
+        records = await corpus.list_documents()
+    except CorpusReadError:
+        return None
+    match = next(
+        (record for record in records if record.uri and normalize_url(record.uri) == target),
+        None,
+    )
+    if match is None:
+        return None
+    try:
+        document = await corpus.read_document(match.source_id)
+    except CorpusReadError:
+        return None
+    if document is None:
+        # Listed and then unreadable: a drop landed between the two calls.
+        return None
+    span = bounded(document.text, None, None, max_chars)
+    return (
+        "[recalled -- this page is already in this project's corpus, so it was "
+        "not fetched again. Quote it from here; the offsets below are real.]\n\n"
+        + format_document(document, span)
+    )
+
+
 def build_fetch_tool(
     *,
     max_chars: int = MAX_CHARS,
     max_bytes: int = MAX_BYTES,
     client: httpx.AsyncClient | None = None,
+    recall: Recall | None = None,
+    corpus: CorpusReadPort | None = None,
 ) -> BaseTool:
     """A `fetch` tool for reading one web page.
 
@@ -123,7 +182,7 @@ def build_fetch_tool(
     """
 
     @tool(FETCH_TOOL)
-    async def fetch(url: str) -> str:
+    async def fetch(url: str, refresh: bool = False) -> str:
         """Read one web page and return its main content as markdown text."""
         scheme = urlsplit(url).scheme.lower()
         if scheme not in ("http", "https"):
@@ -135,6 +194,21 @@ def build_fetch_tool(
                 f"Only http and https URLs can be fetched; {scheme or 'that'} is not "
                 "one. Use the file tools to read the workspace."
             )
+        if not refresh:
+            # Corpus before memo: both avoid the request, and only one comes
+            # back with offsets a claim can cite.
+            if corpus is not None:
+                found = await stored_page(corpus, url, max_chars)
+                if found is not None:
+                    return found
+            if recall is not None:
+                remembered = recall.get(url, key=url_key(url))
+                if remembered is not None:
+                    return (
+                        f"[recalled -- read {describe_age(remembered.age_seconds)} in "
+                        f"this process, not a fresh read. Pass refresh=True if the "
+                        f"page is expected to have changed since.]\n\n{remembered.text}"
+                    )
         owned = client is None
         http = client or httpx.AsyncClient(
             timeout=TIMEOUT, follow_redirects=True, headers=_HEADERS
@@ -155,6 +229,12 @@ def build_fetch_tool(
             text = format_page(html, url, limit=max_chars)
             if truncated and text is not UNREADABLE and not text.endswith(_TRUNCATED):
                 text += _TRUNCATED
+            if recall is not None and text is not UNREADABLE:
+                # Only a page that was actually read. Remembering a failure
+                # would turn one outage into an hour of them, and remembering
+                # UNREADABLE would pin "this renders in the browser" for an
+                # hour after a deploy fixed it.
+                recall.put(url, text, key=url_key(url))
             return text
         except httpx.HTTPStatusError as error:
             # The status is the actionable part: 404 means the URL is wrong,
@@ -185,6 +265,29 @@ FETCH_PROMPT = (
     "an app shell, a login wall -- will come back empty however many times you "
     "ask; treat that as an answer rather than something to retry.\n\n"
     "Fetch when a search snippet is not enough to make a claim you would be "
-    "willing to cite. Do not fetch a page you have already read this session, "
-    "and do not fetch to confirm something the snippet already said plainly."
+    "willing to cite, and not to confirm something the snippet already said "
+    "plainly.\n\n"
+    "You do not have to track what you have already read. A page read earlier "
+    "in this process comes back as it was, marked as recalled and dated. If a "
+    "page is expected to have changed since -- a changelog, a status page, a "
+    "document revised during this run -- pass `refresh=True` and it will be "
+    "read again. Do not pass it merely to be sure."
 )
+
+
+FETCH_CORPUS_PROMPT = (
+    "\n\nA page this project has already stored comes back from the corpus "
+    "rather than the network, with the offsets that make it quotable, and says "
+    "so plainly. When a fetched page is worth keeping, pass it to `remember` "
+    "along with the `url:`, `title:` and `date:` lines printed above it. That "
+    "is what lets a later session recognise the page instead of fetching it "
+    "again."
+)
+"""The part of the `fetch` prompt that only holds inside a project.
+
+Split out of `FETCH_PROMPT` because that one is appended to every session,
+while the corpus and `remember` exist only once a project is attached. A
+project-less session told that its reads come back from the corpus has been
+told something false about the tool it is holding, and would look for a
+`remember` it does not have.
+"""

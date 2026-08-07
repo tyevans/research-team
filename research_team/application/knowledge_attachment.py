@@ -16,6 +16,29 @@ from typing import Any, Protocol
 from uuid import UUID
 
 
+def _compose(base: Sequence[Any], attached: Sequence[Any]) -> list[Any]:
+    """`base` and `attached`, with an attached tool replacing a base one of
+    the same name.
+
+    `fetch` is the reason this exists. It is built once at composition with no
+    project, and a corpus-aware version of it can only be built once a project
+    is known -- which is here. Both are called `fetch`, so without shadowing
+    the executor would hold two tools of one name and which one the model
+    reached would be an accident of ordering.
+
+    The alternative was handing the base tool a mutable slot for the current
+    project's corpus. That fails on `detach`: nothing would clear the slot, so
+    a session that left a project would keep reading its sources. Shadowing
+    makes that impossible rather than merely discouraged, because restoring
+    the base set is something `detach` already does.
+
+    Anything without a `.name` cannot collide and is kept.
+    """
+    shadowed = {name for tool in attached if (name := getattr(tool, "name", None))}
+    kept = [tool for tool in base if getattr(tool, "name", None) not in shadowed]
+    return [*kept, *attached]
+
+
 class TurnExecutorTools(Protocol):
     """The slice of a turn executor this needs: its tools, replaceable between turns."""
 
@@ -79,7 +102,7 @@ class KnowledgeAttachment:
         """
         knowledge, tools = await self._open_graph(project_id)
         previous = self.current
-        self._executor.set_tools([*self._base_tools, *tools])
+        self._executor.set_tools(_compose(self._base_tools, tools))
         self.current = knowledge
         self.attached_project_id = project_id
         if previous is not None:

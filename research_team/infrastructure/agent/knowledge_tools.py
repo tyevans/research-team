@@ -78,11 +78,29 @@ def build_knowledge_tools(
     """`remember`, `graph_search` and `unmerge` over one project's graph."""
 
     @tool(REMEMBER_TOOL)
-    async def remember(text: str, source_id: str, note: str = "") -> str:
+    async def remember(
+        text: str,
+        source_id: str,
+        note: str = "",
+        uri: str = "",
+        title: str = "",
+        published_at: str = "",
+    ) -> str:
         """Commit text to the graph, extracting entities and relationships from it."""
         try:
             report = await knowledge.ingest(
-                SourceRef(source_id=source_id, text=text, note=note or None)
+                SourceRef(
+                    source_id=source_id,
+                    text=text,
+                    note=note or None,
+                    # Empty becomes None rather than travelling as "". A blank
+                    # uri in the corpus is indistinguishable from a page
+                    # fetched from nowhere, and the tool boundary is where a
+                    # model's "I have nothing for this" arrives as "".
+                    uri=uri or None,
+                    title=title or None,
+                    published_at=published_at or None,
+                )
             )
         except KnowledgeError as error:
             return f"Could not record this: {error}"
@@ -124,6 +142,11 @@ KNOWLEDGE_PROMPT = (
     "the result is recorded permanently, so pass substantial content you have "
     "actually read rather than your own summary of it, and give each document "
     "a stable `source_id`.\n\n"
+    "When what you are committing came from a page you fetched, pass the "
+    "`url:`, `title:` and `date:` lines `fetch` printed as `uri`, `title` and "
+    "`published_at`. Those three are how this project recognises a page it "
+    "has already read -- a document stored without its `uri` will be fetched "
+    "again by some later session that had no way to tell.\n\n"
     "Committing is not free and not private -- it changes what every later "
     "session in this project sees. Remember what a future session would want "
     "to have been told, not everything you happened to look at.\n\n"

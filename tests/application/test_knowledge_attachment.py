@@ -150,3 +150,80 @@ async def test_attaching_twice_leaves_exactly_one_graph_for_the_second_project(r
     # The graph attaching over replaced was actually closed, not leaked --
     # the branch `attach` takes to avoid leaking a store when re-attaching.
     assert closed == [first_knowledge]
+
+
+# ---------------- shadowing ----------------
+
+
+class _NamedTool:
+    def __init__(self, name: str, marker: str) -> None:
+        self.name = name
+        self.marker = marker
+
+
+def _shadowing_attachment(executor, base_tools, attached):
+    async def open_graph(project_id):
+        return object(), attached
+
+    async def close_graph(knowledge):
+        return None
+
+    return KnowledgeAttachment(
+        executor, base_tools, open_graph=open_graph, close_graph=close_graph
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_attached_tool_replaces_a_base_tool_of_the_same_name():
+    """`fetch` is built once at composition with no project; a corpus-aware
+    one can only arrive with the project. Both are called `fetch`, and an
+    executor holding two tools of one name is a coin toss over which the model
+    reaches.
+    """
+    base = (_NamedTool("fetch", "plain"), _NamedTool("other", "base"))
+    executor = _FakeExecutor(base)
+    attachment = _shadowing_attachment(executor, base, (_NamedTool("fetch", "corpus-aware"),))
+
+    await attachment.attach(uuid4())
+
+    by_name = {tool.name: tool for tool in executor.tools}
+    assert by_name["fetch"].marker == "corpus-aware"
+    assert by_name["other"].marker == "base"
+    assert [tool.name for tool in executor.tools].count("fetch") == 1
+
+
+@pytest.mark.asyncio
+async def test_detaching_restores_the_shadowed_base_tool():
+    """The reason shadowing was chosen over a mutable holder: leaving a
+    project must restore the project-less tool, and the attachment is the one
+    thing that already knows exactly when that happens.
+    """
+    base = (_NamedTool("fetch", "plain"),)
+    executor = _FakeExecutor(base)
+    attachment = _shadowing_attachment(executor, base, (_NamedTool("fetch", "corpus-aware"),))
+
+    await attachment.attach(uuid4())
+    await attachment.detach()
+
+    by_name = {tool.name: tool for tool in executor.tools}
+    assert by_name["fetch"].marker == "plain"
+    assert len(executor.tools) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_tool_without_a_name_is_kept_rather_than_dropped():
+    """Shadowing is keyed on `.name`. Anything without one cannot collide, and
+    silently dropping it would be a worse bug than the collision.
+    """
+
+    class _Anonymous:
+        pass
+
+    anonymous = _Anonymous()
+    base = (anonymous,)
+    executor = _FakeExecutor(base)
+    attachment = _shadowing_attachment(executor, base, (_NamedTool("fetch", "new"),))
+
+    await attachment.attach(uuid4())
+
+    assert anonymous in executor.tools

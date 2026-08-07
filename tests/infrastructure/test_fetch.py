@@ -12,11 +12,25 @@ import pytest
 
 from research_team.application import AutonomyPolicy
 from research_team.application.autonomy import FETCH_TOOL, GATED_TOOLS
+from research_team.application.corpus_read import CorpusReadError, StoredDocument
+from research_team.domain import DocumentRecord
 from research_team.infrastructure.agent.fetch import (
     UNREADABLE,
     build_fetch_tool,
     format_page,
 )
+from research_team.infrastructure.agent.recall import Recall, url_key
+from research_team.infrastructure.agent.search import build_search_tool
+
+SEARCH_PAYLOAD = {
+    "results": [
+        {
+            "title": "A paper",
+            "url": "https://arxiv.org/abs/2401.00001",
+            "content": "Abstract.",
+        }
+    ]
+}
 
 ARTICLE = (
     "<html><head><title>Incident severity</title></head><body>"
@@ -192,3 +206,289 @@ def test_an_explicit_setting_overrides_the_floor_in_both_directions():
     policy = AutonomyPolicy()
     policy.set(FETCH_TOOL, "auto")
     assert policy.level_for(FETCH_TOOL) == "auto"
+
+
+# ---------------- recall ----------------
+
+
+class _StubCorpus:
+    """A `CorpusReadPort` over a fixed set of documents.
+
+    `drop_on_read` names a source id that is listed but comes back `None`
+    from `read_document` -- the state a real corpus is in for one instant
+    between a delete landing and a listing that predates it.
+    """
+
+    def __init__(self, documents=(), error=None, drop_on_read=None):
+        self._documents = list(documents)
+        self._error = error
+        self._drop_on_read = drop_on_read
+        self.reads: list[str] = []
+
+    async def list_documents(self):
+        if self._error:
+            raise self._error
+        return [document.record for document in self._documents]
+
+    async def read_document(self, source_id):
+        if self._error:
+            raise self._error
+        self.reads.append(source_id)
+        if source_id == self._drop_on_read:
+            return None
+        for document in self._documents:
+            if document.record.source_id == source_id:
+                return document
+        return None
+
+
+def _stored(source_id: str, uri: str, text: str = "stored prose") -> StoredDocument:
+    return StoredDocument(
+        record=DocumentRecord(
+            source_id=source_id,
+            sha256="0" * 64,
+            char_count=len(text),
+            uri=uri,
+            title="Stored",
+        ),
+        text=text,
+    )
+
+
+def _counting(counter: list[int]):
+    def handler(request: httpx.Request) -> httpx.Response:
+        counter.append(1)
+        return httpx.Response(200, html=ARTICLE)
+
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_a_page_already_in_the_corpus_is_not_fetched_again():
+    calls: list[int] = []
+    corpus = _StubCorpus([_stored("s1", "https://ex.example/sev")])
+    fetch = build_fetch_tool(client=_client(_counting(calls)), corpus=corpus, recall=Recall())
+
+    text = await fetch.ainvoke({"url": "https://ex.example/sev"})
+
+    assert calls == []
+    assert "stored prose" in text
+
+
+@pytest.mark.asyncio
+async def test_a_corpus_hit_comes_back_citable():
+    """The reason the corpus is consulted before the memo: a stored hit
+    carries `source_id@start-end`, and a page read off the wire carries no
+    identifier anything downstream can point at.
+    """
+    corpus = _StubCorpus([_stored("s1", "https://ex.example/sev")])
+    fetch = build_fetch_tool(client=_client(_html_response), corpus=corpus)
+
+    text = await fetch.ainvoke({"url": "https://ex.example/sev"})
+
+    assert "s1@0-12 of 12 chars" in text
+    body = text.split("\n\n")[-1]
+    assert len(body) == 12 - 0
+
+
+@pytest.mark.asyncio
+async def test_a_corpus_hit_matches_an_equivalent_url():
+    corpus = _StubCorpus([_stored("s1", "https://ex.example/sev")])
+    calls: list[int] = []
+    fetch = build_fetch_tool(client=_client(_counting(calls)), corpus=corpus)
+
+    await fetch.ainvoke({"url": "HTTPS://Ex.Example:443/sev#top"})
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_the_same_page_twice_is_fetched_once():
+    calls: list[int] = []
+    fetch = build_fetch_tool(client=_client(_counting(calls)), recall=Recall())
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_recalled_page_says_it_is_recalled_and_how_old():
+    calls: list[int] = []
+    fetch = build_fetch_tool(client=_client(_counting(calls)), recall=Recall())
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+    again = await fetch.ainvoke({"url": "https://ex.example/sev"})
+    assert "recalled" in again.lower()
+    assert "ago" in again or "just now" in again
+
+
+@pytest.mark.asyncio
+async def test_refresh_reaches_the_network_past_both():
+    """A tool that cannot be asked for a fresh read does not stop the request
+    -- it makes the agent reach for a cache-busting query parameter, which
+    arrives at the same server in a form nothing can recognise or count.
+    """
+    calls: list[int] = []
+    corpus = _StubCorpus([_stored("s1", "https://ex.example/sev")])
+    fetch = build_fetch_tool(client=_client(_counting(calls)), corpus=corpus, recall=Recall())
+
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+    await fetch.ainvoke({"url": "https://ex.example/sev", "refresh": True})
+
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_also_bypasses_a_memo_hit_and_repopulates_it():
+    """The corpus case above is satisfied even if `refresh` only bypassed the
+    corpus: with no `corpus=`, the first call warms the memo from the
+    network, so a `refresh` that skipped just the corpus check but still
+    honoured the memo would still show one network call. This isolates the
+    memo: two plain-network reads are expected, and the second (refreshed)
+    read must still land in the memo -- `recall.put` sits outside the `if not
+    refresh:` guard, so a later refactor that moved it inside would go
+    unnoticed without this assertion.
+    """
+    calls: list[int] = []
+    recall = Recall()
+    fetch = build_fetch_tool(client=_client(_counting(calls)), recall=recall)
+
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+    await fetch.ainvoke({"url": "https://ex.example/sev", "refresh": True})
+
+    assert len(calls) == 2
+    assert recall.get("https://ex.example/sev", key=url_key("https://ex.example/sev"))
+
+
+@pytest.mark.asyncio
+async def test_a_page_not_in_the_corpus_still_reaches_the_network():
+    """Covers the `match is None` branch of `stored_page`: nothing in the
+    corpus has this URI at all.
+    """
+    calls: list[int] = []
+    corpus = _StubCorpus([_stored("s1", "https://ex.example/other")])
+    fetch = build_fetch_tool(client=_client(_counting(calls)), corpus=corpus)
+
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_page_dropped_between_listing_and_reading_still_reaches_the_network():
+    """Covers the `document is None` branch of `stored_page`: the record is
+    listed, matches by URI, and then a delete lands before `read_document`
+    runs -- the one window `_StubCorpus.drop_on_read` exists to reproduce.
+    """
+    calls: list[int] = []
+    corpus = _StubCorpus([_stored("s1", "https://ex.example/sev")], drop_on_read="s1")
+    fetch = build_fetch_tool(client=_client(_counting(calls)), corpus=corpus)
+
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_document_stored_without_a_uri_never_matches():
+    """Most of the corpus looks like this today. It must be a miss, not a
+    match on the empty string.
+    """
+    calls: list[int] = []
+    document = _stored("s1", "https://ex.example/sev")
+    document = StoredDocument(
+        record=document.record.model_copy(update={"uri": None}), text=document.text
+    )
+    fetch = build_fetch_tool(client=_client(_counting(calls)), corpus=_StubCorpus([document]))
+
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_corpus_falls_through_to_the_network():
+    """A storage failure must not cost the fetch. The corpus is an
+    optimisation here, and an optimisation that can break the operation is
+    not one.
+    """
+    calls: list[int] = []
+    fetch = build_fetch_tool(
+        client=_client(_counting(calls)),
+        corpus=_StubCorpus(error=CorpusReadError("neo4j down")),
+    )
+
+    text = await fetch.ainvoke({"url": "https://ex.example/sev"})
+
+    assert len(calls) == 1
+    assert "revenue critical path" in text
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fetch_is_not_remembered():
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, html=ARTICLE)
+
+    fetch = build_fetch_tool(client=_client(handler), recall=Recall())
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+    second = await fetch.ainvoke({"url": "https://ex.example/sev"})
+
+    assert len(calls) == 2
+    assert "revenue critical path" in second
+
+
+@pytest.mark.asyncio
+async def test_a_project_less_fetch_still_works():
+    calls: list[int] = []
+    fetch = build_fetch_tool(client=_client(_counting(calls)))
+    text = await fetch.ainvoke({"url": "https://ex.example/sev"})
+    assert len(calls) == 1
+    assert "revenue critical path" in text
+
+
+@pytest.mark.asyncio
+async def test_one_document_with_a_malformed_uri_does_not_break_every_fetch():
+    """`uri` is free text the model supplies through `remember`, and
+    `stored_page` normalizes every one of them on every call. A port that is
+    not a number used to raise out of `urlsplit`, so a single stored document
+    poisoned `fetch` for that project permanently.
+    """
+    calls: list[int] = []
+    corpus = _StubCorpus([_stored("s1", "http://host:port/x")])
+    fetch = build_fetch_tool(client=_client(_counting(calls)), corpus=corpus)
+
+    text = await fetch.ainvoke({"url": "https://ex.example/sev"})
+
+    assert len(calls) == 1
+    assert "revenue critical path" in text
+
+
+@pytest.mark.asyncio
+async def test_a_search_for_a_url_and_a_fetch_of_it_do_not_share_an_entry():
+    """`normalize_query` and `normalize_url` agree on a bare URL, so one
+    keyspace would let `web_search`'s snippet list come back from `fetch`
+    labelled as the page -- no `url:` header, no body -- and the reverse.
+    """
+    url = "https://arxiv.org/abs/2401.00001"
+    recall = Recall()
+    search = build_search_tool(
+        "https://searx.example",
+        client=_client(lambda request: httpx.Response(200, json=SEARCH_PAYLOAD)),
+        recall=recall,
+    )
+    fetch = build_fetch_tool(client=_client(_html_response), recall=recall)
+
+    searched = await search.ainvoke({"query": url})
+    fetched = await fetch.ainvoke({"url": url})
+
+    assert "A paper" in searched
+    assert "A paper" not in fetched
+    assert f"url: {url}" in fetched
+
+    searched_again = await search.ainvoke({"query": url})
+    assert "A paper" in searched_again
+    assert "revenue critical path" not in searched_again

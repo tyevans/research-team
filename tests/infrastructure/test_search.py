@@ -5,9 +5,11 @@ marker, like the model tests do.
 """
 
 import httpx
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from research_team.infrastructure.agent.recall import Recall
 from research_team.infrastructure.agent.search import build_search_tool, format_results
 
 PAYLOAD = {
@@ -173,3 +175,120 @@ def test_formatting_never_raises_and_never_exceeds_the_cap(results, limit):
     assert isinstance(text, str)
     shown = text.count("\n\n")
     assert shown <= limit
+
+
+# ---------------- recall ----------------
+
+
+def _counting_handler(counter: list[int]):
+    def handler(request: httpx.Request) -> httpx.Response:
+        counter.append(1)
+        return httpx.Response(
+            200,
+            json={"results": [{"title": "T", "url": "https://ex.example/a", "content": "c"}]},
+        )
+
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_the_same_query_twice_reaches_the_instance_once():
+    calls: list[int] = []
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_counting_handler(calls)), recall=Recall()
+    )
+    await tool.ainvoke({"query": "backward design"})
+    await tool.ainvoke({"query": "backward design"})
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_recalled_result_set_says_it_is_one():
+    """Returning an earlier result set dressed as a fresh search would have
+    the model reason about a snapshot as though it were current, with nothing
+    in the transcript to show why.
+    """
+    calls: list[int] = []
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_counting_handler(calls)), recall=Recall()
+    )
+    await tool.ainvoke({"query": "backward design"})
+    again = await tool.ainvoke({"query": "backward design"})
+    assert "searched" in again.lower()
+    assert "https://ex.example/a" in again
+
+
+@pytest.mark.asyncio
+async def test_a_recalled_result_set_names_the_query_that_produced_it():
+    """The safety net under normalization: a merge the agent cannot see is a
+    wrong answer wearing a right one's label.
+    """
+    calls: list[int] = []
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_counting_handler(calls)), recall=Recall()
+    )
+    await tool.ainvoke({"query": "Backward Design"})
+    again = await tool.ainvoke({"query": "backward  design"})
+    assert "Backward Design" in again
+
+
+@pytest.mark.asyncio
+async def test_a_different_query_is_a_different_search():
+    calls: list[int] = []
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_counting_handler(calls)), recall=Recall()
+    )
+    await tool.ainvoke({"query": "backward design"})
+    await tool.ainvoke({"query": "design backward"})
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failed_search_is_not_remembered():
+    """Caching "could not reach the instance" would turn one outage into an
+    hour of them, and the retry that would have worked never happens.
+    """
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ConnectError("down")
+        return httpx.Response(
+            200, json={"results": [{"title": "T", "url": "u", "content": "c"}]}
+        )
+
+    tool = build_search_tool("http://searx.local", client=_client(handler), recall=Recall())
+    await tool.ainvoke({"query": "q"})
+    second = await tool.ainvoke({"query": "q"})
+    assert len(calls) == 2
+    assert "T" in second
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_payload_is_not_remembered():
+    """A 200 with valid JSON that isn't a results object (a proxy error page
+    serialized as JSON, say) doesn't raise -- `format_results` returns the
+    malformed-payload message instead. That message must not be cached and
+    served back as a recalled answer; the retry that would have succeeded
+    never happens otherwise.
+    """
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(200, json=[])
+
+    tool = build_search_tool("http://searx.local", client=_client(handler), recall=Recall())
+    await tool.ainvoke({"query": "q"})
+    await tool.ainvoke({"query": "q"})
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_without_a_recall_every_search_reaches_the_instance():
+    calls: list[int] = []
+    tool = build_search_tool("http://searx.local", client=_client(_counting_handler(calls)))
+    await tool.ainvoke({"query": "q"})
+    await tool.ainvoke({"query": "q"})
+    assert len(calls) == 2
