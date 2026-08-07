@@ -523,3 +523,51 @@ def test_the_generated_reference_covers_every_registered_type():
         assert parsed.components, f"{name}'s example does not parse as a component"
         assert parsed.components[0].errors == (), f"{name}'s own example is invalid"
         assert parsed.components[0].type == name
+
+
+# --- B31: the guidance has to survive being handed to a subagent ------------
+#
+# Component guidance rides `StageMiddleware`, which wraps the *caller's* model
+# call. A subagent spawned through `task` gets `delegation.py`'s own static
+# system prompt and none of this, so a delegated "draft the assessment items"
+# comes back as prose no renderer will use -- and it fails silently, looking
+# like a model that ignored instructions it was genuinely never given.
+#
+# The fix is the cheaper of B31's two options: tell the *caller* to put the
+# requirement in the task it writes. That is consistent with delegation.py's
+# own "give it everything it needs; it cannot see this conversation", and it
+# keeps the subagent prompt static so every delegation does not pay for
+# guidance most of them have no use for.
+
+
+def test_a_component_stage_is_told_to_carry_the_requirement_into_a_delegated_task():
+    from research_team.application.components import component_guidance
+    from research_team.domain.workflow import ArtifactType, StageOutput
+
+    outputs = (
+        StageOutput(
+            artifact_type=ArtifactType.EVIDENCE_SPEC,
+            subtype="assessment_item",
+            cardinality="1..n",
+        ),
+    )
+    guidance = component_guidance(outputs)
+
+    assert "delegate" in guidance.lower()
+    # Naming the tool matters: "delegate" alone is a concept, `task` is the
+    # thing the model actually calls.
+    assert "task" in guidance.lower()
+    # The instruction has to be to restate the requirement, not merely to know
+    # that subagents exist.
+    assert "cannot see" in guidance.lower()
+
+
+def test_a_stage_with_no_components_is_told_nothing_about_delegation_either():
+    """The delegation note is part of the component block, not a new always-on
+    paragraph. A stage writing source claims has no component requirement to
+    carry into a subagent task, so there is nothing here for it to be told."""
+    from research_team.application.components import component_guidance
+    from research_team.domain.workflow import ArtifactType, StageOutput
+
+    outputs = (StageOutput(artifact_type=ArtifactType.SOURCE_CLAIM, cardinality="1..n"),)
+    assert component_guidance(outputs) == ""

@@ -630,6 +630,13 @@ def component_guidance(outputs: Iterable[Any]) -> str:
         "the learner should *do* something -- recall it, decide it, work through",
         "it -- not when they should understand it.",
         "",
+        "If you delegate any of this with `task`, put the component requirement",
+        "in the task you write. A subagent cannot see this conversation or these",
+        "instructions, so a task that says only \"draft the assessment items\"",
+        "comes back as prose, and nothing will tell you why -- it reads like a",
+        "model that ignored a requirement it was never given. Name the component",
+        "types it should use and tell it to emit fenced `component:` blocks.",
+        "",
         # Narrowed to what this stage was just told fits, in registry order so
         # the reference reads the same wherever it appears.
         component_reference(only=[n for n in REGISTRY if any(n in v for v in fits.values())]),
