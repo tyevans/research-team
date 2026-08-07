@@ -571,3 +571,66 @@ def test_a_stage_with_no_components_is_told_nothing_about_delegation_either():
 
     outputs = (StageOutput(artifact_type=ArtifactType.SOURCE_CLAIM, cardinality="1..n"),)
     assert component_guidance(outputs) == ""
+
+
+# --- B29: the parse was nine times slower than it needed to be -------------
+#
+# B29 recorded "the parse is not cached, though the cache key is exact", and
+# deferred the cache because nothing had measured it. Measuring it found
+# something better than a cache: `yaml.safe_load` binds PyYAML's *pure-Python*
+# scanner even when the libyaml extension is installed, and on this machine the
+# C loader parses the same component body ~9x faster. A cache over the slow
+# loader would have bought less and cost an invalidation story.
+#
+# So these pin the substitution rather than a speed: that we take the C loader
+# when it exists, that it is still a *safe* loader, and that a malformed body
+# still degrades into a Note rather than an exception.
+
+
+def test_the_c_yaml_loader_is_used_when_the_extension_is_available():
+    """Not a benchmark -- benchmarks are flaky on a loaded machine. This pins
+    the decision that produced the speedup, which is the durable part."""
+    import yaml
+
+    from research_team.application.components import _YAML_LOADER
+
+    if hasattr(yaml, "CSafeLoader"):
+        assert _YAML_LOADER is yaml.CSafeLoader
+    else:
+        assert _YAML_LOADER is yaml.SafeLoader
+
+
+def test_the_loader_is_still_a_safe_one():
+    """The whole point of `safe_load` is that a lesson written by a model cannot
+    construct arbitrary Python. Swapping the loader for speed must not swap that
+    away -- `yaml.CLoader` is also faster and would."""
+    doc = parse_document(
+        "```component:mcq\n!!python/object/apply:os.system ['echo pwned']\n```\n"
+    )
+    block = doc.blocks[0]
+    assert block.kind == "component"
+    assert block.errors, "an unsafe tag must be refused, not constructed"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "options: [1, 2",
+        "a:\n- b\n  c: 1",
+        "*undefined",
+        "a: |\n\ttab",
+    ],
+)
+def test_a_malformed_body_still_degrades_rather_than_raising(body):
+    """The C loader words its complaints differently from the pure-Python one.
+    What must not change is that every one of them arrives as a Note on the
+    block -- the authoring feedback loop reads these."""
+    doc = parse_document(f"```component:mcq\n{body}\n```\n")
+    block = doc.blocks[0]
+    assert block.kind == "component"
+    assert block.errors
+    message = str(block.errors[0])
+    assert "could not parse the YAML body" in message
+    # Non-empty detail: an error that says only "could not parse" tells the
+    # model nothing it can act on.
+    assert message.split("--", 1)[1].strip()
