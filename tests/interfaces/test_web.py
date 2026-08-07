@@ -1774,6 +1774,27 @@ async def test_cancelling_nothing_reports_that_nothing_was_running(research_clie
     assert response.json() == {"cancelled": False, "run": None}
 
 
+async def test_a_finished_run_puts_its_session_away(research_client):
+    """Or the second run on a project is refused by a session nobody is driving.
+
+    This route starts the session the run works in, so nothing else will ever
+    release it. Releasing is also what advances the project's tip, which is how
+    anything a run wrote reaches the session that comes after it.
+    """
+    application, http = research_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    first = await http.post(f"/api/projects/{project_id}/auto-research", json={})
+    await application.research.wait(UUID(project_id))
+
+    assert first.status_code == 202
+    held = (await application.service.project_state(UUID(project_id))).active_session_id
+    assert held is None
+    second = await http.post(f"/api/projects/{project_id}/auto-research", json={})
+    assert second.status_code == 202
+    await application.research.wait(UUID(project_id))
+
+
 async def test_a_run_on_an_unknown_project_is_a_404(research_client):
     _, http = research_client
     response = await http.post(f"/api/projects/{uuid4()}/auto-research", json={})

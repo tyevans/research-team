@@ -87,6 +87,7 @@ class ResearchSupervisor:
         session_id: UUID,
         *,
         budget: Budget | None = None,
+        after: Callable[[], Awaitable[None]] | None = None,
     ) -> ActiveRun:
         """Begin a run in the background and name it.
 
@@ -95,6 +96,13 @@ class ResearchSupervisor:
         waiting on a model. The id is minted here rather than by the driver
         precisely so it can be returned now -- see `AutoResearchDriver.run`'s
         `run_id`.
+
+        `after` is for a caller that made the session this run works in and has
+        to put it away again. It belongs to the caller rather than here because
+        the two front ends differ on exactly this point: the web route starts a
+        session for the run and nothing else will ever release it, while the
+        REPL runs in the session the person is already sitting in and must not
+        have it released underneath them.
         """
         existing = self.active(project_id)
         if existing is not None:
@@ -103,12 +111,10 @@ class ResearchSupervisor:
         handle = ActiveRun(run_id=uuid4(), project_id=project_id, session_id=session_id)
         self._cancelled.discard(handle.run_id)
         task = asyncio.ensure_future(
-            self._start(
-                handle.run_id,
-                project_id,
-                session_id,
+            self._run(
+                handle,
                 budget,
-                lambda: handle.run_id in self._cancelled,
+                after,
             )
         )
         # Failures reach nobody otherwise: this task is not awaited by whoever
@@ -119,6 +125,39 @@ class ResearchSupervisor:
         self._tasks[project_id] = task
         self._active[project_id] = handle
         return handle
+
+    async def _run(
+        self,
+        handle: ActiveRun,
+        budget: Budget | None,
+        after: Callable[[], Awaitable[None]] | None,
+    ) -> RunReport:
+        """The run, and whatever the caller has to do once it is over.
+
+        `after` runs in a `finally` and inside the task rather than in the
+        done-callback, because the thing it is for -- releasing the project --
+        is itself a write to the log, and a done-callback is not a place from
+        which anything may be awaited. A failure there is logged rather than
+        raised: the run's own outcome is the answer this returns, and losing it
+        to a failed release would report the work as broken when it is only
+        untidied.
+        """
+        try:
+            return await self._start(
+                handle.run_id,
+                handle.project_id,
+                handle.session_id,
+                budget,
+                lambda: handle.run_id in self._cancelled,
+            )
+        finally:
+            if after is not None:
+                try:
+                    await after()
+                except Exception:
+                    logger.exception(
+                        "could not put away the session for run %s", handle.run_id
+                    )
 
     def _finished(self, handle: ActiveRun, task: asyncio.Task) -> None:
         self._cancelled.discard(handle.run_id)

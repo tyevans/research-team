@@ -569,7 +569,18 @@ def create_app(
                 detail=f"the project's knowledge graph would not open: {error}",
             ) from error
         try:
-            run = research.start(project_id, session_id, budget=options.budget())
+            run = research.start(
+                project_id,
+                session_id,
+                budget=options.budget(),
+                # This route made the session, so this route puts it away.
+                # Two things go wrong without it, and the second is the worse
+                # one: the project stays held, so the *next* run is refused by
+                # a session nobody is driving -- and releasing is what advances
+                # the project's tip, so it is also the only way the files this
+                # run wrote reach the session that comes after it.
+                after=lambda: service.release_project(session_id),
+            )
         except RunAlreadyActive as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         return JSONResponse(status_code=202, content=run_view(run))
