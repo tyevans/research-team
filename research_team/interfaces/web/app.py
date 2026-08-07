@@ -32,8 +32,10 @@ from research_team.application import (
     TurnSupervisor,
     build_fork_tree,
 )
+from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
+from research_team.application.grading import GradingError, grade
 from research_team.domain import CreateProject, ProjectState, SelectWorkflow
 from research_team.domain.auto_research import Budget
 from research_team.domain.project import current_stage_of
@@ -94,6 +96,25 @@ class WorkflowChoice(BaseModel):
     """Which preset a project runs. Chosen once; `decide` refuses a second."""
 
     preset_id: str
+
+
+class Attempt(BaseModel):
+    """One learner's answer to one component, addressed in the body.
+
+    The component is named in the body rather than in the path because a file
+    path contains slashes, and a route of `/files/{path}/components/{id}` would
+    make every caller double-encode one to reach the other. Nothing else about
+    the shape depends on that.
+
+    `at` grades against the file as it stood at that event rather than at HEAD.
+    Without it, an author revising a question would silently re-mark attempts
+    made against the version the learner actually read.
+    """
+
+    path: str
+    component_id: str
+    response: Any = None
+    at: int | None = None
 
 
 class NewRun(BaseModel):
@@ -693,6 +714,22 @@ def create_app(
         Scrubbing has to be able to read a file that no longer exists at HEAD --
         seeing a deleted file again is the point of time travel, not an error.
         """
+        return {"path": path, "content": await _read_file(session_id, path, at), "at": at}
+
+    @app.get("/api/sessions/{session_id}/files/history")
+    async def get_file_history(session_id: UUID, path: str):
+        await _load(session_id)
+        return file_history(await service.history(session_id), path)
+
+    async def _read_file(session_id: UUID, path: str, at: int | None) -> str:
+        """One file's contents at HEAD or as of `at`, or a 404 saying which.
+
+        Shared by the raw, parsed and attempt routes so the three cannot drift
+        apart on what "not found at this point in the log" means. Time travel
+        is not optional on any of them: a learner reading a lesson at a scrub
+        point has to be graded against the lesson that was there, and an author
+        diffing two revisions of a question needs both of them to parse.
+        """
         if at is None:
             session = await _load(session_id)
         else:
@@ -704,12 +741,45 @@ def create_app(
         if entry is None:
             moment = "at HEAD" if at is None else f"as of event {at}"
             raise HTTPException(status_code=404, detail=f"{path}: not found {moment}")
-        return {"path": path, "content": entry.get("content", ""), "at": at}
+        return entry.get("content", "")
 
-    @app.get("/api/sessions/{session_id}/files/history")
-    async def get_file_history(session_id: UUID, path: str):
-        await _load(session_id)
-        return file_history(await service.history(session_id), path)
+    @app.get("/api/sessions/{session_id}/files/parsed")
+    async def get_file_parsed(
+        session_id: UUID,
+        path: str,
+        at: int | None = None,
+        view: View = "author",
+    ):
+        """A markdown file as blocks, with interactive components resolved.
+
+        `view` is a `Literal`, so FastAPI rejects `learnr` with a 422 rather
+        than falling back to a default. A typo that quietly returned the author
+        view would hand back the answer key on exactly the request that meant
+        to ask for it to be withheld -- the one failure mode of this route that
+        is worth a hard edge.
+        """
+        content = await _read_file(session_id, path, at)
+        return project(parse_document(content, path=path), view=view) | {"at": at}
+
+    @app.post("/api/sessions/{session_id}/attempts")
+    async def post_attempt(session_id: UUID, body: Attempt):
+        """Mark one attempt. The server holds the key; the browser was not given it.
+
+        A wrong answer is a 200 with `correct: false` -- it is a result, not an
+        error. The 400s here are all malformed *requests*: a response shape the
+        item cannot interpret, or an item that has no answer to mark.
+        """
+        content = await _read_file(session_id, body.path, body.at)
+        component = parse_document(content, path=body.path).component(body.component_id)
+        if component is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"{body.path} has no component {body.component_id!r}",
+            )
+        try:
+            return grade(component, body.response).as_json()
+        except GradingError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.post("/api/sessions/{session_id}/turns")
     async def run_turn(session_id: UUID, body: NewTurn):

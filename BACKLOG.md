@@ -377,6 +377,79 @@ has to change first, and it is a wider change than it looks: the positions are
 persisted in `TopicInvestigated.at_position` and in every acknowledgement's
 expiry, so redefining the scale invalidates both.
 
+## Interactive components
+
+What v1 of the markdown component system knowingly left out. The design is in
+`docs/research/course-design/markdown-components.md` §3.10, which phases it;
+`widget-horizons.md` beside it ranks the types not yet registered.
+
+### B28. An attempt is graded and then forgotten
+
+`POST /api/sessions/{id}/attempts` marks an answer and returns a verdict.
+Nothing records that it happened. There is no `LearnerProgress` aggregate, so
+the checklist's `persist: true` is accepted and ignored (the UI says so), a
+reload loses every answer, and the pedagogically interesting object -- the
+*sequence* of attempts on one item -- does not exist anywhere.
+
+Deliberate for v1, on the reasoning in §3.10: prove the authoring loop before
+persisting anything, because a learner-state schema built against components
+nobody had authored yet would be guesswork. §3.6 has the shape it should take,
+including that the event names are already xAPI verbs (`attempted`,
+`answered`, `completed`) so an LRS bridge is a projection rather than a
+redesign.
+
+The hard part is not the aggregate, it is identity: `(path, component_id)`
+survives a content edit that keeps the id, and nothing survives an author
+rewriting the item. The parser already warns on a derived id and on a duplicate
+one, which is the input that decision needs.
+
+### B31. A subagent sent to write assessment items will write prose
+
+Component guidance is derived from the stage's declared outputs and delivered
+through `StageMiddleware`, which wraps the *caller's* model call. A subagent
+spawned through `task` gets `delegation.py`'s own system prompt and none of
+that, so a stage that delegates "draft the assessment items for module 3" gets
+back prose that no renderer will turn into anything, and the caller has to
+notice and redo it.
+
+Not fixed here because the fix is a choice, not an oversight. Either the
+delegation prompt gains the same derived guidance (which means the subagent
+system prompt stops being static, and every delegation pays for guidance most
+of them do not need), or the stage prompt tells the model to include the
+component requirements *in the task it writes* (cheaper, and consistent with
+`delegation.py`'s existing "it cannot see this conversation; give it everything
+it needs"). The second is probably right, and it is a prompt change nobody
+should make without watching a real delegated authoring turn first.
+
+Worth noticing early: the failure is silent and looks like a model that ignored
+its instructions, because the instructions genuinely were not there.
+
+### B29. The parse is not cached, though the cache key is exact
+
+`GET .../files/parsed` re-parses the file on every request, and the attempt
+route parses it again to find one component. Files are immutable per event, so
+`(session_id, path, at)` is a perfect cache key -- §3.5 names it. Not done
+because nothing has measured it: the documents are kilobytes and `yaml.safe_load`
+over four blocks is not obviously worth a cache and its invalidation. Recorded
+so the key does not have to be rediscovered when something does measure it.
+
+Note the one asymmetry: `at=None` means HEAD, which moves. A cache keyed on it
+would need the resolved event index, not the literal `None`.
+
+### B30. Answer-withholding is real projection and still not a boundary
+
+The learner projection removes the answer key structurally before serialisation
+and grading happens on the server, so the browser genuinely cannot mark an
+answer. That is worth having and it is not a control: the same file is readable
+in full at `GET /api/sessions/{id}/files?path=`, the source toggle shows it, and
+the agent's prose discusses the answers while authoring them.
+
+This is B18 restated at one surface rather than a separate problem, and B18's
+last line is the rule this implementation follows: it is a presentation
+affordance and is described as one, in the module docstring, in the README, and
+in the UI's own tooltip on the "answers withheld" badge. Anyone tempted to
+describe it otherwise should read B18 first.
+
 ## Knowledge and corpus
 
 Found while researching course-design workflows
@@ -457,7 +530,9 @@ event index. A cosmetic "presenter mode" for screen-shares is fine if it is
 labelled cosmetic and leaves the API untouched.
 
 Until then, any answer-withholding in the renderer is a presentation
-affordance and must not be described as security.
+affordance and must not be described as security. One now exists -- the
+learner projection in `application/components.py` -- and B30 records that it
+follows this rule rather than bending it.
 
 ### B19. Nothing in the event log can be erased
 

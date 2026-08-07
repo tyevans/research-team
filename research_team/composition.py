@@ -17,6 +17,7 @@ from uuid import UUID
 # nothing else would have pulled redstring in.
 import redstring.events  # noqa: F401
 from eventsource.observability import Tracer
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from redstring.llm.adapters.langchain import LangChainLlmProvider
@@ -38,6 +39,7 @@ from research_team.application import (
 )
 from research_team.application.artifacts import stage_artifact_instructions
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
+from research_team.application.components import component_guidance
 from research_team.application.ports import GateReview
 from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.application.stage_exit import (
@@ -55,6 +57,7 @@ from research_team.domain.workflow import Preset
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import DeepAgentTurnExecutor, build_model
 from research_team.infrastructure.agent.compaction import SummarizingStrategy
+from research_team.infrastructure.agent.component_feedback import ComponentFeedback
 from research_team.infrastructure.agent.corpus_tools import (
     CORPUS_PROMPT,
     build_corpus_tools,
@@ -456,8 +459,13 @@ def build_application(
             ProjectWorkflow(repository.projects, project_id), preset=preset
         )
 
-    async def stage_middleware(session: CodingSession) -> tuple[StageMiddleware, ...]:
-        """The stage gate for this turn, or nothing at all.
+    async def turn_middleware(session: CodingSession) -> tuple[AgentMiddleware, ...]:
+        """This turn's middleware: component feedback always, the stage gate if any.
+
+        `ComponentFeedback` is unconditional because a component can appear in
+        any markdown file the agent writes, workflow or no workflow, and a
+        session driving no preset is exactly where nobody is watching the
+        transcript closely enough to notice a malformed widget.
 
         `managed_tools_for` takes the union across *every* stage rather than
         the current stage's list, because the middleware is a denylist: the
@@ -492,9 +500,18 @@ def build_application(
         it says the gate asks a human, and that advancing is for when this
         stage's outputs exist, not for when the model has run out to say.
         """
+        # Reads off the aggregate the tool just wrote through, so an `edit_file`
+        # is validated against the document it produced rather than the
+        # replacement it was given.
+        base: tuple[AgentMiddleware, ...] = (
+            ComponentFeedback(
+                read=lambda path: session.state.files.get(path, {}).get("content")
+            ),
+        )
+
         running = await running_workflow(session)
         if running is None:
-            return ()
+            return base
         project_id, state, preset = running
         stage = current_stage_of(state, preset)
         if stage is None:
@@ -504,12 +521,21 @@ def build_application(
                 state.current_stage,
                 preset.id,
             )
-            return ()
+            return base
         return (
+            *base,
             StageMiddleware(
                 stage,
                 managed_tools=managed_tools_for(preset.stages) - {ADVANCE_STAGE_TOOL},
-                instructions=stage_artifact_instructions(preset, stage) + WORKFLOW_PROMPT,
+                instructions=(
+                    stage_artifact_instructions(preset, stage)
+                    + WORKFLOW_PROMPT
+                    # Derived from this stage's declared outputs, so a stage
+                    # writing source claims is told nothing about widgets and a
+                    # stage writing assessment items is told which ones an
+                    # assessment is made of. Empty for most stages, by design.
+                    + component_guidance(stage.outputs)
+                ),
             ),
         )
 
@@ -558,7 +584,7 @@ def build_application(
         tools=tools,
         policy=resolved_policy,
         approvals=approvals,
-        middleware_provider=stage_middleware,
+        middleware_provider=turn_middleware,
         tools_provider=workflow_tools,
         gate_reviewer=gate_review,
     )

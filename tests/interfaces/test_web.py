@@ -1685,6 +1685,218 @@ async def test_an_unknown_project_has_no_course(client):
     assert response.status_code == 404
 
 
+# ---------------- components ----------------
+#
+# The parsed route and the attempt route are two halves of one decision: the
+# learner projection strips the answer key, so the browser cannot grade and has
+# to ask. Both halves are tested here rather than only the parse, because a
+# projection that withholds and an endpoint that hands the key back would each
+# pass on their own.
+
+LESSON = """\
+---
+type: lesson
+---
+
+# Declaring severity
+
+```component:mcq
+id: sev-1
+prompt: What severity?
+options:
+  - text: "SEV-1"
+    correct: false
+    feedback: "No data loss."
+  - text: "SEV-2"
+    correct: true
+    feedback: "Textbook SEV-2."
+rationale: |
+  Severity is a communication decision.
+```
+
+```component:from-the-future
+shape: unknowable
+```
+"""
+
+LESSON_PATH = "/course/01-lesson.md"
+
+
+async def _with_lesson(service, content=LESSON, path=LESSON_PATH) -> str:
+    session_id = await service.create_session()
+    session = await service.load(session_id)
+    session.execute(WriteFile(path=path, file_data={"content": content}))
+    await service._repository.save(session)
+    return str(session_id)
+
+
+async def test_the_parsed_view_returns_frontmatter_and_blocks_in_order(client, service):
+    session_id = await _with_lesson(service)
+
+    body = (
+        await client.get(
+            f"/api/sessions/{session_id}/files/parsed", params={"path": LESSON_PATH}
+        )
+    ).json()
+
+    assert body["frontmatter"] == {"type": "lesson"}
+    assert [b["kind"] for b in body["blocks"]] == ["markdown", "component", "component"]
+    assert body["blocks"][2]["unknown"] is True
+
+
+async def test_the_author_view_is_the_default_and_carries_the_key(client, service):
+    session_id = await _with_lesson(service)
+
+    body = (
+        await client.get(
+            f"/api/sessions/{session_id}/files/parsed", params={"path": LESSON_PATH}
+        )
+    ).json()
+
+    assert body["view"] == "author"
+    assert body["blocks"][1]["data"]["options"][1]["correct"] is True
+
+
+async def test_the_learner_view_does_not_ship_the_answer(client, service):
+    """Asserted over the response text, because the failure that matters is a
+    secret reaching the wire by any route, not one particular field surviving."""
+    session_id = await _with_lesson(service)
+
+    response = await client.get(
+        f"/api/sessions/{session_id}/files/parsed",
+        params={"path": LESSON_PATH, "view": "learner"},
+    )
+
+    assert "Textbook SEV-2" not in response.text
+    assert "communication decision" not in response.text
+    assert "What severity?" in response.text
+
+
+async def test_an_unrecognised_view_is_refused_rather_than_defaulted(client, service):
+    """Defaulting a typo to the author view would leak the key on `view=learnr`."""
+    session_id = await _with_lesson(service)
+
+    response = await client.get(
+        f"/api/sessions/{session_id}/files/parsed",
+        params={"path": LESSON_PATH, "view": "learnr"},
+    )
+
+    assert response.status_code == 422
+
+
+async def test_a_parsed_file_can_be_read_in_the_past(client, service):
+    session_id = await service.create_session()
+    session = await service.load(session_id)
+    session.execute(WriteFile(path="/c.md", file_data={"content": LESSON}))
+    session.execute(DeleteFile(path="/c.md"))
+    await service._repository.save(session)
+
+    events = (await client.get(f"/api/sessions/{session_id}/events")).json()
+    written_at = next(r["index"] for r in events if r["type"] == "FileWritten")
+
+    gone = await client.get(
+        f"/api/sessions/{session_id}/files/parsed", params={"path": "/c.md"}
+    )
+    past = await client.get(
+        f"/api/sessions/{session_id}/files/parsed",
+        params={"path": "/c.md", "at": written_at},
+    )
+
+    assert gone.status_code == 404
+    assert len(past.json()["blocks"]) == 3
+
+
+async def test_a_missing_file_is_a_404_from_the_parsed_route_too(client, service):
+    session_id = await _with_lesson(service)
+    response = await client.get(
+        f"/api/sessions/{session_id}/files/parsed", params={"path": "/nope.md"}
+    )
+    assert response.status_code == 404
+
+
+async def test_a_right_answer_is_graded_and_the_rationale_returned(client, service):
+    session_id = await _with_lesson(service)
+
+    body = (
+        await client.post(
+            f"/api/sessions/{session_id}/attempts",
+            json={"path": LESSON_PATH, "component_id": "sev-1", "response": 1},
+        )
+    ).json()
+
+    assert body["correct"] is True
+    assert body["feedback"] == ["Textbook SEV-2."]
+    assert "communication decision" in body["rationale"]
+
+
+async def test_a_wrong_answer_is_graded_rather_than_refused(client, service):
+    session_id = await _with_lesson(service)
+
+    response = await client.post(
+        f"/api/sessions/{session_id}/attempts",
+        json={"path": LESSON_PATH, "component_id": "sev-1", "response": 0},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["correct"] is False
+    assert response.json()["correct_options"] == [1]
+
+
+async def test_an_attempt_at_a_component_that_is_not_there_is_a_404(client, service):
+    session_id = await _with_lesson(service)
+
+    response = await client.post(
+        f"/api/sessions/{session_id}/attempts",
+        json={"path": LESSON_PATH, "component_id": "nope", "response": 1},
+    )
+
+    assert response.status_code == 404
+
+
+async def test_a_response_of_the_wrong_shape_is_a_400_not_a_500(client, service):
+    session_id = await _with_lesson(service)
+
+    response = await client.post(
+        f"/api/sessions/{session_id}/attempts",
+        json={"path": LESSON_PATH, "component_id": "sev-1", "response": {"a": 1}},
+    )
+
+    assert response.status_code == 400
+
+
+async def test_an_attempt_is_graded_against_the_file_as_it_was(client, service):
+    """Grading at HEAD would mark yesterday's attempt against today's key."""
+    session_id = await service.create_session()
+    session = await service.load(session_id)
+    session.execute(WriteFile(path="/c.md", file_data={"content": LESSON}))
+    await service._repository.save(session)
+    events = (await client.get(f"/api/sessions/{session_id}/events")).json()
+    original = next(r["index"] for r in events if r["type"] == "FileWritten")
+
+    # The revision moves the answer rather than adding one: a second `correct`
+    # option would make the item multiple-response and change what "0" means.
+    revised = (
+        LESSON.replace("correct: false", "correct: WAS_FALSE")
+        .replace("correct: true", "correct: false")
+        .replace("correct: WAS_FALSE", "correct: true")
+    )
+    session = await service.load(session_id)
+    session.execute(WriteFile(path="/c.md", file_data={"content": revised}))
+    await service._repository.save(session)
+
+    now = await client.post(
+        f"/api/sessions/{session_id}/attempts",
+        json={"path": "/c.md", "component_id": "sev-1", "response": 0},
+    )
+    then = await client.post(
+        f"/api/sessions/{session_id}/attempts",
+        json={"path": "/c.md", "component_id": "sev-1", "response": 0, "at": original},
+    )
+
+    assert now.json()["correct"] is True
+    assert then.json()["correct"] is False
+
+
 # ---------------- autonomous research ----------------
 
 

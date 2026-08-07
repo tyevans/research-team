@@ -463,6 +463,418 @@ function mdLink(href, label, isImage) {
   return h('span', { class: 'md-link-inert', text: label, title: href });
 }
 
+/* --- interactive components ----------------------------------------------
+ * The server parses a markdown artifact into blocks and hands back JSON; this
+ * is the half that turns a component block into something a learner can
+ * operate. Three rules hold across all of it.
+ *
+ * It builds DOM the same way everything else here does -- `h()` and
+ * `textContent`, never `innerHTML` -- because the content is model-authored
+ * and the no-markup-from-model-output property is the one worth keeping most.
+ *
+ * It never grades. The learner projection strips the answer key before it
+ * leaves the server, so the browser genuinely cannot mark an attempt and does
+ * not pretend to: submitting posts to `/attempts` and renders what comes back.
+ *
+ * It degrades the way the server told it to. An unknown type renders as a
+ * labelled code block, exactly as an unrecognised fence does today, and a
+ * component with errors renders as its own source plus a panel naming the
+ * fields. Neither takes the rest of the document down with it. */
+
+const COMPONENTS = {
+  flashcards: renderFlashcards,
+  mcq: renderMcq,
+  cloze: renderCloze,
+  checklist: renderChecklist
+};
+
+/* Per-component UI state, keyed by path and id so two files with the same
+ * component id do not share a selection. Cleared when the file changes. */
+function componentState(block) {
+  const key = (state.openPath || '') + '#' + block.id;
+  if (!state.components[key]) state.components[key] = { picked: [], typed: {}, ticked: {}, card: 0, flipped: false, verdict: null, busy: false, error: null };
+  return state.components[key];
+}
+
+function renderDocument(doc) {
+  const box = h('div', { class: 'md doc' });
+  (doc.blocks || []).forEach(function (block) {
+    if (block.kind === 'markdown') {
+      // Unwrapped into this container rather than nested, so the padding and
+      // the `:first-child` heading rules keep working across a whole document.
+      const rendered = renderMarkdown(block.text);
+      while (rendered.firstChild) box.appendChild(rendered.firstChild);
+      return;
+    }
+    box.appendChild(renderComponent(block));
+  });
+  return box;
+}
+
+function renderComponent(block) {
+  if (block.unknown) return renderUnknownComponent(block);
+  if (block.errors && block.errors.length) return renderComponentErrors(block);
+  const renderer = COMPONENTS[block.type];
+  if (!renderer) return renderUnknownComponent(block);
+
+  const shell = h('section', {
+    class: 'cmp cmp-' + block.type,
+    'data-component': block.id,
+    'aria-label': block.type + ' component'
+  });
+  shell.appendChild(h('div', { class: 'cmp-kind' }, [
+    h('span', { class: 'cmp-kind-name', text: block.type }),
+    block.withheld && block.withheld.length
+      ? h('span', {
+          class: 'cmp-withheld',
+          text: 'answers withheld',
+          title: 'The answer key was removed from this response and is graded on the '
+               + 'server. The raw file is still readable from the source toggle, so '
+               + 'this keeps answers off the page rather than out of reach.'
+        })
+      : null
+  ]));
+  try {
+    shell.appendChild(renderer(block));
+  } catch (e) {
+    // One widget's renderer must not cost the document. This should not fire;
+    // if it does, the author gets a panel rather than a blank page.
+    shell.appendChild(h('div', { class: 'cmp-error', text: 'This component could not be displayed: ' + e.message }));
+  }
+  return shell;
+}
+
+function renderUnknownComponent(block) {
+  const pre = h('pre', { class: 'md-code cmp-unknown' }, [h('code', { text: block.raw || '' })]);
+  if (block.lang) pre.dataset.lang = block.lang;
+  return pre;
+}
+
+function renderComponentErrors(block) {
+  return h('section', { class: 'cmp cmp-broken' }, [
+    h('div', { class: 'cmp-kind' }, [
+      h('span', { class: 'cmp-kind-name', text: block.type }),
+      h('span', { class: 'cmp-broken-tag', text: 'did not parse' })
+    ]),
+    h('ul', { class: 'cmp-error-list' }, block.errors.map(function (e) {
+      return h('li', {}, [
+        e.path ? h('code', { class: 'cmp-error-path', text: e.path }) : null,
+        h('span', { text: e.message })
+      ]);
+    })),
+    h('pre', { class: 'md-code' }, [h('code', { text: block.raw || '' })])
+  ]);
+}
+
+/* Prose inside a component field is markdown too -- an mcq prompt routinely
+ * carries a code span or a list -- so it goes back through the same renderer. */
+function cmpProse(text, cls) {
+  const box = renderMarkdown(String(text === null || text === undefined ? '' : text));
+  box.className = 'md cmp-prose' + (cls ? ' ' + cls : '');
+  return box;
+}
+
+function cmpButton(label, onclick, opts) {
+  const o = opts || {};
+  return h('button', {
+    type: 'button',
+    class: 'cmp-btn' + (o.primary ? ' primary' : ''),
+    disabled: o.disabled || false,
+    onclick: onclick
+  }, [label]);
+}
+
+/* --- flashcards --- */
+
+function renderFlashcards(block) {
+  const ui = componentState(block);
+  const cards = block.data.cards || [];
+  const box = h('div', { class: 'cmp-body' });
+  if (block.data.title) box.appendChild(h('h4', { class: 'cmp-title', text: block.data.title }));
+  if (!cards.length) {
+    box.appendChild(h('div', { class: 'cmp-empty', text: 'This deck has no cards.' }));
+    return box;
+  }
+
+  const index = Math.max(0, Math.min(ui.card, cards.length - 1));
+  const card = cards[index] || {};
+
+  const face = h('div', {
+    class: 'flash-card' + (ui.flipped ? ' flipped' : ''),
+    tabindex: 0,
+    role: 'button',
+    'aria-pressed': ui.flipped ? 'true' : 'false',
+    'aria-label': (ui.flipped ? 'Back' : 'Front') + ' of card ' + (index + 1) + ' of ' + cards.length + '. Activate to flip.',
+    onclick: function () { ui.flipped = !ui.flipped; renderFileView(); },
+    onkeydown: function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ui.flipped = !ui.flipped; renderFileView(); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
+    }
+  }, [
+    h('div', { class: 'flash-side', text: ui.flipped ? 'back' : 'front' }),
+    cmpProse(ui.flipped ? card.back : card.front, 'flash-text')
+  ]);
+
+  function step(delta) {
+    ui.card = (index + delta + cards.length) % cards.length;
+    ui.flipped = false;               // a new card always starts face up
+    renderFileView();
+  }
+
+  box.appendChild(face);
+  box.appendChild(h('div', { class: 'cmp-controls' }, [
+    cmpButton('‹ prev', function () { step(-1); }),
+    h('span', { class: 'cmp-count', text: (index + 1) + ' / ' + cards.length }),
+    cmpButton('next ›', function () { step(1); }),
+    cmpButton(ui.flipped ? 'show front' : 'flip', function () { ui.flipped = !ui.flipped; renderFileView(); })
+  ]));
+  return box;
+}
+
+/* --- multiple choice --- */
+
+function renderMcq(block) {
+  const ui = componentState(block);
+  const options = block.data.options || [];
+  const multiple = block.data.multiple === true;
+  const box = h('div', { class: 'cmp-body' });
+
+  box.appendChild(cmpProse(block.data.prompt, 'cmp-prompt'));
+
+  const group = h('div', {
+    class: 'mcq-options',
+    role: multiple ? 'group' : 'radiogroup',
+    'aria-label': 'Answer options'
+  });
+  const name = 'mcq-' + block.id;
+  options.forEach(function (option, i) {
+    const chosen = ui.picked.indexOf(i) !== -1;
+    const input = h('input', {
+      type: multiple ? 'checkbox' : 'radio',
+      name: name,
+      value: String(i),
+      checked: chosen,
+      disabled: !!ui.verdict,
+      onchange: function () {
+        if (multiple) {
+          const at = ui.picked.indexOf(i);
+          if (at === -1) ui.picked.push(i); else ui.picked.splice(at, 1);
+        } else {
+          ui.picked = [i];
+        }
+        renderFileView();
+      }
+    });
+    // Marking only lands after a verdict, and it marks what the *server* said
+    // was right -- the client was never given the key to decide it locally.
+    let mark = '';
+    if (ui.verdict) {
+      const right = (ui.verdict.correct_options || []).indexOf(i) !== -1;
+      if (right) mark = ' right';
+      else if (chosen) mark = ' wrong';
+    }
+    group.appendChild(h('label', { class: 'mcq-option' + mark + (chosen ? ' picked' : '') }, [
+      input,
+      cmpProse(option.text, 'mcq-text'),
+      ui.verdict && mark === ' right' ? h('span', { class: 'mcq-mark', text: '✓', 'aria-label': 'correct answer' }) : null,
+      ui.verdict && mark === ' wrong' ? h('span', { class: 'mcq-mark', text: '✕', 'aria-label': 'your answer, incorrect' }) : null
+    ]));
+  });
+  box.appendChild(group);
+
+  box.appendChild(h('div', { class: 'cmp-controls' }, [
+    cmpButton(ui.busy ? 'checking…' : 'check answer', function () {
+      submitAttempt(block, multiple ? ui.picked.slice().sort(function (a, b) { return a - b; }) : (ui.picked.length ? ui.picked[0] : []));
+    }, { primary: true, disabled: ui.busy || !!ui.verdict || !ui.picked.length }),
+    ui.verdict ? cmpButton('try again', function () { resetAttempt(block); }) : null,
+    multiple && !ui.verdict ? h('span', { class: 'cmp-hint', text: 'select every answer that applies' }) : null
+  ]));
+
+  box.appendChild(verdictPanel(block, ui));
+  return box;
+}
+
+/* --- cloze --- */
+
+function renderCloze(block) {
+  const ui = componentState(block);
+  const segments = block.data.segments || [];
+  const oneAtATime = block.data.mode !== 'all-at-once';
+  const box = h('div', { class: 'cmp-body' });
+
+  const blanks = segments.filter(function (s) { return s.blank !== undefined; });
+  // In one-at-a-time mode only the first unfilled blank is enabled, which is
+  // what makes the mode mean anything: the learner reads forward rather than
+  // scanning the whole passage for the easy gaps first.
+  let active = blanks.length;
+  for (let i = 0; i < blanks.length; i++) {
+    if (!String(ui.typed[blanks[i].blank] || '').trim()) { active = blanks[i].blank; break; }
+  }
+
+  const prose = h('p', { class: 'cloze-text' });
+  segments.forEach(function (segment) {
+    if (segment.blank === undefined) {
+      prose.appendChild(document.createTextNode(String(segment.text || '')));
+      return;
+    }
+    const result = ui.verdict && (ui.verdict.blanks || []).find(function (b) { return b.blank === segment.blank; });
+    const wrap = h('span', { class: 'cloze-slot' + (result ? (result.correct ? ' right' : ' wrong') : '') });
+    wrap.appendChild(h('input', {
+      type: 'text',
+      class: 'cloze-input',
+      value: ui.typed[segment.blank] || '',
+      // Sized to the hint when there is one, so the passage does not reflow
+      // the moment a learner starts typing.
+      size: Math.max(10, Math.min(24, (segment.hint || '').length + 2)),
+      // The hint goes *in* the blank rather than beside it: trailing it made
+      // the passage ragged, and a hint the learner has to look away from is a
+      // hint they read after guessing.
+      placeholder: segment.hint || '',
+      'aria-label': 'Blank ' + (segment.blank + 1) + (segment.hint ? ': ' + segment.hint : ''),
+      title: segment.hint || '',
+      disabled: !!ui.verdict || (oneAtATime && segment.blank > active),
+      oninput: function (e) { ui.typed[segment.blank] = e.target.value; },
+      onkeydown: function (e) {
+        // Enter submits from any blank, which is what a keyboard user reaches
+        // for and what stops the mouse being required to finish the item.
+        if (e.key === 'Enter') { e.preventDefault(); submitCloze(block, blanks); }
+      },
+      onblur: function () { if (oneAtATime) renderFileView(); }
+    }));
+    if (result && !result.correct) wrap.appendChild(h('span', { class: 'cloze-answer', text: result.answer }));
+    prose.appendChild(wrap);
+  });
+  box.appendChild(prose);
+
+  box.appendChild(h('div', { class: 'cmp-controls' }, [
+    cmpButton(ui.busy ? 'checking…' : 'check answers', function () { submitCloze(block, blanks); },
+      { primary: true, disabled: ui.busy || !!ui.verdict }),
+    ui.verdict ? cmpButton('try again', function () { resetAttempt(block); }) : null,
+    h('span', { class: 'cmp-count', text: blanks.length + (blanks.length === 1 ? ' blank' : ' blanks') })
+  ]));
+
+  box.appendChild(verdictPanel(block, ui));
+  return box;
+}
+
+function submitCloze(block, blanks) {
+  const ui = componentState(block);
+  if (ui.busy || ui.verdict) return;
+  submitAttempt(block, blanks.map(function (b) { return ui.typed[b.blank] || ''; }));
+}
+
+/* --- checklist --- */
+
+function renderChecklist(block) {
+  const ui = componentState(block);
+  const items = block.data.items || [];
+  const box = h('div', { class: 'cmp-body' });
+  if (block.data.title) box.appendChild(h('h4', { class: 'cmp-title', text: block.data.title }));
+
+  const required = items.filter(function (i) { return i.required === true; });
+  const doneRequired = required.filter(function (i) { return ui.ticked[items.indexOf(i)]; }).length;
+
+  const list = h('ul', { class: 'check-list' });
+  items.forEach(function (item, i) {
+    const checked = !!ui.ticked[i];
+    list.appendChild(h('li', { class: 'check-item' + (checked ? ' done' : '') }, [
+      h('label', { class: 'check-label' }, [
+        h('input', {
+          type: 'checkbox',
+          checked: checked,
+          onchange: function () { ui.ticked[i] = !checked; renderFileView(); }
+        }),
+        h('span', { class: 'check-text', text: String(item.text === undefined ? '' : item.text) }),
+        item.required === true ? h('span', { class: 'check-req', text: 'required' }) : null
+      ]),
+      item.note ? cmpProse(item.note, 'check-note') : null
+    ]));
+  });
+  box.appendChild(list);
+
+  const total = items.length;
+  const done = items.filter(function (_, i) { return ui.ticked[i]; }).length;
+  box.appendChild(h('div', { class: 'cmp-controls' }, [
+    h('span', {
+      class: 'cmp-count' + (required.length && doneRequired === required.length ? ' complete' : ''),
+      text: done + ' of ' + total + ' done'
+        + (required.length ? ' · ' + doneRequired + '/' + required.length + ' required' : '')
+    }),
+    // Ticks live in the page and nowhere else until there is a learner-state
+    // aggregate to put them in. Saying so beats a checklist that silently
+    // forgets between reloads.
+    block.data.persist === true
+      ? h('span', { class: 'cmp-hint', text: 'not saved between visits yet' })
+      : null
+  ]));
+  return box;
+}
+
+/* --- attempts --- */
+
+function verdictPanel(block, ui) {
+  if (ui.error) return h('div', { class: 'cmp-error', role: 'alert', text: ui.error });
+  if (!ui.verdict) return h('div', { class: 'cmp-verdict-slot', 'aria-live': 'polite' });
+
+  const v = ui.verdict;
+  const panel = h('div', {
+    class: 'cmp-verdict ' + (v.correct ? 'right' : 'wrong'),
+    role: 'status',
+    'aria-live': 'polite'
+  });
+  panel.appendChild(h('div', { class: 'verdict-head' }, [
+    h('span', { class: 'verdict-mark', text: v.correct ? '✓' : '✕' }),
+    h('span', { class: 'verdict-word', text: v.correct ? 'Correct' : 'Not quite' }),
+    typeof v.score === 'number' && !v.correct && v.score > 0
+      ? h('span', { class: 'verdict-score', text: Math.round(v.score * 100) + '% of the answer' })
+      : null
+  ]));
+  (v.feedback || []).forEach(function (line) {
+    panel.appendChild(cmpProse(line, 'verdict-feedback'));
+  });
+  if (v.rationale) {
+    panel.appendChild(h('div', { class: 'verdict-why' }, [
+      h('div', { class: 'verdict-why-label', text: 'why' }),
+      cmpProse(v.rationale)
+    ]));
+  }
+  return panel;
+}
+
+function submitAttempt(block, response) {
+  const ui = componentState(block);
+  if (ui.busy) return;
+  const id = state.sessionId, path = state.openPath, at = state.at;
+  ui.busy = true;
+  ui.error = null;
+  renderFileView();
+  const body = { path: path, component_id: block.id, response: response };
+  if (at !== null) body.at = at;
+  return api.post('/api/sessions/' + encodeURIComponent(id) + '/attempts', body)
+    .then(function (verdict) {
+      if (state.sessionId !== id || state.openPath !== path) return;
+      ui.busy = false;
+      ui.verdict = verdict;
+      renderFileView();
+    })
+    .catch(function (e) {
+      if (state.sessionId !== id || state.openPath !== path) return;
+      ui.busy = false;
+      ui.error = 'Could not check that answer: ' + e.message;
+      renderFileView();
+    });
+}
+
+function resetAttempt(block) {
+  const ui = componentState(block);
+  ui.verdict = null;
+  ui.error = null;
+  ui.picked = [];
+  ui.typed = {};
+  renderFileView();
+}
+
 /* ===================================================================== */
 /* api                                                                   */
 /* ===================================================================== */
@@ -544,6 +956,16 @@ const state = {
   fileError: null,
   fileMissing: false,       // 404: the path does not exist at this point
   openRevisions: {},        // history index -> bool
+  // The parsed form of the open markdown file, fetched alongside the raw text
+  // so the source toggle still has something to show. Null until it arrives,
+  // and null for a file the server found no components in.
+  fileParsed: null,
+  fileParsedAt: undefined,
+  // 'author' sees the answer key; 'learner' asks the server to withhold it.
+  // Defaults to author because this console's reader is the person building
+  // the course -- the learner view is a preview of someone else's screen.
+  componentView: 'author',
+  components: {},           // "path#component-id" -> that widget's UI state
   sending: false,          // this tab has a POST /turns in flight
   turnRunning: false,      // a turn is running on the session (maybe another tab)
   watchedTurn: null,       // {turn_index, started_at, elapsed_seconds, from_index}
@@ -2653,6 +3075,12 @@ function openFile(path) {
     state.fileError = null;
     state.fileMissing = false;
     state.openRevisions = {};
+    state.fileParsed = null;
+    state.fileParsedAt = undefined;
+    // Answers typed into the file being closed are not answers to the next
+    // one, and a stale verdict shown against a different document would be
+    // worse than losing the attempt.
+    state.components = {};
   }
   renderWorkspace();
   loadFile();
@@ -2680,6 +3108,7 @@ function loadFile() {
       if (state.at !== at) return;   // scrubbed on past this response
       state.fileContent = res && typeof res === 'object' ? res.content : res;
       state.fileContentAt = at;
+      loadParsed();
     }
     renderFileView();
   }).catch(function (e) {
@@ -2691,6 +3120,43 @@ function loadFile() {
     else state.fileError = e.message;
     renderFileView();
   });
+}
+
+/* The parsed companion to `loadFile`.
+ *
+ * A second request rather than a replacement for the first, because the source
+ * toggle and every non-markdown file still need the raw bytes, and because a
+ * parse failure must never cost the reader the file itself -- on any error the
+ * viewer simply falls back to rendering the markdown the way it always has.
+ *
+ * Fetched for markdown files only, and re-fetched when the view switches,
+ * because which fields come back is the server's decision and not a filter the
+ * client could apply to a payload it already holds. */
+function loadParsed() {
+  const id = state.sessionId, path = state.openPath, at = state.at;
+  const view = state.componentView;
+  if (!path || !isMarkdownPath(path)) { state.fileParsed = null; return Promise.resolve(); }
+  const url = '/api/sessions/' + encodeURIComponent(id) + '/files/parsed'
+    + '?path=' + encodePath(path)
+    + '&view=' + encodeURIComponent(view)
+    + (at === null ? '' : '&at=' + at);
+  return api.get(url).then(function (doc) {
+    if (state.sessionId !== id || state.openPath !== path || state.at !== at) return;
+    if (state.componentView !== view) return;   // toggled while in flight
+    state.fileParsed = doc;
+    state.fileParsedAt = at;
+    renderFileView();
+  }).catch(function () {
+    if (state.sessionId !== id || state.openPath !== path) return;
+    // Deliberately silent: the raw render below is a complete fallback, and an
+    // error banner over a document that displays perfectly well would be noise.
+    state.fileParsed = null;
+    renderFileView();
+  });
+}
+
+function documentHasComponents(doc) {
+  return !!(doc && doc.blocks && doc.blocks.some(function (b) { return b.kind === 'component'; }));
 }
 
 function renderFileView() {
@@ -2710,6 +3176,16 @@ function renderFileView() {
       renderModeButton('rendered', 'rendered'),
       renderModeButton('source', 'source')
     ]) : null,
+    // Only for a document that actually has components. A view switch on a
+    // file with nothing to withhold is a control that does nothing, and the
+    // header is already crowded.
+    markdown && state.fileTab === 'content' && state.fileRender !== 'source'
+      && documentHasComponents(state.fileParsed)
+      ? h('div', { class: 'tabs' }, [
+          componentViewButton('author', 'author'),
+          componentViewButton('learner', 'learner')
+        ])
+      : null,
     h('div', { class: 'tabs' }, [
       tabButton('content', 'contents'),
       tabButton('history', 'history')
@@ -2738,9 +3214,14 @@ function renderFileView() {
     // The server folds the file to the scrub point for us; while a newer point
     // is in flight the previous contents stay up, dimmed, rather than flashing.
     const stale = state.fileContentAt !== state.at;
-    const view = (markdown && state.fileRender !== 'source')
-      ? renderMarkdown(state.fileContent)
-      : renderCode(state.fileContent);
+    const rendered = markdown && state.fileRender !== 'source';
+    // The parsed document wins when it has components to show; a markdown file
+    // without any renders through the path it always did, which keeps the
+    // common case free of a second render tree.
+    const parsed = rendered && documentHasComponents(state.fileParsed) ? state.fileParsed : null;
+    const view = parsed
+      ? renderDocument(parsed)
+      : (rendered ? renderMarkdown(state.fileContent) : renderCode(state.fileContent));
     if (stale) view.classList.add('stale');
     box.appendChild(view);
     return;
@@ -2806,6 +3287,29 @@ function renderModeButton(id, label) {
       if ((state.fileRender || 'rendered') === id) return;
       state.fileRender = id;
       renderFileView();
+    }
+  }, label);
+}
+
+/* Author or learner. Switching refetches rather than filters, because which
+ * fields exist is the server's decision -- that is the whole point of doing
+ * the projection there -- and the client has no key to hide even if it tried. */
+function componentViewButton(id, label) {
+  const active = (state.componentView || 'author') === id;
+  return h('button', {
+    class: 'tab' + (active ? ' active' : ''),
+    title: id === 'learner'
+      ? 'Preview what a learner is sent: answers and rationales withheld, and graded on the server.'
+      : 'Everything the file contains, including answers and authoring warnings.',
+    onclick: function () {
+      if (active) return;
+      state.componentView = id;
+      // Attempts belong to the view they were made in: a verdict earned as a
+      // learner should not sit under the answer key in the author view.
+      state.components = {};
+      state.fileParsed = null;
+      renderFileView();
+      loadParsed();
     }
   }, label);
 }
