@@ -83,7 +83,11 @@ async def test_a_stored_document_is_retrievable_by_project_and_source(projection
         _events(
             project_id,
             StoreSourceDocument(
-                source_id="s1", text="the body", uri="https://x/1", title="One"
+                corpus_id=project_id,
+                source_id="s1",
+                text="the body",
+                uri="https://x/1",
+                title="One",
             ),
         ),
     )
@@ -104,10 +108,12 @@ async def test_the_row_id_separates_the_same_source_id_in_different_projects(pro
     """
     first, second = uuid4(), uuid4()
     await _project(
-        projection, _events(first, StoreSourceDocument(source_id="s1", text="mine"))
+        projection,
+        _events(first, StoreSourceDocument(corpus_id=first, source_id="s1", text="mine")),
     )
     await _project(
-        projection, _events(second, StoreSourceDocument(source_id="s1", text="yours"))
+        projection,
+        _events(second, StoreSourceDocument(corpus_id=second, source_id="s1", text="yours")),
     )
 
     assert (await rows.get(CorpusDocumentRow.row_id(first, "s1"))).text == "mine"
@@ -126,8 +132,8 @@ async def test_superseding_a_source_leaves_exactly_one_row(projection, rows):
         projection,
         _events(
             project_id,
-            StoreSourceDocument(source_id="s1", text="v1"),
-            StoreSourceDocument(source_id="s1", text="v2 revised"),
+            StoreSourceDocument(corpus_id=project_id, source_id="s1", text="v1"),
+            StoreSourceDocument(corpus_id=project_id, source_id="s1", text="v2 revised"),
         ),
     )
 
@@ -143,7 +149,7 @@ async def test_a_dropped_document_is_no_longer_returned(projection, rows):
         projection,
         _events(
             project_id,
-            StoreSourceDocument(source_id="s1", text="body"),
+            StoreSourceDocument(corpus_id=project_id, source_id="s1", text="body"),
             DropSourceDocument(source_id="s1", reason="paywalled stub"),
         ),
     )
@@ -163,9 +169,9 @@ async def test_storing_over_a_dropped_source_makes_it_readable_again(projection,
         projection,
         _events(
             project_id,
-            StoreSourceDocument(source_id="s1", text="v1"),
+            StoreSourceDocument(corpus_id=project_id, source_id="s1", text="v1"),
             DropSourceDocument(source_id="s1", reason="wrong paper"),
-            StoreSourceDocument(source_id="s1", text="v2"),
+            StoreSourceDocument(corpus_id=project_id, source_id="s1", text="v2"),
         ),
     )
 
@@ -183,9 +189,11 @@ async def test_rebuilding_from_an_empty_table_reproduces_the_same_rows(rows):
     project_id = uuid4()
     events = _events(
         project_id,
-        StoreSourceDocument(source_id="s1", text="v1", uri="https://x/1"),
-        StoreSourceDocument(source_id="s2", text="other", title="Two"),
-        StoreSourceDocument(source_id="s1", text="v2 revised"),
+        StoreSourceDocument(
+            corpus_id=project_id, source_id="s1", text="v1", uri="https://x/1"
+        ),
+        StoreSourceDocument(corpus_id=project_id, source_id="s2", text="other", title="Two"),
+        StoreSourceDocument(corpus_id=project_id, source_id="s1", text="v2 revised"),
         DropSourceDocument(source_id="s2", reason="duplicate"),
     )
 
@@ -216,7 +224,9 @@ async def test_text_round_trips_byte_exactly(db_path, text):
     project_id = uuid4()
     store = await CorpusStore.open(db_path)
     try:
-        for event in _events(project_id, StoreSourceDocument(source_id="s1", text=text)):
+        for event in _events(
+            project_id, StoreSourceDocument(corpus_id=project_id, source_id="s1", text=text)
+        ):
             await store.projection.handle(event)
 
         document = await store.get(project_id, "s1")
@@ -238,7 +248,10 @@ async def test_the_table_is_created_on_open(db_path):
 
 async def test_documents_outlive_the_process(db_path):
     project_id = uuid4()
-    events = _events(project_id, StoreSourceDocument(source_id="s1", text="remembered"))
+    events = _events(
+        project_id,
+        StoreSourceDocument(corpus_id=project_id, source_id="s1", text="remembered"),
+    )
 
     store = await CorpusStore.open(db_path)
     for event in events:
@@ -263,8 +276,16 @@ async def test_listing_carries_metadata_and_never_text(db_path):
     try:
         for event in _events(
             project_id,
-            StoreSourceDocument(source_id="s1", text="a body", uri="https://x/1", title="One"),
-            StoreSourceDocument(source_id="s2", text="another body", note="skim only"),
+            StoreSourceDocument(
+                corpus_id=project_id,
+                source_id="s1",
+                text="a body",
+                uri="https://x/1",
+                title="One",
+            ),
+            StoreSourceDocument(
+                corpus_id=project_id, source_id="s2", text="another body", note="skim only"
+            ),
         ):
             await store.projection.handle(event)
 
@@ -290,8 +311,8 @@ async def test_get_and_list_both_refuse_a_dropped_document(db_path):
     try:
         for event in _events(
             project_id,
-            StoreSourceDocument(source_id="s1", text="kept"),
-            StoreSourceDocument(source_id="s2", text="dropped"),
+            StoreSourceDocument(corpus_id=project_id, source_id="s1", text="kept"),
+            StoreSourceDocument(corpus_id=project_id, source_id="s2", text="dropped"),
             DropSourceDocument(source_id="s2", reason="paywalled stub"),
         ):
             await store.projection.handle(event)
@@ -306,7 +327,9 @@ async def test_one_project_cannot_read_another_projects_documents(db_path):
     project_id, other = uuid4(), uuid4()
     store = await CorpusStore.open(db_path)
     try:
-        for event in _events(project_id, StoreSourceDocument(source_id="s1", text="mine")):
+        for event in _events(
+            project_id, StoreSourceDocument(corpus_id=project_id, source_id="s1", text="mine")
+        ):
             await store.projection.handle(event)
 
         assert await store.get(other, "s1") is None
@@ -324,7 +347,7 @@ async def test_dropping_a_source_with_no_row_is_an_error(projection):
     project_id = uuid4()
     events = _events(
         project_id,
-        StoreSourceDocument(source_id="s1", text="body"),
+        StoreSourceDocument(corpus_id=project_id, source_id="s1", text="body"),
         DropSourceDocument(source_id="s1", reason="mistake"),
     )
 
@@ -338,7 +361,11 @@ async def test_the_runner_follows_the_log(db_path, store, publisher):
     await runner.start()
     try:
         corpus = Corpus(project_id)
-        corpus.execute(StoreSourceDocument(source_id="s1", text="followed", title="One"))
+        corpus.execute(
+            StoreSourceDocument(
+                corpus_id=corpus.aggregate_id, source_id="s1", text="followed", title="One"
+            )
+        )
         await build_corpus_repository(store, publisher).save(corpus)
 
         await runner.caught_up()
@@ -359,9 +386,19 @@ async def test_a_rebuild_reproduces_the_table_from_the_log(db_path, store, publi
     await runner.start()
     try:
         corpus = Corpus(project_id)
-        corpus.execute(StoreSourceDocument(source_id="s1", text="v1"))
-        corpus.execute(StoreSourceDocument(source_id="s1", text="v2 revised"))
-        corpus.execute(StoreSourceDocument(source_id="s2", text="dropped later"))
+        corpus.execute(
+            StoreSourceDocument(corpus_id=corpus.aggregate_id, source_id="s1", text="v1")
+        )
+        corpus.execute(
+            StoreSourceDocument(
+                corpus_id=corpus.aggregate_id, source_id="s1", text="v2 revised"
+            )
+        )
+        corpus.execute(
+            StoreSourceDocument(
+                corpus_id=corpus.aggregate_id, source_id="s2", text="dropped later"
+            )
+        )
         corpus.execute(DropSourceDocument(source_id="s2", reason="duplicate"))
         await build_corpus_repository(store, publisher).save(corpus)
         await runner.caught_up()

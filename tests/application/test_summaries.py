@@ -28,7 +28,13 @@ def user_message(text: str) -> dict:
 def make_session(aggregates):
     def make(first_message: str | None = None) -> CodingSession:
         aggregate = aggregates.create_new(uuid4())
-        aggregate.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+        aggregate.execute(
+            StartSession(
+                session_id=aggregate.aggregate_id,
+                system_prompt=SYSTEM_PROMPT,
+                model_name=MODEL_NAME,
+            )
+        )
         if first_message is not None:
             aggregate.execute(SendUserMessage(message=user_message(first_message)))
         return aggregate

@@ -263,6 +263,7 @@ class SessionService:
         aggregate = self._repository.create(session_id)
         aggregate.execute(
             StartSession(
+                session_id=session_id,
                 system_prompt=(
                     system_prompt if system_prompt is not None else self._default_system_prompt
                 ),
@@ -299,6 +300,7 @@ class SessionService:
             session = self._repository.create(session_id)
             session.execute(
                 StartSession(
+                    session_id=session_id,
                     system_prompt=self._default_system_prompt + self._knowledge_prompt,
                     model_name=self._executor.model_name,
                     project_id=project_id,
@@ -342,6 +344,7 @@ class SessionService:
         session = self._repository.create(session_id)
         session.execute(
             StartSession(
+                session_id=session_id,
                 system_prompt=self._default_system_prompt + self._knowledge_prompt,
                 model_name=self._executor.model_name,
                 project_id=project_id,

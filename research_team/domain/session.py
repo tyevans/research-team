@@ -48,12 +48,20 @@ from research_team.domain.events import (
     TurnFailed,
     UserMessageSent,
 )
+from research_team.domain.targeting import ChecksCommandTarget
 
 
 class SessionState(BaseModel):
     """Everything derivable from the event stream."""
 
-    session_id: UUID
+    session_id: UUID | None = None
+    """None before the session exists. Set by the fold of `SessionStarted`.
+
+    Optional because `initial_state()` takes no arguments (eventsource 0.12):
+    the value before any event is one value for the aggregate *type*, and an
+    id is not part of it.
+    """
+
     status: Literal["new", "started"] = "new"
     """Whether the session exists yet.
 
@@ -79,9 +87,9 @@ class SessionState(BaseModel):
     """The summary itself. The messages it replaces are still in `messages`."""
 
 
-def initial_state(aggregate_id: UUID) -> SessionState:
+def initial_state() -> SessionState:
     """A session before anything has happened to it."""
-    return SessionState(session_id=aggregate_id)
+    return SessionState()
 
 
 def outstanding_tool_call_ids(messages: list[dict[str, Any]]) -> set[str]:
@@ -112,11 +120,13 @@ def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
     match command, state:
         # ---- creation ----
         case StartSession(
-            system_prompt=prompt, model_name=model, project_id=project_id
+            session_id=new_id, system_prompt=prompt, model_name=model, project_id=project_id
         ), SessionState(status="new"):
             return [
                 SessionStarted(
-                    aggregate_id=session_id,
+                    # From the command, not the state: this is the creation
+                    # command, so on a fresh session `state.session_id` is None.
+                    aggregate_id=new_id,
                     system_prompt=prompt,
                     model_name=model,
                     project_id=project_id,
@@ -267,7 +277,9 @@ def evolve(state: SessionState, event: DomainEvent) -> SessionState:
             # Replaces state wholesale: this is the creation event, and it is
             # the only one that establishes rather than amends.
             return SessionState(
-                session_id=state.session_id,
+                # The event is where the id enters the state: `decide` reads it
+                # back off `state` for every command but the first.
+                session_id=event.aggregate_id,
                 status="started",
                 system_prompt=prompt,
                 model_name=model,
@@ -312,7 +324,7 @@ def evolve(state: SessionState, event: DomainEvent) -> SessionState:
             return state
 
 
-class CodingSession(DeciderAggregate[SessionState, SessionCommand]):
+class CodingSession(ChecksCommandTarget, DeciderAggregate[SessionState, SessionCommand]):
     """The imperative shell. Holds no rules -- it delegates all three.
 
     Everything the library needs from an aggregate (replay, snapshots, version
@@ -326,6 +338,7 @@ class CodingSession(DeciderAggregate[SessionState, SessionCommand]):
     """
 
     aggregate_type = "CodingSession"
+    target_field = "session_id"
     schema_version = 4  # SessionState gained `status` for the decider port
 
     initial_state = staticmethod(initial_state)

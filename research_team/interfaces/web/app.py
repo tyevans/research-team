@@ -213,7 +213,7 @@ def create_app(
                 detail=f"project {body.name!r} already exists ({collision})",
             )
         aggregate = service.projects.create_new(uuid4())
-        aggregate.execute(CreateProject(name=body.name))
+        aggregate.execute(CreateProject(project_id=aggregate.aggregate_id, name=body.name))
         await service.projects.save(aggregate)
         return project_view(aggregate.aggregate_id, body.name)
 

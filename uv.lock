@@ -404,16 +404,16 @@ wheels = [
 
 [[package]]
 name = "eventsource-py"
-version = "0.10.0"
+version = "0.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "orjson" },
     { name = "pydantic" },
-    { name = "sqlalchemy" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9b/b1/05983b1d287ce091ab49f9f359f96ca85badb426c2db33c00f1a4dc561ab/eventsource_py-0.10.0.tar.gz", hash = "sha256:c06b04ac0cd432d629c12d6f834eb75e357bc63091514431d9ff764632a766c9", size = 2808160, upload-time = "2026-08-04T04:33:59.569Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/24/5cd0d851e1dd0682c21b57bfed50ad6228a48bb3e66a97e1cfe77f0e6069/eventsource_py-0.12.0.tar.gz", hash = "sha256:d173a3304c3dad22588a8cd57f8e1b80fd578114e6f70db373fbcb4a60f390b4", size = 2866078, upload-time = "2026-08-06T07:50:03.167Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ca/7c/5b980081cdbf8b25855b36036f368400f3a8437c31efa0276518388736ac/eventsource_py-0.10.0-py3-none-any.whl", hash = "sha256:0fb701eeec486ca9f5dee2d2bc87c8d4d3d35335cd6bc7bb19292a963b0265c7", size = 707528, upload-time = "2026-08-04T04:33:57.495Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/b8/ebe94477843b8f2c9f5d4b64ba045d4ded074c76949f47b616a6317c2f58/eventsource_py-0.12.0-py3-none-any.whl", hash = "sha256:0714c4390766ec683dbd8990b8326fca48ee7901e3381b522703e93024d13205", size = 720074, upload-time = "2026-08-06T07:50:01.127Z" },
 ]
 
 [package.optional-dependencies]
@@ -1619,7 +1619,7 @@ wheels = [
 
 [[package]]
 name = "redstring"
-version = "0.2.0"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dateparser" },
@@ -1629,9 +1629,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dd/a0/9373ca2f2b4444dcc1c7dd9c776ded7f0dbf1bb66e9ec57a71a2f08fc3ab/redstring-0.2.0.tar.gz", hash = "sha256:abb4bb90d51dc06cdf1a8e710e3d0a88153d466b8e7863927a971b93cb04675f", size = 1188454, upload-time = "2026-08-05T17:26:46.886Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/04/a4/0ab1029a827b77e21f177f203831a3c348d053f93a4ca1b20d1fcf6dcbdc/redstring-0.3.0.tar.gz", hash = "sha256:09331f8b2e7a05b65ccd7b8607b31aadc16f75c4245e1c06a507a740a6f89325", size = 1266377, upload-time = "2026-08-07T01:00:11.479Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/70/5f/a9f628c611d0aff15e18287597cb82192257dbc5f4eacc2f231baf3e9bb5/redstring-0.2.0-py3-none-any.whl", hash = "sha256:1be645d3c04b5eebeecca69467b8e87f4f763dd45df10007917507d8bcd72f1b", size = 240734, upload-time = "2026-08-05T17:26:45.475Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/09/c5a021f779a0a4d9e2cdd3520f3108facdd11fc837e93432fcf0945d1a5b/redstring-0.3.0-py3-none-any.whl", hash = "sha256:5cb88875f7476b575184d828834a91fbea0b1635462a107831142eb6e7160d4f", size = 246609, upload-time = "2026-08-07T01:00:09.876Z" },
 ]
 
 [package.optional-dependencies]
@@ -1776,14 +1776,14 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "deepagents", specifier = ">=0.7.1,<0.8" },
-    { name = "eventsource-py", extras = ["sqlite"], specifier = ">=0.10.0" },
-    { name = "eventsource-py", extras = ["telemetry"], marker = "extra == 'tracing'", specifier = ">=0.10.0" },
+    { name = "eventsource-py", extras = ["sqlite"], specifier = ">=0.12.0,<0.13" },
+    { name = "eventsource-py", extras = ["telemetry"], marker = "extra == 'tracing'", specifier = ">=0.12.0,<0.13" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "langchain-openai", specifier = ">=1.4.1" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'tracing'", specifier = ">=1.0,<2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "redstring", extras = ["llm", "neo4j"], specifier = ">=0.2.0" },
+    { name = "redstring", extras = ["llm", "neo4j"], specifier = ">=0.3.0,<0.4" },
     { name = "trafilatura", specifier = ">=2.2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.1" },
 ]
@@ -1944,6 +1944,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0d/c9/f14fdf71bb8957e0c7e39db69bbdf12b5c80f4ef775fdfa127bf4e0d6760/sqlalchemy-2.0.51-cp314-cp314t-win32.whl", hash = "sha256:9161cfc9efce70d1715f47d6ff40f79c6778c00d53be4fbc09d70301e4b83ba7", size = 2151313, upload-time = "2026-06-15T16:03:39.127Z" },
     { url = "https://files.pythonhosted.org/packages/6a/c6/673e618e6f4f297e126d9b56ea2f6478708f6c1af4e3223835c22e2c3697/sqlalchemy-2.0.51-cp314-cp314t-win_amd64.whl", hash = "sha256:159bb6ba32059f57ad7375a8f50d844dd2f19d14954ecf820cd33e20debd46b2", size = 2186280, upload-time = "2026-06-15T16:03:40.569Z" },
     { url = "https://files.pythonhosted.org/packages/e2/22/dbf013a12ec759e54a34a119e9e217435b3f71b2dd5c61a7ade0a25dae87/sqlalchemy-2.0.51-py3-none-any.whl", hash = "sha256:bb024d8b621d0be75f4f44ecc7c950450026e76d66dc8f791bb5331d7fed59d5", size = 1944334, upload-time = "2026-06-15T16:09:22.418Z" },
+]
+
+[package.optional-dependencies]
+asyncio = [
+    { name = "greenlet" },
 ]
 
 [[package]]

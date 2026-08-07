@@ -221,7 +221,7 @@ async def _handle_project(repl: "Repl", argument: str) -> str:
         if collision is not None:
             return f"project {name!r} already exists ({collision})"
         aggregate = service.projects.create_new(uuid4())
-        aggregate.execute(CreateProject(name=name))
+        aggregate.execute(CreateProject(project_id=aggregate.aggregate_id, name=name))
         await service.projects.save(aggregate)
         return f"created project {name} ({aggregate.aggregate_id})"
 

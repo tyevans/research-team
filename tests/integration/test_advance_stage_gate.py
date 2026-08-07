@@ -82,7 +82,7 @@ def _advancing_model(rationale: str = "the intake artifacts are written and cite
 async def _project(application, *, workflow: bool = True):
     project_id = uuid4()
     project = application.service.projects.create_new(project_id)
-    project.execute(CreateProject(name="course"))
+    project.execute(CreateProject(project_id=project_id, name="course"))
     if workflow:
         project.execute(SelectWorkflow(preset=hybrid_default))
     await application.service.projects.save(project)

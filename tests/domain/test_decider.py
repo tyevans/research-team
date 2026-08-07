@@ -58,8 +58,12 @@ def run(state, *commands):
 def started(session_id=None):
     """A session that has been started and nothing else."""
     return run(
-        initial_state(session_id or uuid4()),
-        StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME),
+        initial_state(),
+        StartSession(
+            session_id=session_id or uuid4(),
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+        ),
     )
 
 
@@ -94,13 +98,21 @@ def test_a_new_session_is_not_yet_started():
     about the event store rather than about a session. Here it is `status`,
     which is the thing `decide` matches on.
     """
-    assert initial_state(uuid4()).status == "new"
+    assert initial_state().status == "new"
 
 
 def test_starting_a_session_emits_session_started():
-    state = initial_state(uuid4())
+    session_id = uuid4()
+    state = initial_state()
 
-    [event] = decide(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME), state)
+    [event] = decide(
+        StartSession(
+            session_id=session_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+        ),
+        state,
+    )
+
+    assert event.aggregate_id == session_id
 
     assert isinstance(event, SessionStarted)
     assert event.system_prompt == SYSTEM_PROMPT
@@ -109,15 +121,18 @@ def test_starting_a_session_emits_session_started():
 
 def test_starting_twice_is_rejected():
     with pytest.raises(CommandRejectedError, match="already started"):
-        decide(StartSession(system_prompt="x", model_name="y"), started())
+        decide(StartSession(session_id=uuid4(), system_prompt="x", model_name="y"), started())
 
 
 def test_a_session_records_the_project_it_belongs_to():
     session_id, project_id = uuid4(), uuid4()
-    state = initial_state(session_id)
+    state = initial_state()
 
     events = decide(
-        StartSession(system_prompt="p", model_name="m", project_id=project_id), state
+        StartSession(
+            session_id=session_id, system_prompt="p", model_name="m", project_id=project_id
+        ),
+        state,
     )
 
     assert events[0].project_id == project_id
@@ -126,9 +141,11 @@ def test_a_session_records_the_project_it_belongs_to():
 
 def test_a_session_without_a_project_has_none():
     session_id = uuid4()
-    state = initial_state(session_id)
+    state = initial_state()
 
-    events = decide(StartSession(system_prompt="p", model_name="m"), state)
+    events = decide(
+        StartSession(session_id=session_id, system_prompt="p", model_name="m"), state
+    )
 
     assert events[0].project_id is None
     assert evolve(state, events[0]).project_id is None
@@ -148,7 +165,7 @@ def test_a_session_without_a_project_has_none():
 def test_nothing_is_accepted_before_the_session_starts(command):
     """One case per command in `decide`, rather than a guard called everywhere."""
     with pytest.raises(CommandRejectedError, match="not started"):
-        decide(command, initial_state(uuid4()))
+        decide(command, initial_state())
 
 
 # ---------------- conversation ----------------

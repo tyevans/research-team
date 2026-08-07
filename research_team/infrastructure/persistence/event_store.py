@@ -5,6 +5,7 @@ from uuid import UUID
 
 from eventsource import (
     DomainEvent,
+    FeedReadOptions,
     InMemoryEventBus,
     Position,
     PositionDecodeError,
@@ -74,10 +75,21 @@ def build_corpus_repository(
 
 def build_aggregate_repository(
     store: SQLiteEventStore,
-    db_path: str,
     publisher: InMemoryEventBus | None = None,
-    snapshot_store: SQLiteSnapshotStore | None = None,
+    *,
+    snapshot_store: SQLiteSnapshotStore,
 ) -> AggregateRepository[CodingSession]:
+    """Sessions, over `store`, snapshotting into `snapshot_store`.
+
+    `snapshot_store` is required rather than defaulted. It used to fall back to
+    building its own, which was safe while `SQLiteSnapshotStore` opened a
+    connection per operation and owned nothing. Since eventsource 0.12 it holds
+    one connection for its lifetime and must be closed -- and a store built
+    here is returned to nobody, so nothing can close it. The old B5 note had
+    this the other way round: the reason not to build one here was that a
+    second instance leaked. The reason now is that *any* instance built here
+    leaks, because this function does not hand it back.
+    """
     return AggregateRepository(
         store,
         CodingSession,
@@ -86,18 +98,10 @@ def build_aggregate_repository(
         # It fires after the append commits, so a signal never runs ahead of
         # the write it is announcing.
         event_publisher=publisher,
-        # Same database file as the event store: the schema that creates the
-        # `snapshots` table is applied by the store's connection, so a separate
-        # path (or a second ":memory:") would leave the table missing.
-        #
-        # `SQLiteSnapshotStore` has no `close()` and its aiosqlite worker is a
-        # non-daemon thread, so a second instance leaks a thread nothing can
-        # release (BACKLOG B5). A caller that already has one -- the
-        # composition root, for the knowledge graph's consolidator -- passes
-        # it in rather than letting a second get built here.
-        snapshot_store=(
-            snapshot_store if snapshot_store is not None else SQLiteSnapshotStore(db_path)
-        ),
+        # Opened against the same database file as the event store: the schema
+        # that creates the `snapshots` table is applied by the store's
+        # connection, so a separate path would leave the table missing.
+        snapshot_store=snapshot_store,
         snapshot_threshold=SNAPSHOT_THRESHOLD,
         # A snapshot is an optimisation for a future read, and the turn that
         # triggers it is the one thing in this application a person is actually
@@ -145,7 +149,7 @@ class EventStoreSessionRepository:
         publisher = InMemoryEventBus()
         snapshot_store = SQLiteSnapshotStore(db_path)
         aggregates = build_aggregate_repository(
-            store, db_path, publisher, snapshot_store=snapshot_store
+            store, publisher, snapshot_store=snapshot_store
         )
         return cls(store, aggregates, publisher, snapshot_store=snapshot_store)
 
@@ -267,13 +271,24 @@ class EventStoreSessionRepository:
     async def read_since(self, position: object | None) -> list[FeedEntry]:
         """Session events since `position`, in append order.
 
-        Filtered by aggregate type rather than taking the whole feed. This
-        store is shared: redstring's `Document` and `Consolidation` streams
-        live in the same file, and their aggregate ids are document and tenant
-        ids, not sessions. Unfiltered, every one of them would arrive here as a
+        Scoped by aggregate type rather than taking the whole feed. This store
+        is shared: redstring's `Document` and `Consolidation` streams live in
+        the same file, and their aggregate ids are document and tenant ids, not
+        sessions. Unscoped, every one of them would arrive here as a
         `FeedEntry` claiming to be a session that does not exist.
+
+        The scoping is `FeedReadOptions.aggregate_type` (eventsource 0.12),
+        which the SQLite adapter pushes into the same query that already
+        handles `from_position`. It used to be a comprehension filter here,
+        which read the whole feed to discard most of it -- forced, because
+        before 0.12 the filter had nowhere else to go.
         """
-        envelopes = await collect(self._store.read_all(from_position=position))
+        envelopes = await collect(
+            self._store.read_all(
+                from_position=position,
+                options=FeedReadOptions(aggregate_type=CodingSession.aggregate_type),
+            )
+        )
         return [
             FeedEntry(
                 session_id=envelope.event.aggregate_id,
@@ -281,7 +296,6 @@ class EventStoreSessionRepository:
                 position=envelope.position,
             )
             for envelope in envelopes
-            if envelope.event.aggregate_type == CodingSession.aggregate_type
         ]
 
     def encode_position(self, position: object) -> str:
@@ -326,4 +340,10 @@ class EventStoreSessionRepository:
         # that nothing is awaiting -- so the error would surface as a missing
         # snapshot much later, if at all.
         await self.drain_snapshots()
+        if self._snapshot_store is not None:
+            # Required since eventsource 0.12: the snapshot store holds one
+            # connection for its lifetime, backed by a non-daemon aiosqlite
+            # thread that keeps the interpreter alive until it is closed.
+            # Nothing in the library closes it for us.
+            await self._snapshot_store.close()
         await self._store.close()

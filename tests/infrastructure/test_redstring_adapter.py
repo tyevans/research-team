@@ -17,21 +17,26 @@ from tests.conftest import fake_provider
 async def build_adapter():
     """Factory fixture for a `RedstringKnowledge` over a real `SQLiteEventStore`.
 
-    `SQLiteEventStore` holds a long-lived `aiosqlite` connection with a
-    non-daemon worker thread (BACKLOG B5); it must be closed or that thread
-    lingers past the test. Some tests call this factory only once, but it is
-    shaped to support more -- every `SQLiteEventStore` it opens is tracked and
-    closed in teardown, so nothing here can be forgotten by a future test
-    that calls it twice. `SQLiteSnapshotStore` opens per-operation
-    connections and needs no closing.
+    Both stores hold a long-lived `aiosqlite` connection with a non-daemon
+    worker thread, and both must be closed or that thread lingers past the
+    test and surfaces later as an unrelated test's "Event loop is closed".
+    Some tests call this factory only once, but it is shaped to support more --
+    everything it opens is tracked and closed in teardown, so nothing here can
+    be forgotten by a future test that calls it twice.
+
+    `SQLiteSnapshotStore` used to open a connection per operation and need no
+    closing. That stopped being true in eventsource 0.12, which gave it one
+    connection for its lifetime and a `close()` to match.
     """
     opened_event_stores = []
+    opened_snapshot_stores = []
 
     def _build(tmp_path, project_id, *, provider=None):
         db_path = str(tmp_path / "sessions.db")
         store = SQLiteEventStore(db_path)
         snapshot_store = SQLiteSnapshotStore(db_path)
         opened_event_stores.append(store)
+        opened_snapshot_stores.append(snapshot_store)
         return (
             RedstringKnowledge(
                 project_id,
@@ -49,6 +54,8 @@ async def build_adapter():
 
     yield _build
 
+    for snapshot_store in opened_snapshot_stores:
+        await snapshot_store.close()
     for store in opened_event_stores:
         await store.close()
 

@@ -3,33 +3,18 @@
 Runs at project open, which is what lets the default install keep the graph in
 memory: the store is derived, so losing it costs a fold rather than data.
 
-Two workarounds live here, both waiting on upstream redstring work recorded in
-`docs/superpowers/specs/2026-08-04-projects-and-redstring-knowledge-design.md`:
-
-- **R3.** `project()` folds the *global* feed -- no stream, category or tenant
-  argument -- so in a shared store it reads every session event too. Scoping is
-  by `tenant_filter` on the projection instead; research-team's own events
-  carry no tenant and are filtered out. Still open in redstring 0.2.0, and
-  cheaper to close than it looks: `GlobalEventFeed.read_all` already takes
-  `FeedReadOptions(tenant_id=...)`, which the SQLite adapter pushes into the
-  `WHERE` clause. `project()` simply never passes it, so the filtering that
-  could happen in the query happens here in Python instead.
-- **R4.** `ReplayReport.failed` is a count, not a raise. A poison event is
-  swallowed and the graph comes up quietly incomplete, so the count is checked
-  here and refused. Note what the refusal below *cannot* say: redstring
-  discards the exception, so there is no way to name which event failed or
-  why. The check is safe and undiagnosable at the same time.
-
-redstring exports its replay entry point as the bare verb `project`, which in
-this file would sit next to `project_id` meaning something entirely unrelated
--- a research-team project, which redstring knows only as a tenant. It is
-imported under `fold_into` so the two never read as the same idea.
+The two workarounds that used to live here -- R3 (no scoping, so the fold read
+the whole log and dropped foreign events in Python) and R4 (a failed replay was
+a count, so a partial graph came up silently and undiagnosably) -- are both
+closed upstream. redstring 0.3.0 removed its own replay module in favour of
+`eventsource.replay`, which takes `tenant_id` (pushed into the adapter's
+`WHERE` clause) and `strict`, and whose failures name the offending event.
 """
 
 from uuid import UUID
 
+from eventsource import ReplayFailedError, replay
 from redstring import GraphProjection, GraphStore
-from redstring import project as fold_into
 
 from research_team.application.knowledge import KnowledgeError
 
@@ -41,16 +26,25 @@ async def rebuild_graph(store: GraphStore, *, feed, project_id: UUID) -> int:
     agent asks for it, and is replayed from the log thereafter. A model call on
     this path would mean a session refolded years from now depends on a live
     endpoint.
+
+    `tenant_id` scopes the read rather than the delivery: redstring knows a
+    research-team project only as a tenant, and this store is shared, so the
+    alternative is reading every session event in the file and discarding it.
+    research-team's own events carry no tenant and so are excluded by the same
+    filter.
     """
-    # Workaround for R3: project() has no stream/category scoping, so the
-    # projection itself filters to this tenant.
-    projection = GraphProjection(store, tenant_filter=project_id)
-    report = await fold_into(feed, [projection])
-    # Workaround for R4: a failed replay is a count, not an exception, so a
-    # partial graph would otherwise come up silently.
-    if report.failed:
+    projection = GraphProjection(store)
+    try:
+        report = await replay(feed, [projection], tenant_id=project_id, strict=True)
+    except ReplayFailedError as error:
+        # `strict` refuses at the first bad event rather than folding on and
+        # reporting a count. The failure names the event, which is the whole
+        # difference between a refusal an operator can act on and one they
+        # cannot -- so it is repeated here rather than left to the `__cause__`.
+        failure = error.failure
         raise KnowledgeError(
-            f"{report.failed} knowledge event(s) failed to replay for project "
-            f"{project_id}; refusing to serve a partial graph"
-        )
+            f"knowledge event {failure.event_type} at {failure.position} failed to "
+            f"replay for project {project_id} ({failure.error!r}); refusing to serve "
+            "a partial graph"
+        ) from error
     return report.applied

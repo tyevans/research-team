@@ -104,6 +104,28 @@ and contending, which is a different and more tractable problem: close the store
 *(Original title, for anyone following a link: "`SQLiteSnapshotStore` cannot be
 closed, and its thread outlives the process".)*
 
+**Update, eventsource 0.12: the original title became true, and the correction
+became wrong.** ADR 0053 gave `SQLiteSnapshotStore` one connection for its
+lifetime and a `close()` to match, so it is no longer innocent -- it now leaks
+exactly the way `SQLiteEventStore` does, and for exactly the same reason. The
+upgrade closed every site: `EventStoreSessionRepository.close()` closes its
+snapshot store; `build_aggregate_repository` no longer builds one it cannot
+hand back (it now requires one, since a store built there is returned to nobody
+and so can never be closed); and the test fixtures own and close theirs.
+
+Two unrelated leaks surfaced during the same audit and are also closed:
+`SessionSummaryRunner` and `CorpusRunner` each built a SQLAlchemy async engine
+in `start()` and never disposed it, so a pooled aiosqlite connection and its
+thread survived `stop()`. That one predates 0.12 and was never anything to do
+with snapshots.
+
+The suite went from 14 thread-exception warnings to 2. What remains of this
+entry is the *diagnosis* problem, not any known leak: the symptom still names
+no store, which is why finding these took a hand audit of every construction
+site. That half is now filed upstream (eventsource-py BACKLOG, "An unclosed
+connection-owning adapter is undiagnosable"), which is the only place it can
+actually be fixed.
+
 ### B6. `undo_merge` always reports `reason=None`
 
 `RedstringKnowledge.undo_merge` builds its `MergeRecord` from
@@ -344,6 +366,30 @@ event — and it is the only item on this list that becomes impossible the momen
 the first real transcript is ingested.
 
 ## Waiting on redstring
+
+**Closed by redstring 0.3.0 and eventsource 0.12.0.** Every ask in this section
+landed upstream, and the workarounds they justified are deleted:
+
+- **B20** — `Relationship.source_id` exists, defaulting to `None` and filled by
+  `map_extraction` from the document being extracted. There is deliberately no
+  `source_text` counterpart: `ExtractedRelationship` has no span field, so a
+  value there could only be a paraphrase, and a paraphrase in a field named for
+  a quotation reads as evidence. Span-level anchoring remains B13's problem.
+- **R3** — the fold is scoped by `tenant_id`, pushed into the adapter's `WHERE`
+  clause. Rebuilding one project is an indexed read rather than a full scan
+  filtered in Python.
+- **R4** — a replay's failures are named. `ReplayFailure` carries the position,
+  event id, event type, rejecting projection and the exception object itself,
+  and `strict=True` refuses at the first one. `rebuild.py` catches
+  `ReplayFailedError` and re-raises the detail as `KnowledgeError`, so the
+  refusal an operator sees now names the event that caused it.
+
+The rebuild driver moved: redstring 0.3.0 deleted its own replay module in
+favour of `eventsource.replay`, so `rebuild.py` imports from eventsource now.
+R2 (identifying unconsolidated entities) is still open, which is why the repair
+path is still keyed by `source_id`.
+
+*(Entries below are kept for the reasoning; the asks themselves are closed.)*
 
 ### B20. `Relationship` carries no provenance at all
 

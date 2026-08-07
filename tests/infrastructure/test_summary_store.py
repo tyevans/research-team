@@ -27,7 +27,11 @@ async def test_the_table_is_created_on_open(db_path):
 
 async def test_rows_outlive_the_process(db_path, repository, session_id):
     session = repository.create(session_id)
-    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+        )
+    )
     session.execute(
         SendUserMessage(message={"type": "human", "data": {"content": "remembered"}})
     )
@@ -52,7 +56,13 @@ async def test_sessions_are_listed_newest_first(db_path, repository):
     try:
         for label in ("older", "newer"):
             session = repository.create(uuid4())
-            session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+            session.execute(
+                StartSession(
+                    session_id=session.aggregate_id,
+                    system_prompt=SYSTEM_PROMPT,
+                    model_name=MODEL_NAME,
+                )
+            )
             session.execute(
                 SendUserMessage(message={"type": "human", "data": {"content": label}})
             )

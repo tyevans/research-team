@@ -31,6 +31,10 @@ class Command(BaseModel):
 
 
 class StartSession(Command):
+    #: Which session to start. The one command whose target cannot be read back
+    #: off the state, there being no state yet; every later command takes its id
+    #: from the fold of `SessionStarted`.
+    session_id: UUID
     system_prompt: str
     model_name: str
     project_id: UUID | None = None

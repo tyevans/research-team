@@ -23,7 +23,11 @@ FILE_DATA = {"content": "print(1)\n", "encoding": "utf-8"}
 def test_execute_applies_the_events_decide_returns(session_id):
     session = CodingSession(session_id)
 
-    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+        )
+    )
 
     assert [type(e).__name__ for e in session.uncommitted_events] == ["SessionStarted"]
     assert session.state.system_prompt == SYSTEM_PROMPT
@@ -33,7 +37,11 @@ def test_execute_stamps_the_version_decide_cannot_know(session_id):
     """Pure functions have no business knowing about optimistic concurrency."""
     session = CodingSession(session_id)
 
-    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+        )
+    )
     session.execute(SendUserMessage(message={"type": "human", "data": {}}))
 
     assert [e.aggregate_version for e in session.uncommitted_events] == [1, 2]
@@ -63,7 +71,11 @@ def test_state_is_real_before_the_first_event(session_id):
 
 async def test_state_survives_save_and_reload(aggregates, session_id):
     session = aggregates.create_new(session_id)
-    session.execute(StartSession(system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME))
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+        )
+    )
     session.execute(WriteFile(path="/a.py", file_data=FILE_DATA))
     session.execute(SendUserMessage(message={"type": "human", "data": {"content": "hi"}}))
     await aggregates.save(session)

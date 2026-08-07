@@ -17,13 +17,14 @@ from research_team.domain.corpus import (
 
 def _stored(corpus_id, source_id="s1", text="hello", **kwargs):
     [event] = decide(
-        StoreSourceDocument(source_id=source_id, text=text, **kwargs), initial_state(corpus_id)
+        StoreSourceDocument(corpus_id=corpus_id, source_id=source_id, text=text, **kwargs),
+        initial_state(),
     )
     return event
 
 
 def _with(corpus_id, *events):
-    state = initial_state(corpus_id)
+    state = initial_state()
     for event in events:
         state = evolve(state, event)
     return state
@@ -33,8 +34,10 @@ def test_storing_a_document_records_it():
     corpus_id = uuid4()
 
     [event] = decide(
-        StoreSourceDocument(source_id="s1", text="hello", uri="https://x/1", title="One"),
-        initial_state(corpus_id),
+        StoreSourceDocument(
+            corpus_id=corpus_id, source_id="s1", text="hello", uri="https://x/1", title="One"
+        ),
+        initial_state(),
     )
 
     assert isinstance(event, SourceDocumentStored)
@@ -88,7 +91,7 @@ def test_an_empty_corpus_rejects_everything_but_a_store():
     Dropping from a corpus that has never held anything is a caller bug worth
     naming, not a no-op.
     """
-    state = initial_state(uuid4())
+    state = initial_state()
 
     with pytest.raises(CommandRejectedError, match="empty"):
         decide(DropSourceDocument(source_id="s1", reason="duplicate"), state)
