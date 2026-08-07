@@ -17,13 +17,15 @@ from uuid import UUID, uuid4
 
 from eventsource import CommandRejectedError, OptimisticLockError
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from research_team.application import (
     ApprovalDecision,
     LiveFeed,
+    ResearchSupervisor,
+    RunAlreadyActive,
     SessionService,
     TurnAlreadyRunning,
     TurnCancelled,
@@ -33,6 +35,7 @@ from research_team.application import (
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
 from research_team.domain import CreateProject, ProjectState, SelectWorkflow
+from research_team.domain.auto_research import Budget
 from research_team.domain.project import current_stage_of
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
@@ -45,6 +48,7 @@ from research_team.interfaces.web.presenters import (
     file_history,
     preset_view,
     project_view,
+    run_view,
     session_view,
     source_text_view,
     source_view,
@@ -92,6 +96,39 @@ class WorkflowChoice(BaseModel):
     preset_id: str
 
 
+class NewRun(BaseModel):
+    """What an autonomous run is allowed to spend.
+
+    Every field is optional and every default is the domain's, so a caller
+    that wants a run says `{}` and gets the budget the aggregate documents
+    rather than one this layer invented. Only the two limits a person
+    actually reaches for are exposed: the others are shapes of the same
+    backstop and would be four numbers nobody tunes.
+    """
+
+    max_rounds: int | None = None
+    quiet_rounds: int | None = None
+
+    def budget(self) -> Budget | None:
+        """None when nothing was asked for, so the driver applies its own."""
+        asked = {
+            key: value
+            for key, value in (
+                ("max_rounds", self.max_rounds),
+                ("quiet_rounds", self.quiet_rounds),
+            )
+            if value is not None
+        }
+        if not asked:
+            return None
+        # `max_turns` follows `max_rounds` rather than staying at its default:
+        # a run capped at two rounds and fifty turns is capped at fifty turns,
+        # and a caller asking for two rounds means two rounds' worth of work.
+        if "max_rounds" in asked:
+            asked.setdefault("max_turns", asked["max_rounds"] * 2)
+        return Budget(**asked)
+
+
 class Decision(BaseModel):
     """A human's answer to a parked approval. `type` is langchain's vocabulary."""
 
@@ -108,6 +145,7 @@ def create_app(
     approvals: WebApprovals | None = None,
     activity: TurnActivity | None = None,
     corpus: CorpusRunner | None = None,
+    research: ResearchSupervisor | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -484,6 +522,103 @@ def create_app(
                 "warning": str(error),
             }
         return {"id": str(session_id), "project_id": str(project_id), "warning": None}
+
+    @app.post("/api/projects/{project_id}/auto-research")
+    async def start_auto_research(project_id: UUID, body: NewRun | None = None):
+        """Start an autonomous run over this project's topic queue.
+
+        202 rather than 200, and the reason is the whole shape of this route:
+        the work has not been done when it answers. What it returns is the id
+        of a run that has *begun*, which is enough to fold its stream, watch
+        its rounds arrive on `/api/stream`, and stop it.
+
+        Off unless `AGENT_AUTO_RESEARCH` says otherwise, and absent rather
+        than refusing when it is off -- 404, not 403, because a route that
+        answers 403 has told an unauthenticated caller that there is an
+        unattended research loop on the other side of this port. See
+        `config.auto_research_over_http`.
+
+        A session is required and one is started by default, because a run's
+        rounds are turns and a turn needs a session. Starting one goes through
+        `start_in_project`, so a project already held answers 409 naming its
+        holder -- the same answer joining gives, from the same aggregate.
+        Attaching matters more here than anywhere else: without it the agent
+        has no topic tools, and every round of the run would be a turn that
+        could not record anything, which the driver would correctly read as a
+        project with nothing left to find.
+        """
+        if research is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "autonomous runs are not enabled on this instance; "
+                    "set AGENT_AUTO_RESEARCH=1 to enable them"
+                ),
+            )
+        await _require_project(project_id)
+        options = body or NewRun()
+        try:
+            session_id = await service.start_in_project(project_id)
+        except CommandRejectedError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        try:
+            await service.attach_project(project_id)
+        except Exception as error:
+            raise HTTPException(
+                status_code=503,
+                detail=f"the project's knowledge graph would not open: {error}",
+            ) from error
+        try:
+            run = research.start(
+                project_id,
+                session_id,
+                budget=options.budget(),
+                # This route made the session, so this route puts it away.
+                # Two things go wrong without it, and the second is the worse
+                # one: the project stays held, so the *next* run is refused by
+                # a session nobody is driving -- and releasing is what advances
+                # the project's tip, so it is also the only way the files this
+                # run wrote reach the session that comes after it.
+                after=lambda: service.release_project(session_id),
+            )
+        except RunAlreadyActive as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return JSONResponse(status_code=202, content=run_view(run))
+
+    @app.get("/api/projects/{project_id}/auto-research")
+    async def get_auto_research(project_id: UUID):
+        """This project's run in flight, folded. 404 when nothing is running.
+
+        Deliberately only the live one. "Every run this project has ever done"
+        is a projection nobody has built, and answering it here with a stream
+        scan would be the read that quietly gets slower for a year.
+        """
+        if research is None:
+            raise HTTPException(status_code=404, detail="autonomous runs are not enabled")
+        await _require_project(project_id)
+        run = research.active(project_id)
+        if run is None:
+            raise HTTPException(
+                status_code=404, detail=f"no run is active on project {project_id}"
+            )
+        return run_view(run, await research.state(run.run_id))
+
+    @app.post("/api/projects/{project_id}/auto-research/cancel")
+    async def cancel_auto_research(project_id: UUID):
+        """Ask this project's run to stop after the round it is in.
+
+        200 with `cancelled: false` when there was nothing running, rather
+        than a 404: the caller wanted no run to be in flight, and that is the
+        state they are in. The run is still finishing its round when this
+        returns -- see `ResearchSupervisor.cancel` for why it is not killed.
+        """
+        if research is None:
+            raise HTTPException(status_code=404, detail="autonomous runs are not enabled")
+        await _require_project(project_id)
+        run = research.cancel(project_id)
+        if run is None:
+            return {"cancelled": False, "run": None}
+        return {"cancelled": True, "run": run_view(run)}
 
     @app.get("/api/health")
     async def health():

@@ -16,7 +16,7 @@ async def _run() -> None:
     application = build_application(approvals=TerminalApprovals())
     await application.start()
     try:
-        await run(application.service, application.policy)
+        await run(application.service, application.policy, application.research)
     finally:
         await application.close()
 

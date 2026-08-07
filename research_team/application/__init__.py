@@ -4,6 +4,16 @@ Depends on the domain and on its own port declarations -- never on a concrete
 store, model provider, or user interface.
 """
 
+from research_team.application.auto_research import (
+    AutoResearchDriver,
+    RoundOutcome,
+    RunReport,
+)
+from research_team.application.auto_round import (
+    ROUND_INSTRUCTIONS,
+    TopicRoundRunner,
+    round_prompt,
+)
 from research_team.application.autonomy import (
     GATED_TOOLS,
     SEARCH_TOOL,
@@ -50,6 +60,11 @@ from research_team.application.ports import (
     TurnExecutor,
     TurnResult,
 )
+from research_team.application.research_supervisor import (
+    ActiveRun,
+    ResearchSupervisor,
+    RunAlreadyActive,
+)
 from research_team.application.session_service import (
     DEFAULT_SYSTEM_PROMPT,
     SessionService,
@@ -74,12 +89,15 @@ __all__ = [
     "GATED_TOOLS",
     "GRAPH_SEARCH_TOOL",
     "REMEMBER_TOOL",
+    "ROUND_INSTRUCTIONS",
     "SEARCH_TOOL",
     "UNMERGE_TOOL",
+    "ActiveRun",
     "ActivityReporter",
     "ApprovalDecision",
     "ApprovalPort",
     "ApprovalRequest",
+    "AutoResearchDriver",
     "AutonomyPolicy",
     "Cancellation",
     "CloseGraph",
@@ -101,6 +119,10 @@ __all__ = [
     "OpenGraph",
     "PreparedContext",
     "RecordedMessage",
+    "ResearchSupervisor",
+    "RoundOutcome",
+    "RunAlreadyActive",
+    "RunReport",
     "RunningTurn",
     "SessionRepository",
     "SessionService",
@@ -108,6 +130,7 @@ __all__ = [
     "SessionSummary",
     "SourceRef",
     "SummaryHealth",
+    "TopicRoundRunner",
     "TurnAccountingError",
     "TurnAlreadyRunning",
     "TurnCancelled",
@@ -117,5 +140,6 @@ __all__ = [
     "TurnResult",
     "TurnSupervisor",
     "build_fork_tree",
+    "round_prompt",
     "summarize_sessions",
 ]
