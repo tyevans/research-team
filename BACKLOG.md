@@ -282,6 +282,83 @@ thought to look.
 Found in review of the check library and deferred because it changes the
 contract between presets and the engine, which is a decision worth making
 deliberately rather than inside a review round.
+## Topics and autonomous research
+
+Added alongside the topic tracker and auto-research mode
+(`docs/superpowers/specs/2026-08-06-topic-tracker-and-auto-research-design.md`).
+Each is a thing that feature deliberately did *not* build, recorded so the
+reasoning does not have to be rediscovered.
+
+### B23. Contradiction detection is a human gate, not a check
+
+`topic.contested` tracks contradictions somebody already recorded. Nothing
+*detects* them: deciding that two sources disagree on substance is semantic, and
+a model asked "does my corpus contradict itself?" as a boolean answers no
+fluently.
+
+The shape when it is picked up: a critic prompt behind a gate whose output is a
+*proposed* `TopicContested` entry -- a candidate for a human, not a verdict. The
+registry already has the slot for it (`Trigger(run=None)` reports a standing
+human gate rather than a silent pass), so the work is the prompt and the gate,
+not the plumbing.
+
+### B24. An auto-research run cannot fetch
+
+By design, and worth writing down so it is not "fixed" by accident. `fetch`
+floors at `ask`; an unattended loop that reaches an approval either deadlocks on
+a future nobody will resolve or is auto-rejected outright. So a run is read-only
+over the corpus and graph the project already holds.
+
+The honest way to lift it is a **scoped, counted, run-expiring** pre-authorization
+-- a domain allowlist with a fetch budget, granted as an event and dead when the
+run ends. Not a blanket "N auto-approvals", which is `auto` with a counter: the
+count is not what makes an approval meaningful, the scope is. And not the loop
+lowering `TOOL_FLOORS` itself, ever -- a loop that can edit its own permissions
+makes the floors advisory for everything else too.
+
+### B25. There is no HTTP surface for starting a run
+
+`AutoResearchDriver` is wired into no interface. Starting a run is a POST that
+does not exist, and there is nothing that streams a run's rounds to a browser.
+Deliberate -- the driver and its stop conditions are the part worth reviewing
+first, and an endpoint would have shipped an unattended loop reachable from a
+port with no authentication in front of it (B18).
+
+### B26. The topic trigger registry should merge with the check library
+
+`application/topic_attention.py` deliberately mirrors the check library's
+contract -- named and namespaced, parameterized, `Finding` lists rather than
+scores, severity per binding, `run=None` for gaps that cannot be honestly
+automated -- and does **not** import it. That was written while the check
+library was still unmerged on `feat/check-library`, where importing it would
+have coupled two reviews together.
+
+**It has since merged, so the reason has expired and this is now live work.**
+The two registries should be one with two namespaces. Several existing checks
+(`provenance`, `orphan`, `coverage`, `exclusion_ledger`) bind directly to
+topics with different parameters, and two registries that agree today are the
+shape that drifts tomorrow.
+
+The join is not free, and the shape of it is the decision worth making
+deliberately: `checks.py` runs over `/course` artifacts and a graph, and the
+topic triggers run over folded aggregate state and a corpus snapshot. They
+share a contract and a `Finding`, not an input. Unifying the *types* and
+leaving two `run` signatures is probably right; forcing one signature would
+make every check take arguments it does not use.
+
+### B27. Staleness is per-corpus, not global
+
+Every position in the topic feature is one project's *corpus version*
+(`corpus_position`), because a projection handler is given an event rather than
+its envelope, so the global feed position is not in reach where these are
+written. That is the right scale for the questions being asked -- "did anything
+arrive in this corpus since I last looked" -- but it means a topic cannot be
+stale with respect to anything outside its own project's corpus.
+
+If topics ever need to notice work in *another* project, this is the thing that
+has to change first, and it is a wider change than it looks: the positions are
+persisted in `TopicInvestigated.at_position` and in every acknowledgement's
+expiry, so redefining the scale invalidates both.
 
 ## Knowledge and corpus
 
