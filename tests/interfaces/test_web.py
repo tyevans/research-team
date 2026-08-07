@@ -1583,3 +1583,103 @@ async def test_a_deleted_project_refuses_a_workflow(client):
 
     assert response.status_code == 409
     assert "deleted" in response.json()["detail"]
+
+
+# ---------------- the course ----------------
+
+
+async def _course_project(client, preset_id: str = "ubd.pure") -> str:
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    await client.post(f"/api/projects/{project_id}/workflow", json={"preset_id": preset_id})
+    return project_id
+
+
+async def test_the_course_lists_every_stage_whether_or_not_it_has_run(client):
+    """The rail shows the plan, so a stage that has produced nothing still appears.
+
+    A view built from the `/course` directory instead would show what happened
+    and leave what was supposed to happen underivable -- backwards for a
+    surface whose job is to show a run against its plan.
+    """
+    project_id = await _course_project(client)
+
+    body = (await client.get(f"/api/projects/{project_id}/course")).json()
+
+    assert body["preset"]["id"] == "ubd.pure"
+    assert body["position"] == 1
+    assert body["stage_count"] == len(body["stages"]) == 6
+    assert body["stages"][0]["status"] == "current"
+    assert {stage["status"] for stage in body["stages"][1:]} == {"upcoming"}
+
+
+async def test_declared_artifacts_appear_as_named_gaps_before_anything_is_written(client):
+    project_id = await _course_project(client)
+
+    body = (await client.get(f"/api/projects/{project_id}/course")).json()
+    slots = [slot for stage in body["stages"] for slot in stage["outputs"]]
+
+    assert slots, "the preset declares outputs; the course must name them"
+    assert all(slot["present"] is False for slot in slots)
+    assert all(slot["path"].startswith("/course/") for slot in slots)
+    assert all(slot["provenance"] is None for slot in slots)
+
+
+async def test_a_written_artifact_shows_up_with_the_provenance_it_claims(client, service):
+    """The course reads the filesystem of whichever session currently holds it.
+
+    Written through the session that joined the project rather than through a
+    fixture, because "which stream carries this project's files" is the part
+    the endpoint has to get right.
+    """
+    project_id = await _course_project(client)
+    body = (await client.get(f"/api/projects/{project_id}/course")).json()
+    path = body["stages"][0]["outputs"][0]["path"]
+
+    session_id = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
+    session = await service.load(UUID(session_id))
+    session.execute(
+        WriteFile(
+            path=path,
+            file_data={
+                "content": (
+                    "---\n"
+                    "artifact_type: Intent\n"
+                    "stage: s\n"
+                    "preset: ubd.pure\n"
+                    "preset_version: '1.0'\n"
+                    "provenance:\n"
+                    "  - source_id: doc-1\n"
+                    "    start: 0\n"
+                    "    end: 40\n"
+                    "---\n\nthe body\n"
+                )
+            },
+        )
+    )
+    await service._repository.save(session)
+
+    slot = (await client.get(f"/api/projects/{project_id}/course")).json()["stages"][0][
+        "outputs"
+    ][0]
+
+    assert slot["present"] is True
+    assert slot["has_frontmatter"] is True
+    assert slot["missing_fields"] == []
+    assert slot["provenance"]["sources"] == [{"source_id": "doc-1", "start": 0, "end": 40}]
+    assert slot["provenance"]["empty"] is False
+    assert slot["provenance"]["inferred"] is False
+
+
+async def test_a_project_with_no_workflow_has_no_course(client):
+    """409, not 404: the project is here; the choice has not been made."""
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await client.get(f"/api/projects/{project_id}/course")
+
+    assert response.status_code == 409
+    assert "no workflow" in response.json()["detail"]
+
+
+async def test_an_unknown_project_has_no_course(client):
+    response = await client.get(f"/api/projects/{uuid4()}/course")
+    assert response.status_code == 404

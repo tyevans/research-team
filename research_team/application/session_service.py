@@ -12,6 +12,7 @@ one, and a web server has one per request -- so it belongs to the caller.
 import asyncio
 import logging
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID, uuid4
 
 from eventsource import DomainEvent
@@ -184,6 +185,34 @@ class SessionService:
         cannot see it can only offer an action and let it fail.
         """
         return (await self._projects.load(project_id)).state
+
+    async def project_files(self, project_id: UUID) -> dict[str, dict[str, Any]]:
+        """The project's filesystem, from whichever stream currently carries it.
+
+        A project's files are never the project's own: they fold out of one
+        session's stream, and which session that is changes as sessions join
+        and release. Two cases, and the order matters. A session holding the
+        project has work in it that the tip does not yet know about -- the tip
+        only advances on release -- so the holder is the newer answer and is
+        asked first. With nobody holding it, the tip pointer is the whole
+        truth.
+
+        A project that has never been joined has no stream at all and answers
+        with nothing, which is different from a project whose files are empty
+        only in that nothing here needs to tell them apart.
+
+        Resolved once, here, because every surface that shows a project's files
+        needs the same answer -- and two of them computing it separately is two
+        answers that will eventually disagree about which session was newer.
+        """
+        state = await self.project_state(project_id)
+        if state.active_session_id is not None:
+            session = await self.load(state.active_session_id)
+            return dict(session.state.files)
+        if state.tip_session_id is None or state.tip_at_event < 1:
+            return {}
+        session = await self.state_at(state.tip_session_id, state.tip_at_event)
+        return dict(session.state.files)
 
     async def delete_project(self, project_id: UUID) -> None:
         """Retire a project: no more joins, and gone from every listing.

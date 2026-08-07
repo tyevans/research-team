@@ -13,6 +13,13 @@ from eventsource import DomainEvent
 from research_team.application import ForkNode, SessionSummary
 from research_team.application.corpus_read import StoredDocument
 from research_team.application.corpus_spans import Span
+from research_team.application.course import (
+    ArtifactSlot,
+    Course,
+    ProvenanceSummary,
+    StageProgress,
+)
+from research_team.application.findings import Finding
 from research_team.domain import (
     CodingSession,
     ConversationCompacted,
@@ -264,6 +271,111 @@ def stage_view(preset: Preset, stage: Stage) -> dict[str, Any]:
         "name": stage.name,
         "index": ids.index(stage.id) + 1,
         "of": len(ids),
+    }
+
+
+def provenance_view(provenance: ProvenanceSummary | None) -> dict[str, Any] | None:
+    """What an artifact says it rests on, as the browser needs it.
+
+    `empty` is computed here rather than left to the browser to derive from
+    three other fields, because it is the one shape the artifact contract calls
+    never right and a client rederiving it is a client that can get it wrong.
+    """
+    if provenance is None:
+        return None
+    return {
+        "sources": [
+            {"source_id": span.source_id, "start": span.start, "end": span.end}
+            for span in provenance.sources
+        ],
+        "inferred": provenance.inferred,
+        "unreadable": provenance.unreadable,
+        "empty": provenance.is_empty,
+    }
+
+
+def artifact_slot_view(slot: ArtifactSlot) -> dict[str, Any]:
+    """One declared artifact, present or not.
+
+    The frontmatter is not sent. It is already on the file, the file is one
+    click away through the existing file endpoint, and a listing that inlined
+    every block would grow with the course while being read by a pane that
+    shows a row per artifact. What is sent is what the row itself renders:
+    whether it landed, what it claims, and what its block was missing.
+    """
+    return {
+        "path": slot.path,
+        "artifact_type": slot.artifact_type,
+        "subtype": slot.subtype,
+        "cardinality": slot.cardinality,
+        "stage_id": slot.stage_id,
+        "present": slot.present,
+        "has_frontmatter": slot.frontmatter is not None,
+        "missing_fields": list(slot.missing_fields),
+        "provenance": provenance_view(slot.provenance),
+        "body_chars": slot.body_chars,
+    }
+
+
+def finding_view(finding: Finding) -> dict[str, Any]:
+    return {
+        "check": finding.check,
+        "severity": finding.severity,
+        "message": finding.message,
+        "cites": list(finding.cites),
+        "suggested_edit": finding.suggested_edit,
+    }
+
+
+def stage_progress_view(stage: StageProgress) -> dict[str, Any]:
+    return {
+        "index": stage.index,
+        "id": stage.id,
+        "name": stage.name,
+        "kind": stage.kind,
+        "spine": stage.spine,
+        "scope_level": stage.scope_level,
+        "status": stage.status,
+        "outputs": [artifact_slot_view(slot) for slot in stage.outputs],
+        "gate_decisions": list(stage.gate_decisions),
+        "reviewer_role": stage.reviewer_role,
+        "findings_report": stage.findings_report,
+    }
+
+
+def course_view(
+    course: Course,
+    *,
+    project_name: str = "",
+    holding_session_id: UUID | None = None,
+) -> dict[str, Any]:
+    """A whole run: the rail, the artifacts, and what the current stage's checks say.
+
+    One response rather than three endpoints, because the three are always
+    rendered together and a rail that arrived before its artifacts would show
+    every stage as empty for as long as the second request took -- which reads
+    as a run that has produced nothing.
+
+    `holding_session_id` is carried because an artifact is only readable
+    through a session: the file viewer, its markdown rendering and its history
+    all live there, and a course pane that grew its own reader would be a
+    worse copy of one that already works. `None` says plainly that there is
+    nothing to open the file in until somebody joins the project, which is a
+    better answer than a link that 404s.
+    """
+    return {
+        "project_name": project_name,
+        "holding_session_id": str(holding_session_id) if holding_session_id else None,
+        "preset": {
+            "id": course.preset_id,
+            "name": course.preset_name,
+            "version": course.preset_version,
+        },
+        "position": course.position,
+        "stage_count": course.stage_count,
+        "stages": [stage_progress_view(stage) for stage in course.stages],
+        "live_findings": [finding_view(finding) for finding in course.live_findings],
+        "unimplemented_checks": list(course.unimplemented_checks),
     }
 
 

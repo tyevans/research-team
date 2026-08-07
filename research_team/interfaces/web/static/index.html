@@ -125,6 +125,40 @@
   </section>
 </template>
 
+<!-- The run seen whole. Two panes rather than one list, because the rail
+     answers "where are we" and the artifact list answers "what is there",
+     and a reader scanning for one should not have to read the other. -->
+<template id="tpl-course-view">
+  <section class="view view-course">
+    <div class="view-head">
+      <div>
+        <h1 data-slot="course-title">Course</h1>
+        <p class="sub" data-slot="course-sub"></p>
+      </div>
+      <div class="view-head-actions">
+        <a class="btn btn-quiet" data-slot="course-session" hidden>Open holding session</a>
+      </div>
+    </div>
+    <div class="course-findings" data-slot="course-findings"></div>
+    <div class="panes course-panes">
+      <section class="pane pane-rail" aria-label="Stage rail">
+        <header class="pane-head">
+          <h2>Stages</h2>
+          <span class="pane-meta" data-slot="rail-meta"></span>
+        </header>
+        <div class="pane-body" data-slot="rail"></div>
+      </section>
+      <section class="pane pane-artifacts" aria-label="Artifacts">
+        <header class="pane-head">
+          <h2>Artifacts</h2>
+          <span class="pane-meta" data-slot="artifacts-meta"></span>
+        </header>
+        <div class="pane-body" data-slot="artifacts"></div>
+      </section>
+    </div>
+  </section>
+</template>
+
 <script src="/static/app.js"></script>
 </body>
 </html>

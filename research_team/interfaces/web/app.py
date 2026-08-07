@@ -31,6 +31,7 @@ from research_team.application import (
     build_fork_tree,
 )
 from research_team.application.corpus_spans import quote
+from research_team.application.course import course_progress
 from research_team.domain import CreateProject, ProjectState, SelectWorkflow
 from research_team.domain.project import current_stage_of
 from research_team.infrastructure.persistence import CorpusRunner
@@ -38,6 +39,7 @@ from research_team.infrastructure.persistence.corpus_reader import ProjectCorpus
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.presenters import (
+    course_view,
     event_rows,
     feed_event,
     file_history,
@@ -310,6 +312,46 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(error)) from error
         await service.projects.save(project)
         return _workflow_of(project.state)
+
+    @app.get("/api/projects/{project_id}/course")
+    async def get_course(project_id: UUID):
+        """The whole run: every stage of the preset, and every artifact it owes.
+
+        409 rather than 404 when no workflow is selected. The project exists
+        and the request was well formed; what is missing is a choice nobody has
+        made yet, and the fix is to select a preset rather than to look
+        somewhere else. A 404 would say the course is not here, which reads as
+        "you have the wrong project".
+
+        A preset the project names but this build does not ship is a 409 too,
+        with the id in the message: there is no stage list to build a rail
+        from, and the id is the only thing that lets anyone work out why.
+        """
+        await _require_project(project_id)
+        state = await service.project_state(project_id)
+        if state.preset_id is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "this project runs no workflow, so there is no course to show; "
+                    f"select one of {', '.join(PRESETS)} first"
+                ),
+            )
+        preset = PRESETS.get(state.preset_id)
+        if preset is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"this project runs workflow {state.preset_id!r}, which this "
+                    f"build does not ship; its stage list is unknown here"
+                ),
+            )
+        files = await service.project_files(project_id)
+        return course_view(
+            course_progress(preset, state, files),
+            project_name=state.name,
+            holding_session_id=state.active_session_id,
+        )
 
     def _reader(project_id: UUID) -> ProjectCorpusReader:
         """This project's corpus, through the same port the agent's tools use.

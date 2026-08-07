@@ -511,6 +511,10 @@ const state = {
   projects: null,           // /api/projects
   projectsError: null,
   workflows: [],            // /api/workflows -- static presets, no error state
+  // course view
+  course: null,             // /api/projects/{id}/course
+  courseError: null,
+  openStage: null,          // which rail row is expanded, by stage id
   // session view
   sessionId: null,
   head: null,               // /api/sessions/{id}
@@ -588,8 +592,23 @@ function parseHash() {
   const raw = String(location.hash || '').replace(/^#\/?/, '');
   const parts = raw.split('/').filter(Boolean);
   if (parts[0] === 's' && parts[1]) {
+    // `/file/<path>` opens the workspace on one file. It is a route rather
+    // than a click-only state so the course view can link straight at an
+    // artifact -- and so that link survives being copied to somebody else.
+    if (parts[2] === 'file' && parts[3]) {
+      return {
+        name: 'session', id: decodeURIComponent(parts[1]), at: null,
+        path: decodeURIComponent(parts.slice(3).join('/'))
+      };
+    }
     const at = parts[2] === 'at' && parts[3] ? parseInt(parts[3], 10) : null;
     return { name: 'session', id: decodeURIComponent(parts[1]), at: isNaN(at) ? null : at };
+  }
+  // A course belongs to a project, not to the session that happens to be
+  // driving it: the artifacts outlive any one session, so the route that
+  // shows them is keyed the way they are stored.
+  if (parts[0] === 'p' && parts[1] && parts[2] === 'course') {
+    return { name: 'course', id: decodeURIComponent(parts[1]), at: null };
   }
   return { name: 'tree', id: null, at: null };
 }
@@ -614,7 +633,7 @@ function onRoute() {
       state.events = [];
       state.at = next.at;
       state.snapshot = null;
-      state.openPath = null;
+      state.openPath = next.path || null;
       state.fileContent = null;
       state.fileContentAt = undefined;
       state.fileHistory = null;
@@ -654,6 +673,13 @@ function onRoute() {
       renderScrubBar();
       loadSnapshot();
     }
+  } else if (next.name === 'course') {
+    state.sessionId = null;
+    sessionEls = null;
+    state.course = null;
+    state.courseError = null;
+    mountCourseView();
+    loadCourse();
   } else {
     state.sessionId = null;
     sessionEls = null;
@@ -666,6 +692,17 @@ function onRoute() {
 function renderCrumbs() {
   const box = document.getElementById('crumbs');
   clear(box);
+  if (state.route.name === 'course') {
+    box.appendChild(h('a', { href: '#/', text: 'sessions' }));
+    box.appendChild(h('span', { class: 'sep', text: '/' }));
+    box.appendChild(h('span', {
+      class: 'sid',
+      text: (state.course && state.course.project_name) || shortId(state.route.id)
+    }));
+    box.appendChild(h('span', { class: 'sep', text: '/' }));
+    box.appendChild(h('span', { class: 'sep', text: 'course' }));
+    return;
+  }
   if (state.route.name !== 'session') {
     box.appendChild(h('span', { class: 'sep', text: 'fork tree' }));
     return;
@@ -908,6 +945,18 @@ function renderProjects() {
         workflowChip(p)
       ]),
       h('div', { class: 'node-actions' }, actions.concat([
+        // Only for a project running a workflow: without a preset there is no
+        // stage list and nothing for a rail to show, and an button that leads
+        // to a 409 is worse than no button.
+        p.workflow
+          ? h('button', {
+              class: 'btn btn-sm',
+              title: 'Every stage of this workflow, and every artifact it owes',
+              onclick: function () {
+                go('#/p/' + encodeURIComponent(p.id) + '/course');
+              }
+            }, [document.createTextNode('Course')])
+          : null,
         h('button', {
           class: 'btn btn-sm btn-danger',
           title: 'Retire this project',
@@ -1058,6 +1107,329 @@ function newSession(ev) {
     creatingSession = false;
     if (button && button.isConnected) button.disabled = false;
   });
+}
+
+/* ===================================================================== */
+/* course view                                                           */
+/* ===================================================================== */
+
+/* The run against its plan. Every stage of the preset is a row whether or
+ * not it has run, and every artifact the preset declares is a row whether or
+ * not it was written -- because a view built from what exists can only show
+ * what happened, and the question this pane answers is what was supposed to.
+ *
+ * Nothing here judges. A missing artifact is drawn as missing, an empty
+ * provenance block is drawn as empty, and neither is called a failure: the
+ * check library owns verdicts, it runs on the server, and its findings appear
+ * above the panes with the severities it assigned them. A second opinion
+ * rendered in the browser would be the one users actually saw. */
+
+function mountCourseView() {
+  root = tpl('tpl-course-view');
+  const app = document.getElementById('app');
+  clear(app);
+  app.appendChild(root);
+  slot(root, 'rail').appendChild(h('div', { class: 'empty', text: 'loading course…' }));
+}
+
+function loadCourse() {
+  const id = state.route.id;
+  api.get('/api/projects/' + encodeURIComponent(id) + '/course').then(function (res) {
+    if (state.route.name !== 'course' || state.route.id !== id) return;
+    state.course = res;
+    state.courseError = null;
+    renderCourse();
+  }).catch(function (e) {
+    if (state.route.name !== 'course' || state.route.id !== id) return;
+    state.course = null;
+    state.courseError = e.message;
+    renderCourse();
+  });
+  renderCrumbs();
+}
+
+function renderCourse() {
+  if (!root) return;
+  const railBox = slot(root, 'rail');
+  const artifactBox = slot(root, 'artifacts');
+  clear(railBox); clear(artifactBox);
+  clear(slot(root, 'course-findings'));
+
+  if (state.courseError) {
+    // The two 409s -- no workflow, or one this build does not ship -- are the
+    // interesting failures, and the server's message already names which and
+    // what to do about it. Relaying it beats a generic "could not load".
+    railBox.appendChild(emptyState('No course to show.', state.courseError));
+    slot(root, 'course-sub').textContent = '';
+    return;
+  }
+  const course = state.course;
+  if (!course) {
+    railBox.appendChild(h('div', { class: 'empty', text: 'loading course…' }));
+    return;
+  }
+
+  slot(root, 'course-title').textContent = course.preset.name;
+  slot(root, 'course-sub').textContent = course.position
+    ? 'Stage ' + course.position + ' of ' + course.stage_count +
+      ' · ' + course.preset.id + ' v' + course.preset.version
+    // No position means the project's recorded stage is not one the preset
+    // contains. The rail still renders; saying so is the point.
+    : 'This project’s recorded stage is not part of ' + course.preset.id +
+      ', so its position is unknown.';
+
+  const open = slot(root, 'course-session');
+  if (course.holding_session_id) {
+    open.hidden = false;
+    open.setAttribute('href', '#/s/' + encodeURIComponent(course.holding_session_id));
+  } else {
+    open.hidden = true;
+  }
+
+  renderCourseFindings(course);
+  renderStageRail(course, railBox);
+  renderCourseArtifacts(course, artifactBox);
+}
+
+/* What the current stage's own checks say, right now. Only the current
+ * stage's: a stage that has been left has a findings artifact recorded at the
+ * moment it was left, and that record is what its gate decision was made
+ * against. Recomputing it against a course that has since grown would show a
+ * different table and quietly present it as the one the reviewer saw. */
+function renderCourseFindings(course) {
+  const box = slot(root, 'course-findings');
+  const findings = course.live_findings || [];
+  const unimplemented = course.unimplemented_checks || [];
+  if (!findings.length && !unimplemented.length) return;
+
+  // `human_gate` and `critic_gate` are not defects: they mark work no run can
+  // clear by itself. Spelling them out keeps a reader from filing them with
+  // the failures just because they arrived in the same list.
+  const SEVERITY = {
+    invariant: 'invariant',
+    blocking: 'blocking',
+    advisory: 'advisory',
+    human_gate: 'needs a person',
+    critic_gate: 'needs a critic pass'
+  };
+
+  const rows = findings.map(function (f) {
+    return h('li', { class: 'finding finding-' + f.severity }, [
+      h('span', { class: 'chip chip-' + f.severity,
+                  text: SEVERITY[f.severity] || f.severity }),
+      h('span', { class: 'finding-check', text: f.check }),
+      h('span', { class: 'finding-msg', text: f.message }),
+      f.suggested_edit
+        ? h('span', { class: 'finding-fix', text: '→ ' + f.suggested_edit })
+        : null
+    ]);
+  });
+  if (unimplemented.length) {
+    // A declared check that never runs is a guarantee the preset claims and
+    // nothing provides. Silence about it is worse than declaring none.
+    rows.push(h('li', { class: 'finding finding-unimplemented' }, [
+      h('span', { class: 'chip', text: 'not run' }),
+      h('span', { class: 'finding-msg', text:
+        'This stage declares ' + unimplemented.length + ' check' +
+        (unimplemented.length === 1 ? '' : 's') +
+        ' that nothing implements: ' + unimplemented.join(', ') +
+        '. Nothing they would have found is known.' })
+    ]));
+  }
+  box.appendChild(h('h3', { class: 'findings-head', text: 'This stage’s checks' }));
+  box.appendChild(h('ul', { class: 'findings' }, rows));
+}
+
+function renderStageRail(course, box) {
+  const list = h('ol', { class: 'rail' });
+  course.stages.forEach(function (stage) {
+    const open = state.openStage === stage.id;
+    const written = stage.outputs.filter(function (o) { return o.present; }).length;
+    const head = h('button', {
+      type: 'button',
+      class: 'rail-row',
+      'aria-expanded': open ? 'true' : 'false',
+      onclick: function () {
+        state.openStage = open ? null : stage.id;
+        renderCourse();
+      }
+    }, [
+      h('span', { class: 'rail-dot rail-' + stage.status, 'aria-hidden': 'true' }),
+      h('span', { class: 'rail-index', text: String(stage.index) }),
+      h('span', { class: 'rail-name', text: stage.name }),
+      // Written-of-declared, not a percentage: a stage owing two artifacts
+      // with one written is a specific situation, and "50%" is not.
+      stage.outputs.length
+        ? h('span', {
+            class: 'rail-count' + (written < stage.outputs.length ? ' rail-short' : ''),
+            title: written + ' of ' + stage.outputs.length + ' declared artifacts written'
+          }, [written + '/' + stage.outputs.length])
+        : h('span', { class: 'rail-count empty', title:
+            'This stage declares no artifact of its own.' }, ['—']),
+      h('span', { class: 'chip chip-' + stage.status, text: stage.status })
+    ]);
+
+    const li = h('li', { class: 'rail-item rail-item-' + stage.status }, [head]);
+    if (open) li.appendChild(stageDetail(stage));
+    list.appendChild(li);
+  });
+  clear(box);
+  box.appendChild(list);
+
+  const done = course.stages.filter(function (s) { return s.status === 'done'; }).length;
+  slot(root, 'rail-meta').textContent = done + ' of ' + course.stage_count + ' left behind';
+}
+
+function stageDetail(stage) {
+  const kids = [];
+  kids.push(h('div', { class: 'rail-meta-row' }, [
+    h('span', { class: 'muted', text: stage.id }),
+    h('span', { class: 'muted', text: 'spine ' + stage.spine }),
+    h('span', { class: 'muted', text: stage.scope_level }),
+    h('span', { class: 'muted', text: stage.kind })
+  ]));
+  if (stage.gate_decisions && stage.gate_decisions.length) {
+    // What a human is allowed to answer here. `halt` is the one worth seeing
+    // in advance: the pipeline is structurally biased toward producing its
+    // own output, and the gates that can stop it are the counterweight.
+    kids.push(h('div', { class: 'rail-gate' }, [
+      h('span', { class: 'muted', text: 'gate' +
+        (stage.reviewer_role ? ' (' + stage.reviewer_role + ')' : '') + ': ' }),
+      h('span', {}, [stage.gate_decisions.join(' · ')])
+    ]));
+  }
+  if (stage.findings_report) {
+    kids.push(h('div', { class: 'rail-report' }, [
+      h('span', { class: 'muted', text: 'report: ' }),
+      courseFileLink(stage.findings_report, stage.findings_report.split('/').pop())
+    ]));
+  }
+  if (!stage.outputs.length) {
+    kids.push(h('p', { class: 'muted', text:
+      'Produces no artifact of its own; its result is recorded elsewhere.' }));
+  } else {
+    kids.push(h('ul', { class: 'rail-outputs' }, stage.outputs.map(artifactRow)));
+  }
+  return h('div', { class: 'rail-detail' }, kids);
+}
+
+function renderCourseArtifacts(course, box) {
+  const slots = [];
+  course.stages.forEach(function (stage) {
+    stage.outputs.forEach(function (o) { slots.push(o); });
+  });
+  clear(box);
+  if (!slots.length) {
+    box.appendChild(emptyState('This workflow declares no artifacts.',
+      'Nothing here is missing; the preset simply names no outputs.'));
+    return;
+  }
+  box.appendChild(h('ul', { class: 'artifacts' }, slots.map(artifactRow)));
+  const present = slots.filter(function (o) { return o.present; }).length;
+  slot(root, 'artifacts-meta').textContent = present + ' of ' + slots.length + ' written';
+}
+
+/* One declared artifact. Four states a naive row would flatten into two:
+ * missing; present but with no readable frontmatter; present and claiming
+ * sources; present and claiming its thinking was the model's own. The last
+ * two are both legitimate and must not look alike, and an artifact claiming
+ * neither is the one shape the contract calls never right. */
+function artifactRow(slotData) {
+  const name = slotData.path.split('/').pop();
+  const label = slotData.artifact_type +
+    (slotData.subtype ? ' (' + slotData.subtype + ')' : '');
+
+  const top = h('div', { class: 'artifact-top' }, [
+    h('span', { class: 'artifact-name' }, [
+      slotData.present ? courseFileLink(slotData.path, name)
+                       : h('span', { class: 'muted', text: name })
+    ]),
+    h('span', { class: 'artifact-type', text: label }),
+    h('span', { class: 'muted artifact-card', text: slotData.cardinality }),
+    slotData.present
+      ? h('span', { class: 'chip chip-present', text: 'written' })
+      : h('span', { class: 'chip chip-missing', title:
+          'The preset declares this artifact and no file is at ' + slotData.path,
+          text: 'not written' })
+  ]);
+
+  const kids = [top];
+  if (slotData.present && !slotData.has_frontmatter) {
+    kids.push(h('div', { class: 'artifact-note bad', text:
+      'No readable frontmatter, so nothing can tell what this is or what it ' +
+      'rests on.' }));
+  } else if (slotData.present) {
+    if (slotData.missing_fields && slotData.missing_fields.length) {
+      kids.push(h('div', { class: 'artifact-note', text:
+        'Frontmatter is missing ' + slotData.missing_fields.join(', ') + '.' }));
+    }
+    kids.push(provenanceRow(slotData.provenance));
+  }
+  return h('li', { class: 'artifact' + (slotData.present ? '' : ' artifact-missing') }, kids);
+}
+
+/* What an artifact says it rests on, shown as claims rather than as a score.
+ * Spans link straight into the source reader at the offsets the file claims
+ * -- unresolved, because whether a span still says what it said is a check's
+ * question and answering it here would cost a document read per row. */
+function provenanceRow(prov) {
+  if (!prov) {
+    return h('div', { class: 'artifact-note', text:
+      'No provenance block at all.' });
+  }
+  const kids = [h('span', { class: 'muted', text: 'rests on: ' })];
+  prov.sources.forEach(function (src) {
+    const span = (src.start !== null && src.end !== null)
+      ? src.source_id + '@' + src.start + '-' + src.end
+      : src.source_id;
+    kids.push(h('a', {
+      class: 'prov-src',
+      href: sourceHref(src),
+      title: 'Open this source at the offsets this artifact cites'
+    }, [span]));
+  });
+  if (prov.inferred) {
+    // Not a defect. A stage whose reasoning is its own and says so is working
+    // as designed; the flag is here so a reviewer can weigh it.
+    kids.push(h('span', { class: 'chip chip-inferred', title:
+      'Some of this was reasoned rather than drawn from a source, and says so.',
+      text: 'inferred' }));
+  }
+  if (prov.unreadable) {
+    kids.push(h('span', { class: 'chip chip-bad', title:
+      'Entries that are neither a source span nor the inference flag.',
+      text: prov.unreadable + ' unreadable' }));
+  }
+  if (prov.empty) {
+    kids.push(h('span', { class: 'chip chip-bad', title:
+      'Neither a source nor an admission of inference -- indistinguishable ' +
+      'from an artifact never checked against anything.',
+      text: 'claims nothing' }));
+  }
+  return h('div', { class: 'artifact-prov' }, kids);
+}
+
+function sourceHref(src) {
+  const base = '/api/projects/' + encodeURIComponent(state.route.id) +
+               '/sources/' + encodeURIComponent(src.source_id);
+  if (src.start === null || src.end === null) return base;
+  return base + '?start=' + src.start + '&end=' + src.end;
+}
+
+/* Course files are read through the session that holds them, because that is
+ * where the file viewer lives and it already renders markdown, diffs and
+ * per-file history. A second reader here would be a worse copy of it. */
+function courseFileLink(path, text) {
+  const holder = state.course && state.course.holding_session_id;
+  if (!holder) {
+    return h('span', { class: 'muted', title:
+      'No session is holding this project, so there is nothing to open the ' +
+      'file in. Join the project to read it.', text: text });
+  }
+  return h('a', {
+    href: '#/s/' + encodeURIComponent(holder) + '/file/' + encodeURIComponent(path),
+    title: path
+  }, [text]);
 }
 
 /* ===================================================================== */
