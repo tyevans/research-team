@@ -62,6 +62,14 @@ _GAP = DecideStage(
         Out(artifact_type=A.SOURCE_CLAIM, cardinality="0..n"),
         Out(artifact_type=A.GAP_STATEMENT, cardinality="1"),
         Out(artifact_type=A.INTERVENTION_RECOMMENDATION, cardinality="1"),
+        # B15's home. Consolidation merges disagreeing claims quietly -- two
+        # SMEs giving different escalation thresholds become one node -- so the
+        # contradiction has to have somewhere to be recorded before anything
+        # downstream can be asked to adjudicate it. `0..n` because a corpus
+        # with no disagreements is a real outcome; the file is still written,
+        # empty and explicit, which is what makes "none found" a claim rather
+        # than a silence.
+        Out(artifact_type=A.CONTESTED_QUEUE, cardinality="0..n"),
         Out(artifact_type=A.OPEN_QUESTION, cardinality="0..n"),
         # Planned backward from Level 4 and authored here, because an
         # evaluation plan written after the course is a plan written to be
@@ -80,20 +88,28 @@ _GAP = DecideStage(
     ),
     checks=(
         Check(
-            check="required_field_nondegenerate",
+            check="shared.required_field_nondegenerate",
             params={
                 "field": "GapStatement.business_metric",
                 "reject_if": ["empty", "unmeasurable"],
             },
         ),
         Check(
-            check="format_conformance",
+            # Was a `must_enumerate` on format_conformance, which is what
+            # vocabulary_coverage already is: every option considered at
+            # least once, so a recommendation cannot quietly skip the
+            # possibility that training is the wrong intervention.
+            check="shared.vocabulary_coverage",
             params={
                 "type": "InterventionRecommendation",
-                "must_enumerate": ["training", "non_training", "hybrid"],
+                "dimension": "options_considered",
+                "vocab": ["training", "non_training", "hybrid"],
             },
         ),
-        Check(check="contradiction_escalation", params={"no_auto_resolve": True}),
+        Check(
+            check="shared.contradiction_escalation",
+            params={"type": "ContestedQueue", "no_auto_resolve": True},
+        ),
     ),
     gate=DecisionGate(
         reviewer_role="sponsor",
@@ -126,7 +142,7 @@ _AUDIENCE = GenerateStage(
     generator=Generator(role="needs analyst", prompt_ref="prompts/addie/audience"),
     checks=(
         Check(
-            check="source_starvation",
+            check="shared.source_starvation",
             params={"routes": ["sme", "performance_data"], "min_claims_each": 1},
             severity="advisory",
         ),
@@ -169,7 +185,9 @@ _TASKS = GenerateStage(
         # the expert stop explaining? Each flag carries the quoted span that
         # provoked it, which is what makes the output reviewable at a glance.
         Check(
-            check="expert_gap_flag", params={"quote_span_required": True}, severity="advisory"
+            check="addie.expert_gap_flag",
+            params={"quote_span_required": True},
+            severity="advisory",
         ),
     ),
     gate=RubricGate(
@@ -214,11 +232,11 @@ _OBJECTIVES = SpecifyStage(
         # Attached here and absent from `ubd.pure`, because L3 is a real
         # theoretical disagreement and not vocabulary drift.
         Check(
-            check="format_conformance",
+            check="shared.format_conformance",
             params={"verb_denylist": ["understand", "be aware of", "appreciate", "know"]},
         ),
         Check(
-            check="matrix_density",
+            check="shared.matrix_density",
             params={"matrix": "objective_x_module", "no_empty_rows": True},
         ),
     ),
@@ -267,21 +285,26 @@ _ASSESSMENT = SpecifyStage(
     ),
     checks=(
         Check(
-            check="matrix_density",
+            check="shared.matrix_density",
             params={"matrix": "intent_x_evidence", "no_empty_rows": True},
         ),
         # An item's cognitive level must match its parent objective's rather
         # than drifting down to recall, which is what an unchecked generator
         # writes because recall items are the easiest to produce.
         Check(
-            check="taxonomy_distribution",
+            check="shared.taxonomy_distribution",
             params={"dimension": "blooms_revised", "must_match_parent": "Intent.bloom_level"},
         ),
         Check(
-            check="provenance",
+            check="shared.provenance",
             params={
                 "type": "EvidenceSpec.distractor",
-                "prefer_source": "RiskRegister.expert_gap_flag",
+                # `prefer_source: RiskRegister.expert_gap_flag` was here. A
+                # preference is not a check -- there is no artifact state
+                # that violates it -- so it belongs in the generator prompt,
+                # and asserting it here would have made a nudge look like a
+                # guarantee. What remains is the real constraint: a
+                # distractor cites something.
             },
             severity="advisory",
         ),
@@ -327,7 +350,9 @@ _TREATMENT = SpecifyStage(
         Out(artifact_type=A.RESOURCE_SELECTION, cardinality="0..n"),
     ),
     generator=Generator(role="instructional strategist", prompt_ref="prompts/addie/treatment"),
-    checks=(Check(check="orphan", params={"type": "Experience", "must_link_to": "Intent"}),),
+    checks=(
+        Check(check="shared.orphan", params={"type": "Experience", "must_link_to": "Intent"}),
+    ),
     gate=RubricGate(reviewer_role="sme", presents=("Experience.*", "StyleGuide")),
     amendments=Amendments(emits_to=("addie.d2.assessment_design",)),
 )
@@ -352,11 +377,11 @@ _COURSE_MAP = MatrixStage(
     generator=Generator(role="course architect", prompt_ref="prompts/addie/course_map"),
     checks=(
         Check(
-            check="prerequisite_satisfied",
+            check="shared.prerequisite_satisfied",
             params={"for": "Experience", "required_from": "Intent"},
         ),
         Check(
-            check="budget",
+            check="shared.budget",
             params={"dimension": "duration", "source": "ConstraintRegister.seat_time"},
         ),
     ),
@@ -382,7 +407,8 @@ _STORYBOARD = SpecifyStage(
     ),
     checks=(
         Check(
-            check="provenance", params={"type": "ProductionSpec", "must_cite": "SourceClaim"}
+            check="shared.provenance",
+            params={"type": "ProductionSpec", "must_cite": "SourceClaim"},
         ),
     ),
     gate=RubricGate(reviewer_role="sme", presents=("ProductionSpec.*",)),
@@ -416,11 +442,11 @@ _BUILD = ProduceStage(
     critic=Critic(role="QA", prompt_ref="prompts/addie/qa", criterion_doc="addie.qa_criteria"),
     checks=(
         Check(
-            check="provenance",
+            check="shared.provenance",
             params={"type": "Build.content_claim", "must_cite": "SourceClaim"},
         ),
         Check(
-            check="change_scope",
+            check="addie.change_scope",
             params={
                 "maturity": "beta",
                 "permitted": ["cosmetic", "verification"],
@@ -428,7 +454,7 @@ _BUILD = ProduceStage(
             },
         ),
         Check(
-            check="change_scope",
+            check="addie.change_scope",
             params={
                 "maturity": "gold",
                 "permitted": ["packaging"],
@@ -473,7 +499,13 @@ _TRYOUT = FieldStage(
         Out(artifact_type=A.OUTCOME_EVIDENCE, subtype="tryout", cardinality="1"),
         Out(artifact_type=A.DEFECT_LOG, cardinality="1"),
     ),
-    gate=FieldGate(reviewer_role="learner", presents=("Build.alpha",)),
+    gate=FieldGate(
+        reviewer_role="learner",
+        presents=("Build.alpha",),
+        # Between Alpha and Beta: this is what promotes a build out of
+        # alpha, so alpha is what the learners must be shown.
+        gates_promotion_from="alpha",
+    ),
     amendments=Amendments(emits_to=("addie.v1.build",)),
 )
 
@@ -523,7 +555,10 @@ _EVALUATION = GenerateStage(
     ),
     generator=Generator(role="evaluation analyst", prompt_ref="prompts/addie/evaluate"),
     checks=(
-        Check(check="provenance", params={"type": "RevisionProposal", "must_cite": "Intent"}),
+        Check(
+            check="shared.provenance",
+            params={"type": "RevisionProposal", "must_cite": "Intent"},
+        ),
     ),
     gate=RubricGate(
         reviewer_role="sponsor", presents=("OutcomeEvidence.*", "RevisionProposal.*")

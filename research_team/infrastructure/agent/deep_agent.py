@@ -21,7 +21,12 @@ from research_team.application import (
     AutonomyPolicy,
     TurnResult,
 )
-from research_team.application.ports import ActivityDelta, ActivityMessage
+from research_team.application.ports import (
+    ActivityDelta,
+    ActivityMessage,
+    GateReview,
+    GateReviewer,
+)
 from research_team.domain import CodingSession, RecordToolDecision
 from research_team.infrastructure import config
 from research_team.infrastructure.agent.approval import interrupt_config
@@ -187,6 +192,7 @@ class DeepAgentTurnExecutor:
         middleware: Sequence[AgentMiddleware] = (),
         middleware_provider: MiddlewareProvider | None = None,
         tools_provider: ToolProvider | None = None,
+        gate_reviewer: GateReviewer | None = None,
     ) -> None:
         self._model = model
         self._subagents = list(subagents)
@@ -201,6 +207,11 @@ class DeepAgentTurnExecutor:
         self._middleware = list(middleware)
         self._middleware_provider = middleware_provider
         self._tools_provider = tools_provider
+        # Consulted per gated call, before the human is. Optional for the same
+        # reason the two providers above are: an executor wired without a
+        # workflow has nothing to review and poses exactly the approvals it
+        # posed before this existed.
+        self._gate_reviewer = gate_reviewer
         # An all-`auto` policy is the default so that wiring a supervisor is
         # opt-in: without one, nothing is gated and the executor behaves
         # exactly as it did before interrupts existed.
@@ -409,6 +420,19 @@ class DeepAgentTurnExecutor:
                 "type": "reject",
                 "message": f"The {name} tool is not permitted in this session.",
             }
+        gate = await self._review_gate(session, name, args)
+        if gate is not None and gate.refusal is not None:
+            # Refused without the human seeing it, which is the same shape as
+            # the `deny` arm above and for a related reason: there is no
+            # judgement here to put to anybody. `decided_by` is the harness
+            # rather than policy, because policy said this tool was askable and
+            # it was the check library that objected.
+            session.execute(
+                RecordToolDecision(
+                    tool_name=name, args=args, decision="reject", decided_by="harness"
+                )
+            )
+            return {"type": "reject", "message": gate.refusal}
         decision = await self._approvals.decide(
             ApprovalRequest(
                 session_id=session.aggregate_id,
@@ -416,9 +440,30 @@ class DeepAgentTurnExecutor:
                 args=args,
                 description=str(request.get("description") or ""),
                 allowed_decisions=tuple(review.get("allowed_decisions") or ()),
+                context=gate.context if gate is not None else None,
             )
         )
         return self._apply(session, name, args, decision)
+
+    async def _review_gate(
+        self, session: CodingSession, name: str, args: dict
+    ) -> GateReview | None:
+        """What the harness has to say about this call, or nothing.
+
+        Never lets the reviewer's failure become the turn's, exactly as
+        `_report` refuses to let a browser feed cost a minute of model work.
+        The asymmetry with the refusal path above is deliberate: an invariant
+        that *failed* is a refusal, and an invariant that *crashed* is our bug,
+        and charging the run for our bug is how a gate earns a reputation for
+        being in the way.
+        """
+        if self._gate_reviewer is None:
+            return None
+        try:
+            return await self._gate_reviewer(session, name, args)
+        except Exception:
+            logger.exception("gate reviewer raised; posing the approval unreviewed")
+            return None
 
     def _apply(
         self,

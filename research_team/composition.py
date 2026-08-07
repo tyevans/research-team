@@ -35,8 +35,17 @@ from research_team.application import (
 )
 from research_team.application.artifacts import stage_artifact_instructions
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL
+from research_team.application.ports import GateReview
 from research_team.application.session_service import NO_SEARCH_CLAUSE
+from research_team.application.stage_exit import (
+    findings_path,
+    gate_context,
+    refusal,
+    render_review,
+    review_stage,
+)
 from research_team.domain import CodingSession, ProjectState, current_stage_of
+from research_team.domain.commands import WriteFile
 from research_team.domain.workflow import Preset
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import DeepAgentTurnExecutor, build_model
@@ -442,6 +451,45 @@ def build_application(
             ),
         )
 
+    async def gate_review(
+        session: CodingSession, tool_name: str, args: dict
+    ) -> GateReview | None:
+        """Run the stage's checks before anyone is asked to let it go.
+
+        Only for `advance_stage`. Every other gated tool is gated because it
+        costs money or leaves the process, and there is nothing about a web
+        search for a human to have found out beforehand; running a course
+        review for one would be work nobody reads.
+
+        The findings artifact is written straight onto the aggregate rather
+        than through the agent's filesystem, because the agent is suspended
+        inside an interrupt at this point and has no turn in which to write
+        anything. The consequence is worth naming: the file is in the log and
+        in the viewer immediately, and the *model* does not see it until its
+        next turn rebuilds state from the aggregate. That is the right way
+        round -- the report is for the reviewer, and a model that could read
+        its own report mid-decision would be tempted to argue with it.
+
+        A run whose project has no workflow, or whose stage the preset does
+        not define, gets `None`: there is no stage to check, and inventing one
+        to have something to report would be the gate making things up.
+        """
+        if tool_name != ADVANCE_STAGE_TOOL:
+            return None
+        running = await running_workflow(session)
+        if running is None:
+            return None
+        _, state, preset = running
+        stage = current_stage_of(state, preset)
+        if stage is None:
+            return None
+        review = review_stage(preset, stage, session.state.files)
+        path = findings_path(preset, stage)
+        session.execute(
+            WriteFile(path=path, file_data={"content": render_review(review, preset)})
+        )
+        return GateReview(context=gate_context(review, path), refusal=refusal(review))
+
     executor = DeepAgentTurnExecutor(
         resolved_model,
         subagents=subagents,
@@ -450,6 +498,7 @@ def build_application(
         approvals=approvals,
         middleware_provider=stage_middleware,
         tools_provider=workflow_tools,
+        gate_reviewer=gate_review,
     )
 
     async def open_graph(

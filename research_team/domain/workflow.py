@@ -372,6 +372,28 @@ class FieldGate(GateBase, frozen=True):
 
     kind: Literal["field"] = "field"
     decisions: tuple[Decision, ...] = ("approve", "send_back")
+    gates_promotion_from: str | None = None
+    """The maturity rung this field stage sits above, where it sits on a ladder.
+
+    Exists to make one specific error structurally impossible. ADDIE's formative
+    tryout gates promotion *out of alpha*, so alpha is what it must put in front
+    of the learners -- and `hybrid.default` shipped presenting `Build.beta`,
+    which lets substantive change arrive after the rung where the ladder is
+    meant to have stopped accepting it. That is the whole discipline the
+    maturity gate encodes, and nothing in the preset contradicted it: `beta` is
+    a real rung of a real ladder, so every structural property held. The bug was
+    *which* correct-looking rung was named, and it was catchable only by a
+    reviewer who knew ADDIE.
+
+    Naming the rung here gives the two facts something to disagree about --
+    `test_a_field_gate_presents_the_rung_it_gates` is where they are compared.
+    The alternative was a by-value pin on one stage, which catches that stage
+    regressing and no other instance of the same mistake.
+
+    `None` where a field stage sits on no ladder: Tyler's achievement data and
+    UbD's post-delivery student work answer to no rung, and inventing one for
+    them would make the field meaningless where it is set.
+    """
 
 
 Gate = Annotated[

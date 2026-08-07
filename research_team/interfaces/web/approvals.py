@@ -35,7 +35,14 @@ class PendingApproval:
     future: asyncio.Future = field(repr=False)
 
     def view(self) -> dict[str, Any]:
-        return {
+        """The frame a browser receives for one pending call.
+
+        `context` appears only when there is one, so an ordinary tool gate's
+        payload is byte-identical to what it was before stage reviews existed
+        -- a client switching on the presence of the key gets a reliable
+        answer, and no existing client sees a field it does not know.
+        """
+        view = {
             "id": self.id,
             "session_id": str(self.request.session_id),
             "tool_name": self.request.tool_name,
@@ -43,6 +50,9 @@ class PendingApproval:
             "description": self.request.description,
             "allowed_decisions": list(self.request.allowed_decisions),
         }
+        if self.request.context is not None:
+            view["context"] = self.request.context
+        return view
 
 
 class UnknownApproval(LookupError):

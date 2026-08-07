@@ -552,3 +552,47 @@ async def test_cancelling_a_session_directly_frees_its_approvals(
             await turn
 
     assert approvals.pending(session_id) == []
+
+
+# --- gate context on the wire -------------------------------------------------
+
+
+def _pending(request: ApprovalRequest) -> dict:
+    from research_team.interfaces.web.approvals import PendingApproval
+
+    return PendingApproval(id="p1", request=request, future=None).view()
+
+
+def test_an_ordinary_approval_frame_is_unchanged_by_gate_context_existing():
+    """Every client already parsing these must see exactly what it saw before."""
+    view = _pending(
+        ApprovalRequest(
+            session_id=uuid4(),
+            tool_name="web_search",
+            args={"query": "x"},
+            description="",
+            allowed_decisions=("approve", "reject"),
+        )
+    )
+    assert set(view) == {
+        "id",
+        "session_id",
+        "tool_name",
+        "args",
+        "description",
+        "allowed_decisions",
+    }
+
+
+def test_a_reviewed_gate_puts_its_findings_on_the_frame():
+    view = _pending(
+        ApprovalRequest(
+            session_id=uuid4(),
+            tool_name="advance_stage",
+            args={"rationale": "done"},
+            description="",
+            allowed_decisions=("approve", "reject"),
+            context={"stage": "s.one", "findings": []},
+        )
+    )
+    assert view["context"] == {"stage": "s.one", "findings": []}
