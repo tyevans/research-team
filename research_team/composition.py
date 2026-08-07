@@ -685,7 +685,21 @@ def build_application(
         # A session started in a project gets this appended to its prompt
         # (Task 14/Step 4); one started plainly does not, so it never hears
         # about tools it was not given.
-        knowledge_prompt=KNOWLEDGE_PROMPT + CORPUS_PROMPT + FETCH_CORPUS_PROMPT,
+        # `TOPICS_PROMPT` belongs here for the same reason the other three do,
+        # and its absence was a plain oversight: `open_graph` attaches
+        # `build_topic_tools` alongside the knowledge and corpus tools, so a
+        # joined session has always *had* `open_topic` -- and was never told.
+        # The comment beside the build-time suffix above already names this
+        # exact failure ("no idea the tool exists") while claiming parity with
+        # this line, which is what made the gap invisible.
+        #
+        # Visible from the outside as an autonomous run that stops on its first
+        # round with `queue_empty` forever: the only thing that can put a topic
+        # on the queue is the agent calling `open_topic`, the driver never opens
+        # one itself, and nothing had told the agent the tool was there.
+        knowledge_prompt=(
+            KNOWLEDGE_PROMPT + CORPUS_PROMPT + FETCH_CORPUS_PROMPT + TOPICS_PROMPT
+        ),
         # The service owns the attachment: `/project use` calls
         # `service.attach_project` directly, so it lives where the REPL
         # already reaches rather than behind a second accessor on `Application`.
