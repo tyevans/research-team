@@ -5,6 +5,12 @@ langchain, no deepagents, no SQLite, no environment. Everything above may
 import from here; nothing here imports from above.
 """
 
+from research_team.domain.auto_research import (
+    AutoResearchRun,
+    AutoRunState,
+    Budget,
+    StartRun,
+)
 from research_team.domain.commands import (
     ChangeAutonomy,
     CompactConversation,
@@ -76,7 +82,10 @@ __all__ = [
     "AdvanceStage",
     "AdvanceTip",
     "AssistantMessageAdded",
+    "AutoResearchRun",
+    "AutoRunState",
     "AutonomyChanged",
+    "Budget",
     "ChangeAutonomy",
     "CodingSession",
     "CompactConversation",
@@ -114,6 +123,7 @@ __all__ = [
     "SourceDocumentDropped",
     "SourceDocumentStored",
     "StageAdvanced",
+    "StartRun",
     "StartSession",
     "StoreSourceDocument",
     "ToolCallDecided",

@@ -19,6 +19,7 @@ from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application import FeedEntry
 from research_team.domain import CodingSession, Corpus, Project
+from research_team.domain.topic import Topic
 
 SNAPSHOT_THRESHOLD = 50
 
@@ -40,6 +41,33 @@ def build_project_repository(
     return AggregateRepository(
         store,
         Project,
+        event_publisher=publisher,
+        snapshot_store=snapshot_store,
+        snapshot_threshold=SNAPSHOT_THRESHOLD,
+        snapshot_mode="background",
+    )
+
+
+def build_topic_repository(
+    store: SQLiteEventStore,
+    publisher: InMemoryEventBus | None = None,
+    snapshot_store: SQLiteSnapshotStore | None = None,
+) -> AggregateRepository[Topic]:
+    """One topic, over the same log as everything else.
+
+    Unlike `Corpus` and `Project`, a topic does *not* share the project's UUID:
+    a project has many topics, so each gets its own id and carries
+    `project_id` in its creation event. That is what makes the topic table's
+    per-project reads a column lookup rather than a stream-id convention.
+
+    Snapshots are on at the usual threshold, and are affordable for the same
+    reason the corpus's are: `TopicState` holds counts, ids and statuses, never
+    finding text. A fold that accumulated prose would put the whole research
+    history into every snapshot.
+    """
+    return AggregateRepository(
+        store,
+        Topic,
         event_publisher=publisher,
         snapshot_store=snapshot_store,
         snapshot_threshold=SNAPSHOT_THRESHOLD,

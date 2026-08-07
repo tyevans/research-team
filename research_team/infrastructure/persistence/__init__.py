@@ -6,6 +6,7 @@ from research_team.infrastructure.persistence.event_store import (
     build_aggregate_repository,
     build_corpus_repository,
     build_project_repository,
+    build_topic_repository,
 )
 from research_team.infrastructure.persistence.read_models import (
     CorpusDocumentRow,
@@ -16,6 +17,13 @@ from research_team.infrastructure.persistence.read_models import (
     SessionSummaryRow,
     SessionSummaryRunner,
     SessionSummaryStore,
+)
+from research_team.infrastructure.persistence.topics import (
+    TopicProjection,
+    TopicQueue,
+    TopicRow,
+    TopicRunner,
+    TopicStore,
 )
 
 __all__ = [
@@ -29,7 +37,13 @@ __all__ = [
     "SessionSummaryRow",
     "SessionSummaryRunner",
     "SessionSummaryStore",
+    "TopicProjection",
+    "TopicQueue",
+    "TopicRow",
+    "TopicRunner",
+    "TopicStore",
     "build_aggregate_repository",
     "build_corpus_repository",
     "build_project_repository",
+    "build_topic_repository",
 ]

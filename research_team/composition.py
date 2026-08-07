@@ -44,6 +44,7 @@ from research_team.application.stage_exit import (
     render_review,
     review_stage,
 )
+from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import CodingSession, ProjectState, current_stage_of
 from research_team.domain.commands import WriteFile
 from research_team.domain.workflow import Preset
@@ -68,6 +69,10 @@ from research_team.infrastructure.agent.stage_middleware import (
     StageMiddleware,
     managed_tools_for,
 )
+from research_team.infrastructure.agent.topic_tools import (
+    RepositoryTopics,
+    build_topic_tools,
+)
 from research_team.infrastructure.agent.workflow_tools import (
     WORKFLOW_PROMPT,
     build_workflow_tools,
@@ -79,7 +84,9 @@ from research_team.infrastructure.persistence import (
     CorpusRunner,
     EventStoreSessionRepository,
     SessionSummaryRunner,
+    TopicRunner,
     build_corpus_repository,
+    build_topic_repository,
 )
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
@@ -110,6 +117,13 @@ class Application:
     corpus is read by two callers that share nothing else: the agent, through
     the tools attached with a project, and the web layer, which lists and
     reads any project's sources without attaching anything."""
+
+    topics: TopicRunner
+    """Keeps the topic tables following the log. Idle until `start()`.
+
+    A field for the same reason `corpus` is one: the queue is read by the
+    agent through the tools attached with a project, and by anything driving an
+    autonomous run, which shares nothing else with a session."""
 
     policy: AutonomyPolicy
     """Per-tool autonomy levels for this instance, mutable after construction.
@@ -162,6 +176,7 @@ class Application:
         """
         await self.summaries.start()
         await self.corpus.start()
+        await self.topics.start()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
@@ -182,6 +197,16 @@ class Application:
         makes the lag addressable rather than something to sleep through.
         """
         await self.summaries.caught_up()
+
+    async def topics_caught_up(self) -> None:
+        """Block until the topic tables have seen everything appended so far.
+
+        Load-bearing rather than a test affordance, for the reason the corpus
+        equivalent is: an autonomous round records a look and then asks for the
+        next topic, and the gap between the append and the row is exactly where
+        it would be handed back the topic it just finished.
+        """
+        await self.topics.caught_up()
 
     async def corpus_caught_up(self) -> None:
         """Wait until the corpus projection has seen everything appended.
@@ -204,6 +229,7 @@ class Application:
         await self.turns.cancel_all()
         await self.summaries.stop()
         await self.corpus.stop()
+        await self.topics.stop()
         await self.service.close()
         await self.detach_project()
 
@@ -306,13 +332,18 @@ def build_application(
         # same way `start_in_project`'s per-session prompt does. Otherwise a
         # session it creates has `remember` on the executor and no idea the
         # tool exists.
-        prompt_suffix += KNOWLEDGE_PROMPT + CORPUS_PROMPT
+        prompt_suffix += KNOWLEDGE_PROMPT + CORPUS_PROMPT + TOPICS_PROMPT
 
     resolved_tracer = tracer if tracer is not None else build_tracer()
     # Built here rather than beside `summaries` below because `open_graph`
     # closes over it: the corpus tools are attached with a project, and the
     # thing they read has to exist by the time that callable is defined.
     corpus = CorpusRunner(
+        repository.store, resolved_path, repository.publisher, resolved_tracer
+    )
+    # Same reasoning as `corpus`: `open_graph` closes over it, so the thing the
+    # topic tools read has to exist by the time that callable is defined.
+    topics = TopicRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
 
@@ -541,7 +572,24 @@ def build_application(
         # guarantee exists to rule out. The corpus reader needs nothing closed,
         # so `close_graph` stays about the graph.
         reader = ProjectCorpusReader(corpus, target_project_id)
-        return knowledge, build_knowledge_tools(knowledge) + build_corpus_tools(reader)
+        # The topic tools ride the same channel, for the reason the corpus
+        # tools do: `KnowledgeAttachment` already carries the atomicity
+        # guarantee that a failed attach leaves the executor's tools untouched,
+        # and a second callable would need its own copy of it.
+        topic_port = RepositoryTopics(
+            build_topic_repository(
+                repository.store,
+                repository.publisher,
+                snapshot_store=repository.snapshot_store,
+            ),
+            topics,
+            target_project_id,
+        )
+        return knowledge, (
+            build_knowledge_tools(knowledge)
+            + build_corpus_tools(reader)
+            + build_topic_tools(topic_port, target_project_id)
+        )
 
     async def close_graph(knowledge: RedstringKnowledge) -> None:
         store = knowledge.graph_store
@@ -586,6 +634,7 @@ def build_application(
         context_mode=mode,
         summaries=summaries,
         corpus=corpus,
+        topics=topics,
         policy=resolved_policy,
         _initial_project_id=project_id,
     )
