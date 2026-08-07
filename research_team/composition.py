@@ -64,6 +64,7 @@ from research_team.infrastructure.agent.knowledge_tools import (
     KNOWLEDGE_PROMPT,
     build_knowledge_tools,
 )
+from research_team.infrastructure.agent.recall import Recall
 from research_team.infrastructure.agent.search import SEARCH_PROMPT, build_search_tool
 from research_team.infrastructure.agent.stage_middleware import (
     StageMiddleware,
@@ -313,12 +314,18 @@ def build_application(
     # `web_search` keeps its configuration switch: an instance is a real thing
     # someone has to stand up, and "unset means absent" is a stronger promise
     # than any gate, so there is no reason to trade it for one.
-    tools: tuple[BaseTool, ...] = (build_fetch_tool(),)
+    # One memo for both network tools and for every session this application
+    # serves. Process-wide rather than per-session because `build_fetch_tool`
+    # is called once here -- and correct at that scope for the same reason it
+    # is safe: it holds only responses from public URLs, which are the same
+    # bytes whoever asked. Nothing project-scoped may ever go in it.
+    recall = Recall()
+    tools: tuple[BaseTool, ...] = (build_fetch_tool(recall=recall),)
     prompt_suffix += FETCH_PROMPT
 
     searxng = config.searxng_url()
     if searxng is not None:
-        tools += (build_search_tool(searxng, limit=config.searxng_results()),)
+        tools += (build_search_tool(searxng, limit=config.searxng_results(), recall=recall),)
         prompt_suffix += SEARCH_PROMPT
     else:
         prompt_suffix += NO_SEARCH_CLAUSE
@@ -585,10 +592,16 @@ def build_application(
             topics,
             target_project_id,
         )
+        # Shadows the base `fetch` for as long as this project is attached --
+        # see `_compose` in `knowledge_attachment.py`. It is the same tool
+        # with one more place to look: this project's own sources, which is
+        # the only lookup that can return something citable.
+        project_fetch = build_fetch_tool(recall=recall, corpus=reader)
         return knowledge, (
-            build_knowledge_tools(knowledge)
-            + build_corpus_tools(reader)
-            + build_topic_tools(topic_port, target_project_id)
+            project_fetch,
+            *build_knowledge_tools(knowledge),
+            *build_corpus_tools(reader),
+            *build_topic_tools(topic_port, target_project_id),
         )
 
     async def close_graph(knowledge: RedstringKnowledge) -> None:
