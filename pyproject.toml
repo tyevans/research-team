@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "deepagents>=0.7.1,<0.8",
+    "deepagents>=0.7.4,<0.8",
     # Capped below the next minor, as redstring caps it. Both libraries are
     # pre-1.0 with a stated no-shim policy, so a minor is where the breaking
     # renames land -- 0.12.0 alone carried four. An uncapped floor means a
@@ -40,7 +40,7 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "hypothesis>=6.100",
     "mutmut>=3.0",
-    "ruff==0.14.2",
+    "ruff==0.16.1",
 ]
 
 [tool.pytest.ini_options]
