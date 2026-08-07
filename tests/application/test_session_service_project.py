@@ -182,3 +182,36 @@ async def test_a_plain_session_does_not_mention_the_knowledge_graph(service):
     session = await service.load(session_id)
 
     assert "knowledge graph" not in session.state.system_prompt.lower()
+
+
+async def test_a_session_started_in_a_project_is_told_about_its_topic_tools(
+    service, project_id
+):
+    """The topic tools ride the project attachment, so a joined session *has*
+    `open_topic`, `list_topics`, `record_finding` and `link_source`. It was not
+    told, which is the failure mode the comment beside the build-time prompt
+    already names: the tool is on the executor and the model has no idea it
+    exists.
+
+    Visible from the outside as an autonomous run that stops on its first round
+    with "queue_empty" forever, because the only thing that can put a topic on
+    the queue is the agent calling `open_topic`, and nothing ever told it to.
+    """
+    session_id = await service.start_in_project(project_id)
+
+    session = await service.load(session_id)
+
+    prompt = session.state.system_prompt
+    assert "open_topic" in prompt
+    assert "list_topics" in prompt
+    assert "record_finding" in prompt
+
+
+async def test_a_plain_session_is_not_told_about_topic_tools(service):
+    """No project, no topic tools -- so the prompt must not describe them, for
+    the same reason it must not describe the graph."""
+    session_id = await service.create_session()
+
+    session = await service.load(session_id)
+
+    assert "open_topic" not in session.state.system_prompt
