@@ -383,58 +383,46 @@ What v1 of the markdown component system knowingly left out. The design is in
 `docs/research/course-design/markdown-components.md` §3.10, which phases it;
 `widget-horizons.md` beside it ranks the types not yet registered.
 
-### B28. An attempt is graded and then forgotten
+B28, B29 and B31 are **closed**. What remains open is B30, which is not a
+defect of this subsystem at all -- see its entry.
 
-`POST /api/sessions/{id}/attempts` marks an answer and returns a verdict.
-Nothing records that it happened. There is no `LearnerProgress` aggregate, so
-the checklist's `persist: true` is accepted and ignored (the UI says so), a
-reload loses every answer, and the pedagogically interesting object -- the
-*sequence* of attempts on one item -- does not exist anywhere.
+### B32. A rewritten item leaves a learner's history ambiguous
 
-Deliberate for v1, on the reasoning in §3.10: prove the authoring loop before
-persisting anything, because a learner-state schema built against components
-nobody had authored yet would be guesswork. §3.6 has the shape it should take,
-including that the event names are already xAPI verbs (`attempted`,
-`answered`, `completed`) so an LRS bridge is a projection rather than a
-redesign.
+Closing B28 surfaced the question B28 said was the hard part, in a smaller and
+more answerable form. `LearnerProgress` keys an item by `(path, component_id)`
+and stamps every attempt with the sha256 of the body it was answered against.
+That means a rewrite is *visible* -- the digest changes under a learner -- and
+nothing acts on it.
 
-The hard part is not the aggregate, it is identity: `(path, component_id)`
-survives a content edit that keeps the id, and nothing survives an author
-rewriting the item. The parser already warns on a derived id and on a duplicate
-one, which is the input that decision needs.
+Deliberate, and the reason is that the right action is not a domain rule. A
+fixed typo should not reset anyone; a reworded distractor probably should; a
+question rewritten to ask something else definitely should. Only the first is
+mechanically detectable, and the aggregate has no basis for the other two.
 
-### B31. A subagent sent to write assessment items will write prose
+What it wants is not a rule but a *report*: an author-facing view of which
+items changed under which learners, with the two digests, so the call is made
+by someone who can read both versions. That belongs beside `alignment_map` in
+`widget-horizons.md` -- both are reports that make an authoring decision
+visible rather than making it automatically.
 
-Component guidance is derived from the stage's declared outputs and delivered
-through `StageMiddleware`, which wraps the *caller's* model call. A subagent
-spawned through `task` gets `delegation.py`'s own system prompt and none of
-that, so a stage that delegates "draft the assessment items for module 3" gets
-back prose that no renderer will turn into anything, and the caller has to
-notice and redo it.
+Worth noticing: this is only answerable because the digest is in the log. If
+the attempt had stored the verdict alone, the question could not be asked at
+all afterwards.
 
-Not fixed here because the fix is a choice, not an oversight. Either the
-delegation prompt gains the same derived guidance (which means the subagent
-system prompt stops being static, and every delegation pays for guidance most
-of them do not need), or the stage prompt tells the model to include the
-component requirements *in the task it writes* (cheaper, and consistent with
-`delegation.py`'s existing "it cannot see this conversation; give it everything
-it needs"). The second is probably right, and it is a prompt change nobody
-should make without watching a real delegated authoring turn first.
+### B33. Progress is per session, which is where authentication will bite
 
-Worth noticing early: the failure is silent and looks like a model that ignored
-its instructions, because the instructions genuinely were not there.
+`LearnerProgress` shares its session's UUID, because a session is the only
+identity in this codebase that means "one person working through this
+material". That is correct today and is exactly what breaks first when B18 is
+picked up: two learners cannot share a course without sharing a session, and a
+session is also the thing the *author* takes turns in.
 
-### B29. The parse is not cached, though the cache key is exact
-
-`GET .../files/parsed` re-parses the file on every request, and the attempt
-route parses it again to find one component. Files are immutable per event, so
-`(session_id, path, at)` is a perfect cache key -- §3.5 names it. Not done
-because nothing has measured it: the documents are kilobytes and `yaml.safe_load`
-over four blocks is not obviously worth a cache and its invalidation. Recorded
-so the key does not have to be rediscovered when something does measure it.
-
-Note the one asymmetry: `at=None` means HEAD, which moves. A cache keyed on it
-would need the resolved event index, not the literal `None`.
+Recorded separately from B18 so the coupling is not rediscovered. The shape
+when it is picked up: progress keys on a principal, and the session id becomes
+the principal for the single-operator case rather than the definition of one.
+Nothing else in the aggregate assumes a session -- `decide` and `evolve` never
+name one -- so the change is the repository's key and the routes, not the
+rules.
 
 ### B30. Answer-withholding is real projection and still not a boundary
 
@@ -449,6 +437,71 @@ last line is the rule this implementation follows: it is a presentation
 affordance and is described as one, in the module docstring, in the README, and
 in the UI's own tooltip on the "answers withheld" badge. Anyone tempted to
 describe it otherwise should read B18 first.
+
+**Not independently fixable, and it was reviewed for closure and deliberately
+left open.** There is no action here that is not B18 -- the fix needs
+authentication and a separate deny-by-default delivery reader, which is B18's
+whole content. It stays as the marker that this surface follows the rule rather
+than bending it, and it closes when B18 closes.
+
+### ~~B28. An attempt is graded and then forgotten~~ (done)
+
+`LearnerProgress` (`domain/learner.py`) is the record: one stream per session,
+sharing its UUID, keyed `(path, component_id)`, with `answered` and `completed`
+as its event names for the xAPI reason §3.6 gives.
+
+Three things went differently from what this entry anticipated:
+
+- **`attempted` is not emitted.** The entry named three xAPI verbs. No surface
+  produces the first -- nothing tells the server that a learner opened an item
+  and did not submit -- so emitting one would have been inventing a fact to
+  fill out a vocabulary.
+- **Identity was the hard part, as predicted, and is not resolved so much as
+  made answerable.** Every attempt carries the digest of the body it was
+  answered against, so a rewrite under a learner is recorded. What to do about
+  it is now B32.
+- **`persist: true` is honoured rather than assumed.** A checklist that did not
+  ask to be remembered is refused with a 400 rather than quietly accumulating
+  state the author never opted into.
+
+The state holds counts, scores and flags and no response text, for the reason
+`corpus.py` holds no document text: snapshots fold the state, and a growing
+list of every answer ever given would go into each one. The sequence of
+attempts -- the object this entry called the pedagogically interesting one --
+is a projection over the stream, and the stream has everything it needs.
+
+### ~~B31. A subagent sent to write assessment items will write prose~~ (done)
+
+Took the second of the two options this entry laid out: the stage prompt tells
+the model to put the component requirement in the task it writes. The entry
+called that one "probably right" and said nobody should make the change without
+watching a real delegated authoring turn first. That caveat was aimed at the
+*first* option; what settled it without a live turn is that `delegation.py`
+already steers subagents toward investigation and away from constructive work,
+and already tells the caller "give it everything it needs; it cannot see this
+conversation". Deriving guidance into the delegation prompt would have argued
+with both.
+
+Part of the component block rather than a new always-on paragraph, so a stage
+with no component-bearing output is still told nothing.
+
+### ~~B29. The parse is not cached, though the cache key is exact~~ (done, differently)
+
+Measured, as this entry asked, and the measurement found something better than
+a cache. `yaml.safe_load` binds PyYAML's *pure-Python* scanner even when the
+libyaml extension is installed -- which it is here -- and the C loader parses
+the same component body about nine times faster. A 24-component lesson went
+from 83ms to 16ms on a loaded machine.
+
+So there is still no cache, and now there is much less reason for one: the win
+is larger than a cache over the slow loader would have been, and it costs no
+invalidation story. `CSafeLoader`, not `CLoader` -- the unsafe loader is also
+faster and would let a lesson written by a model construct arbitrary Python.
+
+The cache key this entry recorded is still exact and still unused, including
+the asymmetry it flagged: `at=None` means HEAD, which moves, so a cache keyed
+on it would need the resolved event index. Left here rather than deleted,
+because that is the note whoever measures next will want.
 
 ## Knowledge and corpus
 
@@ -533,6 +586,14 @@ Until then, any answer-withholding in the renderer is a presentation
 affordance and must not be described as security. One now exists -- the
 learner projection in `application/components.py` -- and B30 records that it
 follows this rule rather than bending it.
+
+**B33 is the other half, and it is the one that will bite first.**
+`LearnerProgress` is keyed by session, because a session is the only identity
+this codebase has. So there is not merely no boundary between author and
+learner -- there is no way for two learners to be *distinct* without being two
+sessions, and a session is also the thing the author takes turns in. Whoever
+picks this up should read B33 before designing the principal, because progress
+is the first thing that needs one.
 
 ### B19. Nothing in the event log can be erased
 

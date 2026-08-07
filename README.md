@@ -377,8 +377,31 @@ The mapping is `COMPONENTS_FOR`, from the design's §3.8 table.
 Two consequences worth knowing. A session driving no preset gets no component
 guidance — components are how a *course artifact* becomes something a learner
 can do, and a session with no workflow is not writing one. And subagents get
-their own scoped prompt, so a delegated task that should produce a component
-needs to say so.
+their own scoped prompt, which never carries this guidance, so a stage that
+authors components is told to restate the requirement **in the task it writes**.
+Deriving it into the delegation prompt instead would make that prompt stop being
+static and charge every delegation for guidance most have no use for; telling
+the caller is also what `delegation.py` already asks for in its own words —
+"give it everything it needs; it cannot see this conversation".
+
+**What a learner does is kept.** An attempt used to be graded and forgotten.
+`LearnerProgress` (`domain/learner.py`) is the record: one stream per session,
+keyed `(path, component_id)`, with the xAPI verbs `answered` and `completed` as
+its event names so an LRS bridge is a projection rather than a redesign.
+`GET /api/sessions/{id}/progress?path=` is what the browser reads on opening a
+document, and `persist: true` on a checklist now means what it says —
+`POST .../progress/checklist` records the ticks, and the UI says "saved as you
+go" instead of apologising.
+
+Two decisions inside it. Answering an item three times is *three attempts*, not
+one item in a final state: the count is the pedagogically interesting part, and
+`correct` is sticky so revisiting a completed question to check something cannot
+lose the completion. And every attempt stores the digest of the body it was
+answered against, because `(path, component_id)` survives an edit that keeps the
+id but nothing survives an author rewriting the item — so a rewrite under a
+learner is *recorded* rather than silently resolved. Whether a reworded
+distractor invalidates an earlier attempt is a pedagogical call, not a domain
+rule, and the log is what that call would need.
 
 Design notes are in `docs/research/course-design/markdown-components.md`;
 `widget-horizons.md` beside it ranks the types not yet built.

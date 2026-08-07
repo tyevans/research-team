@@ -1560,6 +1560,23 @@ select.input { max-width: 22rem; }
    the learner just used out from under the pointer. */
 .cmp-verdict-slot { min-height: 8px; }
 
+/* What a returning learner has already earned. Deliberately quieter than a
+   verdict -- it is a note about the past, not a response to anything they just
+   did -- and, like every other correct/incorrect signal here, it carries a
+   glyph and words rather than leaning on hue alone. */
+.cmp-earlier {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: var(--t-sm);
+  color: var(--fg-faint);
+}
+.cmp-earlier .verdict-mark { color: var(--add-fg); }
+
+/* A checklist that promised "saved as you go" and did not has to say so. */
+.cmp-hint-error { color: var(--del-fg); }
+
 .cmp-verdict {
   margin-top: 12px;
   padding: 10px 12px;

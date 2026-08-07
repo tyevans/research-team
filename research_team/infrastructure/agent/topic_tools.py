@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 from langchain_core.tools import BaseTool, tool
 
+from research_team.application.retry import with_retry
 from research_team.application.topics import (
     LINK_SOURCE_TOOL,
     LIST_TOPICS_TOOL,
@@ -32,7 +33,6 @@ from research_team.domain.topic import (
     RecordFinding,
     Topic,
 )
-from research_team.infrastructure.persistence.retry import with_retry
 
 
 class RepositoryTopics(TopicPort):

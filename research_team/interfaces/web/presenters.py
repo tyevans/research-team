@@ -35,6 +35,7 @@ from research_team.domain import (
     WorkflowSelected,
 )
 from research_team.domain.auto_research import AutoRunState
+from research_team.domain.learner import LearnerProgressState
 from research_team.domain.workflow import Preset, Stage
 
 FILE_EVENTS = (FileWritten, FileEdited, FileDeleted)
@@ -502,4 +503,66 @@ def run_view(run: ActiveRun, state: AutoRunState | None = None) -> dict[str, Any
             "quiet_rounds": state.budget.quiet_rounds,
         },
         "read_only": state.read_only,
+    }
+
+
+def item_view(state: LearnerProgressState, path: str, component_id: str) -> dict[str, Any]:
+    """One item's progress, or the zeroed shape for one nobody has touched.
+
+    Never `None`. A client that has to branch on "no record yet" writes that
+    branch once per renderer and gets it wrong in one of them; a zeroed record
+    reads the same as an untouched one everywhere, which is what it is.
+    """
+    record = state.item(path, component_id)
+    if record is None:
+        return {
+            "path": path,
+            "component_id": component_id,
+            "attempts": 0,
+            "correct": False,
+            "best_score": 0.0,
+            "last_score": 0.0,
+            "checked": [],
+        }
+    return {
+        "path": record.path,
+        "component_id": record.component_id,
+        "attempts": record.attempts,
+        "correct": record.correct,
+        "best_score": record.best_score,
+        "last_score": record.last_score,
+        "checked": list(record.checked),
+    }
+
+
+def progress_view(state: LearnerProgressState, path: str | None = None) -> dict[str, Any]:
+    """Everything this learner has done, optionally narrowed to one file.
+
+    Keyed by component id when narrowed to a path, because that is what a
+    renderer holds and it saves every call site re-deriving the composite key.
+    Unnarrowed, the key has to carry the path too -- ids are only unique within
+    a document -- so the two shapes differ deliberately rather than by neglect,
+    and `scope` says which one this is.
+    """
+    records = [
+        record for record in state.items.values() if path is None or record.path == path
+    ]
+    if path is not None:
+        return {
+            "scope": "file",
+            "path": path,
+            "items": {
+                record.component_id: item_view(state, record.path, record.component_id)
+                for record in records
+            },
+        }
+    return {
+        "scope": "session",
+        "path": None,
+        "items": {
+            f"{record.path}#{record.component_id}": item_view(
+                state, record.path, record.component_id
+            )
+            for record in records
+        },
     }

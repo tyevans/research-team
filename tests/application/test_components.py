@@ -523,3 +523,114 @@ def test_the_generated_reference_covers_every_registered_type():
         assert parsed.components, f"{name}'s example does not parse as a component"
         assert parsed.components[0].errors == (), f"{name}'s own example is invalid"
         assert parsed.components[0].type == name
+
+
+# --- B31: the guidance has to survive being handed to a subagent ------------
+#
+# Component guidance rides `StageMiddleware`, which wraps the *caller's* model
+# call. A subagent spawned through `task` gets `delegation.py`'s own static
+# system prompt and none of this, so a delegated "draft the assessment items"
+# comes back as prose no renderer will use -- and it fails silently, looking
+# like a model that ignored instructions it was genuinely never given.
+#
+# The fix is the cheaper of B31's two options: tell the *caller* to put the
+# requirement in the task it writes. That is consistent with delegation.py's
+# own "give it everything it needs; it cannot see this conversation", and it
+# keeps the subagent prompt static so every delegation does not pay for
+# guidance most of them have no use for.
+
+
+def test_a_component_stage_is_told_to_carry_the_requirement_into_a_delegated_task():
+    from research_team.application.components import component_guidance
+    from research_team.domain.workflow import ArtifactType, StageOutput
+
+    outputs = (
+        StageOutput(
+            artifact_type=ArtifactType.EVIDENCE_SPEC,
+            subtype="assessment_item",
+            cardinality="1..n",
+        ),
+    )
+    guidance = component_guidance(outputs)
+
+    assert "delegate" in guidance.lower()
+    # Naming the tool matters: "delegate" alone is a concept, `task` is the
+    # thing the model actually calls.
+    assert "task" in guidance.lower()
+    # The instruction has to be to restate the requirement, not merely to know
+    # that subagents exist.
+    assert "cannot see" in guidance.lower()
+
+
+def test_a_stage_with_no_components_is_told_nothing_about_delegation_either():
+    """The delegation note is part of the component block, not a new always-on
+    paragraph. A stage writing source claims has no component requirement to
+    carry into a subagent task, so there is nothing here for it to be told."""
+    from research_team.application.components import component_guidance
+    from research_team.domain.workflow import ArtifactType, StageOutput
+
+    outputs = (StageOutput(artifact_type=ArtifactType.SOURCE_CLAIM, cardinality="1..n"),)
+    assert component_guidance(outputs) == ""
+
+
+# --- B29: the parse was nine times slower than it needed to be -------------
+#
+# B29 recorded "the parse is not cached, though the cache key is exact", and
+# deferred the cache because nothing had measured it. Measuring it found
+# something better than a cache: `yaml.safe_load` binds PyYAML's *pure-Python*
+# scanner even when the libyaml extension is installed, and on this machine the
+# C loader parses the same component body ~9x faster. A cache over the slow
+# loader would have bought less and cost an invalidation story.
+#
+# So these pin the substitution rather than a speed: that we take the C loader
+# when it exists, that it is still a *safe* loader, and that a malformed body
+# still degrades into a Note rather than an exception.
+
+
+def test_the_c_yaml_loader_is_used_when_the_extension_is_available():
+    """Not a benchmark -- benchmarks are flaky on a loaded machine. This pins
+    the decision that produced the speedup, which is the durable part."""
+    import yaml
+
+    from research_team.application.components import _YAML_LOADER
+
+    if hasattr(yaml, "CSafeLoader"):
+        assert _YAML_LOADER is yaml.CSafeLoader
+    else:
+        assert _YAML_LOADER is yaml.SafeLoader
+
+
+def test_the_loader_is_still_a_safe_one():
+    """The whole point of `safe_load` is that a lesson written by a model cannot
+    construct arbitrary Python. Swapping the loader for speed must not swap that
+    away -- `yaml.CLoader` is also faster and would."""
+    doc = parse_document(
+        "```component:mcq\n!!python/object/apply:os.system ['echo pwned']\n```\n"
+    )
+    block = doc.blocks[0]
+    assert block.kind == "component"
+    assert block.errors, "an unsafe tag must be refused, not constructed"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "options: [1, 2",
+        "a:\n- b\n  c: 1",
+        "*undefined",
+        "a: |\n\ttab",
+    ],
+)
+def test_a_malformed_body_still_degrades_rather_than_raising(body):
+    """The C loader words its complaints differently from the pure-Python one.
+    What must not change is that every one of them arrives as a Note on the
+    block -- the authoring feedback loop reads these."""
+    doc = parse_document(f"```component:mcq\n{body}\n```\n")
+    block = doc.blocks[0]
+    assert block.kind == "component"
+    assert block.errors
+    message = str(block.errors[0])
+    assert "could not parse the YAML body" in message
+    # Non-empty detail: an error that says only "could not parse" tells the
+    # model nothing it can act on.
+    assert message.split("--", 1)[1].strip()

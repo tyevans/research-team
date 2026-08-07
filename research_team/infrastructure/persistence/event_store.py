@@ -20,6 +20,7 @@ from eventsource.application.aggregates.repository import AggregateRepository
 from research_team.application import FeedEntry
 from research_team.domain import CodingSession, Corpus, Project
 from research_team.domain.auto_research import AutoResearchRun
+from research_team.domain.learner import LearnerProgress
 from research_team.domain.topic import Topic
 
 SNAPSHOT_THRESHOLD = 50
@@ -121,6 +122,33 @@ def build_corpus_repository(
     return AggregateRepository(
         store,
         Corpus,
+        event_publisher=publisher,
+        snapshot_store=snapshot_store,
+        snapshot_threshold=SNAPSHOT_THRESHOLD,
+        snapshot_mode="background",
+    )
+
+
+def build_learner_progress_repository(
+    store: SQLiteEventStore,
+    publisher: InMemoryEventBus | None = None,
+    snapshot_store: SQLiteSnapshotStore | None = None,
+) -> AggregateRepository[LearnerProgress]:
+    """One learner's progress, over the same log as the session it belongs to.
+
+    Shares the *session's* UUID, the way a corpus shares its project's, and is
+    kept apart by `aggregate_type`. There is no user system (B18), so a session
+    is the only identity in this codebase that means "one person working
+    through this material" -- see `domain/learner.py` for why that is stated
+    rather than assumed, and what has to change when authentication arrives.
+
+    Snapshots are on at the usual threshold, and are affordable for the same
+    reason the corpus's are: `LearnerProgressState` holds counts and flags, not
+    the text of anything anyone typed.
+    """
+    return AggregateRepository(
+        store,
+        LearnerProgress,
         event_publisher=publisher,
         snapshot_store=snapshot_store,
         snapshot_threshold=SNAPSHOT_THRESHOLD,
