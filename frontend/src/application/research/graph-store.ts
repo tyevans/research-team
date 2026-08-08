@@ -23,6 +23,14 @@ import type { GraphRepository } from '../ports/repositories.ts'
 export interface GraphState {
   readonly view: GraphView
   readonly results: readonly GraphNode[]
+  /** Every entity type this store has seen a result for, sorted.
+   *
+   * Accumulated rather than derived from `results`, because the control that
+   * offers these re-queries the server when one is chosen: picking `fact`
+   * makes the results all facts, and a list derived from them would drop every
+   * other option from the very control that had just offered it. A type seen
+   * once stays on offer for the rest of the visit. */
+  readonly knownTypes: readonly string[]
   /** Whether the last search matched more entities than the page returned
    *  -- the route paginates but this browser does not, and this is what
    *  keeps that truncation from being silent. */
@@ -59,6 +67,7 @@ export const createGraphStore = ({
   create<GraphState>((set, get) => ({
     view: emptyGraph,
     results: [],
+    knownTypes: [],
     truncated: false,
     searching: false,
     error: null,
@@ -104,7 +113,14 @@ export const createGraphStore = ({
       set({ searching: true, error: null })
       try {
         const { entities, truncated } = await graphs.search(projectId, needle, entityType)
-        set({ results: entities, truncated, searching: false })
+        set((state) => ({
+          results: entities,
+          truncated,
+          searching: false,
+          knownTypes: [
+            ...new Set([...state.knownTypes, ...entities.map((entity) => entity.entityType)]),
+          ].sort(),
+        }))
       } catch (err) {
         set({ searching: false, error: errorMessage(err) })
       }

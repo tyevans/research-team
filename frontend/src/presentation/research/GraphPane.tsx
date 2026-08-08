@@ -52,7 +52,7 @@ export const GraphPane = ({
   // instead (the same split `ExtractionPane` uses). Destructuring them here
   // would also detach them from the store instance the way an unbound method
   // detaches from `this`, which this project's lint config catches.
-  const { view, results, truncated, searching, error } = store()
+  const { view, results, knownTypes, truncated, searching, error } = store()
 
   // Debounced rather than firing on every keystroke: `find_entities` fetches
   // the tenant's entire entity set per call (there is no store-side filter
@@ -139,13 +139,11 @@ export const GraphPane = ({
             onChange={(event) => setEntityType(event.target.value)}
           >
             <option value="">All types</option>
-            {Array.from(new Set(results.map((result) => result.entityType)))
-              .sort()
-              .map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
+            {knownTypes.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
           </select>
           {/* Only once there is something to clear -- a control that does
               nothing is a control a reader has to work out the meaning of. */}
@@ -172,6 +170,18 @@ export const GraphPane = ({
           <div className="graph-searching">
             <Loading what="entities" />
           </div>
+        ) : null}
+
+        {/* Silence read as "still working". A search that matched nothing
+            rendered nothing at all, which is exactly what a search still being
+            typed renders -- so the one case where the answer was already known
+            was the case that looked most like waiting. Only once a term or a
+            type has actually been asked for: an empty box has nothing to
+            report. */}
+        {!searching && !error && (term.trim() || entityType) && results.length === 0 ? (
+          <p className="graph-no-results">
+            Nothing matched. Try a shorter term, or widen the type filter.
+          </p>
         ) : null}
 
         {results.length > 0 ? (

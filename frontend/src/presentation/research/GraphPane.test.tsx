@@ -371,3 +371,49 @@ it('reports a picked result outward instead of selecting behind the route’s ba
 
   expect(onEntity).toHaveBeenCalledWith('ada')
 })
+
+it('says a search matched nothing, rather than rendering silence', async () => {
+  const graphs = fakeGraphs({
+    search: vi.fn().mockResolvedValue({ entities: [], truncated: false }),
+  })
+  const user = userEvent.setup()
+
+  renderWithContainer(<RoutedGraphPane />, { graphs })
+
+  await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'zzzz')
+
+  // Silence is what a search still being typed looks like, so the one case
+  // where the answer is already known must not look like waiting.
+  expect(await screen.findByText(/nothing matched/i)).toBeInTheDocument()
+})
+
+it('reports nothing before a term has been asked for', () => {
+  const graphs = fakeGraphs()
+
+  renderWithContainer(<RoutedGraphPane />, { graphs })
+
+  expect(screen.queryByText(/nothing matched/i)).not.toBeInTheDocument()
+})
+
+it('keeps a type on offer after choosing it has narrowed the results to it', async () => {
+  const search = vi
+    .fn()
+    .mockResolvedValueOnce({
+      entities: [node({ id: 'a', entityType: 'fact' }), node({ id: 'b', entityType: 'study' })],
+      truncated: false,
+    })
+    .mockResolvedValue({ entities: [node({ id: 'a', entityType: 'fact' })], truncated: false })
+  const user = userEvent.setup()
+
+  renderWithContainer(<RoutedGraphPane />, { graphs: fakeGraphs({ search }) })
+
+  await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'x')
+  await screen.findByRole('option', { name: 'study' })
+
+  await user.selectOptions(screen.getByRole('combobox', { name: /filter by entity type/i }), 'fact')
+
+  // The results are all facts now. `study` must still be reachable, or the
+  // control that just offered it has trapped the reader on their own choice.
+  await waitFor(() => expect(search).toHaveBeenCalledTimes(2))
+  expect(screen.getByRole('option', { name: 'study' })).toBeInTheDocument()
+})
