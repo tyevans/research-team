@@ -7,6 +7,7 @@ import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/atte
 import type { Course } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
+import type { TopicDetail, TopicView } from '@domain/research/topic.ts'
 import type { EventIndex } from '@domain/session/event-index.ts'
 import type { LogEntry } from '@domain/session/log-entry.ts'
 import type { ScrubPoint } from '@domain/session/scrub-point.ts'
@@ -15,7 +16,13 @@ import type { TurnRange } from '@domain/session/turn.ts'
 import type { Roster } from '@domain/worker/worker.ts'
 import type { FileRevision } from '@domain/workspace/workspace-file.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
-import type { ApprovalId, ComponentId, ProjectId, SessionId } from '@domain/shared/identifier.ts'
+import type {
+  ApprovalId,
+  ComponentId,
+  ProjectId,
+  SessionId,
+  TopicId,
+} from '@domain/shared/identifier.ts'
 
 /** The ports this application depends on, stated in domain terms.
  *
@@ -144,6 +151,13 @@ export interface ResearchRepository {
   current(id: ProjectId): Promise<ResearchRun | null>
   start(id: ProjectId, maxRounds: number | null): Promise<ResearchRun>
   cancel(id: ProjectId): Promise<boolean>
+}
+
+export interface TopicRepository {
+  /** Every topic this project tracks, ranked on nothing — the queue does
+   *  that, with `byUrgency`. */
+  list(projectId: ProjectId): Promise<readonly TopicView[]>
+  read(projectId: ProjectId, topicId: TopicId): Promise<TopicDetail>
 }
 
 export interface WorkerRepository {

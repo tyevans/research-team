@@ -9,6 +9,7 @@ import type {
   ProjectRepository,
   ResearchRepository,
   SessionRepository,
+  TopicRepository,
   TurnRepository,
   WorkerRepository,
   WorkspaceRepository,
@@ -23,6 +24,7 @@ import {
   HttpWorkerRepository,
 } from '@infrastructure/http/project-repository.ts'
 import { HttpSessionRepository } from '@infrastructure/http/session-repository.ts'
+import { HttpTopicRepository } from '@infrastructure/http/topic-repository.ts'
 import { HttpApprovalRepository, HttpTurnRepository } from '@infrastructure/http/turn-repository.ts'
 import {
   HttpLessonRepository,
@@ -46,6 +48,7 @@ export interface Container {
   readonly autonomy: AutonomyRepository
   readonly projects: ProjectRepository
   readonly research: ResearchRepository
+  readonly topics: TopicRepository
   readonly workers: WorkerRepository
   readonly extractions: ExtractionRepository
   readonly health: HealthRepository
@@ -67,6 +70,7 @@ export const createContainer = (baseUrl = ''): Container => {
     autonomy: new HttpAutonomyRepository(http),
     projects: new HttpProjectRepository(http),
     research: new HttpResearchRepository(http),
+    topics: new HttpTopicRepository(http),
     workers: new HttpWorkerRepository(http),
     extractions: new HttpExtractionRepository(http),
     health: new HttpHealthRepository(http),

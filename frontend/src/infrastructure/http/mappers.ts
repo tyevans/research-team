@@ -16,6 +16,7 @@ import type {
 } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
+import type { TopicDetail, TopicStatus, TopicView } from '@domain/research/topic.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
 import type { LogEntry } from '@domain/session/log-entry.ts'
 import type { ForkNode, SessionProjection, SessionSummary } from '@domain/session/session.ts'
@@ -31,6 +32,7 @@ import {
   RunId,
   SessionId,
   SourceId,
+  TopicId,
 } from '@domain/shared/identifier.ts'
 
 import type * as dto from './dto.ts'
@@ -402,3 +404,56 @@ export const readExtractionFrame = (raw: unknown): ExtractionFrame | null => {
   const parsed = extractionFrameDto.safeParse(raw)
   return parsed.success ? toExtractionFrame(parsed.data) : null
 }
+
+/** The statuses this build knows. */
+const TOPIC_STATUSES: readonly TopicStatus[] = [
+  'open',
+  'investigating',
+  'answered',
+  'not_pursuing',
+  'superseded',
+]
+
+/** An unrecognised status reads as `open` rather than being dropped.
+ *
+ * `open`, not one of the closed statuses, for the reason `toStage` picks
+ * `extracting`: mistaking a status this build has not heard of for a closed
+ * one would sink a live topic to the bottom of the queue, which is the wrong
+ * direction to fail in — a topic that still needs a look belongs where it
+ * will be seen. */
+const toTopicStatus = (raw: string): TopicStatus =>
+  TOPIC_STATUSES.find((status) => status === raw) ?? 'open'
+
+export const toTopicView = (raw: Dto<typeof dto.topicDto>): TopicView => ({
+  topicId: TopicId(raw.topic_id),
+  question: raw.question,
+  status: toTopicStatus(raw.status),
+  sources: raw.sources,
+  findings: raw.findings,
+  openSubQuestions: raw.open_sub_questions,
+  triggers: raw.triggers,
+  needsAttention: raw.needs_attention,
+  isBlocked: raw.is_blocked,
+})
+
+export const toTopicDetail = (raw: Dto<typeof dto.topicDetailDto>): TopicDetail => ({
+  topicId: TopicId(raw.topic_id),
+  question: raw.question,
+  status: toTopicStatus(raw.status),
+  sources: raw.sources,
+  openSubQuestions: raw.open_sub_questions,
+  triggers: raw.triggers,
+  needsAttention: raw.needs_attention,
+  isBlocked: raw.is_blocked,
+  rationale: raw.rationale,
+  scope: raw.scope,
+  subQuestions: raw.sub_questions.map((sub) => ({
+    key: sub.key,
+    question: sub.question,
+    answer: sub.answer,
+    resolved: sub.resolved,
+  })),
+  sourceIds: raw.source_ids,
+  findings: raw.findings,
+  contested: raw.contested,
+})

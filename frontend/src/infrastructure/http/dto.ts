@@ -414,5 +414,43 @@ export const autonomyChangeDto = autonomyDto.extend({
   changed: z.record(z.string(), z.string()).default({}),
 })
 
+/** One row of `/api/projects/{id}/topics`. `status` and `triggers` are plain
+ *  strings rather than enums for the reason `extractionFrameDto.stage` is: a
+ *  status or trigger this build has not heard of must still reach the mapper
+ *  and render as itself, not fail validation and blank the whole queue. */
+export const topicDto = z.object({
+  topic_id: z.string(),
+  question: z.string(),
+  status: z.string(),
+  sources: z.number(),
+  findings: z.number(),
+  open_sub_questions: z.number(),
+  triggers: z.array(z.string()).default([]),
+  needs_attention: z.boolean(),
+  is_blocked: z.boolean(),
+})
+
+/** The topic's own page: the row plus what the list leaves out. `.extend`
+ *  because the server builds it the same way — `topic_detail_view` spreads
+ *  `topic_view` and adds these fields — and drift between the two shapes
+ *  would first show up here. */
+export const topicDetailDto = topicDto.extend({
+  rationale: z.string(),
+  scope: z.string(),
+  sub_questions: z
+    .array(
+      z.object({
+        key: z.string(),
+        question: z.string(),
+        answer: maybe(z.string()),
+        resolved: z.boolean(),
+      }),
+    )
+    .default([]),
+  source_ids: z.array(z.string()).default([]),
+  findings: z.array(z.string()).default([]),
+  contested: z.boolean(),
+})
+
 export const idDto = z.object({ id: z.string() })
 export const okDto = z.unknown()

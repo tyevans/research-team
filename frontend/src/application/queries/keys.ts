@@ -1,7 +1,7 @@
 import type { ComponentAudience } from '@domain/lesson/document.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
-import type { ProjectId, SessionId } from '@domain/shared/identifier.ts'
+import type { ProjectId, SessionId, TopicId } from '@domain/shared/identifier.ts'
 
 /** Cache keys, in one place.
  *
@@ -28,6 +28,8 @@ export const queryKeys = {
   course: (project: ProjectId) => ['course', project] as const,
   run: (project: ProjectId) => ['run', project] as const,
   workers: (project: ProjectId) => ['workers', project] as const,
+  topics: (project: ProjectId) => ['topics', project] as const,
+  topic: (project: ProjectId, topic: TopicId) => ['topic', project, topic] as const,
 
   file: (session: SessionId, path: FilePath, at: ScrubPoint) =>
     ['file', session, path.value, ScrubPoint.toNullable(at)] as const,

@@ -1,11 +1,13 @@
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
+import { TopicList } from './TopicList.tsx'
+
 /** The project's research page: topics, seeding, documents and the graph.
  *
- * An empty shell for now -- four labelled regions and nothing that fetches,
- * so this task's routing change is reviewable on its own and later tasks can
- * fill one region at a time without touching the page around it. */
-export const ResearchView = ({ projectId: _projectId }: { projectId: ProjectId }) => (
+ * Three regions are still an empty shell -- this task fills only the topic
+ * queue, so the other three stay reviewable on their own and later tasks can
+ * fill one at a time without touching the page around them. */
+export const ResearchView = ({ projectId }: { projectId: ProjectId }) => (
   <section className="view view-research">
     <div className="view-head">
       <div>
@@ -18,7 +20,9 @@ export const ResearchView = ({ projectId: _projectId }: { projectId: ProjectId }
         <header className="pane-head">
           <h2>Topics</h2>
         </header>
-        <div className="pane-body" />
+        <div className="pane-body">
+          <TopicList projectId={projectId} />
+        </div>
       </section>
 
       <section className="pane pane-seeding" aria-label="Seeding">

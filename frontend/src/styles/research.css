@@ -24,3 +24,74 @@
 .research-panes .pane-body {
   overflow: visible;
 }
+
+/* ---------------------------------------------------------------- topics
+ *
+ * Urgency is carried on the left edge, the way `course.css`'s `.finding`
+ * rows carry theirs -- a border a reader catches while scanning down the
+ * list, rather than a badge that only reads once the eye lands on the row. */
+
+.topic-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.topic-row {
+  padding: 8px 10px;
+  border-left: 2px solid var(--line);
+  background: var(--bg-panel-2);
+}
+
+/* Worse than merely flagged: a blocked topic cannot move on its own, so it
+ * gets the same loud edge `.finding-invariant` uses for a failure nothing
+ * else in the row can explain. */
+.topic-blocked {
+  border-left-color: var(--k-failure);
+}
+.topic-attention {
+  border-left-color: var(--accent);
+}
+.topic-closed {
+  border-left-color: var(--line);
+  color: var(--fg-dim);
+}
+
+.topic-question {
+  font-size: var(--t-md);
+}
+
+.topic-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.topic-status {
+  text-transform: capitalize;
+}
+
+.topic-triggers {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.topic-trigger {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  color: var(--fg-faint);
+}
