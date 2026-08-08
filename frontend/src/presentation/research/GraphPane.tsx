@@ -28,7 +28,19 @@ const GraphCanvas = lazy(() =>
 // this is how many keystrokes of silence the pane waits for before asking.
 const SEARCH_DEBOUNCE_MS = 300
 
-export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
+export const GraphPane = ({
+  projectId,
+  entity,
+  onEntity,
+}: {
+  projectId: ProjectId
+  /** The selected entity, and how to change it. Owned by the route: this pane
+   *  asks for a new selection and then reacts to the one that comes back,
+   *  rather than keeping its own copy alongside the URL's. Two copies of one
+   *  fact is two places for the address bar and the drawing to disagree. */
+  entity: string | null
+  onEntity: (id: string | null) => void
+}) => {
   const { graphs } = useContainer()
   const [term, setTerm] = useState('')
   const [entityType, setEntityType] = useState('')
@@ -39,7 +51,7 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
   // instead (the same split `ExtractionPane` uses). Destructuring them here
   // would also detach them from the store instance the way an unbound method
   // detaches from `this`, which this project's lint config catches.
-  const { view, results, truncated, searching, error, selected } = store()
+  const { view, results, truncated, searching, error } = store()
 
   // Debounced rather than firing on every keystroke: `find_entities` fetches
   // the tenant's entire entity set per call (there is no store-side filter
@@ -57,6 +69,24 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [term, entityType])
 
+  /** The route drives the drawing, not the click.
+   *
+   * Every selection in this pane goes out through `onEntity`, changes the
+   * hash, and arrives back here -- so a node clicked on the canvas and an
+   * entity pasted into the address bar take exactly the same path, and the
+   * page that loads with `/entity/<id>` in its URL draws that neighbourhood
+   * without any separate seeding code. `expandNode` is idempotent (it guards
+   * on `isExpanded`) so re-selecting something already drawn costs no request.
+   */
+  useEffect(() => {
+    if (entity === null) {
+      store.getState().select(null)
+      return
+    }
+    void store.getState().expandNode(entity)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entity])
+
   /** Draw what was picked, and get the list out of the way.
    *
    * The results panel floats over the canvas, so leaving it up after a pick
@@ -67,7 +97,7 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
    * who has finished with this one wants it in. */
   const pick = (id: string) => {
     setTerm('')
-    void store.getState().expandNode(id)
+    onEntity(id)
   }
 
   return (
@@ -84,11 +114,7 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
           />
         ) : (
           <Suspense fallback={<Loading what="the graph canvas" />}>
-            <GraphCanvas
-              view={view}
-              selected={selected}
-              onNodeClick={(id) => void store.getState().expandNode(id)}
-            />
+            <GraphCanvas view={view} selected={entity} onNodeClick={onEntity} />
           </Suspense>
         )}
       </div>
@@ -125,7 +151,13 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
             <button
               type="button"
               className="btn btn-sm graph-clear"
-              onClick={() => store.getState().clear()}
+              onClick={() => {
+                store.getState().clear()
+                // The canvas is empty now, so the URL must stop naming a node
+                // on it -- otherwise a reload would redraw the thing that was
+                // just cleared.
+                onEntity(null)
+              }}
             >
               Clear
             </button>
@@ -161,13 +193,16 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
         ) : null}
       </div>
 
-      {selected ? (
+      {entity ? (
         <GraphDetail
           view={view}
-          selected={selected}
-          onSelect={(id) => void store.getState().expandNode(id)}
-          onRemove={(id) => store.getState().removeNode(id)}
-          onClose={() => store.getState().select(null)}
+          selected={entity}
+          onSelect={onEntity}
+          onRemove={(id) => {
+            store.getState().removeNode(id)
+            onEntity(null)
+          }}
+          onClose={() => onEntity(null)}
         />
       ) : null}
     </div>

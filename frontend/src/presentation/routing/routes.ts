@@ -36,6 +36,14 @@ export type Route =
   | {
       readonly name: 'research'
       readonly id: ProjectId
+      /** The entity whose neighbourhood is drawn and described, or null.
+       *
+       * In the URL for the reason the scrub point and the watched session are:
+       * a graph somebody has browsed to is a thing worth sending, and a reload
+       * that dropped it would throw away the search that found it. It is also
+       * the seed the pane draws from on load -- an empty canvas and this
+       * segment are the same state, so one field covers both. */
+      readonly entity: string | null
     }
 
 export const parseRoute = (hash: string): Route => {
@@ -78,7 +86,11 @@ export const parseRoute = (hash: string): Route => {
   // session, so it is keyed the way the material is stored, not the way it was
   // produced.
   if (parts[0] === 'p' && parts[1] && parts[2] === 'research') {
-    return { name: 'research', id: ProjectId(parts[1]) }
+    // A truncated `entity` with no id after it is still a research page, the
+    // way a truncated `watching` is still a course page: a hand-edited URL
+    // should land on an empty canvas, not on the session tree.
+    const entity = parts[3] === 'entity' && parts[4] ? parts[4] : null
+    return { name: 'research', id: ProjectId(parts[1]), entity }
   }
 
   return { name: 'tree' }
@@ -110,5 +122,7 @@ export const courseHref = (projectId: ProjectId, watching: SessionId | null = nu
     ? `#/p/${encodeURIComponent(projectId)}/course/watching/${encodeURIComponent(watching)}`
     : `#/p/${encodeURIComponent(projectId)}/course`
 
-export const researchHref = (projectId: ProjectId): string =>
-  `#/p/${encodeURIComponent(projectId)}/research`
+export const researchHref = (projectId: ProjectId, entity: string | null = null): string =>
+  entity
+    ? `#/p/${encodeURIComponent(projectId)}/research/entity/${encodeURIComponent(entity)}`
+    : `#/p/${encodeURIComponent(projectId)}/research`
