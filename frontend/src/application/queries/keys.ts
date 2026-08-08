@@ -30,6 +30,7 @@ export const queryKeys = {
   workers: (project: ProjectId) => ['workers', project] as const,
   topics: (project: ProjectId) => ['topics', project] as const,
   topic: (project: ProjectId, topic: TopicId) => ['topic', project, topic] as const,
+  seed: (project: ProjectId) => ['seed', project] as const,
   documents: (project: ProjectId) => ['documents', project] as const,
   /** Ranged reads are their own key, distinct from the whole-document read
    *  `range` omitted gives -- a range and the full text are two different

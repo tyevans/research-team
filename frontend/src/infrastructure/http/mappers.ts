@@ -18,6 +18,7 @@ import type {
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
+import type { SeedingRun, SeedingStatus } from '@domain/research/seeding.ts'
 import type { TopicDetail, TopicStatus, TopicView } from '@domain/research/topic.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
 import type { LogEntry } from '@domain/session/log-entry.ts'
@@ -406,6 +407,24 @@ export const readExtractionFrame = (raw: unknown): ExtractionFrame | null => {
   const parsed = extractionFrameDto.safeParse(raw)
   return parsed.success ? toExtractionFrame(parsed.data) : null
 }
+
+const SEED_STATUSES: readonly SeedingStatus[] = ['running', 'done', 'failed']
+
+/** An unrecognised status reads as `running`, the same reasoning as
+ *  `toStage`'s fallback: `running` is the one status that keeps the control
+ *  disabled and shows the run as still in flight, which is the safer
+ *  misreading of the two -- a build talking to a server with a fourth status
+ *  should stay cautious rather than declare an unknown outcome finished. */
+const toSeedStatus = (raw: string): SeedingStatus =>
+  SEED_STATUSES.find((status) => status === raw) ?? 'running'
+
+export const toSeedingRun = (raw: Dto<typeof dto.seedingFrameDto>): SeedingRun => ({
+  runId: raw.run_id,
+  status: toSeedStatus(raw.status),
+  subject: raw.subject,
+  reply: raw.reply,
+  detail: raw.detail,
+})
 
 /** The statuses this build knows. */
 const TOPIC_STATUSES: readonly TopicStatus[] = [

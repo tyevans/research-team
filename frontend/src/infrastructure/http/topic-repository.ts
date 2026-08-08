@@ -6,7 +6,7 @@ import type { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, seg } from './http-client.ts'
-import { toTopicDetail, toTopicView } from './mappers.ts'
+import { toSeedingRun, toTopicDetail, toTopicView } from './mappers.ts'
 
 export class HttpTopicRepository implements TopicRepository {
   constructor(private readonly http: HttpClient) {}
@@ -57,5 +57,25 @@ export class HttpTopicRepository implements TopicRepository {
       dto.topicDetailDto,
     )
     return toTopicDetail(body)
+  }
+
+  async startSeed(projectId: ProjectId, subject: string, maxTopics: number) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/topics/seed`,
+      { subject, max_topics: maxTopics },
+      dto.seedingFrameDto,
+    )
+    return toSeedingRun(body)
+  }
+
+  async seedStatus(projectId: ProjectId) {
+    const body = await this.http.get(
+      `/api/projects/${seg(projectId)}/topics/seed`,
+      dto.seedingCatchUpDto,
+    )
+    return {
+      current: body.current ? toSeedingRun(body.current) : null,
+      last: body.last ? toSeedingRun(body.last) : null,
+    }
   }
 }

@@ -45,6 +45,12 @@ const fakeTopics = (list: TopicRepository['list']): TopicRepository => ({
   resolveSubQuestion: vi.fn(() => {
     throw new Error('TopicList should never call resolveSubQuestion()')
   }),
+  startSeed: vi.fn(() => {
+    throw new Error('TopicList should never call startSeed()')
+  }),
+  seedStatus: vi.fn(() => {
+    throw new Error('TopicList should never call seedStatus()')
+  }),
 })
 
 /** Mirrors `Workers.test.tsx`'s harness: a fake container behind the same

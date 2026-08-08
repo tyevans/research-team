@@ -334,3 +334,40 @@
   font-family: var(--mono);
   color: var(--fg-dim);
 }
+
+/* ----------------------------------------------------------------- seeding
+ *
+ * One control, one line of status -- a seeding run is a single model turn,
+ * not a multi-stage pipeline like extraction, so there is no progress list
+ * to draw here. */
+
+.seed-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.seed-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.seed-form label {
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.seed-input {
+  flex: 1;
+}
+
+.seed-status {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.seed-failed {
+  color: var(--k-failure);
+}

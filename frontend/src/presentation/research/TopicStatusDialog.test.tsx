@@ -52,6 +52,12 @@ const fakeTopics = (over: Partial<TopicRepository> = {}): TopicRepository => ({
   resolveSubQuestion: vi.fn(() => {
     throw new Error('TopicStatusDialog should never call resolveSubQuestion()')
   }),
+  startSeed: vi.fn(() => {
+    throw new Error('TopicStatusDialog should never call startSeed()')
+  }),
+  seedStatus: vi.fn(() => {
+    throw new Error('TopicStatusDialog should never call seedStatus()')
+  }),
   ...over,
 })
 

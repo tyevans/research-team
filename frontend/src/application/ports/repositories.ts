@@ -9,6 +9,7 @@ import type { Course } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
+import type { SeedingRun } from '@domain/research/seeding.ts'
 import type { TopicDetail, TopicStatus, TopicView } from '@domain/research/topic.ts'
 import type { EventIndex } from '@domain/session/event-index.ts'
 import type { LogEntry } from '@domain/session/log-entry.ts'
@@ -183,6 +184,21 @@ export interface TopicRepository {
     key: string,
     answer: string,
   ): Promise<TopicDetail>
+  /** Start one seeding turn that names this project's first topics for
+   *  `subject`. The topics it opens need no reading here -- `open_topic`
+   *  appends to the log, so the existing `topics` list query invalidates on
+   *  those frames and the new topics arrive on their own; `seedStatus`
+   *  below answers only "is a run in flight, and how did the last one go".
+   *  Rejects with a 409 `ApiError` when a run is already active on this
+   *  project -- one at a time, refused rather than raced. */
+  startSeed(projectId: ProjectId, subject: string, maxTopics: number): Promise<SeedingRun>
+  /** The current or most recently finished seeding run, for a tab that
+   *  arrived mid-run or reconnected after one. These frames carry no feed
+   *  position and cannot replay off `Last-Event-ID` -- see `seeding.py`'s
+   *  module docstring -- so this catch-up read is the only way back. */
+  seedStatus(
+    projectId: ProjectId,
+  ): Promise<{ readonly current: SeedingRun | null; readonly last: SeedingRun | null }>
 }
 
 export interface DocumentRepository {

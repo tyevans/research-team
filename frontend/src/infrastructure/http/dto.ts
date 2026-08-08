@@ -394,6 +394,33 @@ export const extractionCatchUpDto = z.object({
   last: z.array(extractionFrameDto).default([]),
 })
 
+/** One seeding run's status, from `SeedingActivity` -- passed straight
+ *  through by `seeding_view`, so this is the frame's actual wire shape
+ *  rather than a fold of many. `status` is a plain string for the reason
+ *  `extractionFrameDto.stage` is: a status this build has not heard of
+ *  should reach the mapper's fallback, not fail validation. `subject`,
+ *  `reply` and `detail` are each populated on some statuses and absent on
+ *  others -- `maybe` tolerates the key being missing entirely rather than
+ *  merely null, matching how `SeedingActivity.start`'s running frame omits
+ *  them outright instead of nulling them. */
+export const seedingFrameDto = z.object({
+  type: z.string(),
+  project_id: z.string(),
+  run_id: z.string(),
+  status: z.string(),
+  subject: maybe(z.string()),
+  reply: maybe(z.string()),
+  detail: maybe(z.string()),
+})
+
+/** `current`/`last` are each nullable rather than defaulted to an empty
+ *  array like `extractionCatchUpDto`'s: there is at most one frame per side,
+ *  not a sequence, so "nothing yet" is `null` and not `[]`. */
+export const seedingCatchUpDto = z.object({
+  current: seedingFrameDto.nullable().default(null),
+  last: seedingFrameDto.nullable().default(null),
+})
+
 /** The autonomy policy, as all three routes shape it through one presenter.
  *
  * `levels` values are `z.string()` rather than an enum on purpose: a server

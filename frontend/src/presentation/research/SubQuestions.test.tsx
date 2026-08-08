@@ -52,6 +52,12 @@ const fakeTopics = (over: Partial<TopicRepository> = {}): TopicRepository => ({
   resolveSubQuestion: vi.fn(() => {
     throw new Error('resolveSubQuestion was not stubbed for this test')
   }),
+  startSeed: vi.fn(() => {
+    throw new Error('SubQuestions should never call startSeed()')
+  }),
+  seedStatus: vi.fn(() => {
+    throw new Error('SubQuestions should never call seedStatus()')
+  }),
   ...over,
 })
 
