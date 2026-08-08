@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+
 import { edgesOf, isExpanded, type GraphView } from '@domain/knowledge/graph.ts'
 
 /** What the selected node is, and what it is connected to.
@@ -27,6 +29,19 @@ export const GraphDetail = ({
   onRemove: (id: string) => void
   onClose: () => void
 }) => {
+  // Escape closes it, the way it closes the drawers this console already has.
+  // Not a focus trap, though, and deliberately not: the drawer is modal and
+  // this is not -- the point of the panel is to read it *while* working the
+  // canvas beside it, so trapping focus inside would break the one thing it
+  // is for.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   const node = view.nodes.find((candidate) => candidate.id === selected)
   // The selection can outlive its node only if something removed it from the
   // view, which nothing does today -- but rendering an empty shell would be a
