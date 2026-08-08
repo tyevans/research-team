@@ -42,6 +42,14 @@ GATED_TOOLS: tuple[str, ...] = (
 nothing and escape nothing, and gating them would train people to click
 through approvals without reading them."""
 
+STAGE_GATE_TOOLS: tuple[str, ...] = (ADVANCE_STAGE_TOOL,)
+"""The gated tools that are review gates rather than hazards.
+
+Named as a set rather than special-cased inline wherever it matters, because
+"relax everything except the workflow review" is a rule that will be stated in
+more than one place (`relax_all`, the routes over it, whatever UI offers the
+switch) and each restatement is a chance for one of them to forget."""
+
 STRICTNESS: tuple[Level, ...] = ("auto", "ask", "deny")
 """The levels in increasing order, so two of them can be compared."""
 
@@ -98,6 +106,49 @@ class AutonomyPolicy:
         if tool_name not in GATED_TOOLS:
             raise ValueError(f"not a gated tool: {tool_name!r}")
         self._levels[tool_name] = level
+
+    def relax_all(self, *, include_stage_gates: bool = False) -> dict[str, Level]:
+        """Set gated tools to `auto`, and report only what actually changed.
+
+        The answer to "stop asking me about every fetch". Answering it one tool
+        at a time is the thing people give up on, and giving up means clicking
+        through approvals without reading them -- the failure `GATED_TOOLS`
+        avoids by not gating the harmless reads in the first place.
+
+        Only the changes are returned, keyed by tool, so a caller recording
+        this can append exactly one `AutonomyChanged` per level that really
+        moved. Returning every tool would have the log claim eight decisions
+        where a person made one, and a log that overstates is as unreadable as
+        one that omits.
+
+        A `deny` is relaxed to `auto` like anything else. This is a relax-all,
+        not a raise-only: someone who denied `delete_file` an hour ago and now
+        asks for everything to be automatic has said something later and more
+        general, and silently keeping the deny would leave a switch labelled
+        "allow all" that does not.
+
+        `advance_stage` (see `STAGE_GATE_TOOLS`) is excluded unless asked for
+        by name. Its floor is not about danger -- it *is* the workflow review
+        gate. A stage boundary is where a person is supposed to look at what
+        was produced before the run builds on it, and the approval path is that
+        review, already built. Auto-ing it lets a run cross every gate in a
+        workflow with nobody seeing it, which is the silent-progress failure
+        the staging design exists to prevent. So relaxing it stays a separate,
+        deliberate act rather than a side effect of not wanting to be asked
+        about `fetch`. The alternative -- excluding it outright, with no flag --
+        was rejected because a single-operator run where the operator *is* the
+        review is a real way to work, and the honest shape for that is an
+        option they have to reach for, not a rule they have to route around.
+        """
+        changed: dict[str, Level] = {}
+        for tool in GATED_TOOLS:
+            if tool in STAGE_GATE_TOOLS and not include_stage_gates:
+                continue
+            if self.level_for(tool) == "auto":
+                continue
+            self.set(tool, "auto")
+            changed[tool] = "auto"
+        return changed
 
     def levels(self) -> dict[str, Level]:
         """Every gated tool's current level, for display."""

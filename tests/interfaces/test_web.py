@@ -9,11 +9,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
-from research_team.application import WorkerRoster
+from research_team.application import GATED_TOOLS, WorkerRoster
+from research_team.application.autonomy import ADVANCE_STAGE_TOOL
 from research_team.application.knowledge import ExtractionNote
 from research_team.application.ports import ActivityMessage
 from research_team.composition import build_application as _build_application
 from research_team.domain import (
+    AutonomyChanged,
     DeleteFile,
     DropSourceDocument,
     SendUserMessage,
@@ -63,6 +65,10 @@ async def app_and_client(db_path, fake_model, extraction):
             application.service, turns=application.turns, extractions=extraction
         ),
         extraction=extraction,
+        # The application's own policy, not a fresh one: the routes are only
+        # able to change anything because they hold the object the executor
+        # reads, and a test against a copy would pass while proving nothing.
+        policy=application.policy,
     )
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -89,6 +95,26 @@ async def client_without_workers(db_path, fake_model):
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
+    await application.close()
+
+
+@pytest.fixture
+async def client_without_policy(db_path, fake_model):
+    """A build with no policy wired -- the shape the autonomy routes 404 for.
+
+    Yields a live session id alongside the client, so the 404 under test is
+    unambiguously "no policy here" rather than "no such session".
+    """
+    application = await _started(model=fake_model, db_path=db_path)
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        policy=None,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client, await _new_session(client)
     await application.close()
 
 
@@ -2349,3 +2375,153 @@ async def test_extraction_frames_ride_the_stream_without_an_id(repository):
     assert payload["source_id"] == "notes"
     # Not a log entry: no id line precedes the data, so a reconnect refetches.
     assert "\nid:" not in frames[0]
+
+
+# ---------------- autonomy ----------------
+
+
+async def test_get_autonomy_reports_levels_and_the_tool_lists(client):
+    """The read the UI draws its switches from, including the two lists that
+    keep it from hardcoding `GATED_TOOLS` in JavaScript and drifting from it.
+    """
+    body = (await client.get("/api/autonomy")).json()
+
+    assert set(body["levels"]) == set(GATED_TOOLS)
+    assert body["gated"] == list(GATED_TOOLS)
+    assert body["stage_gates"] == [ADVANCE_STAGE_TOOL]
+    assert body["levels"][ADVANCE_STAGE_TOOL] == "ask"
+
+
+async def test_setting_one_tool_changes_the_reported_level(client):
+    session_id = await _new_session(client)
+
+    response = await client.post(
+        f"/api/sessions/{session_id}/autonomy",
+        json={"tool": "write_file", "level": "deny"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["levels"]["write_file"] == "deny"
+    assert (await client.get("/api/autonomy")).json()["levels"]["write_file"] == "deny"
+
+
+async def test_setting_a_tool_records_the_change_in_the_session_log(client, service):
+    """The audit guarantee. The policy is what the executor consults, so a route
+    that only mutated it would leave a session whose behaviour changed mid-run
+    with nothing in the log to say so -- and every decision after that point
+    unreadable, in a system whose whole point is the complete trail.
+    """
+    session_id = await _new_session(client)
+
+    await client.post(
+        f"/api/sessions/{session_id}/autonomy",
+        json={"tool": "web_search", "level": "ask"},
+    )
+
+    events = await service.history(UUID(session_id))
+    changes = [event for event in events if isinstance(event, AutonomyChanged)]
+    assert [(change.tool_name, change.level) for change in changes] == [("web_search", "ask")]
+
+
+async def test_a_bad_level_is_a_400_carrying_the_policys_own_message(client, service):
+    """The policy words this better than a generic error, so it is relayed
+    rather than restated -- and nothing is recorded, because nothing changed.
+    """
+    session_id = await _new_session(client)
+
+    response = await client.post(
+        f"/api/sessions/{session_id}/autonomy",
+        json={"tool": "web_search", "level": "sometimes"},
+    )
+
+    assert response.status_code == 400
+    assert "sometimes" in response.json()["detail"]
+    events = await service.history(UUID(session_id))
+    assert not [event for event in events if isinstance(event, AutonomyChanged)]
+
+
+async def test_a_tool_that_is_not_gated_is_a_400(client):
+    session_id = await _new_session(client)
+
+    response = await client.post(
+        f"/api/sessions/{session_id}/autonomy",
+        json={"tool": "read_file", "level": "ask"},
+    )
+
+    assert response.status_code == 400
+    assert "read_file" in response.json()["detail"]
+
+
+async def test_allow_all_leaves_the_stage_gate_asking(client):
+    """ "Stop asking me" must not silently mean "and cross every stage boundary
+    unseen" -- the review gate is not a hazard rating.
+    """
+    session_id = await _new_session(client)
+
+    body = (await client.post(f"/api/sessions/{session_id}/autonomy/allow-all")).json()
+
+    assert ADVANCE_STAGE_TOOL not in body["changed"]
+    assert body["levels"][ADVANCE_STAGE_TOOL] == "ask"
+    assert body["levels"]["fetch"] == "auto"
+
+
+async def test_allow_all_can_be_asked_to_include_the_stage_gate(client):
+    session_id = await _new_session(client)
+
+    body = (
+        await client.post(
+            f"/api/sessions/{session_id}/autonomy/allow-all",
+            json={"include_stage_gates": True},
+        )
+    ).json()
+
+    assert body["changed"][ADVANCE_STAGE_TOOL] == "auto"
+    assert body["levels"][ADVANCE_STAGE_TOOL] == "auto"
+
+
+async def test_allow_all_records_exactly_the_changes_it_made(client, service):
+    """One event per level that really moved, never one per gated tool: a log
+    claiming eight decisions where a person made one is as unreadable as one
+    that omitted them.
+    """
+    session_id = await _new_session(client)
+    await client.post(
+        f"/api/sessions/{session_id}/autonomy",
+        json={"tool": "write_file", "level": "deny"},
+    )
+
+    body = (await client.post(f"/api/sessions/{session_id}/autonomy/allow-all")).json()
+
+    assert body["changed"] == {"write_file": "auto", "fetch": "auto"}
+    events = await service.history(UUID(session_id))
+    changes = [event for event in events if isinstance(event, AutonomyChanged)]
+    assert [(change.tool_name, change.level) for change in changes] == [
+        ("write_file", "deny"),
+        # `GATED_TOOLS` order, which is the order `relax_all` walks.
+        ("fetch", "auto"),
+        ("write_file", "auto"),
+    ]
+
+
+async def test_autonomy_routes_404_when_no_policy_is_wired(client_without_policy):
+    """ "This build cannot tell you" is a different claim from "everything is
+    auto", so the routes are absent rather than answering permissively.
+    """
+    client, session_id = client_without_policy
+
+    assert (await client.get("/api/autonomy")).status_code == 404
+    setting = await client.post(
+        f"/api/sessions/{session_id}/autonomy",
+        json={"tool": "write_file", "level": "ask"},
+    )
+    assert setting.status_code == 404
+    relaxing = await client.post(f"/api/sessions/{session_id}/autonomy/allow-all")
+    assert relaxing.status_code == 404
+
+
+async def test_setting_autonomy_on_an_unknown_session_is_a_404(client):
+    response = await client.post(
+        f"/api/sessions/{uuid4()}/autonomy",
+        json={"tool": "write_file", "level": "ask"},
+    )
+    assert response.status_code == 404

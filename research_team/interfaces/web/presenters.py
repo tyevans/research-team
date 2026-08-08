@@ -10,7 +10,15 @@ from uuid import UUID
 
 from eventsource import DomainEvent
 
-from research_team.application import ForkNode, Roster, SessionSummary, Worker
+from research_team.application import (
+    GATED_TOOLS,
+    STAGE_GATE_TOOLS,
+    AutonomyPolicy,
+    ForkNode,
+    Roster,
+    SessionSummary,
+    Worker,
+)
 from research_team.application.corpus_read import StoredDocument
 from research_team.application.corpus_spans import Span
 from research_team.application.course import (
@@ -528,6 +536,27 @@ def roster_view(roster: Roster) -> dict[str, Any]:
         "project_id": str(roster.project_id),
         "workers": [worker_view(worker) for worker in roster.workers],
         "idle_session_ids": [str(session) for session in roster.idle_session_ids],
+    }
+
+
+def autonomy_view(policy: AutonomyPolicy) -> dict[str, Any]:
+    """Every gated tool's level, plus the two tool lists a client would
+    otherwise have to hardcode.
+
+    `gated` and `stage_gates` are sent because they are the only place the
+    browser can learn them without copying `GATED_TOOLS` into JavaScript, and a
+    copy drifts the moment a tool is added -- leaving a UI that offers no switch
+    for a tool the server is gating, which reads to the user as a tool that
+    cannot be relaxed rather than one nobody wired up. `levels` already covers
+    every gated tool, but `gated` says so explicitly and `stage_gates` marks the
+    subset that "allow all" deliberately leaves alone (see
+    `AutonomyPolicy.relax_all`), so the UI can label that rather than look
+    broken.
+    """
+    return {
+        "levels": policy.levels(),
+        "gated": list(GATED_TOOLS),
+        "stage_gates": list(STAGE_GATE_TOOLS),
     }
 
 

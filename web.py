@@ -47,6 +47,12 @@ def main() -> None:
             activity=activity,
             workers=application.workers,
             extraction=extraction,
+            # The same object the executor's gating predicate reads, which is
+            # the only reason the routes over it can change anything: a copy
+            # would answer reads correctly and change nothing. Instance-wide,
+            # so a change made in one browser session applies to all of them --
+            # see `set_autonomy` for why that is the trade taken.
+            policy=application.policy,
             # Withheld unless this instance was configured for it, so the
             # routes are absent rather than present-and-refusing. See
             # `config.auto_research_over_http`: there is no authentication in

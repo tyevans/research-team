@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from research_team.application import (
     ApprovalDecision,
+    AutonomyPolicy,
     LiveFeed,
     ResearchSupervisor,
     RunAlreadyActive,
@@ -47,6 +48,7 @@ from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.presenters import (
+    autonomy_view,
     course_view,
     event_rows,
     feed_event,
@@ -178,6 +180,32 @@ class Decision(BaseModel):
     message: str | None = None
 
 
+class AutonomyChoice(BaseModel):
+    """One tool's new autonomy level.
+
+    Both fields are plain `str` rather than the `Level` literal and a tool
+    enum, so that a bad value reaches `AutonomyPolicy.set` and comes back as
+    that method's own complaint -- which names the offending value and says
+    whether the problem was the level or the tool. FastAPI's 422 for a
+    `Literal` mismatch is machine-readable and says neither, and this is a
+    message a person reads off a switch they just flipped.
+    """
+
+    tool: str
+    level: str
+
+
+class AllowAll(BaseModel):
+    """Whether "stop asking me" also crosses the workflow review gates.
+
+    Defaults to false, and the default is the point: see
+    `AutonomyPolicy.relax_all` for why `advance_stage` is not swept along with
+    the hazards. A client that wants it says so.
+    """
+
+    include_stage_gates: bool = False
+
+
 def create_app(
     service: SessionService,
     feed: LiveFeed,
@@ -189,6 +217,7 @@ def create_app(
     research: ResearchSupervisor | None = None,
     workers: WorkerRoster | None = None,
     extraction: ExtractionActivity | None = None,
+    policy: AutonomyPolicy | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -1069,6 +1098,92 @@ def create_app(
             # races a second tab can lose honestly.
             raise HTTPException(status_code=404, detail=str(error)) from error
         return {"decided": True}
+
+    def _policy() -> AutonomyPolicy:
+        """The instance's policy, or a 404 saying this build has none.
+
+        404 rather than a permissive default, matching `/workers`: "this build
+        cannot tell you what the agent may do without asking" is a different
+        claim from "everything is automatic", and a UI that read the second off
+        the first would show a row of green switches for a policy it has no
+        handle on.
+        """
+        if policy is None:
+            raise HTTPException(status_code=404, detail="the autonomy policy is not wired up")
+        return policy
+
+    @app.get("/api/autonomy")
+    async def get_autonomy():
+        """What the agent may currently do without asking.
+
+        No session in the path, because there is no per-session answer to give:
+        one `AutonomyPolicy` serves the whole process, so this is a read of
+        instance state. See the POST routes for why the *writes* name a session
+        even though the state they change does not belong to one.
+        """
+        return autonomy_view(_policy())
+
+    @app.post("/api/sessions/{session_id}/autonomy")
+    async def set_autonomy(session_id: UUID, body: AutonomyChoice):
+        """Set one tool's level, and record that it was set.
+
+        Two steps, both required, exactly as `/autonomy` in the REPL does them.
+        The policy is what the executor consults, so mutating it is what
+        changes behaviour -- but a level that changed mid-session and left no
+        trace makes every surrounding decision unreadable afterwards, in a
+        system whose whole point is a complete audit trail. See
+        `SessionService.record_autonomy_change`.
+
+        The asymmetry is real and worth stating plainly rather than leaving to
+        be discovered: **the policy is instance-wide and the record is
+        per-session.** One object answers for every session in this process, so
+        this call changes what the agent may do in all of them, while the
+        `AutonomyChanged` event lands on this session's stream alone. That is
+        what the REPL does, and it is the right trade for a local single-user
+        tool -- the same trade `join_project` documents for graph attachment.
+        The session in the path is therefore "who is answering for this
+        change", not "where it applies". A per-session policy map would make the
+        two agree, but nothing has asked for concurrent untrusted users, and
+        splitting the policy would silently change what the executor consults
+        for every other caller.
+
+        A bad tool or level is a 400 carrying the policy's own message, and
+        nothing is recorded: a rejected `set` changed nothing, so a log entry
+        would describe a change that did not happen.
+        """
+        instance = _policy()
+        await _load(session_id)
+        try:
+            instance.set(body.tool, body.level)  # type: ignore[arg-type]
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        await service.record_autonomy_change(session_id, body.tool, body.level)
+        # The full map, so a client that just flipped one switch does not need a
+        # second request to redraw the rest -- and cannot drift from the server
+        # by assuming its own change was the only one.
+        return autonomy_view(instance)
+
+    @app.post("/api/sessions/{session_id}/autonomy/allow-all")
+    async def allow_all_autonomy(session_id: UUID, body: AllowAll | None = None):
+        """Stop asking about everything -- except the workflow review gates.
+
+        The instance-wide/per-session asymmetry described on `set_autonomy`
+        applies here too, and more loudly: this relaxes every hazard for every
+        session in the process, and records it on one.
+
+        `changed` is only what actually moved, and one `AutonomyChanged` is
+        recorded per entry -- never one per gated tool. A log that claimed eight
+        decisions where a person made one is as unreadable as a log that
+        omitted them, and it is `changed` the UI should report back so it says
+        what it did rather than claiming more.
+        """
+        instance = _policy()
+        await _load(session_id)
+        options = body or AllowAll()
+        changed = instance.relax_all(include_stage_gates=options.include_stage_gates)
+        for tool, level in changed.items():
+            await service.record_autonomy_change(session_id, tool, level)
+        return {"changed": changed} | autonomy_view(instance)
 
     @app.post("/api/sessions/{session_id}/forks")
     async def fork_session(session_id: UUID, body: NewFork):
