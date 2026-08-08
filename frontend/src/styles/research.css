@@ -40,20 +40,36 @@
   min-height: 0;
 }
 
+/* The rail does not scroll; its two list panes do, side by side down the
+   column. Scrolling the rail as one strip meant the documents pane began
+   roughly two thousand pixels down it -- the topics list renders every open
+   question, and reaching your sources meant scrolling past all of them. Both
+   lists are now always on screen and always the same size, and finding a
+   document costs a scroll inside a box rather than a hunt down a page. */
 .research-rail {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow-y: auto;
+  overflow: hidden;
   min-height: 0;
-  padding-right: 4px;
 }
 
-/* Flex items shrink by default, and these must not: the rail scrolls, so a
-   pane that gave up height would be compressed into the one below it rather
-   than pushing the column longer. */
-.research-rail > .pane {
+/* Seeding is a control, not a list: it takes the height it needs and gives up
+   none of it. */
+.research-rail > .pane-seeding {
   flex: 0 0 auto;
+}
+
+/* The two lists split what is left. `1 1 0` rather than `1 1 auto` so they
+   split the *space* evenly instead of in proportion to how much content each
+   happens to hold -- otherwise a project with three hundred topics and four
+   documents would hand almost the whole rail to the topics again, which is
+   the thing this is fixing. */
+.research-rail > .pane-topics,
+.research-rail > .pane-documents {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .research-workbench .pane {
@@ -62,19 +78,35 @@
   background: var(--bg-panel);
 }
 
-/* The rail's panes size to their content and scroll as one column. Letting
-   each of them scroll separately is what produced the nested scroll traps:
-   three independent 260px boxes inside a page that also scrolled.
-
-   `flex` and `min-height` are both overridden, not just `overflow`: the base
-   rule is `flex: 1 1 auto; min-height: 0`, which is right inside a pane whose
-   height comes from a grid track, and collapses to zero inside one that takes
-   its height from its content. A zero-height body with visible overflow is
-   how the seeding controls ended up drawn on top of the topics below them. */
-.research-rail .pane-body {
+/* Seeding's body takes its height from its content. The base rule is
+   `flex: 1 1 auto; min-height: 0`, which is right inside a pane whose height
+   comes from a grid track and collapses to zero inside one sized by what it
+   holds -- a zero-height body with visible overflow is how the seeding
+   controls came to be drawn on top of the topics below them. */
+.research-rail > .pane-seeding > .pane-body {
   flex: 0 0 auto;
   min-height: auto;
   overflow: visible;
+  padding: 10px 12px 12px;
+}
+
+/* Topics scroll in their body, bounded by the rail rather than by a hardcoded
+   pixel height. */
+.research-rail > .pane-topics > .pane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 12px;
+}
+
+/* Documents do not: the virtualized list owns its own scroll container, and a
+   scrolling body around it would be a box scrolling inside a box, with the
+   virtualizer measuring the wrong one. The body only has to pass its height
+   down. */
+.research-rail > .pane-documents > .pane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
   padding: 10px 12px 12px;
 }
 
@@ -262,8 +294,12 @@
   width: 100%;
 }
 
+/* Was a hard 260px. The pane it sits in now has a real height of its own, so
+   the list takes what the rail gives it -- a tall window shows more documents
+   instead of showing 260px of them above empty pane. */
 .document-list-scroll {
-  height: 260px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius);
