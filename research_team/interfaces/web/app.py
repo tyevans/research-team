@@ -9,7 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,6 +39,7 @@ from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
 from research_team.application.grading import GradingError, grade
+from research_team.application.topic_read import TopicReadPort
 from research_team.domain import CreateProject, ProjectState, SelectWorkflow
 from research_team.domain.auto_research import Budget
 from research_team.domain.project import current_stage_of
@@ -64,6 +65,8 @@ from research_team.interfaces.web.presenters import (
     source_view,
     stage_view,
     summary_view,
+    topic_detail_view,
+    topic_view,
     tree_view,
 )
 from research_team.workflows import PRESETS
@@ -76,6 +79,16 @@ KEEPALIVE_SECONDS = 15.0
 
 DISCONNECT_CHECK = 0.5
 """How long we may sit unaware that the browser has gone."""
+
+TopicReaders = Callable[[UUID], TopicReadPort]
+"""One project's `TopicReadPort`, built on demand.
+
+A callable rather than a bare port because a `TopicReadPort` is bound to one
+project at construction (see `ProjectTopicReader`), and a route serves every
+project from one running app -- so what the route layer holds is the thing
+that builds the bound reader, not a reader itself. Composition owns what the
+callable closes over; `app.py` only calls it, the same division `_reader`
+below keeps for `CorpusRunner`."""
 
 
 class NewSession(BaseModel):
@@ -218,6 +231,7 @@ def create_app(
     workers: WorkerRoster | None = None,
     extraction: ExtractionActivity | None = None,
     policy: AutonomyPolicy | None = None,
+    topics: TopicReaders | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -511,6 +525,43 @@ def create_app(
         text = document.text
         span = quote(text, start or 0, len(text) if end is None else end)
         return source_text_view(document, span)
+
+    def _topic_reader(project_id: UUID) -> TopicReadPort:
+        """This project's topics, through the port composition assembled.
+
+        503 rather than 404 when `topics` was not wired, for the reason
+        `_reader` gives: a build with no topic read model is a valid thing to
+        serve, and the caller needs to know the server cannot answer rather
+        than that the project has none.
+        """
+        if topics is None:
+            raise HTTPException(status_code=503, detail="no topic read model is configured")
+        return topics(project_id)
+
+    @app.get("/api/projects/{project_id}/topics")
+    async def list_topics(project_id: UUID):
+        """Every topic this project tracks, ranked on nothing -- the queue does that."""
+        reader = _topic_reader(project_id)
+        await _require_project(project_id)
+        return [topic_view(view) for view in await reader.list_topics()]
+
+    @app.get("/api/projects/{project_id}/topics/{topic_id}")
+    async def read_topic(project_id: UUID, topic_id: UUID):
+        """One topic's own page. 404 for an unknown id and for a foreign one alike.
+
+        `ProjectTopicReader.read_topic` already collapses those two cases to
+        `None` -- see its docstring -- so this route has nothing left to
+        distinguish; doing so here would leak the very thing the port exists
+        to withhold.
+        """
+        reader = _topic_reader(project_id)
+        await _require_project(project_id)
+        detail = await reader.read_topic(topic_id)
+        if detail is None:
+            raise HTTPException(
+                status_code=404, detail=f"no topic {topic_id} in project {project_id}"
+            )
+        return topic_detail_view(detail)
 
     @app.post("/api/sessions/{session_id}/release")
     async def release_session(session_id: UUID):

@@ -6,6 +6,7 @@ swapping any of them is an edit here and nowhere else.
 """
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -51,6 +52,7 @@ from research_team.application.stage_exit import (
     render_review,
     review_stage,
 )
+from research_team.application.topic_read import TopicReadPort
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import CodingSession, ProjectState, current_stage_of
 from research_team.domain.auto_research import Budget
@@ -106,6 +108,7 @@ from research_team.infrastructure.persistence import (
 )
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
+from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.telemetry import build_tracer
 from research_team.workflows import PRESETS
 
@@ -140,6 +143,19 @@ class Application:
     A field for the same reason `corpus` is one: the queue is read by the
     agent through the tools attached with a project, and by anything driving an
     autonomous run, which shares nothing else with a session."""
+
+    topic_readers: Callable[[UUID], TopicReadPort]
+    """One project's `TopicReadPort`, built fresh per call.
+
+    A factory rather than a bare repository, for the reason `_reader` in
+    `app.py` is a function and not a field: the web layer has no business
+    knowing that a topic reader is assembled from a queue projection, an
+    aggregate repository and a corpus-facts callable -- that is composition
+    knowledge, and handing it out piecemeal would make every future change to
+    how a reader is built a change to the web layer too. This closes over the
+    one `AggregateRepository[Topic]` also used by `start_run` below, so
+    there is exactly one such object, not a second built to avoid depending
+    on this field."""
 
     research: ResearchSupervisor
     """Autonomous runs over this instance's topic queues.
@@ -740,6 +756,18 @@ def build_application(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store
     )
 
+    def topic_reader(target_project_id: UUID) -> TopicReadPort:
+        """This project's `TopicReadPort`, over the one repository above.
+
+        Built per call rather than held, mirroring `ProjectCorpusReader`
+        above: the project is bound at construction so no caller can pass a
+        different one, and a call is cheap enough (three attribute reads and
+        an object) that there is no reason to cache it.
+        """
+        return ProjectTopicReader(
+            topics, topic_repository, topics.corpus_facts, target_project_id
+        )
+
     async def start_run(
         run_id: UUID,
         run_project_id: UUID,
@@ -806,6 +834,7 @@ def build_application(
         summaries=summaries,
         corpus=corpus,
         topics=topics,
+        topic_readers=topic_reader,
         research=research_supervisor,
         workers=worker_roster,
         policy=resolved_policy,

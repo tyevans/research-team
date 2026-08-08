@@ -45,8 +45,12 @@ def main() -> None:
             lifespan,
             approvals=approvals,
             activity=activity,
+            # Was missing: the source routes have been 503ing in this
+            # entrypoint while the test fixture wired a corpus and passed.
+            corpus=application.corpus,
             workers=application.workers,
             extraction=extraction,
+            topics=application.topic_readers,
             # The same object the executor's gating predicate reads, which is
             # the only reason the routes over it can change anything: a copy
             # would answer reads correctly and change nothing. Instance-wide,

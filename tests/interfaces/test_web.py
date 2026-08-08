@@ -23,7 +23,9 @@ from research_team.domain import (
     StoreSourceDocument,
     WriteFile,
 )
+from research_team.domain.topic import OpenTopic
 from research_team.infrastructure.persistence import build_corpus_repository
+from research_team.infrastructure.persistence.event_store import build_topic_repository
 from research_team.interfaces.web import TurnActivity, create_app
 from research_team.interfaces.web.extraction import ExtractionActivity
 
@@ -69,6 +71,7 @@ async def app_and_client(db_path, fake_model, extraction):
         # able to change anything because they hold the object the executor
         # reads, and a test against a copy would pass while proving nothing.
         policy=application.policy,
+        topics=application.topic_readers,
     )
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -1526,6 +1529,82 @@ async def test_a_dropped_source_is_gone_from_both_routes(app_and_client):
 
     assert listing.json() == []
     assert reading.status_code == 404
+
+
+# ---------------- topics ----------------
+
+
+async def _project_with_topics(application, client) -> tuple[str, str]:
+    """A project holding one live, never-investigated topic, projection caught up.
+
+    Opens the topic through the `Topic` aggregate directly rather than through
+    `open_topic`, the same reasoning `_project_with_sources` gives for storing
+    through `Corpus` rather than `remember`: these routes are about the read
+    path, and `open_topic` is not reachable over HTTP until Task 6. Returns
+    both ids because every test needs the project and most need the topic too.
+    """
+    created = await client.post("/api/projects", json={"name": f"topics-{uuid4()}"})
+    assert created.status_code == 200
+    project_id = created.json()["id"]
+
+    repository = build_topic_repository(
+        application.service._repository.store,
+        application.service._repository.publisher,
+        snapshot_store=application.service._repository.snapshot_store,
+    )
+    topic = repository.create_new(uuid4())
+    topic.execute(
+        OpenTopic(
+            topic_id=topic.aggregate_id,
+            project_id=UUID(project_id),
+            question="Does spacing help?",
+            rationale="because it is the whole question",
+        )
+    )
+    await repository.save(topic)
+    await application.topics_caught_up()
+    return project_id, str(topic.aggregate_id)
+
+
+async def test_listing_topics_reports_status_counts_and_triggers(app_and_client):
+    application, client = app_and_client
+    project_id, _ = await _project_with_topics(application, client)
+
+    response = await client.get(f"/api/projects/{project_id}/topics")
+
+    assert response.status_code == 200
+    row = response.json()[0]
+    assert row["question"] == "Does spacing help?"
+    assert row["status"] == "open"
+    assert row["needs_attention"] is True
+    assert "topic.never_investigated" in row["triggers"]
+
+
+async def test_reading_a_topic_adds_what_the_row_leaves_out(app_and_client):
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+
+    body = (await client.get(f"/api/projects/{project_id}/topics/{topic_id}")).json()
+
+    assert body["rationale"] == "because it is the whole question"
+    assert body["sub_questions"] == []
+    assert body["source_ids"] == []
+
+
+async def test_an_unknown_topic_is_a_404(app_and_client):
+    application, client = app_and_client
+    project_id, _ = await _project_with_topics(application, client)
+
+    response = await client.get(f"/api/projects/{project_id}/topics/{uuid4()}")
+
+    assert response.status_code == 404
+
+
+async def test_an_unknown_project_is_a_404_on_both_topic_routes(client):
+    missing = uuid4()
+
+    assert (await client.get(f"/api/projects/{missing}/topics")).status_code == 404
+    assert (await client.get(f"/api/projects/{missing}/topics/{uuid4()}")).status_code == 404
 
 
 # ---------------- workflows ----------------

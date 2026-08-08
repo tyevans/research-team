@@ -21,6 +21,7 @@ from research_team.application import (
 )
 from research_team.application.corpus_read import StoredDocument
 from research_team.application.corpus_spans import Span
+from research_team.application.topic_read import TopicDetail, TopicView
 from research_team.application.course import (
     ArtifactSlot,
     Course,
@@ -477,6 +478,57 @@ def source_text_view(document: StoredDocument, span: Span) -> dict[str, Any]:
         "text": span.text,
         "start": span.start,
         "end": span.end,
+    }
+
+
+def topic_view(view: TopicView) -> dict[str, Any]:
+    """One row of `/api/projects/{id}/topics`: what a queue entry ranks on.
+
+    `needs_attention` and `is_blocked` are read off `view.attention` rather
+    than left for the caller to derive from `triggers` -- a browser rendering
+    a queue wants the verdict, not the raw findings, and `TopicAttention`
+    already computed both from the same evaluation this row's triggers come
+    from. Deriving them again client-side would risk disagreeing with the row
+    that sits right next to them.
+    """
+    summary = view.summary
+    return {
+        "topic_id": str(summary.topic_id),
+        "question": summary.question,
+        "status": summary.status,
+        "sources": summary.sources,
+        "findings": summary.findings,
+        "open_sub_questions": summary.open_sub_questions,
+        "triggers": list(summary.triggers),
+        "needs_attention": view.needs_attention,
+        "is_blocked": view.attention.is_blocked,
+    }
+
+
+def topic_detail_view(detail: TopicDetail) -> dict[str, Any]:
+    """One topic's own page: the row plus what a list would leave out.
+
+    Built on `topic_view` rather than duplicating its fields, for the reason
+    `source_text_view` builds on `source_view`: the row and the detail must
+    describe the same topic the same way, and a single function computing the
+    shared half is what keeps them from drifting apart as either grows.
+    """
+    return {
+        **topic_view(detail.view),
+        "rationale": detail.rationale,
+        "scope": detail.scope,
+        "sub_questions": [
+            {
+                "key": sub.key,
+                "question": sub.question,
+                "answer": sub.answer,
+                "resolved": sub.resolved,
+            }
+            for sub in detail.sub_questions
+        ],
+        "source_ids": list(detail.source_ids),
+        "findings": list(detail.findings),
+        "contested": detail.contested,
     }
 
 
