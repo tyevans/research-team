@@ -59,7 +59,10 @@ const BUDGET_KB = {
   // 231, from 230: filtering the topic queue. A search box, four counted
   // slices, and the domain predicate behind them -- half a kilobyte for the
   // difference between reading a project's queue and scrolling it.
-  total: 231,
+  //
+  // 232, from 231: the canvas legend, which is what made the node colours mean
+  // anything, and the course page's autonomy disclosure.
+  total: 232,
 }
 
 const kb = (bytes) => Math.round((bytes / 1024) * 10) / 10

@@ -590,6 +590,43 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  cursor: pointer;
+  /* The marker is drawn below, so the default triangle would be a second one
+     pointing the other way in some engines. */
+  list-style: none;
+}
+
+.autonomy-head::-webkit-details-marker {
+  display: none;
+}
+
+/* A caret that turns, in the same character set the rest of this console
+   draws its arrows from. Before the title rather than after it, so the whole
+   row reads as one control from its left edge. */
+.autonomy-head::before {
+  content: '\25B8';
+  color: var(--fg-dim);
+  transition: transform 120ms ease;
+}
+
+.autonomy-disclosure[open] > .autonomy-head::before {
+  transform: rotate(90deg);
+}
+
+.autonomy-head:hover::before {
+  color: var(--accent);
+}
+
+.autonomy-tally {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* Only once open: collapsed, the summary is the whole panel and a gap under
+   it would read as an empty box. */
+.autonomy-disclosure[open] > .autonomy-head {
+  margin-bottom: 10px;
 }
 .autonomy-title {
   margin: 0;

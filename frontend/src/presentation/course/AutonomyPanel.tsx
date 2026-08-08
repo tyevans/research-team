@@ -4,6 +4,7 @@ import {
   levelMeaning,
   levelOf,
   levelsToOffer,
+  levelTally,
   type AutonomyPolicyView,
 } from '@domain/autonomy/autonomy.ts'
 import type { SessionId } from '@domain/shared/identifier.ts'
@@ -46,11 +47,30 @@ export const AutonomyPanel = ({ sessionId }: { sessionId: SessionId | null }) =>
     useAutonomy(sessionId)
 
   return (
-    <>
-      <div className="autonomy-head">
+    // Closed until asked for. This policy is instance-wide and changes rarely,
+    // and open it filled the first screen of the course page -- so a reader
+    // arriving to see how the run was going met eight tools by three radio
+    // levels before a single stage or artifact. The summary keeps the fact
+    // worth knowing at a glance (how many tools run without asking) on the
+    // page, and the twenty-four controls behind one click.
+    //
+    // `<details>` rather than a state hook: it gives the disclosure keyboard
+    // behaviour, the expanded/collapsed state a screen reader announces, and
+    // find-in-page that opens the panel to reach a match -- none of which
+    // would survive being reimplemented here.
+    <details className="autonomy-disclosure">
+      <summary className="autonomy-head">
         <h3 className="autonomy-title">What the agent may do without asking</h3>
-        {policy ? <Chip>{policy.gated.length} gated tools</Chip> : null}
-      </div>
+        {policy ? (
+          <span className="autonomy-tally">
+            {levelTally(policy).map(([level, count]) => (
+              <Chip key={level}>
+                {count} {level}
+              </Chip>
+            ))}
+          </span>
+        ) : null}
+      </summary>
 
       {loading ? (
         <p className="sub autonomy-sub">reading the policy…</p>
@@ -85,7 +105,7 @@ export const AutonomyPanel = ({ sessionId }: { sessionId: SessionId | null }) =>
           </ul>
         </>
       )}
-    </>
+    </details>
   )
 }
 
