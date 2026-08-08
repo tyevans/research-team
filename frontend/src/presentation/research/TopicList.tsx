@@ -15,8 +15,8 @@ import { TopicStatusDialog } from './TopicStatusDialog.tsx'
  *
  * A plain query rather than a poll — unlike `Workers`, nothing here is
  * expected to move within the span of one page view, so there is no
- * `refetchInterval` to keep a stale badge honest. A manual action (task 6)
- * is what invalidates this cache.
+ * `refetchInterval` to keep a stale badge honest. A manual action -- setting
+ * a topic's status -- is what invalidates this cache.
  */
 export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
   const { topics } = useContainer()

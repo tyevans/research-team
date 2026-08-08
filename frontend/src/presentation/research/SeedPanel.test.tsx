@@ -149,7 +149,9 @@ it('surfaces a 409 from a concurrent run rather than doing nothing', async () =>
 
 it('shows a run already in flight on mount, from the catch-up route', async () => {
   const topics = fakeTopics({
-    seedStatus: vi.fn().mockResolvedValue({ current: run({ subject: 'memory consolidation' }), last: null }),
+    seedStatus: vi
+      .fn()
+      .mockResolvedValue({ current: run({ subject: 'memory consolidation' }), last: null }),
   })
   const { stream } = fakeStream()
 
@@ -176,9 +178,10 @@ it('says only that a run is in flight when catch-up has no subject for it', asyn
 
 it('shows the last run failing rather than staying silent about it', async () => {
   const topics = fakeTopics({
-    seedStatus: vi
-      .fn()
-      .mockResolvedValue({ current: null, last: run({ status: 'failed', detail: 'the model refused' }) }),
+    seedStatus: vi.fn().mockResolvedValue({
+      current: null,
+      last: run({ status: 'failed', detail: 'the model refused' }),
+    }),
   })
   const { stream } = fakeStream()
 
@@ -192,7 +195,9 @@ it('updates from a live frame without waiting for a refetch', async () => {
   // The gap this closes: without this, a failed run looked exactly like a
   // hung one until the tab reloaded and hit the catch-up route.
   const topics = fakeTopics({
-    seedStatus: vi.fn().mockResolvedValue({ current: run({ subject: 'memory consolidation' }), last: null }),
+    seedStatus: vi
+      .fn()
+      .mockResolvedValue({ current: run({ subject: 'memory consolidation' }), last: null }),
   })
   const { stream, push } = fakeStream()
 

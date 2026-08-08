@@ -152,8 +152,8 @@ class Application:
     """The single owner of every project's open graph store in this instance.
 
     A field rather than something reached only through `open_graph`'s
-    closure, because a read route (Task 10) needs to `open` the same store
-    the attached agent writes to, and a delete route needs to `close` it --
+    closure, because a graph-browsing read route needs to `open` the same
+    store the attached agent writes to, and a delete route needs to `close` it --
     neither is reachable through the executor or the service, so this is
     where both go looking."""
 
@@ -429,7 +429,7 @@ def build_application(
         # A `project_id=` at build time scopes the whole application to that
         # project, not just sessions started through `start_in_project` --
         # `create_session` on an application built this way still gets the
-        # knowledge tools (Task 14's `_initial_project_id` path, attached at
+        # knowledge tools (the `_initial_project_id` path, attached at
         # `start()`), so its default prompt has to describe them too, the
         # same way `start_in_project`'s per-session prompt does. Otherwise a
         # session it creates has `remember` on the executor and no idea the
@@ -659,7 +659,7 @@ def build_application(
 
     # The single owner of an open graph store per project: `open_graph` below
     # borrows from it rather than building its own, which is what lets a read
-    # route (Task 10) see the same store extraction just wrote to instead of
+    # route see the same store extraction just wrote to instead of
     # a second one rebuilt independently and stale from the moment it exists.
     graphs = ProjectGraphs(
         build_store=lambda: build_graph_store(config.graph_store()),
@@ -773,8 +773,8 @@ def build_application(
         # decisions live. The projection gets the same instance, so a turn and
         # the read-model work it causes are read off one trace rather than two.
         tracer=resolved_tracer,
-        # A session started in a project gets this appended to its prompt
-        # (Task 14/Step 4); one started plainly does not, so it never hears
+        # A session started in a project gets this appended to its prompt;
+        # one started plainly does not, so it never hears
         # about tools it was not given.
         # `TOPICS_PROMPT` belongs here for the same reason the other three do,
         # and its absence was a plain oversight: `open_graph` attaches

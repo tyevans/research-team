@@ -1,5 +1,6 @@
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
+import { courseHref } from '../routing/routes.ts'
 import { DocumentList } from './DocumentList.tsx'
 import { GraphPane } from './GraphPane.tsx'
 import { SeedPanel } from './SeedPanel.tsx'
@@ -17,6 +18,11 @@ export const ResearchView = ({ projectId }: { projectId: ProjectId }) => (
     <div className="view-head">
       <div>
         <h1>Research</h1>
+      </div>
+      <div className="view-head-actions">
+        <a className="btn btn-quiet" href={courseHref(projectId)}>
+          Course
+        </a>
       </div>
     </div>
 

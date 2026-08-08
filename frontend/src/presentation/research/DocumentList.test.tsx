@@ -47,10 +47,12 @@ const renderWithContainer = (ui: ReactElement, parts: Partial<AppContainer>) => 
 
 it('renders every document’s label', async () => {
   const documents = fakeDocuments(
-    vi.fn<DocumentRepository['list']>().mockResolvedValue([
-      doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace' }),
-      doc({ sourceId: SourceId('s2'), title: 'Grace Hopper' }),
-    ]),
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([
+        doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace' }),
+        doc({ sourceId: SourceId('s2'), title: 'Grace Hopper' }),
+      ]),
   )
 
   renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })

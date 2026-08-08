@@ -1068,7 +1068,7 @@ async def test_joining_a_project_starts_a_session_that_inherits_its_files(client
 
 
 async def test_joining_a_project_attaches_the_knowledge_tools(app_and_client):
-    """The web-route counterpart of Task 14's REPL fix.
+    """The web-route counterpart of the REPL's `/project use` attach fix.
 
     `application.turns_tools()` is the surface the executor actually reads
     from on the next turn -- the same surface
@@ -1573,8 +1573,8 @@ async def _project_with_topics(application, client) -> tuple[str, str]:
     Opens the topic through the `Topic` aggregate directly rather than through
     `open_topic`, the same reasoning `_project_with_sources` gives for storing
     through `Corpus` rather than `remember`: these routes are about the read
-    path, and `open_topic` is not reachable over HTTP until Task 6. Returns
-    both ids because every test needs the project and most need the topic too.
+    path, not about how a topic came to exist. Returns both ids because every
+    test needs the project and most need the topic too.
     """
     created = await client.post("/api/projects", json={"name": f"topics-{uuid4()}"})
     assert created.status_code == 200

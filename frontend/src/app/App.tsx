@@ -62,7 +62,7 @@ const Shell = () => {
         <Breadcrumbs
           route={route}
           session={route.name === 'session' ? head : null}
-          course={route.name === 'course' ? course : null}
+          course={route.name === 'course' || route.name === 'research' ? course : null}
         />
         <div className="topbar-right">
           <DriftBadge />

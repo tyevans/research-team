@@ -76,12 +76,10 @@ export const SeedPanel = ({ projectId }: { projectId: ProjectId }) => {
     () =>
       stream.onFrame((frame) => {
         if (frame.kind !== 'seeding' || frame.projectId !== projectId) return
-        queryClient.setQueryData(
-          queryKeys.seed(projectId),
-          (previous: SeedStatus | undefined) =>
-            frame.run.status === 'running'
-              ? { current: frame.run, last: previous?.last ?? null }
-              : { current: null, last: frame.run },
+        queryClient.setQueryData(queryKeys.seed(projectId), (previous: SeedStatus | undefined) =>
+          frame.run.status === 'running'
+            ? { current: frame.run, last: previous?.last ?? null }
+            : { current: null, last: frame.run },
         )
       }),
     [stream, queryClient, projectId],
@@ -145,7 +143,7 @@ export const SeedPanel = ({ projectId }: { projectId: ProjectId }) => {
 
       {current?.status === 'running' ? (
         <p className="seed-status" role="status">
-          {current.subject ?? askedSubject
+          {(current.subject ?? askedSubject)
             ? `Naming topics for “${current.subject ?? askedSubject}”…`
             : 'Naming topics…'}
         </p>
