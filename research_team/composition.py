@@ -55,6 +55,7 @@ from research_team.application.stage_exit import (
     review_stage,
 )
 from research_team.application.topic_read import TopicReadPort
+from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import CodingSession, ProjectState, current_stage_of
 from research_team.domain.auto_research import Budget
@@ -190,6 +191,15 @@ class Application:
     topic repository, the queue projection and the turn supervisor -- and both
     front ends want the same one. Two supervisors over one database would each
     believe they held the only run on a project."""
+
+    topic_seeder: TopicSeeder
+    """Names a project's first topics in one turn, given a subject.
+
+    A field for the same reason `research` is one: both front ends want the
+    same object, and it is built from the same `service` and `turns` this
+    module already holds -- nothing a factory would buy over exposing the
+    one instance directly, the way `topic_repository` is exposed rather than
+    rebuilt per call."""
 
     workers: WorkerRoster
     """Everything in flight on a project, for a front end that wants to show it.
@@ -868,6 +878,10 @@ def build_application(
         )
 
     research_supervisor = ResearchSupervisor(start_run, runs)
+    # Built over the same `service` and `turns` a person's own turns run
+    # through -- a seeding turn is a turn like any other, and `TopicSeeder`
+    # joins and releases the project the same way `start_auto_research` does.
+    topic_seeder = TopicSeeder(service, turns)
     # The same object the tools report through, not a second one: the roster's
     # "an extraction is running" and the pane's frames are two reads of one
     # buffer, and two instances would let them disagree.
@@ -887,6 +901,7 @@ def build_application(
         topic_readers=topic_reader,
         topic_repository=topic_repository,
         research=research_supervisor,
+        topic_seeder=topic_seeder,
         workers=worker_roster,
         policy=resolved_policy,
         _initial_project_id=project_id,

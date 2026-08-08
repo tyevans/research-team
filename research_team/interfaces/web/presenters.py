@@ -633,6 +633,20 @@ def run_view(run: ActiveRun, state: AutoRunState | None = None) -> dict[str, Any
     }
 
 
+def seeding_view(frame: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A `SeedingActivity` frame, passed through as-is.
+
+    Unlike `run_view`, there is no folding to do: `SeedingActivity` already
+    keeps its frames in the shape a browser wants, because nothing durable
+    backs them for a presenter to reduce. This function exists anyway, for
+    the same reason every other route reaches for `presenters.py` rather than
+    building a dict inline -- the wire shape is decided in one place, not
+    wherever a route happens to need it. `None` passes through unchanged: no
+    run yet, or none finished, is a state this reports rather than an error.
+    """
+    return frame
+
+
 def worker_view(worker: Worker) -> dict[str, Any]:
     """One worker, in the browser's shape.
 

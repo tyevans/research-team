@@ -43,6 +43,7 @@ from research_team.application.grading import GradingError, grade
 from research_team.application.graph_read import MAX_NEIGHBORHOOD_DEPTH, GraphReadPort
 from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.topic_read import TopicReadPort
+from research_team.application.topic_seeding import TopicSeeder
 from research_team.domain import CreateProject, ProjectState, SelectWorkflow
 from research_team.domain.auto_research import Budget
 from research_team.domain.project import current_stage_of
@@ -73,6 +74,7 @@ from research_team.interfaces.web.presenters import (
     project_view,
     roster_view,
     run_view,
+    seeding_view,
     session_view,
     source_text_view,
     source_view,
@@ -82,6 +84,7 @@ from research_team.interfaces.web.presenters import (
     topic_view,
     tree_view,
 )
+from research_team.interfaces.web.seeding import SeedingActivity
 from research_team.workflows import PRESETS
 
 logger = logging.getLogger(__name__)
@@ -244,6 +247,19 @@ class NewRun(BaseModel):
         return Budget(**asked)
 
 
+class NewSeed(BaseModel):
+    """What one seeding turn is asked to name topics for.
+
+    `max_topics` defaults to 8 rather than being required, matching every
+    other cap in this file (`NewRun.max_rounds` above): a caller that wants
+    the ordinary amount says nothing about it, and the number this layer
+    defaults to is the one `TopicSeeder`'s own tests exercise.
+    """
+
+    subject: str = Field(min_length=1)
+    max_topics: int = 8
+
+
 class Decision(BaseModel):
     """A human's answer to a parked approval. `type` is langchain's vocabulary."""
 
@@ -293,6 +309,8 @@ def create_app(
     topics: TopicReaders | None = None,
     topic_repository: AggregateRepository[Topic] | None = None,
     graphs: ProjectGraphs | None = None,
+    topic_seeder: TopicSeeder | None = None,
+    seeding: SeedingActivity | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -614,6 +632,55 @@ def create_app(
         reader = _topic_reader(project_id)
         await _require_project(project_id)
         return [topic_view(view) for view in await reader.list_topics()]
+
+    @app.post("/api/projects/{project_id}/topics/seed")
+    async def seed_topics(project_id: UUID, body: NewSeed):
+        """Start one seeding turn that names this project's first topics.
+
+        Registered ahead of `/topics/{topic_id}` below -- FastAPI matches
+        routes in declaration order, and `seed` would otherwise be parsed as
+        a topic id and 422 on every call.
+
+        202, matching `start_auto_research`: the turn has not finished when
+        this answers, and what it hands back is the id of a run that has
+        *begun*. The topics it opens arrive over the log like any other
+        `open_topic` call -- a client that wants them invalidates its topic
+        list on those frames rather than reading this response for them.
+
+        503 rather than 404 when unwired, matching `_topic_reader` above:
+        this build is missing configuration, not the project this id names.
+        409 when a seed is already running on this project -- see
+        `seeding.py`'s `SeedingActivity.start` for why it is the same
+        exception `start_auto_research` maps the same way.
+        """
+        if topic_seeder is None or seeding is None:
+            raise HTTPException(status_code=503, detail="topic seeding is not configured")
+        await _require_project(project_id)
+        try:
+            frame = seeding.start(
+                project_id,
+                lambda: topic_seeder.seed(project_id, body.subject, body.max_topics),
+            )
+        except RunAlreadyActive as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return JSONResponse(status_code=202, content=seeding_view(frame))
+
+    @app.get("/api/projects/{project_id}/topics/seed")
+    async def get_seed(project_id: UUID):
+        """What the running seed has done so far, and the last one's account.
+
+        A tab that arrived mid-run, or one whose connection dropped, has no
+        other way back -- see `seeding.py`'s module docstring. 200 with both
+        halves `None` when nothing has run, matching `get_extraction`'s own
+        reasoning: an absent seed is a state, not a missing resource.
+        """
+        await _require_project(project_id)
+        if seeding is None:
+            return {"current": None, "last": None}
+        return {
+            "current": seeding_view(seeding.current(project_id)),
+            "last": seeding_view(seeding.last(project_id)),
+        }
 
     @app.get("/api/projects/{project_id}/topics/{topic_id}")
     async def read_topic(project_id: UUID, topic_id: UUID):

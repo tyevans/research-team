@@ -28,6 +28,7 @@ from research_team.infrastructure.persistence import build_corpus_repository
 from research_team.infrastructure.persistence.event_store import build_topic_repository
 from research_team.interfaces.web import TurnActivity, create_app
 from research_team.interfaces.web.extraction import ExtractionActivity
+from research_team.interfaces.web.seeding import SeedingActivity
 
 
 async def _started(**kwargs):
@@ -2996,3 +2997,96 @@ async def test_graph_routes_503_when_no_graph_reader_is_configured(app_and_clien
 
     assert listing.status_code == 503
     assert neighborhood.status_code == 503
+
+
+# ---------------- topic seeding ----------------
+
+
+@pytest.fixture
+async def seeding_client(db_path, fake_model):
+    """A client wired with a `TopicSeeder` and its own `SeedingActivity`.
+
+    Separate from `client`, matching `research_client`: the default app is
+    built without a seeder, and that unwired case is one of the behaviours
+    these tests check.
+    """
+    application = await _started(model=fake_model, db_path=db_path)
+    activity = SeedingActivity()
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        topic_seeder=application.topic_seeder,
+        seeding=activity,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as http:
+        yield application, activity, http
+    await application.close()
+
+
+async def test_the_seed_routes_are_absent_unless_the_instance_was_wired_for_them(client):
+    """503 rather than 404: this build is missing configuration, not the
+    project this particular id names -- matching `_reader`'s own reasoning."""
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await client.post(
+        f"/api/projects/{project_id}/topics/seed", json={"subject": "spaced repetition"}
+    )
+
+    assert response.status_code == 503
+
+
+async def test_starting_a_seed_answers_with_its_run_before_it_has_finished(seeding_client):
+    application, activity, http = seeding_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await http.post(
+        f"/api/projects/{project_id}/topics/seed", json={"subject": "spaced repetition"}
+    )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["project_id"] == project_id
+    assert body["status"] == "running"
+    await activity.wait(UUID(project_id))
+
+
+async def test_a_second_concurrent_seed_on_the_same_project_is_refused(seeding_client):
+    application, activity, http = seeding_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    first = await http.post(
+        f"/api/projects/{project_id}/topics/seed", json={"subject": "spaced repetition"}
+    )
+    second = await http.post(
+        f"/api/projects/{project_id}/topics/seed", json={"subject": "second wave"}
+    )
+
+    assert first.status_code == 202
+    assert second.status_code == 409
+    assert project_id in second.json()["detail"]
+    await activity.wait(UUID(project_id))
+
+
+async def test_the_catch_up_route_reports_what_a_finished_seed_did(seeding_client):
+    application, activity, http = seeding_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    empty = await http.get(f"/api/projects/{project_id}/topics/seed")
+    assert empty.json()["current"] is None
+    assert empty.json()["last"] is None
+
+    started = await http.post(
+        f"/api/projects/{project_id}/topics/seed", json={"subject": "spaced repetition"}
+    )
+    await activity.wait(UUID(project_id))
+
+    caught_up = await http.get(f"/api/projects/{project_id}/topics/seed")
+
+    assert caught_up.status_code == 200
+    body = caught_up.json()
+    assert body["current"] is None
+    assert body["last"]["status"] == "done"
+    assert body["last"]["run_id"] != started.json()["run_id"]
+    assert body["last"]["subject"] == "spaced repetition"
