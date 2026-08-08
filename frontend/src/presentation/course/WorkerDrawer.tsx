@@ -15,6 +15,7 @@ import { ActivityFeed } from '../session/ActivityFeed.tsx'
 import { Approvals } from '../session/Approvals.tsx'
 import { Conversation } from '../session/Conversation.tsx'
 import { useSessionStream } from '../session/use-session-stream.ts'
+import { AutonomyAllowAll } from './AutonomyAllowAll.tsx'
 
 /** A worker's real transcript, over the course page.
  *
@@ -176,6 +177,13 @@ export const WorkerDrawer = ({
             deciding={state.deciding}
             onDecide={(approval, decision) => void store.getState().decide(approval, decision)}
           />
+          {/* Directly under the approvals, because this is the control that
+              answers "I wish I could stop being asked" — and asking somebody
+              to navigate to a settings surface in order to say that is how the
+              REPL's `/autonomy` came to be the only way to do it. The scope
+              warning it renders is load-bearing: the policy is instance-wide
+              even though this drawer is one session's. */}
+          <AutonomyAllowAll sessionId={sessionId} />
           {/* historicalAt is always null: the drawer only ever shows HEAD, so
               there is no scrub position to report — see the doc comment above.
               emptyDetail overrides Conversation's default, which invites the

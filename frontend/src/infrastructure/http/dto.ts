@@ -394,5 +394,25 @@ export const extractionCatchUpDto = z.object({
   last: z.array(extractionFrameDto).default([]),
 })
 
+/** The autonomy policy, as all three routes shape it through one presenter.
+ *
+ * `levels` values are `z.string()` rather than an enum on purpose: a server
+ * that grows a fourth level must reach the domain's fallback and render as
+ * itself, not fail validation and blank the panel. `gated` and `stage_gates`
+ * are sent so the frontend never hardcodes a tool list — a list that drifts
+ * from `GATED_TOOLS` shows up as a tool silently unmanageable from the web. */
+export const autonomyDto = z.object({
+  levels: z.record(z.string(), z.string()).default({}),
+  gated: z.array(z.string()).default([]),
+  stage_gates: z.array(z.string()).default([]),
+})
+
+/** Allow-all adds `changed`: only what actually moved, possibly empty. It is
+ *  what to report back to the person who clicked — `levels` would claim eight
+ *  changes where one was made. */
+export const autonomyChangeDto = autonomyDto.extend({
+  changed: z.record(z.string(), z.string()).default({}),
+})
+
 export const idDto = z.object({ id: z.string() })
 export const okDto = z.unknown()

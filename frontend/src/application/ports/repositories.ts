@@ -1,5 +1,6 @@
 import type { Approval, ApprovalDecision } from '@domain/approval/approval.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
+import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
 import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
@@ -96,6 +97,33 @@ export interface RunningTurn {
 export interface ApprovalRepository {
   pending(id: SessionId): Promise<readonly Approval[]>
   decide(id: SessionId, approvalId: ApprovalId, decision: ApprovalDecision): Promise<void>
+}
+
+/** What the agent may do without asking.
+ *
+ * The asymmetry in these three signatures is the API's, not an oversight, and
+ * it is worth stating because it is surprising: the read takes no session
+ * because there is no per-session answer to give, while the writes take one
+ * because the audit record — `AutonomyChanged` — lands on a session's stream.
+ * The session in a write is *who is answering for this change*, not where it
+ * applies. It applies everywhere in the process.
+ *
+ * Every write returns the whole policy, so one flipped switch needs no second
+ * request, and so a view whose `levels` went stale behind another tab's write
+ * is corrected by its own next write.
+ */
+export interface AutonomyRepository {
+  /** Rejects when this build has no policy wired up, which a caller must
+   *  distinguish from "everything is auto". */
+  read(): Promise<AutonomyPolicyView>
+  /** `level` and `tool` are plain strings so a bad value reaches the server's
+   *  own validation and comes back as its message, naming the offending value,
+   *  rather than being swallowed by a type this build made up. */
+  setLevel(id: SessionId, tool: string, level: string): Promise<AutonomyPolicyView>
+  /** Autos every gated tool. Stage gates are excluded unless asked for: their
+   *  floor is the workflow review gate, and auto-ing them lets a run cross
+   *  every stage boundary with nobody looking. */
+  allowAll(id: SessionId, includeStageGates: boolean): Promise<AutonomyChange>
 }
 
 export interface ProjectRepository {

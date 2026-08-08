@@ -18,6 +18,13 @@ export const queryKeys = {
   presets: () => ['presets'] as const,
   health: () => ['health'] as const,
 
+  /** Deliberately unparameterised. The autonomy policy is one object serving
+   *  the whole instance, so keying it by session or project would give the
+   *  drawer and the course panel separate caches over the same state — and
+   *  they would disagree the moment either wrote. One key means one write
+   *  corrects both. */
+  autonomy: () => ['autonomy'] as const,
+
   course: (project: ProjectId) => ['course', project] as const,
   run: (project: ProjectId) => ['run', project] as const,
   workers: (project: ProjectId) => ['workers', project] as const,

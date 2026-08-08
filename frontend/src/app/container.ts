@@ -2,6 +2,7 @@ import type { EventStream } from '@application/ports/event-stream.ts'
 import type { PreferenceStore } from '@application/ports/preferences.ts'
 import type {
   ApprovalRepository,
+  AutonomyRepository,
   ExtractionRepository,
   HealthRepository,
   LessonRepository,
@@ -12,6 +13,7 @@ import type {
   WorkerRepository,
   WorkspaceRepository,
 } from '@application/ports/repositories.ts'
+import { HttpAutonomyRepository } from '@infrastructure/http/autonomy-repository.ts'
 import { HttpClient } from '@infrastructure/http/http-client.ts'
 import {
   HttpExtractionRepository,
@@ -41,6 +43,7 @@ export interface Container {
   readonly lessons: LessonRepository
   readonly turns: TurnRepository
   readonly approvals: ApprovalRepository
+  readonly autonomy: AutonomyRepository
   readonly projects: ProjectRepository
   readonly research: ResearchRepository
   readonly workers: WorkerRepository
@@ -61,6 +64,7 @@ export const createContainer = (baseUrl = ''): Container => {
     lessons: new HttpLessonRepository(http),
     turns: new HttpTurnRepository(http),
     approvals: new HttpApprovalRepository(http),
+    autonomy: new HttpAutonomyRepository(http),
     projects: new HttpProjectRepository(http),
     research: new HttpResearchRepository(http),
     workers: new HttpWorkerRepository(http),

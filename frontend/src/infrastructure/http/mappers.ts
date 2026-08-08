@@ -4,6 +4,7 @@ import type { ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { ComponentBlock, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Approval } from '@domain/approval/approval.ts'
+import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame, ExtractionStage } from '@domain/knowledge/extraction.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
@@ -340,6 +341,20 @@ export const toRoster = (raw: Dto<typeof dto.rosterDto>): Roster => ({
     startedAt: toEpoch(worker.started_at),
   })),
   idleSessionIds: raw.idle_session_ids.map((id) => SessionId(id)),
+})
+
+/** A `Map` rather than the record the wire sent, so a tool named `toString` or
+ *  `constructor` cannot be answered by `Object.prototype` — a plain-object
+ *  lookup would report a level for a tool the server never mentioned. */
+export const toAutonomy = (raw: Dto<typeof dto.autonomyDto>): AutonomyPolicyView => ({
+  levels: new Map(Object.entries(raw.levels)),
+  gated: raw.gated,
+  stageGates: raw.stage_gates,
+})
+
+export const toAutonomyChange = (raw: Dto<typeof dto.autonomyChangeDto>): AutonomyChange => ({
+  changed: new Map(Object.entries(raw.changed)),
+  policy: toAutonomy(raw),
 })
 
 /** The stages this build knows, in the order the ingest walks them. */

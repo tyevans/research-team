@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'
@@ -8,6 +9,7 @@ import type { SessionStore } from '@application/session/session-store.ts'
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
+import type { AutonomyRepository } from '@application/ports/repositories.ts'
 import { emptyActivity } from '@domain/activity/activity.ts'
 import type { Approval } from '@domain/approval/approval.ts'
 import { ApprovalId, SessionId } from '@domain/shared/identifier.ts'
@@ -25,6 +27,28 @@ const anApproval = (id: string): Approval => ({
   description: null,
   args: { url: 'https://example.com' },
 })
+
+/** A policy with something still asking, so the drawer's `AutonomyAllowAll`
+ *  renders enabled controls. A policy where everything was already auto would
+ *  disable them, and the Tab-trap tests below would then pass for the wrong
+ *  reason — by excluding the buttons rather than including them. */
+const fakeAutonomy = (): AutonomyRepository => {
+  const policy = {
+    levels: new Map([
+      ['fetch', 'ask'],
+      ['advance_stage', 'ask'],
+    ]),
+    gated: ['fetch', 'advance_stage'],
+    stageGates: ['advance_stage'],
+  }
+  return {
+    read: vi.fn<AutonomyRepository['read']>().mockResolvedValue(policy),
+    setLevel: vi.fn<AutonomyRepository['setLevel']>().mockResolvedValue(policy),
+    allowAll: vi
+      .fn<AutonomyRepository['allowAll']>()
+      .mockResolvedValue({ changed: new Map(), policy }),
+  }
+}
 
 /** A stream that never delivers anything, which is all this suite needs:
  *  `useSessionStream` only has to subscribe and unsubscribe without throwing. */
@@ -101,11 +125,17 @@ const renderDrawer = (
   } = {},
 ) => {
   const store = fakeStore(parts)
-  const container = { stream: fakeStream() } as unknown as AppContainer
+  const container = { stream: fakeStream(), autonomy: fakeAutonomy() } as unknown as AppContainer
+  // A `QueryClient` because the drawer now contains `AutonomyAllowAll`, which
+  // reads the instance-wide policy through the same query key the course
+  // page's panel uses.
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   const wrapper = ({ children }: { children: React.ReactNode }) => (
-    <ContainerProvider container={container}>
-      <StreamProvider>{children}</StreamProvider>
-    </ContainerProvider>
+    <QueryClientProvider client={client}>
+      <ContainerProvider container={container}>
+        <StreamProvider>{children}</StreamProvider>
+      </ContainerProvider>
+    </QueryClientProvider>
   )
   return render(cloneElement(ui, { makeStore: () => store }), { wrapper })
 }
@@ -253,21 +283,42 @@ it('includes approval buttons in the Tab trap once they are present', () => {
   // The trap queries focusable descendants at keypress time (see
   // FOCUSABLE_SELECTOR in WorkerDrawer.tsx) precisely so content that
   // arrives after mount, like an approval, is swept in automatically.
+  //
+  // Asserted by membership rather than by treating an approval button as the
+  // last focusable: the drawer also renders the autonomy control below the
+  // approvals, so "last" is not an approval button and never was guaranteed
+  // to be one. Membership is the actual claim.
   renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
     approvals: [anApproval('a-1')],
   })
 
+  const focusable = [
+    ...screen.getByRole('dialog').querySelectorAll<HTMLElement>('a[href], button:not([disabled])'),
+  ]
   const reject = screen.getByRole('button', { name: /reject/i })
-  const first = screen
-    .getByRole('dialog')
-    .querySelectorAll<HTMLElement>('a[href], button:not([disabled])')[0]
+  expect(focusable).toContain(reject)
 
-  reject.focus()
-  expect(reject).toHaveFocus()
-
+  // And wrapping still works with the approval present.
+  const last = focusable[focusable.length - 1]
+  last?.focus()
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+  expect(focusable[0]).toHaveFocus()
+})
 
-  expect(first).toHaveFocus()
+it('offers the way to stop being asked, beside the approvals', async () => {
+  // The whole reason this control is in the drawer: somebody answering the
+  // same approval for the fifth time should not have to navigate to a
+  // settings surface to make it stop.
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
+    approvals: [anApproval('a-1')],
+  })
+
+  expect(
+    await screen.findByRole('button', { name: /allow everything except the review gate/i }),
+  ).toBeInTheDocument()
+  // And it says what it actually changes, on the control rather than in a
+  // tooltip — the policy is instance-wide even though this drawer is not.
+  expect(screen.getByText(/every session on this instance/i)).toBeInTheDocument()
 })
 
 it('wraps Shift+Tab from the first focusable element to the last', () => {

@@ -10,6 +10,7 @@ import type { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 import { EmptyState, Loading } from '../common/primitives.tsx'
 import { sessionHref } from '../routing/routes.ts'
 import { Artifact } from './Artifacts.tsx'
+import { AutonomyPanel } from './AutonomyPanel.tsx'
 import { ExtractionPane } from './ExtractionPane.tsx'
 import { Findings } from './Findings.tsx'
 import { RunPanel } from './RunPanel.tsx'
@@ -86,6 +87,18 @@ export const CourseView = ({
           when the project has no workflow and the panes below have nothing. */}
       <section className="run-panel" aria-label="Autonomous research">
         <RunPanel projectId={projectId} />
+      </section>
+
+      {/* A sibling of the run panel rather than a pane inside the course: the
+          policy is instance-wide, so it is not a property of this project any
+          more than the run is, and burying it under a workflow the project may
+          not even have would hide it exactly when somebody is looking for it.
+          The holding session is passed because a write has to be recorded
+          against somebody's stream — see `AutonomyPanel`. When there is none,
+          the panel renders read-only and says why rather than offering
+          controls that would 404. */}
+      <section className="autonomy-panel" aria-label="Autonomy">
+        <AutonomyPanel sessionId={course.data?.holdingSessionId ?? null} />
       </section>
 
       {course.isError ? (
