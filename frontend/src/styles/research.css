@@ -285,8 +285,10 @@
   align-items: flex-start;
   gap: 2px;
   width: 100%;
-  height: 100%;
-  padding: 6px 10px;
+  /* No `height: 100%`: the row's height now comes from this button's content
+     and is measured off it, so a fixed height here would be the same lie the
+     virtualizer's fixed row estimate was. */
+  padding: 7px 10px 8px;
   background: none;
   border: none;
   text-align: left;

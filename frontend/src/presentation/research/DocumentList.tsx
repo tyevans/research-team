@@ -52,7 +52,17 @@ export const DocumentList = ({ projectId }: { projectId: ProjectId }) => {
   const virtualizer = useVirtualizer({
     count: filtered.length,
     getScrollElement: () => scrollRef.current,
+    // An estimate now, not the truth. `ROW_HEIGHT` was treated as exact, and a
+    // title that wrapped to two lines -- most of them, in a 340px rail -- drew
+    // over the row beneath it. Each row reports its real height through
+    // `measureElement` below, and this is only what the virtualizer assumes
+    // for rows it has not drawn yet.
     estimateSize: () => ROW_HEIGHT,
+    // Measured, except when the environment has no layout to measure. jsdom
+    // reports every height as 0, and a measured 0 would collapse the list to
+    // nothing and take the rows with it -- so a zero measurement falls back to
+    // the estimate, which is what keeps this component testable at all.
+    measureElement: (element) => element.getBoundingClientRect().height || ROW_HEIGHT,
     overscan: 8,
   })
 
@@ -94,8 +104,9 @@ export const DocumentList = ({ projectId }: { projectId: ProjectId }) => {
               <DocumentRow
                 key={row.sourceId}
                 document={row}
+                index={item.index}
                 top={item.start}
-                height={item.size}
+                measure={virtualizer.measureElement}
                 onOpen={() => setReading(row.sourceId)}
               />
             )
@@ -137,18 +148,34 @@ const readingLabel = (rows: readonly DocumentSummary[], sourceId: SourceId): str
 
 const DocumentRow = ({
   document,
+  index,
   top,
-  height,
+  measure,
   onOpen,
 }: {
   document: DocumentSummary
+  /** The virtualizer reads this back off the DOM node to know which row it
+   *  just measured, so it has to be on the element `measure` is given. */
+  index: number
   top: number
-  height: number
+  measure: (element: HTMLElement | null) => void
   onOpen: () => void
 }) => (
   <li
+    ref={measure}
+    data-index={index}
     className={clsx('document-row', isDropped(document) && 'document-dropped')}
-    style={{ position: 'absolute', top, left: 0, right: 0, height }}
+    // Positioned by transform rather than `top`, and with no height at all:
+    // the row is now as tall as its content, and `translateY` is what the
+    // virtualizer's own measurement expects to find -- a `top` offset would be
+    // counted twice once a row reports a height different from the estimate.
+    style={{
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      transform: `translateY(${top}px)`,
+    }}
   >
     <button type="button" className="document-row-open" onClick={onOpen}>
       <span className="document-row-title">{documentLabel(document)}</span>
