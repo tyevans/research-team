@@ -34,7 +34,7 @@ const view = (): GraphView => ({
 
 it('hands react-force-graph-2d the same graphData object across a re-render that leaves the view unchanged', () => {
   const same = view()
-  const { rerender } = render(<GraphCanvas view={same} onNodeClick={() => {}} />)
+  const { rerender } = render(<GraphCanvas view={same} selected={null} onNodeClick={() => {}} />)
   const first = receivedGraphData
 
   // A re-render that changes only an unrelated prop (`onNodeClick`, as a
@@ -42,7 +42,7 @@ it('hands react-force-graph-2d the same graphData object across a re-render that
   // the library a new `graphData` object -- that object identity, not the
   // node objects inside it, is what react-force-graph-2d checks to decide
   // whether to reheat its d3-force simulation.
-  rerender(<GraphCanvas view={same} onNodeClick={() => {}} />)
+  rerender(<GraphCanvas view={same} selected={null} onNodeClick={() => {}} />)
   const second = receivedGraphData
 
   expect(second).toBe(first)
@@ -56,13 +56,13 @@ it('sizes the canvas to its container rather than letting it default to the wind
   // puts the drawing where the pane is.
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(480)
 
-  render(<GraphCanvas view={view()} onNodeClick={() => {}} />)
+  render(<GraphCanvas view={view()} selected={null} onNodeClick={() => {}} />)
 
   expect(receivedWidth).toBe(480)
 })
 
 it('pins a clicked node at its simulated position so it does not drift while its neighbourhood settles', () => {
-  render(<GraphCanvas view={view()} onNodeClick={() => {}} />)
+  render(<GraphCanvas view={view()} selected={null} onNodeClick={() => {}} />)
 
   // Stand-in for the node object `react-force-graph-2d` would hand back --
   // the simulation has already written x/y onto it by the time a click

@@ -57,6 +57,19 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [term, entityType])
 
+  /** Draw what was picked, and get the list out of the way.
+   *
+   * The results panel floats over the canvas, so leaving it up after a pick
+   * covers the very drawing the pick just produced -- you chose a thing in
+   * order to look at it, and then had to clear the search box by hand before
+   * you could. Clearing the term is what closes the panel, and it also leaves
+   * the box empty and ready for the next search, which is the state somebody
+   * who has finished with this one wants it in. */
+  const pick = (id: string) => {
+    setTerm('')
+    void store.getState().expandNode(id)
+  }
+
   return (
     <div className="graph-browser">
       {/* The canvas is the layer, and the controls sit on top of it rather
@@ -71,7 +84,11 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
           />
         ) : (
           <Suspense fallback={<Loading what="the graph canvas" />}>
-            <GraphCanvas view={view} onNodeClick={(id) => void store.getState().expandNode(id)} />
+            <GraphCanvas
+              view={view}
+              selected={selected}
+              onNodeClick={(id) => void store.getState().expandNode(id)}
+            />
           </Suspense>
         )}
       </div>
@@ -102,6 +119,17 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
                 </option>
               ))}
           </select>
+          {/* Only once there is something to clear -- a control that does
+              nothing is a control a reader has to work out the meaning of. */}
+          {view.nodes.length > 0 ? (
+            <button
+              type="button"
+              className="btn btn-sm graph-clear"
+              onClick={() => store.getState().clear()}
+            >
+              Clear
+            </button>
+          ) : null}
         </div>
 
         {error ? <p className="graph-error">{error}</p> : null}
@@ -119,14 +147,10 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
                 First {results.length} matches -- narrow the search to see more.
               </p>
             ) : null}
-            <ul className="graph-results">
+            <ul className="graph-results" aria-label="Search results">
               {results.map((result) => (
                 <li key={result.id}>
-                  <button
-                    type="button"
-                    className="graph-result"
-                    onClick={() => void store.getState().expandNode(result.id)}
-                  >
+                  <button type="button" className="graph-result" onClick={() => pick(result.id)}>
                     <span className="graph-result-name">{result.name}</span>
                     <span className="graph-result-type">{result.entityType}</span>
                   </button>
@@ -142,6 +166,7 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
           view={view}
           selected={selected}
           onSelect={(id) => void store.getState().expandNode(id)}
+          onRemove={(id) => store.getState().removeNode(id)}
           onClose={() => store.getState().select(null)}
         />
       ) : null}

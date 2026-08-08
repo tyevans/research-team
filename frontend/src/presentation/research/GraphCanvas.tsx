@@ -72,9 +72,14 @@ const colorForType = (entityType: string, palette: readonly string[]): string =>
  */
 export const GraphCanvas = memo(function GraphCanvas({
   view,
+  selected,
   onNodeClick,
 }: {
   view: GraphView
+  /** Ringed on the canvas, so the panel describing an entity and the drawing
+   *  agree about which one it is. Without it the reader has a name in a panel
+   *  and a field of identical dots, and no way to tell which dot it is. */
+  selected: string | null
   onNodeClick: (id: string) => void
 }) {
   const graphData = useMemo(() => ({ nodes: [...view.nodes], links: [...view.links] }), [view])
@@ -123,6 +128,7 @@ export const GraphCanvas = memo(function GraphCanvas({
     return {
       palette: KIND_TOKENS.map((name) => token(name, '#6ba7f5')),
       label: token('--fg', '#d7dee7'),
+      accent: token('--accent', '#e2a457'),
       mono: token('--mono', 'monospace'),
     }
   }, [])
@@ -204,6 +210,17 @@ export const GraphCanvas = memo(function GraphCanvas({
             ctx.arc(x, y, radius, 0, 2 * Math.PI)
             ctx.fillStyle = color
             ctx.fill()
+
+            // A ring rather than a different fill: the fill already carries
+            // the entity type, and overriding it to show selection would trade
+            // one fact for another instead of adding one.
+            if (node.id === selected) {
+              ctx.beginPath()
+              ctx.arc(x, y, radius + 3.5 / globalScale, 0, 2 * Math.PI)
+              ctx.strokeStyle = theme.accent
+              ctx.lineWidth = 1.5 / globalScale
+              ctx.stroke()
+            }
 
             // Below a certain zoom the labels collide into an unreadable mat,
             // and the shape of the graph is the only thing left worth seeing.

@@ -5,6 +5,7 @@ import {
   emptyGraph,
   expand,
   isExpanded,
+  remove,
   type GraphNode,
   type GraphView,
 } from '@domain/knowledge/graph.ts'
@@ -38,6 +39,12 @@ export interface GraphState {
   search(term: string, entityType?: string): Promise<void>
   expandNode(id: string): Promise<void>
   select(id: string | null): void
+  /** Take one entity off the drawing. See `remove` for what goes with it. */
+  removeNode(id: string): void
+  /** Start over with an empty canvas, keeping the search results as they are
+   *  -- clearing the drawing is not the same as forgetting what you searched
+   *  for, and having to retype the term to draw a second thing would be. */
+  clear(): void
 }
 
 export type GraphStore = ReturnType<typeof createGraphStore>
@@ -59,6 +66,27 @@ export const createGraphStore = ({
 
     select(id) {
       set({ selected: id })
+    },
+
+    removeNode(id) {
+      set((state) => {
+        const view = remove(state.view, id)
+        return {
+          view,
+          // The panel describes the selection, so a selection that is no
+          // longer on the canvas would leave it describing something the
+          // reader cannot see. This covers the removed node and anything that
+          // went with it.
+          selected:
+            state.selected && view.nodes.some((node) => node.id === state.selected)
+              ? state.selected
+              : null,
+        }
+      })
+    },
+
+    clear() {
+      set({ view: emptyGraph, selected: null })
     },
 
     async search(term, entityType) {

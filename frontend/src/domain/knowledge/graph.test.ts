@@ -5,6 +5,7 @@ import {
   emptyGraph,
   expand,
   isExpanded,
+  remove,
   type GraphView,
   type Neighborhood,
 } from './graph.ts'
@@ -148,5 +149,62 @@ describe('edgesOf', () => {
     const view = expand(emptyGraph, edge('a', 'b'))
 
     expect(edgesOf(view, 'zz')).toEqual([])
+  })
+})
+
+describe('remove', () => {
+  it('drops neighbours that arrived only because of the node being removed', () => {
+    // `b` came in as a neighbour of `a` and was never asked for. With `a` gone
+    // it is a dot connected to nothing, which is the clutter this exists to
+    // clear.
+    const view = expand(emptyGraph, edge('a', 'b'))
+
+    const after = remove(view, 'a')
+
+    expect(after.nodes).toEqual([])
+    expect(after.links).toEqual([])
+  })
+
+  it('keeps a node the reader expanded themselves, even once it is unconnected', () => {
+    // `b` was expanded in its own right, so it is something the reader asked
+    // for. Removing `a` should not take it away as a side effect.
+    const view = expand(expand(emptyGraph, edge('a', 'b')), hoodWith('b'))
+
+    const after = remove(view, 'a')
+
+    expect(after.nodes.map((n) => n.id)).toEqual(['b'])
+    expect(after.links).toEqual([])
+  })
+
+  it('keeps neighbours that are still connected to something else', () => {
+    const view = expand(expand(emptyGraph, edge('a', 'b')), edge('c', 'b'))
+
+    const after = remove(view, 'a')
+
+    expect(after.nodes.map((n) => n.id).sort()).toEqual(['b', 'c'])
+    expect(after.links).toHaveLength(1)
+  })
+
+  it('leaves no link dangling behind a removed node', () => {
+    // The same invariant `expand` maintains, from the other direction: d3-force
+    // throws on a link whose endpoint is absent, so a removal that orphaned one
+    // would crash the canvas rather than tidy it.
+    const view = expand(expand(emptyGraph, edge('a', 'b')), edge('b', 'c'))
+
+    const after = remove(view, 'b')
+    const ids = new Set(after.nodes.map((n) => n.id))
+
+    for (const link of after.links) {
+      expect(ids).toContain(link.source)
+      expect(ids).toContain(link.target)
+    }
+  })
+
+  it('forgets that a removed node was expanded, so it can be drawn again', () => {
+    const view = expand(emptyGraph, hoodWith('a'))
+
+    const after = remove(view, 'a')
+
+    expect(isExpanded(after, 'a')).toBe(false)
   })
 })

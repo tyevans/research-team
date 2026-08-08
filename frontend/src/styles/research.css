@@ -696,3 +696,13 @@
   font-size: var(--t-sm);
   overflow-wrap: anywhere;
 }
+
+.graph-detail-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.graph-clear {
+  flex-shrink: 0;
+}

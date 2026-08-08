@@ -1,4 +1,4 @@
-import { edgesOf, type GraphView } from '@domain/knowledge/graph.ts'
+import { edgesOf, isExpanded, type GraphView } from '@domain/knowledge/graph.ts'
 
 /** What the selected node is, and what it is connected to.
  *
@@ -16,6 +16,7 @@ export const GraphDetail = ({
   view,
   selected,
   onSelect,
+  onRemove,
   onClose,
 }: {
   view: GraphView
@@ -23,6 +24,7 @@ export const GraphDetail = ({
   /** Selecting from here expands too, which is what makes this a way of
    *  walking the graph rather than a read-only card. */
   onSelect: (id: string) => void
+  onRemove: (id: string) => void
   onClose: () => void
 }) => {
   const node = view.nodes.find((candidate) => candidate.id === selected)
@@ -40,20 +42,38 @@ export const GraphDetail = ({
           <h3 className="graph-detail-name">{node.name}</h3>
           <p className="graph-detail-type">{node.entityType}</p>
         </div>
-        <button
-          type="button"
-          className="btn btn-sm"
-          onClick={onClose}
-          aria-label="Close entity details"
-        >
-          Close
-        </button>
+        <div className="graph-detail-actions">
+          {/* "Remove from view", not "Delete": this takes a dot off a drawing
+              and nothing else. A reader who thought this deleted an entity
+              from the knowledge graph would never touch it. */}
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => onRemove(selected)}
+            aria-label={`Remove ${node.name} from the view`}
+          >
+            Remove
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={onClose}
+            aria-label="Close entity details"
+          >
+            Close
+          </button>
+        </div>
       </header>
 
       {edges.length === 0 ? (
+        // Two different facts, and telling them apart matters: an entity whose
+        // neighbourhood has been fetched and came back empty really has no
+        // recorded connections, and telling that reader to click it again
+        // sends them to fetch a second time for the same nothing.
         <p className="graph-detail-empty">
-          Nothing connected to this one has been drawn yet. Click it on the canvas to pull in its
-          neighbourhood.
+          {isExpanded(view, selected)
+            ? 'No relationships were recorded for this entity.'
+            : 'Nothing connected to this one has been drawn yet. Click it on the canvas to pull in its neighbourhood.'}
         </p>
       ) : (
         <ul className="graph-detail-edges">
