@@ -10,9 +10,9 @@ import { useContainer } from '@app/container-context.tsx'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { shortId, type SessionId } from '@domain/shared/identifier.ts'
 
-import { Chip } from '../common/primitives.tsx'
 import { sessionHref } from '../routing/routes.ts'
 import { ActivityFeed } from '../session/ActivityFeed.tsx'
+import { Approvals } from '../session/Approvals.tsx'
 import { Conversation } from '../session/Conversation.tsx'
 import { useSessionStream } from '../session/use-session-stream.ts'
 
@@ -24,15 +24,17 @@ import { useSessionStream } from '../session/use-session-stream.ts'
  * The store is closed on unmount, or every open-and-close of the drawer
  * would leak a live SSE subscriber onto a store nobody can reach any more.
  *
- * **Read-only, deliberately.** No composer, and a pending approval is a chip
- * linking out to the session view rather than being answerable in place.
- * Typing into a session you opened in order to *observe* is a different
- * intention and should cost a navigation. (An unattended run does not
- * produce approvals at all — the driver floors `fetch` at `ask` and works
- * read-only precisely so it cannot deadlock on one — so a pending approval
- * here always belongs to a human's joined session, and answering it belongs
- * to whoever is driving that session, not to a reader who merely opened the
- * drawer to watch.)
+ * **Read-only means no composing, not no deciding.** Composing a message
+ * changes where a session goes, and typing into a session you opened in
+ * order to *observe* is a different intention — that still costs a
+ * navigation, so there is no `Composer` here. But answering a pending
+ * approval only unblocks work already in flight, and the person watching is
+ * exactly the person positioned to decide, so the drawer renders the real
+ * `Approvals` component wired to its own store rather than a chip pointing
+ * elsewhere. `Approvals` is presentational and answers through
+ * `ApprovalSettled` like every other path (see its own doc comment), so
+ * deciding here composes with the REPL and another tab exactly the way it
+ * already does for those two.
  *
  * The drawer always opens at HEAD rather than deriving a scrub position:
  * "watching" means following the log as it grows, and a drawer opened at a
@@ -143,7 +145,6 @@ export const WorkerDrawer = ({
 
   const state = store()
   const view = currentView(state)
-  const pending = state.approvals.size > 0
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
@@ -157,11 +158,6 @@ export const WorkerDrawer = ({
       >
         <header className="drawer-head">
           <h3 className="drawer-title">Watching {shortId(sessionId)}</h3>
-          {pending ? (
-            <Chip tone="run-short" title="Answering it belongs to whoever is driving that session">
-              waiting on an approval
-            </Chip>
-          ) : null}
           <span className="drawer-spacer" />
           <a className="btn btn-sm" href={sessionHref(sessionId)}>
             Open the session
@@ -172,6 +168,14 @@ export const WorkerDrawer = ({
         </header>
 
         <div className="drawer-body">
+          {/* Approvals sit above the conversation: a blocked agent is the
+              most urgent thing this drawer can contain, and a watcher should
+              see it without scrolling past a possibly-long transcript first. */}
+          <Approvals
+            approvals={state.approvals}
+            deciding={state.deciding}
+            onDecide={(approval, decision) => void store.getState().decide(approval, decision)}
+          />
           {/* historicalAt is always null: the drawer only ever shows HEAD, so
               there is no scrub position to report — see the doc comment above.
               emptyDetail overrides Conversation's default, which invites the

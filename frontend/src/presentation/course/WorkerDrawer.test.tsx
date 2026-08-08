@@ -9,13 +9,22 @@ import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import { emptyActivity } from '@domain/activity/activity.ts'
-import { SessionId } from '@domain/shared/identifier.ts'
+import type { Approval } from '@domain/approval/approval.ts'
+import { ApprovalId, SessionId } from '@domain/shared/identifier.ts'
 import { TurnState } from '@domain/session/turn.ts'
 
 import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { WorkerDrawer } from './WorkerDrawer.tsx'
 
 const SESSION = SessionId('22222222-2222-2222-2222-222222222222')
+
+const anApproval = (id: string): Approval => ({
+  id: ApprovalId(id),
+  sessionId: SESSION,
+  toolName: 'fetch',
+  description: null,
+  args: { url: 'https://example.com' },
+})
 
 /** A stream that never delivers anything, which is all this suite needs:
  *  `useSessionStream` only has to subscribe and unsubscribe without throwing. */
@@ -32,7 +41,8 @@ const fakeStream = (): EventStream => ({
 const fakeStore = (overrides: {
   open?: SessionStore['getState'] extends never ? never : (...args: never[]) => Promise<void>
   close?: () => void
-  approvals?: readonly { approvalId: string; tool: string }[]
+  approvals?: readonly Approval[]
+  decide?: SessionStore['getState'] extends never ? never : (...args: never[]) => Promise<void>
 }): SessionStore => {
   const state = {
     sessionId: SESSION,
@@ -47,9 +57,7 @@ const fakeStore = (overrides: {
     note: null,
     activity: emptyActivity(),
     discarded: new Map(),
-    approvals: new Map(
-      (overrides.approvals ?? []).map((approval) => [approval.approvalId, approval]),
-    ),
+    approvals: new Map((overrides.approvals ?? []).map((approval) => [approval.id, approval])),
     deciding: null,
     fresh: new Map(),
     open: overrides.open ?? vi.fn().mockResolvedValue(undefined),
@@ -59,7 +67,7 @@ const fakeStore = (overrides: {
     send: vi.fn().mockResolvedValue(undefined),
     cancel: vi.fn().mockResolvedValue(undefined),
     fork: vi.fn().mockResolvedValue(null),
-    decide: vi.fn().mockResolvedValue(undefined),
+    decide: overrides.decide ?? vi.fn().mockResolvedValue(undefined),
     dismissNote: vi.fn(),
     handleFrame: vi.fn(),
     handleReconnect: vi.fn().mockResolvedValue(undefined),
@@ -88,7 +96,8 @@ const renderDrawer = (
   parts: {
     open?: (...args: never[]) => Promise<void>
     close?: () => void
-    approvals?: readonly { approvalId: string; tool: string }[]
+    approvals?: readonly Approval[]
+    decide?: (...args: never[]) => Promise<void>
   } = {},
 ) => {
   const store = fakeStore(parts)
@@ -133,13 +142,50 @@ it('does not tell an empty session to send a turn it has no composer for', () =>
   expect(screen.queryByText(/send the first turn below/i)).toBeNull()
 })
 
-it('links out to the session rather than answering an approval in place', () => {
+it('still offers a link to open the full session', () => {
   renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
-    approvals: [{ approvalId: 'a-1', tool: 'fetch' }],
+    approvals: [anApproval('a-1')],
   })
 
   const link = screen.getByRole('link', { name: /open the session/i })
   expect(link).toHaveAttribute('href', expect.stringContaining(SESSION))
+})
+
+it('renders a pending approval with approve and reject controls', () => {
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
+    approvals: [anApproval('a-1')],
+  })
+
+  expect(screen.getByRole('button', { name: /approve/i })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /reject/i })).toBeInTheDocument()
+})
+
+it('approves through the drawer store, not by navigating away', async () => {
+  const decide = vi.fn().mockResolvedValue(undefined)
+  const approval = anApproval('a-1')
+  const user = userEvent.setup()
+
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
+    approvals: [approval],
+    decide,
+  })
+  await user.click(screen.getByRole('button', { name: /approve/i }))
+
+  expect(decide).toHaveBeenCalledWith(approval, 'approve')
+})
+
+it('rejects through the drawer store, not by navigating away', async () => {
+  const decide = vi.fn().mockResolvedValue(undefined)
+  const approval = anApproval('a-1')
+  const user = userEvent.setup()
+
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
+    approvals: [approval],
+    decide,
+  })
+  await user.click(screen.getByRole('button', { name: /reject/i }))
+
+  expect(decide).toHaveBeenCalledWith(approval, 'reject')
 })
 
 it('closes the store it opened when it unmounts', () => {
@@ -197,6 +243,27 @@ it('wraps Tab from the last focusable element back to the first', () => {
   const first = focusable[0]
   last?.focus()
   expect(last).toHaveFocus()
+
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+
+  expect(first).toHaveFocus()
+})
+
+it('includes approval buttons in the Tab trap once they are present', () => {
+  // The trap queries focusable descendants at keypress time (see
+  // FOCUSABLE_SELECTOR in WorkerDrawer.tsx) precisely so content that
+  // arrives after mount, like an approval, is swept in automatically.
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
+    approvals: [anApproval('a-1')],
+  })
+
+  const reject = screen.getByRole('button', { name: /reject/i })
+  const first = screen
+    .getByRole('dialog')
+    .querySelectorAll<HTMLElement>('a[href], button:not([disabled])')[0]
+
+  reject.focus()
+  expect(reject).toHaveFocus()
 
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
 
