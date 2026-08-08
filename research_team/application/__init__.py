@@ -83,6 +83,13 @@ from research_team.application.turn_supervisor import (
     TurnCancelled,
     TurnSupervisor,
 )
+from research_team.application.workers import (
+    ExtractionSnapshot,
+    ExtractionsInFlight,
+    Roster,
+    Worker,
+    WorkerRoster,
+)
 
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
@@ -105,6 +112,8 @@ __all__ = [
     "ContextStrategy",
     "ElideToolResults",
     "EventFeed",
+    "ExtractionSnapshot",
+    "ExtractionsInFlight",
     "FeedEntry",
     "ForkNode",
     "FullHistory",
@@ -120,6 +129,7 @@ __all__ = [
     "PreparedContext",
     "RecordedMessage",
     "ResearchSupervisor",
+    "Roster",
     "RoundOutcome",
     "RunAlreadyActive",
     "RunReport",
@@ -139,6 +149,8 @@ __all__ = [
     "TurnOutcome",
     "TurnResult",
     "TurnSupervisor",
+    "Worker",
+    "WorkerRoster",
     "build_fork_tree",
     "round_prompt",
     "summarize_sessions",
