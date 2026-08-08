@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from research_team.application import (
     ApprovalDecision,
+    AutonomyPolicy,
     LiveFeed,
     ResearchSupervisor,
     RunAlreadyActive,
@@ -31,6 +32,7 @@ from research_team.application import (
     TurnAlreadyRunning,
     TurnCancelled,
     TurnSupervisor,
+    WorkerRoster,
     build_fork_tree,
 )
 from research_team.application.components import View, parse_document, project
@@ -44,7 +46,9 @@ from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
+from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.presenters import (
+    autonomy_view,
     course_view,
     event_rows,
     feed_event,
@@ -53,6 +57,7 @@ from research_team.interfaces.web.presenters import (
     preset_view,
     progress_view,
     project_view,
+    roster_view,
     run_view,
     session_view,
     source_text_view,
@@ -175,6 +180,32 @@ class Decision(BaseModel):
     message: str | None = None
 
 
+class AutonomyChoice(BaseModel):
+    """One tool's new autonomy level.
+
+    Both fields are plain `str` rather than the `Level` literal and a tool
+    enum, so that a bad value reaches `AutonomyPolicy.set` and comes back as
+    that method's own complaint -- which names the offending value and says
+    whether the problem was the level or the tool. FastAPI's 422 for a
+    `Literal` mismatch is machine-readable and says neither, and this is a
+    message a person reads off a switch they just flipped.
+    """
+
+    tool: str
+    level: str
+
+
+class AllowAll(BaseModel):
+    """Whether "stop asking me" also crosses the workflow review gates.
+
+    Defaults to false, and the default is the point: see
+    `AutonomyPolicy.relax_all` for why `advance_stage` is not swept along with
+    the hazards. A client that wants it says so.
+    """
+
+    include_stage_gates: bool = False
+
+
 def create_app(
     service: SessionService,
     feed: LiveFeed,
@@ -184,6 +215,9 @@ def create_app(
     activity: TurnActivity | None = None,
     corpus: CorpusRunner | None = None,
     research: ResearchSupervisor | None = None,
+    workers: WorkerRoster | None = None,
+    extraction: ExtractionActivity | None = None,
+    policy: AutonomyPolicy | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -641,6 +675,43 @@ def create_app(
             )
         return run_view(run, await research.state(run.run_id))
 
+    @app.get("/api/projects/{project_id}/workers")
+    async def get_workers(project_id: UUID):
+        """Everything in flight on this project, right now.
+
+        Polled rather than pushed, and cheap enough to be: two process-local
+        dicts and one fold. What it sets the latency of is "a new worker
+        appeared" -- everything *inside* a worker arrives over the live feed,
+        which is where a person's attention actually is.
+
+        404 when no roster is wired, matching how `auto-research` answers for
+        a feature this build does not have. A 200 with an empty list would
+        tell a browser that nothing is running, which is a different claim.
+        """
+        if workers is None:
+            raise HTTPException(status_code=404, detail="the worker roster is not enabled")
+        await _require_project(project_id)
+        return roster_view(await workers.on(project_id))
+
+    @app.get("/api/projects/{project_id}/extraction")
+    async def get_extraction(project_id: UUID):
+        """What the running extraction has done so far, and the last one's account.
+
+        A tab that arrived mid-ingest, or one whose connection dropped, has no
+        other way back: these frames carry no feed position, so
+        `Last-Event-ID` cannot replay them. 200 with two empty lists when
+        nothing has run -- an absent extraction is a state, not a missing
+        resource, and unlike `/workers` there is no claim being made about
+        what is running elsewhere.
+        """
+        await _require_project(project_id)
+        if extraction is None:
+            return {"current": [], "last": []}
+        return {
+            "current": extraction.current(project_id),
+            "last": extraction.last(project_id),
+        }
+
     @app.post("/api/projects/{project_id}/auto-research/cancel")
     async def cancel_auto_research(project_id: UUID):
         """Ask this project's run to stop after the round it is in.
@@ -1030,6 +1101,92 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(error)) from error
         return {"decided": True}
 
+    def _policy() -> AutonomyPolicy:
+        """The instance's policy, or a 404 saying this build has none.
+
+        404 rather than a permissive default, matching `/workers`: "this build
+        cannot tell you what the agent may do without asking" is a different
+        claim from "everything is automatic", and a UI that read the second off
+        the first would show a row of green switches for a policy it has no
+        handle on.
+        """
+        if policy is None:
+            raise HTTPException(status_code=404, detail="the autonomy policy is not wired up")
+        return policy
+
+    @app.get("/api/autonomy")
+    async def get_autonomy():
+        """What the agent may currently do without asking.
+
+        No session in the path, because there is no per-session answer to give:
+        one `AutonomyPolicy` serves the whole process, so this is a read of
+        instance state. See the POST routes for why the *writes* name a session
+        even though the state they change does not belong to one.
+        """
+        return autonomy_view(_policy())
+
+    @app.post("/api/sessions/{session_id}/autonomy")
+    async def set_autonomy(session_id: UUID, body: AutonomyChoice):
+        """Set one tool's level, and record that it was set.
+
+        Two steps, both required, exactly as `/autonomy` in the REPL does them.
+        The policy is what the executor consults, so mutating it is what
+        changes behaviour -- but a level that changed mid-session and left no
+        trace makes every surrounding decision unreadable afterwards, in a
+        system whose whole point is a complete audit trail. See
+        `SessionService.record_autonomy_change`.
+
+        The asymmetry is real and worth stating plainly rather than leaving to
+        be discovered: **the policy is instance-wide and the record is
+        per-session.** One object answers for every session in this process, so
+        this call changes what the agent may do in all of them, while the
+        `AutonomyChanged` event lands on this session's stream alone. That is
+        what the REPL does, and it is the right trade for a local single-user
+        tool -- the same trade `join_project` documents for graph attachment.
+        The session in the path is therefore "who is answering for this
+        change", not "where it applies". A per-session policy map would make the
+        two agree, but nothing has asked for concurrent untrusted users, and
+        splitting the policy would silently change what the executor consults
+        for every other caller.
+
+        A bad tool or level is a 400 carrying the policy's own message, and
+        nothing is recorded: a rejected `set` changed nothing, so a log entry
+        would describe a change that did not happen.
+        """
+        instance = _policy()
+        await _load(session_id)
+        try:
+            instance.set(body.tool, body.level)  # type: ignore[arg-type]
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        await service.record_autonomy_change(session_id, body.tool, body.level)
+        # The full map, so a client that just flipped one switch does not need a
+        # second request to redraw the rest -- and cannot drift from the server
+        # by assuming its own change was the only one.
+        return autonomy_view(instance)
+
+    @app.post("/api/sessions/{session_id}/autonomy/allow-all")
+    async def allow_all_autonomy(session_id: UUID, body: AllowAll | None = None):
+        """Stop asking about everything -- except the workflow review gates.
+
+        The instance-wide/per-session asymmetry described on `set_autonomy`
+        applies here too, and more loudly: this relaxes every hazard for every
+        session in the process, and records it on one.
+
+        `changed` is only what actually moved, and one `AutonomyChanged` is
+        recorded per entry -- never one per gated tool. A log that claimed eight
+        decisions where a person made one is as unreadable as a log that
+        omitted them, and it is `changed` the UI should report back so it says
+        what it did rather than claiming more.
+        """
+        instance = _policy()
+        await _load(session_id)
+        options = body or AllowAll()
+        changed = instance.relax_all(include_stage_gates=options.include_stage_gates)
+        for tool, level in changed.items():
+            await service.record_autonomy_change(session_id, tool, level)
+        return {"changed": changed} | autonomy_view(instance)
+
     @app.post("/api/sessions/{session_id}/forks")
     async def fork_session(session_id: UUID, body: NewFork):
         await _load(session_id)
@@ -1049,7 +1206,7 @@ def create_app(
         """
         resume_from = request.headers.get("last-event-id")
         return StreamingResponse(
-            _sse(request, feed, resume_from, approvals, activity),
+            _sse(request, feed, resume_from, approvals, activity, extraction),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -1070,6 +1227,7 @@ async def _sse(
     resume_from: str | None = None,
     approvals: WebApprovals | None = None,
     activity: TurnActivity | None = None,
+    extraction: ExtractionActivity | None = None,
 ) -> AsyncIterator[str]:
     """Serialise the live feed as server-sent events.
 
@@ -1083,12 +1241,13 @@ async def _sse(
     starting at the live end shows less than the client wanted, while
     replaying the entire log at it would be worse than the gap.
 
-    Approval requests, and turn activity notes, ride this same connection
-    rather than one of their own, for the same reason each other: neither is
-    a log entry -- an approval that is never answered, and provisional turn
-    content, both leave no event behind -- so neither carries an id, and a
-    reconnecting browser refetches what it missed (`/approvals`, or the
-    activity catch-up route) instead of replaying them. But a second channel
+    Approval requests, turn activity notes, and extraction progress ride this
+    same connection rather than one each of their own, for the same reason as
+    each other: none is a log entry -- an approval that is never answered,
+    provisional turn content, and where an ingest has got to all leave no
+    event behind -- so none carries an id, and a reconnecting browser
+    refetches what it missed (`/approvals`, the activity catch-up route, or
+    `/projects/{id}/extraction`) instead of replaying them. But a second channel
     per concern would multiply the ways a tab can be half-connected, and a
     turn that halts for a person, or is still streaming its reply, is exactly
     the moment when being half-connected is worst.
@@ -1125,6 +1284,16 @@ async def _sse(
 
         pumps.append(asyncio.create_task(pump_activity()))
 
+    extracting = None
+    if extraction is not None:
+        extracting = extraction.listen()
+
+        async def pump_extraction() -> None:
+            while True:
+                await queue.put(("extraction", await extracting.get()))
+
+        pumps.append(asyncio.create_task(pump_extraction()))
+
     idle = 0.0
     try:
         while not await request.is_disconnected():
@@ -1139,7 +1308,7 @@ async def _sse(
                     idle = 0.0
                 continue
             idle = 0.0
-            if kind in ("approval", "activity"):
+            if kind in ("approval", "activity", "extraction"):
                 yield f"data: {json.dumps(item)}\n\n"
                 continue
             payload = feed_event(
@@ -1157,6 +1326,8 @@ async def _sse(
             approvals.stop_listening(listening)
         if activity is not None and watching is not None:
             activity.stop_listening(watching)
+        if extraction is not None and extracting is not None:
+            extraction.stop_listening(extracting)
         for pumping in pumps:
             pumping.cancel()
             with suppress(asyncio.CancelledError):

@@ -7,6 +7,7 @@ import {
   toForkNode,
   toLogEntry,
   toMessage,
+  toRoster,
   toRun,
   toSession,
   toTurnRange,
@@ -213,5 +214,55 @@ describe('toCourse', () => {
       ProjectId('p1'),
     )
     expect(course.position).toBeNull()
+  })
+})
+
+describe('toRoster', () => {
+  it('maps the wire shape, parsing timestamps to epoch milliseconds', () => {
+    const roster = toRoster(
+      parse(dto.rosterDto, {
+        project_id: '11111111-1111-1111-1111-111111111111',
+        workers: [
+          {
+            kind: 'run',
+            ref: 'run-1',
+            detail: 'autonomous run',
+            session_id: '22222222-2222-2222-2222-222222222222',
+            parent: null,
+            started_at: '2026-08-07T12:00:00+00:00',
+          },
+        ],
+        idle_session_ids: ['33333333-3333-3333-3333-333333333333'],
+      }),
+    )
+
+    expect(roster.workers[0]?.kind).toBe('run')
+    expect(roster.workers[0]?.sessionId).toBe('22222222-2222-2222-2222-222222222222')
+    expect(roster.workers[0]?.startedAt).toBe(Date.parse('2026-08-07T12:00:00+00:00'))
+    expect(roster.idleSessionIds).toEqual(['33333333-3333-3333-3333-333333333333'])
+  })
+
+  it('keeps a null start time null rather than turning it into now', () => {
+    // A worker with no start time must not render as "0s elapsed", which
+    // reads as having just begun.
+    const roster = toRoster(
+      parse(dto.rosterDto, {
+        project_id: '11111111-1111-1111-1111-111111111111',
+        workers: [
+          {
+            kind: 'extraction',
+            ref: 'src-1',
+            detail: 'extracting',
+            session_id: null,
+            parent: 'run-1',
+            started_at: null,
+          },
+        ],
+        idle_session_ids: [],
+      }),
+    )
+
+    expect(roster.workers[0]?.startedAt).toBeNull()
+    expect(roster.workers[0]?.sessionId).toBeNull()
   })
 })

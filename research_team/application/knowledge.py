@@ -10,8 +10,9 @@ instance belongs to one project and supplies it; a caller that could pass a
 different tenant is a caller that could write into another project's graph.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 #: Tool names, in one place so the autonomy policy and the tools agree.
@@ -47,6 +48,55 @@ class SourceRef:
     over the one field that matters least. The adapter parses what it can and
     keeps the rest verbatim, so an unparseable date costs precision, not the
     document."""
+
+
+ExtractionStage = Literal[
+    "storing", "extracting", "extracted", "consolidating", "consolidated", "failed"
+]
+
+
+@dataclass(frozen=True)
+class ExtractionNote:
+    """Where one `remember` call has got to.
+
+    **Provisional, and never a domain event.** The log is the replay
+    substrate: `rebuild_graph` refuses to serve a partial graph and forbids
+    model calls on the replay path, so that a session refolded years from now
+    does not depend on a live endpoint. Progress is not a fact about the
+    domain -- it is a fact about one attempt, at one moment, that a later
+    reader has no use for and cannot act on. `DocumentExtracted` and
+    `EntitiesMerged` remain the entire durable record.
+
+    Every count defaults to None rather than 0, because the two say different
+    things: a `storing` note has established no entity count, and reporting
+    one as `0` would claim extraction found nothing.
+    """
+
+    source_id: str
+    stage: ExtractionStage
+    detail: str = ""
+    """Free text for the stage: the entity being consolidated, or why it
+    failed. Never the document's own content."""
+    entities: int | None = None
+    relationships: int | None = None
+    domain: str | None = None
+    domain_confidence: float | None = None
+    """`0.0` means the classifier gave up and fell back; `None` means no
+    classifier ran. Kept distinct for the reason `IngestReport` keeps them
+    distinct -- a fallback is otherwise indistinguishable from a confident
+    choice."""
+    index: int | None = None
+    """Which item of `total` this note is about, 1-based."""
+    total: int | None = None
+    model_calls: int | None = None
+    """Model calls made so far in this ingest. Calls rather than chunks: the
+    chunk count is not knowable before extraction runs, and a denominator
+    invented here would be a number nobody could check."""
+
+
+#: Told where an ingest has got to. Synchronous and must not raise -- see
+#: `KnowledgePort.ingest`.
+ExtractionReporter = Callable[[ExtractionNote], None]
 
 
 @dataclass(frozen=True)
@@ -90,7 +140,9 @@ class Match:
 class KnowledgePort(Protocol):
     """Committing to the graph, reading it back, and reversing a merge."""
 
-    async def ingest(self, source: SourceRef) -> IngestReport:
+    async def ingest(
+        self, source: SourceRef, *, report: ExtractionReporter | None = None
+    ) -> IngestReport:
         """Keep `source`'s text, extract it, and consolidate what it found.
 
         Keeping the text is part of the contract, not an implementation
@@ -99,6 +151,12 @@ class KnowledgePort(Protocol):
         that only built a graph would make every such citation unfalsifiable.
         It happens first, so a failed extraction still leaves the text --
         re-extracting is cheap and re-fetching may be impossible.
+
+        `report`, when given, is told where the ingest has got to. It is
+        called synchronously and **an implementation must not let it fail the
+        ingest**: a listener that raises must not cost a document that has
+        already been fetched and paid for. Optional so every existing caller
+        is unaffected.
         """
         ...
 

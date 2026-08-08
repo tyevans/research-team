@@ -10,7 +10,15 @@ from uuid import UUID
 
 from eventsource import DomainEvent
 
-from research_team.application import ForkNode, SessionSummary
+from research_team.application import (
+    GATED_TOOLS,
+    STAGE_GATE_TOOLS,
+    AutonomyPolicy,
+    ForkNode,
+    Roster,
+    SessionSummary,
+    Worker,
+)
 from research_team.application.corpus_read import StoredDocument
 from research_team.application.corpus_spans import Span
 from research_team.application.course import (
@@ -22,6 +30,7 @@ from research_team.application.course import (
 from research_team.application.findings import Finding
 from research_team.application.research_supervisor import ActiveRun
 from research_team.domain import (
+    AutonomyChanged,
     CodingSession,
     ConversationCompacted,
     DocumentRecord,
@@ -71,6 +80,11 @@ def event_summary(event: DomainEvent) -> str:
         # is what a reviewer scrolling the log is actually looking for, since
         # it is the only record of why the gate was crossed.
         return f"{event.from_stage} → {event.to_stage}: {event.gate_decision}"
+    if isinstance(event, AutonomyChanged):
+        # The level alone doesn't say what changed, and the tool alone
+        # doesn't say what changed to; a reviewer needs both to know what
+        # the agent could do differently after this event than before it.
+        return f"{event.tool_name} → {event.level}"
     if isinstance(event, SessionForkedFrom):
         return f"from {str(event.source_session_id)[:8]} at event {event.at_event}"
     if isinstance(event, TurnFailed):
@@ -503,6 +517,52 @@ def run_view(run: ActiveRun, state: AutoRunState | None = None) -> dict[str, Any
             "quiet_rounds": state.budget.quiet_rounds,
         },
         "read_only": state.read_only,
+    }
+
+
+def worker_view(worker: Worker) -> dict[str, Any]:
+    """One worker, in the browser's shape.
+
+    `started_at` is ISO-8601 text rather than an epoch number, matching every
+    other timestamp this layer emits.
+    """
+    return {
+        "kind": worker.kind,
+        "ref": worker.ref,
+        "detail": worker.detail,
+        "session_id": str(worker.session_id) if worker.session_id else None,
+        "parent": worker.parent,
+        "started_at": worker.started_at.isoformat() if worker.started_at else None,
+    }
+
+
+def roster_view(roster: Roster) -> dict[str, Any]:
+    """Everything in flight on a project, plus who is attached and quiet."""
+    return {
+        "project_id": str(roster.project_id),
+        "workers": [worker_view(worker) for worker in roster.workers],
+        "idle_session_ids": [str(session) for session in roster.idle_session_ids],
+    }
+
+
+def autonomy_view(policy: AutonomyPolicy) -> dict[str, Any]:
+    """Every gated tool's level, plus the two tool lists a client would
+    otherwise have to hardcode.
+
+    `gated` and `stage_gates` are sent because they are the only place the
+    browser can learn them without copying `GATED_TOOLS` into JavaScript, and a
+    copy drifts the moment a tool is added -- leaving a UI that offers no switch
+    for a tool the server is gating, which reads to the user as a tool that
+    cannot be relaxed rather than one nobody wired up. `levels` already covers
+    every gated tool, but `gated` says so explicitly and `stage_gates` marks the
+    subset that "allow all" deliberately leaves alone (see
+    `AutonomyPolicy.relax_all`), so the UI can label that rather than look
+    broken.
+    """
+    return {
+        "levels": policy.levels(),
+        "gated": list(GATED_TOOLS),
+        "stage_gates": list(STAGE_GATE_TOOLS),
     }
 
 

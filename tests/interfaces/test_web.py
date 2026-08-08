@@ -9,9 +9,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
+from research_team.application import GATED_TOOLS, WorkerRoster
+from research_team.application.autonomy import ADVANCE_STAGE_TOOL
+from research_team.application.knowledge import ExtractionNote
 from research_team.application.ports import ActivityMessage
 from research_team.composition import build_application as _build_application
 from research_team.domain import (
+    AutonomyChanged,
     DeleteFile,
     DropSourceDocument,
     SendUserMessage,
@@ -21,6 +25,7 @@ from research_team.domain import (
 )
 from research_team.infrastructure.persistence import build_corpus_repository
 from research_team.interfaces.web import TurnActivity, create_app
+from research_team.interfaces.web.extraction import ExtractionActivity
 
 
 async def _started(**kwargs):
@@ -37,10 +42,33 @@ async def _started(**kwargs):
 
 
 @pytest.fixture
-async def app_and_client(db_path, fake_model):
+def extraction():
+    """The buffer the app and its roster share -- the reporter's other end.
+
+    Its own fixture so both sides of `app_and_client` and any test that drives
+    it get the one instance. Two would let the `/workers` answer and the
+    `/extraction` answer disagree about the same ingest, which is the failure
+    the single-channel design rules out.
+    """
+    return ExtractionActivity()
+
+
+@pytest.fixture
+async def app_and_client(db_path, fake_model, extraction):
     application = await _started(model=fake_model, db_path=db_path)
     api = create_app(
-        application.service, application.feed, application.turns, corpus=application.corpus
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        workers=WorkerRoster(
+            application.service, turns=application.turns, extractions=extraction
+        ),
+        extraction=extraction,
+        # The application's own policy, not a fresh one: the routes are only
+        # able to change anything because they hold the object the executor
+        # reads, and a test against a copy would pass while proving nothing.
+        policy=application.policy,
     )
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -51,6 +79,43 @@ async def app_and_client(db_path, fake_model):
 @pytest.fixture
 def client(app_and_client):
     return app_and_client[1]
+
+
+@pytest.fixture
+async def client_without_workers(db_path, fake_model):
+    """A build with no roster wired -- the shape `get_workers` 404s for."""
+    application = await _started(model=fake_model, db_path=db_path)
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        workers=None,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+    await application.close()
+
+
+@pytest.fixture
+async def client_without_policy(db_path, fake_model):
+    """A build with no policy wired -- the shape the autonomy routes 404 for.
+
+    Yields a live session id alongside the client, so the 404 under test is
+    unambiguously "no policy here" rather than "no such session".
+    """
+    application = await _started(model=fake_model, db_path=db_path)
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        policy=None,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client, await _new_session(client)
+    await application.close()
 
 
 @pytest.fixture
@@ -2188,3 +2253,275 @@ async def test_checklist_state_cannot_be_posted_to_an_mcq(client, service):
     )
     assert refused.status_code == 400
     assert "mcq" in refused.json()["detail"]
+
+
+# ---------------- workers ----------------
+
+
+async def make_project(client, name: str = "atlas") -> UUID:
+    response = await client.post("/api/projects", json={"name": name})
+    assert response.status_code == 200
+    return UUID(response.json()["id"])
+
+
+async def join_session(client, project_id: UUID) -> UUID:
+    response = await client.post(f"/api/projects/{project_id}/join")
+    assert response.status_code == 200
+    return UUID(response.json()["id"])
+
+
+async def test_workers_lists_an_idle_member_session(client):
+    """A project with a session attached and nothing running.
+
+    The 200-with-empty-workers case matters as much as the busy one: the panel
+    must be able to say "attached, nothing running" without an error.
+    """
+    project_id = await make_project(client)
+    session_id = await join_session(client, project_id)
+
+    response = await client.get(f"/api/projects/{project_id}/workers")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project_id"] == str(project_id)
+    assert body["workers"] == []
+    assert body["idle_session_ids"] == [str(session_id)]
+
+
+async def test_workers_404s_on_an_unknown_project(client):
+    response = await client.get(f"/api/projects/{uuid4()}/workers")
+    assert response.status_code == 404
+
+
+async def test_workers_is_404_when_the_roster_is_not_wired(client_without_workers):
+    """A build with no roster says so, rather than reporting an empty project.
+
+    The same shape `auto-research` uses for a disabled feature: 200 with an
+    empty list would tell a browser that nothing is running, which is a
+    different claim from "this build cannot tell you".
+    """
+    project_id = await make_project(client_without_workers)
+    response = await client_without_workers.get(f"/api/projects/{project_id}/workers")
+    assert response.status_code == 404
+
+
+# ---------------- extraction ----------------
+
+
+async def test_extraction_catch_up_is_empty_before_anything_runs(client):
+    project_id = await make_project(client)
+
+    response = await client.get(f"/api/projects/{project_id}/extraction")
+
+    assert response.status_code == 200
+    assert response.json() == {"current": [], "last": []}
+
+
+async def test_extraction_catch_up_shows_the_running_ingest(client, extraction):
+    """A tab that arrived mid-ingest can catch up.
+
+    The frames carry no feed position, so this route is the only way back to
+    a pane's state after a reconnect.
+    """
+    project_id = await make_project(client)
+    extraction.reporter(project_id)(
+        ExtractionNote(source_id="notes", stage="consolidating", index=3, total=9)
+    )
+
+    response = await client.get(f"/api/projects/{project_id}/extraction")
+
+    body = response.json()
+    assert [frame["stage"] for frame in body["current"]] == ["consolidating"]
+    assert body["current"][0]["total"] == 9
+    assert body["last"] == []
+
+
+async def test_the_roster_shows_a_running_extraction(client, extraction):
+    """The roster and the pane read one buffer, so they cannot disagree."""
+    project_id = await make_project(client)
+    extraction.reporter(project_id)(
+        ExtractionNote(source_id="notes", stage="consolidating", index=3, total=9)
+    )
+
+    body = (await client.get(f"/api/projects/{project_id}/workers")).json()
+
+    assert [worker["kind"] for worker in body["workers"]] == ["extraction"]
+    assert body["workers"][0]["detail"] == "consolidating 3/9"
+
+
+async def test_extraction_frames_ride_the_stream_without_an_id(repository):
+    """The third provisional channel, framed like the other two.
+
+    Exercised against `_sse` directly for the reason the activity test is: the
+    ASGI transport cannot stream a still-running response.
+    """
+    from research_team.application import LiveFeed
+    from research_team.interfaces.web.app import _sse
+
+    activity = ExtractionActivity()
+    feed = LiveFeed(repository, poll_interval=0.01)
+    project_id = uuid4()
+
+    frames: list[str] = []
+    generator = _sse(StubRequest(), feed, None, None, None, activity)
+    task = asyncio.create_task(_drain(generator, frames, wanted=1))
+    await asyncio.sleep(0.05)
+    activity.reporter(project_id)(ExtractionNote(source_id="notes", stage="chunking"))
+    await asyncio.wait_for(task, timeout=5)
+
+    assert frames[0].startswith("data: ")
+    payload = json.loads(frames[0][len("data: ") :])
+    assert payload["type"] == "Extraction"
+    assert payload["source_id"] == "notes"
+    # Not a log entry: no id line precedes the data, so a reconnect refetches.
+    assert "\nid:" not in frames[0]
+
+
+# ---------------- autonomy ----------------
+
+
+async def test_get_autonomy_reports_levels_and_the_tool_lists(client):
+    """The read the UI draws its switches from, including the two lists that
+    keep it from hardcoding `GATED_TOOLS` in JavaScript and drifting from it.
+    """
+    body = (await client.get("/api/autonomy")).json()
+
+    assert set(body["levels"]) == set(GATED_TOOLS)
+    assert body["gated"] == list(GATED_TOOLS)
+    assert body["stage_gates"] == [ADVANCE_STAGE_TOOL]
+    assert body["levels"][ADVANCE_STAGE_TOOL] == "ask"
+
+
+async def test_setting_one_tool_changes_the_reported_level(client):
+    session_id = await _new_session(client)
+
+    response = await client.post(
+        f"/api/sessions/{session_id}/autonomy",
+        json={"tool": "write_file", "level": "deny"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["levels"]["write_file"] == "deny"
+    assert (await client.get("/api/autonomy")).json()["levels"]["write_file"] == "deny"
+
+
+async def test_setting_a_tool_records_the_change_in_the_session_log(client, service):
+    """The audit guarantee. The policy is what the executor consults, so a route
+    that only mutated it would leave a session whose behaviour changed mid-run
+    with nothing in the log to say so -- and every decision after that point
+    unreadable, in a system whose whole point is the complete trail.
+    """
+    session_id = await _new_session(client)
+
+    await client.post(
+        f"/api/sessions/{session_id}/autonomy",
+        json={"tool": "web_search", "level": "ask"},
+    )
+
+    events = await service.history(UUID(session_id))
+    changes = [event for event in events if isinstance(event, AutonomyChanged)]
+    assert [(change.tool_name, change.level) for change in changes] == [("web_search", "ask")]
+
+
+async def test_a_bad_level_is_a_400_carrying_the_policys_own_message(client, service):
+    """The policy words this better than a generic error, so it is relayed
+    rather than restated -- and nothing is recorded, because nothing changed.
+    """
+    session_id = await _new_session(client)
+
+    response = await client.post(
+        f"/api/sessions/{session_id}/autonomy",
+        json={"tool": "web_search", "level": "sometimes"},
+    )
+
+    assert response.status_code == 400
+    assert "sometimes" in response.json()["detail"]
+    events = await service.history(UUID(session_id))
+    assert not [event for event in events if isinstance(event, AutonomyChanged)]
+
+
+async def test_a_tool_that_is_not_gated_is_a_400(client):
+    session_id = await _new_session(client)
+
+    response = await client.post(
+        f"/api/sessions/{session_id}/autonomy",
+        json={"tool": "read_file", "level": "ask"},
+    )
+
+    assert response.status_code == 400
+    assert "read_file" in response.json()["detail"]
+
+
+async def test_allow_all_leaves_the_stage_gate_asking(client):
+    """ "Stop asking me" must not silently mean "and cross every stage boundary
+    unseen" -- the review gate is not a hazard rating.
+    """
+    session_id = await _new_session(client)
+
+    body = (await client.post(f"/api/sessions/{session_id}/autonomy/allow-all")).json()
+
+    assert ADVANCE_STAGE_TOOL not in body["changed"]
+    assert body["levels"][ADVANCE_STAGE_TOOL] == "ask"
+    assert body["levels"]["fetch"] == "auto"
+
+
+async def test_allow_all_can_be_asked_to_include_the_stage_gate(client):
+    session_id = await _new_session(client)
+
+    body = (
+        await client.post(
+            f"/api/sessions/{session_id}/autonomy/allow-all",
+            json={"include_stage_gates": True},
+        )
+    ).json()
+
+    assert body["changed"][ADVANCE_STAGE_TOOL] == "auto"
+    assert body["levels"][ADVANCE_STAGE_TOOL] == "auto"
+
+
+async def test_allow_all_records_exactly_the_changes_it_made(client, service):
+    """One event per level that really moved, never one per gated tool: a log
+    claiming eight decisions where a person made one is as unreadable as one
+    that omitted them.
+    """
+    session_id = await _new_session(client)
+    await client.post(
+        f"/api/sessions/{session_id}/autonomy",
+        json={"tool": "write_file", "level": "deny"},
+    )
+
+    body = (await client.post(f"/api/sessions/{session_id}/autonomy/allow-all")).json()
+
+    assert body["changed"] == {"write_file": "auto", "fetch": "auto"}
+    events = await service.history(UUID(session_id))
+    changes = [event for event in events if isinstance(event, AutonomyChanged)]
+    assert [(change.tool_name, change.level) for change in changes] == [
+        ("write_file", "deny"),
+        # `GATED_TOOLS` order, which is the order `relax_all` walks.
+        ("fetch", "auto"),
+        ("write_file", "auto"),
+    ]
+
+
+async def test_autonomy_routes_404_when_no_policy_is_wired(client_without_policy):
+    """ "This build cannot tell you" is a different claim from "everything is
+    auto", so the routes are absent rather than answering permissively.
+    """
+    client, session_id = client_without_policy
+
+    assert (await client.get("/api/autonomy")).status_code == 404
+    setting = await client.post(
+        f"/api/sessions/{session_id}/autonomy",
+        json={"tool": "write_file", "level": "ask"},
+    )
+    assert setting.status_code == 404
+    relaxing = await client.post(f"/api/sessions/{session_id}/autonomy/allow-all")
+    assert relaxing.status_code == 404
+
+
+async def test_setting_autonomy_on_an_unknown_session_is_a_404(client):
+    response = await client.post(
+        f"/api/sessions/{uuid4()}/autonomy",
+        json={"tool": "write_file", "level": "ask"},
+    )
+    assert response.status_code == 404

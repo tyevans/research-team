@@ -18,6 +18,7 @@ get wrong:
 """
 
 import hashlib
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -41,6 +42,8 @@ from redstring import (
 )
 
 from research_team.application.knowledge import (
+    ExtractionNote,
+    ExtractionReporter,
     IngestReport,
     KnowledgeError,
     Match,
@@ -50,8 +53,78 @@ from research_team.application.knowledge import (
 from research_team.application.retry import with_retry
 from research_team.domain import Corpus, StoreSourceDocument
 
+logger = logging.getLogger(__name__)
+
 #: Longest document accepted in one `remember`. Roughly a long article.
 MAX_DOCUMENT_CHARS = 200_000
+
+
+class _CountingProvider:
+    """An `LlmProvider` that says how many calls have been made through it.
+
+    `build_graph` takes no callbacks and is one opaque await containing domain
+    classification, chunking and a call per chunk -- the longest part of an
+    ingest, and the part a watcher most needs to see moving. `LlmProvider` is
+    a single-method protocol, so wrapping it is the whole cost of getting
+    inside.
+
+    It counts **calls, not chunks.** The chunk count is not knowable before
+    extraction runs, and "chunk 4 of 9" would be a denominator invented here
+    that nobody could check.
+    """
+
+    def __init__(self, inner: LlmProvider, announce) -> None:
+        self._inner = inner
+        self._announce = announce
+        self._calls = 0
+
+    @property
+    def model(self) -> str:
+        return self._inner.model
+
+    @property
+    def calls(self) -> int:
+        return self._calls
+
+    async def extract(self, text, schema, *, system_prompt=None):
+        self._calls += 1
+        self._announce(self._calls)
+        return await self._inner.extract(text, schema, system_prompt=system_prompt)
+
+
+def _reporting(report: ExtractionReporter | None, source_id: str):
+    """A guarded `report`, or a no-op.
+
+    Guarded rather than trusted: a listener that raises must not cost a
+    document that has already been fetched and paid for. The work is what
+    matters; the telling about it is not. A no-op when `report` is None so
+    every call site can announce unconditionally rather than guard twice.
+    """
+
+    def announce(stage: str, **fields: Any) -> None:
+        if report is None:
+            return
+        try:
+            report(ExtractionNote(source_id=source_id, stage=stage, **fields))
+        except Exception:
+            # Broad on purpose -- see the docstring: a listener is arbitrary
+            # caller code and any failure in it must cost nothing. No `noqa`,
+            # because `exc_info=True` is ruff's own signal that this handles
+            # the exception rather than swallowing it.
+            logger.warning("an extraction reporter raised; carrying on", exc_info=True)
+
+    return announce
+
+
+def _no_announcement(stage: str, **fields: Any) -> None:
+    """The default announcer: says nothing.
+
+    `_consolidate` has two callers and only one of them is watching. A default
+    here beats a required parameter that `reconsolidate` would have to satisfy
+    with a throwaway lambda at every call site -- and beats an
+    `announce=None` sentinel that every announcement inside the loop would
+    have to test for.
+    """
 
 
 def _parse_published_at(raw: str | None) -> datetime | None:
@@ -145,18 +218,36 @@ class RedstringKnowledge:
         """The tenant this instance is scoped to."""
         return self._project_id
 
-    async def ingest(self, source: SourceRef) -> IngestReport:
+    async def ingest(
+        self, source: SourceRef, *, report: ExtractionReporter | None = None
+    ) -> IngestReport:
+        """Store, extract, consolidate -- and say where it has got to.
+
+        The announcements are the only reason this method's shape changed. An
+        ingest runs for minutes and used to report nothing until it returned,
+        which makes a slow model and a hung one look identical from outside.
+
+        `announce` is built **after** the blank-id check and **before** the
+        length check, which is the one ordering that works: a blank `source_id`
+        has no identity to attribute a note to, so that failure is silent,
+        while an oversized document does have one and its `failed` note is what
+        closes a pane that has already been opened.
+        """
         if not source.source_id.strip():
             raise KnowledgeError("source_id must not be blank; it identifies the document")
+
+        announce = _reporting(report, source.source_id)
         if len(source.text) > MAX_DOCUMENT_CHARS:
             # Capped rather than chunked-without-limit. redstring chunks a long
             # document, which multiplies model calls rather than bounding them,
             # so the bound has to come from here.
-            raise KnowledgeError(
+            detail = (
                 f"that is {len(source.text)} characters; the limit is "
                 f"{MAX_DOCUMENT_CHARS}. Record it in parts, each with its own "
                 f"source_id."
             )
+            announce("failed", detail=detail)
+            raise KnowledgeError(detail)
 
         metadata: dict[str, Any] = {}
         if source.note:
@@ -174,45 +265,84 @@ class RedstringKnowledge:
             metadata=metadata,
         )
         await self._store_document(source)
+        announce("storing")
+        # `built`, not `report` -- the parameter owns that name now, and the
+        # protocol fixed it, so the local is the one that moves.
         try:
+            announce("extracting")
+            # The adjudicator was handed the raw provider in `__init__`, so its
+            # calls do not flow through this wrapper and are not counted. That
+            # is acceptable: adjudication is per-merge and each merge already
+            # has its own `consolidating` note, so nothing goes unreported --
+            # only the model-call tally understates by those calls.
+            counting = _CountingProvider(
+                self._provider, lambda calls: announce("extracting", model_calls=calls)
+            )
             async with tenant_scope(self._project_id):
-                report = await build_graph(
+                built = await build_graph(
                     document,
-                    provider=self._provider,
+                    provider=counting,
                     store=self._store,
                     tenant_id=self._project_id,
                     domain=self._domain,
                 )
-                if report.event is None:
+                if built.event is None:
                     # `Document.record_extraction` found nothing new to record
                     # -- the same content and model version as a previous run.
+                    # Still announced through to `consolidated`: a pane opened
+                    # on a re-ingest would otherwise hang with no closing note.
+                    announce(
+                        "extracted",
+                        entities=0,
+                        relationships=0,
+                        domain=built.domain,
+                        domain_confidence=built.domain_confidence,
+                    )
+                    announce("consolidated", entities=0, relationships=0)
                     return IngestReport(
                         source_id=source.source_id,
                         entity_count=0,
                         relationship_count=0,
-                        domain=report.domain,
-                        domain_confidence=report.domain_confidence,
+                        domain=built.domain,
+                        domain_confidence=built.domain_confidence,
                     )
 
+                announce(
+                    "extracted",
+                    entities=len(built.event.entities),
+                    relationships=len(built.event.relationships),
+                    domain=built.domain,
+                    domain_confidence=built.domain_confidence,
+                )
                 await self._event_store.append(
                     document_stream(tenant_id=self._project_id, source_id=source.source_id),
-                    [report.event],
+                    [built.event],
                     ExpectedVersion.any_(),
                 )
-                merges, failures = await self._consolidate(report.event.entities)
-        except KnowledgeError:
+                merges, failures = await self._consolidate(
+                    built.event.entities, announce=announce
+                )
+        except KnowledgeError as error:
+            announce("failed", detail=str(error))
             raise
         except (RedstringError, ValueError) as error:
+            announce("failed", detail=str(error))
             raise KnowledgeError(str(error)) from error
         except Exception as error:  # provider transports raise their own types
+            announce("failed", detail=f"extraction failed: {error}")
             raise KnowledgeError(f"extraction failed: {error}") from error
 
+        announce(
+            "consolidated",
+            entities=len(built.event.entities),
+            relationships=len(built.event.relationships),
+        )
         return IngestReport(
             source_id=source.source_id,
-            entity_count=len(report.event.entities),
-            relationship_count=len(report.event.relationships),
-            domain=report.domain,
-            domain_confidence=report.domain_confidence,
+            entity_count=len(built.event.entities),
+            relationship_count=len(built.event.relationships),
+            domain=built.domain,
+            domain_confidence=built.domain_confidence,
             merges=tuple(merges),
             consolidation_failures=failures,
         )
@@ -274,7 +404,9 @@ class RedstringKnowledge:
 
         await with_retry(store, what=f"storing {source.source_id!r}")
 
-    async def _consolidate(self, entities) -> tuple[list[MergeRecord], int]:
+    async def _consolidate(
+        self, entities, *, announce=_no_announcement
+    ) -> tuple[list[MergeRecord], int]:
         """Resolve each extracted entity, one at a time.
 
         `resolve` is per-entity by design, and it emits its own event, so this
@@ -282,10 +414,18 @@ class RedstringKnowledge:
         the rest: the extraction is already recorded and the merges that
         succeeded are already folded, so stopping here would leave less of the
         graph consolidated for no gain.
+
+        `announce` defaults to silence because `reconsolidate` also calls this
+        and has no watcher; it is announced *before* each `resolve` as well as
+        after a merge lands, so a slow entity is visible while it is slow
+        rather than only once it is done.
         """
+        entities = list(entities)
         merges: list[MergeRecord] = []
         failures = 0
-        for entity in entities:
+        total = len(entities)
+        for position, entity in enumerate(entities, start=1):
+            announce("consolidating", index=position, total=total, detail=entity.name)
             try:
                 report = await self._consolidator.resolve(
                     entity, adjudicator=self._adjudicator
@@ -297,11 +437,18 @@ class RedstringKnowledge:
                 continue
             if report is None:
                 continue
+            absorbed = tuple(str(i) for i in report.affected_entity_ids)
+            announce(
+                "consolidating",
+                index=position,
+                total=total,
+                detail=f"{entity.name} absorbed {', '.join(absorbed)} -- {report.reason}",
+            )
             merges.append(
                 MergeRecord(
                     merge_id=report.event.event_id,
                     canonical_name=entity.name,
-                    absorbed_names=tuple(str(i) for i in report.affected_entity_ids),
+                    absorbed_names=absorbed,
                     reason=report.reason,
                 )
             )

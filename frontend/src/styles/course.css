@@ -314,3 +314,414 @@
   border-color: #2b3a42;
   background: #121b20;
 }
+
+/* ---------------------------------------------------------------- workers
+ *
+ * A run's own counters say nothing about a turn or extraction that is also
+ * in flight, so this panel lists them by kind rather than folding them into
+ * the run's summary. The dot carries the kind's colour so a scan of the list
+ * reads as a legend for itself, the same rule the event log follows. */
+.worker-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.worker-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.worker-title {
+  margin: 0;
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+.worker-sub {
+  margin: 0;
+}
+
+.worker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.worker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-sm);
+}
+/* Indented under its parent rather than repeating the parent's name, since
+ * `nest()` already did the work of establishing which worker owns which. */
+.worker-child {
+  margin-left: 22px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line-soft);
+}
+
+.worker-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.worker-dot-run {
+  background: var(--k-session);
+}
+.worker-dot-turn {
+  background: var(--k-turn);
+}
+.worker-dot-extraction {
+  background: var(--k-tool);
+}
+
+.worker-kind {
+  color: var(--fg-dim);
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.worker-detail {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.worker-ref {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+/* ------------------------------------------------------------ extraction
+ *
+ * The detail under the roster's extraction row. Indented behind a rule so it
+ * reads as belonging to the row above rather than as a second panel, and set
+ * in the mono face throughout: every line here is a machine's account of its
+ * own progress, and the stage list only scans as a list if the labels align.
+ */
+.extraction {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line-soft);
+}
+
+.extraction-title {
+  margin: 0;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.extraction-sub {
+  margin: 0;
+}
+
+/* Wrapping rather than scrolling: the stages are the shape of the work, and
+ * a stage pushed off the end would hide the one part of this pane that says
+ * how much is left. */
+.extraction-stages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.extraction-stage {
+  color: var(--fg-faint);
+  padding: 1px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+}
+
+/* The stage in flight, carried by colour *and* by a border, so it survives
+ * being read by someone who cannot tell the two greys apart. */
+.extraction-now {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+.extraction-line {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+/* Capped and scrolled: a consolidation pass over a long document runs to
+ * hundreds of verdicts, and letting the list grow unbounded would push the
+ * whole course page down as the ingest ran. */
+.extraction-merge-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  max-height: 140px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.extraction-merge {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+}
+
+.extraction-last {
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.extraction-summary {
+  cursor: pointer;
+  font-family: var(--mono);
+}
+
+.extraction-failed > .extraction-summary {
+  color: var(--k-failure);
+}
+
+.extraction-failed-detail {
+  color: var(--k-failure);
+}
+
+/* ---------------------------------------------------------------- drawer
+ *
+ * A read-only overlay, not a third pane: it opens over whatever the course
+ * page is already showing rather than reflowing it, because watching a
+ * worker is a glance, not a navigation. Right-anchored so it reads as
+ * something laid over the page, the same convention as everything else here
+ * that opens on top rather than beside. */
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 20;
+}
+
+.drawer {
+  width: 42vw;
+  max-width: 640px;
+  min-width: 360px;
+  height: 100%;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+.drawer-title {
+  margin: 0;
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+.drawer-spacer {
+  flex: 1 1 auto;
+}
+
+.drawer-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* -------------------------------------------------------------- autonomy
+ *
+ * Two surfaces over one instance-wide policy: the full per-tool panel on the
+ * course page (`.autonomy-panel`, a sibling of `.worker-panel` and
+ * `.run-panel`, and deliberately built from the same three declarations so it
+ * reads as another band of the same page rather than a modal escape hatch),
+ * and the allow-all control inside the drawer (`.autonomy-allow`, which borrows
+ * `.extraction`'s indent-behind-a-rule language because it likewise belongs to
+ * the thing above it — the approvals).
+ *
+ * `.autonomy-warn` carries the scope warning and is the one thing here that
+ * must not be quiet: it uses the accent border rather than `--line`, because a
+ * reader skimming past it and flipping a switch is the specific failure this
+ * whole panel is shaped to prevent.
+ */
+.autonomy-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.autonomy-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.autonomy-title {
+  margin: 0;
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+.autonomy-sub {
+  margin: 0;
+}
+
+.autonomy-warn {
+  margin: 0;
+  padding: 6px 8px;
+  border-left: 2px solid var(--accent);
+  background: var(--bg-panel-2);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--fg);
+}
+
+.autonomy-error {
+  margin: 0;
+  padding: 6px 8px;
+  border-left: 2px solid var(--k-failure);
+  background: var(--del-bg);
+  color: var(--del-fg);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.autonomy-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.autonomy-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+  border-top: 1px solid var(--line-soft);
+}
+/* The review gate is marked in the layout as well as in words: it is the one
+ * row whose level means something different in kind from the others. */
+.autonomy-row-gate {
+  border-left: 2px solid var(--k-tool);
+  padding-left: 8px;
+}
+
+/* A fieldset for the arrow-key grouping and the announced legend; the browser
+ * chrome that comes with it is removed, since the row itself is the frame. */
+.autonomy-field {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.autonomy-tool {
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.autonomy-tool-name {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+
+.autonomy-levels {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.autonomy-level {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.autonomy-field:disabled .autonomy-level {
+  cursor: default;
+  color: var(--fg-faint);
+}
+
+.autonomy-meaning {
+  margin: 0;
+  flex: 1 1 12ch;
+}
+
+/* --- the drawer's allow-all ------------------------------------------- */
+.autonomy-allow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line-soft);
+}
+
+.autonomy-allow-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--t-sm);
+}
+
+.autonomy-allow-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.autonomy-result {
+  margin: 0;
+}
+
+.autonomy-off {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--line-soft);
+}

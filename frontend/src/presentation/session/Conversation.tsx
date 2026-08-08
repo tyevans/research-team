@@ -16,10 +16,20 @@ export const Conversation = ({
   view,
   error,
   historicalAt,
+  emptyDetail = 'Send the first turn below.',
 }: {
   view: SessionProjection | null
   error: string | null
   historicalAt: number | null
+  /** What an empty transcript means, worded for whoever is looking at it.
+   *
+   * Defaults to the session route's wording, which assumes a composer sits
+   * below this pane — true there, but not for every caller. `WorkerDrawer`
+   * reuses this component read-only, with no composer anywhere in it, so
+   * the default would tell a reader to do something they cannot do. Callers
+   * without a composer must say so explicitly rather than inherit a
+   * prompt to act that their view can't fulfil. */
+  emptyDetail?: string
 }) => {
   const box = useRef<HTMLDivElement | null>(null)
   const stick = useRef(true)
@@ -55,9 +65,7 @@ export const Conversation = ({
         <EmptyState
           title="No conversation yet."
           detail={
-            historicalAt !== null
-              ? `Nothing had been said by event ${historicalAt}.`
-              : 'Send the first turn below.'
+            historicalAt !== null ? `Nothing had been said by event ${historicalAt}.` : emptyDetail
           }
         />
       ) : (

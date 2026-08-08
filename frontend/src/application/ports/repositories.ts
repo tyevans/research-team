@@ -1,5 +1,7 @@
 import type { Approval, ApprovalDecision } from '@domain/approval/approval.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
+import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
+import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
 import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
@@ -10,6 +12,7 @@ import type { LogEntry } from '@domain/session/log-entry.ts'
 import type { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { ForkNode, SessionProjection, SessionSummary } from '@domain/session/session.ts'
 import type { TurnRange } from '@domain/session/turn.ts'
+import type { Roster } from '@domain/worker/worker.ts'
 import type { FileRevision } from '@domain/workspace/workspace-file.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
 import type { ApprovalId, ComponentId, ProjectId, SessionId } from '@domain/shared/identifier.ts'
@@ -96,6 +99,33 @@ export interface ApprovalRepository {
   decide(id: SessionId, approvalId: ApprovalId, decision: ApprovalDecision): Promise<void>
 }
 
+/** What the agent may do without asking.
+ *
+ * The asymmetry in these three signatures is the API's, not an oversight, and
+ * it is worth stating because it is surprising: the read takes no session
+ * because there is no per-session answer to give, while the writes take one
+ * because the audit record — `AutonomyChanged` — lands on a session's stream.
+ * The session in a write is *who is answering for this change*, not where it
+ * applies. It applies everywhere in the process.
+ *
+ * Every write returns the whole policy, so one flipped switch needs no second
+ * request, and so a view whose `levels` went stale behind another tab's write
+ * is corrected by its own next write.
+ */
+export interface AutonomyRepository {
+  /** Rejects when this build has no policy wired up, which a caller must
+   *  distinguish from "everything is auto". */
+  read(): Promise<AutonomyPolicyView>
+  /** `level` and `tool` are plain strings so a bad value reaches the server's
+   *  own validation and comes back as its message, naming the offending value,
+   *  rather than being swallowed by a type this build made up. */
+  setLevel(id: SessionId, tool: string, level: string): Promise<AutonomyPolicyView>
+  /** Autos every gated tool. Stage gates are excluded unless asked for: their
+   *  floor is the workflow review gate, and auto-ing them lets a run cross
+   *  every stage boundary with nobody looking. */
+  allowAll(id: SessionId, includeStageGates: boolean): Promise<AutonomyChange>
+}
+
 export interface ProjectRepository {
   list(): Promise<readonly Project[]>
   presets(): Promise<readonly WorkflowPreset[]>
@@ -114,6 +144,27 @@ export interface ResearchRepository {
   current(id: ProjectId): Promise<ResearchRun | null>
   start(id: ProjectId, maxRounds: number | null): Promise<ResearchRun>
   cancel(id: ProjectId): Promise<boolean>
+}
+
+export interface WorkerRepository {
+  /** Everything in flight on a project. Rejects when this build has no
+   *  roster, which a caller must distinguish from an empty one. */
+  on(projectId: ProjectId): Promise<Roster>
+}
+
+export interface ExtractionRepository {
+  /** Every frame the running extraction has emitted, and the last finished
+   *  one's.
+   *
+   *  The only recovery path there is. These frames carry no feed position, so
+   *  a reconnect cannot replay them off the log; without this a tab that
+   *  arrived mid-ingest, or one whose socket dropped, would show a frozen pane
+   *  indistinguishable from a stalled extraction. Two empty lists when nothing
+   *  has run — an absent extraction is a state, not a missing resource. */
+  on(projectId: ProjectId): Promise<{
+    readonly current: readonly ExtractionFrame[]
+    readonly last: readonly ExtractionFrame[]
+  }>
 }
 
 export interface HealthRepository {

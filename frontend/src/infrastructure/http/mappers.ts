@@ -4,6 +4,8 @@ import type { ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { ComponentBlock, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Approval } from '@domain/approval/approval.ts'
+import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
+import type { ExtractionFrame, ExtractionStage } from '@domain/knowledge/extraction.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
   Course,
@@ -18,6 +20,7 @@ import { EventIndex } from '@domain/session/event-index.ts'
 import type { LogEntry } from '@domain/session/log-entry.ts'
 import type { ForkNode, SessionProjection, SessionSummary } from '@domain/session/session.ts'
 import type { TurnRange } from '@domain/session/turn.ts'
+import type { Roster } from '@domain/worker/worker.ts'
 import type { FileRevision, WorkspaceFile } from '@domain/workspace/workspace-file.ts'
 import { FilePath } from '@domain/shared/file-path.ts'
 import {
@@ -31,6 +34,9 @@ import {
 } from '@domain/shared/identifier.ts'
 
 import type * as dto from './dto.ts'
+// A value import, unlike the type-only namespace above: `readExtractionFrame`
+// parses at run time because a live frame is JSON nobody has validated yet.
+import { extractionFrameDto } from './dto.ts'
 
 /** The anti-corruption layer: wire shapes in, domain objects out.
  *
@@ -309,3 +315,90 @@ export const toRun = (raw: Dto<typeof dto.runDto>): ResearchRun => ({
           readOnly: raw.read_only ?? false,
         },
 })
+
+/** An ISO-8601 timestamp as epoch milliseconds, or null.
+ *
+ * Null stays null rather than defaulting to now: a worker with no start time
+ * would otherwise render as "0s elapsed", which reads as having just begun.
+ */
+const toEpoch = (raw: string | null): number | null => {
+  if (!raw) return null
+  const parsed = Date.parse(raw)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+export const toRoster = (raw: Dto<typeof dto.rosterDto>): Roster => ({
+  projectId: ProjectId(raw.project_id),
+  workers: raw.workers.map((worker) => ({
+    // The server's vocabulary, narrowed. An unrecognised kind renders as a
+    // plain row rather than being dropped: a worker this build cannot label
+    // is still a worker, and hiding it is the failure mode that matters.
+    kind: worker.kind === 'run' || worker.kind === 'extraction' ? worker.kind : 'turn',
+    ref: worker.ref,
+    detail: worker.detail,
+    sessionId: worker.session_id ? SessionId(worker.session_id) : null,
+    parent: worker.parent,
+    startedAt: toEpoch(worker.started_at),
+  })),
+  idleSessionIds: raw.idle_session_ids.map((id) => SessionId(id)),
+})
+
+/** A `Map` rather than the record the wire sent, so a tool named `toString` or
+ *  `constructor` cannot be answered by `Object.prototype` — a plain-object
+ *  lookup would report a level for a tool the server never mentioned. */
+export const toAutonomy = (raw: Dto<typeof dto.autonomyDto>): AutonomyPolicyView => ({
+  levels: new Map(Object.entries(raw.levels)),
+  gated: raw.gated,
+  stageGates: raw.stage_gates,
+})
+
+export const toAutonomyChange = (raw: Dto<typeof dto.autonomyChangeDto>): AutonomyChange => ({
+  changed: new Map(Object.entries(raw.changed)),
+  policy: toAutonomy(raw),
+})
+
+/** The stages this build knows, in the order the ingest walks them. */
+const STAGES: readonly ExtractionStage[] = [
+  'storing',
+  'extracting',
+  'extracted',
+  'consolidating',
+  'consolidated',
+  'failed',
+]
+
+/** An unrecognised stage reads as `extracting` rather than being dropped.
+ *
+ * `extracting` and not, say, `failed`, because the two terminal stages end the
+ * extraction: mistaking a stage this build has not heard of for a terminal one
+ * would file a running extraction under "last" and freeze the pane on it. A
+ * wrong non-terminal label is a cosmetic error; a wrong terminal one is not. */
+const toStage = (raw: string): ExtractionStage =>
+  STAGES.find((stage) => stage === raw) ?? 'extracting'
+
+export const toExtractionFrame = (raw: Dto<typeof dto.extractionFrameDto>): ExtractionFrame => ({
+  type: 'Extraction',
+  projectId: raw.project_id,
+  sourceId: raw.source_id,
+  stage: toStage(raw.stage),
+  detail: raw.detail,
+  entities: raw.entities,
+  relationships: raw.relationships,
+  domain: raw.domain,
+  domainConfidence: raw.domain_confidence,
+  index: raw.index,
+  total: raw.total,
+  modelCalls: raw.model_calls,
+})
+
+/** The same mapping for a live frame, which arrives unvalidated.
+ *
+ * Null rather than a throw, and null rather than a partly-filled frame: an
+ * extraction frame off the socket is JSON nobody has checked, and folding a
+ * half-shaped one would put `undefined` where a count belongs and render as
+ * progress that never happened. This is also the seam that keeps zod out of
+ * the store, which is application-layer and should not know the wire shape. */
+export const readExtractionFrame = (raw: unknown): ExtractionFrame | null => {
+  const parsed = extractionFrameDto.safeParse(raw)
+  return parsed.success ? toExtractionFrame(parsed.data) : null
+}

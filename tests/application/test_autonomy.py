@@ -16,7 +16,11 @@ from research_team.application import (
     UNMERGE_TOOL,
     AutonomyPolicy,
 )
-from research_team.application.autonomy import TOOL_FLOORS
+from research_team.application.autonomy import (
+    ADVANCE_STAGE_TOOL,
+    STAGE_GATE_TOOLS,
+    TOOL_FLOORS,
+)
 
 LEVELS = ("auto", "ask", "deny")
 
@@ -151,3 +155,63 @@ def test_the_knowledge_writes_are_gated_but_the_read_is_not():
     policy.set(REMEMBER_TOOL, "deny")
     assert policy.level_for(REMEMBER_TOOL) == "deny"
     assert policy.level_for(GRAPH_SEARCH_TOOL) == "auto"
+
+
+def test_relax_all_leaves_the_stage_gate_alone():
+    """`advance_stage`'s floor is the workflow review, not a hazard rating.
+
+    "Stop asking me about fetch" must not quietly mean "and let the run cross
+    every stage boundary unseen", which is the silent-progress failure the
+    staging design exists to prevent.
+    """
+    policy = AutonomyPolicy()
+
+    changed = policy.relax_all()
+
+    assert ADVANCE_STAGE_TOOL not in changed
+    assert policy.level_for(ADVANCE_STAGE_TOOL) == "ask"
+    assert STAGE_GATE_TOOLS == (ADVANCE_STAGE_TOOL,)
+
+
+def test_relax_all_can_be_asked_to_include_the_stage_gate():
+    """A deliberate, separate act -- but a supported one."""
+    policy = AutonomyPolicy()
+
+    changed = policy.relax_all(include_stage_gates=True)
+
+    assert changed[ADVANCE_STAGE_TOOL] == "auto"
+    assert policy.level_for(ADVANCE_STAGE_TOOL) == "auto"
+
+
+def test_relax_all_reports_only_the_levels_that_actually_moved():
+    """What comes back is what a caller may record. A tool already `auto` was
+    not a decision anybody made, and recording it would have the log claim
+    changes that never happened.
+    """
+    policy = AutonomyPolicy()
+    policy.set("write_file", "ask")
+
+    changed = policy.relax_all()
+
+    assert changed == {"write_file": "auto", "fetch": "auto"}
+
+
+def test_relax_all_relaxes_a_deny_too():
+    """A relax-all, not a raise-only: a `deny` set earlier is a thing said
+    earlier, and the later, more general "allow everything" wins. Keeping the
+    deny would leave a switch that does not do what it says.
+    """
+    policy = AutonomyPolicy()
+    policy.set("delete_file", "deny")
+
+    changed = policy.relax_all()
+
+    assert changed["delete_file"] == "auto"
+    assert policy.level_for("delete_file") == "auto"
+
+
+def test_relax_all_on_an_already_relaxed_policy_changes_and_reports_nothing():
+    policy = AutonomyPolicy()
+    policy.relax_all()
+
+    assert policy.relax_all() == {}

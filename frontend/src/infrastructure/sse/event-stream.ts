@@ -154,6 +154,13 @@ export const decodeFrame = (data: string): FeedFrame | null => {
           }
         : null
     }
+    case 'Extraction': {
+      // Routed, not decoded: an extraction frame is project-addressed and has
+      // no feed position, so it is neither a log entry nor placeable in one.
+      // Without this case it fell through to the log branch and was dropped
+      // for having no index — the pane would have stayed empty forever.
+      return { kind: 'extraction', payload }
+    }
     case 'TurnActivity': {
       const frame = activityFrameDto.safeParse(payload)
       return frame.success ? { kind: 'activity', entry: toActivityEntry(frame.data) } : null

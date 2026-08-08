@@ -78,4 +78,9 @@
   .pane.collapsed .pane-head h2 {
     writing-mode: horizontal-tb;
   }
+  .drawer {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
 }

@@ -14,6 +14,7 @@ from research_team.application.knowledge import (
     GRAPH_SEARCH_TOOL,
     REMEMBER_TOOL,
     UNMERGE_TOOL,
+    ExtractionReporter,
     IngestReport,
     KnowledgeError,
     KnowledgePort,
@@ -73,9 +74,18 @@ def format_matches(matches: list[Match]) -> str:
 
 
 def build_knowledge_tools(
-    knowledge: KnowledgePort, *, limit: int = 10
+    knowledge: KnowledgePort,
+    *,
+    limit: int = 10,
+    report: ExtractionReporter | None = None,
 ) -> tuple[BaseTool, ...]:
-    """`remember`, `graph_search` and `unmerge` over one project's graph."""
+    """`remember`, `graph_search` and `unmerge` over one project's graph.
+
+    `report` is where an ingest's progress goes while it is happening. Optional
+    because a build with no web layer has nobody to tell: the CLI and every
+    test that wires these tools directly want the same three tools and no
+    channel, and requiring one would make them invent a sink to discard.
+    """
 
     @tool(REMEMBER_TOOL)
     async def remember(
@@ -88,7 +98,7 @@ def build_knowledge_tools(
     ) -> str:
         """Commit text to the graph, extracting entities and relationships from it."""
         try:
-            report = await knowledge.ingest(
+            ingested = await knowledge.ingest(
                 SourceRef(
                     source_id=source_id,
                     text=text,
@@ -100,11 +110,12 @@ def build_knowledge_tools(
                     uri=uri or None,
                     title=title or None,
                     published_at=published_at or None,
-                )
+                ),
+                report=report,
             )
         except KnowledgeError as error:
             return f"Could not record this: {error}"
-        return format_ingest(report)
+        return format_ingest(ingested)
 
     @tool(GRAPH_SEARCH_TOOL)
     async def graph_search(query: str) -> str:

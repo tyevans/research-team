@@ -353,5 +353,66 @@ export const approvalSettledFrameDto = z.object({ id: z.string(), session_id: z.
 export const activityFrameDto = activityEntryDto
 export const logFrameDto = logEntryDto.extend({ session_id: z.string() })
 
+export const workerDto = z.object({
+  kind: z.string(),
+  ref: z.string(),
+  detail: z.string(),
+  session_id: maybe(z.string()),
+  parent: maybe(z.string()),
+  started_at: maybe(z.string()),
+})
+
+export const rosterDto = z.object({
+  project_id: z.string(),
+  workers: z.array(workerDto).default([]),
+  idle_session_ids: z.array(z.string()).default([]),
+})
+
+/** One note from a running `remember`.
+ *
+ * `stage` is a plain string rather than an enum on purpose: an unrecognised
+ * stage must reach the mapper's fallback, not fail validation. A build talking
+ * to a server that has grown a seventh stage should show the extraction
+ * progressing, not blank the pane on every frame. */
+export const extractionFrameDto = z.object({
+  type: z.string(),
+  project_id: z.string(),
+  source_id: z.string(),
+  stage: z.string(),
+  detail: z.string().default(''),
+  entities: maybe(z.number()),
+  relationships: maybe(z.number()),
+  domain: maybe(z.string()),
+  domain_confidence: maybe(z.number()),
+  index: maybe(z.number()),
+  total: maybe(z.number()),
+  model_calls: maybe(z.number()),
+})
+
+export const extractionCatchUpDto = z.object({
+  current: z.array(extractionFrameDto).default([]),
+  last: z.array(extractionFrameDto).default([]),
+})
+
+/** The autonomy policy, as all three routes shape it through one presenter.
+ *
+ * `levels` values are `z.string()` rather than an enum on purpose: a server
+ * that grows a fourth level must reach the domain's fallback and render as
+ * itself, not fail validation and blank the panel. `gated` and `stage_gates`
+ * are sent so the frontend never hardcodes a tool list — a list that drifts
+ * from `GATED_TOOLS` shows up as a tool silently unmanageable from the web. */
+export const autonomyDto = z.object({
+  levels: z.record(z.string(), z.string()).default({}),
+  gated: z.array(z.string()).default([]),
+  stage_gates: z.array(z.string()).default([]),
+})
+
+/** Allow-all adds `changed`: only what actually moved, possibly empty. It is
+ *  what to report back to the person who clicked — `levels` would claim eight
+ *  changes where one was made. */
+export const autonomyChangeDto = autonomyDto.extend({
+  changed: z.record(z.string(), z.string()).default({}),
+})
+
 export const idDto = z.object({ id: z.string() })
 export const okDto = z.unknown()

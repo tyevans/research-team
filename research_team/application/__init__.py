@@ -17,6 +17,7 @@ from research_team.application.auto_round import (
 from research_team.application.autonomy import (
     GATED_TOOLS,
     SEARCH_TOOL,
+    STAGE_GATE_TOOLS,
     AutonomyPolicy,
     Level,
 )
@@ -31,6 +32,9 @@ from research_team.application.knowledge import (
     GRAPH_SEARCH_TOOL,
     REMEMBER_TOOL,
     UNMERGE_TOOL,
+    ExtractionNote,
+    ExtractionReporter,
+    ExtractionStage,
     IngestReport,
     KnowledgeError,
     KnowledgePort,
@@ -83,6 +87,14 @@ from research_team.application.turn_supervisor import (
     TurnCancelled,
     TurnSupervisor,
 )
+from research_team.application.workers import (
+    ExtractionChannel,
+    ExtractionsInFlight,
+    ExtractionSnapshot,
+    Roster,
+    Worker,
+    WorkerRoster,
+)
 
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
@@ -91,6 +103,7 @@ __all__ = [
     "REMEMBER_TOOL",
     "ROUND_INSTRUCTIONS",
     "SEARCH_TOOL",
+    "STAGE_GATE_TOOLS",
     "UNMERGE_TOOL",
     "ActiveRun",
     "ActivityReporter",
@@ -105,6 +118,12 @@ __all__ = [
     "ContextStrategy",
     "ElideToolResults",
     "EventFeed",
+    "ExtractionChannel",
+    "ExtractionNote",
+    "ExtractionReporter",
+    "ExtractionSnapshot",
+    "ExtractionStage",
+    "ExtractionsInFlight",
     "FeedEntry",
     "ForkNode",
     "FullHistory",
@@ -120,6 +139,7 @@ __all__ = [
     "PreparedContext",
     "RecordedMessage",
     "ResearchSupervisor",
+    "Roster",
     "RoundOutcome",
     "RunAlreadyActive",
     "RunReport",
@@ -139,6 +159,8 @@ __all__ = [
     "TurnOutcome",
     "TurnResult",
     "TurnSupervisor",
+    "Worker",
+    "WorkerRoster",
     "build_fork_tree",
     "round_prompt",
     "summarize_sessions",

@@ -56,6 +56,16 @@ describe('decodeFrame', () => {
     expect(decoded).toMatchObject({ kind: 'activity', entry: { messageId: 'm1' } })
   })
 
+  it('routes an extraction frame without decoding it', () => {
+    // It has no index, so before it had a case of its own it fell through to
+    // the log branch and was dropped for being unplaceable — the pane would
+    // never have received a frame. The payload rides through unmapped: the
+    // per-project store folds it, and only that store knows which project is
+    // on screen.
+    const decoded = frame({ type: 'Extraction', project_id: 'p1', source_id: 'notes' })
+    expect(decoded).toMatchObject({ kind: 'extraction' })
+  })
+
   it('drops a log frame with no index rather than guessing a position', () => {
     // Inserting a row at the wrong point is worse than dropping a frame a
     // reconnect will replay correctly.

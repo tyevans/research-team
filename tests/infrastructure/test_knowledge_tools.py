@@ -19,7 +19,7 @@ class StubKnowledge:
         self.undone = []
         self.ingested = []
 
-    async def ingest(self, source):
+    async def ingest(self, source, *, report=None):
         if self._error:
             raise self._error
         self.ingested.append(source)
@@ -202,3 +202,36 @@ async def test_remember_without_provenance_stores_none_not_empty_string():
     assert source.uri is None
     assert source.title is None
     assert source.published_at is None
+
+
+@pytest.mark.asyncio
+async def test_remember_passes_the_reporter_through_to_the_port():
+    """The tool is the only caller of `ingest` in a real turn.
+
+    A reporter that the composition root wires but the tool drops would leave
+    the pane silent with nothing in the logs to say why.
+    """
+    seen = {}
+
+    class RecordingKnowledge:
+        async def ingest(self, source, *, report=None):
+            seen["report"] = report
+            return IngestReport(
+                source_id=source.source_id,
+                entity_count=0,
+                relationship_count=0,
+                domain=None,
+                domain_confidence=None,
+            )
+
+    def reporter(note):
+        pass
+
+    tools = {
+        tool.name: tool
+        for tool in build_knowledge_tools(RecordingKnowledge(), report=reporter)
+    }
+
+    await tools["remember"].ainvoke({"text": "some text", "source_id": "notes"})
+
+    assert seen["report"] is reporter

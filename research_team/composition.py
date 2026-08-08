@@ -29,6 +29,7 @@ from research_team.application import (
     AutoResearchDriver,
     ContextStrategy,
     ElideToolResults,
+    ExtractionChannel,
     FullHistory,
     KnowledgeAttachment,
     LiveFeed,
@@ -36,6 +37,7 @@ from research_team.application import (
     SessionService,
     TopicRoundRunner,
     TurnSupervisor,
+    WorkerRoster,
 )
 from research_team.application.artifacts import stage_artifact_instructions
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
@@ -147,6 +149,14 @@ class Application:
     topic repository, the queue projection and the turn supervisor -- and both
     front ends want the same one. Two supervisors over one database would each
     believe they held the only run on a project."""
+
+    workers: WorkerRoster
+    """Everything in flight on a project, for a front end that wants to show it.
+
+    A field for the same reason `research` is one: it needs three things only
+    this module holds together -- the session service, the turn supervisor and
+    the research supervisor -- and both front ends want the same answer from
+    the same three."""
 
     policy: AutonomyPolicy
     """Per-tool autonomy levels for this instance, mutable after construction.
@@ -307,6 +317,7 @@ def build_application(
     context_mode: str | None = None,
     tracer: Tracer | None = None,
     approvals: ApprovalPort | None = None,
+    extractions: ExtractionChannel | None = None,
     policy: AutonomyPolicy | None = None,
     project_id: UUID | None = None,
 ) -> Application:
@@ -650,7 +661,16 @@ def build_application(
         project_fetch = build_fetch_tool(recall=recall, corpus=reader)
         return knowledge, (
             project_fetch,
-            *build_knowledge_tools(knowledge),
+            # The reporter is per-project and so is this closure, which is why
+            # it is made here rather than passed in already bound. None when
+            # nothing is listening: a build with no web layer has nobody to
+            # tell, and `remember` is unchanged by its absence.
+            *build_knowledge_tools(
+                knowledge,
+                report=extractions.reporter(target_project_id)
+                if extractions is not None
+                else None,
+            ),
             *build_corpus_tools(reader),
             *build_topic_tools(topic_port, target_project_id),
         )
@@ -770,6 +790,14 @@ def build_application(
             read_only=resolved_policy.level_for(FETCH_TOOL) != "auto",
         )
 
+    research_supervisor = ResearchSupervisor(start_run, runs)
+    # The same object the tools report through, not a second one: the roster's
+    # "an extraction is running" and the pane's frames are two reads of one
+    # buffer, and two instances would let them disagree.
+    worker_roster = WorkerRoster(
+        service, turns=turns, runs=research_supervisor, extractions=extractions
+    )
+
     return Application(
         service=service,
         feed=LiveFeed(repository),
@@ -778,7 +806,8 @@ def build_application(
         summaries=summaries,
         corpus=corpus,
         topics=topics,
-        research=ResearchSupervisor(start_run, runs),
+        research=research_supervisor,
+        workers=worker_roster,
         policy=resolved_policy,
         _initial_project_id=project_id,
     )
