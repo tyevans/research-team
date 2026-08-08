@@ -35,10 +35,11 @@ export const Workers = ({
     queryKey: queryKeys.workers(projectId),
     queryFn: () => workers.on(projectId),
     refetchInterval: POLL_MS,
-    // Keeping the previous data is what makes a failed poll stale rather than
-    // empty. Retry is off so a failure is visible within one interval instead
-    // of being hidden behind backoff.
-    placeholderData: (previous) => previous,
+    // A failed refetch keeps the last successful `data` and sets `error`
+    // alongside it — TanStack Query does this on its own, with nothing to opt
+    // into here — which is what lets this render the last roster with a stale
+    // marker instead of emptying. Retry is off so that failure is visible
+    // within one interval instead of being hidden behind backoff.
     retry: false,
   })
 
@@ -98,9 +99,9 @@ const Row = ({
   nested?: boolean
 }) => {
   const { worker } = node
-  // Extraction opens the pane on the session that is hosting it, which is its
-  // parent's. With no resolvable parent there is nothing to open, so the row
-  // is text rather than a dead button.
+  // A worker with a session gets a button that opens it. Extraction has no
+  // session of its own — its detail view is the extraction pane, which a
+  // later task adds — so it renders as text rather than a dead button.
   const target = worker.sessionId
 
   return (

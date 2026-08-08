@@ -108,6 +108,43 @@ it('keeps the last roster and marks it stale when a poll fails', async () => {
   expect(screen.getByText('autonomous run')).toBeInTheDocument()
 })
 
+it('keeps rendering the last roster’s rows, not just its stale chip, after a failed poll', async () => {
+  // Pins the mechanism finding 1 relies on: TanStack Query retains the last
+  // successful `data` across a failed *refetch* on its own — nothing in this
+  // component opts into that. This asserts the row itself (not only the
+  // stale chip) survives, which is what the panel's whole purpose rests on.
+  const workers = {
+    on: vi
+      .fn()
+      .mockResolvedValueOnce({
+        ...empty,
+        workers: [
+          {
+            kind: 'turn' as const,
+            ref: SESSION,
+            detail: 'turn 12',
+            sessionId: SESSION,
+            parent: null,
+            startedAt: null,
+          },
+        ],
+      })
+      .mockRejectedValue(new Error('network')),
+  }
+
+  const { client } = renderWithContainer(
+    <Workers projectId={PROJECT} watching={null} onWatch={() => {}} />,
+    { workers },
+  )
+
+  expect(await screen.findByText('turn 12')).toBeInTheDocument()
+
+  await triggerRefetch(client)
+
+  await waitFor(() => expect(screen.getByText(/stale/i)).toBeInTheDocument())
+  expect(screen.getByRole('button', { name: /turn 12/ })).toBeInTheDocument()
+})
+
 it('indents a nested extraction under its parent', async () => {
   const workers = {
     on: vi.fn().mockResolvedValue({
