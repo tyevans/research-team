@@ -2,23 +2,27 @@ import { describe, expect, it } from 'vitest'
 
 import { emptyGraph, expand, isExpanded, type Neighborhood } from './graph.ts'
 
-// A neighbourhood whose root is `root` and whose entities are `root` plus
-// `others`, with no relationships. Enough to exercise node merging without
-// needing an edge in every test.
+// A neighbourhood whose root is `root` and whose entities are `others`, with
+// no relationships. Enough to exercise node merging without needing an edge in
+// every test.
+//
+// The root is deliberately *absent* from `entities`, because that is what the
+// server sends: `Neighborhood` carries the root in its own field and
+// `GraphReadPort.neighborhood` documents that it "is not repeated inside
+// `entities`". Fixtures that included it agreed with the bug rather than with
+// the API, and kept this suite green while every click in the browser threw.
 const hoodWith = (root: string, ...others: readonly string[]): Neighborhood => ({
   root: { id: root, name: root, entityType: 'concept' },
-  entities: [root, ...others].map((id) => ({ id, name: id, entityType: 'concept' })),
+  entities: others.map((id) => ({ id, name: id, entityType: 'concept' })),
   relationships: [],
 })
 
 // A neighbourhood carrying a single directed edge from `source` to `target`,
-// rooted at `source`.
+// rooted at `source` -- so `source` arrives only as the root, exactly as the
+// route returns it.
 const edge = (source: string, target: string): Neighborhood => ({
   root: { id: source, name: source, entityType: 'concept' },
-  entities: [
-    { id: source, name: source, entityType: 'concept' },
-    { id: target, name: target, entityType: 'concept' },
-  ],
+  entities: [{ id: target, name: target, entityType: 'concept' }],
   relationships: [{ source, target, relationshipType: 'advised' }],
 })
 
@@ -56,6 +60,26 @@ describe('expand', () => {
     const view = expand(expand(emptyGraph, edge('a', 'b')), edge('b', 'a'))
 
     expect(view.links).toHaveLength(2)
+  })
+
+  it('draws the root, which the server sends beside `entities` rather than in it', () => {
+    const view = expand(emptyGraph, hoodWith('prandtl', 'karman'))
+
+    expect(view.nodes.map((n) => n.id).sort()).toEqual(['karman', 'prandtl'])
+  })
+
+  it('leaves no link whose endpoint is missing from the node set', () => {
+    // d3-force resolves every link endpoint against the node array and throws
+    // `node not found: <id>` when one is absent, which takes down the whole
+    // canvas rather than dropping the edge. A merge that can emit a dangling
+    // link is therefore a crash, not a cosmetic gap.
+    const view = expand(expand(emptyGraph, edge('a', 'b')), edge('b', 'c'))
+    const ids = new Set(view.nodes.map((n) => n.id))
+
+    for (const link of view.links) {
+      expect(ids).toContain(link.source)
+      expect(ids).toContain(link.target)
+    }
   })
 
   it('records what has been expanded so a node is not re-fetched', () => {
