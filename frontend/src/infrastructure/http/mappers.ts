@@ -441,6 +441,7 @@ export const toTopicDetail = (raw: Dto<typeof dto.topicDetailDto>): TopicDetail 
   question: raw.question,
   status: toTopicStatus(raw.status),
   sources: raw.sources,
+  findings: raw.findings,
   openSubQuestions: raw.open_sub_questions,
   triggers: raw.triggers,
   needsAttention: raw.needs_attention,
@@ -454,6 +455,6 @@ export const toTopicDetail = (raw: Dto<typeof dto.topicDetailDto>): TopicDetail 
     resolved: sub.resolved,
   })),
   sourceIds: raw.source_ids,
-  findings: raw.findings,
+  findingNotes: raw.finding_notes,
   contested: raw.contested,
 })

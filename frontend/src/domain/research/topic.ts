@@ -35,16 +35,19 @@ export interface SubQuestion {
 
 /** One topic's own page: the row plus what the queue leaves out.
  *
- * No `findings` count here, unlike `TopicView` — the wire response spells the
- * count and the finding texts with the same key, and the texts win, so the
- * count is not recoverable from this route. A caller wanting the count reads
- * it off the row this topic came from in the list.
+ * `findings` carries the same count `TopicView` does, and `findingNotes`
+ * carries the prose behind that count — two fields rather than one, because
+ * the wire response spells them with two different keys (`findings` and
+ * `finding_notes`) for exactly this reason: a page rendering a topic's own
+ * findings wants both the number and what they say, and neither should have
+ * to be reconstructed from the other.
  */
 export interface TopicDetail {
   readonly topicId: TopicId
   readonly question: string
   readonly status: TopicStatus
   readonly sources: number
+  readonly findings: number
   readonly openSubQuestions: number
   readonly triggers: readonly string[]
   readonly needsAttention: boolean
@@ -53,7 +56,7 @@ export interface TopicDetail {
   readonly scope: string
   readonly subQuestions: readonly SubQuestion[]
   readonly sourceIds: readonly string[]
-  readonly findings: readonly string[]
+  readonly findingNotes: readonly string[]
   readonly contested: boolean
 }
 

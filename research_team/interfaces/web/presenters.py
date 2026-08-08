@@ -512,6 +512,15 @@ def topic_detail_view(detail: TopicDetail) -> dict[str, Any]:
     `source_text_view` builds on `source_view`: the row and the detail must
     describe the same topic the same way, and a single function computing the
     shared half is what keeps them from drifting apart as either grows.
+
+    `detail.findings` -- the prose, one entry per recorded finding -- is
+    exposed here as `finding_notes` rather than `findings`, because
+    `topic_view` already spends `findings` on the *count* that both routes
+    must agree on. Calling both of them `findings` would make the same key
+    mean an int on one route and a list on the other, which is a collision a
+    caller has no way to detect from the shape of a single response; the
+    only way to keep the two spellings from drifting back together is to
+    give them names that cannot collide in the first place.
     """
     return {
         **topic_view(detail.view),
@@ -527,7 +536,7 @@ def topic_detail_view(detail: TopicDetail) -> dict[str, Any]:
             for sub in detail.sub_questions
         ],
         "source_ids": list(detail.source_ids),
-        "findings": list(detail.findings),
+        "finding_notes": list(detail.findings),
         "contested": detail.contested,
     }
 

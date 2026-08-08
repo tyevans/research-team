@@ -23,7 +23,7 @@ from research_team.domain import (
     StoreSourceDocument,
     WriteFile,
 )
-from research_team.domain.topic import OpenTopic
+from research_team.domain.topic import OpenTopic, RecordFinding
 from research_team.infrastructure.persistence import build_corpus_repository
 from research_team.infrastructure.persistence.event_store import build_topic_repository
 from research_team.interfaces.web import TurnActivity, create_app
@@ -1590,6 +1590,43 @@ async def test_reading_a_topic_adds_what_the_row_leaves_out(app_and_client):
     assert body["rationale"] == "because it is the whole question"
     assert body["sub_questions"] == []
     assert body["source_ids"] == []
+
+
+async def test_a_topic_detail_reports_the_same_finding_count_as_its_row(app_and_client):
+    """`findings` must mean a count on both routes, or a caller cannot trust it.
+
+    The list route has always answered `findings` with an int -- how many
+    were recorded, not what they say -- because a queue row has no room to
+    print prose. The detail route used to overwrite that same key with the
+    array of finding summaries, which made the count unrecoverable from the
+    page that actually has the findings to count. This asserts the property
+    that regression broke: the detail's `findings` must still be the count,
+    matching the list route for the same topic, with the prose available
+    separately under `finding_notes`.
+    """
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+
+    repository = build_topic_repository(
+        application.service._repository.store,
+        application.service._repository.publisher,
+        snapshot_store=application.service._repository.snapshot_store,
+    )
+    topic = await repository.load(UUID(topic_id))
+    topic.execute(RecordFinding(summary="24 hours seems to be the consensus", source_ids=["a"]))
+    topic.execute(RecordFinding(summary="one SME says 48", source_ids=["b"]))
+    await repository.save(topic)
+    await application.topics_caught_up()
+
+    row = (await client.get(f"/api/projects/{project_id}/topics")).json()[0]
+    detail = (await client.get(f"/api/projects/{project_id}/topics/{topic_id}")).json()
+
+    assert row["findings"] == 2
+    assert detail["findings"] == 2
+    assert detail["finding_notes"] == [
+        "24 hours seems to be the consensus",
+        "one SME says 48",
+    ]
 
 
 async def test_an_unknown_topic_is_a_404(app_and_client):

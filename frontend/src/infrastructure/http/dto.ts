@@ -448,7 +448,7 @@ export const topicDetailDto = topicDto.extend({
     )
     .default([]),
   source_ids: z.array(z.string()).default([]),
-  findings: z.array(z.string()).default([]),
+  finding_notes: z.array(z.string()).default([]),
   contested: z.boolean(),
 })
 
