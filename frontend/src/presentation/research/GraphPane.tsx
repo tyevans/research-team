@@ -5,6 +5,7 @@ import { useContainer } from '@app/container-context.tsx'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { EmptyState, Loading } from '../common/primitives.tsx'
+import { GraphDetail } from './GraphDetail.tsx'
 
 // `React.lazy`, not a static import: `GraphCanvas` is the only module that
 // imports `react-force-graph-2d`, and loading it eagerly would mean every
@@ -38,7 +39,7 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
   // instead (the same split `ExtractionPane` uses). Destructuring them here
   // would also detach them from the store instance the way an unbound method
   // detaches from `this`, which this project's lint config catches.
-  const { view, results, truncated, searching, error } = store()
+  const { view, results, truncated, searching, error, selected } = store()
 
   // Debounced rather than firing on every keystroke: `find_entities` fetches
   // the tenant's entire entity set per call (there is no store-side filter
@@ -135,6 +136,15 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
           </div>
         ) : null}
       </div>
+
+      {selected ? (
+        <GraphDetail
+          view={view}
+          selected={selected}
+          onSelect={(id) => void store.getState().expandNode(id)}
+          onClose={() => store.getState().select(null)}
+        />
+      ) : null}
     </div>
   )
 }

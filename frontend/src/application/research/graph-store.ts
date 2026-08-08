@@ -28,8 +28,16 @@ export interface GraphState {
   readonly truncated: boolean
   readonly searching: boolean
   readonly error: string | null
+  /** The node whose connections are on show, or null.
+   *
+   * Kept here rather than in the pane because expanding sets it: clicking a
+   * node is one gesture, and it should both draw what is around that node and
+   * say what it is. Two pieces of state for one gesture would be two places
+   * for the answer to disagree with the drawing. */
+  readonly selected: string | null
   search(term: string, entityType?: string): Promise<void>
   expandNode(id: string): Promise<void>
+  select(id: string | null): void
 }
 
 export type GraphStore = ReturnType<typeof createGraphStore>
@@ -47,6 +55,11 @@ export const createGraphStore = ({
     truncated: false,
     searching: false,
     error: null,
+    selected: null,
+
+    select(id) {
+      set({ selected: id })
+    },
 
     async search(term, entityType) {
       const needle = term.trim()
@@ -70,6 +83,12 @@ export const createGraphStore = ({
     },
 
     async expandNode(id) {
+      // Selecting happens before the guard below and before the request:
+      // clicking an already-expanded node still means "tell me about this
+      // one", and a reader who clicks a node whose neighbourhood is already
+      // drawn should not be the only one who gets no answer.
+      set({ selected: id })
+
       // The guard `expand`'s own docstring calls out: a second click on a
       // node already on screen must not re-issue the request that put it
       // there.

@@ -594,3 +594,105 @@
 .seed-failed {
   color: var(--k-failure);
 }
+
+/* ---------------------------------------------------------- graph detail
+ *
+ * What the selected node is and what it connects to, docked opposite the
+ * search so the two controls do not stack on the same corner of the drawing.
+ * A panel rather than a tooltip: these rows are links you walk the graph
+ * with, and a tooltip disappears the moment you reach for one. */
+
+.graph-detail {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  bottom: 10px;
+  width: min(300px, calc(100% - 20px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+  z-index: 1;
+}
+
+.graph-detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.graph-detail-heading {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.graph-detail-name {
+  margin: 0;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  /* Entity names in this corpus run to whole sentences -- a `fact` is a full
+     clause -- so the heading wraps rather than being clipped to one line. */
+  overflow-wrap: anywhere;
+}
+
+.graph-detail-type {
+  margin: 2px 0 0;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.graph-detail-empty {
+  margin: 0;
+  padding: 10px;
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.graph-detail-edges {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.graph-detail-edge {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 5px 7px;
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.graph-detail-edge:hover,
+.graph-detail-edge:focus-visible {
+  background: var(--bg-hover);
+  border-left-color: var(--accent);
+}
+
+.graph-detail-rel {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.graph-detail-other {
+  font-size: var(--t-sm);
+  overflow-wrap: anywhere;
+}
