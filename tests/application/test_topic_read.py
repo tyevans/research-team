@@ -15,7 +15,7 @@ from eventsource import InMemoryEventBus
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 
-from research_team.domain.topic import OpenTopic, Topic
+from research_team.domain.topic import LinkSource, OpenTopic, RecordFinding, Topic
 from research_team.infrastructure.persistence.event_store import build_topic_repository
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.persistence.topics import TopicRunner
@@ -99,3 +99,34 @@ async def test_a_topic_belonging_to_another_project_reads_as_none(
     that could sidestep that, so it checks.
     """
     assert await reader_for_other_project.read_topic(opened_topic) is None
+
+
+async def test_a_detail_carries_finding_text_the_fold_only_counts(
+    topic_reader, repository, project_id
+):
+    """`TopicState` folds a count, never the summary -- so this is a real read path.
+
+    A detail page showing "3 findings" with no way to see what they were
+    would be useless, and the count alone is all `TopicState`/`TopicRow`
+    carry. Reading the text back means this reader actually went to the
+    stream rather than to the fold for it.
+    """
+    topic = repository.create_new(uuid4())
+    topic.execute(
+        OpenTopic(
+            topic_id=topic.aggregate_id,
+            project_id=project_id,
+            question="Does retrieval practice beat rereading?",
+            rationale="students keep asking for a citation",
+        )
+    )
+    topic.execute(LinkSource(source_id="s1"))
+    topic.execute(RecordFinding(summary="yes, by a wide margin", source_ids=["s1"]))
+    await repository.save(topic)
+
+    detail = await topic_reader.read_topic(topic.aggregate_id)
+
+    assert detail is not None
+    assert detail.findings == ("yes, by a wide margin",)
+    assert detail.source_ids == ("s1",)
+    assert detail.contested is False
