@@ -552,6 +552,19 @@
   padding: 4px;
 }
 
+/* Styled like the results panel it stands in for, because that is what it is:
+   the answer to the same search, in the case where the answer is none. */
+.graph-no-results {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+  color: var(--fg-dim);
+  font-size: var(--t-xs);
+}
+
 .graph-truncated {
   color: var(--fg-dim);
   font-size: var(--t-xs);

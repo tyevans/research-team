@@ -61,7 +61,8 @@ const BUDGET_KB = {
   // difference between reading a project's queue and scrolling it.
   //
   // 232, from 231: the canvas legend, which is what made the node colours mean
-  // anything, and the course page's autonomy disclosure.
+  // anything, and the course page's autonomy disclosure. The graph search's
+  // own answer-when-there-is-none fits inside the same raise.
   total: 232,
 }
 
