@@ -403,3 +403,57 @@
   font-family: var(--mono);
   font-size: var(--t-xs);
 }
+
+/* ---------------------------------------------------------------- drawer
+ *
+ * A read-only overlay, not a third pane: it opens over whatever the course
+ * page is already showing rather than reflowing it, because watching a
+ * worker is a glance, not a navigation. Right-anchored so it reads as
+ * something laid over the page, the same convention as everything else here
+ * that opens on top rather than beside. */
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 20;
+}
+
+.drawer {
+  width: 42vw;
+  max-width: 640px;
+  min-width: 360px;
+  height: 100%;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+.drawer-title {
+  margin: 0;
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+.drawer-spacer {
+  flex: 1 1 auto;
+}
+
+.drawer-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}

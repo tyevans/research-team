@@ -13,6 +13,7 @@ import { Artifact } from './Artifacts.tsx'
 import { Findings } from './Findings.tsx'
 import { RunPanel } from './RunPanel.tsx'
 import { Stage } from './StageRail.tsx'
+import { WorkerDrawer } from './WorkerDrawer.tsx'
 import { Workers } from './Workers.tsx'
 
 /** The run seen whole: what the workflow was supposed to produce, and what it
@@ -147,6 +148,8 @@ export const CourseView = ({
           </div>
         </>
       )}
+
+      {watching ? <WorkerDrawer sessionId={watching} onClose={() => onWatch(null)} /> : null}
     </section>
   )
 }
