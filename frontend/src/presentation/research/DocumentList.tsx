@@ -8,6 +8,7 @@ import { useContainer } from '@app/container-context.tsx'
 import { documentLabel, isDropped, type DocumentSummary } from '@domain/research/document.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
+import { Drawer } from '../common/Drawer.tsx'
 import { EmptyState, ErrorBox, Loading } from '../common/primitives.tsx'
 import { DocumentReader } from './DocumentReader.tsx'
 
@@ -101,13 +102,37 @@ export const DocumentList = ({ projectId }: { projectId: ProjectId }) => {
           })}
         </ul>
       </div>
+      {/* Over the page, not below the list. The list lives in a 340px rail,
+          and a document is a wall of prose -- read in that column it was a
+          few words per line under a list that had been pushed up out of the
+          way. The drawer is the console's existing answer to "read this
+          without losing where you were", and a source is exactly that kind of
+          thing: you open one, read it, and go back to the graph you were
+          looking at. */}
       {reading ? (
-        <DocumentReader projectId={projectId} sourceId={reading} />
-      ) : (
-        <EmptyState title="No document open" detail="Pick a row to read its text." />
-      )}
+        <Drawer
+          title={readingLabel(filtered, reading)}
+          label={`Reading ${readingLabel(filtered, reading)}`}
+          onClose={() => setReading(null)}
+        >
+          <DocumentReader projectId={projectId} sourceId={reading} />
+        </Drawer>
+      ) : null}
     </div>
   )
+}
+
+/** The open document's title, for the drawer's heading.
+ *
+ * Taken from the row that opened it rather than waited for from the reader's
+ * own fetch: the heading is on screen while that request is in flight, and a
+ * drawer that opens with an empty title and fills it in a moment later reads
+ * as a bug. Falls back to the id, which is all the list can offer if the row
+ * has been filtered out from under the open document.
+ */
+const readingLabel = (rows: readonly DocumentSummary[], sourceId: SourceId): string => {
+  const row = rows.find((candidate) => candidate.sourceId === sourceId)
+  return row ? documentLabel(row) : String(sourceId)
 }
 
 const DocumentRow = ({
