@@ -94,6 +94,32 @@ it('renders a dropped document’s reason and marks it, without hiding it', asyn
   expect(row!.className).toContain('document-dropped')
 })
 
+it('lets a row be as tall as its title instead of pinning it to one row height', async () => {
+  // A fixed 52px row treated a wrapped title as if it took one line, so a
+  // two-line title -- most of them, in a 340px rail -- drew over the row
+  // beneath it. Rows are measured now, which needs three things from the DOM:
+  // the index the virtualizer reads back to know what it measured, a transform
+  // rather than a `top` offset (a measured row would otherwise be offset
+  // twice), and no inline height overriding the content.
+  //
+  // The heights themselves are not asserted: jsdom has no layout, so every
+  // measurement there is 0. This pins the shape that makes measuring work; the
+  // drawing itself was checked in a browser.
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace' })]),
+  )
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+
+  const row = (await screen.findByText('Ada Lovelace')).closest('.document-row')
+  expect(row).not.toBeNull()
+  expect(row).toHaveAttribute('data-index', '0')
+  expect((row as HTMLElement).style.transform).toBe('translateY(0px)')
+  expect((row as HTMLElement).style.height).toBe('')
+})
+
 it('opens a document over the page rather than below the list', async () => {
   // The list sits in a 340px rail. Rendered inline, a document was a few words
   // per line under a list that had been pushed out of the way, so the reader
