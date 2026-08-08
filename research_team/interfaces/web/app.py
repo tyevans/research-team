@@ -552,14 +552,21 @@ def create_app(
         `ProjectTopicReader.read_topic` already collapses those two cases to
         `None` -- see its docstring -- so this route has nothing left to
         distinguish; doing so here would leak the very thing the port exists
-        to withhold.
+        to withhold. The message deliberately does not echo `topic_id` back:
+        doing so would make the response for "this id belongs to another
+        project" differ, byte for byte, from the response for "this id was
+        never opened" whenever the two cases are compared with different
+        ids -- which is the only way to compare them, since an id cannot be
+        both foreign and never-opened at once. Naming only the project keeps
+        every 404 under it identical, which is what actually keeps the two
+        cases indistinguishable rather than merely both being 404s.
         """
         reader = _topic_reader(project_id)
         await _require_project(project_id)
         detail = await reader.read_topic(topic_id)
         if detail is None:
             raise HTTPException(
-                status_code=404, detail=f"no topic {topic_id} in project {project_id}"
+                status_code=404, detail=f"no such topic in project {project_id}"
             )
         return topic_detail_view(detail)
 

@@ -1594,17 +1594,54 @@ async def test_reading_a_topic_adds_what_the_row_leaves_out(app_and_client):
 async def test_an_unknown_topic_is_a_404(app_and_client):
     application, client = app_and_client
     project_id, _ = await _project_with_topics(application, client)
+    unknown_topic = uuid4()
 
-    response = await client.get(f"/api/projects/{project_id}/topics/{uuid4()}")
+    response = await client.get(f"/api/projects/{project_id}/topics/{unknown_topic}")
 
+    # A bare status code cannot tell "this route refused" from "no such route
+    # is registered" -- FastAPI answers 404 for both, so an unregistered path
+    # would pass this assertion with none of the code under test ever
+    # running. The detail is the route's own message, and only the route
+    # produces it.
     assert response.status_code == 404
+    assert response.json()["detail"] == f"no such topic in project {project_id}"
 
 
 async def test_an_unknown_project_is_a_404_on_both_topic_routes(client):
     missing = uuid4()
 
-    assert (await client.get(f"/api/projects/{missing}/topics")).status_code == 404
-    assert (await client.get(f"/api/projects/{missing}/topics/{uuid4()}")).status_code == 404
+    listing = await client.get(f"/api/projects/{missing}/topics")
+    reading = await client.get(f"/api/projects/{missing}/topics/{uuid4()}")
+
+    # Same reasoning as above: `_require_project`'s message is what proves
+    # these went through the route rather than matching nothing at all.
+    assert listing.status_code == 404
+    assert listing.json()["detail"] == f"no project {missing}"
+    assert reading.status_code == 404
+    assert reading.json()["detail"] == f"no project {missing}"
+
+
+async def test_a_topic_from_another_project_reads_as_404_identically_to_unknown(app_and_client):
+    """A caller must not be able to tell "wrong project" from "never existed".
+
+    `ProjectTopicReader.read_topic` collapses both to `None` on purpose --
+    see its docstring -- because telling them apart is exactly the
+    information a project boundary exists to withhold. The status code alone
+    cannot prove that: two different messages that both happen to carry 404
+    would still leak "that topic exists but is not yours" to anyone reading
+    the body. Byte-identical detail is the assertion that actually closes
+    that gap, and the one a future refactor could not "helpfully" break
+    without this test catching it.
+    """
+    application, client = app_and_client
+    owning_project_id, topic_id = await _project_with_topics(application, client)
+    other_project_id, _ = await _project_with_topics(application, client)
+
+    foreign = await client.get(f"/api/projects/{other_project_id}/topics/{topic_id}")
+    never_existed = await client.get(f"/api/projects/{other_project_id}/topics/{uuid4()}")
+
+    assert foreign.status_code == 404
+    assert foreign.json() == never_existed.json()
 
 
 # ---------------- workflows ----------------
