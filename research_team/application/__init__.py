@@ -49,6 +49,7 @@ from research_team.application.knowledge_attachment import (
     TurnExecutorTools,
 )
 from research_team.application.live_feed import LiveFeed
+from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.ports import (
     ActivityReporter,
     ApprovalDecision,
@@ -137,6 +138,7 @@ __all__ = [
     "MergeRecord",
     "OpenGraph",
     "PreparedContext",
+    "ProjectGraphs",
     "RecordedMessage",
     "ResearchSupervisor",
     "Roster",

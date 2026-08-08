@@ -35,6 +35,7 @@ from research_team.application import (
     FullHistory,
     KnowledgeAttachment,
     LiveFeed,
+    ProjectGraphs,
     ResearchSupervisor,
     SessionService,
     TopicRoundRunner,
@@ -145,6 +146,15 @@ class Application:
     A field for the same reason `corpus` is one: the queue is read by the
     agent through the tools attached with a project, and by anything driving an
     autonomous run, which shares nothing else with a session."""
+
+    graphs: ProjectGraphs
+    """The single owner of every project's open graph store in this instance.
+
+    A field rather than something reached only through `open_graph`'s
+    closure, because a read route (Task 10) needs to `open` the same store
+    the attached agent writes to, and a delete route needs to `close` it --
+    neither is reachable through the executor or the service, so this is
+    where both go looking."""
 
     topic_readers: Callable[[UUID], TopicReadPort]
     """One project's `TopicReadPort`, built fresh per call.
@@ -302,6 +312,11 @@ class Application:
         await self.topics.stop()
         await self.service.close()
         await self.detach_project()
+        # Every project this instance ever opened a graph for, not just the
+        # one that happened to be attached -- `detach_project` above only
+        # releases that one, and a read route can have opened others through
+        # `graphs` directly without ever attaching them.
+        await self.graphs.close_all()
 
 
 def _context_parts(
@@ -632,28 +647,36 @@ def build_application(
         gate_reviewer=gate_review,
     )
 
+    # The single owner of an open graph store per project: `open_graph` below
+    # borrows from it rather than building its own, which is what lets a read
+    # route (Task 10) see the same store extraction just wrote to instead of
+    # a second one rebuilt independently and stale from the moment it exists.
+    graphs = ProjectGraphs(
+        build_store=lambda: build_graph_store(config.graph_store()),
+        rebuild=lambda store, target_project_id: rebuild_graph(
+            store, feed=repository.store, project_id=target_project_id
+        ),
+    )
+
     async def open_graph(
         target_project_id: UUID,
     ) -> tuple[RedstringKnowledge, tuple[BaseTool, ...]]:
-        """Build one project's `RedstringKnowledge` and bring its store current.
+        """Build one project's `RedstringKnowledge` over its shared graph store.
 
-        Raises before anything is returned if either step fails -- an
-        unreachable Neo4j or a replay `KnowledgeError` -- which is what lets
-        `KnowledgeAttachment.attach` stay atomic: nothing here is handed back
-        for it to wire in until both have actually succeeded. The store this
-        opened is closed on that path rather than left to leak.
+        The store itself comes from `graphs`, which owns it for as long as
+        the project stays open -- not just for the duration of this
+        attachment. Raises before anything is returned if `graphs.open`
+        fails -- an unreachable Neo4j or a replay `KnowledgeError` -- which is
+        what lets `KnowledgeAttachment.attach` stay atomic: nothing here is
+        handed back for it to wire in until the store has actually opened.
+        Unlike the store this used to build for itself, a store that fails to
+        open here is *not* closed on the way out: `graphs` is what decided to
+        build it, and only `graphs` gets to decide it is done with it --
+        closing a cache's handle out from under it on a failure it did not
+        cause would leave the cache holding a closed store the next `open`
+        would hand straight back out.
         """
-        store = build_graph_store(config.graph_store())
-        try:
-            # `ensure_schema` is the first call that actually talks to a
-            # Neo4j server; a no-op for the in-memory store, which has none.
-            if hasattr(store, "ensure_schema"):
-                await store.ensure_schema()
-            await rebuild_graph(store, feed=repository.store, project_id=target_project_id)
-        except Exception:
-            if hasattr(store, "close"):
-                await store.close()
-            raise
+        store = await graphs.open(target_project_id)
         knowledge = RedstringKnowledge(
             target_project_id,
             store=store,
@@ -707,9 +730,16 @@ def build_application(
         )
 
     async def close_graph(knowledge: RedstringKnowledge) -> None:
-        store = knowledge.graph_store
-        if hasattr(store, "close"):
-            await store.close()
+        """A no-op: detaching a project from one session no longer closes its store.
+
+        Before `graphs` existed, this was the only thing that closed a graph
+        store, so it closed the one `knowledge` held. Now the store outlives
+        any single attachment -- `graphs` is what opened it and `graphs` is
+        what gets to close it, on project delete or process shutdown. Closing
+        it here too would pull it out from under the cache: `graphs` would
+        still list the project as open, and the next `open` would hand back a
+        store that no longer accepts calls instead of rebuilding a working one.
+        """
 
     attachment = KnowledgeAttachment(
         executor,
@@ -762,6 +792,10 @@ def build_application(
         progress=build_learner_progress_repository(
             repository.store, repository.publisher, snapshot_store=repository.snapshot_store
         ),
+        # So `delete_project` can evict the deleted project's cached store --
+        # the same `graphs` `open_graph` above borrows from, not a second
+        # instance that would cache independently of the one attachment uses.
+        graphs=graphs,
     )
     turns = TurnSupervisor(service)
     runs = build_auto_research_repository(
@@ -849,6 +883,7 @@ def build_application(
         summaries=summaries,
         corpus=corpus,
         topics=topics,
+        graphs=graphs,
         topic_readers=topic_reader,
         topic_repository=topic_repository,
         research=research_supervisor,
