@@ -124,12 +124,12 @@ export default defineConfig({
        *  which is why its floor is low rather than absent. Low and visible is
        *  the honest way to carry that debt. */
       thresholds: {
-        lines: 40,
-        functions: 30,
-        branches: 32,
-        statements: 40,
+        lines: 42,
+        functions: 31,
+        branches: 33,
+        statements: 42,
         'src/domain/**': { lines: 90, functions: 90, branches: 88, statements: 90 },
-        'src/application/**': { lines: 55, functions: 34, branches: 45, statements: 52 },
+        'src/application/**': { lines: 66, functions: 46, branches: 50, statements: 60 },
         'src/infrastructure/**': { lines: 52, functions: 30, branches: 55, statements: 52 },
       },
     },

@@ -70,12 +70,17 @@ export const Timeline = ({ log, scrub, fresh, discarded, onSelect, onFork }: Tim
 
       // HEAD sits one past the last event, so it is reachable by the same keys.
       const current = selectedIndex ?? total + 1
-      let next: number | null = null
-      if (event.key === 'ArrowDown' || event.key === 'j') next = Math.min(current + 1, total + 1)
-      else if (event.key === 'ArrowUp' || event.key === 'k') next = Math.max(current - 1, 1)
-      else if (event.key === 'Home') next = 1
-      else if (event.key === 'End' || event.key === 'Escape') next = total + 1
-      else return
+      const next =
+        event.key === 'ArrowDown' || event.key === 'j'
+          ? Math.min(current + 1, total + 1)
+          : event.key === 'ArrowUp' || event.key === 'k'
+            ? Math.max(current - 1, 1)
+            : event.key === 'Home'
+              ? 1
+              : event.key === 'End' || event.key === 'Escape'
+                ? total + 1
+                : null
+      if (next === null) return
 
       event.preventDefault()
       // The document-level Escape handler is on the bubble phase too; without

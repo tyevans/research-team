@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import { useAttempts } from '@application/lesson/use-attempts.ts'
 import { useLesson, type Lesson } from '@application/lesson/use-lesson.ts'
@@ -35,15 +35,20 @@ export const FileView = ({
   path: FilePath | null
   scrub: ScrubPoint
 }) => {
-  const [tab, setTab] = useState<Tab>('content')
+  /** The open tab, stamped with the file it belongs to.
+   *
+   * A different file starts on its contents, not on whatever tab the last one
+   * was left on — and carrying the key makes that true on the render that
+   * changes files, where the effect it replaces left the history tab showing
+   * against the new file for one paint. */
+  const [tabFor, setTabFor] = useState<{ key: string; tab: Tab }>({ key: '', tab: 'content' })
+  const tabKey = path?.value ?? ''
+  const tab = tabFor.key === tabKey ? tabFor.tab : 'content'
+  const setTab = useCallback((next: Tab) => setTabFor({ key: tabKey, tab: next }), [tabKey])
   const [mode, setMode] = useState<RenderMode>('rendered')
   // Defaults to author because this console's reader is the person building the
   // course — the learner view is a preview of somebody else's screen.
   const [audience, setAudience] = useState<ComponentAudience>('author')
-
-  // A different file starts on its contents, not on whatever tab the last one
-  // was left on.
-  useEffect(() => setTab('content'), [path?.value])
 
   const showRendered = (path?.isMarkdown ?? false) && tab === 'content' && mode === 'rendered'
   const lesson = useLesson(sessionId, path, audience, scrub, showRendered)

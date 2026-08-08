@@ -58,9 +58,9 @@ export class HttpClient {
         formatIssues(result.error),
       )
     }
-    // Zod types `data` as `any` on a generic schema; the narrowing is the
-    // `safeParse` above, and this is the one place that has to say so.
-    return result.data as z.output<S>
+    // Zod 4 narrows `data` to `z.output<S>` on the success branch by itself.
+    // Under Zod 3 this needed an assertion here.
+    return result.data
   }
 }
 

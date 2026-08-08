@@ -44,11 +44,15 @@ export const FileList = ({
   const selectedIndex = files.findIndex((file) => file.path.equals(open))
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    let next = selectedIndex
-    if (event.key === 'ArrowDown') next = Math.min(selectedIndex + 1, files.length - 1)
-    else if (event.key === 'ArrowUp') next = Math.max(selectedIndex - 1, 0)
-    else if (event.key === 'Enter') next = selectedIndex < 0 ? 0 : selectedIndex
-    else return
+    const next =
+      event.key === 'ArrowDown'
+        ? Math.min(selectedIndex + 1, files.length - 1)
+        : event.key === 'ArrowUp'
+          ? Math.max(selectedIndex - 1, 0)
+          : event.key === 'Enter'
+            ? Math.max(selectedIndex, 0)
+            : null
+    if (next === null) return
 
     event.preventDefault()
     event.stopPropagation()
