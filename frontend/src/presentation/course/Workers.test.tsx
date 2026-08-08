@@ -5,6 +5,7 @@ import { expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
+import type { WorkerRepository } from '@application/ports/repositories.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 import type { Roster } from '@domain/worker/worker.ts'
 
@@ -40,7 +41,7 @@ const triggerRefetch = async (client: QueryClient) => {
 
 it('names the work in flight and offers it as a button', async () => {
   const workers = {
-    on: vi.fn().mockResolvedValue({
+    on: vi.fn<WorkerRepository['on']>().mockResolvedValue({
       ...empty,
       workers: [
         {
@@ -64,7 +65,7 @@ it('names the work in flight and offers it as a button', async () => {
 })
 
 it('says nothing is running rather than showing an empty box', async () => {
-  const workers = { on: vi.fn().mockResolvedValue(empty) }
+  const workers = { on: vi.fn<WorkerRepository['on']>().mockResolvedValue(empty) }
 
   renderWithContainer(<Workers projectId={PROJECT} watching={null} onWatch={() => {}} />, {
     workers,
@@ -78,7 +79,7 @@ it('keeps the last roster and marks it stale when a poll fails', async () => {
   // "nothing is running", which is the exact lie this panel exists to kill.
   const workers = {
     on: vi
-      .fn()
+      .fn<WorkerRepository['on']>()
       .mockResolvedValueOnce({
         ...empty,
         workers: [
@@ -115,7 +116,7 @@ it('keeps rendering the last roster’s rows, not just its stale chip, after a f
   // stale chip) survives, which is what the panel's whole purpose rests on.
   const workers = {
     on: vi
-      .fn()
+      .fn<WorkerRepository['on']>()
       .mockResolvedValueOnce({
         ...empty,
         workers: [
@@ -145,9 +146,34 @@ it('keeps rendering the last roster’s rows, not just its stale chip, after a f
   expect(screen.getByRole('button', { name: /turn 12/ })).toBeInTheDocument()
 })
 
+it('does not claim nothing is running while stale, even if the last roster was empty', async () => {
+  // Empty-then-failed is the same lie as the plain failed-poll case, reached
+  // by a different route: an empty roster plus `isError` must not render the
+  // unqualified "Nothing is running" sentence, which is a present-tense claim
+  // this render cannot actually back up.
+  const workers = {
+    on: vi
+      .fn<WorkerRepository['on']>()
+      .mockResolvedValueOnce(empty)
+      .mockRejectedValue(new Error('network')),
+  }
+
+  const { client } = renderWithContainer(
+    <Workers projectId={PROJECT} watching={null} onWatch={() => {}} />,
+    { workers },
+  )
+
+  expect(await screen.findByText(/nothing is running/i)).toBeInTheDocument()
+
+  await triggerRefetch(client)
+
+  await waitFor(() => expect(screen.getByText(/stale/i)).toBeInTheDocument())
+  expect(screen.queryByText('Nothing is running on this project.')).not.toBeInTheDocument()
+})
+
 it('indents a nested extraction under its parent', async () => {
   const workers = {
-    on: vi.fn().mockResolvedValue({
+    on: vi.fn<WorkerRepository['on']>().mockResolvedValue({
       ...empty,
       workers: [
         {

@@ -58,15 +58,14 @@ export const Workers = ({
     <>
       <div className="worker-head">
         <h3 className="worker-title">Working now</h3>
+        {isBusy(current) ? <Chip tone="current">{current!.workers.length} running</Chip> : null}
         {stale ? (
           <Chip tone="run-short" title="The last poll failed; this is the last roster that arrived">
             stale
           </Chip>
-        ) : isBusy(current) ? (
-          <Chip tone="current">{current!.workers.length} running</Chip>
-        ) : (
+        ) : !isBusy(current) ? (
           <Chip>idle</Chip>
-        )}
+        ) : null}
       </div>
 
       {current && current.workers.length > 0 ? (
@@ -75,6 +74,14 @@ export const Workers = ({
             <Row key={node.worker.ref} node={node} watching={watching} onWatch={onWatch} />
           ))}
         </ul>
+      ) : stale ? (
+        // Stale and empty must not read as "nothing is running": that is a
+        // present-tense claim this render cannot back up, since the only
+        // thing known is what the last roster (also empty) said, not what is
+        // true now. Say only what is actually known.
+        <p className="sub worker-sub">
+          The last poll failed. As of the last roster that arrived, nothing was running.
+        </p>
       ) : (
         <p className="sub worker-sub">
           Nothing is running on this project.{' '}
