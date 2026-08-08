@@ -374,7 +374,11 @@
      and it disappears entirely behind a dense drawing. */
   background-image:
     linear-gradient(color-mix(in srgb, var(--line-soft) 55%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--line-soft) 55%, transparent) 1px, transparent 1px);
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--line-soft) 55%, transparent) 1px,
+      transparent 1px
+    );
   background-size: 40px 40px;
   background-position: center;
 }

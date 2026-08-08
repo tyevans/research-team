@@ -40,12 +40,22 @@ const BUDGET_KB = {
   // itself, which does not get the `graph-` prefix because it is app code,
   // not a dependency, and manualChunks only renames node_modules code.
   'graph-': 62,
-  'GraphCanvas-': 1,
-  // 227 covered the research page's four panes; the last 1 kB is the links
-  // between that page and the course page, and the breadcrumb that says which
-  // of the two you are on. Measured at 227.1 kB, which is what tripped this
-  // gate -- the cross-links were the change that consumed the headroom.
-  total: 228,
+  // Was 1 kB while this chunk was a bare `React.lazy` wrapper handing the
+  // library a `graphData` prop. It now measures the container it is drawn in
+  // and paints its own nodes -- a `ResizeObserver` that gives the canvas a
+  // real width, and a canvas painter that draws each node's name and takes
+  // its colour from the entity type. Both are what made the pane usable: the
+  // canvas previously defaulted to `window.innerWidth` and drew itself off to
+  // the side of the pane, and an unlabelled node gave a reader nothing to aim
+  // at. Measured at 1.1 kB.
+  'GraphCanvas-': 2,
+  // 227 covered the research page's four panes; 228 added the links between
+  // that page and the course page, and the breadcrumb that says which of the
+  // two you are on. The last 2 kB is the research page's layout: a rail and a
+  // stage in place of the four-pane grid, the floating search over the canvas,
+  // this view's first media queries, and the node painting described above.
+  // Measured at 228.6 kB, which is what tripped this gate.
+  total: 230,
 }
 
 const kb = (bytes) => Math.round((bytes / 1024) * 10) / 10
