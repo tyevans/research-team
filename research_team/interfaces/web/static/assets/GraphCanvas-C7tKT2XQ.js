@@ -1,0 +1,1 @@
+import{t as e}from"./graph-C7vENKx8.js";import{r as t}from"./react-BCk9HORf.js";var n=t(),r=({view:t,onNodeClick:r})=>(0,n.jsx)(e,{graphData:{nodes:[...t.nodes],links:[...t.links]},nodeLabel:e=>`${String(e.name)} (${String(e.entityType)})`,linkLabel:e=>String(e.relationshipType),linkDirectionalArrowLength:4,height:360,onNodeClick:e=>r(String(e.id))});export{r as GraphCanvas};

@@ -41,7 +41,11 @@ const BUDGET_KB = {
   // not a dependency, and manualChunks only renames node_modules code.
   'graph-': 62,
   'GraphCanvas-': 1,
-  total: 227,
+  // 227 covered the research page's four panes; the last 1 kB is the links
+  // between that page and the course page, and the breadcrumb that says which
+  // of the two you are on. Measured at 227.1 kB, which is what tripped this
+  // gate -- the cross-links were the change that consumed the headroom.
+  total: 228,
 }
 
 const kb = (bytes) => Math.round((bytes / 1024) * 10) / 10
