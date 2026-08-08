@@ -895,7 +895,9 @@ def create_app(
         # the turn is still worth running.
         try:
             await service.ensure_project_attached(session_id)
-        except Exception:  # noqa: BLE001 -- a turn without the graph beats no turn
+        # No `noqa` needed: ruff accepts a bare `except Exception` whose handler
+        # logs it with `exc_info=True`, which is what the warning below does.
+        except Exception:
             logger.warning(
                 "could not attach knowledge graph for %s", session_id, exc_info=True
             )

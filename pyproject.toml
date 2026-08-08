@@ -62,11 +62,20 @@ addopts = "-m 'not live and not integration'"
 [tool.ruff]
 line-length = 95
 
+# The files ruff owns, stated rather than inherited. 0.16 added markdown to the
+# default set and began reformatting Python inside fenced blocks, which here
+# means the design docs under `docs/` -- illustrative snippets, hand-aligned to
+# read as prose, and in places verbatim quotations of a third-party library's
+# source. Reformatting a quotation makes it stop being one. Naming the set keeps
+# a future default from silently claiming another file type.
+include = ["*.py", "*.pyi", "**/pyproject.toml"]
+
 [tool.ruff.lint]
 # Chosen to match what the code already does rather than to impose a new style.
-# BLE earns its place: every broad `except` here is deliberate and already
-# carries a `noqa` explaining why, and enabling the rule is what makes those
-# comments load-bearing instead of decorative.
+# BLE earns its place: every broad `except` here is deliberate, and enabling the
+# rule is what makes the comment explaining each one load-bearing instead of
+# decorative. Most carry a `noqa`; the one that logs with `exc_info=True` no
+# longer needs one, because ruff reads that as handling rather than swallowing.
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "C4", "BLE"]
 
 [tool.ruff.lint.per-file-ignores]
