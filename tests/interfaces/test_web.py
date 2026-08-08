@@ -1532,6 +1532,36 @@ async def test_a_dropped_source_is_gone_from_both_routes(app_and_client):
     assert reading.status_code == 404
 
 
+async def test_dropped_sources_can_be_listed_with_their_reason(app_and_client):
+    """The corpus keeps dropped documents deliberately. A browser that hid
+    them would misreport what the project holds."""
+    application, client = app_and_client
+    project_id = await _project_with_sources(
+        application,
+        client,
+        {"source_id": "s1", "text": "Ada Lovelace."},
+        DropSourceDocument(source_id="s1", reason="superseded by a later edition"),
+    )
+
+    rows = (
+        await client.get(f"/api/projects/{project_id}/sources?include_dropped=true")
+    ).json()
+
+    assert rows[0]["dropped_reason"] == "superseded by a later edition"
+
+
+async def test_listing_without_include_dropped_omits_the_reason_key_too(app_and_client):
+    """The default answer says nothing about drops at all, live or dropped."""
+    application, client = app_and_client
+    project_id = await _project_with_sources(
+        application, client, {"source_id": "s1", "text": "Ada Lovelace."}
+    )
+
+    rows = (await client.get(f"/api/projects/{project_id}/sources")).json()
+
+    assert rows[0]["dropped_reason"] is None
+
+
 # ---------------- topics ----------------
 
 

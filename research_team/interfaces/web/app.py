@@ -551,11 +551,20 @@ def create_app(
         return ProjectCorpusReader(corpus, project_id)
 
     @app.get("/api/projects/{project_id}/sources")
-    async def list_sources(project_id: UUID):
-        """Every source this project has stored. Metadata only, never text."""
+    async def list_sources(project_id: UUID, include_dropped: bool = False):
+        """Every source this project has stored. Metadata only, never text.
+
+        `include_dropped` defaults to False, so the agent's own `list_sources`
+        tool -- which calls the port behind this route directly, not this
+        route -- is unaffected either way; the default here exists only so a
+        browser doing the same request the agent's tool makes sees the same
+        thing. A caller that opts in sees dropped documents too, each with
+        the reason it was excluded: the corpus keeps them for that reason.
+        """
         reader = _reader(project_id)
         await _require_project(project_id)
-        return [source_view(summary) for summary in await reader.list_documents()]
+        summaries = await reader.list_documents(include_dropped=include_dropped)
+        return [source_view(summary) for summary in summaries]
 
     @app.get("/api/projects/{project_id}/sources/{source_id}")
     async def read_source(

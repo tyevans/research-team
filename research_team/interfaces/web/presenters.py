@@ -460,6 +460,9 @@ def source_view(summary: DocumentRecord) -> dict[str, Any]:
         "title": summary.title,
         "published_at": summary.published_at,
         "note": summary.note,
+        # Null for a live document; set means excluded. Always present so a
+        # caller can tell "not dropped" from "the field went missing".
+        "dropped_reason": summary.dropped_reason,
     }
 
 

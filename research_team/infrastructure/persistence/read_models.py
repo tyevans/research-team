@@ -659,18 +659,36 @@ class CorpusStore:
             return None
         return row
 
-    async def list(self, project_id: UUID) -> list[DocumentRecord]:
-        """Every live document in a project, by source id, without their text.
+    async def list(
+        self, project_id: UUID, *, include_dropped: bool = False
+    ) -> list[DocumentRecord]:
+        """Every document in a project, by source id, without their text.
 
         Selects columns explicitly instead of going through the repository,
         which would load whole rows -- and a row here is an entire document.
         Listing a corpus of a hundred papers would pull every one of them
         through memory to render a table of titles.
+
+        `include_dropped` defaults to False so every existing caller -- the
+        agent's own `list_sources` tool among them -- keeps seeing exactly
+        the live corpus it always has. A caller that opts in gets dropped
+        rows back too, `dropped_reason` and all, because the corpus keeps
+        them on purpose and hiding them would misreport what it holds.
         """
-        columns = ("source_id", "sha256", "char_count", "uri", "title", "published_at", "note")
+        columns = (
+            "source_id",
+            "sha256",
+            "char_count",
+            "uri",
+            "title",
+            "published_at",
+            "note",
+            "dropped_reason",
+        )
+        drop_filter = "" if include_dropped else "AND dropped_reason IS NULL "
         cursor = await self._connection.execute(
             f"SELECT {', '.join(columns)} FROM {CorpusDocumentRow.table_name()} "
-            "WHERE project_id = ? AND dropped_reason IS NULL AND deleted_at IS NULL "
+            f"WHERE project_id = ? {drop_filter}AND deleted_at IS NULL "
             "ORDER BY source_id",
             (str(project_id),),
         )
@@ -797,10 +815,12 @@ class CorpusRunner:
             raise RuntimeError("the corpus projection has not been started")
         return await self._corpus.get(project_id, source_id)
 
-    async def list(self, project_id: UUID) -> list[DocumentRecord]:
+    async def list(
+        self, project_id: UUID, *, include_dropped: bool = False
+    ) -> list[DocumentRecord]:
         if self._corpus is None:
             raise RuntimeError("the corpus projection has not been started")
-        return await self._corpus.list(project_id)
+        return await self._corpus.list(project_id, include_dropped=include_dropped)
 
     async def rebuild(self) -> None:
         """Throw the table away and derive it again from the log.
