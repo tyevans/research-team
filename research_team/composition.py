@@ -36,6 +36,7 @@ from research_team.application import (
     SessionService,
     TopicRoundRunner,
     TurnSupervisor,
+    WorkerRoster,
 )
 from research_team.application.artifacts import stage_artifact_instructions
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
@@ -147,6 +148,14 @@ class Application:
     topic repository, the queue projection and the turn supervisor -- and both
     front ends want the same one. Two supervisors over one database would each
     believe they held the only run on a project."""
+
+    workers: WorkerRoster
+    """Everything in flight on a project, for a front end that wants to show it.
+
+    A field for the same reason `research` is one: it needs three things only
+    this module holds together -- the session service, the turn supervisor and
+    the research supervisor -- and both front ends want the same answer from
+    the same three."""
 
     policy: AutonomyPolicy
     """Per-tool autonomy levels for this instance, mutable after construction.
@@ -770,6 +779,9 @@ def build_application(
             read_only=resolved_policy.level_for(FETCH_TOOL) != "auto",
         )
 
+    research_supervisor = ResearchSupervisor(start_run, runs)
+    worker_roster = WorkerRoster(service, turns=turns, runs=research_supervisor)
+
     return Application(
         service=service,
         feed=LiveFeed(repository),
@@ -778,7 +790,8 @@ def build_application(
         summaries=summaries,
         corpus=corpus,
         topics=topics,
-        research=ResearchSupervisor(start_run, runs),
+        research=research_supervisor,
+        workers=worker_roster,
         policy=resolved_policy,
         _initial_project_id=project_id,
     )

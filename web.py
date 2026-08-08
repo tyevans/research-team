@@ -35,6 +35,7 @@ def main() -> None:
             lifespan,
             approvals=approvals,
             activity=activity,
+            workers=application.workers,
             # Withheld unless this instance was configured for it, so the
             # routes are absent rather than present-and-refusing. See
             # `config.auto_research_over_http`: there is no authentication in

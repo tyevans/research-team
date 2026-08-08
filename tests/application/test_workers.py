@@ -174,3 +174,18 @@ async def test_a_project_with_nothing_running_has_no_workers():
 
     assert result.workers == ()
     assert result.idle_session_ids == (session_id,)
+
+
+@pytest.mark.asyncio
+async def test_the_composition_root_wires_a_roster(db_path):
+    """A built application can answer "what is running" without more wiring.
+
+    Asserted here rather than left to the web tests because both front ends
+    are entitled to the roster, and a CLI that had to build its own would end
+    up with a second one disagreeing with the first.
+    """
+    from research_team import composition
+
+    app = composition.build_application(db_path=db_path)
+
+    assert app.workers is not None
