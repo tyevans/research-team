@@ -57,14 +57,19 @@ it('reads the document by id and shows its text', async () => {
   expect(read).toHaveBeenCalledWith(PROJECT, SOURCE, undefined)
 })
 
-it('shows the title as a heading, falling back to the source id', async () => {
+it('leaves the title to the drawer around it rather than repeating it', async () => {
+  // The drawer's header names the open document, and it names it from the list
+  // row -- so it is correct while this component's fetch is still in flight,
+  // where a heading here would appear a moment later underneath it. Two copies
+  // of one title is chrome, not information.
   const documents = fakeDocuments(
-    vi.fn<DocumentRepository['read']>().mockResolvedValue(text({ title: null })),
+    vi.fn<DocumentRepository['read']>().mockResolvedValue(text({ title: 'Ada Lovelace' })),
   )
 
   renderWithContainer(<DocumentReader projectId={PROJECT} sourceId={SOURCE} />, { documents })
 
-  expect(await screen.findByRole('heading', { name: 's1' })).toBeInTheDocument()
+  await screen.findByText('Ada Lovelace worked with Charles Babbage.')
+  expect(screen.queryByRole('heading')).not.toBeInTheDocument()
 })
 
 it('reports an error rather than an empty pane when the read fails', async () => {

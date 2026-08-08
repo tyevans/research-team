@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactElement, ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
@@ -91,6 +92,84 @@ it('renders a dropped document’s reason and marks it, without hiding it', asyn
   const row = droppedTitle.closest('.document-row')
   expect(row).not.toBeNull()
   expect(row!.className).toContain('document-dropped')
+})
+
+it('lets a row be as tall as its title instead of pinning it to one row height', async () => {
+  // A fixed 52px row treated a wrapped title as if it took one line, so a
+  // two-line title -- most of them, in a 340px rail -- drew over the row
+  // beneath it. Rows are measured now, which needs three things from the DOM:
+  // the index the virtualizer reads back to know what it measured, a transform
+  // rather than a `top` offset (a measured row would otherwise be offset
+  // twice), and no inline height overriding the content.
+  //
+  // The heights themselves are not asserted: jsdom has no layout, so every
+  // measurement there is 0. This pins the shape that makes measuring work; the
+  // drawing itself was checked in a browser.
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace' })]),
+  )
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+
+  const row = (await screen.findByText('Ada Lovelace')).closest('.document-row')
+  expect(row).not.toBeNull()
+  expect(row).toHaveAttribute('data-index', '0')
+  expect((row as HTMLElement).style.transform).toBe('translateY(0px)')
+  expect((row as HTMLElement).style.height).toBe('')
+})
+
+it('opens a document over the page rather than below the list', async () => {
+  // The list sits in a 340px rail. Rendered inline, a document was a few words
+  // per line under a list that had been pushed out of the way, so the reader
+  // belongs in the same drawer the console already uses for reading something
+  // without losing your place.
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace' })]),
+  )
+  documents.read = vi.fn<DocumentRepository['read']>().mockResolvedValue({
+    sourceId: SourceId('s1'),
+    title: 'Ada Lovelace',
+    text: 'Notes on the Analytical Engine.',
+    droppedReason: null,
+  } as Awaited<ReturnType<DocumentRepository['read']>>)
+  const user = userEvent.setup()
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+
+  await user.click(await screen.findByRole('button', { name: /ada lovelace/i }))
+
+  const dialog = await screen.findByRole('dialog')
+  expect(dialog).toHaveAttribute('aria-modal', 'true')
+  expect(within(dialog).getByText(/analytical engine/i)).toBeInTheDocument()
+})
+
+it('closes the open document on Escape, leaving the list behind it', async () => {
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace' })]),
+  )
+  documents.read = vi.fn<DocumentRepository['read']>().mockResolvedValue({
+    sourceId: SourceId('s1'),
+    title: 'Ada Lovelace',
+    text: 'Notes on the Analytical Engine.',
+    droppedReason: null,
+  } as Awaited<ReturnType<DocumentRepository['read']>>)
+  const user = userEvent.setup()
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+
+  await user.click(await screen.findByRole('button', { name: /ada lovelace/i }))
+  await screen.findByRole('dialog')
+
+  await user.keyboard('{Escape}')
+
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.getByText('Ada Lovelace')).toBeInTheDocument()
 })
 
 it('says no documents exist yet rather than showing an empty box', async () => {

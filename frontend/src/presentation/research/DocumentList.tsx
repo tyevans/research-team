@@ -8,6 +8,7 @@ import { useContainer } from '@app/container-context.tsx'
 import { documentLabel, isDropped, type DocumentSummary } from '@domain/research/document.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
+import { Drawer } from '../common/Drawer.tsx'
 import { EmptyState, ErrorBox, Loading } from '../common/primitives.tsx'
 import { DocumentReader } from './DocumentReader.tsx'
 
@@ -51,7 +52,17 @@ export const DocumentList = ({ projectId }: { projectId: ProjectId }) => {
   const virtualizer = useVirtualizer({
     count: filtered.length,
     getScrollElement: () => scrollRef.current,
+    // An estimate now, not the truth. `ROW_HEIGHT` was treated as exact, and a
+    // title that wrapped to two lines -- most of them, in a 340px rail -- drew
+    // over the row beneath it. Each row reports its real height through
+    // `measureElement` below, and this is only what the virtualizer assumes
+    // for rows it has not drawn yet.
     estimateSize: () => ROW_HEIGHT,
+    // Measured, except when the environment has no layout to measure. jsdom
+    // reports every height as 0, and a measured 0 would collapse the list to
+    // nothing and take the rows with it -- so a zero measurement falls back to
+    // the estimate, which is what keeps this component testable at all.
+    measureElement: (element) => element.getBoundingClientRect().height || ROW_HEIGHT,
     overscan: 8,
   })
 
@@ -93,37 +104,78 @@ export const DocumentList = ({ projectId }: { projectId: ProjectId }) => {
               <DocumentRow
                 key={row.sourceId}
                 document={row}
+                index={item.index}
                 top={item.start}
-                height={item.size}
+                measure={virtualizer.measureElement}
                 onOpen={() => setReading(row.sourceId)}
               />
             )
           })}
         </ul>
       </div>
+      {/* Over the page, not below the list. The list lives in a 340px rail,
+          and a document is a wall of prose -- read in that column it was a
+          few words per line under a list that had been pushed up out of the
+          way. The drawer is the console's existing answer to "read this
+          without losing where you were", and a source is exactly that kind of
+          thing: you open one, read it, and go back to the graph you were
+          looking at. */}
       {reading ? (
-        <DocumentReader projectId={projectId} sourceId={reading} />
-      ) : (
-        <EmptyState title="No document open" detail="Pick a row to read its text." />
-      )}
+        <Drawer
+          title={readingLabel(filtered, reading)}
+          label={`Reading ${readingLabel(filtered, reading)}`}
+          onClose={() => setReading(null)}
+        >
+          <DocumentReader projectId={projectId} sourceId={reading} />
+        </Drawer>
+      ) : null}
     </div>
   )
 }
 
+/** The open document's title, for the drawer's heading.
+ *
+ * Taken from the row that opened it rather than waited for from the reader's
+ * own fetch: the heading is on screen while that request is in flight, and a
+ * drawer that opens with an empty title and fills it in a moment later reads
+ * as a bug. Falls back to the id, which is all the list can offer if the row
+ * has been filtered out from under the open document.
+ */
+const readingLabel = (rows: readonly DocumentSummary[], sourceId: SourceId): string => {
+  const row = rows.find((candidate) => candidate.sourceId === sourceId)
+  return row ? documentLabel(row) : String(sourceId)
+}
+
 const DocumentRow = ({
   document,
+  index,
   top,
-  height,
+  measure,
   onOpen,
 }: {
   document: DocumentSummary
+  /** The virtualizer reads this back off the DOM node to know which row it
+   *  just measured, so it has to be on the element `measure` is given. */
+  index: number
   top: number
-  height: number
+  measure: (element: HTMLElement | null) => void
   onOpen: () => void
 }) => (
   <li
+    ref={measure}
+    data-index={index}
     className={clsx('document-row', isDropped(document) && 'document-dropped')}
-    style={{ position: 'absolute', top, left: 0, right: 0, height }}
+    // Positioned by transform rather than `top`, and with no height at all:
+    // the row is now as tall as its content, and `translateY` is what the
+    // virtualizer's own measurement expects to find -- a `top` offset would be
+    // counted twice once a row reports a height different from the estimate.
+    style={{
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      transform: `translateY(${top}px)`,
+    }}
   >
     <button type="button" className="document-row-open" onClick={onOpen}>
       <span className="document-row-title">{documentLabel(document)}</span>

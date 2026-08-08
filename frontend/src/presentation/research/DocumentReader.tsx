@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query'
 
 import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
-import { documentLabel } from '@domain/research/document.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
 import { ErrorBox, Loading } from '../common/primitives.tsx'
@@ -39,8 +38,12 @@ export const DocumentReader = ({
   const document = query.data
 
   return (
+    // No heading of its own: this renders inside a drawer that already names
+    // the document in its header, and two copies of the same title stacked on
+    // each other is chrome, not information. The title-or-id fallback moved to
+    // the drawer with it, where it is taken from the list row so the heading is
+    // right while this component's own fetch is still in flight.
     <article className="document-reader">
-      <h3 className="document-reader-title">{documentLabel(document)}</h3>
       {document.droppedReason ? (
         <p className="document-reader-dropped">Dropped: {document.droppedReason}</p>
       ) : null}
