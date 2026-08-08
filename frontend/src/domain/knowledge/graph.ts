@@ -105,3 +105,56 @@ export const expand = (view: GraphView, hood: Neighborhood): GraphView => {
 }
 
 export const isExpanded = (view: GraphView, id: string): boolean => view.expanded.has(id)
+
+/** One end of a link, as an id, whichever form it is currently in.
+ *
+ * `GraphLink` declares `source` and `target` as ids, and they are ids right up
+ * until the drawing gets hold of them: d3-force replaces each one with a
+ * reference to the node object it resolved to, in place, on the very objects
+ * this module handed it. So a link read back after the canvas has drawn it
+ * once has node objects where a caller would reasonably expect strings, and
+ * code that assumes either form alone is right exactly half the time.
+ */
+const endpointId = (endpoint: unknown): string =>
+  typeof endpoint === 'string'
+    ? endpoint
+    : String((endpoint as { id?: unknown } | null)?.id ?? endpoint)
+
+/** A link seen from one of its ends: which way it points, and what is at the
+ *  other end. */
+export interface GraphEdgeView {
+  readonly relationshipType: string
+  /** `out` when the selected node is this link's source. */
+  readonly direction: 'out' | 'in'
+  readonly other: GraphNode
+}
+
+/** Every link touching `id`, resolved to the node at the other end.
+ *
+ * Direction is kept rather than flattened to "connected to": `advised(a→b)`
+ * and `advised(b→a)` say different things, and a list that showed both as the
+ * same row would be describing a different graph from the one on screen.
+ */
+export const edgesOf = (view: GraphView, id: string): readonly GraphEdgeView[] => {
+  const byId = new Map(view.nodes.map((node) => [node.id, node]))
+
+  return view.links.flatMap((link) => {
+    const source = endpointId(link.source)
+    const target = endpointId(link.target)
+    const otherId = source === id ? target : target === id ? source : null
+    if (otherId === null) return []
+
+    const other = byId.get(otherId)
+    // A link whose far end is not in the node set cannot be drawn as a row
+    // any more than it can be drawn as a line. `expand` maintains that this
+    // does not happen; this is the reading side of the same invariant.
+    if (!other) return []
+
+    const edge: GraphEdgeView = {
+      relationshipType: link.relationshipType,
+      direction: source === id ? 'out' : 'in',
+      other,
+    }
+    return [edge]
+  })
+}

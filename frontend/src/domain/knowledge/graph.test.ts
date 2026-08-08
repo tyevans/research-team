@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { emptyGraph, expand, isExpanded, type Neighborhood } from './graph.ts'
+import {
+  edgesOf,
+  emptyGraph,
+  expand,
+  isExpanded,
+  type GraphView,
+  type Neighborhood,
+} from './graph.ts'
 
 // A neighbourhood whose root is `root` and whose entities are `others`, with
 // no relationships. Enough to exercise node merging without needing an edge in
@@ -90,5 +97,56 @@ describe('expand', () => {
 
   it('does not report an unexpanded node as expanded', () => {
     expect(isExpanded(emptyGraph, 'prandtl')).toBe(false)
+  })
+})
+
+describe('edgesOf', () => {
+  it('reports both directions distinctly, with the node at the far end', () => {
+    const view = expand(expand(emptyGraph, edge('a', 'b')), edge('c', 'a'))
+
+    const edges = edgesOf(view, 'a')
+
+    expect(edges).toHaveLength(2)
+    expect(edges).toContainEqual({
+      relationshipType: 'advised',
+      direction: 'out',
+      other: expect.objectContaining({ id: 'b' }),
+    })
+    expect(edges).toContainEqual({
+      relationshipType: 'advised',
+      direction: 'in',
+      other: expect.objectContaining({ id: 'c' }),
+    })
+  })
+
+  it('reads endpoints that d3-force has replaced with node objects', () => {
+    // The drawing mutates the very link objects this module hands it, swapping
+    // each id for a reference to the node it resolved to. A link read back
+    // after the canvas has drawn it once therefore has objects where the type
+    // says strings, and a reader that assumed strings would show an entity as
+    // having no connections at all the moment it was drawn.
+    const view = expand(emptyGraph, edge('a', 'b'))
+    const drawn: GraphView = {
+      ...view,
+      links: view.links.map((link) => ({
+        ...link,
+        source: view.nodes.find((n) => n.id === 'a')!,
+        target: view.nodes.find((n) => n.id === 'b')!,
+      })) as unknown as GraphView['links'],
+    }
+
+    expect(edgesOf(drawn, 'a')).toEqual([
+      {
+        relationshipType: 'advised',
+        direction: 'out',
+        other: expect.objectContaining({ id: 'b' }),
+      },
+    ])
+  })
+
+  it('ignores links that do not touch the node', () => {
+    const view = expand(emptyGraph, edge('a', 'b'))
+
+    expect(edgesOf(view, 'zz')).toEqual([])
   })
 })

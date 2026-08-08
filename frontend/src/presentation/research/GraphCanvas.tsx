@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import ForceGraph2D from 'react-force-graph-2d'
+import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d'
 
 import type { GraphView } from '@domain/knowledge/graph.ts'
 
@@ -96,6 +96,23 @@ export const GraphCanvas = memo(function GraphCanvas({
   const container = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ width: number; height: number } | null>(null)
 
+  // The number of nodes the view was last framed at. An expansion drops new
+  // nodes wherever the simulation happens to fling them, which for a
+  // well-connected entity is mostly outside the stage -- so the graph grows and
+  // the reader watches the part they were already looking at, with no way to
+  // know anything arrived. Refitting when the count changes puts the whole
+  // drawing back in view.
+  //
+  // Keyed on the count rather than fitting on every settle: the simulation
+  // re-settles after a drag or a zoom too, and refitting there would yank the
+  // view back from wherever the reader had just put it.
+  const graph = useRef<ForceGraphMethods | undefined>(undefined)
+  const framedAt = useRef<number>(0)
+
+  /** The zoom the last frame was painted at. The node painter is told it; the
+   *  hit-area painter is not, and both have to agree on how big a node is. */
+  const scale = useRef<number>(1)
+
   // Resolved once from the stylesheet. `getComputedStyle` is a layout read, and
   // the canvas painter runs per node per frame -- doing it there would be a
   // forced reflow sixty times a second.
@@ -141,9 +158,24 @@ export const GraphCanvas = memo(function GraphCanvas({
           is the very layout this is avoiding. */}
       {size === null ? null : (
         <ForceGraph2D
+          ref={graph}
           width={size.width}
           height={size.height}
           graphData={graphData}
+          // Fired when the simulation comes to rest, which is the first moment
+          // the node positions are worth framing. `zoomToFit` before then
+          // frames wherever the nodes were mid-flight.
+          // force-graph's default is 15 seconds, which is how long the
+          // simulation keeps running after it has visibly stopped moving --
+          // and, because the framing below waits for it, how long the graph
+          // used to sit unframed after an expansion. A neighbourhood of this
+          // size settles in well under two.
+          cooldownTime={1800}
+          onEngineStop={() => {
+            if (framedAt.current === graphData.nodes.length) return
+            framedAt.current = graphData.nodes.length
+            graph.current?.zoomToFit(400, 48)
+          }}
           nodeLabel={(node) => `${String(node.name)} (${String(node.entityType)})`}
           linkLabel={(link) => String(link.relationshipType)}
           linkDirectionalArrowLength={4}
@@ -158,8 +190,18 @@ export const GraphCanvas = memo(function GraphCanvas({
             const { x = 0, y = 0 } = node as SimulatedNode
             const color = colorForType(String(node.entityType), theme.palette)
 
+            // Remembered for the hit area below, which is painted on a
+            // separate pass that is not told the zoom.
+            scale.current = globalScale
+
+            // Divided by the zoom, so the dot is the same size on screen at
+            // every zoom level. Drawn in graph units it would be a 5px mark
+            // when the graph was small and a blob wider than its own label
+            // once the view was fitted to a handful of nodes.
+            const radius = 5 / globalScale
+
             ctx.beginPath()
-            ctx.arc(x, y, 5, 0, 2 * Math.PI)
+            ctx.arc(x, y, radius, 0, 2 * Math.PI)
             ctx.fillStyle = color
             ctx.fill()
 
@@ -185,7 +227,9 @@ export const GraphCanvas = memo(function GraphCanvas({
             const { x = 0, y = 0 } = node as SimulatedNode
             ctx.fillStyle = color
             ctx.beginPath()
-            ctx.arc(x, y, 8, 0, 2 * Math.PI)
+            // Tracks the painted dot, and is a little larger than it: a reader
+            // aiming at a labelled node is aiming at the label too.
+            ctx.arc(x, y, 9 / scale.current, 0, 2 * Math.PI)
             ctx.fill()
           }}
           onNodeClick={(node) => {

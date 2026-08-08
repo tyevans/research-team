@@ -167,3 +167,56 @@ it('passes the selected entity type filter to the repository', async () => {
 
   await waitFor(() => expect(search).toHaveBeenLastCalledWith(PROJECT, 'ada', 'Person'))
 })
+
+it('says what a clicked entity is and what it connects to', async () => {
+  // The answer to "I can click a node and nothing meaningful happens".
+  // Expanding draws more dots; this is the part that says what the dot was.
+  const ada = node()
+  const babbage = node({ id: 'babbage', name: 'Charles Babbage', entityType: 'Person' })
+  const graphs = fakeGraphs({
+    search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
+    neighborhood: vi.fn().mockResolvedValue({
+      root: ada,
+      entities: [babbage],
+      relationships: [{ source: 'ada', target: 'babbage', relationshipType: 'collaborated_with' }],
+    } satisfies Neighborhood),
+  })
+  const user = userEvent.setup()
+
+  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+
+  await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
+  await user.click(await screen.findByRole('button', { name: /Ada Lovelace/ }))
+
+  const detail = await screen.findByRole('complementary', { name: /about ada lovelace/i })
+  expect(detail).toHaveTextContent('Person')
+  // The relationship type is the content of a knowledge graph -- a panel that
+  // only said "connected to" would be throwing away the part worth reading --
+  // and the arrow is what makes the row read as a sentence about Ada rather
+  // than one the reader has to reverse in their head.
+  expect(detail).toHaveTextContent('collaborated_with')
+  expect(detail).toHaveTextContent('Charles Babbage')
+  expect(detail.textContent).toContain('→')
+})
+
+it('closes the detail panel without disturbing the drawing', async () => {
+  const ada = node()
+  const graphs = fakeGraphs({
+    search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
+    neighborhood: vi.fn().mockResolvedValue(hoodOf(ada)),
+  })
+  const user = userEvent.setup()
+
+  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+
+  await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
+  await user.click(await screen.findByRole('button', { name: /Ada Lovelace/ }))
+  await screen.findByRole('complementary', { name: /about ada lovelace/i })
+
+  await user.click(screen.getByRole('button', { name: /close entity details/i }))
+
+  expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+  // The canvas stub stands in for the drawing: closing the panel is a change
+  // of what is described, not of what is drawn.
+  expect(screen.getByRole('button', { name: 'canvas' })).toBeInTheDocument()
+})
