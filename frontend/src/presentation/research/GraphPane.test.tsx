@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { expect, it, vi } from 'vitest'
 
@@ -40,6 +41,15 @@ const fakeGraphs = (over: Partial<GraphRepository> = {}): GraphRepository => ({
   ...over,
 })
 
+/** `GraphPane` with the route wired up, which is the only way the real app
+ *  ever renders it: selection lives in the URL, so a pane rendered with a
+ *  fixed `entity` and a no-op `onEntity` could never select anything at all.
+ *  This stands in for the address bar. */
+const RoutedGraphPane = ({ start = null }: { start?: string | null }) => {
+  const [entity, setEntity] = useState<string | null>(start)
+  return <GraphPane projectId={PROJECT} entity={entity} onEntity={setEntity} />
+}
+
 const renderWithContainer = (ui: ReactElement, parts: Partial<AppContainer>) => {
   const container = parts as unknown as AppContainer
   return render(<ContainerProvider container={container}>{ui}</ContainerProvider>)
@@ -52,7 +62,7 @@ it('populates results from a search', async () => {
   })
   const user = userEvent.setup()
 
-  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+  renderWithContainer(<RoutedGraphPane />, { graphs })
 
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
 
@@ -68,7 +78,7 @@ it('expands a clicked result into the canvas', async () => {
   })
   const user = userEvent.setup()
 
-  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+  renderWithContainer(<RoutedGraphPane />, { graphs })
 
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
   const result = await screen.findByText(/Ada Lovelace/)
@@ -86,7 +96,7 @@ it('does not re-fetch an already-expanded node clicked again from the canvas', a
   })
   const user = userEvent.setup()
 
-  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+  renderWithContainer(<RoutedGraphPane />, { graphs })
 
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
   const result = await screen.findByText(/Ada Lovelace/)
@@ -109,7 +119,7 @@ it('surfaces a 422 from too-deep a request rather than failing silently', async 
   })
   const user = userEvent.setup()
 
-  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+  renderWithContainer(<RoutedGraphPane />, { graphs })
 
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
   const result = await screen.findByText(/Ada Lovelace/)
@@ -124,7 +134,7 @@ it('debounces search rather than issuing one request per keystroke', async () =>
   const graphs = fakeGraphs({ search })
   const user = userEvent.setup()
 
-  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+  renderWithContainer(<RoutedGraphPane />, { graphs })
 
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
 
@@ -142,7 +152,7 @@ it('tells the reader when the server held back more matches than it showed', asy
   })
   const user = userEvent.setup()
 
-  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+  renderWithContainer(<RoutedGraphPane />, { graphs })
 
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
 
@@ -155,7 +165,7 @@ it('passes the selected entity type filter to the repository', async () => {
   const graphs = fakeGraphs({ search })
   const user = userEvent.setup()
 
-  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+  renderWithContainer(<RoutedGraphPane />, { graphs })
 
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
   await screen.findByText(/Ada Lovelace/)
@@ -183,7 +193,7 @@ it('says what a clicked entity is and what it connects to', async () => {
   })
   const user = userEvent.setup()
 
-  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+  renderWithContainer(<RoutedGraphPane />, { graphs })
 
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
   await user.click(await screen.findByRole('button', { name: /Ada Lovelace/ }))
@@ -207,7 +217,7 @@ it('closes the detail panel without disturbing the drawing', async () => {
   })
   const user = userEvent.setup()
 
-  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+  renderWithContainer(<RoutedGraphPane />, { graphs })
 
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
   await user.click(await screen.findByRole('button', { name: /Ada Lovelace/ }))
@@ -232,7 +242,7 @@ it('gets the result list out of the way once a result is picked', async () => {
   })
   const user = userEvent.setup()
 
-  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+  renderWithContainer(<RoutedGraphPane />, { graphs })
 
   const box = screen.getByRole('searchbox', { name: /search the graph/i })
   await user.type(box, 'ada')
@@ -260,7 +270,7 @@ it('distinguishes an entity with no relationships from one not yet expanded', as
   })
   const user = userEvent.setup()
 
-  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+  renderWithContainer(<RoutedGraphPane />, { graphs })
 
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
   await user.click(await screen.findByRole('button', { name: /Ada Lovelace/ }))
@@ -285,7 +295,7 @@ it('takes an entity off the drawing, and the panel with it', async () => {
   })
   const user = userEvent.setup()
 
-  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+  renderWithContainer(<RoutedGraphPane />, { graphs })
 
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
   await user.click(await screen.findByRole('button', { name: /Ada Lovelace/ }))
@@ -309,7 +319,7 @@ it('closes the detail panel on Escape, the way the drawers do', async () => {
   })
   const user = userEvent.setup()
 
-  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+  renderWithContainer(<RoutedGraphPane />, { graphs })
 
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
   await user.click(await screen.findByRole('button', { name: /Ada Lovelace/ }))
@@ -320,4 +330,38 @@ it('closes the detail panel on Escape, the way the drawers do', async () => {
   expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
   // Closing the description does not undraw what it described.
   expect(screen.getByRole('button', { name: 'canvas' })).toBeInTheDocument()
+})
+
+it('draws the entity named in the route on load, with no search first', async () => {
+  const ada = node()
+  const neighborhood = vi.fn().mockResolvedValue(hoodOf(ada))
+  const graphs = fakeGraphs({ neighborhood })
+
+  renderWithContainer(<RoutedGraphPane start="ada" />, { graphs })
+
+  // The whole point of the entity being in the URL: a pasted link draws the
+  // graph it describes, without anybody retyping the search that found it.
+  await waitFor(() => expect(neighborhood).toHaveBeenCalledWith(PROJECT, 'ada'))
+  expect(
+    await screen.findByRole('complementary', { name: /about ada lovelace/i }),
+  ).toBeInTheDocument()
+})
+
+it('reports a picked result outward instead of selecting behind the route’s back', async () => {
+  const ada = node()
+  const onEntity = vi.fn()
+  const graphs = fakeGraphs({
+    search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
+    neighborhood: vi.fn().mockResolvedValue(hoodOf(ada)),
+  })
+  const user = userEvent.setup()
+
+  renderWithContainer(<GraphPane projectId={PROJECT} entity={null} onEntity={onEntity} />, {
+    graphs,
+  })
+
+  await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
+  await user.click(await screen.findByText(/Ada Lovelace/))
+
+  expect(onEntity).toHaveBeenCalledWith('ada')
 })

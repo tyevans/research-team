@@ -46,11 +46,32 @@ describe('parseRoute', () => {
   it('parses a research route', () => {
     // Sits under the project the way `course` does: what it shows outlives any
     // one session, so it is keyed the way the material is stored.
-    expect(parseRoute('#/p/abc/research')).toEqual({ name: 'research', id: ProjectId('abc') })
+    expect(parseRoute('#/p/abc/research')).toEqual({
+      name: 'research',
+      id: ProjectId('abc'),
+      entity: null,
+    })
   })
 
   it('builds a research href', () => {
     expect(researchHref(ProjectId('abc'))).toBe('#/p/abc/research')
+  })
+
+  it('carries the selected entity in the research route, both ways', () => {
+    expect(parseRoute('#/p/abc/research/entity/e1')).toEqual({
+      name: 'research',
+      id: ProjectId('abc'),
+      entity: 'e1',
+    })
+    expect(researchHref(ProjectId('abc'), 'e1')).toBe('#/p/abc/research/entity/e1')
+  })
+
+  it('lands on an empty canvas when the entity segment has no id after it', () => {
+    expect(parseRoute('#/p/abc/research/entity')).toEqual({
+      name: 'research',
+      id: ProjectId('abc'),
+      entity: null,
+    })
   })
 })
 

@@ -13,7 +13,7 @@ import { Breadcrumbs } from './Breadcrumbs.tsx'
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
 
 it('names the research route and links back to the tree', () => {
-  const route: Route = { name: 'research', id: PROJECT }
+  const route: Route = { entity: null, name: 'research', id: PROJECT }
   render(<Breadcrumbs route={route} session={null} course={null} />)
 
   expect(screen.getByText('research')).toBeInTheDocument()
@@ -25,7 +25,7 @@ it('names the research route and links back to the tree', () => {
 })
 
 it('prefers the loaded project name over the id on the research crumb', () => {
-  const route: Route = { name: 'research', id: PROJECT }
+  const route: Route = { entity: null, name: 'research', id: PROJECT }
   const course = { projectName: 'Spaced repetition' } as Course
   render(<Breadcrumbs route={route} session={null} course={course} />)
 

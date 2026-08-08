@@ -26,7 +26,17 @@ import { TopicList } from './TopicList.tsx'
  * (`open_topic` already appends to the log `TopicList`'s own query
  * invalidates on).
  */
-export const ResearchView = ({ projectId }: { projectId: ProjectId }) => (
+export const ResearchView = ({
+  projectId,
+  entity,
+  onEntity,
+}: {
+  projectId: ProjectId
+  /** The selected entity, owned by the route rather than by the graph store --
+   *  see `Route`'s `research` variant. */
+  entity: string | null
+  onEntity: (id: string | null) => void
+}) => (
   <section className="view view-research">
     <div className="view-head">
       <div>
@@ -70,7 +80,7 @@ export const ResearchView = ({ projectId }: { projectId: ProjectId }) => (
       </div>
 
       <section className="pane pane-graph" aria-label="Graph">
-        <GraphPane projectId={projectId} />
+        <GraphPane projectId={projectId} entity={entity} onEntity={onEntity} />
       </section>
     </div>
   </section>

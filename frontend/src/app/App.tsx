@@ -6,7 +6,7 @@ import { queryKeys } from '@application/queries/keys.ts'
 import { createSessionStore, type SessionStore } from '@application/session/session-store.ts'
 import type { Course } from '@domain/project/course.ts'
 import { CourseView } from '@presentation/course/CourseView.tsx'
-import { courseHref, treeHref, type Route } from '@presentation/routing/routes.ts'
+import { courseHref, researchHref, treeHref, type Route } from '@presentation/routing/routes.ts'
 import { navigate, useRoute } from '@presentation/routing/use-route.ts'
 import { ResearchView } from '@presentation/research/ResearchView.tsx'
 import { SessionView } from '@presentation/session/SessionView.tsx'
@@ -102,7 +102,20 @@ const CurrentView = ({
         />
       )
     case 'research':
-      return <ResearchView projectId={route.id} />
+      return (
+        <ResearchView
+          key={route.id}
+          projectId={route.id}
+          entity={route.entity}
+          // Replaced rather than pushed, for the reason scrubbing replaces.
+          // Browsing a graph also *grows* it -- every selection pulls in a
+          // neighbourhood -- so a back button that restored the previous
+          // entity could not also un-draw what that click added. It would
+          // return a URL describing a smaller graph than the one on screen,
+          // which is worse than not offering the step back at all.
+          onEntity={(id) => navigate(researchHref(route.id, id), { replace: true })}
+        />
+      )
     default:
       return <TreeView />
   }
