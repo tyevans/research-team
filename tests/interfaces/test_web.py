@@ -2886,15 +2886,17 @@ async def test_listing_graph_entities_finds_what_was_seeded(app_and_client):
 
 
 async def test_listing_graph_entities_filters_by_name(app_and_client):
-    """`name` matches the normalized (lowercased) name exactly -- the same
-    contract `InMemoryGraphStore.find_entities` enforces, not a substring
-    search this route would have to invent on top of it.
+    """`name` matches case-insensitively as a substring of the entity's
+    display name -- the same give `RedstringKnowledge.search` gives an
+    agent's free text, because a human typing a partial name into a search
+    box needs no less. `GraphStore.find_entities(name=...)` alone would
+    require the full normalized name; the route must not be held to that.
     """
     application, client = app_and_client
     project_id, ids = await _project_with_graph(application, client)
 
     response = await client.get(
-        f"/api/projects/{project_id}/graph/entities", params={"name": "ludwig prandtl"}
+        f"/api/projects/{project_id}/graph/entities", params={"name": "prandtl"}
     )
 
     assert response.status_code == 200

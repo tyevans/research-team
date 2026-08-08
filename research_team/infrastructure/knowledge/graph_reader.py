@@ -57,16 +57,35 @@ class ProjectGraphReader:
         limit: int = 100,
         after: str | None = None,
     ) -> EntityPage:
+        """Entry points into the graph, `name` given the same give a human
+        typing into a search box needs.
+
+        `GraphStore.find_entities(name=...)` matches `normalized_name` by
+        exact equality -- no substring, no case-insensitivity -- which is a
+        contract nobody typing a partial name into a browser could satisfy.
+        `RedstringKnowledge.search` hit the identical problem for the agent's
+        own free-text tool and filters in Python for exactly this reason;
+        there is no reason a human's search box should be held to a stricter
+        contract than the agent's. `entity_type` stays pushed to the store,
+        because it is an exact match by nature -- a caller picks a type from
+        a fixed vocabulary, never types a fragment of one.
+
+        The cost is the same one `search` accepts: a page of the tenant's
+        entities fetched per call rather than a store-side filtered query.
+        Acceptable against an in-memory store; the first thing to revisit
+        behind Neo4j, where fetching an unfiltered page stops being free.
+        """
         after_id = UUID(after) if after is not None else None
         async with tenant_scope(self._project_id):
             entities = await self._store.find_entities(
                 self._project_id,
-                name=name,
                 entity_type=entity_type,
-                limit=limit,
                 after=after_id,
             )
-        page = tuple(_to_graph_entity(entity) for entity in entities)
+        if name is not None:
+            needle = name.strip().lower()
+            entities = [entity for entity in entities if needle in entity.name.lower()]
+        page = tuple(_to_graph_entity(entity) for entity in entities[:limit])
         # A page that came back short of `limit` is the last one -- the same
         # signal `GraphStore.find_entities`'s own cursor contract relies on,
         # so there is nothing further to resume from.

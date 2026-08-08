@@ -156,3 +156,22 @@ async def test_find_entities_filters_by_type(graph_reader, seeded_graph):
     page = await reader.find_entities(entity_type="place")
 
     assert [entity.name for entity in page.entities] == ["Göttingen"]
+
+
+async def test_find_entities_matches_name_as_a_case_insensitive_substring(graph_reader, seeded_graph):
+    """A search box needs the same give `RedstringKnowledge.search` gives an
+    agent typing free text -- `GraphStore.find_entities(name=...)` matches
+    `normalized_name` exactly, which "prandtl" alone would never satisfy."""
+    reader, _store = graph_reader
+    page = await reader.find_entities(name="prandtl")
+
+    assert [entity.name for entity in page.entities] == ["Ludwig Prandtl"]
+
+
+async def test_find_entities_name_filter_excludes_non_matches(graph_reader, seeded_graph):
+    """The substring filter must actually filter, not degrade into
+    'return everything regardless of name'."""
+    reader, _store = graph_reader
+    page = await reader.find_entities(name="no-such-substring")
+
+    assert page.entities == ()
