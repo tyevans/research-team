@@ -105,6 +105,23 @@ class ExtractionsInFlight(Protocol):
     def in_flight(self, project_id: UUID) -> ExtractionSnapshot | None: ...
 
 
+class ExtractionChannel(ExtractionsInFlight, Protocol):
+    """Both halves of the extraction channel: what is running, and how to say so.
+
+    One collaborator rather than two parameters, because they are two views of
+    one buffer: the roster reads `in_flight`, and the `remember` tool reports
+    through `reporter`. A composition root handed mismatched halves would show
+    a roster that disagreed with its own pane, and nothing in either signature
+    would have caught it.
+
+    Declared here rather than in the web layer for the reason
+    `ExtractionsInFlight` is: `application` may not import `interfaces`, and
+    `ExtractionActivity` -- which satisfies both halves -- lives there.
+    """
+
+    def reporter(self, project_id: UUID): ...
+
+
 class WorkerRoster:
     """Assembles one project's roster from whoever knows a piece of it."""
 

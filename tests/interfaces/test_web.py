@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
 from research_team.application import WorkerRoster
+from research_team.application.knowledge import ExtractionNote
 from research_team.application.ports import ActivityMessage
 from research_team.composition import build_application as _build_application
 from research_team.domain import (
@@ -22,6 +23,7 @@ from research_team.domain import (
 )
 from research_team.infrastructure.persistence import build_corpus_repository
 from research_team.interfaces.web import TurnActivity, create_app
+from research_team.interfaces.web.extraction import ExtractionActivity
 
 
 async def _started(**kwargs):
@@ -38,14 +40,29 @@ async def _started(**kwargs):
 
 
 @pytest.fixture
-async def app_and_client(db_path, fake_model):
+def extraction():
+    """The buffer the app and its roster share -- the reporter's other end.
+
+    Its own fixture so both sides of `app_and_client` and any test that drives
+    it get the one instance. Two would let the `/workers` answer and the
+    `/extraction` answer disagree about the same ingest, which is the failure
+    the single-channel design rules out.
+    """
+    return ExtractionActivity()
+
+
+@pytest.fixture
+async def app_and_client(db_path, fake_model, extraction):
     application = await _started(model=fake_model, db_path=db_path)
     api = create_app(
         application.service,
         application.feed,
         application.turns,
         corpus=application.corpus,
-        workers=WorkerRoster(application.service, turns=application.turns),
+        workers=WorkerRoster(
+            application.service, turns=application.turns, extractions=extraction
+        ),
+        extraction=extraction,
     )
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -2260,3 +2277,75 @@ async def test_workers_is_404_when_the_roster_is_not_wired(client_without_worker
     project_id = await make_project(client_without_workers)
     response = await client_without_workers.get(f"/api/projects/{project_id}/workers")
     assert response.status_code == 404
+
+
+# ---------------- extraction ----------------
+
+
+async def test_extraction_catch_up_is_empty_before_anything_runs(client):
+    project_id = await make_project(client)
+
+    response = await client.get(f"/api/projects/{project_id}/extraction")
+
+    assert response.status_code == 200
+    assert response.json() == {"current": [], "last": []}
+
+
+async def test_extraction_catch_up_shows_the_running_ingest(client, extraction):
+    """A tab that arrived mid-ingest can catch up.
+
+    The frames carry no feed position, so this route is the only way back to
+    a pane's state after a reconnect.
+    """
+    project_id = await make_project(client)
+    extraction.reporter(project_id)(
+        ExtractionNote(source_id="notes", stage="consolidating", index=3, total=9)
+    )
+
+    response = await client.get(f"/api/projects/{project_id}/extraction")
+
+    body = response.json()
+    assert [frame["stage"] for frame in body["current"]] == ["consolidating"]
+    assert body["current"][0]["total"] == 9
+    assert body["last"] == []
+
+
+async def test_the_roster_shows_a_running_extraction(client, extraction):
+    """The roster and the pane read one buffer, so they cannot disagree."""
+    project_id = await make_project(client)
+    extraction.reporter(project_id)(
+        ExtractionNote(source_id="notes", stage="consolidating", index=3, total=9)
+    )
+
+    body = (await client.get(f"/api/projects/{project_id}/workers")).json()
+
+    assert [worker["kind"] for worker in body["workers"]] == ["extraction"]
+    assert body["workers"][0]["detail"] == "consolidating 3/9"
+
+
+async def test_extraction_frames_ride_the_stream_without_an_id(repository):
+    """The third provisional channel, framed like the other two.
+
+    Exercised against `_sse` directly for the reason the activity test is: the
+    ASGI transport cannot stream a still-running response.
+    """
+    from research_team.application import LiveFeed
+    from research_team.interfaces.web.app import _sse
+
+    activity = ExtractionActivity()
+    feed = LiveFeed(repository, poll_interval=0.01)
+    project_id = uuid4()
+
+    frames: list[str] = []
+    generator = _sse(StubRequest(), feed, None, None, None, activity)
+    task = asyncio.create_task(_drain(generator, frames, wanted=1))
+    await asyncio.sleep(0.05)
+    activity.reporter(project_id)(ExtractionNote(source_id="notes", stage="chunking"))
+    await asyncio.wait_for(task, timeout=5)
+
+    assert frames[0].startswith("data: ")
+    payload = json.loads(frames[0][len("data: ") :])
+    assert payload["type"] == "Extraction"
+    assert payload["source_id"] == "notes"
+    # Not a log entry: no id line precedes the data, so a reconnect refetches.
+    assert "\nid:" not in frames[0]

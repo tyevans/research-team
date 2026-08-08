@@ -45,6 +45,7 @@ from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
+from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.presenters import (
     course_view,
     event_rows,
@@ -187,6 +188,7 @@ def create_app(
     corpus: CorpusRunner | None = None,
     research: ResearchSupervisor | None = None,
     workers: WorkerRoster | None = None,
+    extraction: ExtractionActivity | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -662,6 +664,25 @@ def create_app(
         await _require_project(project_id)
         return roster_view(await workers.on(project_id))
 
+    @app.get("/api/projects/{project_id}/extraction")
+    async def get_extraction(project_id: UUID):
+        """What the running extraction has done so far, and the last one's account.
+
+        A tab that arrived mid-ingest, or one whose connection dropped, has no
+        other way back: these frames carry no feed position, so
+        `Last-Event-ID` cannot replay them. 200 with two empty lists when
+        nothing has run -- an absent extraction is a state, not a missing
+        resource, and unlike `/workers` there is no claim being made about
+        what is running elsewhere.
+        """
+        await _require_project(project_id)
+        if extraction is None:
+            return {"current": [], "last": []}
+        return {
+            "current": extraction.current(project_id),
+            "last": extraction.last(project_id),
+        }
+
     @app.post("/api/projects/{project_id}/auto-research/cancel")
     async def cancel_auto_research(project_id: UUID):
         """Ask this project's run to stop after the round it is in.
@@ -1068,7 +1089,7 @@ def create_app(
         """
         resume_from = request.headers.get("last-event-id")
         return StreamingResponse(
-            _sse(request, feed, resume_from, approvals, activity),
+            _sse(request, feed, resume_from, approvals, activity, extraction),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -1089,6 +1110,7 @@ async def _sse(
     resume_from: str | None = None,
     approvals: WebApprovals | None = None,
     activity: TurnActivity | None = None,
+    extraction: ExtractionActivity | None = None,
 ) -> AsyncIterator[str]:
     """Serialise the live feed as server-sent events.
 
@@ -1102,12 +1124,13 @@ async def _sse(
     starting at the live end shows less than the client wanted, while
     replaying the entire log at it would be worse than the gap.
 
-    Approval requests, and turn activity notes, ride this same connection
-    rather than one of their own, for the same reason each other: neither is
-    a log entry -- an approval that is never answered, and provisional turn
-    content, both leave no event behind -- so neither carries an id, and a
-    reconnecting browser refetches what it missed (`/approvals`, or the
-    activity catch-up route) instead of replaying them. But a second channel
+    Approval requests, turn activity notes, and extraction progress ride this
+    same connection rather than one each of their own, for the same reason as
+    each other: none is a log entry -- an approval that is never answered,
+    provisional turn content, and where an ingest has got to all leave no
+    event behind -- so none carries an id, and a reconnecting browser
+    refetches what it missed (`/approvals`, the activity catch-up route, or
+    `/projects/{id}/extraction`) instead of replaying them. But a second channel
     per concern would multiply the ways a tab can be half-connected, and a
     turn that halts for a person, or is still streaming its reply, is exactly
     the moment when being half-connected is worst.
@@ -1144,6 +1167,16 @@ async def _sse(
 
         pumps.append(asyncio.create_task(pump_activity()))
 
+    extracting = None
+    if extraction is not None:
+        extracting = extraction.listen()
+
+        async def pump_extraction() -> None:
+            while True:
+                await queue.put(("extraction", await extracting.get()))
+
+        pumps.append(asyncio.create_task(pump_extraction()))
+
     idle = 0.0
     try:
         while not await request.is_disconnected():
@@ -1158,7 +1191,7 @@ async def _sse(
                     idle = 0.0
                 continue
             idle = 0.0
-            if kind in ("approval", "activity"):
+            if kind in ("approval", "activity", "extraction"):
                 yield f"data: {json.dumps(item)}\n\n"
                 continue
             payload = feed_event(
@@ -1176,6 +1209,8 @@ async def _sse(
             approvals.stop_listening(listening)
         if activity is not None and watching is not None:
             activity.stop_listening(watching)
+        if extraction is not None and extracting is not None:
+            extraction.stop_listening(extracting)
         for pumping in pumps:
             pumping.cancel()
             with suppress(asyncio.CancelledError):

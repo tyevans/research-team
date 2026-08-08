@@ -87,8 +87,9 @@ from research_team.application.turn_supervisor import (
     TurnSupervisor,
 )
 from research_team.application.workers import (
-    ExtractionSnapshot,
+    ExtractionChannel,
     ExtractionsInFlight,
+    ExtractionSnapshot,
     Roster,
     Worker,
     WorkerRoster,
@@ -115,6 +116,7 @@ __all__ = [
     "ContextStrategy",
     "ElideToolResults",
     "EventFeed",
+    "ExtractionChannel",
     "ExtractionNote",
     "ExtractionReporter",
     "ExtractionSnapshot",

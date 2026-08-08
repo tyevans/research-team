@@ -6,7 +6,12 @@ import uvicorn
 
 from research_team.composition import build_application
 from research_team.infrastructure import config
-from research_team.interfaces.web import TurnActivity, WebApprovals, create_app
+from research_team.interfaces.web import (
+    ExtractionActivity,
+    TurnActivity,
+    WebApprovals,
+    create_app,
+)
 
 
 def main() -> None:
@@ -15,7 +20,12 @@ def main() -> None:
     # between them, and the composition root is where seams are chosen.
     approvals = WebApprovals()
     activity = TurnActivity()
-    application = build_application(approvals=approvals)
+    # One instance, both sides, for the same reason `approvals` is one: the
+    # `remember` tool reports into it and the roster and the pane read out of
+    # it. Two would give the roster and the pane different answers about the
+    # same ingest.
+    extraction = ExtractionActivity()
+    application = build_application(approvals=approvals, extractions=extraction)
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -36,6 +46,7 @@ def main() -> None:
             approvals=approvals,
             activity=activity,
             workers=application.workers,
+            extraction=extraction,
             # Withheld unless this instance was configured for it, so the
             # routes are absent rather than present-and-refusing. See
             # `config.auto_research_over_http`: there is no authentication in
