@@ -17,6 +17,7 @@ from uuid import UUID
 # `EventTypeNotFoundError`, including on the "no project at all" path, where
 # nothing else would have pulled redstring in.
 import redstring.events  # noqa: F401
+from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.observability import Tracer
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
@@ -57,6 +58,7 @@ from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import CodingSession, ProjectState, current_stage_of
 from research_team.domain.auto_research import Budget
 from research_team.domain.commands import WriteFile
+from research_team.domain.topic import Topic
 from research_team.domain.workflow import Preset
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import DeepAgentTurnExecutor, build_model
@@ -156,6 +158,19 @@ class Application:
     one `AggregateRepository[Topic]` also used by `start_run` below, so
     there is exactly one such object, not a second built to avoid depending
     on this field."""
+
+    topic_repository: AggregateRepository[Topic]
+    """The `Topic` aggregate repository, for routes that change a topic's state.
+
+    Exposed directly rather than behind a factory, unlike `topic_readers`:
+    an `AggregateRepository[Topic]` needs no project bound at construction --
+    `load` takes the topic id and the aggregate carries its own `project_id`
+    -- so there is no per-project object to assemble and nothing a factory
+    would buy here. The same object `topic_readers` and `start_run` already
+    close over, not a second one, for the reason given above. Mirrors
+    `SessionService.projects`, which exposes the `Project` repository the
+    same way for the same reason: a write that is not a session use case has
+    nowhere else to reach for the aggregate it needs."""
 
     research: ResearchSupervisor
     """Autonomous runs over this instance's topic queues.
@@ -835,6 +850,7 @@ def build_application(
         corpus=corpus,
         topics=topics,
         topic_readers=topic_reader,
+        topic_repository=topic_repository,
         research=research_supervisor,
         workers=worker_roster,
         policy=resolved_policy,

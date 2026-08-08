@@ -72,6 +72,7 @@ async def app_and_client(db_path, fake_model, extraction):
         # reads, and a test against a copy would pass while proving nothing.
         policy=application.policy,
         topics=application.topic_readers,
+        topic_repository=application.topic_repository,
     )
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -1642,6 +1643,104 @@ async def test_a_topic_from_another_project_reads_as_404_identically_to_unknown(
 
     assert foreign.status_code == 404
     assert foreign.json() == never_existed.json()
+
+
+async def test_closing_a_topic_records_the_justification(app_and_client):
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+
+    response = await client.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/status",
+        json={"to_status": "answered", "justification": "the sources agree"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "answered"
+
+
+async def test_a_blank_justification_is_refused(app_and_client):
+    """The aggregate went out of its way to make an unexplained status change
+    impossible, and a transport that supplied a default to get past it would
+    quietly undo that."""
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+
+    response = await client.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/status",
+        json={"to_status": "answered", "justification": "   "},
+    )
+
+    assert response.status_code == 422
+
+
+async def test_reopening_an_answered_topic_is_allowed(app_and_client):
+    """`decide` rejects only a no-op transition, so this is legal, and a
+    reader who closed a topic too early needs it."""
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+    await client.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/status",
+        json={"to_status": "answered", "justification": "done"},
+    )
+
+    response = await client.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/status",
+        json={"to_status": "open", "justification": "new material arrived"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "open"
+
+
+async def test_a_repeated_status_is_a_409(app_and_client):
+    """`decide` refuses a no-op transition; the transport must relay that
+    rather than swallow it as a success."""
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+
+    response = await client.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/status",
+        json={"to_status": "open", "justification": "still open"},
+    )
+
+    assert response.status_code == 409
+
+
+async def test_a_sub_question_can_be_added_and_resolved(app_and_client):
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+
+    await client.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/sub-questions",
+        json={"key": "motor", "question": "Does it hold for motor skills?"},
+    )
+    body = (
+        await client.post(
+            f"/api/projects/{project_id}/topics/{topic_id}/sub-questions/motor/resolve",
+            json={"answer": "Yes, with a smaller effect."},
+        )
+    ).json()
+
+    assert body["sub_questions"][0]["resolved"] is True
+    assert body["sub_questions"][0]["answer"] == "Yes, with a smaller effect."
+
+
+async def test_a_status_change_on_a_foreign_topic_is_the_same_404(app_and_client):
+    """The unknown-topic 404 must not distinguish "foreign" from "never
+    existed" on the write routes either, or a caller could probe project
+    boundaries through a write instead of a read."""
+    application, client = app_and_client
+    owning_project_id, topic_id = await _project_with_topics(application, client)
+    other_project_id, _ = await _project_with_topics(application, client)
+
+    response = await client.post(
+        f"/api/projects/{other_project_id}/topics/{topic_id}/status",
+        json={"to_status": "answered", "justification": "n/a"},
+    )
+    never_existed = await client.get(f"/api/projects/{other_project_id}/topics/{uuid4()}")
+
+    assert response.status_code == 404
+    assert response.json() == never_existed.json()
 
 
 # ---------------- workflows ----------------

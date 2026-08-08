@@ -17,10 +17,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from eventsource import CommandRejectedError, OptimisticLockError
+from eventsource.application.aggregates.repository import AggregateRepository
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from research_team.application import (
     ApprovalDecision,
@@ -43,6 +44,13 @@ from research_team.application.topic_read import TopicReadPort
 from research_team.domain import CreateProject, ProjectState, SelectWorkflow
 from research_team.domain.auto_research import Budget
 from research_team.domain.project import current_stage_of
+from research_team.domain.topic import (
+    AddSubQuestion,
+    ResolveSubQuestion,
+    SetTopicStatus,
+    Topic,
+    TopicStatus,
+)
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.interfaces.web.activity import TurnActivity
@@ -117,6 +125,52 @@ class WorkflowChoice(BaseModel):
     """Which preset a project runs. Chosen once; `decide` refuses a second."""
 
     preset_id: str
+
+
+class StatusChange(BaseModel):
+    """A human's decision to move a topic, with the reason `decide` requires.
+
+    `justification` cannot be blank, and whitespace does not count as
+    content: `Field(min_length=1)` alone would let `"   "` through, and the
+    aggregate went out of its way to make an unexplained status change
+    impossible -- a transport that let whitespace past that gate would
+    quietly undo it. The strip happens here, before the aggregate is even
+    loaded, so a blank justification is a 422 rather than a 409 the aggregate
+    would raise anyway; the outcome the caller needs to fix is the same
+    either way, but failing before a write was attempted is the honest report
+    of what happened.
+    """
+
+    to_status: TopicStatus
+    justification: str = Field(min_length=1)
+
+    @field_validator("justification")
+    @classmethod
+    def _justification_is_not_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("a status change requires a justification")
+        return stripped
+
+
+class NewSubQuestion(BaseModel):
+    """A question worth tracking under a topic, addressed by its own key."""
+
+    key: str
+    question: str
+
+
+class SubQuestionAnswer(BaseModel):
+    """An answer to one sub-question, named in the path rather than the body.
+
+    Mirrors `Attempt`'s reasoning for keeping the target out of the body only
+    where it does not apply: a sub-question key has no slashes, so there is
+    no encoding hazard in putting it in the path, and doing so is what makes
+    `/sub-questions/{key}/resolve` a URL a client can build without first
+    parsing a body shape.
+    """
+
+    answer: str
 
 
 class Attempt(BaseModel):
@@ -232,6 +286,7 @@ def create_app(
     extraction: ExtractionActivity | None = None,
     policy: AutonomyPolicy | None = None,
     topics: TopicReaders | None = None,
+    topic_repository: AggregateRepository[Topic] | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -569,6 +624,105 @@ def create_app(
                 status_code=404, detail=f"no such topic in project {project_id}"
             )
         return topic_detail_view(detail)
+
+    def _topic_repo() -> AggregateRepository[Topic]:
+        """The `Topic` aggregate repository, for routes that change a topic.
+
+        503 rather than 404 when `topic_repository` was not wired, matching
+        `_topic_reader`: a build with no write model configured is a valid
+        thing to serve read-only, and the caller needs to know the server
+        cannot answer rather than that the topic is missing.
+        """
+        if topic_repository is None:
+            raise HTTPException(
+                status_code=503, detail="no topic write model is configured"
+            )
+        return topic_repository
+
+    async def _change_topic(project_id: UUID, topic_id: UUID, command) -> dict[str, Any]:
+        """Apply one command to a topic, the same way every write route below does.
+
+        The three routes below (status, add sub-question, resolve sub-question)
+        share this rather than repeating it, because all three have the same
+        shape: confirm the topic is this project's before touching anything,
+        let `decide` accept or refuse the command, and answer with the page the
+        read route already draws -- so a write and the read that follows it can
+        never disagree about what the topic now looks like.
+
+        The existence check goes through `_topic_reader` rather than a bare
+        `try/except` on the repository load, because it is what makes a
+        foreign topic's 404 byte-identical to an unknown one here too: the
+        reader's `read_topic` already collapses both to `None` (see its
+        docstring), and repeating that collapse against the aggregate
+        directly would risk drifting from it as either evolves.
+        """
+        reader = _topic_reader(project_id)
+        await _require_project(project_id)
+        detail = await reader.read_topic(topic_id)
+        if detail is None:
+            raise HTTPException(
+                status_code=404, detail=f"no such topic in project {project_id}"
+            )
+        repo = _topic_repo()
+        topic = await repo.load(topic_id)
+        try:
+            topic.execute(command)
+        except CommandRejectedError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        await repo.save(topic)
+        updated = await reader.read_topic(topic_id)
+        # `detail` above already proved the topic exists in this project, and
+        # nothing between that read and this one can make it stop existing --
+        # so a `None` here would mean the reader and the repository disagree
+        # about a write this route just made, not a caller's mistake.
+        assert updated is not None
+        return topic_detail_view(updated)
+
+    @app.post("/api/projects/{project_id}/topics/{topic_id}/status")
+    async def set_topic_status(project_id: UUID, topic_id: UUID, body: StatusChange):
+        """Move a topic to a new status, with the reason `decide` requires.
+
+        Human-only: there is no agent tool for this and none should be added.
+        `application/topics.py` documents closing as a decision a person makes,
+        not the model recording what it found -- an autonomous run can learn
+        that a question is answered, but only a reader gets to say the project
+        is done asking it. Reopening an answered topic is legal here for the
+        same reason it is legal in the aggregate: `decide` refuses only a
+        no-op transition, and a reader who closed a topic too early has no
+        other way back in.
+        """
+        return await _change_topic(
+            project_id,
+            topic_id,
+            SetTopicStatus(to_status=body.to_status, justification=body.justification),
+        )
+
+    @app.post("/api/projects/{project_id}/topics/{topic_id}/sub-questions")
+    async def add_sub_question(project_id: UUID, topic_id: UUID, body: NewSubQuestion):
+        """Track a question under a topic, addressed by `key` rather than an index.
+
+        Human-only, for the same reason `set_topic_status` is: shaping what a
+        topic is asking is a reader's editorial decision, not a finding an
+        autonomous run records. `key` rather than a position because a
+        sub-question, once resolved, is referred back to by name -- a client
+        showing "does it hold for motor skills?" needs a stable handle to
+        resolve it against later, and a list position shifts under it the
+        moment another sub-question is added or removed.
+        """
+        return await _change_topic(
+            project_id,
+            topic_id,
+            AddSubQuestion(key=body.key, question=body.question),
+        )
+
+    @app.post("/api/projects/{project_id}/topics/{topic_id}/sub-questions/{key}/resolve")
+    async def resolve_sub_question(
+        project_id: UUID, topic_id: UUID, key: str, body: SubQuestionAnswer
+    ):
+        """Answer a tracked sub-question. Human-only, for the same reason above."""
+        return await _change_topic(
+            project_id, topic_id, ResolveSubQuestion(key=key, answer=body.answer)
+        )
 
     @app.post("/api/sessions/{session_id}/release")
     async def release_session(session_id: UUID):
