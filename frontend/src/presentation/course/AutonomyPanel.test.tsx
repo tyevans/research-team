@@ -250,3 +250,28 @@ it('offers a level the server reported that this build does not know', async () 
   expect(await screen.findByRole('radio', { name: 'sometimes' })).toBeChecked()
   expect(screen.getByText(/unfamiliar level/i)).toBeInTheDocument()
 })
+
+it('starts closed, and says how the gated tools are set without being opened', async () => {
+  const autonomy = fakeAutonomy(policyWith({ fetch: 'ask', advance_stage: 'ask', run: 'auto' }))
+  renderWith(<AutonomyPanel sessionId={SESSION} />, { autonomy: autonomy.repo })
+
+  expect(await screen.findByText('2 ask')).toBeInTheDocument()
+  expect(screen.getByText('1 auto')).toBeInTheDocument()
+
+  // Closed by default: this policy is instance-wide and rarely touched, and
+  // open it pushed the course itself below the fold.
+  const disclosure = document.querySelector('details.autonomy-disclosure')
+  expect(disclosure).not.toBeNull()
+  expect((disclosure as HTMLDetailsElement).open).toBe(false)
+})
+
+it('opens onto the controls when its summary is activated', async () => {
+  const autonomy = fakeAutonomy(policyWith({ fetch: 'ask' }))
+  renderWith(<AutonomyPanel sessionId={SESSION} />, { autonomy: autonomy.repo })
+
+  await screen.findByText('1 ask')
+  const disclosure = document.querySelector('details.autonomy-disclosure') as HTMLDetailsElement
+  await userEvent.click(screen.getByText(/what the agent may do without asking/i))
+
+  expect(disclosure.open).toBe(true)
+})

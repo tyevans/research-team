@@ -87,3 +87,26 @@ export const levelsToOffer = (current: string | null): readonly string[] =>
   current !== null && !AUTONOMY_LEVELS.includes(current)
     ? [...AUTONOMY_LEVELS, current]
     : AUTONOMY_LEVELS
+
+/** How many gated tools sit at each level, commonest level first.
+ *
+ * What a collapsed panel says about itself. A disclosure that only said
+ * "autonomy" would force a reader to open it to learn whether anything was set
+ * to `auto` -- which is the one fact worth knowing at a glance, and the reason
+ * the panel is worth having on this page at all.
+ *
+ * Levels the server sent are counted whether or not this build knows them, for
+ * the reason `levelsToOffer` offers them: a tool sitting at a level this build
+ * cannot name is exactly the case a summary must not silently drop. A tool with
+ * no level is not counted -- `levelOf` returns null rather than guessing, and
+ * a tally that folded those into a real level would be inventing the answer.
+ */
+export const levelTally = (policy: AutonomyPolicyView): readonly (readonly [string, number])[] => {
+  const counts = new Map<string, number>()
+  for (const tool of policy.gated) {
+    const level = levelOf(policy, tool)
+    if (level === null) continue
+    counts.set(level, (counts.get(level) ?? 0) + 1)
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+}
