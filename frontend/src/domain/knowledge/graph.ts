@@ -120,6 +120,45 @@ const endpointId = (endpoint: unknown): string =>
     ? endpoint
     : String((endpoint as { id?: unknown } | null)?.id ?? endpoint)
 
+/** Take one entity off the drawing, and anything left stranded by its going.
+ *
+ * Browsing accumulates. Ten expansions in, the interesting part is buried in
+ * everything that came along on the way, and the only way back was to reload
+ * the page and start over -- which threw away the nine expansions worth
+ * keeping along with the one that was not.
+ *
+ * **What else goes.** Removing an entity strands its neighbours: nodes that
+ * arrived only because they were connected to this one, and that now sit on
+ * the canvas connected to nothing. Those go too. Nodes the reader *chose* --
+ * anything they expanded themselves -- stay, even when removing this one
+ * leaves them unconnected, because a thing you asked for should not vanish as
+ * a side effect of tidying up something else. That is the whole rule: the
+ * graph keeps what you asked for and drops what merely came with it.
+ *
+ * The removed id also leaves `expanded`, so it can be drawn again later. A
+ * node you took off the canvas and then searched out again should arrive with
+ * its neighbourhood, not as a bare dot whose expansion the store thinks it has
+ * already done.
+ */
+export const remove = (view: GraphView, id: string): GraphView => {
+  const links = view.links.filter(
+    (link) => endpointId(link.source) !== id && endpointId(link.target) !== id,
+  )
+
+  const stillLinked = new Set(
+    links.flatMap((link) => [endpointId(link.source), endpointId(link.target)]),
+  )
+
+  const nodes = view.nodes.filter(
+    (node) => node.id !== id && (stillLinked.has(node.id) || view.expanded.has(node.id)),
+  )
+
+  const kept = new Set(nodes.map((node) => node.id))
+  const expanded = new Set([...view.expanded].filter((expandedId) => kept.has(expandedId)))
+
+  return { nodes, links, expanded }
+}
+
 /** A link seen from one of its ends: which way it points, and what is at the
  *  other end. */
 export interface GraphEdgeView {

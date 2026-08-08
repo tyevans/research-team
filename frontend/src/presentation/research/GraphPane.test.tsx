@@ -220,3 +220,83 @@ it('closes the detail panel without disturbing the drawing', async () => {
   // of what is described, not of what is drawn.
   expect(screen.getByRole('button', { name: 'canvas' })).toBeInTheDocument()
 })
+
+it('gets the result list out of the way once a result is picked', async () => {
+  // The list floats over the canvas, so leaving it up after a pick covers the
+  // drawing the pick just produced. You chose the thing in order to look at
+  // it.
+  const ada = node()
+  const graphs = fakeGraphs({
+    search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
+    neighborhood: vi.fn().mockResolvedValue(hoodOf(ada)),
+  })
+  const user = userEvent.setup()
+
+  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+
+  const box = screen.getByRole('searchbox', { name: /search the graph/i })
+  await user.type(box, 'ada')
+  await user.click(await screen.findByRole('button', { name: /Ada Lovelace/ }))
+
+  // Scoped to the results list rather than to the name: the detail panel that
+  // opens on a pick has a Remove button carrying the same entity name, so a
+  // bare name query would find that instead and pass whether or not the list
+  // had gone.
+  await waitFor(() => {
+    expect(screen.queryByRole('list', { name: /search results/i })).not.toBeInTheDocument()
+  })
+  // Empty and ready for the next search, which is the state somebody who has
+  // finished with this one wants it in.
+  expect(box).toHaveValue('')
+})
+
+it('distinguishes an entity with no relationships from one not yet expanded', async () => {
+  // Telling a reader to click again on an entity whose neighbourhood already
+  // came back empty sends them to fetch a second time for the same nothing.
+  const ada = node()
+  const graphs = fakeGraphs({
+    search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
+    neighborhood: vi.fn().mockResolvedValue(hoodOf(ada)),
+  })
+  const user = userEvent.setup()
+
+  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+
+  await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
+  await user.click(await screen.findByRole('button', { name: /Ada Lovelace/ }))
+
+  const detail = await screen.findByRole('complementary', { name: /about ada lovelace/i })
+  expect(detail).toHaveTextContent(/no relationships were recorded/i)
+  expect(detail).not.toHaveTextContent(/click it on the canvas/i)
+})
+
+it('takes an entity off the drawing, and the panel with it', async () => {
+  // Browsing accumulates, and until now the only way back was to reload the
+  // page -- which threw away every expansion, not just the unwanted one.
+  const ada = node()
+  const babbage = node({ id: 'babbage', name: 'Charles Babbage', entityType: 'Person' })
+  const graphs = fakeGraphs({
+    search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
+    neighborhood: vi.fn().mockResolvedValue({
+      root: ada,
+      entities: [babbage],
+      relationships: [{ source: 'ada', target: 'babbage', relationshipType: 'collaborated_with' }],
+    } satisfies Neighborhood),
+  })
+  const user = userEvent.setup()
+
+  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+
+  await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
+  await user.click(await screen.findByRole('button', { name: /Ada Lovelace/ }))
+  await screen.findByRole('complementary', { name: /about ada lovelace/i })
+
+  await user.click(screen.getByRole('button', { name: /remove ada lovelace from the view/i }))
+
+  // The panel describes the selection, so a removed selection must not leave
+  // it describing something no longer on the canvas.
+  expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+  // Babbage arrived only as Ada's neighbour and was never asked for, so he
+  // goes with her -- which empties the canvas back to its invitation.
+  expect(await screen.findByText(/nothing drawn yet/i)).toBeInTheDocument()
+})
