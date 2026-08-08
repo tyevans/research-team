@@ -51,3 +51,36 @@ def test_a_stub_satisfies_the_port():
 
     port: KnowledgePort = Stub()
     assert port is not None
+
+
+def test_an_extraction_note_defaults_everything_it_does_not_know():
+    """A note carries only what its stage actually established.
+
+    Counts default to None rather than 0 because the difference matters: a
+    `storing` note has no entity count, and reporting one as `0` would say
+    extraction found nothing.
+    """
+    from research_team.application.knowledge import ExtractionNote
+
+    note = ExtractionNote(source_id="notes", stage="storing")
+
+    assert note.entities is None
+    assert note.relationships is None
+    assert note.domain_confidence is None
+    assert note.index is None
+    assert note.detail == ""
+
+
+def test_a_note_keeps_a_zero_confidence_distinct_from_an_absent_one():
+    """`0.0` means the classifier gave up; `None` means none ran.
+
+    Collapsing them would report a fallback as a confident choice, which is
+    the one thing `IngestReport.domain_confidence` exists to prevent.
+    """
+    from research_team.application.knowledge import ExtractionNote
+
+    gave_up = ExtractionNote(source_id="n", stage="extracted", domain="x", domain_confidence=0.0)
+    never_ran = ExtractionNote(source_id="n", stage="extracted", domain="x")
+
+    assert gave_up.domain_confidence == 0.0
+    assert never_ran.domain_confidence is None
