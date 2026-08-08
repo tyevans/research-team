@@ -640,3 +640,135 @@ async def test_two_ingests_at_once_do_not_lose_one_to_a_lock_error(tmp_path, bui
     corpus = build_corpus_repository(store, snapshot_store=snapshot_store)
     state = (await corpus.load(project_id)).state
     assert sorted(state.documents) == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_ingest_reports_its_stages_in_order(tmp_path, build_adapter):
+    """The stage sequence, pinned.
+
+    This is what stops a refactor from quietly silencing the pane: the
+    sequence is the contract, not the individual calls.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    notes = []
+
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage."),
+        report=notes.append,
+    )
+
+    stages = [note.stage for note in notes]
+    assert stages[0] == "storing"
+    assert stages[1] == "extracting"
+    assert "extracted" in stages
+    assert stages[-1] == "consolidated"
+    # Consolidation is per entity, and the fake extracts two.
+    consolidating = [note for note in notes if note.stage == "consolidating"]
+    assert [note.index for note in consolidating] == [1, 2]
+    assert all(note.total == 2 for note in consolidating)
+    assert all(note.source_id == "notes" for note in notes)
+
+
+@pytest.mark.asyncio
+async def test_the_extracted_note_carries_the_counts_and_the_schema(tmp_path, build_adapter):
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    notes = []
+
+    report = await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage."),
+        report=notes.append,
+    )
+
+    extracted = next(note for note in notes if note.stage == "extracted")
+    assert extracted.entities == report.entity_count
+    assert extracted.relationships == report.relationship_count
+    assert extracted.domain == report.domain
+
+
+@pytest.mark.asyncio
+async def test_model_calls_are_counted_from_inside_extraction(tmp_path, build_adapter):
+    """`build_graph` takes no callbacks, so the provider is the way in.
+
+    Without this the pane has nothing to show during the longest part of an
+    ingest, and a slow model looks identical to a hung one.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    notes = []
+
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage."),
+        report=notes.append,
+    )
+
+    counted = [note.model_calls for note in notes if note.model_calls]
+    assert counted, "no note reported a model call"
+    assert max(counted) >= 1
+
+
+@pytest.mark.asyncio
+async def test_a_reporter_that_raises_does_not_fail_the_ingest(tmp_path, build_adapter):
+    """A listener must not cost a document already fetched and paid for."""
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+
+    def explode(note):
+        raise RuntimeError("the listener is broken")
+
+    report = await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage."),
+        report=explode,
+    )
+
+    assert report.entity_count > 0
+
+
+@pytest.mark.asyncio
+async def test_a_failed_extraction_reports_a_failed_stage(tmp_path, build_adapter):
+    """The pane must be able to say "it broke", not just stop updating."""
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    notes = []
+
+    with pytest.raises(KnowledgeError):
+        await adapter.ingest(
+            SourceRef(source_id="notes", text="x" * 200_001), report=notes.append
+        )
+
+    assert notes[-1].stage == "failed"
+    assert notes[-1].detail
+
+
+@pytest.mark.asyncio
+async def test_a_no_op_re_ingest_still_closes_its_pane(tmp_path, build_adapter):
+    """Same content, same model version: nothing new to record, but the pane
+
+    still needs its closing note. A watcher cannot tell "already known" from
+    "hung" if the second ingest goes quiet after `extracting`.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    source = SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+
+    await adapter.ingest(source)
+    notes = []
+    await adapter.ingest(source, report=notes.append)
+
+    stages = [note.stage for note in notes]
+    assert "extracted" in stages
+    assert stages[-1] == "consolidated"
+
+
+@pytest.mark.asyncio
+async def test_a_blank_source_id_announces_nothing(tmp_path, build_adapter):
+    """There is no id to attribute a note to, so no note is made."""
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    notes = []
+
+    with pytest.raises(KnowledgeError):
+        await adapter.ingest(SourceRef(source_id="   ", text="anything"), report=notes.append)
+
+    assert notes == []
