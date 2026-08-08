@@ -10,8 +10,9 @@ instance belongs to one project and supplies it; a caller that could pass a
 different tenant is a caller that could write into another project's graph.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Literal, Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 #: Tool names, in one place so the autonomy policy and the tools agree.

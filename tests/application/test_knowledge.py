@@ -79,7 +79,9 @@ def test_a_note_keeps_a_zero_confidence_distinct_from_an_absent_one():
     """
     from research_team.application.knowledge import ExtractionNote
 
-    gave_up = ExtractionNote(source_id="n", stage="extracted", domain="x", domain_confidence=0.0)
+    gave_up = ExtractionNote(
+        source_id="n", stage="extracted", domain="x", domain_confidence=0.0
+    )
     never_ran = ExtractionNote(source_id="n", stage="extracted", domain="x")
 
     assert gave_up.domain_confidence == 0.0

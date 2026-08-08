@@ -2,8 +2,6 @@
 
 from uuid import uuid4
 
-import pytest
-
 from research_team.application.knowledge import ExtractionNote
 from research_team.interfaces.web.extraction import EXTRACTION, ExtractionActivity
 
