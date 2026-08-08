@@ -145,3 +145,71 @@ it('closes the store it opened when it unmounts', () => {
 
   expect(close).toHaveBeenCalled()
 })
+
+it('is announced as a modal', () => {
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />)
+
+  expect(screen.getByRole('dialog')).toHaveAttribute('aria-modal', 'true')
+})
+
+it('moves focus into the drawer on open', () => {
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />)
+
+  expect(screen.getByRole('button', { name: /close/i })).toHaveFocus()
+})
+
+it('returns focus to whatever opened it, on unmount', () => {
+  const opener = document.createElement('button')
+  opener.textContent = 'open drawer'
+  document.body.append(opener)
+  opener.focus()
+  expect(opener).toHaveFocus()
+
+  const { unmount } = renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />)
+  expect(opener).not.toHaveFocus()
+
+  unmount()
+
+  expect(opener).toHaveFocus()
+  opener.remove()
+})
+
+// jsdom does not implement real tab-order traversal — `userEvent.tab()` is
+// emulated and does not exercise the drawer's own keydown handler the way a
+// browser's native Tab would. So these dispatch a real `Tab`/`Shift+Tab`
+// KeyboardEvent by hand and assert on the handler's own `focus()` calls,
+// rather than leaning on `userEvent.tab()` to look like it proved more than
+// it does.
+it('wraps Tab from the last focusable element back to the first', () => {
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />)
+
+  const focusable = screen
+    .getByRole('dialog')
+    .querySelectorAll<HTMLElement>('a[href], button:not([disabled])')
+  const last = focusable[focusable.length - 1]
+  const first = focusable[0]
+  last?.focus()
+  expect(last).toHaveFocus()
+
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+
+  expect(first).toHaveFocus()
+})
+
+it('wraps Shift+Tab from the first focusable element to the last', () => {
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />)
+
+  const focusable = screen
+    .getByRole('dialog')
+    .querySelectorAll<HTMLElement>('a[href], button:not([disabled])')
+  const last = focusable[focusable.length - 1]
+  const first = focusable[0]
+  first?.focus()
+  expect(first).toHaveFocus()
+
+  document.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }),
+  )
+
+  expect(last).toHaveFocus()
+})
