@@ -10,10 +10,16 @@ import type { GraphView } from '@domain/knowledge/graph.ts'
 // and only a component-level test can see that object's identity.
 let receivedGraphData: unknown
 let receivedOnNodeClick: ((node: unknown) => void) | undefined
+let receivedWidth: number | undefined
 vi.mock('react-force-graph-2d', () => ({
-  default: (props: { graphData: unknown; onNodeClick: (node: unknown) => void }) => {
+  default: (props: {
+    graphData: unknown
+    onNodeClick: (node: unknown) => void
+    width?: number
+  }) => {
     receivedGraphData = props.graphData
     receivedOnNodeClick = props.onNodeClick
+    receivedWidth = props.width
     return null
   },
 }))
@@ -40,6 +46,19 @@ it('hands react-force-graph-2d the same graphData object across a re-render that
   const second = receivedGraphData
 
   expect(second).toBe(first)
+})
+
+it('sizes the canvas to its container rather than letting it default to the window', () => {
+  // force-graph defaults `width` to `window.innerWidth`. The graph sits in one
+  // column of a two-column grid, so that default draws a canvas several times
+  // the pane's width and centres the simulation at `width / 2` -- far to the
+  // right of anything the reader can see. Passing a measured width is what
+  // puts the drawing where the pane is.
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(480)
+
+  render(<GraphCanvas view={view()} onNodeClick={() => {}} />)
+
+  expect(receivedWidth).toBe(480)
 })
 
 it('pins a clicked node at its simulated position so it does not drift while its neighbourhood settles', () => {

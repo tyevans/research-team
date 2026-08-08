@@ -1,28 +1,91 @@
 /* The research view: topics, seeding, documents and the graph.
 
-   Four regions in one grid so a reader can see the whole page at a glance,
-   the same shape `course.css`'s `.course-panes` uses for its own pair --
-   the pattern is copied because the two pages carry the same kind of
-   material, not because the code happened to be nearby. */
+   A rail of context beside a stage, rather than four equal panes in a grid.
+   The regions are not peers: the graph is what the page is for, and topics
+   and documents are what you read it against, so they are sized like it.
+
+   The view owns the viewport and does not scroll. Each region scrolls on its
+   own instead, which is the whole reason the graph can fill the height it is
+   given -- inside a scrolling page every pane needs a fixed pixel height, and
+   fixed heights are what made this page a stack of small boxes with the
+   largest artifact in the smallest one. */
 
 .view-research {
-  overflow: auto;
-  padding: 26px 28px 60px;
-}
-
-.research-panes {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  overflow: hidden;
+  padding: 22px 24px 20px;
+  display: flex;
+  flex-direction: column;
   gap: 14px;
+  min-height: 0;
+  flex: 1;
 }
 
-.research-panes .pane {
+/* `.view-head` is capped at 1100px and centred, which suits the tree it was
+   written for. This page is full-bleed, and a centred title over a full-width
+   workbench reads as a different page's header dropped on top of this one. */
+.view-research .view-head {
+  max-width: none;
+  margin: 0;
+}
+
+.research-workbench {
+  display: grid;
+  /* The rail is sized to its content's needs and the stage takes the rest.
+     `minmax(0, 1fr)` on the stage rather than `auto`: without the zero
+     minimum a wide canvas would push the grid instead of being bounded by
+     it, and the rail would shrink away as the graph grew. */
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+}
+
+.research-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+}
+
+/* Flex items shrink by default, and these must not: the rail scrolls, so a
+   pane that gave up height would be compressed into the one below it rather
+   than pushing the column longer. */
+.research-rail > .pane {
+  flex: 0 0 auto;
+}
+
+.research-workbench .pane {
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  background: var(--bg-panel);
 }
 
-.research-panes .pane-body {
+/* The rail's panes size to their content and scroll as one column. Letting
+   each of them scroll separately is what produced the nested scroll traps:
+   three independent 260px boxes inside a page that also scrolled.
+
+   `flex` and `min-height` are both overridden, not just `overflow`: the base
+   rule is `flex: 1 1 auto; min-height: 0`, which is right inside a pane whose
+   height comes from a grid track, and collapses to zero inside one that takes
+   its height from its content. A zero-height body with visible overflow is
+   how the seeding controls ended up drawn on top of the topics below them. */
+.research-rail .pane-body {
+  flex: 0 0 auto;
+  min-height: auto;
   overflow: visible;
+  padding: 10px 12px 12px;
+}
+
+.research-workbench .pane-graph {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  /* Reads as a surface the graph sits on rather than another card in the
+     stack -- the one place on this page where depth is doing work. */
+  background: var(--bg);
 }
 
 /* ---------------------------------------------------------------- topics
@@ -287,66 +350,164 @@
  * has no route that lists every entity, and a graph a reader has not asked
  * for yet is not one they can navigate. */
 
+/* The canvas is the layer and the controls float on it. Stacked in a column,
+   every search pushed the drawing down and a long result list pushed it off
+   screen -- the element that wants the whole box was the one that kept
+   losing it. */
+
 .graph-browser {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.graph-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* A faint field, so an empty stage reads as somewhere a graph goes rather
+     than as a panel that failed to load, and so a sparse graph has something
+     to sit against. Two gradients at the token line colour: no new palette,
+     and it disappears entirely behind a dense drawing. */
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--line-soft) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--line-soft) 55%, transparent) 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-position: center;
+}
+
+/* The canvas element force-graph mounts. It is measured by `GraphCanvas`, so
+   this only has to give it a box with a real size to measure. */
+.graph-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.graph-command {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  /* Bounded rather than stretched: the bar is a control, and one that ran the
+     full width of the stage would read as a header and cover the drawing it
+     is meant to sit on. */
+  width: min(320px, calc(100% - 20px));
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+  z-index: 1;
 }
 
 .graph-controls {
   display: flex;
   gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  /* Lifted off the canvas, which is the only thing on this page that can
+     scroll underneath a control. */
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
 }
 
 .graph-search {
   flex: 1;
+  min-width: 0;
 }
 
 .graph-entity-type {
   flex-shrink: 0;
+  max-width: 40%;
 }
 
 .graph-error {
   color: var(--k-failure);
   font-size: var(--t-xs);
   margin: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--k-failure);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+
+.graph-searching,
+.graph-results-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+}
+
+.graph-searching {
+  padding: 6px 8px;
+}
+
+.graph-results-panel {
+  /* The list scrolls inside the floating panel instead of growing down the
+     page, so the number of matches cannot change how much graph you can see. */
+  max-height: min(340px, calc(100vh - 260px));
+  overflow-y: auto;
+  padding: 4px;
 }
 
 .graph-truncated {
   color: var(--fg-dim);
   font-size: var(--t-xs);
   margin: 0;
+  padding: 4px 6px 6px;
+  border-bottom: 1px solid var(--line-soft);
 }
 
 .graph-results {
   list-style: none;
   margin: 0;
   padding: 0;
+  /* Rows, not wrapped chips: these are a list you read down looking for one
+     name, and chips of varying width made that a scan in two dimensions. */
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .graph-result {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  border: 1px solid var(--line);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-left: 2px solid transparent;
   border-radius: var(--radius);
-  background: var(--bg-panel-2);
+  background: none;
   color: inherit;
   font: inherit;
-  font-size: var(--t-xs);
+  font-size: var(--t-sm);
+  text-align: left;
   cursor: pointer;
 }
 
-.graph-result:hover {
-  border-color: var(--accent);
+.graph-result:hover,
+.graph-result:focus-visible {
+  background: var(--bg-hover);
+  /* The same left edge the topic and document rows use for "this one" --
+     one convention for row emphasis across the page. */
+  border-left-color: var(--accent);
+}
+
+.graph-result-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .graph-result-type {
+  flex-shrink: 0;
   font-family: var(--mono);
+  font-size: var(--t-xs);
   color: var(--fg-dim);
 }
 

@@ -7,6 +7,12 @@
   .panes {
     grid-template-columns: minmax(280px, 1fr) minmax(300px, 1.4fr);
   }
+  /* The rail gives up width before the stage does: the graph is the thing
+     that stops being readable when it narrows, and the rail's rows are text
+     that reflows. */
+  .research-workbench {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
   .pane-conversation {
     grid-column: 1 / -1;
     border-right: none;
@@ -82,5 +88,27 @@
     width: 100%;
     max-width: none;
     min-width: 0;
+  }
+  /* Below this there is no width to put a rail beside a stage, so the page
+     becomes one column and scrolls -- the arrangement the wide layout avoids,
+     which is the right one once nothing can be side by side. The graph keeps
+     a viewport-relative height rather than a pixel one so it stays the
+     largest thing in the column. */
+  .view-research {
+    overflow: auto;
+    display: block;
+    padding: 18px 14px 40px;
+  }
+  .research-workbench {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .research-rail {
+    overflow: visible;
+  }
+  .research-workbench .pane-graph {
+    height: 60vh;
+    min-height: 320px;
   }
 }

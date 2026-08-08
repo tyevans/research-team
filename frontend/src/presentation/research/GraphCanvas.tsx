@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import ForceGraph2D from 'react-force-graph-2d'
 
 import type { GraphView } from '@domain/knowledge/graph.ts'
@@ -12,6 +12,45 @@ interface SimulatedNode {
   y?: number
   fx?: number
   fy?: number
+}
+
+/** The kind palette from `tokens.css`, in the order entity types are assigned
+ *  to it.
+ *
+ * Read off the document rather than written as hexes here, because the tokens
+ * file is the one place this console is allowed to name a colour -- a literal
+ * in this module would be a second palette that only diverges once somebody
+ * edits the first. The list is the same set the event log already uses for
+ * its own kinds, so a reader who has learnt those colours is not learning a
+ * second scheme for the graph.
+ */
+const KIND_TOKENS = [
+  '--k-session',
+  '--k-message',
+  '--k-file',
+  '--k-tool',
+  '--k-compaction',
+  '--k-turn',
+] as const
+
+/** A stable colour per entity type.
+ *
+ * Hashed rather than kept in a lookup table: entity types come from whatever
+ * the extraction produced -- `concept`, `fact`, `hypothesis`, `study`, and
+ * anything else a future prompt yields -- so a table would need editing every
+ * time the corpus grew a new one, and would fall back to grey for exactly the
+ * types nobody had thought of yet. Hashing means the same type is always the
+ * same colour within and across sessions, which is the property that actually
+ * matters when a reader is scanning a drawing.
+ */
+const colorForType = (entityType: string, palette: readonly string[]): string => {
+  let hash = 0
+  for (let index = 0; index < entityType.length; index += 1) {
+    hash = (hash * 31 + entityType.charCodeAt(index)) | 0
+  }
+  // The index is always in range; the fallback is what satisfies the checked
+  // indexed access rather than a case that can happen.
+  return palette[Math.abs(hash) % palette.length] ?? palette[0] ?? '#6ba7f5'
 }
 
 /** The force-directed drawing of a `GraphView`. The only module in this
@@ -40,23 +79,127 @@ export const GraphCanvas = memo(function GraphCanvas({
 }) {
   const graphData = useMemo(() => ({ nodes: [...view.nodes], links: [...view.links] }), [view])
 
+  // Measured, not left to the library: force-graph defaults `width` to
+  // `window.innerWidth`, and this canvas lives in one column of a two-column
+  // grid. That default draws a canvas several times the pane's width and
+  // centres the simulation at `width / 2`, which puts the whole graph off to
+  // the right of the only part of it a reader can see -- the drawing is there,
+  // just not where they are looking.
+  //
+  // A `ResizeObserver` rather than a one-off measurement on mount: the pane is
+  // a grid column, so it changes width whenever the window does, and a width
+  // captured once would be wrong for the rest of the session.
+  // Height is measured for the same reason, and it is why there is no fixed
+  // pixel height here any more: the canvas fills the stage it is given, so the
+  // graph gets whatever room the viewport has rather than a hardcoded 360px
+  // box inside a page that scrolls past it.
+  const container = useRef<HTMLDivElement | null>(null)
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null)
+
+  // Resolved once from the stylesheet. `getComputedStyle` is a layout read, and
+  // the canvas painter runs per node per frame -- doing it there would be a
+  // forced reflow sixty times a second.
+  const theme = useMemo(() => {
+    const styles = getComputedStyle(document.documentElement)
+    const token = (name: string, fallback: string) =>
+      styles.getPropertyValue(name).trim() || fallback
+    return {
+      palette: KIND_TOKENS.map((name) => token(name, '#6ba7f5')),
+      label: token('--fg', '#d7dee7'),
+      mono: token('--mono', 'monospace'),
+    }
+  }, [])
+
+  useEffect(() => {
+    const element = container.current
+    if (!element) return
+
+    const measure = () =>
+      setSize((previous) =>
+        previous?.width === element.clientWidth && previous?.height === element.clientHeight
+          ? // Same box: returning the previous object keeps this from
+            // re-rendering, which matters because a re-render that changed
+            // `size` identity would rebuild nothing but would still run on
+            // every observer callback during a drag-resize.
+            previous
+          : { width: element.clientWidth, height: element.clientHeight },
+      )
+    measure()
+
+    // Absent in some test environments, where the single measurement above is
+    // all this needs to do.
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
   return (
-    <ForceGraph2D
-      graphData={graphData}
-      nodeLabel={(node) => `${String(node.name)} (${String(node.entityType)})`}
-      linkLabel={(link) => String(link.relationshipType)}
-      linkDirectionalArrowLength={4}
-      height={360}
-      onNodeClick={(node) => {
-        // Pin the focused node at its current simulated position so it
-        // stays put while the neighbourhood pulled in around it settles --
-        // without this, expanding a node lets the whole graph drift, since
-        // nothing anchors the point the reader is actually looking at.
-        const pinned = node as SimulatedNode
-        if (pinned.x !== undefined) pinned.fx = pinned.x
-        if (pinned.y !== undefined) pinned.fy = pinned.y
-        onNodeClick(String(node.id))
-      }}
-    />
+    <div ref={container} className="graph-canvas">
+      {/* Withheld until the container has been measured: handing the library
+          no width at all lets it fall back to the window for one frame, which
+          is the very layout this is avoiding. */}
+      {size === null ? null : (
+        <ForceGraph2D
+          width={size.width}
+          height={size.height}
+          graphData={graphData}
+          nodeLabel={(node) => `${String(node.name)} (${String(node.entityType)})`}
+          linkLabel={(link) => String(link.relationshipType)}
+          linkDirectionalArrowLength={4}
+          linkColor={() => 'rgba(138, 149, 163, 0.35)'}
+          nodeRelSize={5}
+          // Names are drawn on the canvas rather than left to the hover
+          // tooltip: a field of identical unlabelled dots gives a reader
+          // nothing to aim at, so finding anything means hovering every node
+          // in turn. The label is what makes the drawing readable at a glance
+          // and the click worth making.
+          nodeCanvasObject={(node, ctx, globalScale) => {
+            const { x = 0, y = 0 } = node as SimulatedNode
+            const color = colorForType(String(node.entityType), theme.palette)
+
+            ctx.beginPath()
+            ctx.arc(x, y, 5, 0, 2 * Math.PI)
+            ctx.fillStyle = color
+            ctx.fill()
+
+            // Below a certain zoom the labels collide into an unreadable mat,
+            // and the shape of the graph is the only thing left worth seeing.
+            if (globalScale < 0.7) return
+
+            const name = String(node.name)
+            // Long entity names are whole sentences in this corpus -- a fact
+            // node is a full clause -- and drawing one in full would cover the
+            // nodes around it.
+            const label = name.length > 28 ? `${name.slice(0, 27)}…` : name
+
+            ctx.font = `${11 / globalScale}px ${theme.mono}`
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'top'
+            ctx.fillStyle = theme.label
+            ctx.fillText(label, x, y + 8 / globalScale)
+          }}
+          // The painted circle is 5px, but the hit area should not be: a
+          // reader aiming at a labelled node is aiming at the label too.
+          nodePointerAreaPaint={(node, color, ctx) => {
+            const { x = 0, y = 0 } = node as SimulatedNode
+            ctx.fillStyle = color
+            ctx.beginPath()
+            ctx.arc(x, y, 8, 0, 2 * Math.PI)
+            ctx.fill()
+          }}
+          onNodeClick={(node) => {
+            // Pin the focused node at its current simulated position so it
+            // stays put while the neighbourhood pulled in around it settles --
+            // without this, expanding a node lets the whole graph drift, since
+            // nothing anchors the point the reader is actually looking at.
+            const pinned = node as SimulatedNode
+            if (pinned.x !== undefined) pinned.fx = pinned.x
+            if (pinned.y !== undefined) pinned.fy = pinned.y
+            onNodeClick(String(node.id))
+          }}
+        />
+      )}
+    </div>
   )
 })
