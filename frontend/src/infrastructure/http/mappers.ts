@@ -4,6 +4,7 @@ import type { ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { ComponentBlock, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Approval } from '@domain/approval/approval.ts'
+import type { ExtractionFrame, ExtractionStage } from '@domain/knowledge/extraction.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
   Course,
@@ -32,6 +33,9 @@ import {
 } from '@domain/shared/identifier.ts'
 
 import type * as dto from './dto.ts'
+// A value import, unlike the type-only namespace above: `readExtractionFrame`
+// parses at run time because a live frame is JSON nobody has validated yet.
+import { extractionFrameDto } from './dto.ts'
 
 /** The anti-corruption layer: wire shapes in, domain objects out.
  *
@@ -337,3 +341,49 @@ export const toRoster = (raw: Dto<typeof dto.rosterDto>): Roster => ({
   })),
   idleSessionIds: raw.idle_session_ids.map((id) => SessionId(id)),
 })
+
+/** The stages this build knows, in the order the ingest walks them. */
+const STAGES: readonly ExtractionStage[] = [
+  'storing',
+  'extracting',
+  'extracted',
+  'consolidating',
+  'consolidated',
+  'failed',
+]
+
+/** An unrecognised stage reads as `extracting` rather than being dropped.
+ *
+ * `extracting` and not, say, `failed`, because the two terminal stages end the
+ * extraction: mistaking a stage this build has not heard of for a terminal one
+ * would file a running extraction under "last" and freeze the pane on it. A
+ * wrong non-terminal label is a cosmetic error; a wrong terminal one is not. */
+const toStage = (raw: string): ExtractionStage =>
+  STAGES.find((stage) => stage === raw) ?? 'extracting'
+
+export const toExtractionFrame = (raw: Dto<typeof dto.extractionFrameDto>): ExtractionFrame => ({
+  type: 'Extraction',
+  projectId: raw.project_id,
+  sourceId: raw.source_id,
+  stage: toStage(raw.stage),
+  detail: raw.detail,
+  entities: raw.entities,
+  relationships: raw.relationships,
+  domain: raw.domain,
+  domainConfidence: raw.domain_confidence,
+  index: raw.index,
+  total: raw.total,
+  modelCalls: raw.model_calls,
+})
+
+/** The same mapping for a live frame, which arrives unvalidated.
+ *
+ * Null rather than a throw, and null rather than a partly-filled frame: an
+ * extraction frame off the socket is JSON nobody has checked, and folding a
+ * half-shaped one would put `undefined` where a count belongs and render as
+ * progress that never happened. This is also the seam that keeps zod out of
+ * the store, which is application-layer and should not know the wire shape. */
+export const readExtractionFrame = (raw: unknown): ExtractionFrame | null => {
+  const parsed = extractionFrameDto.safeParse(raw)
+  return parsed.success ? toExtractionFrame(parsed.data) : null
+}

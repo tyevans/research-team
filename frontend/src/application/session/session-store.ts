@@ -477,6 +477,12 @@ export const createSessionStore = (deps: SessionStoreDeps): SessionStore =>
           return
         }
 
+        // Everything below reads a log frame. Stated rather than left to
+        // narrowing-by-elimination, which quietly stopped being true when the
+        // feed grew a project-addressed extraction channel belonging to no
+        // session at all.
+        if (frame.kind !== 'log') return
+
         if (frame.sessionId !== state.sessionId) return
 
         const log = appendEntry(state.log, frame.entry)

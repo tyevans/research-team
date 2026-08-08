@@ -368,5 +368,31 @@ export const rosterDto = z.object({
   idle_session_ids: z.array(z.string()).default([]),
 })
 
+/** One note from a running `remember`.
+ *
+ * `stage` is a plain string rather than an enum on purpose: an unrecognised
+ * stage must reach the mapper's fallback, not fail validation. A build talking
+ * to a server that has grown a seventh stage should show the extraction
+ * progressing, not blank the pane on every frame. */
+export const extractionFrameDto = z.object({
+  type: z.string(),
+  project_id: z.string(),
+  source_id: z.string(),
+  stage: z.string(),
+  detail: z.string().default(''),
+  entities: maybe(z.number()),
+  relationships: maybe(z.number()),
+  domain: maybe(z.string()),
+  domain_confidence: maybe(z.number()),
+  index: maybe(z.number()),
+  total: maybe(z.number()),
+  model_calls: maybe(z.number()),
+})
+
+export const extractionCatchUpDto = z.object({
+  current: z.array(extractionFrameDto).default([]),
+  last: z.array(extractionFrameDto).default([]),
+})
+
 export const idDto = z.object({ id: z.string() })
 export const okDto = z.unknown()

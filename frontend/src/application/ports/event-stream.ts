@@ -22,6 +22,16 @@ export type FeedFrame =
       readonly approvalId: ApprovalId
     }
   | { readonly kind: 'activity'; readonly entry: ActivityEntry }
+  /** Extraction progress, carried as the payload that arrived rather than as a
+   *  mapped object.
+   *
+   *  The odd one out, deliberately. Every other frame here is addressed to a
+   *  session and belongs to the session tree; this one is addressed to a
+   *  *project* and is read by a per-project store that folds the frames
+   *  itself. Routing the payload rather than a decoded frame keeps that
+   *  folding — and the "is this my project?" test it turns on — in the one
+   *  place that knows which project is on screen. */
+  | { readonly kind: 'extraction'; readonly payload: unknown }
 
 export type ConnectionState = 'connecting' | 'open' | 'down'
 

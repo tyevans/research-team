@@ -10,6 +10,7 @@ import type { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 import { EmptyState, Loading } from '../common/primitives.tsx'
 import { sessionHref } from '../routing/routes.ts'
 import { Artifact } from './Artifacts.tsx'
+import { ExtractionPane } from './ExtractionPane.tsx'
 import { Findings } from './Findings.tsx'
 import { RunPanel } from './RunPanel.tsx'
 import { Stage } from './StageRail.tsx'
@@ -73,6 +74,11 @@ export const CourseView = ({
           nothing about a turn or extraction still in flight. */}
       <section className="worker-panel" aria-label="Working now">
         <Workers projectId={projectId} watching={watching} onWatch={onWatch} />
+        {/* The roster row is the summary — "an extraction is running" — and
+            this is the detail underneath it. Inside the same panel rather
+            than beside it, because a reader who sees the row is asking the
+            question this answers. */}
+        <ExtractionPane projectId={projectId} />
       </section>
 
       {/* A run works the project's topic queue, not the workflow's stages, so

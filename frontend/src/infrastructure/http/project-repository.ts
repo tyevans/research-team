@@ -2,12 +2,14 @@ import { z } from 'zod'
 
 import { ApiError } from '@application/ports/errors.ts'
 import type {
+  ExtractionRepository,
   HealthRepository,
   ProjectRepository,
   ResearchRepository,
   SummaryHealth,
   WorkerRepository,
 } from '@application/ports/repositories.ts'
+import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
 import type { Course } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
@@ -16,7 +18,7 @@ import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, query, seg } from './http-client.ts'
-import { toCourse, toPreset, toProject, toRoster, toRun } from './mappers.ts'
+import { toCourse, toExtractionFrame, toPreset, toProject, toRoster, toRun } from './mappers.ts'
 
 export class HttpProjectRepository implements ProjectRepository {
   constructor(private readonly http: HttpClient) {}
@@ -136,6 +138,21 @@ export class HttpWorkerRepository implements WorkerRepository {
 
   async on(projectId: ProjectId): Promise<Roster> {
     return toRoster(await this.http.get(`/api/projects/${seg(projectId)}/workers`, dto.rosterDto))
+  }
+}
+
+export class HttpExtractionRepository implements ExtractionRepository {
+  constructor(private readonly http: HttpClient) {}
+
+  async on(projectId: ProjectId): Promise<{
+    readonly current: readonly ExtractionFrame[]
+    readonly last: readonly ExtractionFrame[]
+  }> {
+    const body = await this.http.get(
+      `/api/projects/${seg(projectId)}/extraction`,
+      dto.extractionCatchUpDto,
+    )
+    return { current: body.current.map(toExtractionFrame), last: body.last.map(toExtractionFrame) }
   }
 }
 

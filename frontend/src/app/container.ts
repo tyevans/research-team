@@ -2,6 +2,7 @@ import type { EventStream } from '@application/ports/event-stream.ts'
 import type { PreferenceStore } from '@application/ports/preferences.ts'
 import type {
   ApprovalRepository,
+  ExtractionRepository,
   HealthRepository,
   LessonRepository,
   ProjectRepository,
@@ -13,6 +14,7 @@ import type {
 } from '@application/ports/repositories.ts'
 import { HttpClient } from '@infrastructure/http/http-client.ts'
 import {
+  HttpExtractionRepository,
   HttpHealthRepository,
   HttpProjectRepository,
   HttpResearchRepository,
@@ -42,6 +44,7 @@ export interface Container {
   readonly projects: ProjectRepository
   readonly research: ResearchRepository
   readonly workers: WorkerRepository
+  readonly extractions: ExtractionRepository
   readonly health: HealthRepository
   readonly stream: EventStream
   readonly preferences: PreferenceStore
@@ -61,6 +64,7 @@ export const createContainer = (baseUrl = ''): Container => {
     projects: new HttpProjectRepository(http),
     research: new HttpResearchRepository(http),
     workers: new HttpWorkerRepository(http),
+    extractions: new HttpExtractionRepository(http),
     health: new HttpHealthRepository(http),
     stream: new SseEventStream(`${baseUrl}/api/stream`),
     preferences: new LocalPreferenceStore(),

@@ -1,5 +1,6 @@
 import type { Approval, ApprovalDecision } from '@domain/approval/approval.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
+import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
 import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
@@ -121,6 +122,21 @@ export interface WorkerRepository {
   /** Everything in flight on a project. Rejects when this build has no
    *  roster, which a caller must distinguish from an empty one. */
   on(projectId: ProjectId): Promise<Roster>
+}
+
+export interface ExtractionRepository {
+  /** Every frame the running extraction has emitted, and the last finished
+   *  one's.
+   *
+   *  The only recovery path there is. These frames carry no feed position, so
+   *  a reconnect cannot replay them off the log; without this a tab that
+   *  arrived mid-ingest, or one whose socket dropped, would show a frozen pane
+   *  indistinguishable from a stalled extraction. Two empty lists when nothing
+   *  has run — an absent extraction is a state, not a missing resource. */
+  on(projectId: ProjectId): Promise<{
+    readonly current: readonly ExtractionFrame[]
+    readonly last: readonly ExtractionFrame[]
+  }>
 }
 
 export interface HealthRepository {

@@ -404,6 +404,107 @@
   font-size: var(--t-xs);
 }
 
+/* ------------------------------------------------------------ extraction
+ *
+ * The detail under the roster's extraction row. Indented behind a rule so it
+ * reads as belonging to the row above rather than as a second panel, and set
+ * in the mono face throughout: every line here is a machine's account of its
+ * own progress, and the stage list only scans as a list if the labels align.
+ */
+.extraction {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line-soft);
+}
+
+.extraction-title {
+  margin: 0;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.extraction-sub {
+  margin: 0;
+}
+
+/* Wrapping rather than scrolling: the stages are the shape of the work, and
+ * a stage pushed off the end would hide the one part of this pane that says
+ * how much is left. */
+.extraction-stages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.extraction-stage {
+  color: var(--fg-faint);
+  padding: 1px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+}
+
+/* The stage in flight, carried by colour *and* by a border, so it survives
+ * being read by someone who cannot tell the two greys apart. */
+.extraction-now {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+.extraction-line {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+/* Capped and scrolled: a consolidation pass over a long document runs to
+ * hundreds of verdicts, and letting the list grow unbounded would push the
+ * whole course page down as the ingest ran. */
+.extraction-merge-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  max-height: 140px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.extraction-merge {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+}
+
+.extraction-last {
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.extraction-summary {
+  cursor: pointer;
+  font-family: var(--mono);
+}
+
+.extraction-failed > .extraction-summary {
+  color: var(--k-failure);
+}
+
+.extraction-failed-detail {
+  color: var(--k-failure);
+}
+
 /* ---------------------------------------------------------------- drawer
  *
  * A read-only overlay, not a third pane: it opens over whatever the course
