@@ -320,10 +320,12 @@
   color: var(--k-failure);
 }
 
+/* The reader lives in a drawer now, so it no longer needs the rule and the
+   top margin that separated it from the list it used to sit under. The drawer
+   body owns the scrolling, which is why the text below is not bounded any
+   more either. */
 .document-reader {
-  border-top: 1px solid var(--line);
-  padding-top: 10px;
-  margin-top: 4px;
+  padding: 12px 14px 20px;
 }
 
 .document-reader-title {
@@ -340,8 +342,11 @@
 .document-reader-text {
   font-size: var(--t-sm);
   white-space: pre-wrap;
-  max-height: 320px;
-  overflow-y: auto;
+  /* Prose, so it gets a measure. Full-width lines across a 640px drawer are
+     the same reason this was hard to read in the rail, just at the other
+     extreme. */
+  max-width: 68ch;
+  line-height: 1.65;
 }
 
 /* ----------------------------------------------------------------- graph
