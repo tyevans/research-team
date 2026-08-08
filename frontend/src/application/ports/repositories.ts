@@ -6,6 +6,7 @@ import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
+import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { TopicDetail, TopicStatus, TopicView } from '@domain/research/topic.ts'
 import type { EventIndex } from '@domain/session/event-index.ts'
@@ -21,6 +22,7 @@ import type {
   ComponentId,
   ProjectId,
   SessionId,
+  SourceId,
   TopicId,
 } from '@domain/shared/identifier.ts'
 
@@ -180,6 +182,23 @@ export interface TopicRepository {
     key: string,
     answer: string,
   ): Promise<TopicDetail>
+}
+
+export interface DocumentRepository {
+  /** Every source this project has stored, dropped ones included -- the
+   *  corpus keeps them on purpose, as an audit trail, and hiding them here
+   *  would misreport what the project holds. */
+  list(projectId: ProjectId): Promise<readonly DocumentSummary[]>
+  /** One document's text, or a `start`/`end` range of it. Omitting `range`
+   *  reads the whole document; the server clamps a range past the end
+   *  rather than refusing it, and the offsets in the result are what it
+   *  actually returned. */
+  read(projectId: ProjectId, sourceId: SourceId, range?: DocumentRange): Promise<DocumentText>
+}
+
+export interface DocumentRange {
+  readonly start?: number
+  readonly end?: number
 }
 
 export interface WorkerRepository {

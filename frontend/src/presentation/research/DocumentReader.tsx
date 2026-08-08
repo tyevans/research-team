@@ -1,0 +1,50 @@
+import { useQuery } from '@tanstack/react-query'
+
+import { queryKeys } from '@application/queries/keys.ts'
+import { useContainer } from '@app/container-context.tsx'
+import { documentLabel } from '@domain/research/document.ts'
+import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
+
+import { ErrorBox, Loading } from '../common/primitives.tsx'
+
+/** One document's text, read fresh rather than reused from the list row --
+ *  `DocumentSummary` carries no `text`, on purpose, so this is the only
+ *  place in the pane that ever asks the server for it. */
+export const DocumentReader = ({
+  projectId,
+  sourceId,
+}: {
+  projectId: ProjectId
+  sourceId: SourceId
+}) => {
+  const { documents } = useContainer()
+
+  const query = useQuery({
+    queryKey: queryKeys.document(projectId, sourceId),
+    queryFn: () => documents.read(projectId, sourceId, undefined),
+  })
+
+  if (query.isPending) return <Loading what="document" />
+
+  if (query.isError) {
+    return (
+      <ErrorBox
+        title="Could not read this document"
+        message={query.error instanceof Error ? query.error.message : String(query.error)}
+        onRetry={() => void query.refetch()}
+      />
+    )
+  }
+
+  const document = query.data
+
+  return (
+    <article className="document-reader">
+      <h3 className="document-reader-title">{documentLabel(document)}</h3>
+      {document.droppedReason ? (
+        <p className="document-reader-dropped">Dropped: {document.droppedReason}</p>
+      ) : null}
+      <p className="document-reader-text">{document.text}</p>
+    </article>
+  )
+}

@@ -452,5 +452,28 @@ export const topicDetailDto = topicDto.extend({
   contested: z.boolean(),
 })
 
+/** One row of `/api/projects/{id}/sources`: metadata only, never text. See
+ *  `source_view` -- `dropped_reason` is always present, `null` for a live
+ *  document. */
+export const documentDto = z.object({
+  source_id: z.string(),
+  char_count: z.number(),
+  sha256: z.string(),
+  uri: maybe(z.string()),
+  title: maybe(z.string()),
+  published_at: maybe(z.string()),
+  note: maybe(z.string()),
+  dropped_reason: maybe(z.string()),
+})
+
+/** `/api/projects/{id}/sources/{source_id}`: the row plus the text and the
+ *  offsets it was actually read at. `.extend` for the reason `topicDetailDto`
+ *  gives -- `source_text_view` spreads `source_view` and adds these three. */
+export const documentTextDto = documentDto.extend({
+  text: z.string(),
+  start: z.number(),
+  end: z.number(),
+})
+
 export const idDto = z.object({ id: z.string() })
 export const okDto = z.unknown()

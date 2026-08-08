@@ -15,6 +15,7 @@ import type {
   Finding,
 } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
+import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { TopicDetail, TopicStatus, TopicView } from '@domain/research/topic.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
@@ -457,4 +458,22 @@ export const toTopicDetail = (raw: Dto<typeof dto.topicDetailDto>): TopicDetail 
   sourceIds: raw.source_ids,
   findingNotes: raw.finding_notes,
   contested: raw.contested,
+})
+
+export const toDocumentSummary = (raw: Dto<typeof dto.documentDto>): DocumentSummary => ({
+  sourceId: SourceId(raw.source_id),
+  charCount: raw.char_count,
+  sha256: raw.sha256,
+  uri: raw.uri,
+  title: raw.title,
+  publishedAt: raw.published_at,
+  note: raw.note,
+  droppedReason: raw.dropped_reason,
+})
+
+export const toDocumentText = (raw: Dto<typeof dto.documentTextDto>): DocumentText => ({
+  ...toDocumentSummary(raw),
+  text: raw.text,
+  start: raw.start,
+  end: raw.end,
 })

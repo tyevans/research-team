@@ -31,7 +31,7 @@ const BUDGET_KB = {
   'app-': 55, // our code: every component, store, mapper and stylesheet rule
   'react-': 66, // react + react-dom + scheduler
   'text-': 34, // marked, dompurify, jsdiff — markdown and diff rendering
-  'vendor-': 36, // query, zustand, wouter, zod, date-fns, clsx
+  'vendor-': 38, // query, zustand, wouter, zod, date-fns, clsx, @tanstack/react-virtual
   'rolldown-runtime-': 2, // the bundler's own module loader, emitted once
   total: 180,
 }

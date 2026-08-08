@@ -3,6 +3,7 @@ import type { PreferenceStore } from '@application/ports/preferences.ts'
 import type {
   ApprovalRepository,
   AutonomyRepository,
+  DocumentRepository,
   ExtractionRepository,
   HealthRepository,
   LessonRepository,
@@ -15,6 +16,7 @@ import type {
   WorkspaceRepository,
 } from '@application/ports/repositories.ts'
 import { HttpAutonomyRepository } from '@infrastructure/http/autonomy-repository.ts'
+import { HttpDocumentRepository } from '@infrastructure/http/document-repository.ts'
 import { HttpClient } from '@infrastructure/http/http-client.ts'
 import {
   HttpExtractionRepository,
@@ -49,6 +51,7 @@ export interface Container {
   readonly projects: ProjectRepository
   readonly research: ResearchRepository
   readonly topics: TopicRepository
+  readonly documents: DocumentRepository
   readonly workers: WorkerRepository
   readonly extractions: ExtractionRepository
   readonly health: HealthRepository
@@ -71,6 +74,7 @@ export const createContainer = (baseUrl = ''): Container => {
     projects: new HttpProjectRepository(http),
     research: new HttpResearchRepository(http),
     topics: new HttpTopicRepository(http),
+    documents: new HttpDocumentRepository(http),
     workers: new HttpWorkerRepository(http),
     extractions: new HttpExtractionRepository(http),
     health: new HttpHealthRepository(http),

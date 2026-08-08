@@ -1,7 +1,7 @@
 import type { ComponentAudience } from '@domain/lesson/document.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
-import type { ProjectId, SessionId, TopicId } from '@domain/shared/identifier.ts'
+import type { ProjectId, SessionId, SourceId, TopicId } from '@domain/shared/identifier.ts'
 
 /** Cache keys, in one place.
  *
@@ -30,6 +30,13 @@ export const queryKeys = {
   workers: (project: ProjectId) => ['workers', project] as const,
   topics: (project: ProjectId) => ['topics', project] as const,
   topic: (project: ProjectId, topic: TopicId) => ['topic', project, topic] as const,
+  documents: (project: ProjectId) => ['documents', project] as const,
+  /** Ranged reads are their own key, distinct from the whole-document read
+   *  `range` omitted gives -- a range and the full text are two different
+   *  responses over the same source, and sharing a key would show one
+   *  under the other's cache entry. */
+  document: (project: ProjectId, source: SourceId, range?: { start?: number; end?: number }) =>
+    ['document', project, source, range?.start ?? null, range?.end ?? null] as const,
 
   file: (session: SessionId, path: FilePath, at: ScrubPoint) =>
     ['file', session, path.value, ScrubPoint.toNullable(at)] as const,
