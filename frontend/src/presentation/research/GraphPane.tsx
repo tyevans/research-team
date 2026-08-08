@@ -58,71 +58,83 @@ export const GraphPane = ({ projectId }: { projectId: ProjectId }) => {
 
   return (
     <div className="graph-browser">
-      <div className="graph-controls">
-        <input
-          type="search"
-          role="searchbox"
-          className="graph-search"
-          placeholder="Search the graph"
-          aria-label="Search the graph"
-          value={term}
-          onChange={(event) => setTerm(event.target.value)}
-        />
-        <select
-          className="graph-entity-type"
-          aria-label="Filter by entity type"
-          value={entityType}
-          onChange={(event) => setEntityType(event.target.value)}
-        >
-          <option value="">All types</option>
-          {Array.from(new Set(results.map((result) => result.entityType)))
-            .sort()
-            .map((type) => (
-              <option key={type} value={type}>
-                {type}
-              </option>
-            ))}
-        </select>
+      {/* The canvas is the layer, and the controls sit on top of it rather
+          than in a column above it. Stacked, every search pushed the drawing
+          down and a long result list pushed it off screen entirely -- the one
+          element that wants the whole box was the one that kept losing it. */}
+      <div className="graph-stage">
+        {view.nodes.length === 0 ? (
+          <EmptyState
+            title="Nothing drawn yet"
+            detail="Search for an entity and pick a result to draw what connects to it."
+          />
+        ) : (
+          <Suspense fallback={<Loading what="the graph canvas" />}>
+            <GraphCanvas view={view} onNodeClick={(id) => void store.getState().expandNode(id)} />
+          </Suspense>
+        )}
       </div>
 
-      {error ? <p className="graph-error">{error}</p> : null}
+      <div className="graph-command">
+        <div className="graph-controls">
+          <input
+            type="search"
+            role="searchbox"
+            className="graph-search"
+            placeholder="Search the graph"
+            aria-label="Search the graph"
+            value={term}
+            onChange={(event) => setTerm(event.target.value)}
+          />
+          <select
+            className="graph-entity-type"
+            aria-label="Filter by entity type"
+            value={entityType}
+            onChange={(event) => setEntityType(event.target.value)}
+          >
+            <option value="">All types</option>
+            {Array.from(new Set(results.map((result) => result.entityType)))
+              .sort()
+              .map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+          </select>
+        </div>
 
-      {searching ? <Loading what="entities" /> : null}
+        {error ? <p className="graph-error">{error}</p> : null}
 
-      {results.length > 0 ? (
-        <>
-          {truncated ? (
-            <p className="graph-truncated">
-              Showing the first {results.length} matches -- narrow the search to see more.
-            </p>
-          ) : null}
-          <ul className="graph-results">
-            {results.map((result) => (
-              <li key={result.id}>
-                <button
-                  type="button"
-                  className="graph-result"
-                  onClick={() => void store.getState().expandNode(result.id)}
-                >
-                  {result.name}
-                  <span className="graph-result-type">{result.entityType}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : null}
+        {searching ? (
+          <div className="graph-searching">
+            <Loading what="entities" />
+          </div>
+        ) : null}
 
-      {view.nodes.length === 0 ? (
-        <EmptyState
-          title="Nothing expanded yet"
-          detail="Search for an entity above and click a result to draw its neighbourhood."
-        />
-      ) : (
-        <Suspense fallback={<Loading what="the graph canvas" />}>
-          <GraphCanvas view={view} onNodeClick={(id) => void store.getState().expandNode(id)} />
-        </Suspense>
-      )}
+        {results.length > 0 ? (
+          <div className="graph-results-panel">
+            {truncated ? (
+              <p className="graph-truncated">
+                First {results.length} matches -- narrow the search to see more.
+              </p>
+            ) : null}
+            <ul className="graph-results">
+              {results.map((result) => (
+                <li key={result.id}>
+                  <button
+                    type="button"
+                    className="graph-result"
+                    onClick={() => void store.getState().expandNode(result.id)}
+                  >
+                    <span className="graph-result-name">{result.name}</span>
+                    <span className="graph-result-type">{result.entityType}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }

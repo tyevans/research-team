@@ -146,7 +146,7 @@ it('tells the reader when the server held back more matches than it showed', asy
 
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
 
-  expect(await screen.findByText(/showing the first 1 match/i)).toBeInTheDocument()
+  expect(await screen.findByText(/first 1 match/i)).toBeInTheDocument()
 })
 
 it('passes the selected entity type filter to the repository', async () => {
