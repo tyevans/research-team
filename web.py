@@ -51,6 +51,7 @@ def main() -> None:
             workers=application.workers,
             extraction=extraction,
             topics=application.topic_readers,
+            graphs=application.graphs,
             # The same object the executor's gating predicate reads, which is
             # the only reason the routes over it can change anything: a copy
             # would answer reads correctly and change nothing. Instance-wide,

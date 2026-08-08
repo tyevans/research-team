@@ -73,6 +73,7 @@ async def app_and_client(db_path, fake_model, extraction):
         policy=application.policy,
         topics=application.topic_readers,
         topic_repository=application.topic_repository,
+        graphs=application.graphs,
     )
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -2807,3 +2808,189 @@ async def test_setting_autonomy_on_an_unknown_session_is_a_404(client):
         json={"tool": "write_file", "level": "ask"},
     )
     assert response.status_code == 404
+
+
+# ---------------- graph ----------------
+
+
+def _graph_entity(entity_id, tenant_id, name: str, entity_type: str = "person"):
+    from redstring.domain.entity import Entity, ExtractionMethod
+
+    return Entity(
+        id=entity_id,
+        tenant_id=tenant_id,
+        name=name,
+        normalized_name=name.lower(),
+        entity_type=entity_type,
+        extraction_method=ExtractionMethod.MANUAL,
+        confidence=1.0,
+    )
+
+
+def _graph_relationship(relationship_id, tenant_id, source_id, target_id, relationship_type: str):
+    from redstring.domain.relationship import Relationship
+
+    return Relationship(
+        id=relationship_id,
+        tenant_id=tenant_id,
+        source_entity_id=source_id,
+        target_entity_id=target_id,
+        relationship_type=relationship_type,
+        confidence=1.0,
+    )
+
+
+async def _project_with_graph(application, client) -> tuple[str, dict]:
+    """A project holding two linked entities in its graph store, seeded directly.
+
+    Seeded through `GraphStore.upsert_entities`/`upsert_relationships` --
+    the same shortcut `test_graph_read.py` takes -- rather than through
+    `remember`, because what is under test is the read route, not extraction.
+    """
+    created = await client.post("/api/projects", json={"name": f"graph-{uuid4()}"})
+    assert created.status_code == 200
+    project_id = created.json()["id"]
+    tenant_id = UUID(project_id)
+
+    store = await application.graphs.open(tenant_id)
+    prandtl_id, karman_id = uuid4(), uuid4()
+    await store.upsert_entities(
+        [
+            _graph_entity(prandtl_id, tenant_id, "Ludwig Prandtl"),
+            _graph_entity(karman_id, tenant_id, "Theodore von Kármán"),
+        ]
+    )
+    await store.upsert_relationships(
+        [_graph_relationship(uuid4(), tenant_id, prandtl_id, karman_id, "advised")]
+    )
+    return project_id, {"prandtl_id": prandtl_id, "karman_id": karman_id}
+
+
+async def test_listing_graph_entities_finds_what_was_seeded(app_and_client):
+    application, client = app_and_client
+    project_id, ids = await _project_with_graph(application, client)
+
+    response = await client.get(f"/api/projects/{project_id}/graph/entities")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert {row["name"] for row in body["entities"]} == {
+        "Ludwig Prandtl",
+        "Theodore von Kármán",
+    }
+    assert {row["entity_id"] for row in body["entities"]} == {
+        str(ids["prandtl_id"]),
+        str(ids["karman_id"]),
+    }
+    assert body["next_after"] is None
+
+
+async def test_listing_graph_entities_filters_by_name(app_and_client):
+    """`name` matches the normalized (lowercased) name exactly -- the same
+    contract `InMemoryGraphStore.find_entities` enforces, not a substring
+    search this route would have to invent on top of it.
+    """
+    application, client = app_and_client
+    project_id, ids = await _project_with_graph(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities", params={"name": "ludwig prandtl"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [row["entity_id"] for row in body["entities"]] == [str(ids["prandtl_id"])]
+
+
+async def test_a_neighborhood_carries_root_entities_and_relationships(app_and_client):
+    application, client = app_and_client
+    project_id, ids = await _project_with_graph(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities/{ids['prandtl_id']}/neighborhood"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["root"]["entity_id"] == str(ids["prandtl_id"])
+    assert [row["entity_id"] for row in body["entities"]] == [str(ids["karman_id"])]
+    assert body["relationships"] == [
+        {
+            "source_id": str(ids["prandtl_id"]),
+            "target_id": str(ids["karman_id"]),
+            "relationship_type": "advised",
+        }
+    ]
+
+
+async def test_asking_past_the_depth_cap_is_refused(app_and_client):
+    """A caller asking for depth 5 has misunderstood the API; quietly handing
+    back depth `MAX_NEIGHBORHOOD_DEPTH` would hide that from them. The port
+    underneath still clamps -- see `test_depth_is_clamped_by_the_port_not_only_the_route`
+    -- but that is a different guarantee for a different caller: the port
+    protects any future in-process caller, this 422 tells an HTTP client it
+    was wrong.
+    """
+    application, client = app_and_client
+    project_id, ids = await _project_with_graph(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities/{ids['prandtl_id']}/neighborhood",
+        params={"depth": 5},
+    )
+
+    assert response.status_code == 422
+    assert "depth" in response.json()["detail"]
+
+
+async def test_an_unknown_entity_is_a_404(app_and_client):
+    application, client = app_and_client
+    project_id, _ids = await _project_with_graph(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities/{uuid4()}/neighborhood"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == f"no such entity in project {project_id}"
+
+
+async def test_an_unknown_project_is_a_404_on_both_graph_routes(client):
+    missing = uuid4()
+
+    listing = await client.get(f"/api/projects/{missing}/graph/entities")
+    neighborhood = await client.get(
+        f"/api/projects/{missing}/graph/entities/{uuid4()}/neighborhood"
+    )
+
+    assert listing.status_code == 404
+    assert listing.json()["detail"] == f"no project {missing}"
+    assert neighborhood.status_code == 404
+    assert neighborhood.json()["detail"] == f"no project {missing}"
+
+
+async def test_graph_routes_503_when_no_graph_reader_is_configured(app_and_client):
+    """A build with no graph read model configured is a valid thing to serve
+    -- see `_reader`'s own docstring for the reasoning -- so the caller needs
+    to know the server cannot answer, not that the project has no graph.
+    """
+    application, client = app_and_client
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        topics=application.topic_readers,
+        graphs=None,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as unwired:
+        project_id, ids = await _project_with_graph(application, client)
+
+        listing = await unwired.get(f"/api/projects/{project_id}/graph/entities")
+        neighborhood = await unwired.get(
+            f"/api/projects/{project_id}/graph/entities/{ids['prandtl_id']}/neighborhood"
+        )
+
+    assert listing.status_code == 503
+    assert neighborhood.status_code == 503

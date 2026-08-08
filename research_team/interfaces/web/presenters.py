@@ -29,6 +29,7 @@ from research_team.application.course import (
     StageProgress,
 )
 from research_team.application.findings import Finding
+from research_team.application.graph_read import EntityPage, GraphEntity, GraphRelationship, Neighborhood
 from research_team.application.research_supervisor import ActiveRun
 from research_team.domain import (
     AutonomyChanged,
@@ -481,6 +482,54 @@ def source_text_view(document: StoredDocument, span: Span) -> dict[str, Any]:
         "text": span.text,
         "start": span.start,
         "end": span.end,
+    }
+
+
+def entity_view(entity: GraphEntity) -> dict[str, Any]:
+    """One node, in the shape a graph browser draws: id, label, kind."""
+    return {
+        "entity_id": entity.entity_id,
+        "name": entity.name,
+        "entity_type": entity.entity_type,
+    }
+
+
+def relationship_view(relationship: GraphRelationship) -> dict[str, Any]:
+    """One edge: the two ends a browser connects, and the label on the line."""
+    return {
+        "source_id": relationship.source_id,
+        "target_id": relationship.target_id,
+        "relationship_type": relationship.relationship_type,
+    }
+
+
+def entity_page_view(page: EntityPage) -> dict[str, Any]:
+    """One page of `/api/projects/{id}/graph/entities`.
+
+    `next_after` is passed straight through -- `None` already means "no
+    further page" on both `EntityPage` and the cursor contract the browser
+    consumes it under, so there is no translation to do here.
+    """
+    return {
+        "entities": [entity_view(entity) for entity in page.entities],
+        "next_after": page.next_after,
+    }
+
+
+def neighborhood_view(neighborhood: Neighborhood) -> dict[str, Any]:
+    """A root plus what a graph browser can draw around it in one response.
+
+    `root` is rendered through `entity_view` rather than repeated inline,
+    the same reason `topic_detail_view` builds on `topic_view`: the root and
+    an entry in `entities` describe a node the same way, and duplicating that
+    shape here is a second place for it to drift.
+    """
+    return {
+        "root": entity_view(neighborhood.root),
+        "entities": [entity_view(entity) for entity in neighborhood.entities],
+        "relationships": [
+            relationship_view(relationship) for relationship in neighborhood.relationships
+        ],
     }
 
 

@@ -40,6 +40,8 @@ from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
 from research_team.application.grading import GradingError, grade
+from research_team.application.graph_read import MAX_NEIGHBORHOOD_DEPTH, GraphReadPort
+from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.topic_read import TopicReadPort
 from research_team.domain import CreateProject, ProjectState, SelectWorkflow
 from research_team.domain.auto_research import Budget
@@ -51,6 +53,7 @@ from research_team.domain.topic import (
     Topic,
     TopicStatus,
 )
+from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.interfaces.web.activity import TurnActivity
@@ -59,10 +62,12 @@ from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.presenters import (
     autonomy_view,
     course_view,
+    entity_page_view,
     event_rows,
     feed_event,
     file_history,
     item_view,
+    neighborhood_view,
     preset_view,
     progress_view,
     project_view,
@@ -287,6 +292,7 @@ def create_app(
     policy: AutonomyPolicy | None = None,
     topics: TopicReaders | None = None,
     topic_repository: AggregateRepository[Topic] | None = None,
+    graphs: ProjectGraphs | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -732,6 +738,71 @@ def create_app(
         return await _change_topic(
             project_id, topic_id, ResolveSubQuestion(key=key, answer=body.answer)
         )
+
+    async def _graph_reader(project_id: UUID) -> GraphReadPort:
+        """This project's `GraphReadPort`, over the store `graphs` already owns.
+
+        503 rather than 404 when `graphs` was not wired, for the reason
+        `_reader` gives: a build with no graph read model is a valid thing to
+        serve, and the caller needs to know the server cannot answer rather
+        than that the project has no graph.
+
+        `async`, unlike `_reader` and `_topic_reader`: those wrap an
+        already-open corpus and topic repository, but the store behind a
+        `ProjectGraphReader` is opened on demand by `graphs.open`, which is
+        itself a coroutine -- there is no synchronous constructor to call
+        here. Building it per request rather than caching it is safe because
+        `graphs` is the single owner of the store underneath (see
+        `ProjectGraphs`): a second call today gets back the same store a
+        first call already opened, not a stale second one.
+        """
+        if graphs is None:
+            raise HTTPException(status_code=503, detail="no graph read model is configured")
+        store = await graphs.open(project_id)
+        return ProjectGraphReader(project_id=project_id, store=store)
+
+    @app.get("/api/projects/{project_id}/graph/entities")
+    async def list_graph_entities(
+        project_id: UUID,
+        name: str | None = None,
+        entity_type: str | None = None,
+        limit: int = 100,
+        after: str | None = None,
+    ):
+        """Entry points into this project's graph: entities matching every filter given."""
+        reader = await _graph_reader(project_id)
+        await _require_project(project_id)
+        page = await reader.find_entities(
+            name=name, entity_type=entity_type, limit=limit, after=after
+        )
+        return entity_page_view(page)
+
+    @app.get("/api/projects/{project_id}/graph/entities/{entity_id}/neighborhood")
+    async def read_graph_neighborhood(project_id: UUID, entity_id: str, depth: int = 1):
+        """`entity_id` and what lies within `depth` hops of it, fully wired.
+
+        A `depth` above `MAX_NEIGHBORHOOD_DEPTH` is refused with a 422 here,
+        even though `GraphReadPort.neighborhood` clamps the same bound on its
+        own -- see that port's docstring. The two are not redundant: the
+        port's clamp protects every present and future in-process caller from
+        an oversized traversal regardless of what sits above it, while this
+        check exists for the one caller that can be told it made a mistake.
+        Clamping silently here would spend the request answering a question
+        nobody asked instead of saying which question was too big.
+        """
+        if depth > MAX_NEIGHBORHOOD_DEPTH:
+            raise HTTPException(
+                status_code=422,
+                detail=f"depth {depth} exceeds the maximum of {MAX_NEIGHBORHOOD_DEPTH}",
+            )
+        reader = await _graph_reader(project_id)
+        await _require_project(project_id)
+        hood = await reader.neighborhood(entity_id, depth=depth)
+        if hood is None:
+            raise HTTPException(
+                status_code=404, detail=f"no such entity in project {project_id}"
+            )
+        return neighborhood_view(hood)
 
     @app.post("/api/sessions/{session_id}/release")
     async def release_session(session_id: UUID):
