@@ -293,12 +293,27 @@
   gap: 8px;
 }
 
+.graph-controls {
+  display: flex;
+  gap: 6px;
+}
+
 .graph-search {
-  width: 100%;
+  flex: 1;
+}
+
+.graph-entity-type {
+  flex-shrink: 0;
 }
 
 .graph-error {
   color: var(--k-failure);
+  font-size: var(--t-xs);
+  margin: 0;
+}
+
+.graph-truncated {
+  color: var(--fg-dim);
   font-size: var(--t-xs);
   margin: 0;
 }

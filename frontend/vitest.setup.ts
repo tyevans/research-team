@@ -35,17 +35,19 @@ if (!window.ResizeObserver) {
     disconnect() {}
   }
 }
-Element.prototype.getBoundingClientRect = (): DOMRect => ({
-  width: 800,
-  height: 600,
-  top: 0,
-  left: 0,
-  bottom: 600,
-  right: 800,
-  x: 0,
-  y: 0,
-  toJSON: () => {},
-})
+if (!Element.prototype.getBoundingClientRect) {
+  Element.prototype.getBoundingClientRect = (): DOMRect => ({
+    width: 800,
+    height: 600,
+    top: 0,
+    left: 0,
+    bottom: 600,
+    right: 800,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  })
+}
 // `react-virtual` sizes the scroll container off `offsetWidth`/`offsetHeight`
 // rather than the rect above, and jsdom never lays either out. `HTMLElement`,
 // not `Element`, is what actually defines these in jsdom, and it sits closer

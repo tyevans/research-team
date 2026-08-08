@@ -8,12 +8,15 @@ import { toGraphNode, toNeighborhood } from './mappers.ts'
 export class HttpGraphRepository implements GraphRepository {
   constructor(private readonly http: HttpClient) {}
 
-  async search(projectId: ProjectId, name: string) {
+  async search(projectId: ProjectId, name: string, entityType?: string) {
     const body = await this.http.get(
-      `/api/projects/${seg(projectId)}/graph/entities${query({ name })}`,
+      `/api/projects/${seg(projectId)}/graph/entities${query({ name, entity_type: entityType })}`,
       dto.graphEntityPageDto,
     )
-    return body.entities.map(toGraphNode)
+    // `next_after` present means the store had more to give than this page
+    // returned -- the same "absent means finished" cursor shape the route
+    // and reader use, read here as a truncation flag rather than resumed.
+    return { entities: body.entities.map(toGraphNode), truncated: body.next_after !== null }
   }
 
   async neighborhood(projectId: ProjectId, entityId: string, depth?: number) {

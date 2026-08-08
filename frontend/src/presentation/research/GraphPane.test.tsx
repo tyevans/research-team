@@ -35,7 +35,7 @@ const node = (over: Partial<GraphNode> = {}): GraphNode => ({
 const hoodOf = (root: GraphNode): Neighborhood => ({ root, entities: [root], relationships: [] })
 
 const fakeGraphs = (over: Partial<GraphRepository> = {}): GraphRepository => ({
-  search: vi.fn().mockResolvedValue([]),
+  search: vi.fn().mockResolvedValue({ entities: [], truncated: false }),
   neighborhood: vi.fn().mockRejectedValue(new Error('neighborhood was not stubbed for this test')),
   ...over,
 })
@@ -47,7 +47,9 @@ const renderWithContainer = (ui: ReactElement, parts: Partial<AppContainer>) => 
 
 it('populates results from a search', async () => {
   const ada = node()
-  const graphs = fakeGraphs({ search: vi.fn().mockResolvedValue([ada]) })
+  const graphs = fakeGraphs({
+    search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
+  })
   const user = userEvent.setup()
 
   renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
@@ -60,7 +62,10 @@ it('populates results from a search', async () => {
 it('expands a clicked result into the canvas', async () => {
   const ada = node()
   const neighborhood = vi.fn().mockResolvedValue(hoodOf(ada))
-  const graphs = fakeGraphs({ search: vi.fn().mockResolvedValue([ada]), neighborhood })
+  const graphs = fakeGraphs({
+    search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
+    neighborhood,
+  })
   const user = userEvent.setup()
 
   renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
@@ -75,7 +80,10 @@ it('expands a clicked result into the canvas', async () => {
 it('does not re-fetch an already-expanded node clicked again from the canvas', async () => {
   const ada = node()
   const neighborhood = vi.fn().mockResolvedValue(hoodOf(ada))
-  const graphs = fakeGraphs({ search: vi.fn().mockResolvedValue([ada]), neighborhood })
+  const graphs = fakeGraphs({
+    search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
+    neighborhood,
+  })
   const user = userEvent.setup()
 
   renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
@@ -96,7 +104,7 @@ it('does not re-fetch an already-expanded node clicked again from the canvas', a
 it('surfaces a 422 from too-deep a request rather than failing silently', async () => {
   const ada = node()
   const graphs = fakeGraphs({
-    search: vi.fn().mockResolvedValue([ada]),
+    search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
     neighborhood: vi.fn().mockRejectedValue(new ApiError('depth 3 exceeds the maximum of 2', 422)),
   })
   const user = userEvent.setup()
@@ -108,4 +116,54 @@ it('surfaces a 422 from too-deep a request rather than failing silently', async 
   await user.click(result)
 
   expect(await screen.findByText(/depth 3 exceeds the maximum of 2/)).toBeInTheDocument()
+})
+
+it('debounces search rather than issuing one request per keystroke', async () => {
+  const ada = node()
+  const search = vi.fn().mockResolvedValue({ entities: [ada], truncated: false })
+  const graphs = fakeGraphs({ search })
+  const user = userEvent.setup()
+
+  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+
+  await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
+
+  await waitFor(() => expect(search).toHaveBeenCalled())
+  // Four keystrokes, and the debounce settled once, at the final value --
+  // the whole point is that this is not four requests.
+  expect(search).toHaveBeenCalledTimes(1)
+  expect(search).toHaveBeenCalledWith(PROJECT, 'ada', undefined)
+})
+
+it('tells the reader when the server held back more matches than it showed', async () => {
+  const ada = node()
+  const graphs = fakeGraphs({
+    search: vi.fn().mockResolvedValue({ entities: [ada], truncated: true }),
+  })
+  const user = userEvent.setup()
+
+  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+
+  await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
+
+  expect(await screen.findByText(/showing the first 1 match/i)).toBeInTheDocument()
+})
+
+it('passes the selected entity type filter to the repository', async () => {
+  const ada = node()
+  const search = vi.fn().mockResolvedValue({ entities: [ada], truncated: false })
+  const graphs = fakeGraphs({ search })
+  const user = userEvent.setup()
+
+  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+
+  await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
+  await screen.findByText(/Ada Lovelace/)
+
+  await user.selectOptions(
+    screen.getByRole('combobox', { name: /filter by entity type/i }),
+    'Person',
+  )
+
+  await waitFor(() => expect(search).toHaveBeenLastCalledWith(PROJECT, 'ada', 'Person'))
 })

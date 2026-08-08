@@ -2,7 +2,7 @@ import type { Approval, ApprovalDecision } from '@domain/approval/approval.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
-import type { GraphNode, Neighborhood } from '@domain/knowledge/graph.ts'
+import type { EntitySearchResult, Neighborhood } from '@domain/knowledge/graph.ts'
 import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
@@ -219,9 +219,11 @@ export interface DocumentRange {
 }
 
 export interface GraphRepository {
-  /** Entities matching a name substring -- the browser's only entry point
-   *  into the graph, since there is no route that lists every node. */
-  search(projectId: ProjectId, name: string): Promise<readonly GraphNode[]>
+  /** Entities matching a name substring and, optionally, an exact entity
+   *  type -- the browser's only entry point into the graph, since there is
+   *  no route that lists every node. `truncated` on the result says whether
+   *  the server held more back than the page returned. */
+  search(projectId: ProjectId, name: string, entityType?: string): Promise<EntitySearchResult>
   /** `entityId` and what lies within `depth` hops of it. Rejects with a 422
    *  `ApiError` for a depth past the server's bound, which the caller must
    *  surface rather than clamp -- see the route's own docstring for why the

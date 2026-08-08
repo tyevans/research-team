@@ -18,6 +18,18 @@ export interface GraphLink {
   readonly relationshipType: string
 }
 
+/** A page of entity-search results, plus whether the server held more back.
+ *
+ * The route paginates (`limit` defaults to 100, `next_after` carries a
+ * cursor), but the browser does not page -- it shows one screen of results.
+ * `truncated` is what keeps that silent: a search matching 150 entities
+ * must say it showed only the first 100, not just show 100 and stop.
+ */
+export interface EntitySearchResult {
+  readonly entities: readonly GraphNode[]
+  readonly truncated: boolean
+}
+
 /** What the backend's neighbourhood route returns: a root entity, the
  *  entities reachable from it (including the root itself), and the
  *  relationships among them.

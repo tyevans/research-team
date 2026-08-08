@@ -27,7 +27,7 @@ const hoodOf = (root: GraphNode, ...others: readonly GraphNode[]): Neighborhood 
 })
 
 const fakeGraphs = (over: Partial<GraphRepository> = {}): GraphRepository => ({
-  search: vi.fn().mockResolvedValue([]),
+  search: vi.fn().mockResolvedValue({ entities: [], truncated: false }),
   neighborhood: vi.fn().mockRejectedValue(new Error('neighborhood was not stubbed for this test')),
   ...over,
 })
@@ -37,18 +37,40 @@ const store = (graphs: GraphRepository = fakeGraphs()) =>
 
 it('populates results from a search', async () => {
   const ada = node()
-  const search = vi.fn().mockResolvedValue([ada])
+  const search = vi.fn().mockResolvedValue({ entities: [ada], truncated: false })
   const graphs = fakeGraphs({ search })
   const graph = store(graphs)
 
   await graph.getState().search('ada')
 
   expect(graph.getState().results).toEqual([ada])
-  expect(search).toHaveBeenCalledWith(PROJECT, 'ada')
+  expect(graph.getState().truncated).toBe(false)
+  expect(search).toHaveBeenCalledWith(PROJECT, 'ada', undefined)
 })
 
-it('clears results without a request for a blank search', async () => {
-  const search = vi.fn().mockResolvedValue([])
+it('reports when the server held more matches back than the page returned', async () => {
+  const ada = node()
+  const search = vi.fn().mockResolvedValue({ entities: [ada], truncated: true })
+  const graphs = fakeGraphs({ search })
+  const graph = store(graphs)
+
+  await graph.getState().search('a')
+
+  expect(graph.getState().truncated).toBe(true)
+})
+
+it('passes an entity type filter through to the repository', async () => {
+  const search = vi.fn().mockResolvedValue({ entities: [], truncated: false })
+  const graphs = fakeGraphs({ search })
+  const graph = store(graphs)
+
+  await graph.getState().search('ada', 'Person')
+
+  expect(search).toHaveBeenCalledWith(PROJECT, 'ada', 'Person')
+})
+
+it('clears results without a request for a blank search with no type filter', async () => {
+  const search = vi.fn().mockResolvedValue({ entities: [], truncated: false })
   const graphs = fakeGraphs({ search })
   const graph = store(graphs)
 
@@ -56,6 +78,16 @@ it('clears results without a request for a blank search', async () => {
 
   expect(graph.getState().results).toEqual([])
   expect(search).not.toHaveBeenCalled()
+})
+
+it('still searches on a blank term when a type filter is set', async () => {
+  const search = vi.fn().mockResolvedValue({ entities: [], truncated: false })
+  const graphs = fakeGraphs({ search })
+  const graph = store(graphs)
+
+  await graph.getState().search('   ', 'Person')
+
+  expect(search).toHaveBeenCalledWith(PROJECT, '', 'Person')
 })
 
 it('expands a clicked node into the view', async () => {
