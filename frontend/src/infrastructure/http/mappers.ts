@@ -18,6 +18,7 @@ import { EventIndex } from '@domain/session/event-index.ts'
 import type { LogEntry } from '@domain/session/log-entry.ts'
 import type { ForkNode, SessionProjection, SessionSummary } from '@domain/session/session.ts'
 import type { TurnRange } from '@domain/session/turn.ts'
+import type { Roster } from '@domain/worker/worker.ts'
 import type { FileRevision, WorkspaceFile } from '@domain/workspace/workspace-file.ts'
 import { FilePath } from '@domain/shared/file-path.ts'
 import {
@@ -308,4 +309,31 @@ export const toRun = (raw: Dto<typeof dto.runDto>): ResearchRun => ({
           },
           readOnly: raw.read_only ?? false,
         },
+})
+
+/** An ISO-8601 timestamp as epoch milliseconds, or null.
+ *
+ * Null stays null rather than defaulting to now: a worker with no start time
+ * would otherwise render as "0s elapsed", which reads as having just begun.
+ */
+const toEpoch = (raw: string | null): number | null => {
+  if (!raw) return null
+  const parsed = Date.parse(raw)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+export const toRoster = (raw: Dto<typeof dto.rosterDto>): Roster => ({
+  projectId: ProjectId(raw.project_id),
+  workers: raw.workers.map((worker) => ({
+    // The server's vocabulary, narrowed. An unrecognised kind renders as a
+    // plain row rather than being dropped: a worker this build cannot label
+    // is still a worker, and hiding it is the failure mode that matters.
+    kind: worker.kind === 'run' || worker.kind === 'extraction' ? worker.kind : 'turn',
+    ref: worker.ref,
+    detail: worker.detail,
+    sessionId: worker.session_id ? SessionId(worker.session_id) : null,
+    parent: worker.parent,
+    startedAt: toEpoch(worker.started_at),
+  })),
+  idleSessionIds: raw.idle_session_ids.map((id) => SessionId(id)),
 })

@@ -20,6 +20,7 @@ export const queryKeys = {
 
   course: (project: ProjectId) => ['course', project] as const,
   run: (project: ProjectId) => ['run', project] as const,
+  workers: (project: ProjectId) => ['workers', project] as const,
 
   file: (session: SessionId, path: FilePath, at: ScrubPoint) =>
     ['file', session, path.value, ScrubPoint.toNullable(at)] as const,

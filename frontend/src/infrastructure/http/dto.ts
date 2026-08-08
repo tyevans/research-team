@@ -353,5 +353,20 @@ export const approvalSettledFrameDto = z.object({ id: z.string(), session_id: z.
 export const activityFrameDto = activityEntryDto
 export const logFrameDto = logEntryDto.extend({ session_id: z.string() })
 
+export const workerDto = z.object({
+  kind: z.string(),
+  ref: z.string(),
+  detail: z.string(),
+  session_id: maybe(z.string()),
+  parent: maybe(z.string()),
+  started_at: maybe(z.string()),
+})
+
+export const rosterDto = z.object({
+  project_id: z.string(),
+  workers: z.array(workerDto).default([]),
+  idle_session_ids: z.array(z.string()).default([]),
+})
+
 export const idDto = z.object({ id: z.string() })
 export const okDto = z.unknown()

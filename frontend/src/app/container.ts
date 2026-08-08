@@ -8,6 +8,7 @@ import type {
   ResearchRepository,
   SessionRepository,
   TurnRepository,
+  WorkerRepository,
   WorkspaceRepository,
 } from '@application/ports/repositories.ts'
 import { HttpClient } from '@infrastructure/http/http-client.ts'
@@ -15,6 +16,7 @@ import {
   HttpHealthRepository,
   HttpProjectRepository,
   HttpResearchRepository,
+  HttpWorkerRepository,
 } from '@infrastructure/http/project-repository.ts'
 import { HttpSessionRepository } from '@infrastructure/http/session-repository.ts'
 import { HttpApprovalRepository, HttpTurnRepository } from '@infrastructure/http/turn-repository.ts'
@@ -39,6 +41,7 @@ export interface Container {
   readonly approvals: ApprovalRepository
   readonly projects: ProjectRepository
   readonly research: ResearchRepository
+  readonly workers: WorkerRepository
   readonly health: HealthRepository
   readonly stream: EventStream
   readonly preferences: PreferenceStore
@@ -57,6 +60,7 @@ export const createContainer = (baseUrl = ''): Container => {
     approvals: new HttpApprovalRepository(http),
     projects: new HttpProjectRepository(http),
     research: new HttpResearchRepository(http),
+    workers: new HttpWorkerRepository(http),
     health: new HttpHealthRepository(http),
     stream: new SseEventStream(`${baseUrl}/api/stream`),
     preferences: new LocalPreferenceStore(),

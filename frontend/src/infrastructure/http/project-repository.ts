@@ -6,15 +6,17 @@ import type {
   ProjectRepository,
   ResearchRepository,
   SummaryHealth,
+  WorkerRepository,
 } from '@application/ports/repositories.ts'
 import type { Course } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
+import type { Roster } from '@domain/worker/worker.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, query, seg } from './http-client.ts'
-import { toCourse, toPreset, toProject, toRun } from './mappers.ts'
+import { toCourse, toPreset, toProject, toRoster, toRun } from './mappers.ts'
 
 export class HttpProjectRepository implements ProjectRepository {
   constructor(private readonly http: HttpClient) {}
@@ -126,6 +128,14 @@ export class HttpResearchRepository implements ResearchRepository {
       z.object({ cancelled: z.boolean().default(false) }),
     )
     return result.cancelled
+  }
+}
+
+export class HttpWorkerRepository implements WorkerRepository {
+  constructor(private readonly http: HttpClient) {}
+
+  async on(projectId: ProjectId): Promise<Roster> {
+    return toRoster(await this.http.get(`/api/projects/${seg(projectId)}/workers`, dto.rosterDto))
   }
 }
 

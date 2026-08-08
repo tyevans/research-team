@@ -10,6 +10,7 @@ import type { LogEntry } from '@domain/session/log-entry.ts'
 import type { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { ForkNode, SessionProjection, SessionSummary } from '@domain/session/session.ts'
 import type { TurnRange } from '@domain/session/turn.ts'
+import type { Roster } from '@domain/worker/worker.ts'
 import type { FileRevision } from '@domain/workspace/workspace-file.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
 import type { ApprovalId, ComponentId, ProjectId, SessionId } from '@domain/shared/identifier.ts'
@@ -114,6 +115,12 @@ export interface ResearchRepository {
   current(id: ProjectId): Promise<ResearchRun | null>
   start(id: ProjectId, maxRounds: number | null): Promise<ResearchRun>
   cancel(id: ProjectId): Promise<boolean>
+}
+
+export interface WorkerRepository {
+  /** Everything in flight on a project. Rejects when this build has no
+   *  roster, which a caller must distinguish from an empty one. */
+  on(projectId: ProjectId): Promise<Roster>
 }
 
 export interface HealthRepository {
