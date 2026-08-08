@@ -146,9 +146,7 @@ async def test_extraction_is_top_level_when_the_owner_is_ambiguous():
     project_id, one, two = uuid4(), uuid4(), uuid4()
     roster = WorkerRoster(
         FakeProjects(state_with(project_id, [one, two])),
-        turns=FakeTurns(
-            {one: FakeRunningTurn(one, 1, AT), two: FakeRunningTurn(two, 1, AT)}
-        ),
+        turns=FakeTurns({one: FakeRunningTurn(one, 1, AT), two: FakeRunningTurn(two, 1, AT)}),
         runs=None,
         extractions=FakeExtractions(
             ExtractionSnapshot("notes", "extracting", "", None, None, AT)
