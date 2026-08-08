@@ -39,6 +39,15 @@ A `remember` call happens inside a round's turn; two rows side by side would dra
 two workers where there is one, and the containment is the thing a reader wants
 when a round looks stalled.
 
+The nesting is resolved by the roster, not carried on the note. `ExtractionNote`
+has no session id and must not grow one: the adapter is scoped to a project and
+knows nothing about sessions, and threading one in would hand it a second
+identity to get wrong. So the roster applies a stated rule -- nest under the
+active run if there is one, else under the single running turn if there is
+exactly one, else show it at top level. Display topology is resolved in the layer
+that owns display topology, and the ambiguous case is shown as ambiguous rather
+than guessed.
+
 Clicking a session or run row opens the drawer on that session's transcript.
 Clicking the extraction row opens it on the extraction pane.
 
@@ -102,8 +111,11 @@ the driver floors `fetch` at `ask` and works read-only precisely so it cannot
 deadlock on one -- so this case belongs to a human's joined session, whose
 approvals belong to whoever is driving it.)
 
-The watched session lives in the URL (`?watching=<sessionId>`), so a reload
-reproduces the screen. Same reasoning `SessionView` gives for keeping the open file
+The watched session lives in the URL as a route segment --
+`#/p/<projectId>/course/watching/<sessionId>` -- so a reload reproduces the screen.
+A segment rather than a query string because `routes.ts` parses hash segments and
+has no query handling at all; adding one for this would be a second addressing
+scheme for one feature. Same reasoning `SessionView` gives for keeping the open file
 in the route: the address bar owns it, so nothing can silently drop it and a link
 always reproduces what you were looking at.
 
