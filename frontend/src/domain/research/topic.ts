@@ -26,6 +26,62 @@ export interface TopicView {
 
 export const isClosed = (topic: TopicView): boolean => CLOSED_STATUSES.includes(topic.status)
 
+/** Which slice of the queue a reader is looking at.
+ *
+ * Four named slices rather than a status dropdown listing all five statuses,
+ * because the question somebody scanning a queue asks is not "which topics are
+ * `superseded`" -- it is "what needs me", "what is live", "what is done with".
+ * `attention` deliberately spans two wire fields: a blocked topic and a
+ * flagged one are both things waiting on a person, and splitting them would
+ * make the reader check two slices to answer one question.
+ */
+export type TopicFocus = 'all' | 'attention' | 'live' | 'closed'
+
+export const inFocus = (topic: TopicView, focus: TopicFocus): boolean => {
+  switch (focus) {
+    case 'attention':
+      return topic.isBlocked || topic.needsAttention
+    case 'live':
+      return !isClosed(topic)
+    case 'closed':
+      return isClosed(topic)
+    default:
+      return true
+  }
+}
+
+/** Whether a topic survives the queue's filter.
+ *
+ * The text is matched against the triggers as well as the question, because a
+ * trigger is *why* a topic is flagged -- "contested", say -- and somebody
+ * hunting the reason a queue has stalled is searching for that word, not for
+ * whatever the question happens to be phrased as. Matching the question alone
+ * would return nothing for the search most worth making.
+ */
+export const matchesTopic = (topic: TopicView, focus: TopicFocus, search: string): boolean => {
+  if (!inFocus(topic, focus)) return false
+  const needle = search.trim().toLowerCase()
+  if (!needle) return true
+  return (
+    topic.question.toLowerCase().includes(needle) ||
+    topic.triggers.some((trigger) => trigger.toLowerCase().includes(needle))
+  )
+}
+
+/** How many topics sit in each slice, counted over the whole queue.
+ *
+ * Counted before filtering and shown on the controls themselves: a slice that
+ * is empty should say so before it is chosen, so a reader is never left
+ * wondering whether they picked the wrong filter or the queue really has
+ * nothing waiting on them.
+ */
+export const focusCounts = (topics: readonly TopicView[]): Record<TopicFocus, number> => ({
+  all: topics.length,
+  attention: topics.filter((topic) => inFocus(topic, 'attention')).length,
+  live: topics.filter((topic) => inFocus(topic, 'live')).length,
+  closed: topics.filter((topic) => inFocus(topic, 'closed')).length,
+})
+
 export interface SubQuestion {
   readonly key: string
   readonly question: string

@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest'
 
 import { TopicId } from '@domain/shared/identifier.ts'
 
-import { byUrgency, CLOSED_STATUSES, isClosed, type TopicStatus, type TopicView } from './topic.ts'
+import {
+  byUrgency,
+  CLOSED_STATUSES,
+  focusCounts,
+  isClosed,
+  matchesTopic,
+  type TopicStatus,
+  type TopicView,
+} from './topic.ts'
 
 const topic = (over: Partial<TopicView> = {}): TopicView => ({
   topicId: TopicId('11111111-1111-1111-1111-111111111111'),
@@ -81,5 +89,47 @@ describe('byUrgency', () => {
       live,
       closed,
     ])
+  })
+})
+
+describe('matchesTopic', () => {
+  it('counts a blocked topic and a flagged one as both needing attention', () => {
+    expect(matchesTopic(topic({ isBlocked: true }), 'attention', '')).toBe(true)
+    expect(matchesTopic(topic({ needsAttention: true }), 'attention', '')).toBe(true)
+    expect(matchesTopic(topic(), 'attention', '')).toBe(false)
+  })
+
+  it('splits live from closed on the same rule isClosed uses', () => {
+    expect(matchesTopic(topic({ status: 'investigating' }), 'live', '')).toBe(true)
+    expect(matchesTopic(topic({ status: 'superseded' }), 'live', '')).toBe(false)
+    expect(matchesTopic(topic({ status: 'superseded' }), 'closed', '')).toBe(true)
+  })
+
+  it('searches the triggers as well as the question', () => {
+    const flagged = topic({ question: 'Do dogs dream?', triggers: ['contested'] })
+    expect(matchesTopic(flagged, 'all', 'contested')).toBe(true)
+    expect(matchesTopic(flagged, 'all', 'dream')).toBe(true)
+    expect(matchesTopic(flagged, 'all', 'cats')).toBe(false)
+  })
+
+  it('ignores case and surrounding space, so a pasted term still matches', () => {
+    expect(matchesTopic(topic({ question: 'Do dogs dream?' }), 'all', '  DOGS ')).toBe(true)
+  })
+
+  it('applies the focus even when the search is empty', () => {
+    expect(matchesTopic(topic({ status: 'superseded' }), 'live', '   ')).toBe(false)
+  })
+})
+
+describe('focusCounts', () => {
+  it('counts every slice over the unfiltered queue', () => {
+    const counts = focusCounts([
+      topic({ isBlocked: true }),
+      topic({ needsAttention: true }),
+      topic({ status: 'open' }),
+      topic({ status: 'superseded' }),
+    ])
+
+    expect(counts).toEqual({ all: 4, attention: 2, live: 3, closed: 1 })
   })
 })

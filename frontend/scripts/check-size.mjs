@@ -55,7 +55,11 @@ const BUDGET_KB = {
   // stage in place of the four-pane grid, the floating search over the canvas,
   // this view's first media queries, and the node painting described above.
   // Measured at 228.6 kB, which is what tripped this gate.
-  total: 230,
+  //
+  // 231, from 230: filtering the topic queue. A search box, four counted
+  // slices, and the domain predicate behind them -- half a kilobyte for the
+  // difference between reading a project's queue and scrolling it.
+  total: 231,
 }
 
 const kb = (bytes) => Math.round((bytes / 1024) * 10) / 10

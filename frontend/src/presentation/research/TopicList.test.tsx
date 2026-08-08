@@ -174,3 +174,89 @@ it('opens the status dialog for a topic on manage, reading its detail first', as
   expect(read).toHaveBeenCalledWith(PROJECT, TopicId('22222222-2222-2222-2222-222222222222'))
   expect(await screen.findByRole('dialog')).toBeInTheDocument()
 })
+
+it('narrows the queue to what needs a person, counting blocked and flagged alike', async () => {
+  const topics = fakeTopics(
+    vi.fn<TopicRepository['list']>().mockResolvedValue([
+      topic({ topicId: TopicId('88888888-8888-8888-8888-888888888888'), question: 'Just open' }),
+      topic({
+        topicId: TopicId('99999999-9999-9999-9999-999999999999'),
+        question: 'Is blocked',
+        isBlocked: true,
+      }),
+      topic({
+        topicId: TopicId('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+        question: 'Is flagged',
+        needsAttention: true,
+      }),
+    ]),
+  )
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
+
+  await screen.findByText('Just open')
+  await userEvent.click(screen.getByRole('radio', { name: /needs you/i }))
+
+  expect(screen.getByText('Is blocked')).toBeInTheDocument()
+  expect(screen.getByText('Is flagged')).toBeInTheDocument()
+  expect(screen.queryByText('Just open')).not.toBeInTheDocument()
+})
+
+it('counts each slice over the whole queue, not over what is currently shown', async () => {
+  const topics = fakeTopics(
+    vi.fn<TopicRepository['list']>().mockResolvedValue([
+      topic({ topicId: TopicId('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'), question: 'Just open' }),
+      topic({
+        topicId: TopicId('cccccccc-cccc-cccc-cccc-cccccccccccc'),
+        question: 'Is blocked',
+        isBlocked: true,
+      }),
+    ]),
+  )
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
+
+  await screen.findByText('Just open')
+  // Still 2 and 1 after filtering down to one row: the counts describe the
+  // queue, so they are what tells a reader what the other tabs hold.
+  expect(screen.getByRole('radio', { name: /all/i }).textContent).toContain('2')
+  await userEvent.click(screen.getByRole('radio', { name: /needs you/i }))
+  expect(screen.getByRole('radio', { name: /all/i }).textContent).toContain('2')
+  expect(screen.getByRole('radio', { name: /needs you/i }).textContent).toContain('1')
+})
+
+it('filters on the search term, matching a trigger as well as a question', async () => {
+  const topics = fakeTopics(
+    vi.fn<TopicRepository['list']>().mockResolvedValue([
+      topic({
+        topicId: TopicId('dddddddd-dddd-dddd-dddd-dddddddddddd'),
+        question: 'Do dogs dream?',
+        triggers: ['topic.contested'],
+      }),
+      topic({ topicId: TopicId('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'), question: 'Do cats?' }),
+    ]),
+  )
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
+
+  await screen.findByText('Do cats?')
+  await userEvent.type(screen.getByLabelText('Filter topics'), 'contested')
+
+  expect(screen.getByText('Do dogs dream?')).toBeInTheDocument()
+  expect(screen.queryByText('Do cats?')).not.toBeInTheDocument()
+})
+
+it('says the filter is hiding the queue, not that the project has no topics', async () => {
+  const topics = fakeTopics(
+    vi
+      .fn<TopicRepository['list']>()
+      .mockResolvedValue([topic({ question: 'Who funded the study?' })]),
+  )
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
+
+  await screen.findByText('Who funded the study?')
+  await userEvent.type(screen.getByLabelText('Filter topics'), 'zzzz')
+
+  expect(screen.getByText(/no topics match/i)).toBeInTheDocument()
+})

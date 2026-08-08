@@ -1,9 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
-import { byUrgency, isClosed, type TopicView } from '@domain/research/topic.ts'
+import {
+  byUrgency,
+  focusCounts,
+  isClosed,
+  matchesTopic,
+  type TopicFocus,
+  type TopicView,
+} from '@domain/research/topic.ts'
 import type { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
 import { Button, EmptyState, ErrorBox, Loading } from '../common/primitives.tsx'
@@ -25,6 +32,11 @@ export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
   // `TopicView` leaves out the rationale, scope and sub-questions the dialog
   // needs and `TopicDetail` is what `TopicStatusDialog` was built to take.
   const [managing, setManaging] = useState<TopicId | null>(null)
+  // Defaults to the whole queue rather than to `attention`: opening a page
+  // already filtered would misreport how much work the project holds, and a
+  // reader who has not chosen a filter should be looking at everything.
+  const [focus, setFocus] = useState<TopicFocus>('all')
+  const [search, setSearch] = useState('')
 
   const query = useQuery({
     queryKey: queryKeys.topics(projectId),
@@ -36,6 +48,16 @@ export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
     queryFn: () => topics.read(projectId, managing!),
     enabled: managing !== null,
   })
+
+  // Ranked and filtered above the early returns, because hooks cannot run
+  // after them. `query.data` is undefined until the fetch lands, and the
+  // result is thrown away by the `isPending` branch below.
+  const shown = useMemo(() => {
+    const rows = query.data ?? []
+    return rows.filter((topic) => matchesTopic(topic, focus, search)).sort(byUrgency)
+  }, [query.data, focus, search])
+
+  const counts = useMemo(() => focusCounts(query.data ?? []), [query.data])
 
   if (query.isPending) return <Loading what="topics" />
 
@@ -53,15 +75,56 @@ export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
     return <EmptyState title="No topics" detail="Nothing has been seeded into this queue yet." />
   }
 
-  const ranked = [...query.data].sort(byUrgency)
-
   return (
-    <>
-      <ul className="topic-list">
-        {ranked.map((topic) => (
-          <TopicRow key={topic.topicId} topic={topic} onManage={() => setManaging(topic.topicId)} />
-        ))}
-      </ul>
+    <div className="topic-browser">
+      <div className="topic-filters">
+        <input
+          type="search"
+          className="topic-search"
+          placeholder="Filter topics"
+          aria-label="Filter topics"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+        {/* A radio group, not a row of buttons: these four are one choice with
+            one answer, and that is what a screen reader should be told. The
+            count rides on the label so an empty slice announces itself as
+            empty before it is picked. */}
+        <div className="topic-focus" role="radiogroup" aria-label="Which topics to show">
+          {FOCUSES.map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={focus === value}
+              className={focus === value ? 'topic-focus-tab is-on' : 'topic-focus-tab'}
+              onClick={() => setFocus(value)}
+            >
+              {label} <span className="topic-focus-count">{counts[value]}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {shown.length === 0 ? (
+        // Distinct from "No topics" above, and the distinction is the whole
+        // point: that one means the queue is empty, this one means the queue
+        // has work in it that the current filter is hiding.
+        <EmptyState
+          title="No topics match"
+          detail="Nothing in this project matches that filter. Widen it to see the rest of the queue."
+        />
+      ) : (
+        <ul className="topic-list">
+          {shown.map((topic) => (
+            <TopicRow
+              key={topic.topicId}
+              topic={topic}
+              onManage={() => setManaging(topic.topicId)}
+            />
+          ))}
+        </ul>
+      )}
       {/* Rendered only once the detail has actually loaded -- opening on the
           click and closing the moment `read` resolves would flash a dialog
           with nothing in it, and `TopicStatusDialog` requires a `TopicDetail`
@@ -73,9 +136,18 @@ export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
           onClose={() => setManaging(null)}
         />
       ) : null}
-    </>
+    </div>
   )
 }
+
+/** The slices, in the order they are offered: everything, then the one that
+ *  wants a person, then what is still moving, then what is done with. */
+const FOCUSES: readonly (readonly [TopicFocus, string])[] = [
+  ['all', 'All'],
+  ['attention', 'Needs you'],
+  ['live', 'Live'],
+  ['closed', 'Closed'],
+]
 
 const TopicRow = ({ topic, onManage }: { topic: TopicView; onManage: () => void }) => (
   <li
