@@ -126,6 +126,13 @@ it('offers no composer, because it is for watching', () => {
   expect(screen.queryByRole('textbox')).toBeNull()
 })
 
+it('does not tell an empty session to send a turn it has no composer for', () => {
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />)
+
+  expect(screen.getByText('Nothing has been said in this session yet.')).toBeInTheDocument()
+  expect(screen.queryByText(/send the first turn below/i)).toBeNull()
+})
+
 it('links out to the session rather than answering an approval in place', () => {
   renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
     approvals: [{ approvalId: 'a-1', tool: 'fetch' }],

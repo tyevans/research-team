@@ -173,8 +173,16 @@ export const WorkerDrawer = ({
 
         <div className="drawer-body">
           {/* historicalAt is always null: the drawer only ever shows HEAD, so
-              there is no scrub position to report — see the doc comment above. */}
-          <Conversation view={view} error={state.snapshotError} historicalAt={null} />
+              there is no scrub position to report — see the doc comment above.
+              emptyDetail overrides Conversation's default, which invites the
+              reader to send a turn below; the drawer has no composer, so
+              that instruction would point at a control that isn't there. */}
+          <Conversation
+            view={view}
+            error={state.snapshotError}
+            historicalAt={null}
+            emptyDetail="Nothing has been said in this session yet."
+          />
           <ActivityFeed store={store} />
         </div>
       </aside>
