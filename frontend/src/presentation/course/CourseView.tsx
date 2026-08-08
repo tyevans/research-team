@@ -5,7 +5,7 @@ import { errorMessage } from '@application/ports/errors.ts'
 import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
 import { allArtifacts, writtenCount, type Course } from '@domain/project/course.ts'
-import type { ProjectId } from '@domain/shared/identifier.ts'
+import type { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import { EmptyState, Loading } from '../common/primitives.tsx'
 import { sessionHref } from '../routing/routes.ts'
@@ -25,11 +25,17 @@ import { Workers } from './Workers.tsx'
 export const CourseView = ({
   projectId,
   onLoaded,
+  watching,
+  onWatch,
 }: {
   projectId: ProjectId
   /** Reported upward because the breadcrumb wants the project's name and this
    *  is the request that already has it. */
   onLoaded?: (course: Course | null) => void
+  /** The session whose transcript the drawer shows, or null. Owned by the
+   *  route, not by this view — see `Route`'s `course` variant. */
+  watching: SessionId | null
+  onWatch: (sessionId: SessionId | null) => void
 }) => {
   const { projects } = useContainer()
   const [openStage, setOpenStage] = useState<string | null>(null)
@@ -65,10 +71,7 @@ export const CourseView = ({
           extraction alike — not just the run's own counters, which say
           nothing about a turn or extraction still in flight. */}
       <section className="worker-panel" aria-label="Working now">
-        {/* watching/onWatch come from the route; Task 7 wires the drawer that
-            supplies real values. Until then these are inert placeholders so
-            this panel compiles and is reviewable on its own. */}
-        <Workers projectId={projectId} watching={null} onWatch={() => {}} />
+        <Workers projectId={projectId} watching={watching} onWatch={onWatch} />
       </section>
 
       {/* A run works the project's topic queue, not the workflow's stages, so

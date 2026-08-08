@@ -21,7 +21,18 @@ export type Route =
       readonly at: ScrubPoint
       readonly path: FilePath | null
     }
-  | { readonly name: 'course'; readonly id: ProjectId }
+  | {
+      readonly name: 'course'
+      readonly id: ProjectId
+      /** The session whose transcript is open in the drawer, or null.
+       *
+       * In the URL for the reason the scrub point and the open file are: a
+       * reader watching one worker should be able to send somebody the exact
+       * screen, and a reload should not close the drawer. A path segment
+       * rather than a query string because this parser handles segments and
+       * has no query handling at all. */
+      readonly watching: SessionId | null
+    }
 
 export const parseRoute = (hash: string): Route => {
   const parts = String(hash ?? '')
@@ -52,7 +63,10 @@ export const parseRoute = (hash: string): Route => {
   // driving it: the artifacts outlive any one session, so the route that shows
   // them is keyed the way they are stored.
   if (parts[0] === 'p' && parts[1] && parts[2] === 'course') {
-    return { name: 'course', id: ProjectId(parts[1]) }
+    // A truncated `watching` with no id after it is still a course route: a
+    // hand-edited URL should drop the drawer, not send somebody to the tree.
+    const watching = parts[3] === 'watching' && parts[4] ? SessionId(parts[4]) : null
+    return { name: 'course', id: ProjectId(parts[1]), watching }
   }
 
   return { name: 'tree' }
@@ -79,4 +93,7 @@ export const sessionHref = (
   return href
 }
 
-export const courseHref = (id: ProjectId): string => `#/p/${encodeURIComponent(id)}/course`
+export const courseHref = (projectId: ProjectId, watching: SessionId | null = null): string =>
+  watching
+    ? `#/p/${encodeURIComponent(projectId)}/course/watching/${encodeURIComponent(watching)}`
+    : `#/p/${encodeURIComponent(projectId)}/course`

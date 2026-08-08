@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { EventIndex } from '@domain/session/event-index.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { FilePath } from '@domain/shared/file-path.ts'
-import { SessionId } from '@domain/shared/identifier.ts'
+import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
-import { parseRoute, sessionHref } from './routes.ts'
+import { courseHref, parseRoute, sessionHref } from './routes.ts'
 
 describe('parseRoute', () => {
   it('reads the tree for an empty or unknown hash', () => {
@@ -36,7 +36,57 @@ describe('parseRoute', () => {
   })
 
   it('reads a course by project', () => {
-    expect(parseRoute('#/p/proj-1/course')).toEqual({ name: 'course', id: 'proj-1' })
+    expect(parseRoute('#/p/proj-1/course')).toEqual({
+      name: 'course',
+      id: 'proj-1',
+      watching: null,
+    })
+  })
+})
+
+describe('the watched session', () => {
+  it('reads a watched session out of the course route', () => {
+    const route = parseRoute(
+      '#/p/11111111-1111-1111-1111-111111111111/course/watching/22222222-2222-2222-2222-222222222222',
+    )
+
+    expect(route).toEqual({
+      name: 'course',
+      id: '11111111-1111-1111-1111-111111111111',
+      watching: '22222222-2222-2222-2222-222222222222',
+    })
+  })
+
+  it('leaves it null on a plain course route', () => {
+    const route = parseRoute('#/p/11111111-1111-1111-1111-111111111111/course')
+    expect(route).toEqual({
+      name: 'course',
+      id: '11111111-1111-1111-1111-111111111111',
+      watching: null,
+    })
+  })
+
+  it('ignores a watching segment with no session after it', () => {
+    // A hand-truncated URL is still a course route. Falling through to the
+    // tree would send somebody somewhere they did not ask for.
+    const route = parseRoute('#/p/11111111-1111-1111-1111-111111111111/course/watching')
+    expect(route).toEqual({
+      name: 'course',
+      id: '11111111-1111-1111-1111-111111111111',
+      watching: null,
+    })
+  })
+
+  it('round-trips through courseHref', () => {
+    const href = courseHref(
+      ProjectId('11111111-1111-1111-1111-111111111111'),
+      SessionId('22222222-2222-2222-2222-222222222222'),
+    )
+    expect(parseRoute(href)).toEqual({
+      name: 'course',
+      id: '11111111-1111-1111-1111-111111111111',
+      watching: '22222222-2222-2222-2222-222222222222',
+    })
   })
 })
 

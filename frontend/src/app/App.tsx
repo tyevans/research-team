@@ -6,8 +6,8 @@ import { queryKeys } from '@application/queries/keys.ts'
 import { createSessionStore, type SessionStore } from '@application/session/session-store.ts'
 import type { Course } from '@domain/project/course.ts'
 import { CourseView } from '@presentation/course/CourseView.tsx'
-import { treeHref, type Route } from '@presentation/routing/routes.ts'
-import { useRoute } from '@presentation/routing/use-route.ts'
+import { courseHref, treeHref, type Route } from '@presentation/routing/routes.ts'
+import { navigate, useRoute } from '@presentation/routing/use-route.ts'
 import { SessionView } from '@presentation/session/SessionView.tsx'
 import { Breadcrumbs } from '@presentation/shell/Breadcrumbs.tsx'
 import { ConnectionBadge, DriftBadge } from '@presentation/shell/ConnectionBadge.tsx'
@@ -91,7 +91,15 @@ const CurrentView = ({
     case 'session':
       return <SessionView store={store} sessionId={route.id} at={route.at} path={route.path} />
     case 'course':
-      return <CourseView key={route.id} projectId={route.id} onLoaded={onCourse} />
+      return (
+        <CourseView
+          key={route.id}
+          projectId={route.id}
+          onLoaded={onCourse}
+          watching={route.watching}
+          onWatch={(sessionId) => navigate(courseHref(route.id, sessionId))}
+        />
+      )
     default:
       return <TreeView />
   }
