@@ -33,6 +33,7 @@ from research_team.application.ports import (
     TurnAccountingError,
     TurnExecutor,
 )
+from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.retry import with_retry
 from research_team.application.summaries import SessionSummary
 from research_team.domain import (
@@ -133,6 +134,7 @@ class SessionService:
         knowledge_prompt: str = "",
         attachment: KnowledgeAttachment | None = None,
         progress: "AggregateRepository[LearnerProgress] | None" = None,
+        graphs: ProjectGraphs | None = None,
     ) -> None:
         self._repository = repository
         self._executor = executor
@@ -157,6 +159,10 @@ class SessionService:
         # -- `attach_project`/`detach_project` are then no-ops, the same
         # posture `search` has without an instance configured.
         self._attachment = attachment
+        # None on the same posture: a build with no graph subsystem has
+        # nothing for `delete_project` to evict, so eviction is a no-op
+        # rather than an attribute error on a caller that never wired one.
+        self._graphs = graphs
 
     @property
     def tracer(self) -> Tracer:
@@ -321,10 +327,18 @@ class SessionService:
         move to make, because releasing advances the tip -- a write to the
         holder's session -- and deletion doing that silently would hide a
         real change behind an unrelated verb.
+
+        Evicts the project's graph store from `graphs` after the tombstone
+        commits, not before: a rejected `DeleteProject` (still held) must
+        leave a live project's cached store exactly as it was, and evicting
+        first would have to be undone on every rejection path this or a
+        future one grows.
         """
         project = await self._projects.load(project_id)
         project.execute(DeleteProject())
         await self._projects.save(project)
+        if self._graphs is not None:
+            await self._graphs.close(project_id)
 
     async def close(self) -> None:
         await self._repository.close()

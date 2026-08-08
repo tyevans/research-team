@@ -6,6 +6,7 @@ import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Approval } from '@domain/approval/approval.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame, ExtractionStage } from '@domain/knowledge/extraction.ts'
+import type { GraphLink, GraphNode, Neighborhood } from '@domain/knowledge/graph.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
   Course,
@@ -15,7 +16,10 @@ import type {
   Finding,
 } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
+import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
+import type { SeedingRun, SeedingStatus } from '@domain/research/seeding.ts'
+import type { TopicDetail, TopicStatus, TopicView } from '@domain/research/topic.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
 import type { LogEntry } from '@domain/session/log-entry.ts'
 import type { ForkNode, SessionProjection, SessionSummary } from '@domain/session/session.ts'
@@ -31,6 +35,7 @@ import {
   RunId,
   SessionId,
   SourceId,
+  TopicId,
 } from '@domain/shared/identifier.ts'
 
 import type * as dto from './dto.ts'
@@ -402,3 +407,111 @@ export const readExtractionFrame = (raw: unknown): ExtractionFrame | null => {
   const parsed = extractionFrameDto.safeParse(raw)
   return parsed.success ? toExtractionFrame(parsed.data) : null
 }
+
+const SEED_STATUSES: readonly SeedingStatus[] = ['running', 'done', 'failed']
+
+/** An unrecognised status reads as `running`, the same reasoning as
+ *  `toStage`'s fallback: `running` is the one status that keeps the control
+ *  disabled and shows the run as still in flight, which is the safer
+ *  misreading of the two -- a build talking to a server with a fourth status
+ *  should stay cautious rather than declare an unknown outcome finished. */
+const toSeedStatus = (raw: string): SeedingStatus =>
+  SEED_STATUSES.find((status) => status === raw) ?? 'running'
+
+export const toSeedingRun = (raw: Dto<typeof dto.seedingFrameDto>): SeedingRun => ({
+  runId: raw.run_id,
+  status: toSeedStatus(raw.status),
+  subject: raw.subject,
+  reply: raw.reply,
+  detail: raw.detail,
+})
+
+/** The statuses this build knows. */
+const TOPIC_STATUSES: readonly TopicStatus[] = [
+  'open',
+  'investigating',
+  'answered',
+  'not_pursuing',
+  'superseded',
+]
+
+/** An unrecognised status reads as `open` rather than being dropped.
+ *
+ * `open`, not one of the closed statuses, for the reason `toStage` picks
+ * `extracting`: mistaking a status this build has not heard of for a closed
+ * one would sink a live topic to the bottom of the queue, which is the wrong
+ * direction to fail in — a topic that still needs a look belongs where it
+ * will be seen. */
+const toTopicStatus = (raw: string): TopicStatus =>
+  TOPIC_STATUSES.find((status) => status === raw) ?? 'open'
+
+export const toTopicView = (raw: Dto<typeof dto.topicDto>): TopicView => ({
+  topicId: TopicId(raw.topic_id),
+  question: raw.question,
+  status: toTopicStatus(raw.status),
+  sources: raw.sources,
+  findings: raw.findings,
+  openSubQuestions: raw.open_sub_questions,
+  triggers: raw.triggers,
+  needsAttention: raw.needs_attention,
+  isBlocked: raw.is_blocked,
+})
+
+export const toTopicDetail = (raw: Dto<typeof dto.topicDetailDto>): TopicDetail => ({
+  topicId: TopicId(raw.topic_id),
+  question: raw.question,
+  status: toTopicStatus(raw.status),
+  sources: raw.sources,
+  findings: raw.findings,
+  openSubQuestions: raw.open_sub_questions,
+  triggers: raw.triggers,
+  needsAttention: raw.needs_attention,
+  isBlocked: raw.is_blocked,
+  rationale: raw.rationale,
+  scope: raw.scope,
+  subQuestions: raw.sub_questions.map((sub) => ({
+    key: sub.key,
+    question: sub.question,
+    answer: sub.answer,
+    resolved: sub.resolved,
+  })),
+  sourceIds: raw.source_ids,
+  findingNotes: raw.finding_notes,
+  contested: raw.contested,
+})
+
+export const toDocumentSummary = (raw: Dto<typeof dto.documentDto>): DocumentSummary => ({
+  sourceId: SourceId(raw.source_id),
+  charCount: raw.char_count,
+  sha256: raw.sha256,
+  uri: raw.uri,
+  title: raw.title,
+  publishedAt: raw.published_at,
+  note: raw.note,
+  droppedReason: raw.dropped_reason,
+})
+
+export const toDocumentText = (raw: Dto<typeof dto.documentTextDto>): DocumentText => ({
+  ...toDocumentSummary(raw),
+  text: raw.text,
+  start: raw.start,
+  end: raw.end,
+})
+
+export const toGraphNode = (raw: Dto<typeof dto.graphEntityDto>): GraphNode => ({
+  id: raw.entity_id,
+  name: raw.name,
+  entityType: raw.entity_type,
+})
+
+export const toGraphLink = (raw: Dto<typeof dto.graphRelationshipDto>): GraphLink => ({
+  source: raw.source_id,
+  target: raw.target_id,
+  relationshipType: raw.relationship_type,
+})
+
+export const toNeighborhood = (raw: Dto<typeof dto.graphNeighborhoodDto>): Neighborhood => ({
+  root: toGraphNode(raw.root),
+  entities: raw.entities.map(toGraphNode),
+  relationships: raw.relationships.map(toGraphLink),
+})

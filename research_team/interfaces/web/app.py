@@ -9,7 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,10 +17,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from eventsource import CommandRejectedError, OptimisticLockError
+from eventsource.application.aggregates.repository import AggregateRepository
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from research_team.application import (
     ApprovalDecision,
@@ -39,9 +40,21 @@ from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
 from research_team.application.grading import GradingError, grade
+from research_team.application.graph_read import MAX_NEIGHBORHOOD_DEPTH, GraphReadPort
+from research_team.application.project_graphs import ProjectGraphs
+from research_team.application.topic_read import TopicReadPort
+from research_team.application.topic_seeding import TopicSeeder
 from research_team.domain import CreateProject, ProjectState, SelectWorkflow
 from research_team.domain.auto_research import Budget
 from research_team.domain.project import current_stage_of
+from research_team.domain.topic import (
+    AddSubQuestion,
+    ResolveSubQuestion,
+    SetTopicStatus,
+    Topic,
+    TopicStatus,
+)
+from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.interfaces.web.activity import TurnActivity
@@ -50,22 +63,28 @@ from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.presenters import (
     autonomy_view,
     course_view,
+    entity_page_view,
     event_rows,
     feed_event,
     file_history,
     item_view,
+    neighborhood_view,
     preset_view,
     progress_view,
     project_view,
     roster_view,
     run_view,
+    seeding_view,
     session_view,
     source_text_view,
     source_view,
     stage_view,
     summary_view,
+    topic_detail_view,
+    topic_view,
     tree_view,
 )
+from research_team.interfaces.web.seeding import SeedingActivity
 from research_team.workflows import PRESETS
 
 logger = logging.getLogger(__name__)
@@ -76,6 +95,16 @@ KEEPALIVE_SECONDS = 15.0
 
 DISCONNECT_CHECK = 0.5
 """How long we may sit unaware that the browser has gone."""
+
+TopicReaders = Callable[[UUID], TopicReadPort]
+"""One project's `TopicReadPort`, built on demand.
+
+A callable rather than a bare port because a `TopicReadPort` is bound to one
+project at construction (see `ProjectTopicReader`), and a route serves every
+project from one running app -- so what the route layer holds is the thing
+that builds the bound reader, not a reader itself. Composition owns what the
+callable closes over; `app.py` only calls it, the same division `_reader`
+below keeps for `CorpusRunner`."""
 
 
 class NewSession(BaseModel):
@@ -104,6 +133,52 @@ class WorkflowChoice(BaseModel):
     """Which preset a project runs. Chosen once; `decide` refuses a second."""
 
     preset_id: str
+
+
+class StatusChange(BaseModel):
+    """A human's decision to move a topic, with the reason `decide` requires.
+
+    `justification` cannot be blank, and whitespace does not count as
+    content: `Field(min_length=1)` alone would let `"   "` through, and the
+    aggregate went out of its way to make an unexplained status change
+    impossible -- a transport that let whitespace past that gate would
+    quietly undo it. The strip happens here, before the aggregate is even
+    loaded, so a blank justification is a 422 rather than a 409 the aggregate
+    would raise anyway; the outcome the caller needs to fix is the same
+    either way, but failing before a write was attempted is the honest report
+    of what happened.
+    """
+
+    to_status: TopicStatus
+    justification: str = Field(min_length=1)
+
+    @field_validator("justification")
+    @classmethod
+    def _justification_is_not_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("a status change requires a justification")
+        return stripped
+
+
+class NewSubQuestion(BaseModel):
+    """A question worth tracking under a topic, addressed by its own key."""
+
+    key: str
+    question: str
+
+
+class SubQuestionAnswer(BaseModel):
+    """An answer to one sub-question, named in the path rather than the body.
+
+    Mirrors `Attempt`'s reasoning for keeping the target out of the body only
+    where it does not apply: a sub-question key has no slashes, so there is
+    no encoding hazard in putting it in the path, and doing so is what makes
+    `/sub-questions/{key}/resolve` a URL a client can build without first
+    parsing a body shape.
+    """
+
+    answer: str
 
 
 class Attempt(BaseModel):
@@ -172,6 +247,19 @@ class NewRun(BaseModel):
         return Budget(**asked)
 
 
+class NewSeed(BaseModel):
+    """What one seeding turn is asked to name topics for.
+
+    `max_topics` defaults to 8 rather than being required, matching every
+    other cap in this file (`NewRun.max_rounds` above): a caller that wants
+    the ordinary amount says nothing about it, and the number this layer
+    defaults to is the one `TopicSeeder`'s own tests exercise.
+    """
+
+    subject: str = Field(min_length=1)
+    max_topics: int = 8
+
+
 class Decision(BaseModel):
     """A human's answer to a parked approval. `type` is langchain's vocabulary."""
 
@@ -218,6 +306,11 @@ def create_app(
     workers: WorkerRoster | None = None,
     extraction: ExtractionActivity | None = None,
     policy: AutonomyPolicy | None = None,
+    topics: TopicReaders | None = None,
+    topic_repository: AggregateRepository[Topic] | None = None,
+    graphs: ProjectGraphs | None = None,
+    topic_seeder: TopicSeeder | None = None,
+    seeding: SeedingActivity | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -482,11 +575,20 @@ def create_app(
         return ProjectCorpusReader(corpus, project_id)
 
     @app.get("/api/projects/{project_id}/sources")
-    async def list_sources(project_id: UUID):
-        """Every source this project has stored. Metadata only, never text."""
-        reader = _reader(project_id)
+    async def list_sources(project_id: UUID, include_dropped: bool = False):
+        """Every source this project has stored. Metadata only, never text.
+
+        `include_dropped` defaults to False, so the agent's own `list_sources`
+        tool -- which calls the port behind this route directly, not this
+        route -- is unaffected either way; the default here exists only so a
+        browser doing the same request the agent's tool makes sees the same
+        thing. A caller that opts in sees dropped documents too, each with
+        the reason it was excluded: the corpus keeps them for that reason.
+        """
         await _require_project(project_id)
-        return [source_view(summary) for summary in await reader.list_documents()]
+        reader = _reader(project_id)
+        summaries = await reader.list_documents(include_dropped=include_dropped)
+        return [source_view(summary) for summary in summaries]
 
     @app.get("/api/projects/{project_id}/sources/{source_id}")
     async def read_source(
@@ -511,6 +613,273 @@ def create_app(
         text = document.text
         span = quote(text, start or 0, len(text) if end is None else end)
         return source_text_view(document, span)
+
+    def _topic_reader(project_id: UUID) -> TopicReadPort:
+        """This project's topics, through the port composition assembled.
+
+        503 rather than 404 when `topics` was not wired, for the reason
+        `_reader` gives: a build with no topic read model is a valid thing to
+        serve, and the caller needs to know the server cannot answer rather
+        than that the project has none.
+        """
+        if topics is None:
+            raise HTTPException(status_code=503, detail="no topic read model is configured")
+        return topics(project_id)
+
+    @app.get("/api/projects/{project_id}/topics")
+    async def list_topics(project_id: UUID):
+        """Every topic this project tracks, ranked on nothing -- the queue does that."""
+        await _require_project(project_id)
+        reader = _topic_reader(project_id)
+        return [topic_view(view) for view in await reader.list_topics()]
+
+    @app.post("/api/projects/{project_id}/topics/seed")
+    async def seed_topics(project_id: UUID, body: NewSeed):
+        """Start one seeding turn that names this project's first topics.
+
+        Registered ahead of `/topics/{topic_id}` below -- FastAPI matches
+        routes in declaration order, and `seed` would otherwise be parsed as
+        a topic id and 422 on every call.
+
+        202, matching `start_auto_research`: the turn has not finished when
+        this answers, and what it hands back is the id of a run that has
+        *begun*. The topics it opens arrive over the log like any other
+        `open_topic` call -- a client that wants them invalidates its topic
+        list on those frames rather than reading this response for them.
+
+        503 rather than 404 when unwired, matching `_topic_reader` above:
+        this build is missing configuration, not the project this id names.
+        409 when a seed is already running on this project -- see
+        `seeding.py`'s `SeedingActivity.start` for why it is the same
+        exception `start_auto_research` maps the same way.
+        """
+        if topic_seeder is None or seeding is None:
+            raise HTTPException(status_code=503, detail="topic seeding is not configured")
+        await _require_project(project_id)
+        try:
+            frame = seeding.start(
+                project_id,
+                lambda run_id: topic_seeder.seed(
+                    project_id, body.subject, body.max_topics, run_id=run_id
+                ),
+            )
+        except RunAlreadyActive as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return JSONResponse(status_code=202, content=seeding_view(frame))
+
+    @app.get("/api/projects/{project_id}/topics/seed")
+    async def get_seed(project_id: UUID):
+        """What the running seed has done so far, and the last one's account.
+
+        A tab that arrived mid-run, or one whose connection dropped, has no
+        other way back -- see `seeding.py`'s module docstring. 200 with both
+        halves `None` when nothing has run, matching `get_extraction`'s own
+        reasoning: an absent seed is a state, not a missing resource.
+        """
+        await _require_project(project_id)
+        if seeding is None:
+            return {"current": None, "last": None}
+        return {
+            "current": seeding_view(seeding.current(project_id)),
+            "last": seeding_view(seeding.last(project_id)),
+        }
+
+    @app.get("/api/projects/{project_id}/topics/{topic_id}")
+    async def read_topic(project_id: UUID, topic_id: UUID):
+        """One topic's own page. 404 for an unknown id and for a foreign one alike.
+
+        `ProjectTopicReader.read_topic` already collapses those two cases to
+        `None` -- see its docstring -- so this route has nothing left to
+        distinguish; doing so here would leak the very thing the port exists
+        to withhold. The message deliberately does not echo `topic_id` back:
+        doing so would make the response for "this id belongs to another
+        project" differ, byte for byte, from the response for "this id was
+        never opened" whenever the two cases are compared with different
+        ids -- which is the only way to compare them, since an id cannot be
+        both foreign and never-opened at once. Naming only the project keeps
+        every 404 under it identical, which is what actually keeps the two
+        cases indistinguishable rather than merely both being 404s.
+        """
+        reader = _topic_reader(project_id)
+        await _require_project(project_id)
+        detail = await reader.read_topic(topic_id)
+        if detail is None:
+            raise HTTPException(
+                status_code=404, detail=f"no such topic in project {project_id}"
+            )
+        return topic_detail_view(detail)
+
+    def _topic_repo() -> AggregateRepository[Topic]:
+        """The `Topic` aggregate repository, for routes that change a topic.
+
+        503 rather than 404 when `topic_repository` was not wired, matching
+        `_topic_reader`: a build with no write model configured is a valid
+        thing to serve read-only, and the caller needs to know the server
+        cannot answer rather than that the topic is missing.
+        """
+        if topic_repository is None:
+            raise HTTPException(status_code=503, detail="no topic write model is configured")
+        return topic_repository
+
+    async def _change_topic(project_id: UUID, topic_id: UUID, command) -> dict[str, Any]:
+        """Apply one command to a topic, the same way every write route below does.
+
+        The three routes below (status, add sub-question, resolve sub-question)
+        share this rather than repeating it, because all three have the same
+        shape: confirm the topic is this project's before touching anything,
+        let `decide` accept or refuse the command, and answer with the page the
+        read route already draws -- so a write and the read that follows it can
+        never disagree about what the topic now looks like.
+
+        The existence check goes through `_topic_reader` rather than a bare
+        `try/except` on the repository load, because it is what makes a
+        foreign topic's 404 byte-identical to an unknown one here too: the
+        reader's `read_topic` already collapses both to `None` (see its
+        docstring), and repeating that collapse against the aggregate
+        directly would risk drifting from it as either evolves.
+        """
+        reader = _topic_reader(project_id)
+        await _require_project(project_id)
+        detail = await reader.read_topic(topic_id)
+        if detail is None:
+            raise HTTPException(
+                status_code=404, detail=f"no such topic in project {project_id}"
+            )
+        repo = _topic_repo()
+        topic = await repo.load(topic_id)
+        try:
+            topic.execute(command)
+        except CommandRejectedError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        await repo.save(topic)
+        updated = await reader.read_topic(topic_id)
+        # `detail` above already proved the topic exists in this project, and
+        # nothing between that read and this one can make it stop existing --
+        # so a `None` here would mean the reader and the repository disagree
+        # about a write this route just made, not a caller's mistake.
+        assert updated is not None
+        return topic_detail_view(updated)
+
+    @app.post("/api/projects/{project_id}/topics/{topic_id}/status")
+    async def set_topic_status(project_id: UUID, topic_id: UUID, body: StatusChange):
+        """Move a topic to a new status, with the reason `decide` requires.
+
+        Human-only: there is no agent tool for this and none should be added.
+        `application/topics.py` documents closing as a decision a person makes,
+        not the model recording what it found -- an autonomous run can learn
+        that a question is answered, but only a reader gets to say the project
+        is done asking it. Reopening an answered topic is legal here for the
+        same reason it is legal in the aggregate: `decide` refuses only a
+        no-op transition, and a reader who closed a topic too early has no
+        other way back in.
+        """
+        return await _change_topic(
+            project_id,
+            topic_id,
+            SetTopicStatus(to_status=body.to_status, justification=body.justification),
+        )
+
+    @app.post("/api/projects/{project_id}/topics/{topic_id}/sub-questions")
+    async def add_sub_question(project_id: UUID, topic_id: UUID, body: NewSubQuestion):
+        """Track a question under a topic, addressed by `key` rather than an index.
+
+        Human-only, for the same reason `set_topic_status` is: shaping what a
+        topic is asking is a reader's editorial decision, not a finding an
+        autonomous run records. `key` rather than a position because a
+        sub-question, once resolved, is referred back to by name -- a client
+        showing "does it hold for motor skills?" needs a stable handle to
+        resolve it against later, and a list position shifts under it the
+        moment another sub-question is added or removed.
+        """
+        return await _change_topic(
+            project_id,
+            topic_id,
+            AddSubQuestion(key=body.key, question=body.question),
+        )
+
+    @app.post("/api/projects/{project_id}/topics/{topic_id}/sub-questions/{key}/resolve")
+    async def resolve_sub_question(
+        project_id: UUID, topic_id: UUID, key: str, body: SubQuestionAnswer
+    ):
+        """Answer a tracked sub-question. Human-only, for the same reason above."""
+        return await _change_topic(
+            project_id, topic_id, ResolveSubQuestion(key=key, answer=body.answer)
+        )
+
+    async def _graph_reader(project_id: UUID) -> GraphReadPort:
+        """This project's `GraphReadPort`, over the store `graphs` already owns.
+
+        503 rather than 404 when `graphs` was not wired, for the reason
+        `_reader` gives: a build with no graph read model is a valid thing to
+        serve, and the caller needs to know the server cannot answer rather
+        than that the project has no graph.
+
+        `async`, unlike `_reader` and `_topic_reader`: those wrap an
+        already-open corpus and topic repository, but the store behind a
+        `ProjectGraphReader` is opened on demand by `graphs.open`, which is
+        itself a coroutine -- there is no synchronous constructor to call
+        here. Building it per request rather than caching it is safe because
+        `graphs` is the single owner of the store underneath (see
+        `ProjectGraphs`): a second call today gets back the same store a
+        first call already opened, not a stale second one.
+        """
+        if graphs is None:
+            raise HTTPException(status_code=503, detail="no graph read model is configured")
+        store = await graphs.open(project_id)
+        return ProjectGraphReader(project_id=project_id, store=store)
+
+    @app.get("/api/projects/{project_id}/graph/entities")
+    async def list_graph_entities(
+        project_id: UUID,
+        name: str | None = None,
+        entity_type: str | None = None,
+        limit: int = 100,
+        after: UUID | None = None,
+    ):
+        """Entry points into this project's graph: entities matching every filter given.
+
+        `after` is typed as `UUID | None` rather than `str | None` so FastAPI
+        rejects a malformed cursor with a 422 before it ever reaches the
+        reader -- `neighborhood`'s `entity_id` handles the identical problem
+        with a try/except because it takes a path segment FastAPI cannot
+        type-check for it; a query parameter does not need that fallback.
+        """
+        await _require_project(project_id)
+        reader = await _graph_reader(project_id)
+        page = await reader.find_entities(
+            name=name,
+            entity_type=entity_type,
+            limit=limit,
+            after=str(after) if after is not None else None,
+        )
+        return entity_page_view(page)
+
+    @app.get("/api/projects/{project_id}/graph/entities/{entity_id}/neighborhood")
+    async def read_graph_neighborhood(project_id: UUID, entity_id: str, depth: int = 1):
+        """`entity_id` and what lies within `depth` hops of it, fully wired.
+
+        A `depth` above `MAX_NEIGHBORHOOD_DEPTH` is refused with a 422 here,
+        even though `GraphReadPort.neighborhood` clamps the same bound on its
+        own -- see that port's docstring. The two are not redundant: the
+        port's clamp protects every present and future in-process caller from
+        an oversized traversal regardless of what sits above it, while this
+        check exists for the one caller that can be told it made a mistake.
+        Clamping silently here would spend the request answering a question
+        nobody asked instead of saying which question was too big.
+        """
+        if depth > MAX_NEIGHBORHOOD_DEPTH:
+            raise HTTPException(
+                status_code=422,
+                detail=f"depth {depth} exceeds the maximum of {MAX_NEIGHBORHOOD_DEPTH}",
+            )
+        await _require_project(project_id)
+        reader = await _graph_reader(project_id)
+        hood = await reader.neighborhood(entity_id, depth=depth)
+        if hood is None:
+            raise HTTPException(
+                status_code=404, detail=f"no such entity in project {project_id}"
+            )
+        return neighborhood_view(hood)
 
     @app.post("/api/sessions/{session_id}/release")
     async def release_session(session_id: UUID):
@@ -1206,7 +1575,7 @@ def create_app(
         """
         resume_from = request.headers.get("last-event-id")
         return StreamingResponse(
-            _sse(request, feed, resume_from, approvals, activity, extraction),
+            _sse(request, feed, resume_from, approvals, activity, extraction, seeding),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -1228,6 +1597,7 @@ async def _sse(
     approvals: WebApprovals | None = None,
     activity: TurnActivity | None = None,
     extraction: ExtractionActivity | None = None,
+    seeding: SeedingActivity | None = None,
 ) -> AsyncIterator[str]:
     """Serialise the live feed as server-sent events.
 
@@ -1241,16 +1611,17 @@ async def _sse(
     starting at the live end shows less than the client wanted, while
     replaying the entire log at it would be worse than the gap.
 
-    Approval requests, turn activity notes, and extraction progress ride this
-    same connection rather than one each of their own, for the same reason as
-    each other: none is a log entry -- an approval that is never answered,
-    provisional turn content, and where an ingest has got to all leave no
-    event behind -- so none carries an id, and a reconnecting browser
-    refetches what it missed (`/approvals`, the activity catch-up route, or
-    `/projects/{id}/extraction`) instead of replaying them. But a second channel
-    per concern would multiply the ways a tab can be half-connected, and a
-    turn that halts for a person, or is still streaming its reply, is exactly
-    the moment when being half-connected is worst.
+    Approval requests, turn activity notes, extraction progress, and seeding
+    status ride this same connection rather than one each of their own, for
+    the same reason as each other: none is a log entry -- an approval that is
+    never answered, provisional turn content, where an ingest has got to, and
+    whether a seeding run is still going all leave no event behind -- so none
+    carries an id, and a reconnecting browser refetches what it missed
+    (`/approvals`, the activity catch-up route, `/projects/{id}/extraction`,
+    or `/projects/{id}/topics/seed`) instead of replaying them. But a second
+    channel per concern would multiply the ways a tab can be half-connected,
+    and a turn that halts for a person, or is still streaming its reply, is
+    exactly the moment when being half-connected is worst.
     """
     queue: asyncio.Queue = asyncio.Queue()
     start_at = feed.decode_position(resume_from) if resume_from else None
@@ -1294,6 +1665,16 @@ async def _sse(
 
         pumps.append(asyncio.create_task(pump_extraction()))
 
+    seeded = None
+    if seeding is not None:
+        seeded = seeding.listen()
+
+        async def pump_seeding() -> None:
+            while True:
+                await queue.put(("seeding", await seeded.get()))
+
+        pumps.append(asyncio.create_task(pump_seeding()))
+
     idle = 0.0
     try:
         while not await request.is_disconnected():
@@ -1308,7 +1689,7 @@ async def _sse(
                     idle = 0.0
                 continue
             idle = 0.0
-            if kind in ("approval", "activity", "extraction"):
+            if kind in ("approval", "activity", "extraction", "seeding"):
                 yield f"data: {json.dumps(item)}\n\n"
                 continue
             payload = feed_event(
@@ -1328,6 +1709,8 @@ async def _sse(
             activity.stop_listening(watching)
         if extraction is not None and extracting is not None:
             extraction.stop_listening(extracting)
+        if seeding is not None and seeded is not None:
+            seeding.stop_listening(seeded)
         for pumping in pumps:
             pumping.cancel()
             with suppress(asyncio.CancelledError):

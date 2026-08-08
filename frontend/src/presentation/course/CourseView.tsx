@@ -8,7 +8,7 @@ import { allArtifacts, writtenCount, type Course } from '@domain/project/course.
 import type { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import { EmptyState, Loading } from '../common/primitives.tsx'
-import { sessionHref } from '../routing/routes.ts'
+import { researchHref, sessionHref } from '../routing/routes.ts'
 import { Artifact } from './Artifacts.tsx'
 import { AutonomyPanel } from './AutonomyPanel.tsx'
 import { ExtractionPane } from './ExtractionPane.tsx'
@@ -62,6 +62,9 @@ export const CourseView = ({
           <p className="sub">{course.data ? subtitle(course.data) : ''}</p>
         </div>
         <div className="view-head-actions">
+          <a className="btn btn-quiet" href={researchHref(projectId)}>
+            Research
+          </a>
           {course.data?.holdingSessionId ? (
             <a className="btn btn-quiet" href={sessionHref(course.data.holdingSessionId)}>
               Open holding session

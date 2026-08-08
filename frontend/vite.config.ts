@@ -21,6 +21,54 @@ const STATIC_DIR = fileURLToPath(new URL('../research_team/interfaces/web/static
  */
 const API_SERVER = process.env.RT_API_URL ?? 'http://127.0.0.1:8000'
 
+/** Everything `react-force-graph-2d` pulls in, named for the `manualChunks`
+ *  split below. Every one of these arrived with it -- see the commit that
+ *  added the dependency -- so listing them is a snapshot of that install,
+ *  not a maintenance burden that drifts on its own. */
+const GRAPH_DEPENDENCIES = [
+  'react-force-graph-2d',
+  'react-kapsule',
+  'force-graph',
+  'kapsule',
+  'accessor-fn',
+  'bezier-js',
+  'canvas-color-tracker',
+  'float-tooltip',
+  'index-array-by',
+  'internmap',
+  'jerrypick',
+  'lodash-es',
+  'loose-envify',
+  'object-assign',
+  'preact',
+  'prop-types',
+  // `react-is@17` also ships as a dev-only transitive of `@testing-library`;
+  // this is the second, separately-resolved copy `prop-types` pulls in, and
+  // the only one that reaches the built bundle at all.
+  'react-is',
+  'tinycolor2',
+  '@tweenjs/tween.js',
+  'd3-array',
+  'd3-binarytree',
+  'd3-color',
+  'd3-dispatch',
+  'd3-drag',
+  'd3-ease',
+  'd3-force-3d',
+  'd3-format',
+  'd3-interpolate',
+  'd3-octree',
+  'd3-quadtree',
+  'd3-scale',
+  'd3-scale-chromatic',
+  'd3-selection',
+  'd3-time',
+  'd3-time-format',
+  'd3-timer',
+  'd3-transition',
+  'd3-zoom',
+]
+
 export default defineConfig({
   plugins: [react()],
   base: '/static/',
@@ -70,6 +118,15 @@ export default defineConfig({
           if (!id.includes('node_modules')) return undefined
           if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'react'
           if (/[\\/]node_modules[\\/](marked|dompurify|diff)[\\/]/.test(id)) return 'text'
+          // Its own chunk, never folded into `vendor-`: `GraphCanvas` is the
+          // only module that imports `react-force-graph-2d`, loaded with
+          // `React.lazy`, so this chunk -- the library and everything it
+          // pulls in, d3's force simulation included -- is fetched only by a
+          // reader who opens the graph pane. Named explicitly rather than by
+          // a `d3-*` pattern: none of these packages are pulled in by
+          // anything else this project depends on today, and naming them
+          // keeps a future unrelated dependency from silently landing here.
+          if (GRAPH_DEPENDENCIES.some((pkg) => id.includes(`node_modules/${pkg}/`))) return 'graph'
           return 'vendor'
         },
         entryFileNames: 'assets/app-[hash].js',

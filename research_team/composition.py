@@ -6,6 +6,7 @@ swapping any of them is an edit here and nowhere else.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from uuid import UUID
 # `EventTypeNotFoundError`, including on the "no project at all" path, where
 # nothing else would have pulled redstring in.
 import redstring.events  # noqa: F401
+from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.observability import Tracer
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
@@ -33,6 +35,7 @@ from research_team.application import (
     FullHistory,
     KnowledgeAttachment,
     LiveFeed,
+    ProjectGraphs,
     ResearchSupervisor,
     SessionService,
     TopicRoundRunner,
@@ -51,10 +54,13 @@ from research_team.application.stage_exit import (
     render_review,
     review_stage,
 )
+from research_team.application.topic_read import TopicReadPort
+from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import CodingSession, ProjectState, current_stage_of
 from research_team.domain.auto_research import Budget
 from research_team.domain.commands import WriteFile
+from research_team.domain.topic import Topic
 from research_team.domain.workflow import Preset
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import DeepAgentTurnExecutor, build_model
@@ -106,6 +112,7 @@ from research_team.infrastructure.persistence import (
 )
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
+from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.telemetry import build_tracer
 from research_team.workflows import PRESETS
 
@@ -141,6 +148,41 @@ class Application:
     agent through the tools attached with a project, and by anything driving an
     autonomous run, which shares nothing else with a session."""
 
+    graphs: ProjectGraphs
+    """The single owner of every project's open graph store in this instance.
+
+    A field rather than something reached only through `open_graph`'s
+    closure, because a graph-browsing read route needs to `open` the same
+    store the attached agent writes to, and a delete route needs to `close` it --
+    neither is reachable through the executor or the service, so this is
+    where both go looking."""
+
+    topic_readers: Callable[[UUID], TopicReadPort]
+    """One project's `TopicReadPort`, built fresh per call.
+
+    A factory rather than a bare repository, for the reason `_reader` in
+    `app.py` is a function and not a field: the web layer has no business
+    knowing that a topic reader is assembled from a queue projection, an
+    aggregate repository and a corpus-facts callable -- that is composition
+    knowledge, and handing it out piecemeal would make every future change to
+    how a reader is built a change to the web layer too. This closes over the
+    one `AggregateRepository[Topic]` also used by `start_run` below, so
+    there is exactly one such object, not a second built to avoid depending
+    on this field."""
+
+    topic_repository: AggregateRepository[Topic]
+    """The `Topic` aggregate repository, for routes that change a topic's state.
+
+    Exposed directly rather than behind a factory, unlike `topic_readers`:
+    an `AggregateRepository[Topic]` needs no project bound at construction --
+    `load` takes the topic id and the aggregate carries its own `project_id`
+    -- so there is no per-project object to assemble and nothing a factory
+    would buy here. The same object `topic_readers` and `start_run` already
+    close over, not a second one, for the reason given above. Mirrors
+    `SessionService.projects`, which exposes the `Project` repository the
+    same way for the same reason: a write that is not a session use case has
+    nowhere else to reach for the aggregate it needs."""
+
     research: ResearchSupervisor
     """Autonomous runs over this instance's topic queues.
 
@@ -149,6 +191,15 @@ class Application:
     topic repository, the queue projection and the turn supervisor -- and both
     front ends want the same one. Two supervisors over one database would each
     believe they held the only run on a project."""
+
+    topic_seeder: TopicSeeder
+    """Names a project's first topics in one turn, given a subject.
+
+    A field for the same reason `research` is one: both front ends want the
+    same object, and it is built from the same `service` and `turns` this
+    module already holds -- nothing a factory would buy over exposing the
+    one instance directly, the way `topic_repository` is exposed rather than
+    rebuilt per call."""
 
     workers: WorkerRoster
     """Everything in flight on a project, for a front end that wants to show it.
@@ -271,6 +322,11 @@ class Application:
         await self.topics.stop()
         await self.service.close()
         await self.detach_project()
+        # Every project this instance ever opened a graph for, not just the
+        # one that happened to be attached -- `detach_project` above only
+        # releases that one, and a read route can have opened others through
+        # `graphs` directly without ever attaching them.
+        await self.graphs.close_all()
 
 
 def _context_parts(
@@ -373,7 +429,7 @@ def build_application(
         # A `project_id=` at build time scopes the whole application to that
         # project, not just sessions started through `start_in_project` --
         # `create_session` on an application built this way still gets the
-        # knowledge tools (Task 14's `_initial_project_id` path, attached at
+        # knowledge tools (the `_initial_project_id` path, attached at
         # `start()`), so its default prompt has to describe them too, the
         # same way `start_in_project`'s per-session prompt does. Otherwise a
         # session it creates has `remember` on the executor and no idea the
@@ -601,28 +657,36 @@ def build_application(
         gate_reviewer=gate_review,
     )
 
+    # The single owner of an open graph store per project: `open_graph` below
+    # borrows from it rather than building its own, which is what lets a read
+    # route see the same store extraction just wrote to instead of
+    # a second one rebuilt independently and stale from the moment it exists.
+    graphs = ProjectGraphs(
+        build_store=lambda: build_graph_store(config.graph_store()),
+        rebuild=lambda store, target_project_id: rebuild_graph(
+            store, feed=repository.store, project_id=target_project_id
+        ),
+    )
+
     async def open_graph(
         target_project_id: UUID,
     ) -> tuple[RedstringKnowledge, tuple[BaseTool, ...]]:
-        """Build one project's `RedstringKnowledge` and bring its store current.
+        """Build one project's `RedstringKnowledge` over its shared graph store.
 
-        Raises before anything is returned if either step fails -- an
-        unreachable Neo4j or a replay `KnowledgeError` -- which is what lets
-        `KnowledgeAttachment.attach` stay atomic: nothing here is handed back
-        for it to wire in until both have actually succeeded. The store this
-        opened is closed on that path rather than left to leak.
+        The store itself comes from `graphs`, which owns it for as long as
+        the project stays open -- not just for the duration of this
+        attachment. Raises before anything is returned if `graphs.open`
+        fails -- an unreachable Neo4j or a replay `KnowledgeError` -- which is
+        what lets `KnowledgeAttachment.attach` stay atomic: nothing here is
+        handed back for it to wire in until the store has actually opened.
+        Unlike the store this used to build for itself, a store that fails to
+        open here is *not* closed on the way out: `graphs` is what decided to
+        build it, and only `graphs` gets to decide it is done with it --
+        closing a cache's handle out from under it on a failure it did not
+        cause would leave the cache holding a closed store the next `open`
+        would hand straight back out.
         """
-        store = build_graph_store(config.graph_store())
-        try:
-            # `ensure_schema` is the first call that actually talks to a
-            # Neo4j server; a no-op for the in-memory store, which has none.
-            if hasattr(store, "ensure_schema"):
-                await store.ensure_schema()
-            await rebuild_graph(store, feed=repository.store, project_id=target_project_id)
-        except Exception:
-            if hasattr(store, "close"):
-                await store.close()
-            raise
+        store = await graphs.open(target_project_id)
         knowledge = RedstringKnowledge(
             target_project_id,
             store=store,
@@ -676,9 +740,16 @@ def build_application(
         )
 
     async def close_graph(knowledge: RedstringKnowledge) -> None:
-        store = knowledge.graph_store
-        if hasattr(store, "close"):
-            await store.close()
+        """A no-op: detaching a project from one session no longer closes its store.
+
+        Before `graphs` existed, this was the only thing that closed a graph
+        store, so it closed the one `knowledge` held. Now the store outlives
+        any single attachment -- `graphs` is what opened it and `graphs` is
+        what gets to close it, on project delete or process shutdown. Closing
+        it here too would pull it out from under the cache: `graphs` would
+        still list the project as open, and the next `open` would hand back a
+        store that no longer accepts calls instead of rebuilding a working one.
+        """
 
     attachment = KnowledgeAttachment(
         executor,
@@ -702,8 +773,8 @@ def build_application(
         # decisions live. The projection gets the same instance, so a turn and
         # the read-model work it causes are read off one trace rather than two.
         tracer=resolved_tracer,
-        # A session started in a project gets this appended to its prompt
-        # (Task 14/Step 4); one started plainly does not, so it never hears
+        # A session started in a project gets this appended to its prompt;
+        # one started plainly does not, so it never hears
         # about tools it was not given.
         # `TOPICS_PROMPT` belongs here for the same reason the other three do,
         # and its absence was a plain oversight: `open_graph` attaches
@@ -731,6 +802,10 @@ def build_application(
         progress=build_learner_progress_repository(
             repository.store, repository.publisher, snapshot_store=repository.snapshot_store
         ),
+        # So `delete_project` can evict the deleted project's cached store --
+        # the same `graphs` `open_graph` above borrows from, not a second
+        # instance that would cache independently of the one attachment uses.
+        graphs=graphs,
     )
     turns = TurnSupervisor(service)
     runs = build_auto_research_repository(
@@ -739,6 +814,18 @@ def build_application(
     topic_repository = build_topic_repository(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store
     )
+
+    def topic_reader(target_project_id: UUID) -> TopicReadPort:
+        """This project's `TopicReadPort`, over the one repository above.
+
+        Built per call rather than held, mirroring `ProjectCorpusReader`
+        above: the project is bound at construction so no caller can pass a
+        different one, and a call is cheap enough (three attribute reads and
+        an object) that there is no reason to cache it.
+        """
+        return ProjectTopicReader(
+            topics, topic_repository, topics.corpus_facts, target_project_id
+        )
 
     async def start_run(
         run_id: UUID,
@@ -791,6 +878,10 @@ def build_application(
         )
 
     research_supervisor = ResearchSupervisor(start_run, runs)
+    # Built over the same `service` and `turns` a person's own turns run
+    # through -- a seeding turn is a turn like any other, and `TopicSeeder`
+    # joins and releases the project the same way `start_auto_research` does.
+    topic_seeder = TopicSeeder(service, turns)
     # The same object the tools report through, not a second one: the roster's
     # "an extraction is running" and the pane's frames are two reads of one
     # buffer, and two instances would let them disagree.
@@ -806,7 +897,11 @@ def build_application(
         summaries=summaries,
         corpus=corpus,
         topics=topics,
+        graphs=graphs,
+        topic_readers=topic_reader,
+        topic_repository=topic_repository,
         research=research_supervisor,
+        topic_seeder=topic_seeder,
         workers=worker_roster,
         policy=resolved_policy,
         _initial_project_id=project_id,

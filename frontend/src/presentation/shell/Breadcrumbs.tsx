@@ -32,6 +32,18 @@ export const Breadcrumbs = ({
     )
   }
 
+  if (route.name === 'research') {
+    return (
+      <nav className="crumbs" id="crumbs">
+        <a href={treeHref()}>sessions</a>
+        <span className="sep">/</span>
+        <span className="sid">{course?.projectName || shortId(route.id)}</span>
+        <span className="sep">/</span>
+        <span className="sep">research</span>
+      </nav>
+    )
+  }
+
   if (route.name !== 'session') {
     return (
       <nav className="crumbs" id="crumbs">

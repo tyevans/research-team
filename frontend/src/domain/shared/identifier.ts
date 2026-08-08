@@ -17,6 +17,7 @@ export type ApprovalId = Branded<string, 'ApprovalId'>
 export type SourceId = Branded<string, 'SourceId'>
 export type ComponentId = Branded<string, 'ComponentId'>
 export type MessageId = Branded<string, 'MessageId'>
+export type TopicId = Branded<string, 'TopicId'>
 
 export const SessionId = (raw: string): SessionId => raw as SessionId
 export const ProjectId = (raw: string): ProjectId => raw as ProjectId
@@ -25,6 +26,7 @@ export const ApprovalId = (raw: string): ApprovalId => raw as ApprovalId
 export const SourceId = (raw: string): SourceId => raw as SourceId
 export const ComponentId = (raw: string): ComponentId => raw as ComponentId
 export const MessageId = (raw: string): MessageId => raw as MessageId
+export const TopicId = (raw: string): TopicId => raw as TopicId
 
 /** The leading octet of a UUID, which is what every surface here displays.
  *

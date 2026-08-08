@@ -3,17 +3,22 @@ import type { PreferenceStore } from '@application/ports/preferences.ts'
 import type {
   ApprovalRepository,
   AutonomyRepository,
+  DocumentRepository,
   ExtractionRepository,
+  GraphRepository,
   HealthRepository,
   LessonRepository,
   ProjectRepository,
   ResearchRepository,
   SessionRepository,
+  TopicRepository,
   TurnRepository,
   WorkerRepository,
   WorkspaceRepository,
 } from '@application/ports/repositories.ts'
 import { HttpAutonomyRepository } from '@infrastructure/http/autonomy-repository.ts'
+import { HttpDocumentRepository } from '@infrastructure/http/document-repository.ts'
+import { HttpGraphRepository } from '@infrastructure/http/graph-repository.ts'
 import { HttpClient } from '@infrastructure/http/http-client.ts'
 import {
   HttpExtractionRepository,
@@ -23,6 +28,7 @@ import {
   HttpWorkerRepository,
 } from '@infrastructure/http/project-repository.ts'
 import { HttpSessionRepository } from '@infrastructure/http/session-repository.ts'
+import { HttpTopicRepository } from '@infrastructure/http/topic-repository.ts'
 import { HttpApprovalRepository, HttpTurnRepository } from '@infrastructure/http/turn-repository.ts'
 import {
   HttpLessonRepository,
@@ -46,6 +52,9 @@ export interface Container {
   readonly autonomy: AutonomyRepository
   readonly projects: ProjectRepository
   readonly research: ResearchRepository
+  readonly topics: TopicRepository
+  readonly documents: DocumentRepository
+  readonly graphs: GraphRepository
   readonly workers: WorkerRepository
   readonly extractions: ExtractionRepository
   readonly health: HealthRepository
@@ -67,6 +76,9 @@ export const createContainer = (baseUrl = ''): Container => {
     autonomy: new HttpAutonomyRepository(http),
     projects: new HttpProjectRepository(http),
     research: new HttpResearchRepository(http),
+    topics: new HttpTopicRepository(http),
+    documents: new HttpDocumentRepository(http),
+    graphs: new HttpGraphRepository(http),
     workers: new HttpWorkerRepository(http),
     extractions: new HttpExtractionRepository(http),
     health: new HttpHealthRepository(http),

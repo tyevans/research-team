@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.62.0",
+    "@tanstack/react-virtual": "^3.14.9",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "diff": "^9.0.0",
@@ -30,6 +31,7 @@
     "marked": "^18.0.9",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-force-graph-2d": "^1.29.1",
     "wouter": "^3.10.0",
     "zod": "^4.4.3",
     "zustand": "^5.0.2"

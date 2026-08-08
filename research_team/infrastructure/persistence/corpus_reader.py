@@ -29,9 +29,9 @@ class ProjectCorpusReader:
         self._runner = runner
         self._project_id = project_id
 
-    async def list_documents(self) -> list[DocumentRecord]:
+    async def list_documents(self, *, include_dropped: bool = False) -> list[DocumentRecord]:
         try:
-            return await self._runner.list(self._project_id)
+            return await self._runner.list(self._project_id, include_dropped=include_dropped)
         except RuntimeError as error:
             # The runner raises this when its projection was never started,
             # which is a wiring fault rather than an absent document -- and

@@ -60,16 +60,23 @@ class CorpusReadPort(Protocol):
     type will eventually disagree, and the disagreement would surface as a
     citation whose metadata does not match the corpus it came from.
 
-    `DocumentRecord` carries two fields this port has no use for. `sha256` is
-    harmless and occasionally wanted -- it is what proves a quote came from
-    the bytes on record. `dropped_reason` is always `None` by the time it gets
-    here, because both methods filter dropped documents out; that is a
-    redundant field, not a wrong one, and redundancy is the cheaper of the two
-    prices on offer.
+    `DocumentRecord` carries a field most callers have no use for: `sha256`
+    is harmless and occasionally wanted -- it is what proves a quote came
+    from the bytes on record. `dropped_reason` is `None` unless a caller asks
+    for dropped documents by name, because the default answer is the live
+    corpus and nothing else.
     """
 
-    async def list_documents(self) -> list[DocumentRecord]:
-        """Every source still in the corpus. Dropped documents are absent."""
+    async def list_documents(self, *, include_dropped: bool = False) -> list[DocumentRecord]:
+        """Every source in the corpus. Dropped documents are absent by default.
+
+        `include_dropped` is opt-in and defaults to False, so a caller that
+        never asks -- the agent's own tools, most of all -- keeps seeing
+        exactly the corpus it always has. A caller that does ask gets dropped
+        rows back too, because the corpus keeps them on purpose: a drop is a
+        judgement someone made, and hiding it from a browser would misreport
+        what the project holds.
+        """
         ...
 
     async def read_document(self, source_id: str) -> StoredDocument | None:

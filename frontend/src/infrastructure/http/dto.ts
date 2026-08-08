@@ -394,6 +394,33 @@ export const extractionCatchUpDto = z.object({
   last: z.array(extractionFrameDto).default([]),
 })
 
+/** One seeding run's status, from `SeedingActivity` -- passed straight
+ *  through by `seeding_view`, so this is the frame's actual wire shape
+ *  rather than a fold of many. `status` is a plain string for the reason
+ *  `extractionFrameDto.stage` is: a status this build has not heard of
+ *  should reach the mapper's fallback, not fail validation. `subject`,
+ *  `reply` and `detail` are each populated on some statuses and absent on
+ *  others -- `maybe` tolerates the key being missing entirely rather than
+ *  merely null, matching how `SeedingActivity.start`'s running frame omits
+ *  them outright instead of nulling them. */
+export const seedingFrameDto = z.object({
+  type: z.string(),
+  project_id: z.string(),
+  run_id: z.string(),
+  status: z.string(),
+  subject: maybe(z.string()),
+  reply: maybe(z.string()),
+  detail: maybe(z.string()),
+})
+
+/** `current`/`last` are each nullable rather than defaulted to an empty
+ *  array like `extractionCatchUpDto`'s: there is at most one frame per side,
+ *  not a sequence, so "nothing yet" is `null` and not `[]`. */
+export const seedingCatchUpDto = z.object({
+  current: seedingFrameDto.nullable().default(null),
+  last: seedingFrameDto.nullable().default(null),
+})
+
 /** The autonomy policy, as all three routes shape it through one presenter.
  *
  * `levels` values are `z.string()` rather than an enum on purpose: a server
@@ -412,6 +439,94 @@ export const autonomyDto = z.object({
  *  changes where one was made. */
 export const autonomyChangeDto = autonomyDto.extend({
   changed: z.record(z.string(), z.string()).default({}),
+})
+
+/** One row of `/api/projects/{id}/topics`. `status` and `triggers` are plain
+ *  strings rather than enums for the reason `extractionFrameDto.stage` is: a
+ *  status or trigger this build has not heard of must still reach the mapper
+ *  and render as itself, not fail validation and blank the whole queue. */
+export const topicDto = z.object({
+  topic_id: z.string(),
+  question: z.string(),
+  status: z.string(),
+  sources: z.number(),
+  findings: z.number(),
+  open_sub_questions: z.number(),
+  triggers: z.array(z.string()).default([]),
+  needs_attention: z.boolean(),
+  is_blocked: z.boolean(),
+})
+
+/** The topic's own page: the row plus what the list leaves out. `.extend`
+ *  because the server builds it the same way — `topic_detail_view` spreads
+ *  `topic_view` and adds these fields — and drift between the two shapes
+ *  would first show up here. */
+export const topicDetailDto = topicDto.extend({
+  rationale: z.string(),
+  scope: z.string(),
+  sub_questions: z
+    .array(
+      z.object({
+        key: z.string(),
+        question: z.string(),
+        answer: maybe(z.string()),
+        resolved: z.boolean(),
+      }),
+    )
+    .default([]),
+  source_ids: z.array(z.string()).default([]),
+  finding_notes: z.array(z.string()).default([]),
+  contested: z.boolean(),
+})
+
+/** One row of `/api/projects/{id}/sources`: metadata only, never text. See
+ *  `source_view` -- `dropped_reason` is always present, `null` for a live
+ *  document. */
+export const documentDto = z.object({
+  source_id: z.string(),
+  char_count: z.number(),
+  sha256: z.string(),
+  uri: maybe(z.string()),
+  title: maybe(z.string()),
+  published_at: maybe(z.string()),
+  note: maybe(z.string()),
+  dropped_reason: maybe(z.string()),
+})
+
+/** `/api/projects/{id}/sources/{source_id}`: the row plus the text and the
+ *  offsets it was actually read at. `.extend` for the reason `topicDetailDto`
+ *  gives -- `source_text_view` spreads `source_view` and adds these three. */
+export const documentTextDto = documentDto.extend({
+  text: z.string(),
+  start: z.number(),
+  end: z.number(),
+})
+
+/** One node of `/api/projects/{id}/graph/entities` and the neighbourhood
+ *  route: an id, its label and its kind. Shared by both because
+ *  `neighborhood_view` builds on `entity_view` the same way `topicDetailDto`
+ *  builds on `topicDto`. */
+export const graphEntityDto = z.object({
+  entity_id: z.string(),
+  name: z.string(),
+  entity_type: z.string(),
+})
+
+export const graphEntityPageDto = z.object({
+  entities: z.array(graphEntityDto).default([]),
+  next_after: maybe(z.string()),
+})
+
+export const graphRelationshipDto = z.object({
+  source_id: z.string(),
+  target_id: z.string(),
+  relationship_type: z.string(),
+})
+
+export const graphNeighborhoodDto = z.object({
+  root: graphEntityDto,
+  entities: z.array(graphEntityDto).default([]),
+  relationships: z.array(graphRelationshipDto).default([]),
 })
 
 export const idDto = z.object({ id: z.string() })

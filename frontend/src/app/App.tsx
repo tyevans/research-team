@@ -8,6 +8,7 @@ import type { Course } from '@domain/project/course.ts'
 import { CourseView } from '@presentation/course/CourseView.tsx'
 import { courseHref, treeHref, type Route } from '@presentation/routing/routes.ts'
 import { navigate, useRoute } from '@presentation/routing/use-route.ts'
+import { ResearchView } from '@presentation/research/ResearchView.tsx'
 import { SessionView } from '@presentation/session/SessionView.tsx'
 import { Breadcrumbs } from '@presentation/shell/Breadcrumbs.tsx'
 import { ConnectionBadge, DriftBadge } from '@presentation/shell/ConnectionBadge.tsx'
@@ -61,7 +62,7 @@ const Shell = () => {
         <Breadcrumbs
           route={route}
           session={route.name === 'session' ? head : null}
-          course={route.name === 'course' ? course : null}
+          course={route.name === 'course' || route.name === 'research' ? course : null}
         />
         <div className="topbar-right">
           <DriftBadge />
@@ -100,6 +101,8 @@ const CurrentView = ({
           onWatch={(sessionId) => navigate(courseHref(route.id, sessionId))}
         />
       )
+    case 'research':
+      return <ResearchView projectId={route.id} />
     default:
       return <TreeView />
   }

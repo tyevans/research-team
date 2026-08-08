@@ -64,6 +64,7 @@ from research_team.application.ports import (
     TurnExecutor,
     TurnResult,
 )
+from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.research_supervisor import (
     ActiveRun,
     ResearchSupervisor,
@@ -137,6 +138,7 @@ __all__ = [
     "MergeRecord",
     "OpenGraph",
     "PreparedContext",
+    "ProjectGraphs",
     "RecordedMessage",
     "ResearchSupervisor",
     "Roster",

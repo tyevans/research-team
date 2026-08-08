@@ -18,6 +18,7 @@
 @import './states.css';
 @import './responsive.css';
 @import './course.css';
+@import './research.css';
 @import './components.css';
 
 /* Last, so it can correct the structural differences above. */

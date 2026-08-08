@@ -640,6 +640,19 @@ class TopicRunner:
             raise RuntimeError("the topic projection has not been started")
         return await self._topics.list(project_id)
 
+    async def corpus_facts(self, project_id: UUID) -> CorpusFacts:
+        """The corpus snapshot `attention_for` needs, delegated to the table.
+
+        `TopicQueue.evaluate` already reads this to judge a whole queue; a
+        single-topic read needs the same snapshot to judge one topic the same
+        way, and this is that read exposed rather than a second one built from
+        the corpus projection -- two paths to the same `CorpusFacts` are two
+        chances for them to disagree about what "live" means.
+        """
+        if self._topics is None:
+            raise RuntimeError("the topic projection has not been started")
+        return await self._topics.corpus_facts(project_id)
+
     async def caught_up(self, timeout: float = 10.0) -> None:
         """Block until both projections have seen everything appended so far.
 

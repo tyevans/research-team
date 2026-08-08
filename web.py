@@ -12,6 +12,7 @@ from research_team.interfaces.web import (
     WebApprovals,
     create_app,
 )
+from research_team.interfaces.web.seeding import SeedingActivity
 
 
 def main() -> None:
@@ -25,6 +26,9 @@ def main() -> None:
     # it. Two would give the roster and the pane different answers about the
     # same ingest.
     extraction = ExtractionActivity()
+    # Web-layer state, matching `extraction`: nothing durable backs a seeding
+    # run's status, so this buffer is what a reconnecting tab catches up from.
+    seeding = SeedingActivity()
     application = build_application(approvals=approvals, extractions=extraction)
 
     @asynccontextmanager
@@ -45,8 +49,15 @@ def main() -> None:
             lifespan,
             approvals=approvals,
             activity=activity,
+            # Was missing: the source routes have been 503ing in this
+            # entrypoint while the test fixture wired a corpus and passed.
+            corpus=application.corpus,
             workers=application.workers,
             extraction=extraction,
+            topics=application.topic_readers,
+            graphs=application.graphs,
+            topic_seeder=application.topic_seeder,
+            seeding=seeding,
             # The same object the executor's gating predicate reads, which is
             # the only reason the routes over it can change anything: a copy
             # would answer reads correctly and change nothing. Instance-wide,

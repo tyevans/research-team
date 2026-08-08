@@ -23,9 +23,12 @@ from research_team.domain import (
     StoreSourceDocument,
     WriteFile,
 )
+from research_team.domain.topic import OpenTopic, RecordFinding
 from research_team.infrastructure.persistence import build_corpus_repository
+from research_team.infrastructure.persistence.event_store import build_topic_repository
 from research_team.interfaces.web import TurnActivity, create_app
 from research_team.interfaces.web.extraction import ExtractionActivity
+from research_team.interfaces.web.seeding import SeedingActivity
 
 
 async def _started(**kwargs):
@@ -69,6 +72,9 @@ async def app_and_client(db_path, fake_model, extraction):
         # able to change anything because they hold the object the executor
         # reads, and a test against a copy would pass while proving nothing.
         policy=application.policy,
+        topics=application.topic_readers,
+        topic_repository=application.topic_repository,
+        graphs=application.graphs,
     )
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -1062,7 +1068,7 @@ async def test_joining_a_project_starts_a_session_that_inherits_its_files(client
 
 
 async def test_joining_a_project_attaches_the_knowledge_tools(app_and_client):
-    """The web-route counterpart of Task 14's REPL fix.
+    """The web-route counterpart of the REPL's `/project use` attach fix.
 
     `application.turns_tools()` is the surface the executor actually reads
     from on the next turn -- the same surface
@@ -1526,6 +1532,288 @@ async def test_a_dropped_source_is_gone_from_both_routes(app_and_client):
 
     assert listing.json() == []
     assert reading.status_code == 404
+
+
+async def test_dropped_sources_can_be_listed_with_their_reason(app_and_client):
+    """The corpus keeps dropped documents deliberately. A browser that hid
+    them would misreport what the project holds."""
+    application, client = app_and_client
+    project_id = await _project_with_sources(
+        application,
+        client,
+        {"source_id": "s1", "text": "Ada Lovelace."},
+        DropSourceDocument(source_id="s1", reason="superseded by a later edition"),
+    )
+
+    rows = (
+        await client.get(f"/api/projects/{project_id}/sources?include_dropped=true")
+    ).json()
+
+    assert rows[0]["dropped_reason"] == "superseded by a later edition"
+
+
+async def test_listing_without_include_dropped_omits_the_reason_key_too(app_and_client):
+    """The default answer says nothing about drops at all, live or dropped."""
+    application, client = app_and_client
+    project_id = await _project_with_sources(
+        application, client, {"source_id": "s1", "text": "Ada Lovelace."}
+    )
+
+    rows = (await client.get(f"/api/projects/{project_id}/sources")).json()
+
+    assert rows[0]["dropped_reason"] is None
+
+
+# ---------------- topics ----------------
+
+
+async def _project_with_topics(application, client) -> tuple[str, str]:
+    """A project holding one live, never-investigated topic, projection caught up.
+
+    Opens the topic through the `Topic` aggregate directly rather than through
+    `open_topic`, the same reasoning `_project_with_sources` gives for storing
+    through `Corpus` rather than `remember`: these routes are about the read
+    path, not about how a topic came to exist. Returns both ids because every
+    test needs the project and most need the topic too.
+    """
+    created = await client.post("/api/projects", json={"name": f"topics-{uuid4()}"})
+    assert created.status_code == 200
+    project_id = created.json()["id"]
+
+    repository = build_topic_repository(
+        application.service._repository.store,
+        application.service._repository.publisher,
+        snapshot_store=application.service._repository.snapshot_store,
+    )
+    topic = repository.create_new(uuid4())
+    topic.execute(
+        OpenTopic(
+            topic_id=topic.aggregate_id,
+            project_id=UUID(project_id),
+            question="Does spacing help?",
+            rationale="because it is the whole question",
+        )
+    )
+    await repository.save(topic)
+    await application.topics_caught_up()
+    return project_id, str(topic.aggregate_id)
+
+
+async def test_listing_topics_reports_status_counts_and_triggers(app_and_client):
+    application, client = app_and_client
+    project_id, _ = await _project_with_topics(application, client)
+
+    response = await client.get(f"/api/projects/{project_id}/topics")
+
+    assert response.status_code == 200
+    row = response.json()[0]
+    assert row["question"] == "Does spacing help?"
+    assert row["status"] == "open"
+    assert row["needs_attention"] is True
+    assert "topic.never_investigated" in row["triggers"]
+
+
+async def test_reading_a_topic_adds_what_the_row_leaves_out(app_and_client):
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+
+    body = (await client.get(f"/api/projects/{project_id}/topics/{topic_id}")).json()
+
+    assert body["rationale"] == "because it is the whole question"
+    assert body["sub_questions"] == []
+    assert body["source_ids"] == []
+
+
+async def test_a_topic_detail_reports_the_same_finding_count_as_its_row(app_and_client):
+    """`findings` must mean a count on both routes, or a caller cannot trust it.
+
+    The list route has always answered `findings` with an int -- how many
+    were recorded, not what they say -- because a queue row has no room to
+    print prose. The detail route used to overwrite that same key with the
+    array of finding summaries, which made the count unrecoverable from the
+    page that actually has the findings to count. This asserts the property
+    that regression broke: the detail's `findings` must still be the count,
+    matching the list route for the same topic, with the prose available
+    separately under `finding_notes`.
+    """
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+
+    repository = build_topic_repository(
+        application.service._repository.store,
+        application.service._repository.publisher,
+        snapshot_store=application.service._repository.snapshot_store,
+    )
+    topic = await repository.load(UUID(topic_id))
+    topic.execute(
+        RecordFinding(summary="24 hours seems to be the consensus", source_ids=["a"])
+    )
+    topic.execute(RecordFinding(summary="one SME says 48", source_ids=["b"]))
+    await repository.save(topic)
+    await application.topics_caught_up()
+
+    row = (await client.get(f"/api/projects/{project_id}/topics")).json()[0]
+    detail = (await client.get(f"/api/projects/{project_id}/topics/{topic_id}")).json()
+
+    assert row["findings"] == 2
+    assert detail["findings"] == 2
+    assert detail["finding_notes"] == [
+        "24 hours seems to be the consensus",
+        "one SME says 48",
+    ]
+
+
+async def test_an_unknown_topic_is_a_404(app_and_client):
+    application, client = app_and_client
+    project_id, _ = await _project_with_topics(application, client)
+    unknown_topic = uuid4()
+
+    response = await client.get(f"/api/projects/{project_id}/topics/{unknown_topic}")
+
+    # A bare status code cannot tell "this route refused" from "no such route
+    # is registered" -- FastAPI answers 404 for both, so an unregistered path
+    # would pass this assertion with none of the code under test ever
+    # running. The detail is the route's own message, and only the route
+    # produces it.
+    assert response.status_code == 404
+    assert response.json()["detail"] == f"no such topic in project {project_id}"
+
+
+async def test_an_unknown_project_is_a_404_on_both_topic_routes(client):
+    missing = uuid4()
+
+    listing = await client.get(f"/api/projects/{missing}/topics")
+    reading = await client.get(f"/api/projects/{missing}/topics/{uuid4()}")
+
+    # Same reasoning as above: `_require_project`'s message is what proves
+    # these went through the route rather than matching nothing at all.
+    assert listing.status_code == 404
+    assert listing.json()["detail"] == f"no project {missing}"
+    assert reading.status_code == 404
+    assert reading.json()["detail"] == f"no project {missing}"
+
+
+async def test_a_topic_from_another_project_reads_as_404_identically_to_unknown(
+    app_and_client,
+):
+    """A caller must not be able to tell "wrong project" from "never existed".
+
+    `ProjectTopicReader.read_topic` collapses both to `None` on purpose --
+    see its docstring -- because telling them apart is exactly the
+    information a project boundary exists to withhold. The status code alone
+    cannot prove that: two different messages that both happen to carry 404
+    would still leak "that topic exists but is not yours" to anyone reading
+    the body. Byte-identical detail is the assertion that actually closes
+    that gap, and the one a future refactor could not "helpfully" break
+    without this test catching it.
+    """
+    application, client = app_and_client
+    _owning_project_id, topic_id = await _project_with_topics(application, client)
+    other_project_id, _ = await _project_with_topics(application, client)
+
+    foreign = await client.get(f"/api/projects/{other_project_id}/topics/{topic_id}")
+    never_existed = await client.get(f"/api/projects/{other_project_id}/topics/{uuid4()}")
+
+    assert foreign.status_code == 404
+    assert foreign.json() == never_existed.json()
+
+
+async def test_closing_a_topic_records_the_justification(app_and_client):
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+
+    response = await client.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/status",
+        json={"to_status": "answered", "justification": "the sources agree"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "answered"
+
+
+async def test_a_blank_justification_is_refused(app_and_client):
+    """The aggregate went out of its way to make an unexplained status change
+    impossible, and a transport that supplied a default to get past it would
+    quietly undo that."""
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+
+    response = await client.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/status",
+        json={"to_status": "answered", "justification": "   "},
+    )
+
+    assert response.status_code == 422
+
+
+async def test_reopening_an_answered_topic_is_allowed(app_and_client):
+    """`decide` rejects only a no-op transition, so this is legal, and a
+    reader who closed a topic too early needs it."""
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+    await client.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/status",
+        json={"to_status": "answered", "justification": "done"},
+    )
+
+    response = await client.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/status",
+        json={"to_status": "open", "justification": "new material arrived"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "open"
+
+
+async def test_a_repeated_status_is_a_409(app_and_client):
+    """`decide` refuses a no-op transition; the transport must relay that
+    rather than swallow it as a success."""
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+
+    response = await client.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/status",
+        json={"to_status": "open", "justification": "still open"},
+    )
+
+    assert response.status_code == 409
+
+
+async def test_a_sub_question_can_be_added_and_resolved(app_and_client):
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+
+    await client.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/sub-questions",
+        json={"key": "motor", "question": "Does it hold for motor skills?"},
+    )
+    body = (
+        await client.post(
+            f"/api/projects/{project_id}/topics/{topic_id}/sub-questions/motor/resolve",
+            json={"answer": "Yes, with a smaller effect."},
+        )
+    ).json()
+
+    assert body["sub_questions"][0]["resolved"] is True
+    assert body["sub_questions"][0]["answer"] == "Yes, with a smaller effect."
+
+
+async def test_a_status_change_on_a_foreign_topic_is_the_same_404(app_and_client):
+    """The unknown-topic 404 must not distinguish "foreign" from "never
+    existed" on the write routes either, or a caller could probe project
+    boundaries through a write instead of a read."""
+    application, client = app_and_client
+    _owning_project_id, topic_id = await _project_with_topics(application, client)
+    other_project_id, _ = await _project_with_topics(application, client)
+
+    response = await client.post(
+        f"/api/projects/{other_project_id}/topics/{topic_id}/status",
+        json={"to_status": "answered", "justification": "n/a"},
+    )
+    never_existed = await client.get(f"/api/projects/{other_project_id}/topics/{uuid4()}")
+
+    assert response.status_code == 404
+    assert response.json() == never_existed.json()
 
 
 # ---------------- workflows ----------------
@@ -2377,6 +2665,43 @@ async def test_extraction_frames_ride_the_stream_without_an_id(repository):
     assert "\nid:" not in frames[0]
 
 
+async def test_seeding_frames_ride_the_stream_without_an_id(repository):
+    """The fourth provisional channel, framed like the other three.
+
+    Wired last because nothing forced it: `SeedingActivity`'s catch-up route
+    already answers "what happened" cold, and `open_topic` already streams
+    over the log. But a subject-less "running" frame arriving live is what
+    lets the panel show something before a browser reloads to find out.
+    """
+    from research_team.application import LiveFeed
+    from research_team.interfaces.web.app import _sse
+    from research_team.interfaces.web.seeding import SeedingActivity
+
+    seeding = SeedingActivity()
+    feed = LiveFeed(repository, poll_interval=0.01)
+    project_id = uuid4()
+
+    frames: list[str] = []
+    generator = _sse(StubRequest(), feed, None, None, None, None, seeding)
+    task = asyncio.create_task(_drain(generator, frames, wanted=1))
+    await asyncio.sleep(0.05)
+
+    async def _run(run_id):
+        raise RuntimeError("boom")
+
+    seeding.start(project_id, _run)
+    await asyncio.wait_for(task, timeout=5)
+
+    assert frames[0].startswith("data: ")
+    payload = json.loads(frames[0][len("data: ") :])
+    assert payload["type"] == "Seeding"
+    assert payload["project_id"] == str(project_id)
+    assert payload["status"] == "running"
+    # Not a log entry: no id line precedes the data, so a reconnect refetches.
+    assert "\nid:" not in frames[0]
+    await seeding.wait(project_id)
+
+
 # ---------------- autonomy ----------------
 
 
@@ -2525,3 +2850,340 @@ async def test_setting_autonomy_on_an_unknown_session_is_a_404(client):
         json={"tool": "write_file", "level": "ask"},
     )
     assert response.status_code == 404
+
+
+# ---------------- graph ----------------
+
+
+def _graph_entity(entity_id, tenant_id, name: str, entity_type: str = "person"):
+    from redstring.domain.entity import Entity, ExtractionMethod
+
+    return Entity(
+        id=entity_id,
+        tenant_id=tenant_id,
+        name=name,
+        normalized_name=name.lower(),
+        entity_type=entity_type,
+        extraction_method=ExtractionMethod.MANUAL,
+        confidence=1.0,
+    )
+
+
+def _graph_relationship(
+    relationship_id, tenant_id, source_id, target_id, relationship_type: str
+):
+    from redstring.domain.relationship import Relationship
+
+    return Relationship(
+        id=relationship_id,
+        tenant_id=tenant_id,
+        source_entity_id=source_id,
+        target_entity_id=target_id,
+        relationship_type=relationship_type,
+        confidence=1.0,
+    )
+
+
+async def _project_with_graph(application, client) -> tuple[str, dict]:
+    """A project holding two linked entities in its graph store, seeded directly.
+
+    Seeded through `GraphStore.upsert_entities`/`upsert_relationships` --
+    the same shortcut `test_graph_read.py` takes -- rather than through
+    `remember`, because what is under test is the read route, not extraction.
+    """
+    created = await client.post("/api/projects", json={"name": f"graph-{uuid4()}"})
+    assert created.status_code == 200
+    project_id = created.json()["id"]
+    tenant_id = UUID(project_id)
+
+    store = await application.graphs.open(tenant_id)
+    prandtl_id, karman_id = uuid4(), uuid4()
+    await store.upsert_entities(
+        [
+            _graph_entity(prandtl_id, tenant_id, "Ludwig Prandtl"),
+            _graph_entity(karman_id, tenant_id, "Theodore von Kármán"),
+        ]
+    )
+    await store.upsert_relationships(
+        [_graph_relationship(uuid4(), tenant_id, prandtl_id, karman_id, "advised")]
+    )
+    return project_id, {"prandtl_id": prandtl_id, "karman_id": karman_id}
+
+
+async def test_listing_graph_entities_finds_what_was_seeded(app_and_client):
+    application, client = app_and_client
+    project_id, ids = await _project_with_graph(application, client)
+
+    response = await client.get(f"/api/projects/{project_id}/graph/entities")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert {row["name"] for row in body["entities"]} == {
+        "Ludwig Prandtl",
+        "Theodore von Kármán",
+    }
+    assert {row["entity_id"] for row in body["entities"]} == {
+        str(ids["prandtl_id"]),
+        str(ids["karman_id"]),
+    }
+    assert body["next_after"] is None
+
+
+async def test_listing_graph_entities_filters_by_name(app_and_client):
+    """`name` matches case-insensitively as a substring of the entity's
+    display name -- the same give `RedstringKnowledge.search` gives an
+    agent's free text, because a human typing a partial name into a search
+    box needs no less. `GraphStore.find_entities(name=...)` alone would
+    require the full normalized name; the route must not be held to that.
+    """
+    application, client = app_and_client
+    project_id, ids = await _project_with_graph(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities", params={"name": "prandtl"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [row["entity_id"] for row in body["entities"]] == [str(ids["prandtl_id"])]
+
+
+async def test_a_neighborhood_carries_root_entities_and_relationships(app_and_client):
+    application, client = app_and_client
+    project_id, ids = await _project_with_graph(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities/{ids['prandtl_id']}/neighborhood"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["root"]["entity_id"] == str(ids["prandtl_id"])
+    assert [row["entity_id"] for row in body["entities"]] == [str(ids["karman_id"])]
+    assert body["relationships"] == [
+        {
+            "source_id": str(ids["prandtl_id"]),
+            "target_id": str(ids["karman_id"]),
+            "relationship_type": "advised",
+        }
+    ]
+
+
+async def test_asking_past_the_depth_cap_is_refused(app_and_client):
+    """A caller asking for depth 5 has misunderstood the API; quietly handing
+    back depth `MAX_NEIGHBORHOOD_DEPTH` would hide that from them. The port
+    underneath still clamps -- see `test_depth_is_clamped_by_the_port_not_only_the_route`
+    -- but that is a different guarantee for a different caller: the port
+    protects any future in-process caller, this 422 tells an HTTP client it
+    was wrong.
+    """
+    application, client = app_and_client
+    project_id, ids = await _project_with_graph(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities/{ids['prandtl_id']}/neighborhood",
+        params={"depth": 5},
+    )
+
+    assert response.status_code == 422
+    assert "depth" in response.json()["detail"]
+
+
+async def test_a_malformed_after_cursor_is_a_422_not_a_500(app_and_client):
+    """`after` arrives straight off the query string. `neighborhood`'s
+    `entity_id` handles the same kind of caller mistake with a 404; this
+    route should not let an unparseable UUID reach `UUID(after)` inside the
+    reader and blow up as an unhandled 500.
+    """
+    application, client = app_and_client
+    project_id, _ids = await _project_with_graph(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities", params={"after": "not-a-uuid"}
+    )
+
+    assert response.status_code == 422
+
+
+async def test_an_unknown_entity_is_a_404(app_and_client):
+    application, client = app_and_client
+    project_id, _ids = await _project_with_graph(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities/{uuid4()}/neighborhood"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == f"no such entity in project {project_id}"
+
+
+async def test_an_unknown_project_is_a_404_on_both_graph_routes(client):
+    missing = uuid4()
+
+    listing = await client.get(f"/api/projects/{missing}/graph/entities")
+    neighborhood = await client.get(
+        f"/api/projects/{missing}/graph/entities/{uuid4()}/neighborhood"
+    )
+
+    assert listing.status_code == 404
+    assert listing.json()["detail"] == f"no project {missing}"
+    assert neighborhood.status_code == 404
+    assert neighborhood.json()["detail"] == f"no project {missing}"
+
+
+async def test_a_404_on_an_unknown_project_does_not_cache_a_graph_store(app_and_client):
+    """`_graph_reader` opens and caches a store as a side effect of building
+    a reader -- `graphs.open` is the first call that talks to Neo4j and
+    `ProjectGraphs` never evicts except on `close`/`close_all`. Calling it
+    for a project that turns out not to exist would grow `graphs._stores`
+    without bound for every caller that walks unknown ids, and would pay a
+    schema round trip per garbage id behind Neo4j. The 404 must be decided
+    before the reader is ever built.
+    """
+    application, client = app_and_client
+    missing = uuid4()
+
+    response = await client.get(f"/api/projects/{missing}/graph/entities")
+
+    assert response.status_code == 404
+    assert missing not in application.graphs._stores
+
+
+async def test_graph_routes_503_when_no_graph_reader_is_configured(app_and_client):
+    """A build with no graph read model configured is a valid thing to serve
+    -- see `_reader`'s own docstring for the reasoning -- so the caller needs
+    to know the server cannot answer, not that the project has no graph.
+    """
+    application, client = app_and_client
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        topics=application.topic_readers,
+        graphs=None,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as unwired:
+        project_id, ids = await _project_with_graph(application, client)
+
+        listing = await unwired.get(f"/api/projects/{project_id}/graph/entities")
+        neighborhood = await unwired.get(
+            f"/api/projects/{project_id}/graph/entities/{ids['prandtl_id']}/neighborhood"
+        )
+
+    assert listing.status_code == 503
+    assert neighborhood.status_code == 503
+
+
+# ---------------- topic seeding ----------------
+
+
+@pytest.fixture
+async def seeding_client(db_path, fake_model):
+    """A client wired with a `TopicSeeder` and its own `SeedingActivity`.
+
+    Separate from `client`, matching `research_client`: the default app is
+    built without a seeder, and that unwired case is one of the behaviours
+    these tests check.
+    """
+    application = await _started(model=fake_model, db_path=db_path)
+    activity = SeedingActivity()
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        topic_seeder=application.topic_seeder,
+        seeding=activity,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as http:
+        yield application, activity, http
+    await application.close()
+
+
+async def test_the_seed_routes_are_absent_unless_the_instance_was_wired_for_them(client):
+    """503 rather than 404: this build is missing configuration, not the
+    project this particular id names -- matching `_reader`'s own reasoning."""
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await client.post(
+        f"/api/projects/{project_id}/topics/seed", json={"subject": "spaced repetition"}
+    )
+
+    assert response.status_code == 503
+
+
+async def test_starting_a_seed_answers_with_its_run_before_it_has_finished(seeding_client):
+    _application, activity, http = seeding_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await http.post(
+        f"/api/projects/{project_id}/topics/seed", json={"subject": "spaced repetition"}
+    )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["project_id"] == project_id
+    assert body["status"] == "running"
+    await activity.wait(UUID(project_id))
+
+
+async def test_a_second_concurrent_seed_on_the_same_project_is_refused(seeding_client):
+    _application, activity, http = seeding_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    first = await http.post(
+        f"/api/projects/{project_id}/topics/seed", json={"subject": "spaced repetition"}
+    )
+    second = await http.post(
+        f"/api/projects/{project_id}/topics/seed", json={"subject": "second wave"}
+    )
+
+    assert first.status_code == 202
+    assert second.status_code == 409
+    assert project_id in second.json()["detail"]
+    await activity.wait(UUID(project_id))
+
+
+async def test_the_catch_up_route_reports_what_a_finished_seed_did(seeding_client):
+    _application, activity, http = seeding_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    empty = await http.get(f"/api/projects/{project_id}/topics/seed")
+    assert empty.json()["current"] is None
+    assert empty.json()["last"] is None
+
+    started = await http.post(
+        f"/api/projects/{project_id}/topics/seed", json={"subject": "spaced repetition"}
+    )
+    assert started.status_code == 202
+    await activity.wait(UUID(project_id))
+
+    caught_up = await http.get(f"/api/projects/{project_id}/topics/seed")
+
+    assert caught_up.status_code == 200
+    body = caught_up.json()
+    assert body["current"] is None
+    assert body["last"]["status"] == "done"
+    assert body["last"]["subject"] == "spaced repetition"
+
+
+async def test_the_202s_run_id_is_the_id_the_finished_run_reports(seeding_client):
+    """A client's only reasonable reading of `run_id` in a 202 is "the run I
+    just started" -- that is what the field means everywhere else this API
+    hands one back (`run_view`'s `run_id`, `ActiveRun.run_id`). An id here
+    that never shows up again would be worse than no id at all: a panel
+    correlating "the run I started" with "the run that just finished" has to
+    be able to do it by this field."""
+    _application, activity, http = seeding_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    started = await http.post(
+        f"/api/projects/{project_id}/topics/seed", json={"subject": "spaced repetition"}
+    )
+    await activity.wait(UUID(project_id))
+
+    caught_up = await http.get(f"/api/projects/{project_id}/topics/seed")
+
+    assert caught_up.json()["last"]["run_id"] == started.json()["run_id"]

@@ -7,6 +7,7 @@ import {
   toForkNode,
   toLogEntry,
   toMessage,
+  toNeighborhood,
   toRoster,
   toRun,
   toSession,
@@ -264,5 +265,26 @@ describe('toRoster', () => {
 
     expect(roster.workers[0]?.startedAt).toBeNull()
     expect(roster.workers[0]?.sessionId).toBeNull()
+  })
+})
+
+describe('toNeighborhood', () => {
+  it('renames the wire fields on the root, its entities and its relationships', () => {
+    const neighborhood = toNeighborhood(
+      parse(dto.graphNeighborhoodDto, {
+        root: { entity_id: 'ada', name: 'Ada Lovelace', entity_type: 'Person' },
+        entities: [
+          { entity_id: 'ada', name: 'Ada Lovelace', entity_type: 'Person' },
+          { entity_id: 'grace', name: 'Grace Hopper', entity_type: 'Person' },
+        ],
+        relationships: [{ source_id: 'ada', target_id: 'grace', relationship_type: 'advised' }],
+      }),
+    )
+
+    expect(neighborhood.root).toEqual({ id: 'ada', name: 'Ada Lovelace', entityType: 'Person' })
+    expect(neighborhood.entities).toHaveLength(2)
+    expect(neighborhood.relationships).toEqual([
+      { source: 'ada', target: 'grace', relationshipType: 'advised' },
+    ])
   })
 })

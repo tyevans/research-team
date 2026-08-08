@@ -1,0 +1,388 @@
+/* The research view: topics, seeding, documents and the graph.
+
+   Four regions in one grid so a reader can see the whole page at a glance,
+   the same shape `course.css`'s `.course-panes` uses for its own pair --
+   the pattern is copied because the two pages carry the same kind of
+   material, not because the code happened to be nearby. */
+
+.view-research {
+  overflow: auto;
+  padding: 26px 28px 60px;
+}
+
+.research-panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.research-panes .pane {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.research-panes .pane-body {
+  overflow: visible;
+}
+
+/* ---------------------------------------------------------------- topics
+ *
+ * Urgency is carried on the left edge, the way `course.css`'s `.finding`
+ * rows carry theirs -- a border a reader catches while scanning down the
+ * list, rather than a badge that only reads once the eye lands on the row. */
+
+.topic-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.topic-row {
+  padding: 8px 10px;
+  border-left: 2px solid var(--line);
+  background: var(--bg-panel-2);
+}
+
+/* Worse than merely flagged: a blocked topic cannot move on its own, so it
+ * gets the same loud edge `.finding-invariant` uses for a failure nothing
+ * else in the row can explain. */
+.topic-blocked {
+  border-left-color: var(--k-failure);
+}
+.topic-attention {
+  border-left-color: var(--accent);
+}
+.topic-closed {
+  border-left-color: var(--line);
+  color: var(--fg-dim);
+}
+
+.topic-question {
+  font-size: var(--t-md);
+}
+
+.topic-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.topic-status {
+  text-transform: capitalize;
+}
+
+.topic-triggers {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.topic-trigger {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  color: var(--fg-faint);
+}
+
+.topic-manage {
+  margin-left: auto;
+}
+
+/* ------------------------------------------------------- topic status dialog
+ *
+ * Reuses `.drawer`/`.drawer-backdrop` from `course.css` -- the overlay shape
+ * is the same read-over-the-page convention `WorkerDrawer` established, and a
+ * second set of rules for the same box would be the second palette the
+ * tokens file warns against, just for layout instead of colour. */
+
+.topic-status-current {
+  color: var(--fg-dim);
+  font-size: var(--t-sm);
+  margin-bottom: 8px;
+}
+
+.topic-status-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.topic-status-choice-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.topic-status-justification {
+  display: block;
+  width: 100%;
+  min-height: 4.5em;
+  margin: 4px 0 10px;
+  resize: vertical;
+}
+
+.topic-status-actions {
+  margin-bottom: 16px;
+}
+
+.sub-questions {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.sub-question-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sub-question {
+  padding: 6px 8px;
+  border-left: 2px solid var(--line);
+  background: var(--bg-panel-2);
+}
+
+.sub-question-resolved {
+  color: var(--fg-dim);
+}
+
+.sub-question-text {
+  font-size: var(--t-sm);
+}
+
+.sub-question-answer {
+  margin-top: 3px;
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.sub-question-resolve,
+.sub-question-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+/* ------------------------------------------------------------- documents
+ *
+ * The list is virtualized: rows are absolutely positioned inside a tall,
+ * fixed-height scroll container rather than laid out by the browser, so a
+ * corpus of hundreds of sources costs the same to render as one of ten. */
+
+.document-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+}
+
+.document-filter {
+  width: 100%;
+}
+
+.document-list-scroll {
+  height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.document-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.document-row {
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.document-row-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  height: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.document-row-open:hover {
+  background: var(--bg-panel-2);
+}
+
+.document-row-title {
+  font-size: var(--t-sm);
+}
+
+.document-row-meta {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+/* Same loud edge `.topic-blocked` uses: a dropped document cannot be read
+ * back, and that fact should be visible without opening the row. */
+.document-dropped {
+  border-left: 2px solid var(--k-failure);
+}
+
+.document-row-dropped-reason {
+  font-size: var(--t-xs);
+  color: var(--k-failure);
+}
+
+.document-reader {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+
+.document-reader-title {
+  font-size: var(--t-md);
+  margin: 0 0 6px;
+}
+
+.document-reader-dropped {
+  color: var(--k-failure);
+  font-size: var(--t-xs);
+  margin: 0 0 8px;
+}
+
+.document-reader-text {
+  font-size: var(--t-sm);
+  white-space: pre-wrap;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* ----------------------------------------------------------------- graph
+ *
+ * Search-then-expand rather than a rendered-from-the-start map: the corpus
+ * has no route that lists every entity, and a graph a reader has not asked
+ * for yet is not one they can navigate. */
+
+.graph-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.graph-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.graph-search {
+  flex: 1;
+}
+
+.graph-entity-type {
+  flex-shrink: 0;
+}
+
+.graph-error {
+  color: var(--k-failure);
+  font-size: var(--t-xs);
+  margin: 0;
+}
+
+.graph-truncated {
+  color: var(--fg-dim);
+  font-size: var(--t-xs);
+  margin: 0;
+}
+
+.graph-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.graph-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel-2);
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.graph-result:hover {
+  border-color: var(--accent);
+}
+
+.graph-result-type {
+  font-family: var(--mono);
+  color: var(--fg-dim);
+}
+
+/* ----------------------------------------------------------------- seeding
+ *
+ * One control, one line of status -- a seeding run is a single model turn,
+ * not a multi-stage pipeline like extraction, so there is no progress list
+ * to draw here. */
+
+.seed-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.seed-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.seed-form label {
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.seed-input {
+  flex: 1;
+}
+
+.seed-status {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.seed-failed {
+  color: var(--k-failure);
+}

@@ -1,5 +1,6 @@
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Approval } from '@domain/approval/approval.ts'
+import type { SeedingRun } from '@domain/research/seeding.ts'
 import type { LogEntry } from '@domain/session/log-entry.ts'
 import type { ApprovalId, SessionId } from '@domain/shared/identifier.ts'
 
@@ -32,6 +33,16 @@ export type FeedFrame =
    *  folding — and the "is this my project?" test it turns on — in the one
    *  place that knows which project is on screen. */
   | { readonly kind: 'extraction'; readonly payload: unknown }
+  /** A seeding run's status, decoded rather than routed raw.
+   *
+   * Unlike extraction, `SeedingActivity` hands back one flat frame that
+   * already is the full domain model -- there is no note to fold, just the
+   * one status a run is currently at -- so this is validated and mapped here
+   * like an approval or activity frame. `projectId` rides alongside `run`
+   * rather than inside it because `SeedingRun` is the read model `SeedPanel`
+   * also gets from the catch-up route, which is not project-addressed once
+   * it is in a per-project query cache. */
+  | { readonly kind: 'seeding'; readonly projectId: string; readonly run: SeedingRun }
 
 export type ConnectionState = 'connecting' | 'open' | 'down'
 

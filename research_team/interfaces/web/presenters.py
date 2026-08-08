@@ -28,7 +28,14 @@ from research_team.application.course import (
     StageProgress,
 )
 from research_team.application.findings import Finding
+from research_team.application.graph_read import (
+    EntityPage,
+    GraphEntity,
+    GraphRelationship,
+    Neighborhood,
+)
 from research_team.application.research_supervisor import ActiveRun
+from research_team.application.topic_read import TopicDetail, TopicView
 from research_team.domain import (
     AutonomyChanged,
     CodingSession,
@@ -459,6 +466,9 @@ def source_view(summary: DocumentRecord) -> dict[str, Any]:
         "title": summary.title,
         "published_at": summary.published_at,
         "note": summary.note,
+        # Null for a live document; set means excluded. Always present so a
+        # caller can tell "not dropped" from "the field went missing".
+        "dropped_reason": summary.dropped_reason,
     }
 
 
@@ -477,6 +487,114 @@ def source_text_view(document: StoredDocument, span: Span) -> dict[str, Any]:
         "text": span.text,
         "start": span.start,
         "end": span.end,
+    }
+
+
+def entity_view(entity: GraphEntity) -> dict[str, Any]:
+    """One node, in the shape a graph browser draws: id, label, kind."""
+    return {
+        "entity_id": entity.entity_id,
+        "name": entity.name,
+        "entity_type": entity.entity_type,
+    }
+
+
+def relationship_view(relationship: GraphRelationship) -> dict[str, Any]:
+    """One edge: the two ends a browser connects, and the label on the line."""
+    return {
+        "source_id": relationship.source_id,
+        "target_id": relationship.target_id,
+        "relationship_type": relationship.relationship_type,
+    }
+
+
+def entity_page_view(page: EntityPage) -> dict[str, Any]:
+    """One page of `/api/projects/{id}/graph/entities`.
+
+    `next_after` is passed straight through -- `None` already means "no
+    further page" on both `EntityPage` and the cursor contract the browser
+    consumes it under, so there is no translation to do here.
+    """
+    return {
+        "entities": [entity_view(entity) for entity in page.entities],
+        "next_after": page.next_after,
+    }
+
+
+def neighborhood_view(neighborhood: Neighborhood) -> dict[str, Any]:
+    """A root plus what a graph browser can draw around it in one response.
+
+    `root` is rendered through `entity_view` rather than repeated inline,
+    the same reason `topic_detail_view` builds on `topic_view`: the root and
+    an entry in `entities` describe a node the same way, and duplicating that
+    shape here is a second place for it to drift.
+    """
+    return {
+        "root": entity_view(neighborhood.root),
+        "entities": [entity_view(entity) for entity in neighborhood.entities],
+        "relationships": [
+            relationship_view(relationship) for relationship in neighborhood.relationships
+        ],
+    }
+
+
+def topic_view(view: TopicView) -> dict[str, Any]:
+    """One row of `/api/projects/{id}/topics`: what a queue entry ranks on.
+
+    `needs_attention` and `is_blocked` are read off `view.attention` rather
+    than left for the caller to derive from `triggers` -- a browser rendering
+    a queue wants the verdict, not the raw findings, and `TopicAttention`
+    already computed both from the same evaluation this row's triggers come
+    from. Deriving them again client-side would risk disagreeing with the row
+    that sits right next to them.
+    """
+    summary = view.summary
+    return {
+        "topic_id": str(summary.topic_id),
+        "question": summary.question,
+        "status": summary.status,
+        "sources": summary.sources,
+        "findings": summary.findings,
+        "open_sub_questions": summary.open_sub_questions,
+        "triggers": list(summary.triggers),
+        "needs_attention": view.needs_attention,
+        "is_blocked": view.attention.is_blocked,
+    }
+
+
+def topic_detail_view(detail: TopicDetail) -> dict[str, Any]:
+    """One topic's own page: the row plus what a list would leave out.
+
+    Built on `topic_view` rather than duplicating its fields, for the reason
+    `source_text_view` builds on `source_view`: the row and the detail must
+    describe the same topic the same way, and a single function computing the
+    shared half is what keeps them from drifting apart as either grows.
+
+    `detail.findings` -- the prose, one entry per recorded finding -- is
+    exposed here as `finding_notes` rather than `findings`, because
+    `topic_view` already spends `findings` on the *count* that both routes
+    must agree on. Calling both of them `findings` would make the same key
+    mean an int on one route and a list on the other, which is a collision a
+    caller has no way to detect from the shape of a single response; the
+    only way to keep the two spellings from drifting back together is to
+    give them names that cannot collide in the first place.
+    """
+    return {
+        **topic_view(detail.view),
+        "rationale": detail.rationale,
+        "scope": detail.scope,
+        "sub_questions": [
+            {
+                "key": sub.key,
+                "question": sub.question,
+                "answer": sub.answer,
+                "resolved": sub.resolved,
+            }
+            for sub in detail.sub_questions
+        ],
+        "source_ids": list(detail.source_ids),
+        "finding_notes": list(detail.findings),
+        "contested": detail.contested,
     }
 
 
@@ -518,6 +636,20 @@ def run_view(run: ActiveRun, state: AutoRunState | None = None) -> dict[str, Any
         },
         "read_only": state.read_only,
     }
+
+
+def seeding_view(frame: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A `SeedingActivity` frame, passed through as-is.
+
+    Unlike `run_view`, there is no folding to do: `SeedingActivity` already
+    keeps its frames in the shape a browser wants, because nothing durable
+    backs them for a presenter to reduce. This function exists anyway, for
+    the same reason every other route reaches for `presenters.py` rather than
+    building a dict inline -- the wire shape is decided in one place, not
+    wherever a route happens to need it. `None` passes through unchanged: no
+    run yet, or none finished, is a state this reports rather than an error.
+    """
+    return frame
 
 
 def worker_view(worker: Worker) -> dict[str, Any]:

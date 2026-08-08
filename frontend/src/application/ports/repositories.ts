@@ -2,11 +2,15 @@ import type { Approval, ApprovalDecision } from '@domain/approval/approval.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
+import type { EntitySearchResult, Neighborhood } from '@domain/knowledge/graph.ts'
 import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
+import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
+import type { SeedingRun } from '@domain/research/seeding.ts'
+import type { TopicDetail, TopicStatus, TopicView } from '@domain/research/topic.ts'
 import type { EventIndex } from '@domain/session/event-index.ts'
 import type { LogEntry } from '@domain/session/log-entry.ts'
 import type { ScrubPoint } from '@domain/session/scrub-point.ts'
@@ -15,7 +19,14 @@ import type { TurnRange } from '@domain/session/turn.ts'
 import type { Roster } from '@domain/worker/worker.ts'
 import type { FileRevision } from '@domain/workspace/workspace-file.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
-import type { ApprovalId, ComponentId, ProjectId, SessionId } from '@domain/shared/identifier.ts'
+import type {
+  ApprovalId,
+  ComponentId,
+  ProjectId,
+  SessionId,
+  SourceId,
+  TopicId,
+} from '@domain/shared/identifier.ts'
 
 /** The ports this application depends on, stated in domain terms.
  *
@@ -144,6 +155,80 @@ export interface ResearchRepository {
   current(id: ProjectId): Promise<ResearchRun | null>
   start(id: ProjectId, maxRounds: number | null): Promise<ResearchRun>
   cancel(id: ProjectId): Promise<boolean>
+}
+
+export interface TopicRepository {
+  /** Every topic this project tracks, ranked on nothing — the queue does
+   *  that, with `byUrgency`. */
+  list(projectId: ProjectId): Promise<readonly TopicView[]>
+  read(projectId: ProjectId, topicId: TopicId): Promise<TopicDetail>
+  /** Rejects with a 422 `ApiError` for a blank or whitespace-only
+   *  justification, and a 409 `ApiError` for re-selecting the topic's
+   *  current status — the domain aggregate refuses both as no-ops on the
+   *  audit trail, not failures the client should paper over. */
+  setStatus(
+    projectId: ProjectId,
+    topicId: TopicId,
+    toStatus: TopicStatus,
+    justification: string,
+  ): Promise<TopicDetail>
+  addSubQuestion(
+    projectId: ProjectId,
+    topicId: TopicId,
+    key: string,
+    question: string,
+  ): Promise<TopicDetail>
+  resolveSubQuestion(
+    projectId: ProjectId,
+    topicId: TopicId,
+    key: string,
+    answer: string,
+  ): Promise<TopicDetail>
+  /** Start one seeding turn that names this project's first topics for
+   *  `subject`. The topics it opens need no reading here -- `open_topic`
+   *  appends to the log, so the existing `topics` list query invalidates on
+   *  those frames and the new topics arrive on their own; `seedStatus`
+   *  below answers only "is a run in flight, and how did the last one go".
+   *  Rejects with a 409 `ApiError` when a run is already active on this
+   *  project -- one at a time, refused rather than raced. */
+  startSeed(projectId: ProjectId, subject: string, maxTopics: number): Promise<SeedingRun>
+  /** The current or most recently finished seeding run, for a tab that
+   *  arrived mid-run or reconnected after one. These frames carry no feed
+   *  position and cannot replay off `Last-Event-ID` -- see `seeding.py`'s
+   *  module docstring -- so this catch-up read is the only way back. */
+  seedStatus(
+    projectId: ProjectId,
+  ): Promise<{ readonly current: SeedingRun | null; readonly last: SeedingRun | null }>
+}
+
+export interface DocumentRepository {
+  /** Every source this project has stored, dropped ones included -- the
+   *  corpus keeps them on purpose, as an audit trail, and hiding them here
+   *  would misreport what the project holds. */
+  list(projectId: ProjectId): Promise<readonly DocumentSummary[]>
+  /** One document's text, or a `start`/`end` range of it. Omitting `range`
+   *  reads the whole document; the server clamps a range past the end
+   *  rather than refusing it, and the offsets in the result are what it
+   *  actually returned. */
+  read(projectId: ProjectId, sourceId: SourceId, range?: DocumentRange): Promise<DocumentText>
+}
+
+export interface DocumentRange {
+  readonly start?: number
+  readonly end?: number
+}
+
+export interface GraphRepository {
+  /** Entities matching a name substring and, optionally, an exact entity
+   *  type -- the browser's only entry point into the graph, since there is
+   *  no route that lists every node. `truncated` on the result says whether
+   *  the server held more back than the page returned. */
+  search(projectId: ProjectId, name: string, entityType?: string): Promise<EntitySearchResult>
+  /** `entityId` and what lies within `depth` hops of it. Rejects with a 422
+   *  `ApiError` for a depth past the server's bound, which the caller must
+   *  surface rather than clamp -- see the route's own docstring for why the
+   *  server refuses instead of silently capping it. */
+  neighborhood(projectId: ProjectId, entityId: string, depth?: number): Promise<Neighborhood>
 }
 
 export interface WorkerRepository {
