@@ -10,7 +10,7 @@ from uuid import UUID
 
 from eventsource import DomainEvent
 
-from research_team.application import ForkNode, SessionSummary
+from research_team.application import ForkNode, Roster, SessionSummary, Worker
 from research_team.application.corpus_read import StoredDocument
 from research_team.application.corpus_spans import Span
 from research_team.application.course import (
@@ -503,6 +503,31 @@ def run_view(run: ActiveRun, state: AutoRunState | None = None) -> dict[str, Any
             "quiet_rounds": state.budget.quiet_rounds,
         },
         "read_only": state.read_only,
+    }
+
+
+def worker_view(worker: Worker) -> dict[str, Any]:
+    """One worker, in the browser's shape.
+
+    `started_at` is ISO-8601 text rather than an epoch number, matching every
+    other timestamp this layer emits.
+    """
+    return {
+        "kind": worker.kind,
+        "ref": worker.ref,
+        "detail": worker.detail,
+        "session_id": str(worker.session_id) if worker.session_id else None,
+        "parent": worker.parent,
+        "started_at": worker.started_at.isoformat() if worker.started_at else None,
+    }
+
+
+def roster_view(roster: Roster) -> dict[str, Any]:
+    """Everything in flight on a project, plus who is attached and quiet."""
+    return {
+        "project_id": str(roster.project_id),
+        "workers": [worker_view(worker) for worker in roster.workers],
+        "idle_session_ids": [str(session) for session in roster.idle_session_ids],
     }
 
 

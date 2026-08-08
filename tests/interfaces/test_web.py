@@ -9,6 +9,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
+from research_team.application import WorkerRoster
 from research_team.application.ports import ActivityMessage
 from research_team.composition import build_application as _build_application
 from research_team.domain import (
@@ -40,7 +41,11 @@ async def _started(**kwargs):
 async def app_and_client(db_path, fake_model):
     application = await _started(model=fake_model, db_path=db_path)
     api = create_app(
-        application.service, application.feed, application.turns, corpus=application.corpus
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        workers=WorkerRoster(application.service, turns=application.turns),
     )
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -51,6 +56,23 @@ async def app_and_client(db_path, fake_model):
 @pytest.fixture
 def client(app_and_client):
     return app_and_client[1]
+
+
+@pytest.fixture
+async def client_without_workers(db_path, fake_model):
+    """A build with no roster wired -- the shape `get_workers` 404s for."""
+    application = await _started(model=fake_model, db_path=db_path)
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        workers=None,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+    await application.close()
 
 
 @pytest.fixture
@@ -2188,3 +2210,53 @@ async def test_checklist_state_cannot_be_posted_to_an_mcq(client, service):
     )
     assert refused.status_code == 400
     assert "mcq" in refused.json()["detail"]
+
+
+# ---------------- workers ----------------
+
+
+async def make_project(client, name: str = "atlas") -> UUID:
+    response = await client.post("/api/projects", json={"name": name})
+    assert response.status_code == 200
+    return UUID(response.json()["id"])
+
+
+async def join_session(client, project_id: UUID) -> UUID:
+    response = await client.post(f"/api/projects/{project_id}/join")
+    assert response.status_code == 200
+    return UUID(response.json()["id"])
+
+
+async def test_workers_lists_an_idle_member_session(client):
+    """A project with a session attached and nothing running.
+
+    The 200-with-empty-workers case matters as much as the busy one: the panel
+    must be able to say "attached, nothing running" without an error.
+    """
+    project_id = await make_project(client)
+    session_id = await join_session(client, project_id)
+
+    response = await client.get(f"/api/projects/{project_id}/workers")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project_id"] == str(project_id)
+    assert body["workers"] == []
+    assert body["idle_session_ids"] == [str(session_id)]
+
+
+async def test_workers_404s_on_an_unknown_project(client):
+    response = await client.get(f"/api/projects/{uuid4()}/workers")
+    assert response.status_code == 404
+
+
+async def test_workers_is_404_when_the_roster_is_not_wired(client_without_workers):
+    """A build with no roster says so, rather than reporting an empty project.
+
+    The same shape `auto-research` uses for a disabled feature: 200 with an
+    empty list would tell a browser that nothing is running, which is a
+    different claim from "this build cannot tell you".
+    """
+    project_id = await make_project(client_without_workers)
+    response = await client_without_workers.get(f"/api/projects/{project_id}/workers")
+    assert response.status_code == 404

@@ -31,6 +31,7 @@ from research_team.application import (
     TurnAlreadyRunning,
     TurnCancelled,
     TurnSupervisor,
+    WorkerRoster,
     build_fork_tree,
 )
 from research_team.application.components import View, parse_document, project
@@ -53,6 +54,7 @@ from research_team.interfaces.web.presenters import (
     preset_view,
     progress_view,
     project_view,
+    roster_view,
     run_view,
     session_view,
     source_text_view,
@@ -184,6 +186,7 @@ def create_app(
     activity: TurnActivity | None = None,
     corpus: CorpusRunner | None = None,
     research: ResearchSupervisor | None = None,
+    workers: WorkerRoster | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -640,6 +643,24 @@ def create_app(
                 status_code=404, detail=f"no run is active on project {project_id}"
             )
         return run_view(run, await research.state(run.run_id))
+
+    @app.get("/api/projects/{project_id}/workers")
+    async def get_workers(project_id: UUID):
+        """Everything in flight on this project, right now.
+
+        Polled rather than pushed, and cheap enough to be: two process-local
+        dicts and one fold. What it sets the latency of is "a new worker
+        appeared" -- everything *inside* a worker arrives over the live feed,
+        which is where a person's attention actually is.
+
+        404 when no roster is wired, matching how `auto-research` answers for
+        a feature this build does not have. A 200 with an empty list would
+        tell a browser that nothing is running, which is a different claim.
+        """
+        if workers is None:
+            raise HTTPException(status_code=404, detail="the worker roster is not enabled")
+        await _require_project(project_id)
+        return roster_view(await workers.on(project_id))
 
     @app.post("/api/projects/{project_id}/auto-research/cancel")
     async def cancel_auto_research(project_id: UUID):
