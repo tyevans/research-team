@@ -475,5 +475,32 @@ export const documentTextDto = documentDto.extend({
   end: z.number(),
 })
 
+/** One node of `/api/projects/{id}/graph/entities` and the neighbourhood
+ *  route: an id, its label and its kind. Shared by both because
+ *  `neighborhood_view` builds on `entity_view` the same way `topicDetailDto`
+ *  builds on `topicDto`. */
+export const graphEntityDto = z.object({
+  entity_id: z.string(),
+  name: z.string(),
+  entity_type: z.string(),
+})
+
+export const graphEntityPageDto = z.object({
+  entities: z.array(graphEntityDto).default([]),
+  next_after: maybe(z.string()),
+})
+
+export const graphRelationshipDto = z.object({
+  source_id: z.string(),
+  target_id: z.string(),
+  relationship_type: z.string(),
+})
+
+export const graphNeighborhoodDto = z.object({
+  root: graphEntityDto,
+  entities: z.array(graphEntityDto).default([]),
+  relationships: z.array(graphRelationshipDto).default([]),
+})
+
 export const idDto = z.object({ id: z.string() })
 export const okDto = z.unknown()

@@ -1,13 +1,14 @@
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { DocumentList } from './DocumentList.tsx'
+import { GraphPane } from './GraphPane.tsx'
 import { TopicList } from './TopicList.tsx'
 
 /** The project's research page: topics, seeding, documents and the graph.
  *
- * Two regions are still an empty shell -- seeding and the graph are later
- * tasks' work, so they stay reviewable on their own and each task fills one
- * pane at a time without touching the page around it. */
+ * One region is still an empty shell -- seeding is a later task's work, so
+ * it stays reviewable on its own and that task fills the pane without
+ * touching the page around it. */
 export const ResearchView = ({ projectId }: { projectId: ProjectId }) => (
   <section className="view view-research">
     <div className="view-head">
@@ -46,7 +47,9 @@ export const ResearchView = ({ projectId }: { projectId: ProjectId }) => (
         <header className="pane-head">
           <h2>Graph</h2>
         </header>
-        <div className="pane-body" />
+        <div className="pane-body">
+          <GraphPane projectId={projectId} />
+        </div>
       </section>
     </div>
   </section>

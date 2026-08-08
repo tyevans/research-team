@@ -6,6 +6,7 @@ import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Approval } from '@domain/approval/approval.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame, ExtractionStage } from '@domain/knowledge/extraction.ts'
+import type { GraphLink, GraphNode, Neighborhood } from '@domain/knowledge/graph.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
   Course,
@@ -476,4 +477,22 @@ export const toDocumentText = (raw: Dto<typeof dto.documentTextDto>): DocumentTe
   text: raw.text,
   start: raw.start,
   end: raw.end,
+})
+
+export const toGraphNode = (raw: Dto<typeof dto.graphEntityDto>): GraphNode => ({
+  id: raw.entity_id,
+  name: raw.name,
+  entityType: raw.entity_type,
+})
+
+export const toGraphLink = (raw: Dto<typeof dto.graphRelationshipDto>): GraphLink => ({
+  source: raw.source_id,
+  target: raw.target_id,
+  relationshipType: raw.relationship_type,
+})
+
+export const toNeighborhood = (raw: Dto<typeof dto.graphNeighborhoodDto>): Neighborhood => ({
+  root: toGraphNode(raw.root),
+  entities: raw.entities.map(toGraphNode),
+  relationships: raw.relationships.map(toGraphLink),
 })

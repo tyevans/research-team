@@ -33,7 +33,15 @@ const BUDGET_KB = {
   'text-': 34, // marked, dompurify, jsdiff — markdown and diff rendering
   'vendor-': 38, // query, zustand, wouter, zod, date-fns, clsx, @tanstack/react-virtual
   'rolldown-runtime-': 2, // the bundler's own module loader, emitted once
-  total: 180,
+  // react-force-graph-2d, force-graph, d3-force and the rest of what draws
+  // the research page's graph pane -- see `GRAPH_DEPENDENCIES` in
+  // `vite.config.ts` for the full list. Measured at 61.4 kB; `GraphCanvas-`
+  // is the tiny wrapper chunk Rollup emits for the `React.lazy()` import
+  // itself, which does not get the `graph-` prefix because it is app code,
+  // not a dependency, and manualChunks only renames node_modules code.
+  'graph-': 62,
+  'GraphCanvas-': 1,
+  total: 227,
 }
 
 const kb = (bytes) => Math.round((bytes / 1024) * 10) / 10

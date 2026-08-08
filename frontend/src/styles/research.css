@@ -280,3 +280,57 @@
   max-height: 320px;
   overflow-y: auto;
 }
+
+/* ----------------------------------------------------------------- graph
+ *
+ * Search-then-expand rather than a rendered-from-the-start map: the corpus
+ * has no route that lists every entity, and a graph a reader has not asked
+ * for yet is not one they can navigate. */
+
+.graph-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.graph-search {
+  width: 100%;
+}
+
+.graph-error {
+  color: var(--k-failure);
+  font-size: var(--t-xs);
+  margin: 0;
+}
+
+.graph-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.graph-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel-2);
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.graph-result:hover {
+  border-color: var(--accent);
+}
+
+.graph-result-type {
+  font-family: var(--mono);
+  color: var(--fg-dim);
+}
