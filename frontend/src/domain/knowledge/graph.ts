@@ -31,8 +31,12 @@ export interface EntitySearchResult {
 }
 
 /** What the backend's neighbourhood route returns: a root entity, the
- *  entities reachable from it (including the root itself), and the
- *  relationships among them.
+ *  entities reachable from it, and the relationships among them.
+ *
+ * The root is *not* repeated inside `entities` -- it arrives in its own field
+ * and nowhere else, which is what `GraphReadPort.neighborhood` documents on
+ * the other side of the wire. A merge that reads only `entities` therefore
+ * draws the root's edges without drawing the root.
  */
 export interface Neighborhood {
   readonly root: GraphNode
@@ -71,11 +75,24 @@ const linkKey = (link: GraphLink): string =>
  * different edges and both must survive. What collapses is the same
  * directed edge arriving twice, which happens whenever a neighbourhood is
  * fetched from either of its two endpoints.
+ *
+ * The root is merged alongside `hood.entities` because the route does not put
+ * it there (see `Neighborhood`). Leaving it out is not a missing dot: every
+ * relationship in the response has the root at one end, so d3-force resolves
+ * those endpoints against a node set the root is absent from and throws
+ * `node not found: <root id>`, which takes the canvas down rather than
+ * dropping an edge. Every arriving link is anchored at both ends by
+ * construction -- the route only returns edges whose two ends are both in the
+ * response -- so merging the root is what keeps that invariant true here.
  */
 export const expand = (view: GraphView, hood: Neighborhood): GraphView => {
   const existingById = new Map(view.nodes.map((node) => [node.id, node]))
-  const nodes = hood.entities.map((entity) => existingById.get(entity.id) ?? entity)
-  const newNodes = nodes.filter((node) => !existingById.has(node.id))
+  // Deduplicated on the way in rather than trusted: the root is documented as
+  // absent from `entities`, but a response that repeated it would otherwise
+  // put the same id in `nodes` twice, and a doubled node draws twice and
+  // simulates against itself.
+  const arriving = new Map([hood.root, ...hood.entities].map((entity) => [entity.id, entity]))
+  const newNodes = Array.from(arriving.values()).filter((node) => !existingById.has(node.id))
 
   const existingLinkKeys = new Set(view.links.map(linkKey))
   const newLinks = hood.relationships.filter((link) => !existingLinkKeys.has(linkKey(link)))
