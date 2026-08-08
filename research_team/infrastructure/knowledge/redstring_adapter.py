@@ -106,7 +106,11 @@ def _reporting(report: ExtractionReporter | None, source_id: str):
             return
         try:
             report(ExtractionNote(source_id=source_id, stage=stage, **fields))
-        except Exception:  # noqa: BLE001 -- see the docstring
+        except Exception:
+            # Broad on purpose -- see the docstring: a listener is arbitrary
+            # caller code and any failure in it must cost nothing. No `noqa`,
+            # because `exc_info=True` is ruff's own signal that this handles
+            # the exception rather than swallowing it.
             logger.warning("an extraction reporter raised; carrying on", exc_info=True)
 
     return announce
