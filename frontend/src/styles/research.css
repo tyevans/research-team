@@ -1,0 +1,26 @@
+/* The research view: topics, seeding, documents and the graph.
+
+   Four regions in one grid so a reader can see the whole page at a glance,
+   the same shape `course.css`'s `.course-panes` uses for its own pair --
+   the pattern is copied because the two pages carry the same kind of
+   material, not because the code happened to be nearby. */
+
+.view-research {
+  overflow: auto;
+  padding: 26px 28px 60px;
+}
+
+.research-panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.research-panes .pane {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.research-panes .pane-body {
+  overflow: visible;
+}

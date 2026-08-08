@@ -5,7 +5,7 @@ import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { FilePath } from '@domain/shared/file-path.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
-import { courseHref, parseRoute, sessionHref } from './routes.ts'
+import { courseHref, parseRoute, researchHref, sessionHref } from './routes.ts'
 
 describe('parseRoute', () => {
   it('reads the tree for an empty or unknown hash', () => {
@@ -41,6 +41,16 @@ describe('parseRoute', () => {
       id: 'proj-1',
       watching: null,
     })
+  })
+
+  it('parses a research route', () => {
+    // Sits under the project the way `course` does: what it shows outlives any
+    // one session, so it is keyed the way the material is stored.
+    expect(parseRoute('#/p/abc/research')).toEqual({ name: 'research', id: ProjectId('abc') })
+  })
+
+  it('builds a research href', () => {
+    expect(researchHref(ProjectId('abc'))).toBe('#/p/abc/research')
   })
 })
 

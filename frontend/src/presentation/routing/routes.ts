@@ -33,6 +33,10 @@ export type Route =
        * has no query handling at all. */
       readonly watching: SessionId | null
     }
+  | {
+      readonly name: 'research'
+      readonly id: ProjectId
+    }
 
 export const parseRoute = (hash: string): Route => {
   const parts = String(hash ?? '')
@@ -69,6 +73,14 @@ export const parseRoute = (hash: string): Route => {
     return { name: 'course', id: ProjectId(parts[1]), watching }
   }
 
+  // A research page belongs to a project for the same reason a course does:
+  // what it shows -- topics, seeding, documents, the graph -- outlives any one
+  // session, so it is keyed the way the material is stored, not the way it was
+  // produced.
+  if (parts[0] === 'p' && parts[1] && parts[2] === 'research') {
+    return { name: 'research', id: ProjectId(parts[1]) }
+  }
+
   return { name: 'tree' }
 }
 
@@ -97,3 +109,6 @@ export const courseHref = (projectId: ProjectId, watching: SessionId | null = nu
   watching
     ? `#/p/${encodeURIComponent(projectId)}/course/watching/${encodeURIComponent(watching)}`
     : `#/p/${encodeURIComponent(projectId)}/course`
+
+export const researchHref = (projectId: ProjectId): string =>
+  `#/p/${encodeURIComponent(projectId)}/research`
