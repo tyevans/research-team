@@ -83,7 +83,9 @@ class TopicSeeder:
         self._session = session
         self._turns = turns
 
-    async def seed(self, project_id: UUID, subject: str, max_topics: int) -> SeedingRun:
+    async def seed(
+        self, project_id: UUID, subject: str, max_topics: int, run_id: UUID | None = None
+    ) -> SeedingRun:
         """Open a broad set of topics for `subject`, in a single turn.
 
         `release_project` runs in `finally` rather than after a successful
@@ -94,8 +96,17 @@ class TopicSeeder:
         was never joined has nothing to release, and `release_project` on an
         id that was never attached is the ordinary case `start_auto_research`
         already relies on.
+
+        `run_id` is accepted rather than always minted here so a caller that
+        has to hand back an id *before* this coroutine runs -- the web
+        route's 202, minted the moment a background task starts -- can hand
+        back the same id `SeedingRun.run_id` reports once the turn finishes,
+        the way `ResearchSupervisor.start` mints `ActiveRun.run_id` up front
+        for the same reason. Defaults to a fresh one for every caller that
+        has no such id to thread through, `TopicSeeder`'s own tests among
+        them.
         """
-        run_id = uuid4()
+        run_id = run_id or uuid4()
         session_id = await self._session.start_in_project(project_id)
         try:
             await self._session.attach_project(project_id)

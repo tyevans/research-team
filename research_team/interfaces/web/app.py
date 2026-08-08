@@ -659,7 +659,9 @@ def create_app(
         try:
             frame = seeding.start(
                 project_id,
-                lambda: topic_seeder.seed(project_id, body.subject, body.max_topics),
+                lambda run_id: topic_seeder.seed(
+                    project_id, body.subject, body.max_topics, run_id=run_id
+                ),
             )
         except RunAlreadyActive as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

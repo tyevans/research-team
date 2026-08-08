@@ -61,7 +61,7 @@ class SeedingActivity:
     # ---------------- what the route drives ----------------
 
     def start(
-        self, project_id: UUID, run: Callable[[], Awaitable[SeedingRun]]
+        self, project_id: UUID, run: Callable[[UUID], Awaitable[SeedingRun]]
     ) -> dict[str, Any]:
         """Begin a seeding run in the background and record it as running.
 
@@ -70,37 +70,40 @@ class SeedingActivity:
         same reason: one run at a time, refused up front rather than
         discovered when two runs open the same topic twice.
 
+        The run id is minted here, before the task starts, and handed to
+        `run` so the coroutine it builds (`TopicSeeder.seed(..., run_id=...)`)
+        reports the same id back in `SeedingRun.run_id` once it finishes.
+        Matches `ResearchSupervisor.start`, which mints `ActiveRun.run_id` up
+        front for the identical reason: a 202 that hands back an id has to
+        be the id the caller will see again, not a second one invented for
+        the response and thrown away.
+
         `run` is a factory, not a coroutine already in hand -- a caller
         refused by the check below has not been handed a live coroutine to
         leave unawaited, which is exactly what constructing one ahead of the
         check would do.
-
-        A locally minted id, not `TopicSeeder`'s -- `seed` only mints its
-        `run_id` once the turn has actually started inside the task, and the
-        409 this guards against has to be raised before that coroutine has
-        run at all.
         """
         existing = self.active(project_id)
         if existing is not None:
             raise RunAlreadyActive(project_id, UUID(existing["run_id"]))
 
-        placeholder_id = uuid4()
+        run_id = uuid4()
         frame = {
             "type": SEEDING,
             "project_id": str(project_id),
-            "run_id": str(placeholder_id),
+            "run_id": str(run_id),
             "status": "running",
         }
         self._running[project_id] = frame
 
         async def _drive() -> None:
             try:
-                outcome = await run()
+                outcome = await run(run_id)
             except Exception as error:  # noqa: BLE001 -- reported, not raised, from a task
                 self._finished[project_id] = {
                     "type": SEEDING,
                     "project_id": str(project_id),
-                    "run_id": str(placeholder_id),
+                    "run_id": str(run_id),
                     "status": "failed",
                     "detail": str(error),
                 }

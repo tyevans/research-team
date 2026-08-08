@@ -3088,5 +3088,24 @@ async def test_the_catch_up_route_reports_what_a_finished_seed_did(seeding_clien
     body = caught_up.json()
     assert body["current"] is None
     assert body["last"]["status"] == "done"
-    assert body["last"]["run_id"] != started.json()["run_id"]
     assert body["last"]["subject"] == "spaced repetition"
+
+
+async def test_the_202s_run_id_is_the_id_the_finished_run_reports(seeding_client):
+    """A client's only reasonable reading of `run_id` in a 202 is "the run I
+    just started" -- that is what the field means everywhere else this API
+    hands one back (`run_view`'s `run_id`, `ActiveRun.run_id`). An id here
+    that never shows up again would be worse than no id at all: a panel
+    correlating "the run I started" with "the run that just finished" has to
+    be able to do it by this field."""
+    application, activity, http = seeding_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    started = await http.post(
+        f"/api/projects/{project_id}/topics/seed", json={"subject": "spaced repetition"}
+    )
+    await activity.wait(UUID(project_id))
+
+    caught_up = await http.get(f"/api/projects/{project_id}/topics/seed")
+
+    assert caught_up.json()["last"]["run_id"] == started.json()["run_id"]
