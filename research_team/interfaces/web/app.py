@@ -585,8 +585,8 @@ def create_app(
         thing. A caller that opts in sees dropped documents too, each with
         the reason it was excluded: the corpus keeps them for that reason.
         """
-        reader = _reader(project_id)
         await _require_project(project_id)
+        reader = _reader(project_id)
         summaries = await reader.list_documents(include_dropped=include_dropped)
         return [source_view(summary) for summary in summaries]
 
@@ -629,8 +629,8 @@ def create_app(
     @app.get("/api/projects/{project_id}/topics")
     async def list_topics(project_id: UUID):
         """Every topic this project tracks, ranked on nothing -- the queue does that."""
-        reader = _topic_reader(project_id)
         await _require_project(project_id)
+        reader = _topic_reader(project_id)
         return [topic_view(view) for view in await reader.list_topics()]
 
     @app.post("/api/projects/{project_id}/topics/seed")
@@ -834,13 +834,23 @@ def create_app(
         name: str | None = None,
         entity_type: str | None = None,
         limit: int = 100,
-        after: str | None = None,
+        after: UUID | None = None,
     ):
-        """Entry points into this project's graph: entities matching every filter given."""
-        reader = await _graph_reader(project_id)
+        """Entry points into this project's graph: entities matching every filter given.
+
+        `after` is typed as `UUID | None` rather than `str | None` so FastAPI
+        rejects a malformed cursor with a 422 before it ever reaches the
+        reader -- `neighborhood`'s `entity_id` handles the identical problem
+        with a try/except because it takes a path segment FastAPI cannot
+        type-check for it; a query parameter does not need that fallback.
+        """
         await _require_project(project_id)
+        reader = await _graph_reader(project_id)
         page = await reader.find_entities(
-            name=name, entity_type=entity_type, limit=limit, after=after
+            name=name,
+            entity_type=entity_type,
+            limit=limit,
+            after=str(after) if after is not None else None,
         )
         return entity_page_view(page)
 
@@ -862,8 +872,8 @@ def create_app(
                 status_code=422,
                 detail=f"depth {depth} exceeds the maximum of {MAX_NEIGHBORHOOD_DEPTH}",
             )
-        reader = await _graph_reader(project_id)
         await _require_project(project_id)
+        reader = await _graph_reader(project_id)
         hood = await reader.neighborhood(entity_id, depth=depth)
         if hood is None:
             raise HTTPException(

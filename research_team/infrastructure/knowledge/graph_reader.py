@@ -70,10 +70,12 @@ class ProjectGraphReader:
         because it is an exact match by nature -- a caller picks a type from
         a fixed vocabulary, never types a fragment of one.
 
-        The cost is the same one `search` accepts: a page of the tenant's
-        entities fetched per call rather than a store-side filtered query.
-        Acceptable against an in-memory store; the first thing to revisit
-        behind Neo4j, where fetching an unfiltered page stops being free.
+        The cost is worse than `search`'s: `limit` is deliberately not passed
+        to the store call below (the cursor invariant depends on filtering
+        happening after the store returns, not before), so both adapters
+        return the tenant's *entire* entity set on every call, not a page of
+        it. Acceptable against an in-memory store; the first thing to revisit
+        behind Neo4j, where fetching the whole tenant stops being free.
         """
         after_id = UUID(after) if after is not None else None
         async with tenant_scope(self._project_id):

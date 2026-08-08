@@ -2989,6 +2989,22 @@ async def test_asking_past_the_depth_cap_is_refused(app_and_client):
     assert "depth" in response.json()["detail"]
 
 
+async def test_a_malformed_after_cursor_is_a_422_not_a_500(app_and_client):
+    """`after` arrives straight off the query string. `neighborhood`'s
+    `entity_id` handles the same kind of caller mistake with a 404; this
+    route should not let an unparseable UUID reach `UUID(after)` inside the
+    reader and blow up as an unhandled 500.
+    """
+    application, client = app_and_client
+    project_id, _ids = await _project_with_graph(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities", params={"after": "not-a-uuid"}
+    )
+
+    assert response.status_code == 422
+
+
 async def test_an_unknown_entity_is_a_404(app_and_client):
     application, client = app_and_client
     project_id, _ids = await _project_with_graph(application, client)
@@ -3013,6 +3029,24 @@ async def test_an_unknown_project_is_a_404_on_both_graph_routes(client):
     assert listing.json()["detail"] == f"no project {missing}"
     assert neighborhood.status_code == 404
     assert neighborhood.json()["detail"] == f"no project {missing}"
+
+
+async def test_a_404_on_an_unknown_project_does_not_cache_a_graph_store(app_and_client):
+    """`_graph_reader` opens and caches a store as a side effect of building
+    a reader -- `graphs.open` is the first call that talks to Neo4j and
+    `ProjectGraphs` never evicts except on `close`/`close_all`. Calling it
+    for a project that turns out not to exist would grow `graphs._stores`
+    without bound for every caller that walks unknown ids, and would pay a
+    schema round trip per garbage id behind Neo4j. The 404 must be decided
+    before the reader is ever built.
+    """
+    application, client = app_and_client
+    missing = uuid4()
+
+    response = await client.get(f"/api/projects/{missing}/graph/entities")
+
+    assert response.status_code == 404
+    assert missing not in application.graphs._stores
 
 
 async def test_graph_routes_503_when_no_graph_reader_is_configured(app_and_client):
