@@ -30,6 +30,7 @@ from research_team.application.course import (
 from research_team.application.findings import Finding
 from research_team.application.research_supervisor import ActiveRun
 from research_team.domain import (
+    AutonomyChanged,
     CodingSession,
     ConversationCompacted,
     DocumentRecord,
@@ -79,6 +80,11 @@ def event_summary(event: DomainEvent) -> str:
         # is what a reviewer scrolling the log is actually looking for, since
         # it is the only record of why the gate was crossed.
         return f"{event.from_stage} → {event.to_stage}: {event.gate_decision}"
+    if isinstance(event, AutonomyChanged):
+        # The level alone doesn't say what changed, and the tool alone
+        # doesn't say what changed to; a reviewer needs both to know what
+        # the agent could do differently after this event than before it.
+        return f"{event.tool_name} → {event.level}"
     if isinstance(event, SessionForkedFrom):
         return f"from {str(event.source_session_id)[:8]} at event {event.at_event}"
     if isinstance(event, TurnFailed):

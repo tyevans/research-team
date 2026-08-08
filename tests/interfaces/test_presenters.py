@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from research_team.domain import (
     AssistantMessageAdded,
+    AutonomyChanged,
     FileDeleted,
     FileEdited,
     FileWritten,
@@ -296,6 +297,14 @@ def test_an_advanced_stage_is_summarised_by_both_ends_of_the_move():
     assert "tyler.step0.intake" in summary
     assert "hybrid.step1.framing" in summary
     assert "the intake is cited" in summary
+
+
+def test_a_changed_autonomy_is_summarised_by_the_tool_and_its_new_level():
+    """The tool alone or the level alone doesn't say what changed; both do."""
+    event = make(AutonomyChanged, tool_name="fetch", level="auto")
+    summary = event_summary(event)
+    assert "fetch" in summary
+    assert "auto" in summary
 
 
 def test_a_preset_is_described_by_what_it_produces_and_where_it_stops():
