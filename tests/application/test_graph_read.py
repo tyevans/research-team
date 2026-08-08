@@ -30,7 +30,9 @@ def _entity(entity_id, name: str, entity_type: str = "person") -> Entity:
     )
 
 
-def _relationship(relationship_id, source_id, target_id, relationship_type: str) -> Relationship:
+def _relationship(
+    relationship_id, source_id, target_id, relationship_type: str
+) -> Relationship:
     return Relationship(
         id=relationship_id,
         tenant_id=TENANT_ID,
@@ -86,7 +88,9 @@ async def deep_graph(graph_reader):
     return {"root_id": ids[0]}
 
 
-async def test_a_neighborhood_carries_the_edges_among_what_it_returned(graph_reader, seeded_graph):
+async def test_a_neighborhood_carries_the_edges_among_what_it_returned(
+    graph_reader, seeded_graph
+):
     """One call, not N. A client that had to ask how its own result is wired
     would issue a request per node and draw a graph that flickers into shape."""
     reader, _store = graph_reader
@@ -96,7 +100,9 @@ async def test_a_neighborhood_carries_the_edges_among_what_it_returned(graph_rea
     assert any(edge.relationship_type == "advised" for edge in hood.relationships)
 
 
-async def test_edges_to_entities_outside_the_neighborhood_are_dropped(graph_reader, seeded_graph):
+async def test_edges_to_entities_outside_the_neighborhood_are_dropped(
+    graph_reader, seeded_graph
+):
     """An edge whose other end was not returned is one the caller cannot draw."""
     reader, _store = graph_reader
     hood = await reader.neighborhood(str(seeded_graph["prandtl_id"]), depth=1)
@@ -158,7 +164,9 @@ async def test_find_entities_filters_by_type(graph_reader, seeded_graph):
     assert [entity.name for entity in page.entities] == ["Göttingen"]
 
 
-async def test_find_entities_matches_name_as_a_case_insensitive_substring(graph_reader, seeded_graph):
+async def test_find_entities_matches_name_as_a_case_insensitive_substring(
+    graph_reader, seeded_graph
+):
     """A search box needs the same give `RedstringKnowledge.search` gives an
     agent typing free text -- `GraphStore.find_entities(name=...)` matches
     `normalized_name` exactly, which "prandtl" alone would never satisfy."""

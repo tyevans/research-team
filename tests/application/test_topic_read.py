@@ -15,7 +15,7 @@ from eventsource import InMemoryEventBus
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 
-from research_team.domain.topic import LinkSource, OpenTopic, RecordFinding, Topic
+from research_team.domain.topic import LinkSource, OpenTopic, RecordFinding
 from research_team.infrastructure.persistence.event_store import build_topic_repository
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.persistence.topics import TopicRunner

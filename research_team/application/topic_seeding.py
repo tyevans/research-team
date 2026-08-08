@@ -26,7 +26,6 @@ from typing import Protocol
 from uuid import UUID, uuid4
 
 from research_team.application.session_service import SessionService
-from research_team.application.turn_supervisor import TurnSupervisor
 
 SEEDING_PROMPT = (
     "Open a set of broad, orthogonal topics covering this subject. Work from "
@@ -69,11 +68,7 @@ class SeedingRun:
 
 def seeding_prompt(subject: str, max_topics: int) -> str:
     """The turn's user input: the rule, then the specifics it needs applied to."""
-    return (
-        f"{SEEDING_PROMPT}\n\n"
-        f"Subject: {subject}\n"
-        f"Open at most {max_topics} topics."
-    )
+    return f"{SEEDING_PROMPT}\n\nSubject: {subject}\nOpen at most {max_topics} topics."
 
 
 class TopicSeeder:
@@ -110,9 +105,7 @@ class TopicSeeder:
         session_id = await self._session.start_in_project(project_id)
         try:
             await self._session.attach_project(project_id)
-            outcome = await self._turns.run(
-                session_id, seeding_prompt(subject, max_topics)
-            )
+            outcome = await self._turns.run(session_id, seeding_prompt(subject, max_topics))
         finally:
             await self._session.release_project(session_id)
 

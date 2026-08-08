@@ -103,14 +103,18 @@ class ProjectGraphReader:
             root = await self._store.get_entity(root_id, self._project_id)
             if root is None:
                 return None
-            neighbors = await self._store.neighbors(root_id, self._project_id, depth=capped_depth)
+            neighbors = await self._store.neighbors(
+                root_id, self._project_id, depth=capped_depth
+            )
 
             # Every edge among the entities this call is about to return, in
             # one round trip -- resolved over the *result* set (root plus its
             # neighbors), which is exactly what makes it safe to keep only
             # edges whose both ends survived into that set.
             entity_ids = [root_id, *(entity.id for entity in neighbors)]
-            relationships = await self._store.get_relationships_for(entity_ids, self._project_id)
+            relationships = await self._store.get_relationships_for(
+                entity_ids, self._project_id
+            )
 
         returned_ids = {root_id} | {entity.id for entity in neighbors}
         edges = tuple(

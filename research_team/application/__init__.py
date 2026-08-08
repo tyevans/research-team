@@ -49,7 +49,6 @@ from research_team.application.knowledge_attachment import (
     TurnExecutorTools,
 )
 from research_team.application.live_feed import LiveFeed
-from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.ports import (
     ActivityReporter,
     ApprovalDecision,
@@ -65,6 +64,7 @@ from research_team.application.ports import (
     TurnExecutor,
     TurnResult,
 )
+from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.research_supervisor import (
     ActiveRun,
     ResearchSupervisor,

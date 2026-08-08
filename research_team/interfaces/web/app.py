@@ -718,9 +718,7 @@ def create_app(
         cannot answer rather than that the topic is missing.
         """
         if topic_repository is None:
-            raise HTTPException(
-                status_code=503, detail="no topic write model is configured"
-            )
+            raise HTTPException(status_code=503, detail="no topic write model is configured")
         return topic_repository
 
     async def _change_topic(project_id: UUID, topic_id: UUID, command) -> dict[str, Any]:

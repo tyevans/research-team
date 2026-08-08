@@ -1645,7 +1645,9 @@ async def test_a_topic_detail_reports_the_same_finding_count_as_its_row(app_and_
         snapshot_store=application.service._repository.snapshot_store,
     )
     topic = await repository.load(UUID(topic_id))
-    topic.execute(RecordFinding(summary="24 hours seems to be the consensus", source_ids=["a"]))
+    topic.execute(
+        RecordFinding(summary="24 hours seems to be the consensus", source_ids=["a"])
+    )
     topic.execute(RecordFinding(summary="one SME says 48", source_ids=["b"]))
     await repository.save(topic)
     await application.topics_caught_up()
@@ -1691,7 +1693,9 @@ async def test_an_unknown_project_is_a_404_on_both_topic_routes(client):
     assert reading.json()["detail"] == f"no project {missing}"
 
 
-async def test_a_topic_from_another_project_reads_as_404_identically_to_unknown(app_and_client):
+async def test_a_topic_from_another_project_reads_as_404_identically_to_unknown(
+    app_and_client,
+):
     """A caller must not be able to tell "wrong project" from "never existed".
 
     `ProjectTopicReader.read_topic` collapses both to `None` on purpose --
@@ -1704,7 +1708,7 @@ async def test_a_topic_from_another_project_reads_as_404_identically_to_unknown(
     without this test catching it.
     """
     application, client = app_and_client
-    owning_project_id, topic_id = await _project_with_topics(application, client)
+    _owning_project_id, topic_id = await _project_with_topics(application, client)
     other_project_id, _ = await _project_with_topics(application, client)
 
     foreign = await client.get(f"/api/projects/{other_project_id}/topics/{topic_id}")
@@ -1799,7 +1803,7 @@ async def test_a_status_change_on_a_foreign_topic_is_the_same_404(app_and_client
     existed" on the write routes either, or a caller could probe project
     boundaries through a write instead of a read."""
     application, client = app_and_client
-    owning_project_id, topic_id = await _project_with_topics(application, client)
+    _owning_project_id, topic_id = await _project_with_topics(application, client)
     other_project_id, _ = await _project_with_topics(application, client)
 
     response = await client.post(
@@ -2865,7 +2869,9 @@ def _graph_entity(entity_id, tenant_id, name: str, entity_type: str = "person"):
     )
 
 
-def _graph_relationship(relationship_id, tenant_id, source_id, target_id, relationship_type: str):
+def _graph_relationship(
+    relationship_id, tenant_id, source_id, target_id, relationship_type: str
+):
     from redstring.domain.relationship import Relationship
 
     return Relationship(
@@ -3076,7 +3082,7 @@ async def test_the_seed_routes_are_absent_unless_the_instance_was_wired_for_them
 
 
 async def test_starting_a_seed_answers_with_its_run_before_it_has_finished(seeding_client):
-    application, activity, http = seeding_client
+    _application, activity, http = seeding_client
     project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
 
     response = await http.post(
@@ -3091,7 +3097,7 @@ async def test_starting_a_seed_answers_with_its_run_before_it_has_finished(seedi
 
 
 async def test_a_second_concurrent_seed_on_the_same_project_is_refused(seeding_client):
-    application, activity, http = seeding_client
+    _application, activity, http = seeding_client
     project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
 
     first = await http.post(
@@ -3108,7 +3114,7 @@ async def test_a_second_concurrent_seed_on_the_same_project_is_refused(seeding_c
 
 
 async def test_the_catch_up_route_reports_what_a_finished_seed_did(seeding_client):
-    application, activity, http = seeding_client
+    _application, activity, http = seeding_client
     project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
     empty = await http.get(f"/api/projects/{project_id}/topics/seed")
     assert empty.json()["current"] is None
@@ -3117,6 +3123,7 @@ async def test_the_catch_up_route_reports_what_a_finished_seed_did(seeding_clien
     started = await http.post(
         f"/api/projects/{project_id}/topics/seed", json={"subject": "spaced repetition"}
     )
+    assert started.status_code == 202
     await activity.wait(UUID(project_id))
 
     caught_up = await http.get(f"/api/projects/{project_id}/topics/seed")
@@ -3135,7 +3142,7 @@ async def test_the_202s_run_id_is_the_id_the_finished_run_reports(seeding_client
     that never shows up again would be worse than no id at all: a panel
     correlating "the run I started" with "the run that just finished" has to
     be able to do it by this field."""
-    application, activity, http = seeding_client
+    _application, activity, http = seeding_client
     project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
 
     started = await http.post(

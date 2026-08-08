@@ -25,7 +25,6 @@ from eventsource.observability.attributes import (
 
 from research_team.application.context import ContextStrategy, FullHistory
 from research_team.application.knowledge_attachment import KnowledgeAttachment
-from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.ports import (
     ActivityReporter,
     SessionRepository,
@@ -34,6 +33,7 @@ from research_team.application.ports import (
     TurnAccountingError,
     TurnExecutor,
 )
+from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.retry import with_retry
 from research_team.application.summaries import SessionSummary
 from research_team.domain import (

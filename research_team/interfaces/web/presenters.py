@@ -21,7 +21,6 @@ from research_team.application import (
 )
 from research_team.application.corpus_read import StoredDocument
 from research_team.application.corpus_spans import Span
-from research_team.application.topic_read import TopicDetail, TopicView
 from research_team.application.course import (
     ArtifactSlot,
     Course,
@@ -29,8 +28,14 @@ from research_team.application.course import (
     StageProgress,
 )
 from research_team.application.findings import Finding
-from research_team.application.graph_read import EntityPage, GraphEntity, GraphRelationship, Neighborhood
+from research_team.application.graph_read import (
+    EntityPage,
+    GraphEntity,
+    GraphRelationship,
+    Neighborhood,
+)
 from research_team.application.research_supervisor import ActiveRun
+from research_team.application.topic_read import TopicDetail, TopicView
 from research_team.domain import (
     AutonomyChanged,
     CodingSession,

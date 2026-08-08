@@ -42,7 +42,8 @@ from research_team.infrastructure.persistence.topics import TopicRunner
 
 
 class ProjectTopicReader:
-    """`TopicReadPort` over `TopicRunner` and `AggregateRepository[Topic]`, fixed to one project."""
+    """`TopicReadPort` over `TopicRunner` and `AggregateRepository[Topic]`, fixed to one
+    project."""
 
     def __init__(
         self,

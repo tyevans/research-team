@@ -73,9 +73,7 @@ async def test_seeding_opens_the_topics_the_model_named(
     await seeder.seed(project_id, "spaced repetition", max_topics=8)
 
     topics = await topic_reader.list_topics()
-    assert [view.summary.question for view in topics] == [
-        "How does spacing affect retention?"
-    ]
+    assert [view.summary.question for view in topics] == ["How does spacing affect retention?"]
 
 
 async def test_seeding_prompts_the_agent_with_the_subject_and_the_search_rule(
