@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import type { TopicRepository } from '@application/ports/repositories.ts'
+import type { TopicStatus } from '@domain/research/topic.ts'
 import type { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
@@ -21,6 +22,38 @@ export class HttpTopicRepository implements TopicRepository {
   async read(projectId: ProjectId, topicId: TopicId) {
     const body = await this.http.get(
       `/api/projects/${seg(projectId)}/topics/${seg(topicId)}`,
+      dto.topicDetailDto,
+    )
+    return toTopicDetail(body)
+  }
+
+  async setStatus(
+    projectId: ProjectId,
+    topicId: TopicId,
+    toStatus: TopicStatus,
+    justification: string,
+  ) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/topics/${seg(topicId)}/status`,
+      { to_status: toStatus, justification },
+      dto.topicDetailDto,
+    )
+    return toTopicDetail(body)
+  }
+
+  async addSubQuestion(projectId: ProjectId, topicId: TopicId, key: string, question: string) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/topics/${seg(topicId)}/sub-questions`,
+      { key, question },
+      dto.topicDetailDto,
+    )
+    return toTopicDetail(body)
+  }
+
+  async resolveSubQuestion(projectId: ProjectId, topicId: TopicId, key: string, answer: string) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/topics/${seg(topicId)}/sub-questions/${seg(key)}/resolve`,
+      { answer },
       dto.topicDetailDto,
     )
     return toTopicDetail(body)

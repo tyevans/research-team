@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactElement, ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
@@ -26,13 +27,23 @@ const topic = (over: Partial<TopicView> = {}): TopicView => ({
   ...over,
 })
 
-/** `TopicList` never calls `read` -- that is task 6's detail page -- so this
- *  stub exists only to satisfy `TopicRepository` and fails loudly if that
+/** `TopicList` only calls `list` and, on Manage, `read` -- it never sets a
+ *  status or touches a sub-question itself, that is `TopicStatusDialog`'s job
+ *  once it is open. Those three stay stubs that fail loudly if that
  *  assumption ever stops holding. */
 const fakeTopics = (list: TopicRepository['list']): TopicRepository => ({
   list,
   read: vi.fn(() => {
-    throw new Error('TopicList should never call read()')
+    throw new Error('read was not stubbed for this test')
+  }),
+  setStatus: vi.fn(() => {
+    throw new Error('TopicList should never call setStatus()')
+  }),
+  addSubQuestion: vi.fn(() => {
+    throw new Error('TopicList should never call addSubQuestion()')
+  }),
+  resolveSubQuestion: vi.fn(() => {
+    throw new Error('TopicList should never call resolveSubQuestion()')
   }),
 })
 
@@ -124,4 +135,36 @@ it('says no topics exist yet rather than showing an empty box', async () => {
   renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
 
   expect(await screen.findByText(/no topics/i)).toBeInTheDocument()
+})
+
+it('opens the status dialog for a topic on manage, reading its detail first', async () => {
+  const list = vi
+    .fn<TopicRepository['list']>()
+    .mockResolvedValue([topic({ question: 'Who funded the study?' })])
+  const read = vi.fn<TopicRepository['read']>().mockResolvedValue({
+    topicId: TopicId('22222222-2222-2222-2222-222222222222'),
+    question: 'Who funded the study?',
+    status: 'open',
+    sources: 0,
+    findings: 0,
+    openSubQuestions: 0,
+    triggers: [],
+    needsAttention: false,
+    isBlocked: false,
+    rationale: 'because it matters',
+    scope: 'the whole project',
+    subQuestions: [],
+    sourceIds: [],
+    findingNotes: [],
+    contested: false,
+  })
+
+  const topics = { ...fakeTopics(list), read }
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
+
+  await userEvent.click(await screen.findByRole('button', { name: /manage/i }))
+
+  expect(read).toHaveBeenCalledWith(PROJECT, TopicId('22222222-2222-2222-2222-222222222222'))
+  expect(await screen.findByRole('dialog')).toBeInTheDocument()
 })

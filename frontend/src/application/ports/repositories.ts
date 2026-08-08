@@ -7,7 +7,7 @@ import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/atte
 import type { Course } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
-import type { TopicDetail, TopicView } from '@domain/research/topic.ts'
+import type { TopicDetail, TopicStatus, TopicView } from '@domain/research/topic.ts'
 import type { EventIndex } from '@domain/session/event-index.ts'
 import type { LogEntry } from '@domain/session/log-entry.ts'
 import type { ScrubPoint } from '@domain/session/scrub-point.ts'
@@ -158,6 +158,28 @@ export interface TopicRepository {
    *  that, with `byUrgency`. */
   list(projectId: ProjectId): Promise<readonly TopicView[]>
   read(projectId: ProjectId, topicId: TopicId): Promise<TopicDetail>
+  /** Rejects with a 422 `ApiError` for a blank or whitespace-only
+   *  justification, and a 409 `ApiError` for re-selecting the topic's
+   *  current status — the domain aggregate refuses both as no-ops on the
+   *  audit trail, not failures the client should paper over. */
+  setStatus(
+    projectId: ProjectId,
+    topicId: TopicId,
+    toStatus: TopicStatus,
+    justification: string,
+  ): Promise<TopicDetail>
+  addSubQuestion(
+    projectId: ProjectId,
+    topicId: TopicId,
+    key: string,
+    question: string,
+  ): Promise<TopicDetail>
+  resolveSubQuestion(
+    projectId: ProjectId,
+    topicId: TopicId,
+    key: string,
+    answer: string,
+  ): Promise<TopicDetail>
 }
 
 export interface WorkerRepository {

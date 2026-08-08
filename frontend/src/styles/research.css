@@ -95,3 +95,89 @@
   border: 1px solid var(--line);
   color: var(--fg-faint);
 }
+
+.topic-manage {
+  margin-left: auto;
+}
+
+/* ------------------------------------------------------- topic status dialog
+ *
+ * Reuses `.drawer`/`.drawer-backdrop` from `course.css` -- the overlay shape
+ * is the same read-over-the-page convention `WorkerDrawer` established, and a
+ * second set of rules for the same box would be the second palette the
+ * tokens file warns against, just for layout instead of colour. */
+
+.topic-status-current {
+  color: var(--fg-dim);
+  font-size: var(--t-sm);
+  margin-bottom: 8px;
+}
+
+.topic-status-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.topic-status-choice-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.topic-status-justification {
+  display: block;
+  width: 100%;
+  min-height: 4.5em;
+  margin: 4px 0 10px;
+  resize: vertical;
+}
+
+.topic-status-actions {
+  margin-bottom: 16px;
+}
+
+.sub-questions {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.sub-question-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sub-question {
+  padding: 6px 8px;
+  border-left: 2px solid var(--line);
+  background: var(--bg-panel-2);
+}
+
+.sub-question-resolved {
+  color: var(--fg-dim);
+}
+
+.sub-question-text {
+  font-size: var(--t-sm);
+}
+
+.sub-question-answer {
+  margin-top: 3px;
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.sub-question-resolve,
+.sub-question-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
