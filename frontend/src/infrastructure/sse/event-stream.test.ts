@@ -66,6 +66,23 @@ describe('decodeFrame', () => {
     expect(decoded).toMatchObject({ kind: 'extraction' })
   })
 
+  it('reads a seeding frame, decoded, addressed by project', () => {
+    // Unlike extraction, this frame's wire shape already is its full domain
+    // model -- `SeedingActivity` hands back one flat frame, not a note to
+    // fold -- so it is decoded here rather than routed raw.
+    const decoded = frame({
+      type: 'Seeding',
+      project_id: 'p1',
+      run_id: 'r1',
+      status: 'running',
+    })
+    expect(decoded).toMatchObject({
+      kind: 'seeding',
+      projectId: 'p1',
+      run: { runId: 'r1', status: 'running', subject: null },
+    })
+  })
+
   it('drops a log frame with no index rather than guessing a position', () => {
     // Inserting a row at the wrong point is worse than dropping a frame a
     // reconnect will replay correctly.

@@ -1567,7 +1567,7 @@ def create_app(
         """
         resume_from = request.headers.get("last-event-id")
         return StreamingResponse(
-            _sse(request, feed, resume_from, approvals, activity, extraction),
+            _sse(request, feed, resume_from, approvals, activity, extraction, seeding),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -1589,6 +1589,7 @@ async def _sse(
     approvals: WebApprovals | None = None,
     activity: TurnActivity | None = None,
     extraction: ExtractionActivity | None = None,
+    seeding: SeedingActivity | None = None,
 ) -> AsyncIterator[str]:
     """Serialise the live feed as server-sent events.
 
@@ -1602,16 +1603,17 @@ async def _sse(
     starting at the live end shows less than the client wanted, while
     replaying the entire log at it would be worse than the gap.
 
-    Approval requests, turn activity notes, and extraction progress ride this
-    same connection rather than one each of their own, for the same reason as
-    each other: none is a log entry -- an approval that is never answered,
-    provisional turn content, and where an ingest has got to all leave no
-    event behind -- so none carries an id, and a reconnecting browser
-    refetches what it missed (`/approvals`, the activity catch-up route, or
-    `/projects/{id}/extraction`) instead of replaying them. But a second channel
-    per concern would multiply the ways a tab can be half-connected, and a
-    turn that halts for a person, or is still streaming its reply, is exactly
-    the moment when being half-connected is worst.
+    Approval requests, turn activity notes, extraction progress, and seeding
+    status ride this same connection rather than one each of their own, for
+    the same reason as each other: none is a log entry -- an approval that is
+    never answered, provisional turn content, where an ingest has got to, and
+    whether a seeding run is still going all leave no event behind -- so none
+    carries an id, and a reconnecting browser refetches what it missed
+    (`/approvals`, the activity catch-up route, `/projects/{id}/extraction`,
+    or `/projects/{id}/topics/seed`) instead of replaying them. But a second
+    channel per concern would multiply the ways a tab can be half-connected,
+    and a turn that halts for a person, or is still streaming its reply, is
+    exactly the moment when being half-connected is worst.
     """
     queue: asyncio.Queue = asyncio.Queue()
     start_at = feed.decode_position(resume_from) if resume_from else None
@@ -1655,6 +1657,16 @@ async def _sse(
 
         pumps.append(asyncio.create_task(pump_extraction()))
 
+    seeded = None
+    if seeding is not None:
+        seeded = seeding.listen()
+
+        async def pump_seeding() -> None:
+            while True:
+                await queue.put(("seeding", await seeded.get()))
+
+        pumps.append(asyncio.create_task(pump_seeding()))
+
     idle = 0.0
     try:
         while not await request.is_disconnected():
@@ -1669,7 +1681,7 @@ async def _sse(
                     idle = 0.0
                 continue
             idle = 0.0
-            if kind in ("approval", "activity", "extraction"):
+            if kind in ("approval", "activity", "extraction", "seeding"):
                 yield f"data: {json.dumps(item)}\n\n"
                 continue
             payload = feed_event(
@@ -1689,6 +1701,8 @@ async def _sse(
             activity.stop_listening(watching)
         if extraction is not None and extracting is not None:
             extraction.stop_listening(extracting)
+        if seeding is not None and seeded is not None:
+            seeding.stop_listening(seeded)
         for pumping in pumps:
             pumping.cancel()
             with suppress(asyncio.CancelledError):

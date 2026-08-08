@@ -12,8 +12,9 @@ import {
   approvalSettledFrameDto,
   frameEnvelopeDto,
   logFrameDto,
+  seedingFrameDto,
 } from '../http/dto.ts'
-import { toActivityEntry, toApproval, toLogEntry } from '../http/mappers.ts'
+import { toActivityEntry, toApproval, toLogEntry, toSeedingRun } from '../http/mappers.ts'
 
 const INITIAL_BACKOFF_MS = 1_000
 const MAX_BACKOFF_MS = 30_000
@@ -164,6 +165,12 @@ export const decodeFrame = (data: string): FeedFrame | null => {
     case 'TurnActivity': {
       const frame = activityFrameDto.safeParse(payload)
       return frame.success ? { kind: 'activity', entry: toActivityEntry(frame.data) } : null
+    }
+    case 'Seeding': {
+      const frame = seedingFrameDto.safeParse(payload)
+      return frame.success
+        ? { kind: 'seeding', projectId: frame.data.project_id, run: toSeedingRun(frame.data) }
+        : null
     }
     default: {
       // An ordinary log frame. One without a usable index cannot be placed, and

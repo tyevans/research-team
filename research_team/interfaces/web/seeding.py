@@ -41,13 +41,10 @@ from research_team.application.topic_seeding import SeedingRun
 SEEDING = "Seeding"
 """The frame type on the live feed, PascalCase like `EXTRACTION` beside it.
 
-Not wired to the live feed yet -- nothing in `app.py` pumps it -- because
-nothing there needs pushing: the catch-up route below is enough to answer
-"what happened" from a cold reconnect, and the topics a run opens already
-arrive over the log. The constant exists so a frame this module hands out is
-self-describing the moment a channel does want it, the same way `EXTRACTION`
-would be if extraction had been built before its frames needed a feed.
-"""
+The browser switches on one `type` field for everything it receives. It is
+*not* a domain event and must never become one -- the log has no such entry,
+and that is the point: `open_topic` calls are what the log records, not "a
+seeding run started" or "a seeding run finished"."""
 
 
 class SeedingActivity:
@@ -57,6 +54,7 @@ class SeedingActivity:
         self._running: dict[UUID, dict[str, Any]] = {}
         self._finished: dict[UUID, dict[str, Any]] = {}
         self._tasks: dict[UUID, asyncio.Task] = {}
+        self._listeners: set[asyncio.Queue] = set()
 
     # ---------------- what the route drives ----------------
 
@@ -95,12 +93,13 @@ class SeedingActivity:
             "status": "running",
         }
         self._running[project_id] = frame
+        self._announce(frame)
 
         async def _drive() -> None:
             try:
                 outcome = await run(run_id)
             except Exception as error:  # noqa: BLE001 -- reported, not raised, from a task
-                self._finished[project_id] = {
+                finished = {
                     "type": SEEDING,
                     "project_id": str(project_id),
                     "run_id": str(run_id),
@@ -108,7 +107,7 @@ class SeedingActivity:
                     "detail": str(error),
                 }
             else:
-                self._finished[project_id] = {
+                finished = {
                     "type": SEEDING,
                     "project_id": str(project_id),
                     "run_id": str(outcome.run_id),
@@ -117,7 +116,9 @@ class SeedingActivity:
                     "subject": outcome.subject,
                     "reply": outcome.reply,
                 }
+            self._finished[project_id] = finished
             self._running.pop(project_id, None)
+            self._announce(finished)
 
         task = asyncio.ensure_future(_drive())
         self._tasks[project_id] = task
@@ -151,3 +152,27 @@ class SeedingActivity:
         task = self._tasks.get(project_id)
         if task is not None:
             await task
+
+    # ---------------- the feed ----------------
+
+    def listen(self) -> asyncio.Queue:
+        """Subscribe to seeding frames.
+
+        Unbounded, matching the extraction and activity feeds: a dropped
+        frame leaves a gap in the panel's account with nothing to reconcile
+        it. Not seeded with the running frame -- a subscriber gets that from
+        the catch-up route, which it must call anyway to learn about a run
+        that started before it connected.
+        """
+        queue: asyncio.Queue = asyncio.Queue()
+        self._listeners.add(queue)
+        return queue
+
+    def stop_listening(self, queue: asyncio.Queue) -> None:
+        self._listeners.discard(queue)
+
+    # ---------------- internals ----------------
+
+    def _announce(self, payload: dict[str, Any]) -> None:
+        for queue in self._listeners:
+            queue.put_nowait(payload)

@@ -42,6 +42,10 @@ const fakeStream = () => {
   }
   return {
     stream,
+    push: (run: SeedingRun) =>
+      act(() => {
+        listener?.onFrame({ kind: 'seeding', projectId: PROJECT, run })
+      }),
     reconnect: () =>
       act(() => {
         listener?.onReconnect(true)
@@ -182,6 +186,24 @@ it('shows the last run failing rather than staying silent about it', async () =>
 
   const failed = await screen.findByText(/The last seed failed: the model refused/)
   expect(failed).toHaveClass('seed-failed')
+})
+
+it('updates from a live frame without waiting for a refetch', async () => {
+  // The gap this closes: without this, a failed run looked exactly like a
+  // hung one until the tab reloaded and hit the catch-up route.
+  const topics = fakeTopics({
+    seedStatus: vi.fn().mockResolvedValue({ current: run({ subject: 'memory consolidation' }), last: null }),
+  })
+  const { stream, push } = fakeStream()
+
+  renderWithContainer(<SeedPanel projectId={PROJECT} />, { topics, stream })
+  await screen.findByText(/Naming topics for “memory consolidation”/)
+
+  push(run({ status: 'failed', subject: 'memory consolidation', detail: 'the model refused' }))
+
+  const failed = await screen.findByText(/The last seed failed: the model refused/)
+  expect(failed).toHaveClass('seed-failed')
+  expect(topics.seedStatus).toHaveBeenCalledTimes(1)
 })
 
 it('refetches on reconnect, because a dropped frame cannot be replayed', async () => {

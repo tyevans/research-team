@@ -16,6 +16,13 @@ import { useStream } from '../shell/StreamProvider.tsx'
  *  opinion gets the amount `TopicSeeder`'s own tests exercise. */
 const MAX_TOPICS = 8
 
+/** The shape `seedStatus` resolves and the cache under `queryKeys.seed`
+ *  therefore holds -- named so the two `setQueryData` folders below (the
+ *  mutation's own optimistic write and the live-frame handler) can type
+ *  their `previous` without referencing the query's own return, which
+ *  `react-hooks/exhaustive-deps` would then treat as a stale dependency. */
+type SeedStatus = { readonly current: SeedingRun | null; readonly last: SeedingRun | null }
+
 /** A subject in, a broad first set of topics out.
  *
  * Reads its state through `useQuery` rather than `ExtractionPane`'s zustand
@@ -29,6 +36,11 @@ const MAX_TOPICS = 8
  * `Last-Event-ID` cannot replay it, and a socket that drops mid-run would
  * otherwise leave this panel showing whatever it last saw. Refetching on
  * mount and on every reconnect is the only way back.
+ *
+ * A live seeding frame writes straight into the query cache the way the
+ * mutation's own `onSuccess` does, rather than triggering a refetch --
+ * without this, a run's `done`/`failed` state only reached the panel on the
+ * next reload, and a failed run looked exactly like a hung one until then.
  *
  * The topics a run opens need no reading here -- `open_topic` already
  * appends to the log, so `TopicList`'s own query invalidates on those frames
@@ -60,6 +72,21 @@ export const SeedPanel = ({ projectId }: { projectId: ProjectId }) => {
     [stream, queryClient, projectId],
   )
 
+  useEffect(
+    () =>
+      stream.onFrame((frame) => {
+        if (frame.kind !== 'seeding' || frame.projectId !== projectId) return
+        queryClient.setQueryData(
+          queryKeys.seed(projectId),
+          (previous: SeedStatus | undefined) =>
+            frame.run.status === 'running'
+              ? { current: frame.run, last: previous?.last ?? null }
+              : { current: null, last: frame.run },
+        )
+      }),
+    [stream, queryClient, projectId],
+  )
+
   const seed = useMutation({
     mutationFn: (askedSubject: string) => topics.startSeed(projectId, askedSubject, MAX_TOPICS),
     onSuccess: (run, askedSubject) => {
@@ -67,7 +94,7 @@ export const SeedPanel = ({ projectId }: { projectId: ProjectId }) => {
       // straight into the cache shows a run starting the instant it is
       // accepted, rather than waiting on a refetch that a 409 test would
       // otherwise need to distinguish from "nothing happened yet".
-      queryClient.setQueryData(queryKeys.seed(projectId), (previous: typeof status.data) => ({
+      queryClient.setQueryData(queryKeys.seed(projectId), (previous: SeedStatus | undefined) => ({
         current: run,
         last: previous?.last ?? null,
       }))

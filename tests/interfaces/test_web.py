@@ -2661,6 +2661,43 @@ async def test_extraction_frames_ride_the_stream_without_an_id(repository):
     assert "\nid:" not in frames[0]
 
 
+async def test_seeding_frames_ride_the_stream_without_an_id(repository):
+    """The fourth provisional channel, framed like the other three.
+
+    Wired last because nothing forced it: `SeedingActivity`'s catch-up route
+    already answers "what happened" cold, and `open_topic` already streams
+    over the log. But a subject-less "running" frame arriving live is what
+    lets the panel show something before a browser reloads to find out.
+    """
+    from research_team.application import LiveFeed
+    from research_team.interfaces.web.app import _sse
+    from research_team.interfaces.web.seeding import SeedingActivity
+
+    seeding = SeedingActivity()
+    feed = LiveFeed(repository, poll_interval=0.01)
+    project_id = uuid4()
+
+    frames: list[str] = []
+    generator = _sse(StubRequest(), feed, None, None, None, None, seeding)
+    task = asyncio.create_task(_drain(generator, frames, wanted=1))
+    await asyncio.sleep(0.05)
+
+    async def _run(run_id):
+        raise RuntimeError("boom")
+
+    seeding.start(project_id, _run)
+    await asyncio.wait_for(task, timeout=5)
+
+    assert frames[0].startswith("data: ")
+    payload = json.loads(frames[0][len("data: ") :])
+    assert payload["type"] == "Seeding"
+    assert payload["project_id"] == str(project_id)
+    assert payload["status"] == "running"
+    # Not a log entry: no id line precedes the data, so a reconnect refetches.
+    assert "\nid:" not in frames[0]
+    await seeding.wait(project_id)
+
+
 # ---------------- autonomy ----------------
 
 
