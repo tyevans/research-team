@@ -759,3 +759,68 @@
 .graph-clear {
   flex-shrink: 0;
 }
+
+/* ---------------------------------------------------------- graph legend
+ *
+ * Bottom left, opposite the detail panel and below the command bar: the three
+ * floating things on this stage each take a corner rather than competing for
+ * the same one, and the legend is the one a reader consults least, so it gets
+ * the corner the drawing is least often framed into. */
+
+.graph-legend {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  max-width: min(240px, calc(100% - 20px));
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  /* Translucent rather than opaque: it sits over the drawing, and a solid
+     panel would hide whatever the simulation put underneath it. */
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  font-size: 11px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.graph-legend-types {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.graph-legend-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-legend-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.graph-legend-name {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-legend-count {
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.graph-legend-note {
+  margin: 6px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  color: var(--fg-dim);
+  line-height: 1.4;
+}

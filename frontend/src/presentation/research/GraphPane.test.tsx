@@ -225,7 +225,9 @@ it('closes the detail panel without disturbing the drawing', async () => {
 
   await user.click(screen.getByRole('button', { name: /close entity details/i }))
 
-  expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('complementary', { name: /about ada lovelace/i }),
+  ).not.toBeInTheDocument()
   // The canvas stub stands in for the drawing: closing the panel is a change
   // of what is described, not of what is drawn.
   expect(screen.getByRole('button', { name: 'canvas' })).toBeInTheDocument()
@@ -305,7 +307,9 @@ it('takes an entity off the drawing, and the panel with it', async () => {
 
   // The panel describes the selection, so a removed selection must not leave
   // it describing something no longer on the canvas.
-  expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('complementary', { name: /about ada lovelace/i }),
+  ).not.toBeInTheDocument()
   // Babbage arrived only as Ada's neighbour and was never asked for, so he
   // goes with her -- which empties the canvas back to its invitation.
   expect(await screen.findByText(/nothing drawn yet/i)).toBeInTheDocument()
@@ -327,7 +331,9 @@ it('closes the detail panel on Escape, the way the drawers do', async () => {
 
   await user.keyboard('{Escape}')
 
-  expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('complementary', { name: /about ada lovelace/i }),
+  ).not.toBeInTheDocument()
   // Closing the description does not undraw what it described.
   expect(screen.getByRole('button', { name: 'canvas' })).toBeInTheDocument()
 })

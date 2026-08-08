@@ -3,6 +3,8 @@ import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d'
 
 import type { GraphView } from '@domain/knowledge/graph.ts'
 
+import { colorForType, KIND_TOKENS } from './entity-colors.ts'
+
 /** A node as `react-force-graph-2d` hands it back once its simulation has
  *  positioned it: the `GraphNode` fields, plus the `x`/`y` the simulation
  *  wrote in and the `fx`/`fy` it will read to pin a node in place. */
@@ -12,45 +14,6 @@ interface SimulatedNode {
   y?: number
   fx?: number
   fy?: number
-}
-
-/** The kind palette from `tokens.css`, in the order entity types are assigned
- *  to it.
- *
- * Read off the document rather than written as hexes here, because the tokens
- * file is the one place this console is allowed to name a colour -- a literal
- * in this module would be a second palette that only diverges once somebody
- * edits the first. The list is the same set the event log already uses for
- * its own kinds, so a reader who has learnt those colours is not learning a
- * second scheme for the graph.
- */
-const KIND_TOKENS = [
-  '--k-session',
-  '--k-message',
-  '--k-file',
-  '--k-tool',
-  '--k-compaction',
-  '--k-turn',
-] as const
-
-/** A stable colour per entity type.
- *
- * Hashed rather than kept in a lookup table: entity types come from whatever
- * the extraction produced -- `concept`, `fact`, `hypothesis`, `study`, and
- * anything else a future prompt yields -- so a table would need editing every
- * time the corpus grew a new one, and would fall back to grey for exactly the
- * types nobody had thought of yet. Hashing means the same type is always the
- * same colour within and across sessions, which is the property that actually
- * matters when a reader is scanning a drawing.
- */
-const colorForType = (entityType: string, palette: readonly string[]): string => {
-  let hash = 0
-  for (let index = 0; index < entityType.length; index += 1) {
-    hash = (hash * 31 + entityType.charCodeAt(index)) | 0
-  }
-  // The index is always in range; the fallback is what satisfies the checked
-  // indexed access rather than a case that can happen.
-  return palette[Math.abs(hash) % palette.length] ?? palette[0] ?? '#6ba7f5'
 }
 
 /** The force-directed drawing of a `GraphView`. The only module in this
@@ -206,10 +169,23 @@ export const GraphCanvas = memo(function GraphCanvas({
             // once the view was fitted to a handful of nodes.
             const radius = 5 / globalScale
 
+            // Filled means explored, hollow means there is more behind it.
+            //
+            // Every dot looked the same whether its neighbourhood had already
+            // been pulled in or not, so the only way to find the edge of what
+            // you had drawn was to click nodes at random and watch for one
+            // that added something. On a graph of thirty nodes that is thirty
+            // clicks to find the frontier. The ring is the frontier.
             ctx.beginPath()
             ctx.arc(x, y, radius, 0, 2 * Math.PI)
-            ctx.fillStyle = color
-            ctx.fill()
+            if (view.expanded.has(String(node.id))) {
+              ctx.fillStyle = color
+              ctx.fill()
+            } else {
+              ctx.strokeStyle = color
+              ctx.lineWidth = 1.5 / globalScale
+              ctx.stroke()
+            }
 
             // A ring rather than a different fill: the fill already carries
             // the entity type, and overriding it to show selection would trade

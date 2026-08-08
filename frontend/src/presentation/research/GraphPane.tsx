@@ -6,6 +6,7 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { EmptyState, Loading } from '../common/primitives.tsx'
 import { GraphDetail } from './GraphDetail.tsx'
+import { GraphLegend } from './GraphLegend.tsx'
 
 // `React.lazy`, not a static import: `GraphCanvas` is the only module that
 // imports `react-force-graph-2d`, and loading it eagerly would mean every
@@ -117,6 +118,7 @@ export const GraphPane = ({
             <GraphCanvas view={view} selected={entity} onNodeClick={onEntity} />
           </Suspense>
         )}
+        <GraphLegend view={view} />
       </div>
 
       <div className="graph-command">
