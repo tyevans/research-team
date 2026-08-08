@@ -300,3 +300,24 @@ it('takes an entity off the drawing, and the panel with it', async () => {
   // goes with her -- which empties the canvas back to its invitation.
   expect(await screen.findByText(/nothing drawn yet/i)).toBeInTheDocument()
 })
+
+it('closes the detail panel on Escape, the way the drawers do', async () => {
+  const ada = node()
+  const graphs = fakeGraphs({
+    search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
+    neighborhood: vi.fn().mockResolvedValue(hoodOf(ada)),
+  })
+  const user = userEvent.setup()
+
+  renderWithContainer(<GraphPane projectId={PROJECT} />, { graphs })
+
+  await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
+  await user.click(await screen.findByRole('button', { name: /Ada Lovelace/ }))
+  await screen.findByRole('complementary', { name: /about ada lovelace/i })
+
+  await user.keyboard('{Escape}')
+
+  expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+  // Closing the description does not undraw what it described.
+  expect(screen.getByRole('button', { name: 'canvas' })).toBeInTheDocument()
+})

@@ -366,11 +366,6 @@
   padding: 12px 14px 20px;
 }
 
-.document-reader-title {
-  font-size: var(--t-md);
-  margin: 0 0 6px;
-}
-
 .document-reader-dropped {
   color: var(--k-failure);
   font-size: var(--t-xs);
