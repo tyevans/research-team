@@ -13,6 +13,7 @@ import { Artifact } from './Artifacts.tsx'
 import { Findings } from './Findings.tsx'
 import { RunPanel } from './RunPanel.tsx'
 import { Stage } from './StageRail.tsx'
+import { Workers } from './Workers.tsx'
 
 /** The run seen whole: what the workflow was supposed to produce, and what it
  *  has.
@@ -59,6 +60,16 @@ export const CourseView = ({
           ) : null}
         </div>
       </div>
+
+      {/* Everything currently working on this project, run and turn and
+          extraction alike — not just the run's own counters, which say
+          nothing about a turn or extraction still in flight. */}
+      <section className="worker-panel" aria-label="Working now">
+        {/* watching/onWatch come from the route; Task 7 wires the drawer that
+            supplies real values. Until then these are inert placeholders so
+            this panel compiles and is reviewable on its own. */}
+        <Workers projectId={projectId} watching={null} onWatch={() => {}} />
+      </section>
 
       {/* A run works the project's topic queue, not the workflow's stages, so
           this sits above the course rather than inside it — and renders even
