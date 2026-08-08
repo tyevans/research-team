@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
 import { notify } from '@application/notifications/toast-store.ts'
@@ -75,8 +75,31 @@ export const SessionView = ({
     return () => clearTimeout(timer)
   }, [state.fresh, store])
 
-  // Global "back to live". The timeline handles Escape itself and stops the
-  // event, so a keypress with it focused never folds twice.
+  // Both of these rewrite the address bar rather than component state, and both
+  // replace rather than push: dragging through forty events, or clicking down a
+  // file list, should not bury the page you arrived from under forty entries.
+  const selectEvent = useCallback(
+    (point: ScrubPoint) => {
+      navigate(sessionHref(sessionId, point, openPath), { replace: true })
+    },
+    [openPath, sessionId],
+  )
+
+  const openFile = useCallback(
+    (path: FilePath) => {
+      navigate(sessionHref(sessionId, state.scrub, path), { replace: true })
+    },
+    [sessionId, state.scrub],
+  )
+
+  /** Global "back to live". The timeline handles Escape itself and stops the
+   *  event, so a keypress with it focused never folds twice.
+   *
+   *  `selectEvent` is a real dependency, and used to be suppressed as one. It
+   *  closes over the open file, so the listener registered on the first render
+   *  kept navigating with whatever file was open then — pressing Escape after
+   *  opening a file dropped it, which is exactly the case the path is in the
+   *  URL to survive. Re-subscribing costs one listener swap. */
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
@@ -86,19 +109,7 @@ export const SessionView = ({
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store])
-
-  // Both of these rewrite the address bar rather than component state, and both
-  // replace rather than push: dragging through forty events, or clicking down a
-  // file list, should not bury the page you arrived from under forty entries.
-  const selectEvent = (point: ScrubPoint) => {
-    navigate(sessionHref(sessionId, point, openPath), { replace: true })
-  }
-
-  const openFile = (path: FilePath) => {
-    navigate(sessionHref(sessionId, state.scrub, path), { replace: true })
-  }
+  }, [selectEvent, store])
 
   const forkAt = (index: EventIndex) => {
     void store

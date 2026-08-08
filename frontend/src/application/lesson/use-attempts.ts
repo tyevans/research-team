@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import { errorMessage } from '@application/ports/errors.ts'
 import { queryKeys } from '@application/queries/keys.ts'
@@ -16,6 +16,10 @@ import type { ComponentBlock } from '@domain/lesson/document.ts'
 import type { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
 import type { ComponentId, SessionId } from '@domain/shared/identifier.ts'
+
+/** One shared empty map, so "this learner has edited nothing" is a stable
+ *  identity and not a new object every render. */
+const EMPTY: ReadonlyMap<ComponentId, AttemptState> = new Map()
 
 export interface AttemptsApi {
   stateFor(block: ComponentBlock): AttemptState
@@ -43,12 +47,31 @@ export const useAttempts = (
   at: ScrubPoint,
 ): AttemptsApi => {
   const { lessons } = useContainer()
-  const [attempts, setAttempts] = useState<ReadonlyMap<ComponentId, AttemptState>>(new Map())
 
-  // A different document is a different set of answers.
-  useEffect(() => {
-    setAttempts(new Map())
-  }, [path?.value, sessionId])
+  /** Only what this learner has typed *here*, stamped with the document it was
+   *  typed against.
+   *
+   * Carrying the key rather than clearing the map in an effect is what makes
+   * "a different document is a different set of answers" true on the render
+   * that changes documents, instead of one render later — the effect version
+   * painted the previous file's answers against the new file first, and only
+   * then blanked them. */
+  const documentKey = `${sessionId}:${path?.value ?? ''}`
+  const [edits, setEdits] = useState<{
+    key: string
+    byComponent: ReadonlyMap<ComponentId, AttemptState>
+  }>({ key: documentKey, byComponent: EMPTY })
+
+  /** Two halves of one rule. The guard makes the new document blank on the
+   *  render that changes documents; the reset throws the old map away rather
+   *  than leaving it to be found again.
+   *
+   * Without the reset, closing a file and reopening it restored answers — but
+   * only if no third file had been touched in between, since the map holds one
+   * key at a time. Arbitrary is worse than either answer, so this picks the one
+   * the learner was already told: those answers are gone. */
+  const mine = edits.key === documentKey ? edits.byComponent : EMPTY
+  if (edits.key !== documentKey) setEdits({ key: documentKey, byComponent: EMPTY })
 
   /** What this learner has already done, folded back in.
    *
@@ -63,29 +86,35 @@ export const useAttempts = (
     retry: false,
   })
 
-  useEffect(() => {
-    const stored = progress.data
-    if (!stored || stored.size === 0) return
-    setAttempts((current) => {
-      const next = new Map(current)
-      for (const [componentId, record] of stored) {
-        next.set(componentId, withStoredProgress(next.get(componentId) ?? freshAttempt(), record))
-      }
-      return next
-    })
-  }, [progress.data])
-
-  const write = useCallback((id: ComponentId, change: (previous: AttemptState) => AttemptState) => {
-    setAttempts((current) => {
-      const next = new Map(current)
-      next.set(id, change(current.get(id) ?? freshAttempt()))
-      return next
-    })
-  }, [])
+  /** The server's record of a component, as an attempt state.
+   *
+   * Read at the point of use rather than merged into state when it arrives. The
+   * merge had an ordering bug in it: progress is fetched, so it can land after
+   * the learner has already started answering, and folding it in at that moment
+   * overwrote what they had just typed. Derived, the local edit simply wins. */
+  const storedAttempt = useCallback(
+    (id: ComponentId) => {
+      const record = progress.data?.get(id)
+      return record ? withStoredProgress(freshAttempt(), record) : freshAttempt()
+    },
+    [progress.data],
+  )
 
   const stateFor = useCallback(
-    (block: ComponentBlock) => attempts.get(block.id) ?? freshAttempt(),
-    [attempts],
+    (block: ComponentBlock) => mine.get(block.id) ?? storedAttempt(block.id),
+    [mine, storedAttempt],
+  )
+
+  const write = useCallback(
+    (id: ComponentId, change: (previous: AttemptState) => AttemptState) => {
+      setEdits((current) => {
+        const base = current.key === documentKey ? current.byComponent : EMPTY
+        const next = new Map(base)
+        next.set(id, change(base.get(id) ?? storedAttempt(id)))
+        return { key: documentKey, byComponent: next }
+      })
+    },
+    [documentKey, storedAttempt],
   )
 
   const submit = useCallback(

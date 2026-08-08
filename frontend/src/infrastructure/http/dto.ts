@@ -17,6 +17,15 @@ import { z } from 'zod'
  *  a few endpoints omit rather than null them. */
 const maybe = <T extends z.ZodTypeAny>(schema: T) => schema.nullish().transform((v) => v ?? null)
 
+/** A field this layer deliberately does not describe — a message body, a tool's
+ *  arguments — read structurally further in, and absent as often as not.
+ *
+ *  Spelled out rather than left as a bare `z.unknown()`, which under Zod 3 was
+ *  implicitly optional and under Zod 4 is not. That difference is silent in the
+ *  types and rejects real responses at run time, so the optionality is stated
+ *  here where it can be read. */
+const opaque = z.unknown().optional()
+
 export const logEntryDto = z.object({
   index: z.number(),
   type: z.string(),
@@ -31,9 +40,9 @@ export type LogEntryDto = z.infer<typeof logEntryDto>
 
 export const messageDto = z.object({
   role: z.string(),
-  content: z.unknown(),
+  content: opaque,
   tool_calls: z
-    .array(z.object({ name: z.string(), args: z.record(z.unknown()).default({}) }))
+    .array(z.object({ name: z.string(), args: z.record(z.string(), z.unknown()).default({}) }))
     .default([]),
   is_error: z.boolean().default(false),
 })
@@ -75,12 +84,17 @@ export const sessionSummaryDto = z.object({
 })
 
 /** The fork tree is recursive, so its schema needs an explicit type: inference
- *  cannot see through `z.lazy`. Input and output are declared separately
- *  because `maybe()` transforms make them genuinely different shapes. */
+ *  cannot see through the self-reference.
+ *
+ *  The child schema is a getter rather than a `z.lazy` wrapper — that is Zod 4's
+ *  idiom for this, and it is the same trick either way: the property is not
+ *  evaluated until something reads it, by which time `forkNodeDto` is bound. */
 export type ForkNodeDto = z.infer<typeof sessionSummaryDto> & { children: ForkNodeDto[] }
 
-export const forkNodeDto: z.ZodType<ForkNodeDto, z.ZodTypeDef, unknown> = sessionSummaryDto.extend({
-  children: z.lazy(() => z.array(forkNodeDto)).default([]),
+export const forkNodeDto: z.ZodType<ForkNodeDto, unknown> = sessionSummaryDto.extend({
+  get children() {
+    return z.array(forkNodeDto).default([])
+  },
 })
 
 export const fileRevisionDto = z.object({
@@ -111,7 +125,7 @@ export const documentBlockDto = z.union([
     kind: z.literal('component'),
     id: z.string(),
     type: z.string().default(''),
-    data: z.record(z.unknown()).default({}),
+    data: z.record(z.string(), z.unknown()).default({}),
     raw: z.string().default(''),
     lang: maybe(z.string()),
     unknown: z.boolean().default(false),
@@ -137,7 +151,7 @@ export const itemProgressDto = z.object({
 export const progressDto = z.object({
   scope: z.string().optional(),
   path: maybe(z.string()),
-  items: z.record(itemProgressDto).default({}),
+  items: z.record(z.string(), itemProgressDto).default({}),
 })
 
 export const verdictDto = z.object({
@@ -176,7 +190,7 @@ export const activityEntryDto = z.object({
   message_id: z.string(),
   kind: z.string().default('message'),
   text: maybe(z.string()),
-  payload: z.unknown(),
+  payload: opaque,
 })
 
 export const activityDto = z.object({
@@ -189,7 +203,7 @@ export const approvalDto = z.object({
   session_id: z.string(),
   tool_name: z.string(),
   description: maybe(z.string()),
-  args: z.unknown(),
+  args: opaque,
 })
 
 export const workflowRefDto = z.object({

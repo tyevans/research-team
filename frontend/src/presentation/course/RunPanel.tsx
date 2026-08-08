@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 
 import { notify } from '@application/notifications/toast-store.ts'
 import { errorMessage } from '@application/ports/errors.ts'
@@ -37,7 +37,15 @@ export const RunPanel = ({ projectId }: { projectId: ProjectId }) => {
   // "nothing running" into "it ended and this page missed the reason" rather
   // than the ordinary empty state. Declared before any early return: hooks run
   // in a fixed order or they run wrong.
-  const watched = useRef(false)
+  /** Whether this panel has ever seen the run live.
+   *
+   * State rather than a ref, and set during render rather than in an effect.
+   * React supports exactly this — adjusting state when the props it derives
+   * from change — and it is the only version that is safe under a discarded
+   * render: a ref written during render keeps its value when the render is
+   * thrown away, so a run this panel never actually showed as live could still
+   * be reported as having ended. */
+  const [seenLive, setSeenLive] = useState(false)
 
   const run = useQuery({
     queryKey: queryKeys.run(projectId),
@@ -88,8 +96,8 @@ export const RunPanel = ({ projectId }: { projectId: ProjectId }) => {
   // A run this panel was watching that has left the live route: it ended, and
   // this page did not see with what reason. Saying that is the honest reading;
   // clearing back to "no run" would quietly retract an ending nobody read.
-  if (isLive(current)) watched.current = true
-  const gone = watched.current && current === null && run.isFetched
+  if (isLive(current) && !seenLive) setSeenLive(true)
+  const gone = seenLive && current === null && run.isFetched
 
   const live = isLive(current) && !gone
 
