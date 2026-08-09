@@ -1583,8 +1583,10 @@ def create_app(
         await _load(session_id)
         options = body or AllowAll()
         changed = instance.relax_all(include_stage_gates=options.include_stage_gates)
-        for tool, level in changed.items():
-            await service.record_autonomy_change(session_id, tool, level)
+        # One append, not one per tool. Each append is a chance for a turn
+        # running on this session to lose its version, and this route issues
+        # its writes back to back -- see `record_autonomy_changes`.
+        await service.record_autonomy_changes(session_id, changed)
         return {"changed": changed} | autonomy_view(instance)
 
     @app.post("/api/sessions/{session_id}/forks")

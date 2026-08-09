@@ -7,6 +7,10 @@
  * it is used.
  */
 export interface PreferenceStore {
-  collapsedPanes(): readonly string[]
-  setCollapsedPanes(names: readonly string[]): void
+  /** Collapsed panes within one view. Grouped rather than one flat list
+   *  because two views now remember a layout, and a single list means the
+   *  session view's next write erases the research view's -- the names do not
+   *  collide, but each writer replaces the whole list. */
+  collapsedPanes(group: string): readonly string[]
+  setCollapsedPanes(group: string, names: readonly string[]): void
 }

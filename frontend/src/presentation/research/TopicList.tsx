@@ -85,7 +85,7 @@ export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
       <div className="topic-filters">
         <input
           type="search"
-          className="topic-search"
+          className="input topic-search"
           placeholder="Filter topics"
           aria-label="Filter topics"
           value={search}

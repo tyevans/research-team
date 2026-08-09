@@ -7,6 +7,10 @@ export type PaneName = 'timeline' | 'workspace' | 'conversation'
 
 export const PANES: readonly PaneName[] = ['timeline', 'workspace', 'conversation']
 
+/** Which view's layout this is. The research rail remembers its own under a
+ *  different group. */
+const GROUP = 'session'
+
 /** The collapsed rail's width. A fixed track rather than a min-width, so the
  *  space a collapsed pane gives up goes to the open ones — which is the entire
  *  point of collapsing. */
@@ -27,7 +31,9 @@ const THREE_COLUMN = '(min-width: 1181px)'
  * no longer see. */
 export const usePanes = () => {
   const { preferences } = useContainer()
-  const [collapsed, setCollapsed] = useState<readonly string[]>(() => preferences.collapsedPanes())
+  const [collapsed, setCollapsed] = useState<readonly string[]>(() =>
+    preferences.collapsedPanes(GROUP),
+  )
   const [wide, setWide] = useState(() => window.matchMedia?.(THREE_COLUMN).matches ?? true)
 
   // Crossing the breakpoint changes who owns the columns, so recompute there.
@@ -49,7 +55,7 @@ export const usePanes = () => {
           notify('At least one pane has to stay open.', 'bad')
           return current
         }
-        preferences.setCollapsedPanes(next)
+        preferences.setCollapsedPanes(GROUP, next)
         return next
       })
     },
