@@ -85,6 +85,7 @@ from research_team.interfaces.web.presenters import (
     source_view,
     stage_view,
     summary_view,
+    topic_change,
     topic_detail_view,
     topic_view,
     tree_view,
@@ -1716,11 +1717,14 @@ async def _sse(
             if kind in ("approval", "activity", "extraction", "seeding"):
                 yield f"data: {json.dumps(item)}\n\n"
                 continue
-            payload = feed_event(
-                item.session_id,
-                item.event,
-                getattr(item.event, "aggregate_version", None),
-            )
+            if item.aggregate_type == Topic.aggregate_type:
+                payload = topic_change(item.aggregate_id, item.event)
+            else:
+                payload = feed_event(
+                    item.aggregate_id,
+                    item.event,
+                    getattr(item.event, "aggregate_version", None),
+                )
             # One yield, not two: an id and its data are a single SSE frame,
             # and splitting them would let a cancellation land between the
             # cursor and the event it belongs to.

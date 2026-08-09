@@ -285,10 +285,10 @@ class EventStoreSessionRepository:
         """Every project's id and name, from the creation events.
 
         Reads the `Project` category directly rather than going through
-        `read_since`/`read_all`: that path is filtered to `CodingSession`
-        events on purpose (this store is shared with `Project` and
+        `read_since`/`read_all`: that path is filtered to the aggregate types
+        a live subscriber can place (this store is shared with `Project` and
         redstring's own streams), so listing projects needs its own read
-        rather than a weakened session filter.
+        rather than a weakened feed filter.
 
         Deleted projects are left out. Deletion is a tombstone event on the
         same stream rather than a removal, so the creation event is still
@@ -352,33 +352,54 @@ class EventStoreSessionRepository:
         return await self._store.current_position()
 
     async def read_since(self, position: object | None) -> list[FeedEntry]:
-        """Session events since `position`, in append order.
+        """Session and topic events since `position`, in append order.
 
         Scoped by aggregate type rather than taking the whole feed. This store
         is shared: redstring's `Document` and `Consolidation` streams live in
         the same file, and their aggregate ids are document and tenant ids, not
-        sessions. Unscoped, every one of them would arrive here as a
-        `FeedEntry` claiming to be a session that does not exist.
+        sessions or topics. Unscoped, every one of them would arrive here as a
+        `FeedEntry` for an aggregate no subscriber can place.
 
         The scoping is `FeedReadOptions.aggregate_type` (eventsource 0.12),
         which the SQLite adapter pushes into the same query that already
         handles `from_position`. It used to be a comprehension filter here,
         which read the whole feed to discard most of it -- forced, because
         before 0.12 the filter had nowhere else to go.
+
+        **Topics are read as well as sessions, and that is the fix for a
+        research page that only showed new topics after a reload.** `open_topic`
+        appends to this same log, and both `seeding.py` and `ResearchView`
+        already say in their own comments that a client sees new topics by
+        invalidating on those frames -- but the filter above admitted only
+        `CodingSession`, so no topic event has ever reached the SSE feed and
+        neither claim held. A test that saves a `Topic` and asserts a feed
+        entry for it is what would have failed.
+
+        One read per type rather than one unfiltered read, because the filter
+        is what keeps redstring's streams out; merged by position afterwards,
+        which is safe because positions are totally ordered within one store
+        and both reads start from the same cursor. Two indexed queries per
+        poll is the price, against reading and discarding a whole corpus's
+        document events on every one.
         """
-        envelopes = await collect(
-            self._store.read_all(
-                from_position=position,
-                options=FeedReadOptions(aggregate_type=CodingSession.aggregate_type),
+        envelopes = [
+            envelope
+            for aggregate_type in (CodingSession.aggregate_type, Topic.aggregate_type)
+            for envelope in await collect(
+                self._store.read_all(
+                    from_position=position,
+                    options=FeedReadOptions(aggregate_type=aggregate_type),
+                )
             )
-        )
+        ]
         return [
             FeedEntry(
-                session_id=envelope.event.aggregate_id,
+                aggregate_id=envelope.event.aggregate_id,
+                aggregate_type=envelope.event.aggregate_type,
                 event=envelope.event,
                 position=envelope.position,
             )
-            for envelope in envelopes
+            for envelope in sorted(envelopes, key=lambda envelope: envelope.position)
         ]
 
     def encode_position(self, position: object) -> str:
