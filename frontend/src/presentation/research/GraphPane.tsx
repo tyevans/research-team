@@ -151,14 +151,14 @@ export const GraphPane = ({
           <input
             type="search"
             role="searchbox"
-            className="graph-search"
+            className="input graph-search"
             placeholder="Search the graph"
             aria-label="Search the graph"
             value={term}
             onChange={(event) => setTerm(event.target.value)}
           />
           <select
-            className="graph-entity-type"
+            className="input graph-entity-type"
             aria-label="Filter by entity type"
             value={entityType}
             onChange={(event) => setEntityType(event.target.value)}

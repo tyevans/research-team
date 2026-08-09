@@ -12,10 +12,13 @@
 
 .view-research {
   overflow: hidden;
-  padding: 22px 24px 20px;
+  /* Was 22/24/20px. On the spacing rhythm now, and slightly tighter with it:
+     every pixel this page does not spend on its own margin is a pixel the two
+     short rail panes get. */
+  padding: var(--space-5) var(--space-5) var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-3);
   min-height: 0;
   flex: 1;
 }
@@ -35,28 +38,33 @@
      minimum a wide canvas would push the grid instead of being bounded by
      it, and the rail would shrink away as the graph grew. */
   grid-template-columns: 340px minmax(0, 1fr);
-  gap: 14px;
+  gap: var(--space-4);
   flex: 1;
   min-height: 0;
 }
 
-/* The rail does not scroll; its two list panes do, side by side down the
-   column. Scrolling the rail as one strip meant the documents pane began
-   roughly two thousand pixels down it -- the topics list renders every open
-   question, and reaching your sources meant scrolling past all of them. Both
-   lists are now always on screen and always the same size, and finding a
-   document costs a scroll inside a box rather than a hunt down a page. */
+/* The rail's list panes scroll their own contents, side by side down the
+   column, rather than the rail scrolling as one strip. When it did, the
+   documents pane began roughly two thousand pixels down it -- the topics list
+   renders every open question, and reaching your sources meant scrolling past
+   all of them.
+   The rail itself now scrolls too, but only in the case that arrangement did
+   not have an answer for: a viewport too short for both lists to be legible.
+   The difference from what it replaces is that the panes are bounded, so the
+   rail can overflow by at most the slack between the floor below and the
+   viewport, not by the length of the queue. */
 .research-rail {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  overflow: hidden;
+  gap: var(--space-3);
+  overflow-y: auto;
   min-height: 0;
 }
 
 /* Seeding is a control, not a list: it takes the height it needs and gives up
-   none of it. */
-.research-rail > .pane-seeding {
+   none of it. A folded pane is the same -- it is now only a head. */
+.research-rail > .pane-seeding,
+.research-rail > .pane.is-folded {
   flex: 0 0 auto;
 }
 
@@ -64,18 +72,42 @@
    split the *space* evenly instead of in proportion to how much content each
    happens to hold -- otherwise a project with three hundred topics and four
    documents would hand almost the whole rail to the topics again, which is
-   the thing this is fixing. */
+   the thing this is fixing.
+
+   `min-height` is the fix for the complaint that both panes are too short to
+   use: an even split of a laptop viewport across three regions left each list
+   showing three or four rows, which is a scrollbar rather than a list. 240px
+   is roughly seven document rows or five topic rows -- enough to compare two
+   entries without scrolling, which is the smallest thing either pane is for.
+   Below that the rail scrolls instead of squashing them further, and folding
+   a pane is how you get the space back on a short screen. */
 .research-rail > .pane-topics,
 .research-rail > .pane-documents {
   flex: 1 1 0;
-  min-height: 0;
+  min-height: 240px;
   overflow: hidden;
+}
+
+/* Folded: the head stays, as a horizontal strip rather than the vertical rail
+   `panes.css` gives a collapsed session pane -- that one turns a column into a
+   spine, and these are rows in a column already. Hence `is-folded` rather than
+   reusing `collapsed`, whose rules would rotate the title. */
+.research-rail > .pane.is-folded > .pane-head {
+  border-bottom: none;
 }
 
 .research-workbench .pane {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg-panel);
+}
+
+/* The session pane's head lays out toggle · title · meta and pushes the two
+   ends apart. These heads carry no meta, so the same rule would strand the
+   title against the right edge with the toggle alone on the left. */
+.research-rail > .pane > .pane-head {
+  justify-content: flex-start;
+  gap: var(--space-2);
 }
 
 /* Seeding's body takes its height from its content. The base rule is
@@ -509,7 +541,7 @@
   background: var(--bg-panel);
   /* Lifted off the canvas, which is the only thing on this page that can
      scroll underneath a control. */
-  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+  box-shadow: var(--shadow-1);
 }
 
 .graph-search {
@@ -517,7 +549,11 @@
   min-width: 0;
 }
 
-.graph-entity-type {
+/* `select.` rather than `.`: the shared field style caps a `<select>` at 22rem
+   for the workflow menu, and that selector outranks a bare class -- so an
+   unqualified rule here would leave the type menu wider than the command bar
+   it sits in, with `flex-shrink: 0` refusing to take it back. */
+select.graph-entity-type {
   flex-shrink: 0;
   max-width: 40%;
 }
@@ -537,7 +573,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg-panel);
-  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+  box-shadow: var(--shadow-1);
 }
 
 .graph-searching {
@@ -560,7 +596,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg-panel);
-  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+  box-shadow: var(--shadow-1);
   color: var(--fg-dim);
   font-size: var(--t-xs);
 }
@@ -679,7 +715,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg-panel);
-  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+  box-shadow: var(--shadow-1);
   z-index: 1;
 }
 
