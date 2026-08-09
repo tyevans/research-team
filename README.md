@@ -95,6 +95,7 @@ variable:
 | `AGENT_SEARXNG_RESULTS` | `5` | how many results reach the model |
 | `AGENT_GRAPH_STORE` | `memory` | what backs the knowledge graph: `memory` or `neo4j` |
 | `AGENT_KNOWLEDGE_DOMAIN` | `auto` | a redstring schema id, or `auto` to have a classifier choose |
+| `AGENT_EXTRACTION_THINKING` | *(unset)* | set to `1` to let the extraction model reason before answering; off by default because extraction is measurably worse for it (slower, more false positives, same recall). Turn it on for a backend with no chat template — OpenAI's hosted API rejects the field with a 400 on the first extraction call |
 | `AGENT_NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI, when `AGENT_GRAPH_STORE=neo4j` |
 | `AGENT_NEO4J_USER` | `neo4j` | Neo4j username |
 | `AGENT_NEO4J_PASSWORD` | *(unset)* | Neo4j password; required when `AGENT_GRAPH_STORE=neo4j`, no default |
