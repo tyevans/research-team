@@ -205,7 +205,7 @@ class Repl:
 NO_SESSION = (
     "no session yet -- a session belongs to a project.\n"
     "  /project              list projects\n"
-    "  /project new <name>   create one and start a session in it\n"
+    "  /project new <name>   create one (then /project use it)\n"
     "  /project use <name>   start a session in an existing project"
 )
 """What every session-needing command says before a project has been chosen.
@@ -418,7 +418,13 @@ async def _switch_to(repl: "Repl", new_session_id: UUID) -> str | None:
     the detach above still happened, so the session is never left unusable
     over a graph that would not open, only without knowledge tools.
     """
-    await repl.service.release_project(repl.session_id)
+    # Guarded, because the REPL now starts with no session and the first
+    # `/project use` switches *from* that state -- there is no outgoing
+    # session to release, and `release_project(None)` raises inside
+    # `StreamId` rather than no-opping. This is the propagation `Repl.
+    # session_id` warns about, at the one site that meets it first.
+    if repl.session_id is not None:
+        await repl.service.release_project(repl.session_id)
     await repl.service.detach_project()
     repl.session_id = new_session_id
     session = await repl.service.load(new_session_id)
