@@ -110,3 +110,19 @@ def test_graph_store_defaults_to_memory(monkeypatch):
 def test_knowledge_domain_defaults_to_auto(monkeypatch):
     monkeypatch.delenv("AGENT_KNOWLEDGE_DOMAIN", raising=False)
     assert config.knowledge_domain() == "auto"
+
+
+def test_extraction_does_not_think_by_default(monkeypatch):
+    """Off is redstring's measured default for extraction, and ours too."""
+    monkeypatch.delenv("AGENT_EXTRACTION_THINKING", raising=False)
+    assert config.extraction_thinking() is False
+
+
+def test_extraction_thinking_can_be_turned_back_on(monkeypatch):
+    """The way out for a backend that rejects `chat_template_kwargs` with a 400."""
+    for value in ("1", "true", "TRUE", "yes", "on"):
+        monkeypatch.setenv("AGENT_EXTRACTION_THINKING", value)
+        assert config.extraction_thinking() is True, value
+    for value in ("0", "false", "no", ""):
+        monkeypatch.setenv("AGENT_EXTRACTION_THINKING", value)
+        assert config.extraction_thinking() is False, value
