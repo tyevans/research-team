@@ -64,7 +64,8 @@ Time travel
 Sessions (persisted to SQLite; they survive restarts)
   /sessions        list every stored session, newest first
   /resume <n|id>   switch to a stored session by list position or id
-  /new             start a fresh session
+
+  Every session belongs to a project -- see Projects below to start one.
 
 Autonomy (how much the agent may do without asking)
   /autonomy              every gated tool and its level
@@ -149,7 +150,22 @@ class Repl:
     """A service, plus which session this terminal is looking at."""
 
     service: SessionService
-    session_id: UUID
+    session_id: UUID | None = None
+    """The session this terminal is looking at, or None before one is chosen.
+
+    None at startup, and that is the whole of the "sessions live in projects"
+    rule as the terminal sees it. A session needs a project, choosing a project
+    is a decision only the person at the keyboard can make -- the workflow it
+    runs is permanent -- and inventing one on their behalf would make that
+    choice silently, once, forever. So the REPL opens with no session and says
+    what to type.
+
+    Every command that needs a session guards on this rather than the type
+    system, which is the cost of the choice: `UUID | None` propagates into
+    `_switch_to`, `release_project` and every handler that reads it. The
+    alternative -- a separate "no session yet" REPL type -- buys the guarantee
+    at the price of duplicating the dispatch table, which is worse.
+    """
     policy: AutonomyPolicy = field(default_factory=AutonomyPolicy)
     """The same object the executor consults, when one was wired. A REPL given
     its own is honest rather than broken: `/autonomy` still reports and sets,
@@ -170,13 +186,44 @@ class Repl:
         policy: AutonomyPolicy | None = None,
         research: ResearchSupervisor | None = None,
     ) -> "Repl":
+        """A REPL with no session. `/project new` or `/project use` starts one.
+
+        It used to create one here. It cannot now: a session belongs to a
+        project, and this classmethod has no way to ask which -- it is called
+        before the input loop exists, from `run` and from tests, and a project
+        chosen without being asked for is a permanent workflow choice made by
+        a default.
+        """
         return cls(
             service,
-            await service.create_session(),
+            None,
             policy if policy is not None else AutonomyPolicy(),
             research,
         )
 
+
+NO_SESSION = (
+    "no session yet -- a session belongs to a project.\n"
+    "  /project              list projects\n"
+    "  /project new <name>   create one and start a session in it\n"
+    "  /project use <name>   start a session in an existing project"
+)
+"""What every session-needing command says before a project has been chosen.
+
+Names all three commands rather than only the one that would have worked,
+because which one is right depends on whether the project exists, and the
+person who has just been refused does not necessarily know.
+"""
+
+_WITHOUT_A_SESSION = frozenset(
+    {"/quit", "/help", "/project", "/sessions", "/resume", "/health", "/rebuild"}
+)
+"""Commands that work before a session exists.
+
+`/sessions` and `/resume` are here because they are how you get back to work
+already done, and `/health` and `/rebuild` because they are about the database
+rather than about a session. Everything else needs one.
+"""
 
 MIN_PREFIX = 4
 """Shorter than this is a list position, never an id prefix.
@@ -395,11 +442,21 @@ async def handle_command(
     if not line:
         return ""
     if not line.startswith("/"):
+        if repl.session_id is None:
+            return NO_SESSION
         outcome = await service.run_turn(repl.session_id, line, on_activity)
         return format_turn(outcome)
 
     command, _, argument = line.partition(" ")
     argument = argument.strip()
+
+    # Before dispatch rather than inside each handler: most commands read
+    # `repl.session_id`, and one guard that lists its exceptions is easier to
+    # keep true than fifteen that each have to remember. The exceptions are
+    # the commands whose whole job is to get you a session, plus the ones
+    # about the database rather than about a session.
+    if repl.session_id is None and command not in _WITHOUT_A_SESSION:
+        return NO_SESSION
 
     if command == "/quit":
         return None
@@ -418,8 +475,14 @@ async def handle_command(
         resumed = format_resumed(session)
         return f"{resumed}\n{warning}" if warning else resumed
     if command == "/new":
-        await _switch_to(repl, await service.create_session())
-        return f"started {repl.session_id}"
+        # Kept as a command purely to answer for itself. It started a
+        # project-less session, which no longer exists as a thing; removing it
+        # outright would answer `unknown command '/new'`, which is true and
+        # unhelpful to the one person who has the old habit.
+        return (
+            "/new is gone -- a session belongs to a project.\n"
+            "  /project new <name>, or /project use <name>"
+        )
     if command == "/diff":
         if not argument:
             return "usage: /diff <path>"
@@ -507,10 +570,12 @@ async def run(
     try:
         repl = await Repl.start(service, policy, research)
         stored = await service.list_sessions()
-        print(f"session {repl.session_id}")
         print(f"database {config.default_db_path()}")
-        if len(stored) > 1:
-            print(f"{len(stored) - 1} earlier session(s) -- /sessions to list")
+        if stored:
+            print(f"{len(stored)} stored session(s) -- /sessions to list")
+        # The count is now every stored session rather than every one but this
+        # terminal's own, because this terminal no longer has one to exclude.
+        print(NO_SESSION)
         print("/help for commands")
 
         while True:
@@ -536,9 +601,11 @@ async def run(
             if output:
                 print(output)
     finally:
-        # A no-op for a session that never joined a project. A session that
-        # is never released holds the project forever -- nothing else takes
-        # it back for a terminal that just closes.
-        if repl is not None:
+        # A session that is never released holds the project forever --
+        # nothing else takes it back for a terminal that just closes. The
+        # `session_id` guard is new and is not the same as the old "never
+        # joined a project" no-op: a terminal that was opened and closed
+        # without choosing a project now has nothing to release at all.
+        if repl is not None and repl.session_id is not None:
             await service.release_project(repl.session_id)
         await service.close()
