@@ -279,7 +279,10 @@ async def apply_schema(connection: aiosqlite.Connection, model: type[ReadModel])
     """
     await connection.executescript(model_schema(model))
     existing = {
-        row[1] for row in await (await connection.execute(f"PRAGMA table_info({model.table_name()})")).fetchall()
+        row[1]
+        for row in await (
+            await connection.execute(f"PRAGMA table_info({model.table_name()})")
+        ).fetchall()
     }
     for name, definition in _column_definitions(model):
         if name not in existing:

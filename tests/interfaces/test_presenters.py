@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from research_team.application import SessionSummary
 from research_team.domain import (
     AssistantMessageAdded,
     AutonomyChanged,
@@ -18,7 +19,6 @@ from research_team.domain import (
     UserMessageSent,
     WorkflowSelected,
 )
-from research_team.application import SessionSummary
 from research_team.interfaces.web.presenters import (
     event_row,
     event_rows,
@@ -355,7 +355,7 @@ def test_a_project_without_a_workflow_reports_both_fields_as_null():
     assert view["stage"] is None
 
 
-def test_a_session_summary_carries_its_project_so_rows_can_be_grouped(): 
+def test_a_session_summary_carries_its_project_so_rows_can_be_grouped():
     """The landing page groups sessions under projects; the key has to be here.
 
     Without it `/sessions` and `/tree` answer a flat pile of ids that cannot be
