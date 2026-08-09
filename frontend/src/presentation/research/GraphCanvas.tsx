@@ -16,6 +16,16 @@ interface SimulatedNode {
   fy?: number
 }
 
+/** How close focusing a node brings the view, and how long the move takes.
+ *
+ * A floor rather than a fixed zoom: `focusOn` never zooms *out* to reach it.
+ * On a graph of four nodes the fitted view is already closer than this, and
+ * pulling back to a fixed level as the reward for clicking something would
+ * be the opposite of the ask.
+ */
+const FOCUS_ZOOM = 2.5
+const FOCUS_MS = 600
+
 /** The force-directed drawing of a `GraphView`. The only module in this
  *  console that imports `react-force-graph-2d` -- `GraphPane` loads this
  *  one lazily, so the ~60 kB canvas/d3-force bundle is fetched only when a
@@ -81,6 +91,57 @@ export const GraphCanvas = memo(function GraphCanvas({
    *  hit-area painter is not, and both have to agree on how big a node is. */
   const scale = useRef<number>(1)
 
+  /** The node the view has already been moved to, so a re-render does not
+   *  re-run the move and a settle does not repeat it. */
+  const focused = useRef<string | null>(null)
+
+  /** Bring `id` to the middle of the stage, close enough to read.
+   *
+   * `false` when the node has no position yet -- d3-force writes `x`/`y`
+   * during the first tick, so a node selected before the simulation has run
+   * (a pasted `/entity/<id>` link, say) cannot be centred at the moment it
+   * is asked for. `onEngineStop` picks that case up once there is somewhere
+   * to centre on.
+   */
+  const focusOn = (id: string): boolean => {
+    const node = graphData.nodes.find((candidate) => candidate.id === id) as
+      SimulatedNode | undefined
+    if (!node || node.x === undefined || node.y === undefined) return false
+
+    const api = graph.current
+    if (!api) return false
+    api.centerAt(node.x, node.y, FOCUS_MS)
+    api.zoom(Math.max(api.zoom(), FOCUS_ZOOM), FOCUS_MS)
+    return true
+  }
+
+  /** Move to the selection as soon as there is one.
+   *
+   * Selecting a node and having the view stay where it was is the reason a
+   * reader has to go hunting for the thing they just clicked -- on a graph
+   * drawn whole that is a ringed dot somewhere in a field of five hundred.
+   * Every selection arrives here, whichever gesture made it: a canvas click,
+   * a search result, or the entity named in the URL on load.
+   */
+  useEffect(() => {
+    if (selected === null) {
+      focused.current = null
+      return
+    }
+    if (focused.current === selected) return
+    if (focusOn(selected)) focused.current = selected
+    // `size` is in here because the library is not rendered at all until the
+    // container has been measured (see below), so on the very first pass
+    // there is no handle to drive and the move silently does nothing. The
+    // measurement landing is what makes the retry possible.
+    //
+    // `focusOn` itself is left out: it closes over `graphData`, which is
+    // already a dependency, and including a function rebuilt every render
+    // would re-issue the move mid-animation on every keystroke in the search
+    // box above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, graphData, size])
+
   // Resolved once from the stylesheet. `getComputedStyle` is a layout read, and
   // the canvas painter runs per node per frame -- doing it there would be a
   // forced reflow sixty times a second.
@@ -141,8 +202,29 @@ export const GraphCanvas = memo(function GraphCanvas({
           // size settles in well under two.
           cooldownTime={1800}
           onEngineStop={() => {
-            if (framedAt.current === graphData.nodes.length) return
-            framedAt.current = graphData.nodes.length
+            const settledAt = graphData.nodes.length
+
+            // A selection made before the simulation had positioned anything
+            // -- a pasted `/entity/<id>` link -- is only centreable now. This
+            // is the one place that case gets picked up.
+            if (selected !== null && focused.current !== selected && focusOn(selected)) {
+              focused.current = selected
+              framedAt.current = settledAt
+              return
+            }
+
+            // Nothing is re-framed while a node is selected. Expanding one
+            // pulls in new nodes and settles again, and fitting the whole
+            // graph at that moment would zoom straight back out from the node
+            // the reader had just clicked to look at -- undoing the move
+            // above, every time, a moment after it finished.
+            if (selected !== null) {
+              framedAt.current = settledAt
+              return
+            }
+
+            if (framedAt.current === settledAt) return
+            framedAt.current = settledAt
             graph.current?.zoomToFit(400, 48)
           }}
           nodeLabel={(node) => `${String(node.name)} (${String(node.entityType)})`}
