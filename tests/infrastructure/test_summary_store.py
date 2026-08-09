@@ -73,3 +73,35 @@ async def test_sessions_are_listed_newest_first(db_path, repository):
         assert [summary.first_message for summary in listed] == ["newer", "older"]
     finally:
         await store.close()
+
+
+async def test_a_sessions_project_survives_a_reopen(db_path, repository, session_id):
+    """`project_id` is written by the creation handler and never touched again.
+
+    Worth pinning over a real file rather than only in the fold: the column has
+    to exist in the generated DDL, and a UUID has to survive the round trip
+    through SQLite as one -- neither of which the in-memory repository proves.
+    """
+    project_id = uuid4()
+    session = repository.create(session_id)
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=project_id,
+        )
+    )
+    events = list(session.uncommitted_events)
+
+    store = await SessionSummaryStore.open(db_path)
+    for event in events:
+        await store.projection.handle(event)
+    await store.close()
+
+    reopened = await SessionSummaryStore.open(db_path)
+    try:
+        [summary] = await reopened.list()
+        assert summary.project_id == project_id
+    finally:
+        await reopened.close()

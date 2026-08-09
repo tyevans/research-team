@@ -93,6 +93,7 @@ class SessionSummaryRow(ReadModel):
     file_paths: list[str] = Field(default_factory=list)
     forked_from: UUID | None = None
     forked_at: int | None = None
+    project_id: UUID | None = None
 
     @field_validator("file_paths", mode="before")
     @classmethod
@@ -125,6 +126,7 @@ def to_summary(row: SessionSummaryRow) -> SessionSummary:
         forked_from=row.forked_from,
         forked_at=row.forked_at,
         failed_turns=row.failed_turns,
+        project_id=row.project_id,
     )
 
 
@@ -160,7 +162,14 @@ class SessionSummaryProjection(DeclarativeProjection):
     @handles(SessionStarted)
     async def _on_started(self, event: SessionStarted) -> None:
         await self._rows.save(
-            SessionSummaryRow(id=event.aggregate_id, started_at=event.occurred_at)
+            SessionSummaryRow(
+                id=event.aggregate_id,
+                started_at=event.occurred_at,
+                # Written here and nowhere else: this is the only event that
+                # carries a project, so no later handler can change it and a
+                # replay from any checkpoint re-derives the same value.
+                project_id=event.project_id,
+            )
         )
 
     @handles(UserMessageSent)

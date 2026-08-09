@@ -227,8 +227,16 @@ def file_history(events: list[DomainEvent], path: str) -> list[dict[str, Any]]:
 
 
 def summary_view(summary: SessionSummary) -> dict[str, Any]:
+    """One row of `/sessions`, and -- with `children` -- one node of `/tree`.
+
+    `project_id` is reported the way `session_view` reports it, and for the
+    console's sake rather than the fold's: a list of sessions carrying no
+    project key cannot be grouped under the projects they belong to, so the
+    landing page could only ever show two unrelated piles.
+    """
     return {
         "id": str(summary.session_id),
+        "project_id": str(summary.project_id) if summary.project_id else None,
         "started_at": summary.started_at.isoformat(),
         "turns": summary.turns,
         "files": summary.files,

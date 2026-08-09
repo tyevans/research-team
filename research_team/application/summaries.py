@@ -16,6 +16,7 @@ from research_team.domain import (
     FileEdited,
     FileWritten,
     SessionForkedFrom,
+    SessionStarted,
     TurnCompleted,
     TurnFailed,
     UserMessageSent,
@@ -34,6 +35,14 @@ class SessionSummary:
     forked_from: UUID | None = None
     forked_at: int | None = None
     failed_turns: int = 0
+    project_id: UUID | None = None
+    """The project this session shares a filesystem and knowledge graph with.
+
+    Here because a list of sessions with no project key cannot be grouped
+    under the projects they belong to, which is what the console's landing
+    page is: projects, with their sessions inside them. `None` is a session
+    that belongs to no project, which is a real state and not a gap.
+    """
 
 
 def summarize_sessions(events: list[DomainEvent]) -> list[SessionSummary]:
@@ -111,6 +120,13 @@ def _summarize(session_id: UUID, events: list[DomainEvent]) -> SessionSummary:
             None,
         ),
         failed_turns=sum(1 for e in events if isinstance(e, TurnFailed)),
+        # `SessionStarted` is the only event carrying it, and it is required to
+        # be first on the stream -- so a session's project is fixed the moment
+        # it exists and there is no later event to fold over.
+        project_id=next(
+            (e.project_id for e in events if isinstance(e, SessionStarted)),
+            None,
+        ),
     )
 
 

@@ -18,6 +18,7 @@ from research_team.domain import (
     UserMessageSent,
     WorkflowSelected,
 )
+from research_team.application import SessionSummary
 from research_team.interfaces.web.presenters import (
     event_row,
     event_rows,
@@ -27,6 +28,7 @@ from research_team.interfaces.web.presenters import (
     preset_view,
     project_view,
     stage_view,
+    summary_view,
 )
 from research_team.workflows import hybrid_default, ubd_pure
 
@@ -351,3 +353,36 @@ def test_a_project_without_a_workflow_reports_both_fields_as_null():
     view = project_view(AGGREGATE, "atlas")
     assert view["workflow"] is None
     assert view["stage"] is None
+
+
+def test_a_session_summary_carries_its_project_so_rows_can_be_grouped(): 
+    """The landing page groups sessions under projects; the key has to be here.
+
+    Without it `/sessions` and `/tree` answer a flat pile of ids that cannot be
+    related to the project list beside them -- which is the defect this field
+    exists to fix, not a convenience.
+    """
+    project_id = uuid4()
+    summary = SessionSummary(
+        session_id=AGGREGATE,
+        started_at=datetime(2026, 8, 2, 12, 0, tzinfo=UTC),
+        turns=2,
+        files=1,
+        first_message="hello",
+        project_id=project_id,
+    )
+
+    assert summary_view(summary)["project_id"] == str(project_id)
+
+
+def test_a_session_belonging_to_no_project_reports_null_rather_than_omitting_it():
+    """A loose session is a state the page renders, not a missing field."""
+    summary = SessionSummary(
+        session_id=AGGREGATE,
+        started_at=datetime(2026, 8, 2, 12, 0, tzinfo=UTC),
+        turns=0,
+        files=0,
+        first_message="",
+    )
+
+    assert summary_view(summary)["project_id"] is None
