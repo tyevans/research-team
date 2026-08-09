@@ -41,10 +41,11 @@ export interface SessionSummary {
   readonly id: SessionId
   /** The project this session shares a filesystem and knowledge graph with.
    *
-   * The key the landing page groups on: a session row that cannot name its
-   * project can only be listed beside the projects, never inside one. `null`
-   * is a session belonging to no project, which is a state and not a gap. */
-  readonly projectId: ProjectId | null
+   * The key the landing page groups on, and never absent: a session is started
+   * inside a project or not at all. `SessionProjection` still admits `null`
+   * here, and the difference is real rather than an oversight — that one folds
+   * a `SessionState` that exists before `SessionStarted` does. */
+  readonly projectId: ProjectId
   readonly startedAt: string | null
   readonly turns: number | null
   readonly files: number | null

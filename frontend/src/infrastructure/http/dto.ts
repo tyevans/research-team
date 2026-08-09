@@ -74,7 +74,13 @@ export const sessionDto = z.object({
 
 export const sessionSummaryDto = z.object({
   id: z.string(),
-  project_id: maybe(z.string()),
+  /** Required, unlike `sessionDto`'s. This shape is folded from a stream that
+   *  must open with `SessionStarted`, which carries a project — so a summary
+   *  without one is a response no current backend can produce, and parsing it
+   *  as `null` would only push the impossible state further in. The cost is
+   *  that a pre-#65 database served by a current build fails loudly here
+   *  rather than rendering a project-less row; loudly is the point. */
+  project_id: z.string(),
   started_at: maybe(z.string()),
   turns: maybe(z.number()),
   files: maybe(z.number()),

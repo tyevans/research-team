@@ -11,6 +11,7 @@ import {
   toRoster,
   toRun,
   toSession,
+  toSessionSummary,
   toTurnRange,
 } from './mappers.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
@@ -103,12 +104,32 @@ describe('toSession', () => {
   })
 })
 
+describe('toSessionSummary', () => {
+  it('reads the project every session row belongs to', () => {
+    expect(
+      toSessionSummary(parse(dto.sessionSummaryDto, { id: 's1', project_id: 'p1' })).projectId,
+    ).toBe('p1')
+  })
+
+  it('refuses a row with no project rather than carrying a null inwards', () => {
+    // The shape a pre-#65 backend served. Asserting the schema rejects it is
+    // what makes `SessionSummary.projectId` non-nullable a fact rather than a
+    // hope: everything downstream stopped checking, so this is the only place
+    // left that would notice.
+    expect(() => dto.sessionSummaryDto.parse({ id: 's1', project_id: null })).toThrow()
+    expect(() => dto.sessionSummaryDto.parse({ id: 's1' })).toThrow()
+  })
+})
+
 describe('toForkNode', () => {
   it('maps a tree to any depth', () => {
     const node = toForkNode(
       parse(dto.forkNodeDto, {
         id: 'a',
-        children: [{ id: 'b', children: [{ id: 'c', children: [] }] }],
+        project_id: 'p1',
+        children: [
+          { id: 'b', project_id: 'p1', children: [{ id: 'c', project_id: 'p1', children: [] }] },
+        ],
       }),
     )
     expect(node.children[0]?.children[0]?.id).toBe('c')
@@ -121,6 +142,7 @@ describe('summariesAsForest', () => {
     const forest = summariesAsForest([
       {
         id: 'a',
+        projectId: 'p1',
         startedAt: null,
         turns: null,
         files: null,
