@@ -1,5 +1,4 @@
 /* The landing page: projects, with their sessions inside them.
-   Also the loose-session list, which is the same row at a smaller weight.
 
    Two rules govern the colour here. The accent is spent on *actions* and on
    "someone has this", never on identifiers -- it used to colour a hex string
@@ -186,16 +185,6 @@
   border-radius: 3px;
   padding: 1px var(--space-1);
 }
-.linkish {
-  background: none;
-  border: 0;
-  padding: 0;
-  color: var(--accent);
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
 /* --- virtualized row lists ---------------------------------------------- */
 
 .rows {

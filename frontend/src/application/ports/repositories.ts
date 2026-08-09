@@ -40,7 +40,10 @@ import type {
 export interface SessionRepository {
   list(): Promise<readonly SessionSummary[]>
   tree(): Promise<readonly ForkNode[]>
-  create(systemPrompt?: string): Promise<SessionId>
+  /** No `create`. A session belongs to a project, so it is `ProjectRepository`
+   *  that mints one -- `join` -- and there is no session to make without one.
+   *  `fork` is the other way a session comes into being, and it inherits the
+   *  project of the session it came from. */
   /** The session folded to a point. HEAD and a scrubbed point are one call. */
   read(id: SessionId, at: ScrubPoint): Promise<SessionProjection>
   log(id: SessionId): Promise<readonly LogEntry[]>

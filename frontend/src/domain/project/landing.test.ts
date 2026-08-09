@@ -4,15 +4,7 @@ import type { Project } from './project.ts'
 import type { SessionSummary } from '../session/session.ts'
 import { ProjectId, SessionId } from '../shared/identifier.ts'
 
-import {
-  currentSession,
-  flatten,
-  forest,
-  looseSessions,
-  matches,
-  recencyOf,
-  rollups,
-} from './landing.ts'
+import { currentSession, flatten, forest, matches, recencyOf, rollups } from './landing.ts'
 
 const ATLAS = ProjectId('11111111-1111-1111-1111-111111111111')
 const RETENTION = ProjectId('22222222-2222-2222-2222-222222222222')
@@ -106,14 +98,16 @@ it('makes a fork whose parent is in another project a root of its own', () => {
   expect(atlas!.sessions[0]!.children).toEqual([])
 })
 
-it('leaves project-less sessions flat and newest first', () => {
-  const rows = looseSessions([
-    session('older', { startedAt: '2026-01-01T00:00:00Z' }),
-    session('newer', { startedAt: '2026-08-01T00:00:00Z', forkedFrom: SessionId('older') }),
-    session('owned', { projectId: ATLAS, startedAt: '2026-09-01T00:00:00Z' }),
-  ])
+it('drops a session belonging to no project rather than grouping it anywhere', () => {
+  // Every session belongs to a project now, so a project-less one is a relic
+  // of a database written before that was true. It is not somebody's project's
+  // session, and the fold must not attach it to one.
+  const ranked = rollups(
+    [project(ATLAS, 'atlas')],
+    [session('owned', { projectId: ATLAS }), session('orphan', { projectId: null })],
+  )
 
-  expect(rows.map((row) => row.id)).toEqual(['newer', 'older'])
+  expect(flatten(ranked[0]!.sessions).map((row) => row.id)).toEqual(['owned'])
 })
 
 it('does not lose a session whose fork parent it has never heard of', () => {
