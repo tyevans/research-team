@@ -104,7 +104,6 @@ export const rollups = (
 ): readonly ProjectRollup[] => {
   const grouped = new Map<ProjectId, SessionSummary[]>()
   for (const summary of summaries) {
-    if (summary.projectId === null) continue
     const rows = grouped.get(summary.projectId)
     if (rows) rows.push(summary)
     else grouped.set(summary.projectId, [summary])
