@@ -116,12 +116,11 @@ variable:
 | `/fork <n>` | fork at event `n` and switch to it |
 | `/sessions` | every stored session, newest first; current one marked `*` |
 | `/resume <n\|id>` | switch to a stored session by list position or id prefix |
-| `/new` | start a fresh session |
 | `/autonomy` | current autonomy level for each gated tool |
 | `/autonomy <tool> <level>` | set a gated tool's level: `auto`, `ask`, or `deny` |
 | `/project` | every project, with its id |
 | `/project new <name>` | create a project |
-| `/project use <name>` | start a session that inherits the project's files |
+| `/project use <name>` | start a session that inherits the project's files -- the only way to start a session |
 | `/research [n]` | work this project's topic queue autonomously, optionally capped at `n` rounds |
 | `/help` | the command list |
 | `/quit` | exit |
@@ -148,6 +147,13 @@ instance's `settings.yml`, the tool cannot read its response and the failure
 is otherwise mystifying.
 
 ## Projects and the knowledge graph
+
+**Every session belongs to a project.** There is no way to make one that does
+not: `SessionStarted` requires a project id, and the only path to a session is
+`/project use <name>` in the terminal or joining a project from the console.
+The REPL therefore opens with no session at all and says so -- choosing a
+project is a decision only the person at the keyboard can make, since the
+workflow a project runs is fixed when it is created.
 
 A session is scoped to one conversation. A **project** is scoped to more than
 that: a set of sessions that share a filesystem lineage and a knowledge graph,
@@ -184,9 +190,11 @@ thereafter. A project reopened years later reproduces the same graph without
 depending on a live model call, for the same reason a refolded session
 reproduces the same conversation without depending on a live search index.
 
-No project means no knowledge tools and no graph store at all -- the same
-posture `web_search` has without `AGENT_SEARXNG_URL`: nothing is registered,
-so there is nothing to search or remember into.
+The graph store is still configurable per project, and an unconfigured one
+means no knowledge tools -- the same posture `web_search` has without
+`AGENT_SEARXNG_URL`: nothing is registered, so there is nothing to search or
+remember into. What is no longer possible is a *session* with no project to
+configure: that state was removed rather than handled.
 
 **This changes the network claim above, and it is worth being exact about
 how.** `remember`'s extraction is not new egress -- it calls the same model
