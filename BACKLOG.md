@@ -64,6 +64,32 @@ on an isolated re-run, on a machine running several other projects' containers:
   was fine and the answer needed a same-code A/B against `main` under matched
   load to establish. That is far too much ceremony to attribute one test.
 
+  **Fixed, and this entry was wrong about it three times.** The
+  `settle_timeout=0.1` was never the problem. The precondition was: the test
+  slept 0.3s and assumed the turn had reached the model call, and the cancel's
+  answer depends entirely on where the turn is when it arrives --
+
+  | Turn's position | Result |
+  |---|---|
+  | not yet registered | `cancelled=False, settled=True` |
+  | registered, not yet in the model call | `cancelled=True, settled=True` |
+  | wedged in `StubbornModel` | `cancelled=True, settled=False` |
+
+  Only the third is under test. Under CI load the turn was slower to *start*,
+  so 0.3s left it in the second row and the cancel settled promptly -- correct
+  behaviour, failing as `assert True is False`. Note the direction, which is
+  what kept this misfiled: load makes things slower, so a "will not settle"
+  test failing under load reads as impossible, and the failure was repeatedly
+  waved through as "the flaky one" on the strength of this entry. It was
+  reproduced deliberately by dropping the sleep to zero (first row) and
+  confirmed by proving the fixed test red with the wedge removed.
+
+  `StubbornModel` now sets an `asyncio.Event` as the call begins and the test
+  waits on that, with a 5s ceiling that means "the turn never started" rather
+  than naming a deadline. The two other `sleep(0.3)` sites in that file have
+  the same shape and are not yet converted; they have not been observed
+  failing, which is not the same as being right.
+
 Both are wall-clock races against a loaded scheduler, not logic faults, and
 both are testing something worth testing — a real socket and a real timeout
 are the point. The fix is not a longer sleep: it is making the wait
