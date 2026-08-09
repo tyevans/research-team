@@ -7,9 +7,12 @@ from eventsource.ports.positions import ExpectedVersion
 from langchain_core.messages import AIMessage
 
 from research_team.application.session_service import NO_SEARCH_CLAUSE
+from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import StartSession
 from research_team.domain.project import ProjectCreated
-from research_team.infrastructure.agent.fetch import FETCH_PROMPT
+from research_team.infrastructure.agent.corpus_tools import CORPUS_PROMPT
+from research_team.infrastructure.agent.fetch import FETCH_CORPUS_PROMPT, FETCH_PROMPT
+from research_team.infrastructure.agent.knowledge_tools import KNOWLEDGE_PROMPT
 from research_team.infrastructure.persistence import (
     SNAPSHOT_THRESHOLD,
     EventStoreSessionRepository,
@@ -69,10 +72,19 @@ async def test_reopening_keeps_the_stored_system_prompt(fake_model, db_path, bui
     )
     session = await reopened.load(session_id)
     # Composition appends capability clauses (fetch always, and "no search"
-    # because none is configured here) to whatever system_prompt it is given --
-    # so the stored value is the first process's prompt plus its suffix, not
+    # because none is configured here) to whatever system_prompt it is given,
+    # and `start_in_project` appends the knowledge prompt on top -- so the
+    # stored value is the first process's prompt plus both suffixes, not
     # "DIFFERENT" plus the second's.
-    assert session.state.system_prompt == "ORIGINAL" + FETCH_PROMPT + NO_SEARCH_CLAUSE
+    assert session.state.system_prompt == (
+        "ORIGINAL"
+        + FETCH_PROMPT
+        + NO_SEARCH_CLAUSE
+        + KNOWLEDGE_PROMPT
+        + CORPUS_PROMPT
+        + FETCH_CORPUS_PROMPT
+        + TOPICS_PROMPT
+    )
 
 
 async def test_files_survive_a_reopen(fake_model, db_path, build_service, repository):
@@ -124,9 +136,16 @@ async def test_session_summary_describes_the_session(fake_model, db_path, build_
     assert summary.first_message == "a memorable opening line"
 
 
-async def test_create_session_leaves_the_previous_one_alone(
+async def test_starting_a_session_leaves_the_previous_one_alone(
     fake_model, db_path, build_service, repository
 ):
+    """A second session is a second stream, not a reset of the store.
+
+    Two projects rather than one, which is the only way to have two live
+    sessions now -- a project holds one at a time and would reject the second.
+    That rejection is the project rule and is tested where it lives; the claim
+    here is about the store, so the sessions are kept out of each other's way.
+    """
     service = await build_service(model=fake_model, db_path=db_path)
     original = await start_session(service)
     new_id = await start_session(service)
@@ -160,7 +179,12 @@ async def test_read_since_ignores_events_from_other_aggregate_types(tmp_path):
         session_id = uuid4()
         session = repository.create(session_id)
         session.execute(
-            StartSession(session_id=session.aggregate_id, system_prompt="p", model_name="m")
+            StartSession(
+                session_id=session.aggregate_id,
+                system_prompt="p",
+                model_name="m",
+                project_id=uuid4(),
+            )
         )
         await repository.save(session)
 

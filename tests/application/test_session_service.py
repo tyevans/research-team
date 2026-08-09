@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -6,6 +8,7 @@ from research_team.domain import (
     AssistantMessageAdded,
     FileWritten,
     SessionStarted,
+    StartSession,
     TurnCompleted,
     TurnFailed,
     UserMessageSent,
@@ -322,7 +325,26 @@ async def test_turn_runs_under_the_sessions_own_prompt(build_service, fake_model
     monkeypatch.setattr(DeepAgentTurnExecutor, "_invoke", capture)
 
     service = await build_service(model=fake_model, system_prompt="the service default")
-    session_id = await service.create_session("a distinctive prompt")
+
+    # Started through the repository rather than through the service, because
+    # no service method takes a prompt any more: `start_in_project` composes
+    # the default with the knowledge prompt, so a session made that way would
+    # carry a prompt derived from the default and there would be nothing to
+    # tell "the session's own" apart from "the service's". The claim under
+    # test is about what `run_turn` reads, and `StartSession` is where a
+    # session's prompt is set either way.
+    session_id = uuid4()
+    session = service._repository.create(session_id)
+    session.execute(
+        StartSession(
+            session_id=session_id,
+            system_prompt="a distinctive prompt",
+            model_name=fake_model.__class__.__name__,
+            project_id=uuid4(),
+        )
+    )
+    await service._repository.save(session)
+
     await service.run_turn(session_id, "hello")
 
     assert seen == ["a distinctive prompt"]
