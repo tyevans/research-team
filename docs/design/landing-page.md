@@ -571,3 +571,87 @@ Pre-release, no stored shape changes: it is a projection column and
    the CLI is genuinely faster for a first prompt. The current empty state says
    so; the proposal keeps that on the first-run page only. It may deserve to be
    permanent.
+
+## 8. What was decided
+
+Appended 2026-08-09, after the fact, by the agent that implemented this
+document — across #57 (the layout), #58 (folding a project's sessions away)
+and #59 (removing the fourth region). Everything above is left exactly as it
+was written, including the parts implementation proved wrong; the point of
+keeping it is the reasoning, and a document quietly edited to agree with
+what shipped is worth nothing to the next person. This section is the only
+place the two are reconciled.
+
+### The open questions in §7, answered
+
+1. **Liveness is worth the requests, for rows that exist.** The marker is
+   built, off `ResearchRepository.current` and `WorkerRepository.on` as
+   proposed, but only for rows the virtualizer has actually drawn — a
+   project scrolled past is not polled — and it refreshes off the log frames
+   the page already invalidates on rather than a timer of its own. A failed
+   read renders no marker rather than degrading the row. The `activity`
+   object on `/api/projects` is still the right fix and is still not done.
+2. **The default workflow is the first preset, not `no workflow`.** As §4
+   argued. `list_workflows` already orders them deliberately, so "first" is
+   a decision the server had made and the browser was throwing away.
+   Choosing no workflow at all stays possible, and now states its cost where
+   it is chosen.
+3. **Bare sessions do not deserve to keep existing — the owner's call, taken
+   later.** So the fourth region and the third action are both gone, which
+   §7 predicted would be "a much cleaner page" and was right about. The rule
+   itself is `SessionStarted.project_id` becoming required (#65), which is
+   what made removing the region honest rather than merely tidier.
+4. **One person.** No name is attached to a take-over; "held by 3f2a…" stays
+   informational.
+5. **The CLI is on the first-run page only**, as proposed — and it survived
+   answering question 3. Only the claim that you can start *without* a
+   project went; the sentence about both front ends sharing one database did
+   not.
+
+### Where this document was wrong
+
+**"Pre-release, no stored shape changes: it is a projection column"** (§7)
+is true of the event log and false of the database. `SessionSummaryRow`
+gaining `project_id` did change a stored shape: `CREATE TABLE IF NOT EXISTS`
+does nothing to a table that already exists, so the column never appeared,
+every read against it failed, and `/api/sessions` and `/api/tree` answered
+500 — on the only database anybody had, while a fresh one was fine and the
+whole suite passed. `/rebuild` does not help, because it re-derives rows and
+not columns. `apply_schema` in `read_models.py` now reconciles added
+columns, and a test drops the column and reopens so it fails if that is
+removed. The general form is the more useful thing: a read-model change
+verified only against a fresh database is unverified.
+
+**"Rows are fixed-height, which is what makes this cheap"** (§5) stopped
+being true the moment a row carried a disclosure. Rows are measured, and
+measurement needs two things §5 does not mention: a stable `getItemKey`,
+because measurements cached against an array index follow the wrong row as
+soon as the list shifts, and a `scrollMargin`, because the list does not
+start at the top of its scroll container. Without the first there was a
+122px hole in the list at three projects.
+
+**A live project sorting first, regardless of timestamp** (§5) was not
+built. Doing it means knowing whether every project is live, including the
+ones nobody has scrolled to, which is exactly the per-project request §7's
+first question warns about. Projects rank by last activity; the marker
+appears wherever the project sorts. Worth revisiting when `/api/projects`
+carries activity itself.
+
+### What superseded it
+
+**A project's sessions are folded away by default, and the row shows one.**
+§5's "sessions collapsed except the most recent project's, which is expanded
+on load" was tried and was wrong in the direction this whole document
+argues: sessions accumulate far faster than projects, so one project's
+history pushed every other project off the screen. The row names the session
+holding the project, or the newest if none does, and the fold opens the full
+forest only when there is more than one to see.
+
+**The fourth region is gone entirely**, so §5's ranking rule for loose
+sessions and §4's fourth region describe a page that no longer exists. The
+session-creating method on the repository went with them.
+
+Two things outside this document's scope moved to make room for it: the
+bundle budget (`app-` 55 → 57 for the page's own weight, and `total` 232 →
+512 at the owner's instruction), and the route rename §7 asked for — the
+tree route is now the home route, and the breadcrumb reads `projects`.
