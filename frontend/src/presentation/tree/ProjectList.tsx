@@ -8,6 +8,7 @@ import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
 import { isHeld, type Project } from '@domain/project/project.ts'
 import {
+  currentSession,
   matches,
   recencyOf,
   rollups,
@@ -22,7 +23,7 @@ import { fullTime, plural, relativeTime } from '../formatting/format.ts'
 import { courseHref, researchHref, sessionHref } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
 import { ActivityChip, useProjectActivity } from './ProjectActivity.tsx'
-import { SessionForest } from './SessionRow.tsx'
+import { SessionForest, SessionRow } from './SessionRow.tsx'
 import { useSessionForest } from './SessionTree.tsx'
 import { SkeletonRows } from './Skeletons.tsx'
 
@@ -48,15 +49,16 @@ export const ProjectList = ({
   const query = useQuery({ queryKey: queryKeys.projects(), queryFn: () => projects.list() })
   const { all: sessions } = useSessionForest()
 
-  /** Which project's sessions are open, or `null` for "the most recent one".
+  /** Which projects have their full session list open. None, to begin with.
    *
-   * `null` rather than a set seeded from the data: seeding needs the ranked
-   * list, which is not known until both queries have answered, and a fold that
-   * ran on the first render would open whichever project happened to be first
-   * before the sessions arrived. Deferring it to the render that draws the row
-   * keeps "the most recent project is open on load" true without a effect that
-   * fights the reader the moment they collapse it. */
-  const [open, setOpen] = useState<ReadonlySet<ProjectId> | null>(null)
+   * The most recent project's list used to be expanded on load. It made the
+   * page longer than it was useful: sessions accumulate far faster than
+   * projects -- every `/project use`, every take-over and every fork mints one
+   * -- so one project's history could push every other project off the screen,
+   * and what a returning reader wants is the *project*, not an inventory of
+   * it. Each row shows its current session instead, which is the one line of
+   * that list anybody was actually reading. */
+  const [open, setOpen] = useState<ReadonlySet<ProjectId>>(new Set())
   const [pending, setPending] = useState<Confirmation | null>(null)
 
   const join = useMutation({
@@ -110,9 +112,8 @@ export const ProjectList = ({
     return <EmptyState title={`Nothing matches “${search.trim()}”.`} />
   }
 
-  const openIds = open ?? new Set(firstProjectId(shown))
   const toggle = (id: ProjectId) => {
-    const next = new Set(openIds)
+    const next = new Set(open)
     if (!next.delete(id)) next.add(id)
     setOpen(next)
   }
@@ -122,7 +123,7 @@ export const ProjectList = ({
       <ProjectRows
         items={items}
         scrollRef={scrollRef}
-        openIds={openIds}
+        openIds={open}
         onToggle={toggle}
         onTakeOver={(project) => setPending({ kind: 'takeOver', project })}
         onDelete={(project) => setPending({ kind: 'delete', project })}
@@ -145,11 +146,6 @@ export const ProjectList = ({
       ) : null}
     </>
   )
-}
-
-const firstProjectId = (shown: readonly ProjectRollup[]): readonly ProjectId[] => {
-  const first = shown[0]
-  return first ? [first.project.id] : []
 }
 
 interface Confirmation {
@@ -376,6 +372,7 @@ const ProjectRow = ({
   busy: boolean
 }) => {
   const { project, sessions, sessionCount, fileCount, lastActivity } = rollup
+  const current = currentSession(rollup)
   const [menuOpen, setMenuOpen] = useState(false)
   const activity = useProjectActivity(project.id, true)
 
@@ -481,18 +478,36 @@ const ProjectRow = ({
         </Disclosure>
       </div>
 
-      <Disclosure
-        className="project-sessions"
-        label={`sessions (${sessionCount})`}
-        open={open}
-        onToggle={onToggle}
-      >
-        {sessions.length > 0 ? (
+      {/* One session, not a list of them. Which one is the question a landing
+          page exists to answer -- "where was I" -- so it is the session holding
+          the project when one does, and the newest otherwise. Expanding gives
+          the full forest, where fork lineage is the structure and worth the
+          space; collapsed, that lineage is a `forked @` chip on one row.
+
+          The preview gives way to the forest rather than sitting above it: the
+          current session is *in* that forest, and showing it twice reads as a
+          duplicated row rather than as a summary of the list below it. */}
+      {current && !open ? (
+        <SessionRow session={current} held={current.id === project.activeSessionId} />
+      ) : null}
+
+      {sessionCount > 1 ? (
+        <Disclosure
+          className="project-sessions"
+          label={open ? `sessions (${sessionCount})` : `all ${sessionCount} sessions`}
+          open={open}
+          onToggle={onToggle}
+        >
           <SessionForest nodes={sessions} heldBy={project.activeSessionId} />
-        ) : (
-          <EmptyState title="Nothing has run in this project yet." />
-        )}
-      </Disclosure>
+        </Disclosure>
+      ) : null}
+
+      {/* Only when there is nothing at all. A project with one session shows it
+          above and needs no note, and a fold offering no more than the row
+          already displays is a click that changes nothing. */}
+      {sessionCount === 0 ? (
+        <p className="project-no-sessions">Nothing has run in this project yet.</p>
+      ) : null}
     </div>
   )
 }

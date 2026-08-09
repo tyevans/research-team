@@ -291,8 +291,12 @@
 }
 .project-sessions {
   margin-top: var(--space-2);
-  border-top: 1px solid var(--line-soft);
-  padding-top: var(--space-2);
+}
+.project-no-sessions {
+  margin: var(--space-2) 0 0;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
 }
 
 /* --- a session row ------------------------------------------------------ */

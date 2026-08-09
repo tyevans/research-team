@@ -141,6 +141,30 @@ export const rollups = (
     .sort((a, b) => String(b.lastActivity ?? '').localeCompare(String(a.lastActivity ?? '')))
 }
 
+/** The one session a project row shows without being asked.
+ *
+ * "Where was I" resolves to a project and then to a single session, and which
+ * one that is deserves an answer rather than whichever happens to sort first:
+ * the session *holding* the project, because that is the one still open and
+ * the one `Resume` goes to, and the newest otherwise. A project whose holder
+ * is missing from the summary list falls back to the newest rather than
+ * showing nothing -- a row with no session reads as a project nothing has run
+ * in, which would be a lie.
+ */
+export const currentSession = (rollup: ProjectRollup): SessionSummary | null => {
+  const all = flatten(rollup.sessions)
+  const holder = rollup.project.activeSessionId
+  if (holder) {
+    const held = all.find((session) => session.id === holder)
+    if (held) return held
+  }
+  return all.reduce<SessionSummary | null>(
+    (newest, session) =>
+      newest === null || byStartAscending(session, newest) > 0 ? session : newest,
+    null,
+  )
+}
+
 export type Recency = 'today' | 'week' | 'older' | 'empty'
 
 /** Which recency heading a project sits under.

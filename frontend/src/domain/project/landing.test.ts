@@ -4,7 +4,15 @@ import type { Project } from './project.ts'
 import type { SessionSummary } from '../session/session.ts'
 import { ProjectId, SessionId } from '../shared/identifier.ts'
 
-import { flatten, forest, looseSessions, matches, recencyOf, rollups } from './landing.ts'
+import {
+  currentSession,
+  flatten,
+  forest,
+  looseSessions,
+  matches,
+  recencyOf,
+  rollups,
+} from './landing.ts'
 
 const ATLAS = ProjectId('11111111-1111-1111-1111-111111111111')
 const RETENTION = ProjectId('22222222-2222-2222-2222-222222222222')
@@ -137,4 +145,47 @@ it('buckets a project by the same timestamp its row prints', () => {
   expect(recencyOf(at('2026-08-06T09:00:00Z'), now)).toBe('week')
   expect(recencyOf(at('2026-01-06T09:00:00Z'), now)).toBe('older')
   expect(recencyOf(rollups([project(ATLAS, 'atlas')], [])[0]!, now)).toBe('empty')
+})
+
+it('picks the holding session as a project’s current one, not merely the newest', () => {
+  // "Where was I" is the holder: it is the session still open, and the one
+  // `Resume` goes to. A newer fork made from it is not where you were.
+  const [atlas] = rollups(
+    [project(ATLAS, 'atlas', { activeSessionId: SessionId('holder') })],
+    [
+      session('holder', { projectId: ATLAS, startedAt: '2026-01-01T00:00:00Z' }),
+      session('newer', { projectId: ATLAS, startedAt: '2026-08-01T00:00:00Z' }),
+    ],
+  )
+
+  expect(currentSession(atlas!)?.id).toBe('holder')
+})
+
+it('falls back to the newest session when nothing holds the project', () => {
+  const [atlas] = rollups(
+    [project(ATLAS, 'atlas')],
+    [
+      session('older', { projectId: ATLAS, startedAt: '2026-01-01T00:00:00Z' }),
+      session('newest', { projectId: ATLAS, startedAt: '2026-08-01T00:00:00Z' }),
+    ],
+  )
+
+  expect(currentSession(atlas!)?.id).toBe('newest')
+})
+
+it('falls back to the newest when the holder is missing from the session list', () => {
+  // A row showing no session at all would read as a project nothing has run
+  // in, which is a different and false statement.
+  const [atlas] = rollups(
+    [project(ATLAS, 'atlas', { activeSessionId: SessionId('not-listed') })],
+    [session('present', { projectId: ATLAS })],
+  )
+
+  expect(currentSession(atlas!)?.id).toBe('present')
+})
+
+it('has no current session for a project nothing has run in', () => {
+  const [atlas] = rollups([project(ATLAS, 'atlas')], [])
+
+  expect(currentSession(atlas!)).toBeNull()
 })

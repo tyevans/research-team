@@ -317,3 +317,50 @@ it('says the session list may be lying, in the page rather than only in the topb
   expect(await screen.findByText(/4 events did not apply/)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /Rebuild the list/ })).toBeInTheDocument()
 })
+
+it('shows a project’s current session and keeps the rest folded away', async () => {
+  // Sessions accumulate far faster than projects, so a row that listed all of
+  // them buried every other project. The row shows the one line anybody was
+  // reading -- the holder -- and the rest are one click away.
+  const user = userEvent.setup()
+  renderPage(
+    <TreeView />,
+    containerWith({
+      projects: [project(ATLAS, 'atlas', { activeSessionId: HOLDER })],
+      sessions: [
+        session(HOLDER, {
+          projectId: ATLAS,
+          firstMessage: 'the one still open',
+          startedAt: '2026-08-01T00:00:00Z',
+        }),
+        session('older', {
+          projectId: ATLAS,
+          firstMessage: 'an older one',
+          startedAt: '2026-07-01T00:00:00Z',
+        }),
+      ],
+    }),
+  )
+
+  expect(await screen.findByText('the one still open')).toBeInTheDocument()
+  expect(screen.queryByText('an older one')).not.toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: /all 2 sessions/i }))
+  expect(screen.getByText('an older one')).toBeInTheDocument()
+})
+
+it('offers no fold for a project with a single session', async () => {
+  // A fold promising no more than the row already shows is a click that
+  // changes nothing.
+  renderPage(
+    <TreeView />,
+    containerWith({
+      projects: [project(ATLAS, 'atlas')],
+      sessions: [session('only', { projectId: ATLAS, firstMessage: 'the only one' })],
+    }),
+  )
+
+  expect(await screen.findByText('the only one')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /sessions \(/i })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /all .* sessions/i })).not.toBeInTheDocument()
+})
