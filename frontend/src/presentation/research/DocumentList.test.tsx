@@ -235,7 +235,6 @@ it('says no documents exist yet rather than showing an empty box', async () => {
   expect(await screen.findByText(/no documents/i)).toBeInTheDocument()
 })
 
-
 it('lists a document that arrived after the page did, without a reload', async () => {
   // The pane shipped subscribing to nothing at all, so a source the agent
   // stored mid-session sat invisible until the reader reloaded -- while the
@@ -250,7 +249,11 @@ it('lists a document that arrived after the page did, without a reload', async (
     ])
   const feed = fakeStream()
 
-  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents: fakeDocuments(list) }, feed.stream)
+  renderWithContainer(
+    <DocumentList projectId={PROJECT} />,
+    { documents: fakeDocuments(list) },
+    feed.stream,
+  )
   await screen.findByText('Ada Lovelace')
 
   feed.pushCorpus()
@@ -264,7 +267,11 @@ it('re-reads once for a burst of corpus frames, not once each', async () => {
   const list = vi.fn<DocumentRepository['list']>().mockResolvedValue([doc()])
   const feed = fakeStream()
 
-  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents: fakeDocuments(list) }, feed.stream)
+  renderWithContainer(
+    <DocumentList projectId={PROJECT} />,
+    { documents: fakeDocuments(list) },
+    feed.stream,
+  )
   await screen.findByText('s1')
   expect(list).toHaveBeenCalledTimes(1)
 
@@ -290,7 +297,11 @@ it('ignores graph and log frames, which change no document', async () => {
   const list = vi.fn<DocumentRepository['list']>().mockResolvedValue([doc()])
   const feed = fakeStream()
 
-  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents: fakeDocuments(list) }, feed.stream)
+  renderWithContainer(
+    <DocumentList projectId={PROJECT} />,
+    { documents: fakeDocuments(list) },
+    feed.stream,
+  )
   await screen.findByText('s1')
 
   feed.pushGraph()
@@ -310,7 +321,11 @@ it('ignores another project’s corpus frame', async () => {
   const list = vi.fn<DocumentRepository['list']>().mockResolvedValue([doc()])
   const feed = fakeStream()
 
-  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents: fakeDocuments(list) }, feed.stream)
+  renderWithContainer(
+    <DocumentList projectId={PROJECT} />,
+    { documents: fakeDocuments(list) },
+    feed.stream,
+  )
   await screen.findByText('s1')
 
   feed.pushCorpus('99999999-9999-9999-9999-999999999999')

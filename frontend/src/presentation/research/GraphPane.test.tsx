@@ -539,7 +539,6 @@ it('keeps a type on offer after choosing it has narrowed the results to it', asy
   expect(screen.getByRole('option', { name: 'study' })).toBeInTheDocument()
 })
 
-
 it('draws an entity extracted after the page loaded, without a reload', async () => {
   // The bug this whole change exists for. `loadAll` runs once per project, so
   // a pane opened before an ingest drew the graph as it was then and never
