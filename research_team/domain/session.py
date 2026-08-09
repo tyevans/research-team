@@ -74,7 +74,14 @@ class SessionState(BaseModel):
     system_prompt: str = ""
     model_name: str = ""
     project_id: UUID | None = None
-    """The project whose filesystem and knowledge graph this session shares."""
+    """The project whose filesystem and knowledge graph this session shares.
+
+    Still `| None`, unlike `SessionStarted.project_id`, and for the same reason
+    `session_id` is: `initial_state()` takes no arguments, so every field needs
+    a value that is true before any event exists. `None` here means `status ==
+    "new"` and nothing else -- once `SessionStarted` has folded, a project is
+    always present, because the event cannot carry anything else.
+    """
     files: dict[str, dict[str, Any]] = Field(default_factory=dict)
     messages: list[dict[str, Any]] = Field(default_factory=list)
     turn_index: int = 0

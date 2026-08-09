@@ -15,6 +15,11 @@ def summary(index: int, *, forked_from=None, forked_at=None) -> SessionSummary:
         turns=index,
         files=0,
         first_message=f"session {index}",
+        # A different project per summary, and which one is never asserted:
+        # these tests are about fork lineage, a relationship between sessions
+        # that says nothing about projects. A shared constant would read as
+        # though belonging to one project mattered to the forest.
+        project_id=uuid4(),
         forked_from=forked_from,
         forked_at=forked_at,
     )

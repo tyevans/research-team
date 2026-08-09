@@ -7,21 +7,25 @@ from eventsource.ports.positions import ExpectedVersion
 from langchain_core.messages import AIMessage
 
 from research_team.application.session_service import NO_SEARCH_CLAUSE
+from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import StartSession
 from research_team.domain.project import ProjectCreated
 from research_team.domain.topic import OpenTopic
-from research_team.infrastructure.agent.fetch import FETCH_PROMPT
+from research_team.infrastructure.agent.corpus_tools import CORPUS_PROMPT
+from research_team.infrastructure.agent.fetch import FETCH_CORPUS_PROMPT, FETCH_PROMPT
+from research_team.infrastructure.agent.knowledge_tools import KNOWLEDGE_PROMPT
 from research_team.infrastructure.persistence import (
     SNAPSHOT_THRESHOLD,
     EventStoreSessionRepository,
     build_aggregate_repository,
 )
 from research_team.infrastructure.persistence.event_store import build_topic_repository
+from tests.conftest import start_session
 
 
 async def test_session_survives_a_closed_store(fake_model, db_path, build_service, repository):
     first = await build_service(model=fake_model, db_path=db_path)
-    session_id = await first.create_session()
+    session_id = await start_session(first)
     await first.run_turn(session_id, "remember this")
     await first.close()
 
@@ -33,7 +37,7 @@ async def test_session_survives_a_closed_store(fake_model, db_path, build_servic
 
 async def test_reopening_appends_no_second_session_started(fake_model, db_path, build_service):
     first = await build_service(model=fake_model, db_path=db_path)
-    session_id = await first.create_session()
+    session_id = await start_session(first)
     before = len(await first.history(session_id))
     await first.close()
 
@@ -49,7 +53,7 @@ async def test_reopened_session_continues_the_same_stream(
         AIMessage(content="two", id="a2"),
     ]
     first = await build_service(model=fake_model, db_path=db_path)
-    session_id = await first.create_session()
+    session_id = await start_session(first)
     await first.run_turn(session_id, "first")
     await first.close()
 
@@ -62,7 +66,7 @@ async def test_reopened_session_continues_the_same_stream(
 
 async def test_reopening_keeps_the_stored_system_prompt(fake_model, db_path, build_service):
     first = await build_service(model=fake_model, db_path=db_path, system_prompt="ORIGINAL")
-    session_id = await first.create_session()
+    session_id = await start_session(first)
     await first.close()
 
     reopened = await build_service(
@@ -70,10 +74,19 @@ async def test_reopening_keeps_the_stored_system_prompt(fake_model, db_path, bui
     )
     session = await reopened.load(session_id)
     # Composition appends capability clauses (fetch always, and "no search"
-    # because none is configured here) to whatever system_prompt it is given --
-    # so the stored value is the first process's prompt plus its suffix, not
+    # because none is configured here) to whatever system_prompt it is given,
+    # and `start_in_project` appends the knowledge prompt on top -- so the
+    # stored value is the first process's prompt plus both suffixes, not
     # "DIFFERENT" plus the second's.
-    assert session.state.system_prompt == "ORIGINAL" + FETCH_PROMPT + NO_SEARCH_CLAUSE
+    assert session.state.system_prompt == (
+        "ORIGINAL"
+        + FETCH_PROMPT
+        + NO_SEARCH_CLAUSE
+        + KNOWLEDGE_PROMPT
+        + CORPUS_PROMPT
+        + FETCH_CORPUS_PROMPT
+        + TOPICS_PROMPT
+    )
 
 
 async def test_files_survive_a_reopen(fake_model, db_path, build_service, repository):
@@ -92,7 +105,7 @@ async def test_files_survive_a_reopen(fake_model, db_path, build_service, reposi
         AIMessage(content="wrote", id="a2"),
     ]
     first = await build_service(model=fake_model, db_path=db_path)
-    session_id = await first.create_session()
+    session_id = await start_session(first)
     await first.run_turn(session_id, "write it")
     await first.close()
 
@@ -105,9 +118,9 @@ async def test_list_sessions_reports_every_session_newest_first(
     fake_model, db_path, build_service
 ):
     service = await build_service(model=fake_model, db_path=db_path)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "the first one")
-    second = await service.create_session()
+    second = await start_session(service)
 
     summaries = await service.list_sessions()
     assert len(summaries) == 2
@@ -117,7 +130,7 @@ async def test_list_sessions_reports_every_session_newest_first(
 
 async def test_session_summary_describes_the_session(fake_model, db_path, build_service):
     service = await build_service(model=fake_model, db_path=db_path)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "a memorable opening line")
 
     summary = next(s for s in await service.list_sessions() if s.session_id == session_id)
@@ -125,12 +138,19 @@ async def test_session_summary_describes_the_session(fake_model, db_path, build_
     assert summary.first_message == "a memorable opening line"
 
 
-async def test_create_session_leaves_the_previous_one_alone(
+async def test_starting_a_session_leaves_the_previous_one_alone(
     fake_model, db_path, build_service, repository
 ):
+    """A second session is a second stream, not a reset of the store.
+
+    Two projects rather than one, which is the only way to have two live
+    sessions now -- a project holds one at a time and would reject the second.
+    That rejection is the project rule and is tested where it lives; the claim
+    here is about the store, so the sessions are kept out of each other's way.
+    """
     service = await build_service(model=fake_model, db_path=db_path)
-    original = await service.create_session()
-    new_id = await service.create_session()
+    original = await start_session(service)
+    new_id = await start_session(service)
 
     assert new_id != original
     assert (await repository.load(original)).version >= 1
@@ -140,9 +160,9 @@ async def test_sessions_are_isolated_from_each_other(
     fake_model, db_path, build_service, repository
 ):
     service = await build_service(model=fake_model, db_path=db_path)
-    first = await service.create_session()
+    first = await start_session(service)
     await service.run_turn(first, "in the first session")
-    second = await service.create_session()
+    second = await start_session(service)
 
     assert (await repository.load(second)).state.messages == []
 
@@ -195,7 +215,12 @@ async def test_read_since_ignores_events_from_other_aggregate_types(tmp_path):
         session_id = uuid4()
         session = repository.create(session_id)
         session.execute(
-            StartSession(session_id=session.aggregate_id, system_prompt="p", model_name="m")
+            StartSession(
+                session_id=session.aggregate_id,
+                system_prompt="p",
+                model_name="m",
+                project_id=uuid4(),
+            )
         )
         await repository.save(session)
 

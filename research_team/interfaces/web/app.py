@@ -113,8 +113,16 @@ callable closes over; `app.py` only calls it, the same division `_reader`
 below keeps for `CorpusRunner`."""
 
 
-class NewSession(BaseModel):
-    system_prompt: str | None = None
+# `NewSession` was here, with `POST /api/sessions`. Both are gone: a session
+# belongs to a project, so the only way to make one is
+# `POST /api/projects/{id}/join`, which is where the project agrees to be
+# joined. A body carrying a `project_id` would have been the same endpoint
+# with the project as a parameter instead of as the route, and two ways in is
+# how one of them ends up not enforcing the rule.
+#
+# `system_prompt` had no replacement and needed none: it was only ever set by
+# tests, and `start_in_project` composes the default prompt with the knowledge
+# prompt, which a caller-supplied override would have silently dropped.
 
 
 class NewTurn(BaseModel):
@@ -337,11 +345,6 @@ def create_app(
     @app.get("/api/sessions")
     async def list_sessions():
         return [summary_view(summary) for summary in await service.list_sessions()]
-
-    @app.post("/api/sessions")
-    async def create_session(body: NewSession | None = None):
-        prompt = body.system_prompt if body else None
-        return {"id": str(await service.create_session(prompt))}
 
     def _workflow_of(state: ProjectState) -> dict[str, Any]:
         """Which preset a project runs and where it stands in it, both nullable.

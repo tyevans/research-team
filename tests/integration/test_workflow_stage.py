@@ -20,7 +20,7 @@ from langchain_core.messages import AIMessage
 
 from research_team.domain import AdvanceStage, CreateProject, SelectWorkflow
 from research_team.workflows import hybrid_default
-from tests.conftest import ToolAwareFakeChatModel
+from tests.conftest import ToolAwareFakeChatModel, start_session
 
 FRAMING = "hybrid.step1.framing"
 
@@ -108,7 +108,7 @@ async def test_a_project_with_no_workflow_sees_every_registered_tool(build_appli
 async def test_a_session_outside_a_project_is_not_gated(build_application):
     model = _model()
     application = await build_application(model=model)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     await application.service.run_turn(session_id, "hi")
 

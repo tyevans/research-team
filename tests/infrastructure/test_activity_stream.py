@@ -1,6 +1,7 @@
 """What the executor reports while a turn is in flight."""
 
 from typing import Any
+from uuid import uuid4
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
@@ -42,7 +43,10 @@ async def test_running_a_turn_reports_whole_messages(aggregates, session_id):
     session = aggregates.create_new(session_id)
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt="be brief", model_name="fake"
+            session_id=session.aggregate_id,
+            system_prompt="be brief",
+            model_name="fake",
+            project_id=uuid4(),
         )
     )
     model = ToolAwareFakeChatModel(responses=[AIMessage(content="the reply", id="a1")])
@@ -66,7 +70,10 @@ async def test_prose_is_reported_as_a_delta(aggregates, session_id):
     session = aggregates.create_new(session_id)
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt="be brief", model_name="fake"
+            session_id=session.aggregate_id,
+            system_prompt="be brief",
+            model_name="fake",
+            project_id=uuid4(),
         )
     )
     model = ToolAwareFakeChatModel(
@@ -97,7 +104,10 @@ async def test_the_durable_record_is_identical_with_and_without_a_reporter(
         session = aggregates.create_new(session_id)
         session.execute(
             StartSession(
-                session_id=session.aggregate_id, system_prompt="be brief", model_name="fake"
+                session_id=session.aggregate_id,
+                system_prompt="be brief",
+                model_name="fake",
+                project_id=uuid4(),
             )
         )
         model = ToolAwareFakeChatModel(responses=[AIMessage(content="the reply", id="a1")])
@@ -121,7 +131,10 @@ async def test_a_raising_reporter_does_not_fail_the_turn(aggregates, session_id)
     session = aggregates.create_new(session_id)
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt="be brief", model_name="fake"
+            session_id=session.aggregate_id,
+            system_prompt="be brief",
+            model_name="fake",
+            project_id=uuid4(),
         )
     )
     model = ToolAwareFakeChatModel(responses=[AIMessage(content="the reply", id="a1")])

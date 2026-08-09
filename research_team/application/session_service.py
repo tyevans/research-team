@@ -392,22 +392,14 @@ class SessionService:
 
     # ---------------- lifecycle ----------------
 
-    async def create_session(self, system_prompt: str | None = None) -> UUID:
-        """Start a new session and return its id."""
-        session_id = uuid4()
-        aggregate = self._repository.create(session_id)
-        aggregate.execute(
-            StartSession(
-                session_id=session_id,
-                system_prompt=(
-                    system_prompt if system_prompt is not None else self._default_system_prompt
-                ),
-                model_name=self._executor.model_name,
-            )
-        )
-        await self._repository.save(aggregate)
-        return session_id
-
+    # `create_session` was here, and is deleted rather than given a
+    # `project_id` parameter. A session now belongs to a project always, and
+    # the way to make that true is for there to be no method that can produce
+    # one without: a parameterised `create_session` would sit beside
+    # `start_in_project` doing the same job less completely -- minting a
+    # session that names a project without the project having agreed to it, so
+    # no `JoinProject`, no holder, no inherited filesystem. Callers that
+    # wanted "a session, quickly" want `start_in_project` and a project.
     async def start_in_project(self, project_id: UUID) -> UUID:
         """Begin a session that shares the project's filesystem.
 

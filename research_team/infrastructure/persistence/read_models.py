@@ -27,10 +27,12 @@ from uuid import UUID, uuid5
 import aiosqlite
 from eventsource import (
     DeclarativeProjection,
+    FeedReadOptions,
     InMemoryEventBus,
     ReadModel,
     SQLCheckpointRepository,
     SQLDLQRepository,
+    collect,
     create_async_engine,
     handles,
 )
@@ -50,6 +52,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.application import SessionSummary, SummaryHealth
 from research_team.domain import (
+    CodingSession,
     DocumentRecord,
     FileDeleted,
     FileEdited,
@@ -94,7 +97,11 @@ class SessionSummaryRow(ReadModel):
     file_paths: list[str] = Field(default_factory=list)
     forked_from: UUID | None = None
     forked_at: int | None = None
-    project_id: UUID | None = None
+    project_id: UUID
+    """Required, matching `SessionStarted`. A row without one could only come
+    from a database written before a project was compulsory, and this build
+    does not load those: the event itself refuses to validate, so a rebuild
+    raises rather than quietly reproducing the row."""
 
     @field_validator("file_paths", mode="before")
     @classmethod
@@ -495,22 +502,44 @@ class SessionSummaryRunner:
 
         The read model is eventually consistent on purpose, which is invisible
         when a person clicks and maddening when a test asserts. Rather than
-        sleep and hope, this compares the subscription's position against the
-        log's own end -- so it waits exactly as long as it has to.
+        sleep and hope, this waits until nothing this projection consumes is
+        still unread -- so it waits exactly as long as it has to.
+
+        **It used to compare against `current_position()`, the store's global
+        end, and that was wrong in a way nothing could reach until now.** This
+        store is shared: `Project`, `Corpus`, `Topic` and redstring's own
+        streams live in it, while this subscription is scoped to
+        `CodingSession`. Any append of another type moves the global end to a
+        position this projection will never reach, and the wait runs its full
+        timeout.
+
+        Starting a session is exactly that case, every time: `start_in_project`
+        ends with `JoinProject`, a `Project` append. So the last event in the
+        store after any session starts is one this projection must ignore, and
+        `caught_up` could only ever time out. It was survivable while sessions
+        could be created without a project; it cannot be now, which is what
+        turned an intermittent test failure into a certain one.
+
+        The remaining-work read is scoped and starts from what the
+        subscription has already processed, so it is empty in the common case
+        rather than a scan of the log.
         """
         if self._manager is None:
             return
-        target = await self._store.current_position()
-        if target is None:
-            return
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
-            reached = self._subscription.last_processed_position
-            if reached is not None and not reached < target:
+            remaining = await collect(
+                self._store.read_all(
+                    from_position=self._subscription.last_processed_position,
+                    options=FeedReadOptions(aggregate_type=CodingSession.aggregate_type),
+                )
+            )
+            if not remaining:
                 return
             await asyncio.sleep(0.01)
         raise TimeoutError(
-            f"the /sessions projection did not reach {target} within {timeout}s"
+            f"the /sessions projection did not consume every {CodingSession.aggregate_type} "
+            f"event within {timeout}s"
         )
 
     async def stop(self) -> None:

@@ -52,7 +52,10 @@ def _new_session(session_id=None) -> CodingSession:
     session = CodingSession(session_id or uuid4())
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         )
     )
     return session

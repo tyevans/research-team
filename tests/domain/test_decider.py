@@ -15,6 +15,7 @@ from uuid import uuid4
 
 import pytest
 from eventsource import CommandRejectedError
+from pydantic import ValidationError
 
 from research_team.domain import (
     AutonomyChanged,
@@ -63,6 +64,7 @@ def started(session_id=None):
             session_id=session_id or uuid4(),
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
+            project_id=uuid4(),
         ),
     )
 
@@ -107,7 +109,10 @@ def test_starting_a_session_emits_session_started():
 
     [event] = decide(
         StartSession(
-            session_id=session_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         ),
         state,
     )
@@ -121,7 +126,12 @@ def test_starting_a_session_emits_session_started():
 
 def test_starting_twice_is_rejected():
     with pytest.raises(CommandRejectedError, match="already started"):
-        decide(StartSession(session_id=uuid4(), system_prompt="x", model_name="y"), started())
+        decide(
+            StartSession(
+                session_id=uuid4(), system_prompt="x", model_name="y", project_id=uuid4()
+            ),
+            started(),
+        )
 
 
 def test_a_session_records_the_project_it_belongs_to():
@@ -139,16 +149,18 @@ def test_a_session_records_the_project_it_belongs_to():
     assert evolve(state, events[0]).project_id == project_id
 
 
-def test_a_session_without_a_project_has_none():
-    session_id = uuid4()
-    state = initial_state()
+def test_a_session_outside_a_project_cannot_be_asked_for():
+    """What `test_a_session_without_a_project_has_none` used to assert.
 
-    events = decide(
-        StartSession(session_id=session_id, system_prompt="p", model_name="m"), state
-    )
-
-    assert events[0].project_id is None
-    assert evolve(state, events[0]).project_id is None
+    That test built a `StartSession` with no `project_id` and checked the
+    event and the state both came back `None`. `project_id` is required on
+    the command now, so the request cannot be phrased -- which is the point:
+    the rule is enforced by the type rather than by `decide` rejecting it, so
+    there is no rejection to test and no caller left to remember the rule.
+    The failure happens at construction, one layer before the decider.
+    """
+    with pytest.raises(ValidationError, match="project_id"):
+        StartSession(session_id=uuid4(), system_prompt="p", model_name="m")
 
 
 @pytest.mark.parametrize(
@@ -385,7 +397,13 @@ def test_evolve_ignores_an_event_it_has_no_branch_for():
 
     assert (
         evolve(
-            state, Unrelated(aggregate_id=state.session_id, system_prompt="", model_name="")
+            state,
+            Unrelated(
+                aggregate_id=state.session_id,
+                system_prompt="",
+                model_name="",
+                project_id=uuid4(),
+            ),
         ).messages
         == state.messages
     )

@@ -16,7 +16,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from research_team.domain import ToolResultRecorded
-from tests.conftest import ToolAwareFakeChatModel
+from tests.conftest import ToolAwareFakeChatModel, start_session
 
 ESCAPE_MARKER = "/tmp/research_team_escape_probe"
 
@@ -55,7 +55,7 @@ async def test_a_shell_command_cannot_reach_the_real_filesystem(
     build_application, shell_attempt
 ):
     application = await build_application(model=shell_attempt)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     await application.service.run_turn(session_id, "escape the sandbox")
 
@@ -67,7 +67,7 @@ async def test_a_shell_command_cannot_reach_the_real_filesystem(
 async def test_the_refusal_is_recorded_rather_than_swallowed(build_application, shell_attempt):
     """An attempt the log does not mention is an attempt nobody can audit."""
     application = await build_application(model=shell_attempt)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     await application.service.run_turn(session_id, "escape the sandbox")
 
@@ -80,7 +80,7 @@ async def test_the_refusal_is_recorded_rather_than_swallowed(build_application, 
 async def test_the_turn_survives_the_refusal(build_application, shell_attempt):
     """A refused tool is an ordinary tool result, not a crashed turn."""
     application = await build_application(model=shell_attempt)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     outcome = await application.service.run_turn(session_id, "escape the sandbox")
 

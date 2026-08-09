@@ -9,11 +9,13 @@ question anyone opens a trace to answer.
 
 from eventsource.observability import MockTracer
 
+from tests.conftest import start_session
+
 
 async def test_a_turn_opens_a_span(build_application, fake_model):
     tracer = MockTracer()
     application = await build_application(model=fake_model, tracer=tracer)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     await application.service.run_turn(session_id, "hello")
 
@@ -24,7 +26,7 @@ async def test_a_failing_turn_still_closes_its_span(build_application, fake_mode
     """A span that only ends on success reports failures as infinite duration."""
     tracer = MockTracer()
     application = await build_application(model=fake_model, tracer=tracer)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     fake_model.responses = []  # nothing to reply with
 
     with __import__("contextlib").suppress(Exception):
@@ -56,7 +58,7 @@ async def test_the_sessions_projection_is_traced_too(build_application, fake_mod
     """
     tracer = MockTracer()
     application = await build_application(model=fake_model, tracer=tracer)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     await application.service.run_turn(session_id, "hello")
     await application.summaries_caught_up()
 

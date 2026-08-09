@@ -8,6 +8,8 @@ and a log that already had events in it before the projection existed.
 
 from contextlib import suppress
 
+from tests.conftest import start_session
+
 
 async def _settle(application) -> None:
     """Let the subscription catch up with what was just appended."""
@@ -16,7 +18,7 @@ async def _settle(application) -> None:
 
 async def test_a_new_session_appears_in_the_list(build_application, fake_model, db_path):
     application = await build_application(model=fake_model, db_path=db_path)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     await _settle(application)
 
     listed = await application.service.list_sessions()
@@ -26,7 +28,7 @@ async def test_a_new_session_appears_in_the_list(build_application, fake_model, 
 
 async def test_a_turn_updates_the_row(build_application, fake_model, db_path):
     application = await build_application(model=fake_model, db_path=db_path)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     await application.service.run_turn(session_id, "hello")
     await _settle(application)
 
@@ -46,7 +48,7 @@ async def test_a_log_written_before_the_projection_existed_is_caught_up(
     authoritative, so it has to actually run.
     """
     first = await build_application(model=fake_model, db_path=db_path)
-    session_id = await first.service.create_session()
+    session_id = await start_session(first.service)
     await first.close()
 
     reopened = await build_application(model=fake_model, db_path=db_path)
@@ -64,7 +66,7 @@ async def test_a_restart_does_not_double_count(build_application, fake_model, db
     not being written, or not being read, looks like.
     """
     first = await build_application(model=fake_model, db_path=db_path)
-    session_id = await first.service.create_session()
+    session_id = await start_session(first.service)
     fake_model.responses = []  # nothing to reply with: the turn fails
     with suppress(Exception):
         await first.service.run_turn(session_id, "this will not work")
@@ -105,7 +107,7 @@ async def test_a_new_session_is_listed_without_waiting(build_application, fake_m
     """
     application = await build_application(model=fake_model, db_path=db_path)
 
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     listed = await application.service.list_sessions()
     assert session_id in {summary.session_id for summary in listed}

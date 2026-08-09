@@ -1,5 +1,5 @@
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from eventsource import InMemoryEventBus
@@ -13,6 +13,7 @@ from research_team import composition
 from research_team.application import SessionService
 from research_team.domain import (
     CodingSession,
+    CreateProject,
     StartSession,
 )
 from research_team.infrastructure.persistence import (
@@ -156,16 +157,53 @@ def session_id():
 
 
 @pytest.fixture
-def session(aggregates, session_id) -> CodingSession:
+def project_id():
+    return uuid4()
+
+
+@pytest.fixture
+def session(aggregates, session_id, project_id) -> CodingSession:
     aggregate = aggregates.create_new(session_id)
     aggregate.execute(
         StartSession(
             session_id=aggregate.aggregate_id,
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
+            project_id=project_id,
         )
     )
     return aggregate
+
+
+async def start_session(service: SessionService, *, name: str | None = None) -> UUID:
+    """A session in a project of its own, and the id of the session.
+
+    Stands where `SessionService.create_session()` used to. That method was
+    deleted because a session belongs to a project, and most tests that called
+    it did not care which project -- they wanted "a session" as a starting
+    condition. This gives them one, at the cost of a project per call.
+
+    A fresh project each time, deliberately. A project accepts one session at a
+    time and rejects a second by name, so a shared project would couple every
+    test that used it: two of them asking for a session would fail on the
+    *second* one, in a rejection about holding that names nothing the test was
+    about. Tests that want the holding rule exercise it explicitly with
+    `start_in_project`.
+
+    `name` defaults to a unique one for the same reason: `/project new` and the
+    web endpoint both reject a duplicate name, and a fixed default would turn
+    the second call in any test into a collision.
+    """
+    project = service.projects.create_new(uuid4())
+    identifier = project.aggregate_id
+    project.execute(
+        CreateProject(
+            project_id=identifier,
+            name=name if name is not None else f"test project {identifier}",
+        )
+    )
+    await service.projects.save(project)
+    return await service.start_in_project(identifier)
 
 
 class ToolAwareFakeChatModel(FakeMessagesListChatModel):

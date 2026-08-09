@@ -109,7 +109,10 @@ def _session() -> CodingSession:
     session = CodingSession(uuid4())
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt="be brief", model_name="fake"
+            session_id=session.aggregate_id,
+            system_prompt="be brief",
+            model_name="fake",
+            project_id=uuid4(),
         )
     )
     return session

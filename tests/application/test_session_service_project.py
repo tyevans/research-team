@@ -12,6 +12,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from research_team.domain import CreateProject
+from tests.conftest import start_session
 
 
 @pytest.fixture
@@ -103,14 +104,20 @@ async def test_a_second_session_cannot_start_while_one_holds_the_project(service
         await service.start_in_project(project_id)
 
 
-async def test_release_project_is_a_no_op_for_a_plain_session(service):
-    """A session with no `project_id` releasing nothing is not an error.
+async def test_release_project_is_a_no_op_for_a_session_that_holds_nothing(service):
+    """Releasing what you do not hold is not an error.
 
     The REPL calls `release_project` unconditionally on exit -- it does not
-    know whether the session it is closing ever joined a project -- so this
-    has to be safe to call on an ordinary session too.
+    know whether the session it is closing still holds its project -- so this
+    has to be safe on a session that does not.
+
+    Reached by releasing twice. It used to be reached with a session that had
+    no `project_id` at all, which cannot be built now; a session that has
+    already given its project back is the same "holds nothing" state by the
+    only route left to it.
     """
-    session_id = await service.create_session()
+    session_id = await start_session(service)
+    await service.release_project(session_id)
 
     await service.release_project(session_id)
 
@@ -173,15 +180,12 @@ async def test_a_session_started_in_a_project_records_the_knowledge_prompt(
     assert "knowledge graph" in session.state.system_prompt.lower()
 
 
-async def test_a_plain_session_does_not_mention_the_knowledge_graph(service):
-    """No project, no knowledge tools -- so the prompt must not describe
-    tools the session was never given.
-    """
-    session_id = await service.create_session()
-
-    session = await service.load(session_id)
-
-    assert "knowledge graph" not in session.state.system_prompt.lower()
+# `test_a_plain_session_does_not_mention_the_knowledge_graph` was here. It
+# checked that a session with no project was not told about tools it did not
+# have. There is no such session now -- every one belongs to a project and so
+# every one has the graph -- which makes the guarantee unconditional rather
+# than gone: the test above it, that a joined session *is* told, is now the
+# whole of the claim.
 
 
 async def test_a_session_started_in_a_project_is_told_about_its_topic_tools(
@@ -207,11 +211,6 @@ async def test_a_session_started_in_a_project_is_told_about_its_topic_tools(
     assert "record_finding" in prompt
 
 
-async def test_a_plain_session_is_not_told_about_topic_tools(service):
-    """No project, no topic tools -- so the prompt must not describe them, for
-    the same reason it must not describe the graph."""
-    session_id = await service.create_session()
-
-    session = await service.load(session_id)
-
-    assert "open_topic" not in session.state.system_prompt
+# `test_a_plain_session_is_not_told_about_topic_tools` was here, and went for
+# the same reason as its knowledge-graph twin above: the session it described
+# cannot be built.

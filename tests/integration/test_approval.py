@@ -36,7 +36,7 @@ from research_team.infrastructure.agent.search import build_search_tool
 from research_team.interfaces.cli import TerminalApprovals, repl
 from research_team.interfaces.web import WebApprovals, create_app
 from research_team.interfaces.web.app import _sse
-from tests.conftest import ToolAwareFakeChatModel
+from tests.conftest import ToolAwareFakeChatModel, start_session
 
 RESULT_TITLE = "Event Sourcing Explained"
 PAYLOAD = {
@@ -141,7 +141,7 @@ async def test_an_approved_search_is_decided_before_it_is_run(
     application = await build_application(
         model=searching_model, policy=_asking_policy(), approvals=port
     )
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     await application.service.run_turn(session_id, "what is event sourcing?")
 
@@ -162,7 +162,7 @@ async def test_a_rejected_search_records_the_decision_and_no_result(
     application = await build_application(
         model=searching_model, policy=_asking_policy(), approvals=port
     )
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     await application.service.run_turn(session_id, "what is event sourcing?")
 
@@ -180,7 +180,7 @@ async def test_an_edited_search_records_both_the_original_and_the_amendment(
     application = await build_application(
         model=searching_model, policy=_asking_policy(), approvals=port
     )
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     await application.service.run_turn(session_id, "what is event sourcing?")
 
@@ -283,6 +283,7 @@ async def test_an_unreadable_key_is_asked_again_rather_than_assumed():
 
 async def test_autonomy_lists_every_gated_tool(build_service, fake_model):
     current = await repl.Repl.start(await build_service(model=fake_model))
+    current.session_id = await start_session(current.service)
 
     output = await repl.handle_command(current, "/autonomy")
 
@@ -298,6 +299,7 @@ async def test_autonomy_sets_a_level_and_records_it(build_service, fake_model):
     """
     service = await build_service(model=fake_model)
     current = await repl.Repl.start(service)
+    current.session_id = await start_session(service)
 
     output = await repl.handle_command(current, "/autonomy web_search ask")
 
@@ -310,6 +312,7 @@ async def test_autonomy_sets_a_level_and_records_it(build_service, fake_model):
 
 async def test_autonomy_complains_about_a_bad_level_without_dying(build_service, fake_model):
     current = await repl.Repl.start(await build_service(model=fake_model))
+    current.session_id = await start_session(current.service)
 
     output = await repl.handle_command(current, "/autonomy web_search whenever")
 
@@ -319,6 +322,7 @@ async def test_autonomy_complains_about_a_bad_level_without_dying(build_service,
 
 async def test_autonomy_complains_about_an_ungated_tool(build_service, fake_model):
     current = await repl.Repl.start(await build_service(model=fake_model))
+    current.session_id = await start_session(current.service)
 
     output = await repl.handle_command(current, "/autonomy read_file ask")
 
@@ -327,6 +331,7 @@ async def test_autonomy_complains_about_an_ungated_tool(build_service, fake_mode
 
 async def test_autonomy_reports_its_usage_when_given_nonsense(build_service, fake_model):
     current = await repl.Repl.start(await build_service(model=fake_model))
+    current.session_id = await start_session(current.service)
 
     assert "usage" in await repl.handle_command(current, "/autonomy web_search")
 
@@ -362,7 +367,7 @@ async def test_a_browser_approval_unblocks_the_turn_and_the_search_runs(
         build_application, searching_model, _asking_policy(), approvals
     )
     async with client:
-        session_id = await application.service.create_session()
+        session_id = await start_session(application.service)
         turn = asyncio.ensure_future(application.turns.run(session_id, "search please"))
 
         parked = await _wait_for_pending(approvals, session_id)
@@ -397,7 +402,7 @@ async def test_a_browser_rejection_stops_the_call(
         build_application, searching_model, _asking_policy(), approvals
     )
     async with client:
-        session_id = await application.service.create_session()
+        session_id = await start_session(application.service)
         turn = asyncio.ensure_future(application.turns.run(session_id, "search please"))
         parked = await _wait_for_pending(approvals, session_id)
 
@@ -421,7 +426,7 @@ async def test_an_edit_from_the_browser_amends_the_arguments(
         build_application, searching_model, _asking_policy(), approvals
     )
     async with client:
-        session_id = await application.service.create_session()
+        session_id = await start_session(application.service)
         turn = asyncio.ensure_future(application.turns.run(session_id, "search please"))
         parked = await _wait_for_pending(approvals, session_id)
 
@@ -442,7 +447,7 @@ async def test_answering_the_same_approval_twice_is_a_404(
         build_application, searching_model, _asking_policy(), approvals
     )
     async with client:
-        session_id = await application.service.create_session()
+        session_id = await start_session(application.service)
         turn = asyncio.ensure_future(application.turns.run(session_id, "search please"))
         parked = await _wait_for_pending(approvals, session_id)
         url = f"/api/sessions/{session_id}/approvals/{parked['id']}"
@@ -466,7 +471,7 @@ async def test_the_request_is_published_on_the_existing_sse_feed(
     application = await build_application(
         model=searching_model, policy=_asking_policy(), approvals=approvals
     )
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     frames: list[str] = []
     generator = _sse(_StillHere(), application.feed, None, approvals)
@@ -524,7 +529,7 @@ async def test_cancelling_the_turn_unblocks_a_waiting_approval(
         build_application, searching_model, _asking_policy(), approvals
     )
     async with client:
-        session_id = await application.service.create_session()
+        session_id = await start_session(application.service)
         turn = asyncio.ensure_future(application.turns.run(session_id, "search please"))
         await _wait_for_pending(approvals, session_id)
 
@@ -550,7 +555,7 @@ async def test_cancelling_a_session_directly_frees_its_approvals(
         build_application, searching_model, _asking_policy(), approvals
     )
     async with client:
-        session_id = await application.service.create_session()
+        session_id = await start_session(application.service)
         turn = asyncio.ensure_future(application.turns.run(session_id, "search please"))
         await _wait_for_pending(approvals, session_id)
 

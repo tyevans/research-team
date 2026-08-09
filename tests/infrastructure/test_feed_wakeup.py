@@ -6,6 +6,7 @@ promptly, and that its absence costs nothing worse than the poll interval.
 """
 
 import asyncio
+from uuid import uuid4
 
 from research_team.domain import (
     StartSession,
@@ -17,7 +18,10 @@ async def test_a_local_save_wakes_a_waiting_reader(repository, session_id):
     session = repository.create(session_id)
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         )
     )
 
@@ -48,7 +52,10 @@ async def test_a_save_before_the_wait_does_not_leave_a_signal_standing(repositor
     session = repository.create(session_id)
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         )
     )
     await repository.save(session)
@@ -65,7 +72,10 @@ async def test_a_position_survives_a_round_trip_through_text(repository, session
     session = repository.create(session_id)
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         )
     )
     await repository.save(session)

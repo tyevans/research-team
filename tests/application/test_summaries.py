@@ -27,6 +27,9 @@ def user_message(text: str) -> dict:
 @pytest.fixture
 def make_session(aggregates):
     def make(first_message: str | None = None, project_id=None) -> CodingSession:
+        # A project of its own when the caller does not name one: the field is
+        # required, and every test here that cares passes its own.
+        project_id = project_id if project_id is not None else uuid4()
         aggregate = aggregates.create_new(uuid4())
         aggregate.execute(
             StartSession(
@@ -111,11 +114,14 @@ def test_a_sessions_project_is_reported_so_rows_can_be_grouped_by_it(make_sessio
     A session list carrying no project key cannot be arranged under the
     projects those sessions belong to, which is what the landing page is.
     """
-    project_id = uuid4()
-    in_project = make_session("shared work", project_id=project_id)
-    loose = make_session("just a prompt")
+    research, archive = uuid4(), uuid4()
+    in_research = make_session("shared work", project_id=research)
+    in_archive = make_session("other work", project_id=archive)
 
-    rows = {row.session_id: row for row in summaries_for(in_project, loose)}
+    rows = {row.session_id: row for row in summaries_for(in_research, in_archive)}
 
-    assert rows[in_project.aggregate_id].project_id == project_id
-    assert rows[loose.aggregate_id].project_id is None
+    # Two projects rather than one-and-a-loose-session: a session outside a
+    # project cannot be built now, so "carries its own project" is the only
+    # remaining way to say that the key is per-row and not a constant.
+    assert rows[in_research.aggregate_id].project_id == research
+    assert rows[in_archive.aggregate_id].project_id == archive

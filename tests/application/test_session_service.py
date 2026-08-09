@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -6,11 +8,13 @@ from research_team.domain import (
     AssistantMessageAdded,
     FileWritten,
     SessionStarted,
+    StartSession,
     TurnCompleted,
     TurnFailed,
     UserMessageSent,
 )
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
+from tests.conftest import start_session
 
 
 @pytest.fixture
@@ -21,7 +25,7 @@ async def service(build_service, fake_model):
 @pytest.fixture
 async def session_id(service):
     """The session under test. The caller owns the cursor now, so tests do too."""
-    return await service.create_session()
+    return await start_session(service)
 
 
 @pytest.fixture
@@ -83,7 +87,7 @@ async def test_tool_call_writes_file_and_records_events(build_service, fake_mode
         AIMessage(content="wrote it", id="a2"),
     ]
     service = await build_service(model=fake_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     outcome = await service.run_turn(session_id, "write hello.py")
 
     assert outcome.reply == "wrote it"
@@ -193,7 +197,7 @@ async def test_second_turn_does_not_replay_earlier_messages(build_service, fake_
         AIMessage(content="second reply", id="a2"),
     ]
     service = await build_service(model=fake_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     await service.run_turn(session_id, "first")
     after_first = len(await service.history(session_id))
@@ -267,7 +271,7 @@ def editing_model(fake_model):
 
 async def test_state_at_reproduces_the_earlier_workspace(build_service, editing_model):
     service = await build_service(model=editing_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "write a.py")
     await service.run_turn(session_id, "revise it")
 
@@ -281,7 +285,7 @@ async def test_state_at_reproduces_the_earlier_workspace(build_service, editing_
 
 async def test_state_at_writes_nothing_to_the_log(build_service, editing_model):
     service = await build_service(model=editing_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "write a.py")
     before = await service.history(session_id)
 
@@ -292,7 +296,7 @@ async def test_state_at_writes_nothing_to_the_log(build_service, editing_model):
 
 async def test_state_at_creates_no_session(build_service, editing_model):
     service = await build_service(model=editing_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "write a.py")
     before = len(await service.list_sessions())
 
@@ -321,7 +325,26 @@ async def test_turn_runs_under_the_sessions_own_prompt(build_service, fake_model
     monkeypatch.setattr(DeepAgentTurnExecutor, "_invoke", capture)
 
     service = await build_service(model=fake_model, system_prompt="the service default")
-    session_id = await service.create_session("a distinctive prompt")
+
+    # Started through the repository rather than through the service, because
+    # no service method takes a prompt any more: `start_in_project` composes
+    # the default with the knowledge prompt, so a session made that way would
+    # carry a prompt derived from the default and there would be nothing to
+    # tell "the session's own" apart from "the service's". The claim under
+    # test is about what `run_turn` reads, and `StartSession` is where a
+    # session's prompt is set either way.
+    session_id = uuid4()
+    session = service._repository.create(session_id)
+    session.execute(
+        StartSession(
+            session_id=session_id,
+            system_prompt="a distinctive prompt",
+            model_name=fake_model.__class__.__name__,
+            project_id=uuid4(),
+        )
+    )
+    await service._repository.save(session)
+
     await service.run_turn(session_id, "hello")
 
     assert seen == ["a distinctive prompt"]
@@ -333,7 +356,7 @@ async def test_state_at_leaves_the_folded_aggregate_with_nothing_to_commit(
     """A fold is a read. If it left uncommitted events, a later save would
     silently append a duplicate of the past to the log."""
     service = await build_service(model=editing_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "write a.py")
 
     folded = await service.state_at(session_id, 2)
@@ -344,7 +367,7 @@ async def test_state_at_leaves_the_folded_aggregate_with_nothing_to_commit(
 
 async def test_state_at_does_not_disturb_the_live_aggregate(build_service, editing_model):
     service = await build_service(model=editing_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "write a.py")
     await service.run_turn(session_id, "revise it")
     live_before = await service.load(session_id)

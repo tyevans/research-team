@@ -2,6 +2,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from research_team.domain import CodingSession
+from tests.conftest import start_session
 
 
 @pytest.fixture
@@ -39,7 +40,7 @@ async def test_refolding_reproduces_state_exactly(
     build_service, store, db_path, scripted_model
 ):
     service = await build_service(model=scripted_model, db_path=db_path)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "create app.py")
     await service.run_turn(session_id, "change 1 to 2")
 
@@ -57,7 +58,7 @@ async def test_refolding_reproduces_state_exactly(
 
 async def test_replay_reproduces_file_content(build_service, store, db_path, scripted_model):
     service = await build_service(model=scripted_model, db_path=db_path)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "create app.py")
     await service.run_turn(session_id, "change 1 to 2")
 
@@ -73,7 +74,7 @@ async def test_replay_is_deterministic_across_repeats(
     build_service, store, db_path, scripted_model
 ):
     service = await build_service(model=scripted_model, db_path=db_path)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "create app.py")
 
     from eventsource.application.aggregates.repository import AggregateRepository
@@ -88,7 +89,7 @@ async def test_fork_diverges_without_affecting_original(
     build_service, repository, db_path, scripted_model
 ):
     service = await build_service(model=scripted_model, db_path=db_path)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "create app.py")
     await service.run_turn(session_id, "change 1 to 2")
 

@@ -8,6 +8,7 @@ from research_team.domain import SessionForkedFrom, ToolResultRecorded, TurnFail
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 from research_team.interfaces.cli import repl
 from research_team.interfaces.cli.formatters import format_log
+from tests.conftest import start_session
 
 
 @pytest.fixture
@@ -35,7 +36,7 @@ def failing_edit_model(fake_model):
 
 async def test_failed_tool_call_is_flagged(build_service, failing_edit_model):
     service = await build_service(model=failing_edit_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "edit a file that does not exist")
 
     log = EventAssertions(await service.history(session_id))
@@ -61,7 +62,7 @@ async def test_successful_tool_call_is_not_flagged(build_service, fake_model):
         AIMessage(content="wrote", id="a2"),
     ]
     service = await build_service(model=fake_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "write it")
 
     results = EventAssertions(await service.history(session_id)).get_events_of_type(
@@ -72,14 +73,14 @@ async def test_successful_tool_call_is_not_flagged(build_service, fake_model):
 
 async def test_errored_tool_result_is_marked_in_the_log(build_service, failing_edit_model):
     service = await build_service(model=failing_edit_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "edit a file that does not exist")
     assert "!" in format_log(await service.history(session_id), limit=50)
 
 
 async def test_fork_records_its_source(build_service, repository, db_path, fake_model):
     service = await build_service(model=fake_model, db_path=db_path)
-    source = await service.create_session()
+    source = await start_session(service)
     await service.run_turn(source, "hello")
 
     forked_id = await service.fork(source, at=2)
@@ -91,7 +92,7 @@ async def test_fork_records_its_source(build_service, repository, db_path, fake_
 
 async def test_fork_lineage_is_an_event_on_the_stream(build_service, fake_model):
     service = await build_service(model=fake_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "hello")
     forked_id = await service.fork(session_id, at=2)
 
@@ -105,7 +106,7 @@ async def test_fork_lineage_is_an_event_on_the_stream(build_service, fake_model)
 
 async def test_lineage_survives_a_cold_refold(build_service, fake_model, db_path):
     service = await build_service(model=fake_model, db_path=db_path)
-    source = await service.create_session()
+    source = await start_session(service)
     await service.run_turn(source, "hello")
     forked_id = await service.fork(source, at=2)
     await service.close()
@@ -116,7 +117,7 @@ async def test_lineage_survives_a_cold_refold(build_service, fake_model, db_path
 
 async def test_unforked_session_has_no_lineage(build_service, fake_model):
     service = await build_service(model=fake_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     aggregate = await service.load(session_id)
     assert aggregate.state.forked_from is None
 
@@ -125,7 +126,7 @@ async def test_sessions_view_shows_lineage_and_failures(
     build_service, fake_model, monkeypatch
 ):
     service = await build_service(model=fake_model)
-    source = await service.create_session()
+    source = await start_session(service)
     await service.run_turn(source, "hello")
     current = repl.Repl(service, await service.fork(source, at=2))
 
@@ -144,7 +145,7 @@ async def test_sessions_view_shows_lineage_and_failures(
 
 async def test_state_reports_lineage(build_service, fake_model):
     service = await build_service(model=fake_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "hello")
     current = repl.Repl(service, await service.fork(session_id, at=2))
 
@@ -164,7 +165,7 @@ async def test_turn_failed_appears_in_the_log(service_with_failure):
 @pytest.fixture
 async def service_with_failure(build_service, fake_model, monkeypatch):
     service = await build_service(model=fake_model)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     async def boom(*args, **kwargs):
         raise RuntimeError("model exploded")

@@ -111,6 +111,29 @@ select {
   color: inherit;
 }
 
+/* Fields carry the page's background as well as its text colour.
+   `color: inherit` above was only half the job: it gave every field the
+   theme's light-grey text and left the browser's own white background
+   underneath. Any field without a class of its own -- `.seed-input` sets only
+   `flex`, and a bare `<input>` sets nothing -- rendered light grey on white
+   and could not be read while being typed into.
+   `composer.css`'s `.input` had already met this for `<select>` and said so in
+   a comment; this is the same fact applied where a field does not have to opt
+   in. Anything setting its own background still wins on specificity. */
+input,
+textarea,
+select {
+  background: var(--bg);
+}
+
+/* Dimmer than a real value, and deliberately not `--fg-faint`: a placeholder
+   is a hint, not disabled content, so it stays legible while reading as
+   secondary. */
+input::placeholder,
+textarea::placeholder {
+  color: var(--fg-dim);
+}
+
 ::selection {
   background: var(--accent-dim);
   color: #fff;

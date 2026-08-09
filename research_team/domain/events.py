@@ -41,12 +41,22 @@ class SessionStarted(DomainEvent):
     aggregate_type: str = "CodingSession"
     system_prompt: str
     model_name: str
-    project_id: UUID | None = None
+    project_id: UUID
     """The project whose filesystem and knowledge graph this session shares.
 
-    Defaulted rather than required: every session written before projects
-    existed has no such key, and `None` means exactly what its absence meant.
-    This is case 1 of the strategy at the top of this module.
+    Required, and deliberately not defaulted. It was `UUID | None` under case 1
+    of the strategy above, which was right while sessions could exist outside a
+    project; they cannot now, so a `None` here is not "written before projects
+    existed" but a session with no filesystem, no knowledge graph and no course
+    -- a state the rest of the system has no handling for.
+
+    This is a **breaking change to stored payloads**: a session written without
+    a project no longer loads, and there is no validator to translate one,
+    because there is nothing to translate it *to*. Chosen over a shim while the
+    project is pre-release and holds no real data. The cost is stated rather
+    than hidden -- a build that has to read such a log again needs this field
+    optional and every caller of `project_id` ready for None, which is the
+    design that was just removed.
     """
 
 

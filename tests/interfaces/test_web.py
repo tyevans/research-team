@@ -30,6 +30,7 @@ from research_team.infrastructure.persistence.event_store import build_topic_rep
 from research_team.interfaces.web import TurnActivity, create_app
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.seeding import SeedingActivity
+from tests.conftest import start_session
 
 
 async def _started(**kwargs):
@@ -131,7 +132,17 @@ def service(app_and_client):
 
 
 async def _new_session(client) -> str:
-    response = await client.post("/api/sessions", json={})
+    """A session over HTTP, by the only route there is: a project, then a join.
+
+    `POST /api/sessions` is gone -- a session belongs to a project, and joining
+    one is where the project agrees to it. A project per call, with a unique
+    name: a project holds one session at a time and creation rejects a
+    duplicate name, so a shared one would fail the second caller in a rejection
+    about neither of their subjects.
+    """
+    project = await client.post("/api/projects", json={"name": f"test project {uuid4()}"})
+    assert project.status_code == 200
+    response = await client.post(f"/api/projects/{project.json()['id']}/join")
     assert response.status_code == 200
     return response.json()["id"]
 
@@ -154,13 +165,12 @@ async def test_get_session_reports_its_prompt_and_model(client):
     assert body["files"] == []
 
 
-async def test_create_session_honours_a_custom_prompt(client):
-    response = await client.post(
-        "/api/sessions", json={"system_prompt": "a distinctive prompt"}
-    )
-    session_id = response.json()["id"]
-    body = (await client.get(f"/api/sessions/{session_id}")).json()
-    assert body["system_prompt"] == "a distinctive prompt"
+# `test_create_session_honours_a_custom_prompt` was here. It posted a
+# `system_prompt` to `POST /api/sessions`; both the field and the endpoint are
+# gone, and there is nothing left to assert -- `start_in_project` composes the
+# prompt and takes no override, so no HTTP caller can choose one. The claim
+# that a session runs under its own prompt still has a home in
+# tests/application/test_session_service.py, driven at the aggregate.
 
 
 async def test_unknown_session_is_404(client):
@@ -391,7 +401,10 @@ async def test_sse_frames_each_event_as_a_data_line(repository, session_id):
     aggregate = repository.create(session_id)
     aggregate.execute(
         StartSession(
-            session_id=aggregate.aggregate_id, system_prompt="prompt", model_name="test-model"
+            session_id=aggregate.aggregate_id,
+            system_prompt="prompt",
+            model_name="test-model",
+            project_id=uuid4(),
         )
     )
     await repository.save(aggregate)
@@ -524,7 +537,7 @@ async def test_stream_reaches_a_real_browser_over_a_real_socket(db_path, fake_mo
     listener = asyncio.create_task(listen())
     try:
         await asyncio.sleep(0.4)  # let the subscriber take its position
-        session_id = await application.service.create_session()
+        session_id = await start_session(application.service)
         await asyncio.wait_for(listener, timeout=10)
     finally:
         # Let the server notice the browser has gone and unwind the streaming
@@ -561,7 +574,7 @@ async def test_two_turns_at_once_on_one_session_conflict_rather_than_interleave(
     failure.
     """
     application, client = app_and_client
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     first, second = await asyncio.gather(
         client.post(f"/api/sessions/{session_id}/turns", json={"input": "a"}),
@@ -581,8 +594,8 @@ async def test_two_turns_at_once_on_one_session_conflict_rather_than_interleave(
 
 async def test_turns_on_different_sessions_run_concurrently(app_and_client):
     application, client = app_and_client
-    first_id = await application.service.create_session()
-    second_id = await application.service.create_session()
+    first_id = await start_session(application.service)
+    second_id = await start_session(application.service)
 
     responses = await asyncio.gather(
         client.post(f"/api/sessions/{first_id}/turns", json={"input": "a"}),
@@ -597,7 +610,7 @@ async def test_turns_on_different_sessions_run_concurrently(app_and_client):
 
 async def test_reads_are_safe_while_a_turn_is_in_flight(app_and_client):
     application, client = app_and_client
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     await client.post(f"/api/sessions/{session_id}/turns", json={"input": "first"})
 
     turn, events, listing, scrub = await asyncio.gather(
@@ -619,7 +632,7 @@ async def test_a_failed_turn_is_recorded_and_reported(app_and_client, monkeypatc
     from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 
     application, client = app_and_client
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     async def boom(self, session, messages, system_prompt, on_activity):
         raise RuntimeError("model endpoint is down")
@@ -676,7 +689,7 @@ async def test_a_file_deleted_later_is_still_readable_in_the_past(db_path, fake_
     """The headline case: seeing a deleted file again is the point."""
     application = await _started(model=fake_model, db_path=db_path)
     api = create_app(application.service, application.feed, application.turns)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     session = await application.service.load(session_id)
     session.execute(WriteFile(path="/doomed.py", file_data={"content": "still here\n"}))
     session.execute(DeleteFile(path="/doomed.py"))
@@ -773,7 +786,7 @@ async def slow_app(db_path):
 
 async def test_an_in_flight_turn_is_visible_and_cancellable(slow_app):
     application, client, _ = slow_app
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     turn = asyncio.create_task(
         client.post(f"/api/sessions/{session_id}/turns", json={"input": "slow"})
@@ -799,7 +812,7 @@ async def test_an_in_flight_turn_is_visible_and_cancellable(slow_app):
 async def test_a_second_turn_is_refused_while_one_is_running(slow_app):
     """Refused immediately, rather than after spending a minute in the model."""
     application, client, _ = slow_app
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     turn = asyncio.create_task(
         client.post(f"/api/sessions/{session_id}/turns", json={"input": "slow"})
@@ -815,7 +828,7 @@ async def test_a_second_turn_is_refused_while_one_is_running(slow_app):
 
 async def test_the_session_still_works_after_a_cancellation(slow_app):
     application, client, model = slow_app
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     turn = asyncio.create_task(
         client.post(f"/api/sessions/{session_id}/turns", json={"input": "slow"})
@@ -834,7 +847,7 @@ async def test_the_session_still_works_after_a_cancellation(slow_app):
 async def test_a_running_turn_is_described_not_just_flagged(slow_app):
     """A tab arriving mid-turn should be able to say which turn, and for how long."""
     application, client, _ = slow_app
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     turn = asyncio.create_task(
         client.post(f"/api/sessions/{session_id}/turns", json={"input": "slow"})
@@ -865,7 +878,7 @@ async def test_a_quiet_session_reports_no_running_turn_details(client):
 async def test_a_cancellation_is_marked_as_such_in_the_log(slow_app):
     """Stopped on purpose must be distinguishable from broke, without prose."""
     application, client, _ = slow_app
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     turn = asyncio.create_task(
         client.post(f"/api/sessions/{session_id}/turns", json={"input": "slow"})
@@ -886,7 +899,7 @@ async def test_a_genuine_failure_is_not_marked_cancelled(app_and_client, monkeyp
     from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 
     application, client = app_and_client
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     async def boom(self, session, messages, system_prompt, on_activity):
         raise RuntimeError("model endpoint is down")
@@ -936,7 +949,10 @@ async def test_each_frame_carries_the_cursor_that_follows_it(repository, session
     aggregate = repository.create(session_id)
     aggregate.execute(
         StartSession(
-            session_id=aggregate.aggregate_id, system_prompt="prompt", model_name="test-model"
+            session_id=aggregate.aggregate_id,
+            system_prompt="prompt",
+            model_name="test-model",
+            project_id=uuid4(),
         )
     )
     await repository.save(aggregate)
@@ -963,7 +979,10 @@ async def test_reconnecting_with_a_cursor_delivers_what_was_missed(repository, s
     aggregate = repository.create(session_id)
     aggregate.execute(
         StartSession(
-            session_id=aggregate.aggregate_id, system_prompt="prompt", model_name="test-model"
+            session_id=aggregate.aggregate_id,
+            system_prompt="prompt",
+            model_name="test-model",
+            project_id=uuid4(),
         )
     )
     await repository.save(aggregate)
@@ -995,7 +1014,10 @@ async def test_an_unplaceable_cursor_falls_back_to_the_live_end(repository, sess
     aggregate = repository.create(session_id)
     aggregate.execute(
         StartSession(
-            session_id=aggregate.aggregate_id, system_prompt="prompt", model_name="test-model"
+            session_id=aggregate.aggregate_id,
+            system_prompt="prompt",
+            model_name="test-model",
+            project_id=uuid4(),
         )
     )
     await repository.save(aggregate)  # already in the log, must not be replayed
@@ -1021,7 +1043,7 @@ async def test_rebuild_endpoint_rederives_the_session_list(client, service):
     Safe to expose: it discards derived data and recomputes it from the log,
     which is idempotent and cannot lose anything the log still holds.
     """
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     response = await client.post("/api/summaries/rebuild")
 
@@ -1171,13 +1193,31 @@ async def test_releasing_a_session_frees_its_project_for_the_next_one(client):
     assert second.json()["id"] != first
 
 
-async def test_releasing_a_session_in_no_project_is_not_an_error(client):
-    session_id = (await client.post("/api/sessions")).json()["id"]
+async def test_releasing_a_session_twice_is_not_an_error(client):
+    """Releasing what you no longer hold answers calmly rather than raising.
+
+    This replaces a test that made a project-less session with
+    `POST /api/sessions` and released that, asserting
+    `{"released": False, "project_id": None}`. A session outside a project can
+    no longer be built, so that response shape is unreachable and the branch in
+    `release_session` that returns it is dead. The second release stands in as
+    the reachable way to release something you do not hold, which is the case
+    that has to stay quiet -- every REPL and browser exit path calls release
+    unconditionally.
+
+    Note what the second call answers: `released: True`, though nothing moved.
+    `release_project` no-ops when the session is not the holder and the route
+    reports success either way. Asserted as it stands rather than as it ought
+    to be; changing the route is not this test's to do.
+    """
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    session_id = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
+    assert (await client.post(f"/api/sessions/{session_id}/release")).status_code == 200
 
     response = await client.post(f"/api/sessions/{session_id}/release")
 
     assert response.status_code == 200
-    assert response.json() == {"released": False, "project_id": None}
+    assert response.json() == {"released": True, "project_id": project_id}
 
 
 async def test_release_advances_the_tip_so_the_next_session_inherits(client, service):
@@ -2120,7 +2160,7 @@ LESSON_PATH = "/course/01-lesson.md"
 
 
 async def _with_lesson(service, content=LESSON, path=LESSON_PATH) -> str:
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     session = await service.load(session_id)
     session.execute(WriteFile(path=path, file_data={"content": content}))
     await service._repository.save(session)
@@ -2182,7 +2222,7 @@ async def test_an_unrecognised_view_is_refused_rather_than_defaulted(client, ser
 
 
 async def test_a_parsed_file_can_be_read_in_the_past(client, service):
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     session = await service.load(session_id)
     session.execute(WriteFile(path="/c.md", file_data={"content": LESSON}))
     session.execute(DeleteFile(path="/c.md"))
@@ -2263,7 +2303,7 @@ async def test_a_response_of_the_wrong_shape_is_a_400_not_a_500(client, service)
 
 async def test_an_attempt_is_graded_against_the_file_as_it_was(client, service):
     """Grading at HEAD would mark yesterday's attempt against today's key."""
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     session = await service.load(session_id)
     session.execute(WriteFile(path="/c.md", file_data={"content": LESSON}))
     await service._repository.save(session)
