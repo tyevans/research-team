@@ -2,7 +2,7 @@ import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Approval } from '@domain/approval/approval.ts'
 import type { SeedingRun } from '@domain/research/seeding.ts'
 import type { LogEntry } from '@domain/session/log-entry.ts'
-import type { ApprovalId, SessionId } from '@domain/shared/identifier.ts'
+import type { ApprovalId, SessionId, TopicId } from '@domain/shared/identifier.ts'
 
 /** What arrives over the live feed, as three genuinely different things.
  *
@@ -43,6 +43,18 @@ export type FeedFrame =
    * also gets from the catch-up route, which is not project-addressed once
    * it is in a per-project query cache. */
   | { readonly kind: 'seeding'; readonly projectId: string; readonly run: SeedingRun }
+  /** A topic was opened or moved.
+   *
+   * A durable log entry, unlike `extraction` and `seeding` beside it -- it
+   * carries a feed position, so a reconnect replays it. It is still not a
+   * `log` frame, because a topic is not a session: its aggregate id under
+   * `sessionId` would have the tree and the session views refetching a
+   * session that does not exist.
+   *
+   * No project id, matching the server (`topic_change` in `presenters.py`
+   * says why): only the creation event knows one. A subscriber scopes by the
+   * project it is already showing. */
+  | { readonly kind: 'topic'; readonly topicId: TopicId; readonly change: string }
 
 export type ConnectionState = 'connecting' | 'open' | 'down'
 

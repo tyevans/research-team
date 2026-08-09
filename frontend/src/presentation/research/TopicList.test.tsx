@@ -1,18 +1,26 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement, ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
+import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { TopicRepository } from '@application/ports/repositories.ts'
 import type { TopicView } from '@domain/research/topic.ts'
-import { ProjectId, TopicId } from '@domain/shared/identifier.ts'
+import { EventIndex } from '@domain/session/event-index.ts'
+import { ProjectId, SessionId, TopicId } from '@domain/shared/identifier.ts'
 
+import { StreamProvider } from '../shell/StreamProvider.tsx'
+import { FRAME_DEBOUNCE_MS } from '../shell/use-frame-refresh.ts'
 import { TopicList } from './TopicList.tsx'
 
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
+/** The topic a pushed frame names. Deliberately not one of the topics any
+ *  test lists: a frame says *something* moved, and the list is re-read
+ *  wholesale rather than patched from the frame's own id. */
+const OTHER = TopicId('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
 
 const topic = (over: Partial<TopicView> = {}): TopicView => ({
   topicId: TopicId('22222222-2222-2222-2222-222222222222'),
@@ -53,14 +61,56 @@ const fakeTopics = (list: TopicRepository['list']): TopicRepository => ({
   }),
 })
 
+/** Mirrors `SeedPanel.test.tsx`'s fake stream, so a live-update assertion
+ *  drives the real `StreamProvider` fan-out rather than calling a prop. */
+const fakeStream = () => {
+  let listener: EventStreamListener | null = null
+  const stream: EventStream = {
+    connect: (received) => {
+      listener = received
+    },
+    disconnect: () => {
+      listener = null
+    },
+  }
+  return {
+    stream,
+    push: (change = 'TopicOpened') =>
+      act(() => {
+        listener?.onFrame({ kind: 'topic', topicId: OTHER, change })
+      }),
+    pushLog: () =>
+      act(() => {
+        listener?.onFrame({
+          kind: 'log',
+          sessionId: SessionId('cccccccc-cccc-cccc-cccc-cccccccccccc'),
+          entry: {
+            index: EventIndex(1),
+            type: 'FileWritten',
+            occurredAt: '2026-01-01T00:00:00Z',
+            summary: '/a.md',
+            path: '/a.md',
+            turnIndex: null,
+            isError: false,
+            cancelled: null,
+          },
+        })
+      }),
+  }
+}
+
 /** Mirrors `Workers.test.tsx`'s harness: a fake container behind the same
- *  providers the real app wraps every view in. */
+ *  providers the real app wraps every view in. The `StreamProvider` is not
+ *  decoration -- `TopicList` subscribes to the feed, and a harness without
+ *  one would be testing a component the application never renders. */
 const renderWithContainer = (ui: ReactElement, parts: Partial<AppContainer>) => {
-  const container = parts as unknown as AppContainer
+  const container = { stream: fakeStream().stream, ...parts } as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
-      <ContainerProvider container={container}>{children}</ContainerProvider>
+      <ContainerProvider container={container}>
+        <StreamProvider>{children}</StreamProvider>
+      </ContainerProvider>
     </QueryClientProvider>
   )
   return render(ui, { wrapper })
@@ -259,4 +309,71 @@ it('says the filter is hiding the queue, not that the project has no topics', as
   await userEvent.type(screen.getByLabelText('Filter topics'), 'zzzz')
 
   expect(screen.getByText(/no topics match/i)).toBeInTheDocument()
+})
+
+it('re-reads the queue when a topic frame says one was opened', async () => {
+  // The bug this pins: a seeding run opens topics, the frames arrive, and the
+  // list showed the same rows until the reader hit reload. Asserting the
+  // second `list` call and the new row, not just the call -- an invalidation
+  // that fired against a misspelt key would still leave the screen stale.
+  const feed = fakeStream()
+  const list = vi
+    .fn<TopicRepository['list']>()
+    .mockResolvedValueOnce([topic({ question: 'Who funded the study?' })])
+    .mockResolvedValue([
+      topic({ question: 'Who funded the study?' }),
+      topic({ topicId: OTHER, question: 'Freshly seeded' }),
+    ])
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, {
+    topics: fakeTopics(list),
+    stream: feed.stream,
+  })
+
+  await screen.findByText('Who funded the study?')
+  feed.push()
+
+  // Longer than `FRAME_DEBOUNCE_MS`: the refresh is deliberately not
+  // immediate, because a run opens eight topics in a burst.
+  expect(await screen.findByText('Freshly seeded', {}, { timeout: 2_000 })).toBeInTheDocument()
+})
+
+it('re-reads once for a burst of topic frames, not once per frame', async () => {
+  // A seeding run opens eight topics in a row. Without the debounce this page
+  // would fire eight list reads while also drawing a force-directed graph.
+  const feed = fakeStream()
+  const list = vi
+    .fn<TopicRepository['list']>()
+    .mockResolvedValue([topic({ question: 'Who funded the study?' })])
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, {
+    topics: fakeTopics(list),
+    stream: feed.stream,
+  })
+
+  await screen.findByText('Who funded the study?')
+  for (let i = 0; i < 8; i += 1) feed.push()
+
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(2), { timeout: 2_000 })
+  expect(list).toHaveBeenCalledTimes(2)
+})
+
+it('ignores a log frame, which says nothing about this project’s topics', async () => {
+  // Scope, asserted: the tree refetches on every log frame, and this list
+  // doing the same would re-read the queue on every token of every turn.
+  const feed = fakeStream()
+  const list = vi
+    .fn<TopicRepository['list']>()
+    .mockResolvedValue([topic({ question: 'Who funded the study?' })])
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, {
+    topics: fakeTopics(list),
+    stream: feed.stream,
+  })
+
+  await screen.findByText('Who funded the study?')
+  feed.pushLog()
+
+  await new Promise((resolve) => setTimeout(resolve, FRAME_DEBOUNCE_MS * 2))
+  expect(list).toHaveBeenCalledTimes(1)
 })

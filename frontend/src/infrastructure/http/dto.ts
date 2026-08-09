@@ -353,6 +353,11 @@ export const approvalRequestedFrameDto = approvalDto
 export const approvalSettledFrameDto = z.object({ id: z.string(), session_id: z.string() })
 export const activityFrameDto = activityEntryDto
 export const logFrameDto = logEntryDto.extend({ session_id: z.string() })
+/** One topic event on the live feed. `change` is the event class name and is
+ *  a plain string for the reason `extractionFrameDto.stage` is: a server that
+ *  has grown a new topic event must move this list, not fail validation on it
+ *  and leave the pane stale. */
+export const topicFrameDto = z.object({ topic_id: z.string(), change: z.string() })
 
 export const workerDto = z.object({
   kind: z.string(),

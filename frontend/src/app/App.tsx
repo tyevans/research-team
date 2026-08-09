@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { notify } from '@application/notifications/toast-store.ts'
 import { queryKeys } from '@application/queries/keys.ts'
@@ -13,6 +13,7 @@ import { SessionView } from '@presentation/session/SessionView.tsx'
 import { Breadcrumbs } from '@presentation/shell/Breadcrumbs.tsx'
 import { ConnectionBadge, DriftBadge } from '@presentation/shell/ConnectionBadge.tsx'
 import { StreamProvider, useStream } from '@presentation/shell/StreamProvider.tsx'
+import { useFrameRefresh } from '@presentation/shell/use-frame-refresh.ts'
 import { Toasts } from '@presentation/shell/Toasts.tsx'
 import { TreeView } from '@presentation/tree/TreeView.tsx'
 
@@ -123,35 +124,27 @@ const CurrentView = ({
 
 /** The tree is a projection of every session, so any log frame can change it.
  *
- * Debounced, because frames arrive in a burst when a turn commits and
- * refetching per frame would be dozens of identical requests for one repaint.
  * Only while the tree is on screen: a session view has its own, finer-grained
- * subscription and does not want this one's refetches. */
+ * subscription and does not want this one's refetches. The debounce, and why
+ * there is one, now lives in `useFrameRefresh` -- shared with the research
+ * page's topic list, which needs the same "the log moved, re-read" and had
+ * none, which is why a seeded topic sat invisible until a reload. */
 const useTreeRefresh = (active: boolean) => {
-  const stream = useStream()
   const queryClient = useQueryClient()
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  useEffect(() => {
-    if (!active) return
-    const off = stream.onFrame((frame) => {
-      if (frame.kind !== 'log') return
-      if (timer.current) clearTimeout(timer.current)
-      timer.current = setTimeout(() => {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.tree() })
-        void queryClient.invalidateQueries({ queryKey: queryKeys.sessions() })
-        // The landing page's live markers, refreshed off the same frames
-        // rather than off a timer of their own. A run's rounds *are* turns on
-        // a session, so the frames that move the counts are the frames that
-        // move the marker -- and a poll would be N more requests per interval
-        // on a page that already asks two per drawn row.
-        void queryClient.invalidateQueries({ queryKey: queryKeys.allRuns() })
-        void queryClient.invalidateQueries({ queryKey: queryKeys.allWorkers() })
-      }, 400)
-    })
-    return () => {
-      off()
-      if (timer.current) clearTimeout(timer.current)
-    }
-  }, [active, queryClient, stream])
+  useFrameRefresh(
+    active,
+    (frame) => frame.kind === 'log',
+    () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tree() })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions() })
+      // The landing page's live markers, refreshed off the same frames
+      // rather than off a timer of their own. A run's rounds *are* turns on
+      // a session, so the frames that move the counts are the frames that
+      // move the marker -- and a poll would be N more requests per interval
+      // on a page that already asks two per drawn row.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.allRuns() })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.allWorkers() })
+    },
+  )
 }
