@@ -21,7 +21,7 @@ const project = (id: ProjectId, name: string, over: Partial<Project> = {}): Proj
 
 const session = (id: string, over: Partial<SessionSummary> = {}): SessionSummary => ({
   id: SessionId(id),
-  projectId: null,
+  projectId: ATLAS,
   startedAt: '2026-08-01T00:00:00Z',
   turns: 0,
   files: 0,
@@ -35,11 +35,7 @@ const session = (id: string, over: Partial<SessionSummary> = {}): SessionSummary
 it('puts each session under the project it belongs to', () => {
   const [first] = rollups(
     [project(ATLAS, 'atlas')],
-    [
-      session('a', { projectId: ATLAS }),
-      session('b', { projectId: RETENTION }),
-      session('c', { projectId: null }),
-    ],
+    [session('a', { projectId: ATLAS }), session('b', { projectId: RETENTION })],
   )
 
   expect(first!.sessionCount).toBe(1)
@@ -96,18 +92,6 @@ it('makes a fork whose parent is in another project a root of its own', () => {
 
   expect(atlas!.sessions.map((node) => node.id)).toEqual(['child'])
   expect(atlas!.sessions[0]!.children).toEqual([])
-})
-
-it('drops a session belonging to no project rather than grouping it anywhere', () => {
-  // Every session belongs to a project now, so a project-less one is a relic
-  // of a database written before that was true. It is not somebody's project's
-  // session, and the fold must not attach it to one.
-  const ranked = rollups(
-    [project(ATLAS, 'atlas')],
-    [session('owned', { projectId: ATLAS }), session('orphan', { projectId: null })],
-  )
-
-  expect(flatten(ranked[0]!.sessions).map((row) => row.id)).toEqual(['owned'])
 })
 
 it('does not lose a session whose fork parent it has never heard of', () => {

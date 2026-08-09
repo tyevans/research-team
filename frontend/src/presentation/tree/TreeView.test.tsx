@@ -30,7 +30,7 @@ const project = (id: ProjectId, name: string, over: Partial<Project> = {}): Proj
 
 const session = (id: string, over: Partial<SessionSummary> = {}): SessionSummary => ({
   id: SessionId(id),
-  projectId: null,
+  projectId: ATLAS,
   startedAt: '2026-08-09T09:00:00Z',
   turns: 0,
   files: 0,
@@ -130,7 +130,7 @@ it('leads with projects and puts their sessions inside them', async () => {
       projects: [project(ATLAS, 'atlas')],
       sessions: [
         session('a', { projectId: ATLAS, firstMessage: 'How does spacing affect retention?' }),
-        session('b', { projectId: null, firstMessage: 'a relic with no project' }),
+        session('b', { projectId: SANDBOX, firstMessage: 'a session of another project' }),
       ],
     }),
   )
@@ -141,9 +141,9 @@ it('leads with projects and puts their sessions inside them', async () => {
     within(row as HTMLElement).getByText(/How does spacing affect retention/),
   ).toBeInTheDocument()
 
-  // A session belonging to no project has nowhere on this page to appear, and
-  // must not be counted into or drawn inside a project it is not in.
-  expect(screen.queryByText(/a relic with no project/)).not.toBeInTheDocument()
+  // A session of a project this listing does not include has nowhere on this
+  // page to appear, and must not be counted into or drawn inside another.
+  expect(screen.queryByText(/a session of another project/)).not.toBeInTheDocument()
 })
 
 it('reaches all four of a project’s destinations from its row', async () => {
