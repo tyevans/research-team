@@ -99,6 +99,36 @@ describe('decodeFrame', () => {
     ).toEqual({ kind: 'topic', topicId: 't1', change: 'TopicOpened' })
   })
 
+  it('reads a graph frame as a graph change addressed to its project', () => {
+    // The knowledge graph moves inside redstring's own streams, whose
+    // aggregate ids are a document's and a tenant's. Without this case the
+    // frame fell to the log branch, arrived with a document stream's uuid5
+    // under `sessionId`, and -- having no `index` -- was dropped, which is
+    // why entities only appeared on a reload.
+    expect(
+      frame({
+        type: 'Graph',
+        project_id: 'p1',
+        change: 'DocumentExtracted',
+        occurred_at: '2026-01-01T00:00:00Z',
+      }),
+    ).toEqual({ kind: 'graph', projectId: 'p1', change: 'DocumentExtracted' })
+  })
+
+  it('reads a corpus frame as its own kind, not as a graph change', () => {
+    // Two frames rather than one because a document is stored before it is
+    // extracted: an ingest whose extraction fails emits this and no graph
+    // frame at all, and the documents pane has to redraw for it.
+    expect(
+      frame({
+        type: 'Corpus',
+        project_id: 'p1',
+        change: 'SourceDocumentStored',
+        occurred_at: '2026-01-01T00:00:00Z',
+      }),
+    ).toEqual({ kind: 'corpus', projectId: 'p1', change: 'SourceDocumentStored' })
+  })
+
   it('drops a log frame with no index rather than guessing a position', () => {
     // Inserting a row at the wrong point is worse than dropping a frame a
     // reconnect will replay correctly.

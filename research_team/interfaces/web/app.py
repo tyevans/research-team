@@ -48,7 +48,7 @@ from research_team.application.graph_read import (
 from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
-from research_team.domain import CreateProject, ProjectState, SelectWorkflow
+from research_team.domain import Corpus, CreateProject, ProjectState, SelectWorkflow
 from research_team.domain.auto_research import Budget
 from research_team.domain.project import current_stage_of
 from research_team.domain.topic import (
@@ -61,16 +61,19 @@ from research_team.domain.topic import (
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
+from research_team.infrastructure.persistence.event_store import KNOWLEDGE_CATEGORIES
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.presenters import (
     autonomy_view,
+    corpus_change,
     course_view,
     entity_page_view,
     event_rows,
     feed_event,
     file_history,
+    graph_change,
     graph_view,
     item_view,
     neighborhood_view,
@@ -1724,6 +1727,18 @@ async def _sse(
                 continue
             if item.aggregate_type == Topic.aggregate_type:
                 payload = topic_change(item.aggregate_id, item.event)
+            elif item.aggregate_type in KNOWLEDGE_CATEGORIES:
+                # `tenant_id`, not `aggregate_id`: see `graph_change`. Read
+                # directly rather than through a `getattr` default -- every
+                # event in these two categories is a `TenantDomainEvent`, and
+                # one that was not would be a bug worth an `AttributeError`
+                # naming it rather than a frame quietly addressed to nobody.
+                payload = graph_change(item.event.tenant_id, item.event)
+            elif item.aggregate_type == Corpus.aggregate_type:
+                # A corpus shares its project's UUID, so the aggregate id is
+                # the project id with no lookup -- unlike a topic, which is why
+                # a topic frame carries no project at all.
+                payload = corpus_change(item.aggregate_id, item.event)
             else:
                 payload = feed_event(
                     item.aggregate_id,

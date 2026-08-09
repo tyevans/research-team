@@ -55,6 +55,31 @@ export type FeedFrame =
    * says why): only the creation event knows one. A subscriber scopes by the
    * project it is already showing. */
   | { readonly kind: 'topic'; readonly topicId: TopicId; readonly change: string }
+  /** The project's knowledge graph moved -- an extraction landed, or entities
+   * merged.
+   *
+   * Project-addressed and durable, which no other frame here manages both of:
+   * it carries a feed position like a log frame, so a reconnect replays it,
+   * *and* it says whose graph it is, because redstring writes tenant events
+   * and a project is the tenant. A subscriber can therefore ignore another
+   * project's extraction outright rather than re-reading its own graph to
+   * discover nothing changed -- which matters more here than for a topic
+   * list, because the read it saves is a whole graph.
+   *
+   * It carries no entities, only that some arrived. The pane re-reads the
+   * graph route, which is the one description of what the graph is; folding a
+   * payload into the drawing instead would give the page a second one, and
+   * the two would disagree the moment consolidation merged anything. */
+  | { readonly kind: 'graph'; readonly projectId: string; readonly change: string }
+  /** A document was stored in, or dropped from, the project's corpus.
+   *
+   * Its own kind rather than a `graph` frame, even though one ingest emits
+   * both: the document is stored *before* it is extracted (see
+   * `_store_document`, which says why that order and not the other), so an
+   * extraction that fails emits this and no graph frame at all. A documents
+   * pane keyed to graph frames would go quiet on exactly the ingests whose
+   * source a reader needs to find. */
+  | { readonly kind: 'corpus'; readonly projectId: string; readonly change: string }
 
 export type ConnectionState = 'connecting' | 'open' | 'down'
 

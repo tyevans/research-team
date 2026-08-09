@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
@@ -10,6 +10,7 @@ import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
 import { Drawer } from '../common/Drawer.tsx'
 import { EmptyState, ErrorBox, Loading } from '../common/primitives.tsx'
+import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
 import { DocumentReader } from './DocumentReader.tsx'
 
 const ROW_HEIGHT = 52
@@ -24,7 +25,14 @@ const ROW_HEIGHT = 52
  *
  * Sorting and filtering are left as a `useMemo` over the fetched array
  * rather than a table library: the whole point of trying `react-virtual`
- * first is that a plain list is all a document browser needs. */
+ * first is that a plain list is all a document browser needs.
+ *
+ * Refreshed off the live feed, like `TopicList` and for the same reason: a
+ * document being stored *is* a log entry, so the frames that change this list
+ * are already on the connection the shell holds open and a poll would be a
+ * second delivery path for something already delivered. Without
+ * `useDocumentRefresh` below, this pane changed only on a reload -- which is
+ * what a reader watching a session fetch three papers actually saw. */
 export const DocumentList = ({ projectId }: { projectId: ProjectId }) => {
   const { documents } = useContainer()
   const [reading, setReading] = useState<SourceId | null>(null)
@@ -35,6 +43,7 @@ export const DocumentList = ({ projectId }: { projectId: ProjectId }) => {
     queryKey: queryKeys.documents(projectId),
     queryFn: () => documents.list(projectId),
   })
+  useDocumentRefresh(projectId)
 
   const filtered = useMemo(() => {
     const rows = query.data ?? []
@@ -186,3 +195,34 @@ const DocumentRow = ({
     </button>
   </li>
 )
+
+/** Re-read this project's sources when its corpus moves.
+ *
+ * Scoped to `projectId` off the frame's own project id rather than by
+ * refreshing on everything and letting the read discover nothing changed --
+ * a corpus frame carries one, unlike a topic frame, because a corpus shares
+ * its project's UUID and the server gets the answer for free.
+ *
+ * Only corpus frames. A graph frame rides the same ingest and is deliberately
+ * ignored: it would double every read and answer nothing the corpus frame did
+ * not. A log frame is ignored the way `TopicList` ignores it -- the session
+ * tree already refetches on every one, and this list doing the same would
+ * re-read the corpus on every token of every turn. Both are asserted.
+ *
+ * One key, not a prefix: a stored document changes the list. It does not
+ * change the *text* of a document already open in the reader, which is
+ * immutable once stored, so `queryKeys.document` is left alone.
+ */
+const useDocumentRefresh = (projectId: ProjectId) => {
+  const queryClient = useQueryClient()
+
+  useFrameRefresh(
+    // Always on: this hook lives in the pane it refreshes, so being mounted is
+    // the "on screen" test `useTreeRefresh` needs its flag for.
+    true,
+    (frame) => frame.kind === 'corpus' && frame.projectId === projectId,
+    () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.documents(projectId) })
+    },
+  )
+}

@@ -5,10 +5,12 @@ from uuid import uuid4
 from eventsource import StreamId
 from eventsource.ports.positions import ExpectedVersion
 from langchain_core.messages import AIMessage
+from redstring.events.document import DocumentExtracted
+from redstring.events.streams import document_stream
 
 from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.application.topics import TOPICS_PROMPT
-from research_team.domain import StartSession
+from research_team.domain import StartSession, StoreSourceDocument
 from research_team.domain.project import ProjectCreated
 from research_team.domain.topic import OpenTopic
 from research_team.infrastructure.agent.corpus_tools import CORPUS_PROMPT
@@ -18,6 +20,7 @@ from research_team.infrastructure.persistence import (
     SNAPSHOT_THRESHOLD,
     EventStoreSessionRepository,
     build_aggregate_repository,
+    build_corpus_repository,
 )
 from research_team.infrastructure.persistence.event_store import build_topic_repository
 from tests.conftest import start_session
@@ -235,5 +238,82 @@ async def test_read_since_ignores_events_from_other_aggregate_types(tmp_path):
 
         assert entries, "the session's own events should still arrive"
         assert all(entry.aggregate_id == session_id for entry in entries)
+    finally:
+        await repository.close()
+
+
+async def test_read_since_carries_knowledge_graph_events(tmp_path):
+    """The graph pane's live path starts here, the way the topic list's did.
+
+    redstring writes `DocumentExtracted` into this same log, and the graph the
+    research page draws is exactly what that event added. Until this test the
+    feed admitted only `CodingSession` and `Topic`, so an extraction that ran
+    while a tab was open reached the browser through nothing at all and the
+    entities appeared on the next reload.
+
+    Asserting the aggregate type rather than only the count: `Document` is what
+    tells `_sse` to write a graph frame instead of a session one, and an entry
+    arriving as `CodingSession` would send the session tree after an aggregate
+    that is a document. Asserting the tenant for the same reason -- the frame
+    is addressed to a project, and the event is the only place that project id
+    exists on this path.
+    """
+    repository = EventStoreSessionRepository.open(str(tmp_path / "sessions.db"))
+    try:
+        project_id = uuid4()
+        stream = document_stream(tenant_id=project_id, source_id="paper-1")
+        await repository.store.append(
+            stream,
+            [
+                DocumentExtracted(
+                    aggregate_id=stream.aggregate_id,
+                    tenant_id=project_id,
+                    source_id="paper-1",
+                    model_version="test-model",
+                )
+            ],
+            ExpectedVersion.any_(),
+        )
+
+        entries = await repository.read_since(None)
+
+        assert [entry.aggregate_type for entry in entries] == ["Document"]
+        assert entries[0].event.tenant_id == project_id
+    finally:
+        await repository.close()
+
+
+async def test_read_since_carries_corpus_events(tmp_path):
+    """The documents pane's live path, and the reason it is not the graph's.
+
+    A document is stored on the `Corpus` aggregate *before* it is extracted,
+    and an extraction that fails leaves the document stored and emits nothing
+    on redstring's streams at all. So `Document`/`Consolidation` frames cannot
+    stand in for this one: a pane refreshed only on those would miss every
+    source whose extraction failed, which is exactly the case a reader most
+    wants to see listed.
+
+    A corpus shares its project's UUID, so the entry's `aggregate_id` is the
+    project id -- which is what lets `_sse` address the frame without reading
+    anything. Asserting it here rather than only the type: the whole frame
+    depends on that identity holding.
+    """
+    repository = EventStoreSessionRepository.open(str(tmp_path / "sessions.db"))
+    try:
+        project_id = uuid4()
+        corpus = build_corpus_repository(repository.store)
+        aggregate = await corpus.load_or_create(project_id)
+        aggregate.execute(
+            StoreSourceDocument(
+                corpus_id=project_id, source_id="paper-1", text="Ada worked with Charles."
+            )
+        )
+        await corpus.save(aggregate)
+
+        entries = await repository.read_since(None)
+
+        assert [(entry.aggregate_id, entry.aggregate_type) for entry in entries] == [
+            (project_id, "Corpus")
+        ]
     finally:
         await repository.close()

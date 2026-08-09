@@ -365,6 +365,13 @@ export const logFrameDto = logEntryDto.extend({ session_id: z.string() })
  *  and leave the pane stale. */
 export const topicFrameDto = z.object({ topic_id: z.string(), change: z.string() })
 
+/** A knowledge-graph or corpus event on the live feed. One shape for both:
+ *  the server addresses each by project and names the event class, and the
+ *  two differ only in the `type` that selected them. `change` is a plain
+ *  string for the reason `topicFrameDto.change` is -- a server that grew a
+ *  new event must move the pane, not fail validation and leave it stale. */
+export const projectChangeFrameDto = z.object({ project_id: z.string(), change: z.string() })
+
 export const workerDto = z.object({
   kind: z.string(),
   ref: z.string(),

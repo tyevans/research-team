@@ -6,8 +6,11 @@ import json
 from uuid import UUID, uuid4
 
 import pytest
+from eventsource.ports.positions import ExpectedVersion
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
+from redstring.events.document import DocumentExtracted
+from redstring.events.streams import document_stream
 
 from research_team.application import GATED_TOOLS, WorkerRoster
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL
@@ -463,6 +466,98 @@ async def test_sse_frames_a_topic_change_as_its_own_project_shaped_frame(reposit
     assert payload["type"] == "Topic"
     assert payload["topic_id"] == str(topic.aggregate_id)
     assert payload["change"] == "TopicOpened"
+    assert "session_id" not in payload
+
+
+async def test_sse_frames_a_graph_change_addressed_to_its_project(repository):
+    """An extraction reaches the live feed addressed to the project it changed.
+
+    The graph pane redraws off these frames. Three failures this pins: no frame
+    at all (what shipped -- the feed read only `CodingSession` and `Topic`, so
+    entities appeared on a reload and never before it); a frame carrying the
+    document stream's `uuid5` id under `session_id`, which would set the
+    session tree hunting an aggregate that is a document; and a frame with no
+    project on it at all, which every open tab would have to act on because
+    none of them could tell whether it was theirs.
+
+    The project id is the event's `tenant_id` and nothing else -- unlike a
+    topic frame, which carries none because only its creation event knows one.
+    Every redstring event is a `TenantDomainEvent`, so the answer is on the
+    frame already and costs no read-model lookup on a connection every browser
+    holds open.
+    """
+    from research_team.application import LiveFeed
+    from research_team.interfaces.web.app import _sse
+
+    feed = LiveFeed(repository, poll_interval=0.01)
+    project_id = uuid4()
+    stream = document_stream(tenant_id=project_id, source_id="paper-1")
+
+    frames: list[str] = []
+    generator = _sse(StubRequest(), feed)
+    task = asyncio.create_task(_drain(generator, frames, wanted=1))
+    await asyncio.sleep(0.05)
+    await repository.store.append(
+        stream,
+        [
+            DocumentExtracted(
+                aggregate_id=stream.aggregate_id,
+                tenant_id=project_id,
+                source_id="paper-1",
+                model_version="test-model",
+            )
+        ],
+        ExpectedVersion.any_(),
+    )
+    await asyncio.wait_for(task, timeout=5)
+
+    assert frames[0].startswith("id: ")
+    payload = json.loads(frames[0].split("data: ", 1)[1])
+    assert payload["type"] == "Graph"
+    assert payload["project_id"] == str(project_id)
+    assert payload["change"] == "DocumentExtracted"
+    assert "session_id" not in payload
+
+
+async def test_sse_frames_a_stored_document_as_a_corpus_frame(repository):
+    """A stored source reaches the live feed addressed to its project.
+
+    The documents pane redraws off these frames. It shipped with no live path
+    of any kind -- the feed read only `CodingSession` and `Topic`, so a source
+    the agent stored mid-session appeared in the rail only on a reload, while
+    the reader watched the turn that fetched it scroll past.
+
+    Its own frame type rather than a graph frame, though both move on one
+    ingest: the document is stored first and an extraction that fails emits
+    nothing on redstring's streams, so a pane keyed to graph frames would drop
+    exactly the sources whose failure a reader needs to see. `project_id` is
+    the corpus's own aggregate id -- a corpus shares its project's UUID.
+    """
+    from research_team.application import LiveFeed
+    from research_team.interfaces.web.app import _sse
+
+    feed = LiveFeed(repository, poll_interval=0.01)
+    project_id = uuid4()
+    corpus = build_corpus_repository(repository.store)
+    aggregate = await corpus.load_or_create(project_id)
+
+    frames: list[str] = []
+    generator = _sse(StubRequest(), feed)
+    task = asyncio.create_task(_drain(generator, frames, wanted=1))
+    await asyncio.sleep(0.05)
+    aggregate.execute(
+        StoreSourceDocument(
+            corpus_id=project_id, source_id="paper-1", text="Ada worked with Charles."
+        )
+    )
+    await corpus.save(aggregate)
+    await asyncio.wait_for(task, timeout=5)
+
+    assert frames[0].startswith("id: ")
+    payload = json.loads(frames[0].split("data: ", 1)[1])
+    assert payload["type"] == "Corpus"
+    assert payload["project_id"] == str(project_id)
+    assert payload["change"] == "SourceDocumentStored"
     assert "session_id" not in payload
 
 
