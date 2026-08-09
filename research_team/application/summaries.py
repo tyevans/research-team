@@ -32,17 +32,25 @@ class SessionSummary:
     turns: int
     files: int
     first_message: str
-    forked_from: UUID | None = None
-    forked_at: int | None = None
-    failed_turns: int = 0
-    project_id: UUID | None = None
+    project_id: UUID
     """The project this session shares a filesystem and knowledge graph with.
 
     Here because a list of sessions with no project key cannot be grouped
     under the projects they belong to, which is what the console's landing
-    page is: projects, with their sessions inside them. `None` is a session
-    that belongs to no project, which is a real state and not a gap.
+    page is: projects, with their sessions inside them.
+
+    No longer `| None`. A session that belongs to no project was once a real
+    state; it is now unreachable, because `SessionStarted` requires a project
+    and there is no other way to start one. The console can stop asking.
+
+    Declared above the defaulted fields rather than in the position it used to
+    hold: this is a dataclass, so a field with no default cannot follow one
+    that has a default. That moves it in the positional argument order, which
+    nothing here depends on -- every construction site names its fields.
     """
+    forked_from: UUID | None = None
+    forked_at: int | None = None
+    failed_turns: int = 0
 
 
 def summarize_sessions(events: list[DomainEvent]) -> list[SessionSummary]:
@@ -123,10 +131,14 @@ def _summarize(session_id: UUID, events: list[DomainEvent]) -> SessionSummary:
         # `SessionStarted` is the only event carrying it, and it is required to
         # be first on the stream -- so a session's project is fixed the moment
         # it exists and there is no later event to fold over.
-        project_id=next(
-            (e.project_id for e in events if isinstance(e, SessionStarted)),
-            None,
-        ),
+        #
+        # No default. `next` raises `StopIteration` on a stream with no
+        # `SessionStarted`, which is what a stream with no creation event
+        # deserves: it is not a session. A `None` default here would have
+        # turned that corruption into a summary claiming the session belongs
+        # to no project -- a shape the type no longer permits and the console
+        # no longer renders, so it would surface somewhere further away.
+        project_id=next(e.project_id for e in events if isinstance(e, SessionStarted)),
     )
 
 

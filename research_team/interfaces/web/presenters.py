@@ -178,6 +178,14 @@ def session_view(
     revisions = _revision_counts(events if at is None else events[:at])
     return {
         "id": str(state.session_id),
+        # Still conditional, where `summary_view`'s is not, and the difference
+        # is not an oversight. That one reads a `SessionSummary`, folded from a
+        # stream that must open with `SessionStarted`, so its project is
+        # required. This one reads `SessionState`, whose `project_id` is `None`
+        # until that event folds -- the "new" state `initial_state()` has to be
+        # able to express. No route reaches this with an unstarted session, so
+        # the branch is unreachable in practice; it is kept because the
+        # alternative renders the string "None" if it ever is reached.
         "project_id": str(state.project_id) if state.project_id else None,
         "holds_project": holds_project,
         "knowledge_attached": knowledge_attached,
@@ -236,7 +244,7 @@ def summary_view(summary: SessionSummary) -> dict[str, Any]:
     """
     return {
         "id": str(summary.session_id),
-        "project_id": str(summary.project_id) if summary.project_id else None,
+        "project_id": str(summary.project_id),
         "started_at": summary.started_at.isoformat(),
         "turns": summary.turns,
         "files": summary.files,

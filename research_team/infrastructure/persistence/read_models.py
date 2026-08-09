@@ -94,7 +94,11 @@ class SessionSummaryRow(ReadModel):
     file_paths: list[str] = Field(default_factory=list)
     forked_from: UUID | None = None
     forked_at: int | None = None
-    project_id: UUID | None = None
+    project_id: UUID
+    """Required, matching `SessionStarted`. A row without one could only come
+    from a database written before a project was compulsory, and this build
+    does not load those: the event itself refuses to validate, so a rebuild
+    raises rather than quietly reproducing the row."""
 
     @field_validator("file_paths", mode="before")
     @classmethod
