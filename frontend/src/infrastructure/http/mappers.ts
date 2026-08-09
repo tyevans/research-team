@@ -106,6 +106,7 @@ export const toSession = (raw: Dto<typeof dto.sessionDto>): SessionProjection =>
 
 export const toSessionSummary = (raw: Dto<typeof dto.sessionSummaryDto>): SessionSummary => ({
   id: SessionId(raw.id),
+  projectId: raw.project_id ? ProjectId(raw.project_id) : null,
   startedAt: raw.started_at,
   turns: raw.turns,
   files: raw.files,

@@ -74,6 +74,7 @@ export const sessionDto = z.object({
 
 export const sessionSummaryDto = z.object({
   id: z.string(),
+  project_id: maybe(z.string()),
   started_at: maybe(z.string()),
   turns: maybe(z.number()),
   files: maybe(z.number()),

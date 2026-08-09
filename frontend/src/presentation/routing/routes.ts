@@ -14,7 +14,10 @@ import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
  * client paths — a history route would 404 on reload.
  */
 export type Route =
-  | { readonly name: 'tree' }
+  /** The landing page. Named for what it shows -- projects, with their
+   *  sessions inside them -- rather than for the fork tree it used to lead
+   *  with. The href is unchanged; only the name is honest now. */
+  | { readonly name: 'home' }
   | {
       readonly name: 'session'
       readonly id: SessionId
@@ -93,10 +96,10 @@ export const parseRoute = (hash: string): Route => {
     return { name: 'research', id: ProjectId(parts[1]), entity }
   }
 
-  return { name: 'tree' }
+  return { name: 'home' }
 }
 
-export const treeHref = (): string => '#/'
+export const homeHref = (): string => '#/'
 
 /** The scrub point and the open file are both in the URL, and both are
  *  optional.

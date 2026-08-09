@@ -39,6 +39,12 @@ export interface SessionProjection {
  * has always had and which a second type would have made a second code path. */
 export interface SessionSummary {
   readonly id: SessionId
+  /** The project this session shares a filesystem and knowledge graph with.
+   *
+   * The key the landing page groups on: a session row that cannot name its
+   * project can only be listed beside the projects, never inside one. `null`
+   * is a session belonging to no project, which is a state and not a gap. */
+  readonly projectId: ProjectId | null
   readonly startedAt: string | null
   readonly turns: number | null
   readonly files: number | null

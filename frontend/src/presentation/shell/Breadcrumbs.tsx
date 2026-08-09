@@ -4,7 +4,7 @@ import { forkOrigin } from '@domain/session/session.ts'
 import type { Course } from '@domain/project/course.ts'
 
 import type { Route } from '../routing/routes.ts'
-import { courseHref, researchHref, sessionHref, treeHref } from '../routing/routes.ts'
+import { courseHref, researchHref, sessionHref, homeHref } from '../routing/routes.ts'
 
 /** Where you are, and the one link back.
  *
@@ -23,7 +23,7 @@ export const Breadcrumbs = ({
   if (route.name === 'course') {
     return (
       <nav className="crumbs" id="crumbs">
-        <a href={treeHref()}>sessions</a>
+        <a href={homeHref()}>projects</a>
         <span className="sep">/</span>
         <span className="sid">{course?.projectName || shortId(route.id)}</span>
         <span className="sep">/</span>
@@ -35,7 +35,7 @@ export const Breadcrumbs = ({
   if (route.name === 'research') {
     return (
       <nav className="crumbs" id="crumbs">
-        <a href={treeHref()}>sessions</a>
+        <a href={homeHref()}>projects</a>
         <span className="sep">/</span>
         <span className="sid">{course?.projectName || shortId(route.id)}</span>
         <span className="sep">/</span>
@@ -47,7 +47,7 @@ export const Breadcrumbs = ({
   if (route.name !== 'session') {
     return (
       <nav className="crumbs" id="crumbs">
-        <span className="sep">fork tree</span>
+        <span className="sep">projects</span>
       </nav>
     )
   }
@@ -67,7 +67,7 @@ export const Breadcrumbs = ({
   const projectId = session?.projectId ?? null
   return (
     <nav className="crumbs" id="crumbs">
-      <a href={treeHref()}>sessions</a>
+      <a href={homeHref()}>projects</a>
       <span className="sep">/</span>
       <span className="sid">{shortId(route.id)}</span>
       {origin ? (
