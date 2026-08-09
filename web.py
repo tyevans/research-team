@@ -55,6 +55,14 @@ def main() -> None:
             workers=application.workers,
             extraction=extraction,
             topics=application.topic_readers,
+            # The write half of the same pair: `topics` answers the reads and
+            # this answers the Manage dialog's writes. Missing here until now,
+            # so those routes 503'd in this entrypoint while every test built
+            # its own app and passed both -- the third instance of that, which
+            # is why `tests/interfaces/test_web_entrypoint.py` now exists.
+            # Deliberately the one instance the readers and `research` already
+            # close over, not a second built here; see `Application`.
+            topic_repository=application.topic_repository,
             graphs=application.graphs,
             topic_seeder=application.topic_seeder,
             seeding=seeding,
