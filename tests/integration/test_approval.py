@@ -36,7 +36,7 @@ from research_team.infrastructure.agent.search import build_search_tool
 from research_team.interfaces.cli import TerminalApprovals, repl
 from research_team.interfaces.web import WebApprovals, create_app
 from research_team.interfaces.web.app import _sse
-from tests.conftest import ToolAwareFakeChatModel, start_session, start_session
+from tests.conftest import ToolAwareFakeChatModel, start_session
 
 RESULT_TITLE = "Event Sourcing Explained"
 PAYLOAD = {
