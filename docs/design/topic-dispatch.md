@@ -7,6 +7,32 @@ after #66 and #67).
 Line numbers are pointers, not contracts — several of the files named here are
 being edited concurrently, so check before trusting a number.
 
+**How the load-bearing claims were checked.** Three of the arguments below rest
+on an absence, and an absence is the easiest thing to get wrong by reading
+too little. Each was verified by grep over the tree rather than inferred:
+
+- *No generator prompts exist* (§6): `prompt_ref` appears outside
+  `workflows/` and `tests/` in exactly one place, `checks.py:1110`, which
+  compares the string to detect a critic sharing a generator's prompt. There
+  is no `prompts/` directory. `stage_middleware.py:60` states the gap in its
+  own docstring — "Notably absent: the prompt" — and
+  `test_stage_middleware.py:117` describes "prompt text as composition would
+  resolve it", a conditional about code that was never written.
+- *The feed is filtered by aggregate type* (§5): `read_since`
+  (`event_store.py:354`) reads one type at a time and admits sessions and
+  topics only. Note this was fixed recently and its docstring is worth
+  reading — before the fix "no topic event has ever reached the SSE feed",
+  while two modules' comments already claimed otherwise. That is the exact
+  failure mode this note exists to avoid.
+- *Unknown SSE frames are dropped silently* (§5): `decodeFrame`'s `default:`
+  branch returns `null` on a failed parse, with no log.
+
+Everything asserted about behaviour under a *populated* database is untested
+here, because this document proposes and implements nothing. Anyone building
+from it should treat "a fresh database passes" as not yet an answer — see
+`CLAUDE.md` on read models, and §8 of `landing-page.md` beside this file for
+what that cost the last time.
+
 The ask: from a topic in the research view, dispatch an agent to do one of
 three things — **(1)** research the topic and fetch primary sources, **(2)**
 write down our understanding of it in markdown, **(3)** make a course from the
