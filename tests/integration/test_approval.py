@@ -36,7 +36,7 @@ from research_team.infrastructure.agent.search import build_search_tool
 from research_team.interfaces.cli import TerminalApprovals, repl
 from research_team.interfaces.web import WebApprovals, create_app
 from research_team.interfaces.web.app import _sse
-from tests.conftest import ToolAwareFakeChatModel, start_session
+from tests.conftest import ToolAwareFakeChatModel, start_session, start_session
 
 RESULT_TITLE = "Event Sourcing Explained"
 PAYLOAD = {
@@ -283,6 +283,7 @@ async def test_an_unreadable_key_is_asked_again_rather_than_assumed():
 
 async def test_autonomy_lists_every_gated_tool(build_service, fake_model):
     current = await repl.Repl.start(await build_service(model=fake_model))
+    current.session_id = await start_session(current.service)
 
     output = await repl.handle_command(current, "/autonomy")
 
@@ -298,6 +299,7 @@ async def test_autonomy_sets_a_level_and_records_it(build_service, fake_model):
     """
     service = await build_service(model=fake_model)
     current = await repl.Repl.start(service)
+    current.session_id = await start_session(service)
 
     output = await repl.handle_command(current, "/autonomy web_search ask")
 
@@ -310,6 +312,7 @@ async def test_autonomy_sets_a_level_and_records_it(build_service, fake_model):
 
 async def test_autonomy_complains_about_a_bad_level_without_dying(build_service, fake_model):
     current = await repl.Repl.start(await build_service(model=fake_model))
+    current.session_id = await start_session(current.service)
 
     output = await repl.handle_command(current, "/autonomy web_search whenever")
 
@@ -319,6 +322,7 @@ async def test_autonomy_complains_about_a_bad_level_without_dying(build_service,
 
 async def test_autonomy_complains_about_an_ungated_tool(build_service, fake_model):
     current = await repl.Repl.start(await build_service(model=fake_model))
+    current.session_id = await start_session(current.service)
 
     output = await repl.handle_command(current, "/autonomy read_file ask")
 
@@ -327,6 +331,7 @@ async def test_autonomy_complains_about_an_ungated_tool(build_service, fake_mode
 
 async def test_autonomy_reports_its_usage_when_given_nonsense(build_service, fake_model):
     current = await repl.Repl.start(await build_service(model=fake_model))
+    current.session_id = await start_session(current.service)
 
     assert "usage" in await repl.handle_command(current, "/autonomy web_search")
 
