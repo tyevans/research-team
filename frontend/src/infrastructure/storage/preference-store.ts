@@ -1,6 +1,9 @@
 import type { PreferenceStore } from '@application/ports/preferences.ts'
 
-const COLLAPSED_PANES = 'rt.collapsedPanes'
+/* One key per view. The old single `rt.collapsedPanes` key is left behind
+   rather than migrated: it holds a pane layout, the project is pre-release,
+   and the cost of losing it is that one reader's panes open once. */
+const collapsedKey = (group: string) => `rt.collapsedPanes.${group}`
 
 /** `localStorage`, with every way it fails absorbed here.
  *
@@ -10,9 +13,9 @@ const COLLAPSED_PANES = 'rt.collapsedPanes'
  * a reader who gets a blank console has lost the tool.
  */
 export class LocalPreferenceStore implements PreferenceStore {
-  collapsedPanes(): readonly string[] {
+  collapsedPanes(group: string): readonly string[] {
     try {
-      const raw = window.localStorage.getItem(COLLAPSED_PANES)
+      const raw = window.localStorage.getItem(collapsedKey(group))
       const parsed: unknown = raw ? JSON.parse(raw) : []
       if (!Array.isArray(parsed)) return []
       return parsed.filter((name): name is string => typeof name === 'string')
@@ -21,9 +24,9 @@ export class LocalPreferenceStore implements PreferenceStore {
     }
   }
 
-  setCollapsedPanes(names: readonly string[]): void {
+  setCollapsedPanes(group: string, names: readonly string[]): void {
     try {
-      window.localStorage.setItem(COLLAPSED_PANES, JSON.stringify(names))
+      window.localStorage.setItem(collapsedKey(group), JSON.stringify(names))
     } catch {
       // Not worth failing over: the layout still applies for this page's life.
     }
@@ -32,13 +35,13 @@ export class LocalPreferenceStore implements PreferenceStore {
 
 /** For tests and for a headless render: remembers nothing, fails at nothing. */
 export class InMemoryPreferenceStore implements PreferenceStore {
-  private panes: readonly string[] = []
+  private panes = new Map<string, readonly string[]>()
 
-  collapsedPanes(): readonly string[] {
-    return this.panes
+  collapsedPanes(group: string): readonly string[] {
+    return this.panes.get(group) ?? []
   }
 
-  setCollapsedPanes(names: readonly string[]): void {
-    this.panes = names
+  setCollapsedPanes(group: string, names: readonly string[]): void {
+    this.panes.set(group, names)
   }
 }

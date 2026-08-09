@@ -86,7 +86,7 @@ export const DocumentList = ({ projectId }: { projectId: ProjectId }) => {
     <div className="document-browser">
       <input
         type="search"
-        className="document-filter"
+        className="input document-filter"
         placeholder="Filter documents"
         value={query_}
         onChange={(event) => setQuery_(event.target.value)}
