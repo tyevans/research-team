@@ -20,6 +20,7 @@ back, and this is that something.
 
 import asyncio
 import json
+import re
 from datetime import datetime
 from uuid import UUID, uuid5
 
@@ -234,11 +235,70 @@ class SessionSummaryProjection(DeclarativeProjection):
         return row
 
 
+def _column_definitions(model: type[ReadModel]) -> list[tuple[str, str]]:
+    """The `(name, definition)` of every column in a model's generated DDL.
+
+    Read back out of the DDL rather than off the model's fields so there is
+    still one source of truth for how a field becomes a column -- the type
+    mapping, the defaults and the constraints are the generator's business,
+    and a second opinion here would drift from it silently.
+    """
+    body = re.search(r"CREATE TABLE[^(]*\((.*?)\n\);", model_schema(model), re.DOTALL)
+    if not body:
+        return []
+    columns = []
+    for line in body.group(1).splitlines():
+        stripped = line.strip().rstrip(",")
+        name, _, definition = stripped.partition(" ")
+        if name and definition:
+            columns.append((name, stripped))
+    return columns
+
+
+def model_schema(model: type[ReadModel]) -> str:
+    return generate_full_schema(model, dialect="sqlite")
+
+
+async def apply_schema(connection: aiosqlite.Connection, model: type[ReadModel]) -> None:
+    """Create the table, and add any column the model has grown since.
+
+    `CREATE TABLE IF NOT EXISTS` is the whole of the DDL, which is exactly
+    right until a field is *added* to a read model: the table already exists,
+    so nothing happens, and the next read fails against a table missing a
+    column the row type now declares. That is not a hypothetical -- adding
+    `project_id` to `SessionSummaryRow` broke every existing database this way,
+    with `/sessions` and `/tree` answering 500 while a fresh database was fine
+    and every test passed.
+
+    A read model is derived data, so widening it is always safe: the column is
+    added empty and `/rebuild` re-derives it from the log. That is what makes
+    this an idempotent reconcile rather than a migration to write and version.
+    Only additions are handled -- a *renamed* or *retyped* column is a rebuild
+    from scratch, and one that silently dropped data here would be worse than
+    an error nobody can miss.
+    """
+    await connection.executescript(model_schema(model))
+    existing = {
+        row[1] for row in await (await connection.execute(f"PRAGMA table_info({model.table_name()})")).fetchall()
+    }
+    for name, definition in _column_definitions(model):
+        if name not in existing:
+            # SQLite refuses `NOT NULL` with no default here, which is the
+            # right refusal: such a column has no honest value for the rows
+            # already stored. The error names the column, which is what a
+            # developer who has just added a field needs to see.
+            await connection.execute(
+                f"ALTER TABLE {model.table_name()} ADD COLUMN {definition}"
+            )
+    await connection.commit()
+
+
 class SessionSummaryStore:
     """The `/sessions` table, its projection, and the connection they share.
 
     Opening it applies the model's own DDL, so there is no migration step to
-    run and forget -- the table either exists or is created on the way past.
+    run and forget -- the table either exists or is created on the way past,
+    and a column the model has gained since is added on the way past too.
     """
 
     def __init__(
@@ -256,10 +316,7 @@ class SessionSummaryStore:
         cls, db_path: str, checkpoint_repo=None, dlq_repo=None, tracer=None
     ) -> "SessionSummaryStore":
         connection = await aiosqlite.connect(db_path)
-        await connection.executescript(
-            generate_full_schema(SessionSummaryRow, dialect="sqlite")
-        )
-        await connection.commit()
+        await apply_schema(connection, SessionSummaryRow)
         rows = SQLiteReadModelRepository(connection, SessionSummaryRow, tracer)
         return cls(
             connection,
