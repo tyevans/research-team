@@ -15,7 +15,7 @@ import type { FilePath } from '@domain/shared/file-path.ts'
 
 import { ErrorBox } from '../common/primitives.tsx'
 import { plural } from '../formatting/format.ts'
-import { sessionHref, treeHref } from '../routing/routes.ts'
+import { sessionHref, homeHref } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
 import { ActivityFeed } from './ActivityFeed.tsx'
 import { Approvals } from './Approvals.tsx'
@@ -142,7 +142,7 @@ export const SessionView = ({
         }
         notify(`Session ended. ${shortId(state.head?.projectId)} is free.`, 'good')
         void queryClient.invalidateQueries({ queryKey: queryKeys.projects() })
-        navigate(treeHref())
+        navigate(homeHref())
       })
       .catch((error: unknown) => notify(`Could not end session: ${errorMessage(error)}`, 'bad'))
   }

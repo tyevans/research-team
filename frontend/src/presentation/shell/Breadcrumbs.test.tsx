@@ -7,7 +7,7 @@ import type { SessionProjection } from '@domain/session/session.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import type { Route } from '../routing/routes.ts'
-import { courseHref, researchHref, treeHref } from '../routing/routes.ts'
+import { courseHref, researchHref, homeHref } from '../routing/routes.ts'
 import { Breadcrumbs } from './Breadcrumbs.tsx'
 
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
@@ -21,7 +21,7 @@ it('names the research route and links back to the tree', () => {
   // carry the course query CourseView does -- the same fallback the course
   // crumb uses when the name has not loaded yet.
   expect(screen.getByText(PROJECT.slice(0, 8))).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: 'sessions' })).toHaveAttribute('href', treeHref())
+  expect(screen.getByRole('link', { name: 'projects' })).toHaveAttribute('href', homeHref())
 })
 
 it('prefers the loaded project name over the id on the research crumb', () => {

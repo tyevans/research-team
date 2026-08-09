@@ -17,6 +17,9 @@
   --bg-hover: #1e242c;
   --line: #232a33;
   --line-soft: #1a2027;
+  /* hover and focus borders. Was a literal in `.node:hover`, which is exactly
+     the second palette the note above says this file exists to prevent. */
+  --line-strong: #34404e;
 
   --fg: #d7dee7;
   --fg-dim: #8a95a3;
@@ -33,6 +36,17 @@
   --k-turn: #7e8b9b;
   --k-failure: #f4736b;
   --k-compaction: #5f7d8c;
+
+  /* Chip and box tints. Each of these was written out twice already -- once in
+     `tree.css` for a chip and once in `states.css` for the error box -- so the
+     two could drift apart with nothing to say they had. */
+  --tint-session: #1a1630;
+  --tint-session-line: #3a3060;
+  --tint-fail: #241417;
+  --tint-fail-line: #45272a;
+  --tint-held: #241d10;
+  --tint-ok: #131f17;
+  --tint-ok-line: #24402c;
 
   --add-fg: #82d9a4;
   --add-bg: #0f2418;
@@ -52,6 +66,19 @@
 
   --radius: 5px;
   --topbar-h: 44px;
+
+  /* The one elevation this UI has: a toast, and now the row menu. */
+  --shadow-1: 0 6px 20px rgb(0 0 0 / 50%);
+
+  /* The spacing rhythm. Literal pixels everywhere before this, which was
+     survivable while a row had one level of padding; the project row has
+     four nested ones. */
+  --space-1: 3px;
+  --space-2: 6px;
+  --space-3: 10px;
+  --space-4: 14px;
+  --space-5: 20px;
+  --space-6: 28px;
 }
 
 * {

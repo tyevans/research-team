@@ -28,6 +28,15 @@ export const queryKeys = {
   course: (project: ProjectId) => ['course', project] as const,
   run: (project: ProjectId) => ['run', project] as const,
   workers: (project: ProjectId) => ['workers', project] as const,
+  /** Every project's run and worker state at once.
+   *
+   * The landing page draws one live marker per project row and has no list of
+   * which projects to invalidate -- the rows it drew are the virtualizer's
+   * business, not the invalidator's. These are prefixes rather than keys, and
+   * they are here for the reason every other key is: an invalidation that
+   * misspells one silently does nothing. */
+  allRuns: () => ['run'] as const,
+  allWorkers: () => ['workers'] as const,
   topics: (project: ProjectId) => ['topics', project] as const,
   topic: (project: ProjectId, topic: TopicId) => ['topic', project, topic] as const,
   seed: (project: ProjectId) => ['seed', project] as const,

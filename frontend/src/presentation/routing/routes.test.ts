@@ -9,9 +9,9 @@ import { courseHref, parseRoute, researchHref, sessionHref } from './routes.ts'
 
 describe('parseRoute', () => {
   it('reads the tree for an empty or unknown hash', () => {
-    expect(parseRoute('')).toEqual({ name: 'tree' })
-    expect(parseRoute('#/')).toEqual({ name: 'tree' })
-    expect(parseRoute('#/nonsense')).toEqual({ name: 'tree' })
+    expect(parseRoute('')).toEqual({ name: 'home' })
+    expect(parseRoute('#/')).toEqual({ name: 'home' })
+    expect(parseRoute('#/nonsense')).toEqual({ name: 'home' })
   })
 
   it('reads a session at HEAD', () => {

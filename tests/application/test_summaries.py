@@ -26,13 +26,14 @@ def user_message(text: str) -> dict:
 
 @pytest.fixture
 def make_session(aggregates):
-    def make(first_message: str | None = None) -> CodingSession:
+    def make(first_message: str | None = None, project_id=None) -> CodingSession:
         aggregate = aggregates.create_new(uuid4())
         aggregate.execute(
             StartSession(
                 session_id=aggregate.aggregate_id,
                 system_prompt=SYSTEM_PROMPT,
                 model_name=MODEL_NAME,
+                project_id=project_id,
             )
         )
         if first_message is not None:
@@ -102,3 +103,19 @@ def test_fork_lineage_is_reported(make_session):
 
     assert rows[forked.aggregate_id].forked_from == source.aggregate_id
     assert rows[source.aggregate_id].forked_from is None
+
+
+def test_a_sessions_project_is_reported_so_rows_can_be_grouped_by_it(make_session):
+    """Without this the console can only show two unrelated piles.
+
+    A session list carrying no project key cannot be arranged under the
+    projects those sessions belong to, which is what the landing page is.
+    """
+    project_id = uuid4()
+    in_project = make_session("shared work", project_id=project_id)
+    loose = make_session("just a prompt")
+
+    rows = {row.session_id: row for row in summaries_for(in_project, loose)}
+
+    assert rows[in_project.aggregate_id].project_id == project_id
+    assert rows[loose.aggregate_id].project_id is None

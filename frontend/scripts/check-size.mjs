@@ -28,7 +28,15 @@ const ASSETS = fileURLToPath(
 
 /** Gzipped kilobytes. Keyed by the chunk-name prefix Rollup emits. */
 const BUDGET_KB = {
-  'app-': 55, // our code: every component, store, mapper and stylesheet rule
+  // 57, from 55: the landing page, rewritten around projects rather than
+  // around the fork tree. Measured at 55.2 kB. What the 3.7 kB bought: each
+  // project's sessions folded underneath it, all four routes reachable from a
+  // project row, a live run marker, search, recency headings, per-region
+  // empty/loading/error states, and a confirmation dialog that is the
+  // console's own rather than the browser's. Roughly half of it is the two
+  // things the page had none of -- state per region, and a project row with
+  // more than a name on it.
+  'app-': 57, // our code: every component, store, mapper and stylesheet rule
   'react-': 66, // react + react-dom + scheduler
   'text-': 34, // marked, dompurify, jsdiff — markdown and diff rendering
   'vendor-': 38, // query, zustand, wouter, zod, date-fns, clsx, @tanstack/react-virtual
@@ -63,7 +71,26 @@ const BUDGET_KB = {
   // 232, from 231: the canvas legend, which is what made the node colours mean
   // anything, and the course page's autonomy disclosure. The graph search's
   // own answer-when-there-is-none fits inside the same raise.
-  total: 232,
+  //
+  // 236, from 232: the landing-page rewrite above, which is the whole of the
+  // difference -- every other bucket measured the same before and after. 232
+  // had 0.3 kB of headroom left, so this is the raise that was going to be
+  // needed by whatever landed next; it is spent here on the one page the
+  // owner said was hard to use.
+  //
+  // 512, from 236, on the owner's instruction. This one bought nothing: it is
+  // headroom, not a change. Worth being clear about what it costs, since the
+  // note above is the last one that will be forced for a long while. At 235.5
+  // kB measured, this is 276 kB of slack -- more than the console currently
+  // ships in total -- so `total` stops being a gate that anything realistic
+  // will trip, and the per-chunk budgets above become the only real ones.
+  // Those still bite, and are where a dependency would show up: a new library
+  // lands in `vendor-` or `graph-`, and our own growth in `app-`. What is no
+  // longer caught here is the shape this file was written for -- several
+  // chunks each growing within their own limit while the page a reader
+  // actually downloads doubles. If that matters again, the number to move is
+  // this one.
+  total: 512,
 }
 
 const kb = (bytes) => Math.round((bytes / 1024) * 10) / 10
