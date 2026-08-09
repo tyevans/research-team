@@ -63,7 +63,11 @@ from research_team.domain.commands import WriteFile
 from research_team.domain.topic import Topic
 from research_team.domain.workflow import Preset
 from research_team.infrastructure import config
-from research_team.infrastructure.agent import DeepAgentTurnExecutor, build_model
+from research_team.infrastructure.agent import (
+    DeepAgentTurnExecutor,
+    build_extraction_model,
+    build_model,
+)
 from research_team.infrastructure.agent.compaction import SummarizingStrategy
 from research_team.infrastructure.agent.component_feedback import ComponentFeedback
 from research_team.infrastructure.agent.corpus_tools import (
@@ -365,6 +369,25 @@ def _context_parts(
     return FullHistory(), (), ""
 
 
+def _extraction_model(injected: BaseChatModel | None) -> BaseChatModel:
+    """The chat model knowledge extraction runs on, given what the caller passed.
+
+    An injected model is handed back untouched. `build_application(model=...)`
+    is how tests supply fakes, and a fake is not a `ChatOpenAI` -- it has no
+    `extra_body` to set, and rebuilding one here would quietly point extraction
+    at a real endpoint the test never asked for. Wrapping the injected model in
+    a copy carrying `extra_body` would be no better: nothing guarantees the
+    fake can be copied, and a caller who injects a model has said which model
+    they want used.
+
+    A model this project built for itself is a `ChatOpenAI` against
+    `config.base_url()`, so extraction gets its own with thinking turned off --
+    see `build_extraction_model`. The agent's model is deliberately left
+    alone; only extraction is measured to be better off not reasoning.
+    """
+    return injected if injected is not None else build_extraction_model()
+
+
 def build_application(
     *,
     model: BaseChatModel | None = None,
@@ -388,6 +411,9 @@ def build_application(
     """
     resolved_path = db_path if db_path is not None else config.default_db_path()
     resolved_model = model if model is not None else build_model()
+    # Extraction runs on its own model, not the agent's: it is the one job
+    # here that is measurably better off not reasoning first.
+    extraction_model = _extraction_model(model)
     mode = context_mode if context_mode is not None else config.context_mode()
     strategy, subagents, prompt_suffix = _context_parts(mode, resolved_model, system_prompt)
     resolved_policy = policy if policy is not None else AutonomyPolicy()
@@ -692,7 +718,7 @@ def build_application(
             store=store,
             event_store=repository.store,
             snapshot_store=repository.snapshot_store,
-            provider=LangChainLlmProvider(resolved_model, model=config.model_name()),
+            provider=LangChainLlmProvider(extraction_model, model=config.model_name()),
             corpus=build_corpus_repository(
                 repository.store, snapshot_store=repository.snapshot_store
             ),

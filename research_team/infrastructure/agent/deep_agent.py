@@ -12,6 +12,7 @@ from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
+from redstring.llm.adapters.langchain import NO_THINKING
 
 from research_team.application import (
     ActivityReporter,
@@ -71,6 +72,35 @@ def build_model() -> BaseChatModel:
         base_url=config.base_url(),
         api_key=config.api_key(),
         temperature=0,
+    )
+
+
+def build_extraction_model() -> BaseChatModel:
+    """The same endpoint as `build_model`, told not to think before answering.
+
+    A second `ChatOpenAI` rather than `build_model().bind(extra_body=...)`,
+    for two reasons. `extra_body` is a constructor field, and `bind` returns a
+    `RunnableBinding`, not the `BaseChatModel` that `LangChainLlmProvider`
+    is typed against. And the agent and the extractor genuinely want different
+    request bodies, so two objects says what is true: this one is not the
+    agent's model with a decoration, it is the extractor's model.
+
+    redstring 0.4.0 made thinking-off the default for extraction, but only
+    inside `LangChainLlmProvider.openai_compatible`. This project builds its
+    own chat model and uses `__init__`, so that default never reached it --
+    which is the bug this exists to close. `NO_THINKING` is imported rather
+    than spelled out so a rename or a change of shape upstream breaks the
+    build instead of quietly leaving extraction thinking again.
+
+    See `config.extraction_thinking` for the measurement, the env override and
+    the backends this field is rejected by.
+    """
+    return ChatOpenAI(
+        model=config.model_name(),
+        base_url=config.base_url(),
+        api_key=config.api_key(),
+        temperature=0,
+        extra_body=None if config.extraction_thinking() else dict(NO_THINKING),
     )
 
 
