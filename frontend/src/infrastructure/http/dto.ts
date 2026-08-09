@@ -523,6 +523,14 @@ export const graphRelationshipDto = z.object({
   relationship_type: z.string(),
 })
 
+/** `/api/projects/{id}/graph`: the whole graph, and whether the server's cap
+ *  cut it short. No root -- see `WholeGraph`. */
+export const graphWholeDto = z.object({
+  entities: z.array(graphEntityDto).default([]),
+  relationships: z.array(graphRelationshipDto).default([]),
+  truncated: z.boolean().default(false),
+})
+
 export const graphNeighborhoodDto = z.object({
   root: graphEntityDto,
   entities: z.array(graphEntityDto).default([]),

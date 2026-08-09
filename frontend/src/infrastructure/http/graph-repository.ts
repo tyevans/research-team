@@ -3,10 +3,17 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, query, seg } from './http-client.ts'
-import { toGraphNode, toNeighborhood } from './mappers.ts'
+import { toGraphNode, toNeighborhood, toWholeGraph } from './mappers.ts'
 
 export class HttpGraphRepository implements GraphRepository {
   constructor(private readonly http: HttpClient) {}
+
+  async whole(projectId: ProjectId) {
+    // No `limit`: the server's own cap is the right one, and a number picked
+    // here would be a second bound to keep in step with it.
+    const body = await this.http.get(`/api/projects/${seg(projectId)}/graph`, dto.graphWholeDto)
+    return toWholeGraph(body)
+  }
 
   async search(projectId: ProjectId, name: string, entityType?: string) {
     const body = await this.http.get(

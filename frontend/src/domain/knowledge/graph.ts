@@ -44,6 +44,19 @@ export interface Neighborhood {
   readonly relationships: readonly GraphLink[]
 }
 
+/** A whole project graph as `/api/projects/{id}/graph` returns it: every
+ *  entity up to the server's cap, every edge among them, and whether the cap
+ *  cut anything off.
+ *
+ * Flat, with no root, unlike `Neighborhood` -- nobody asked about a
+ * particular entity here, which is the entire point of the read.
+ */
+export interface WholeGraph {
+  readonly entities: readonly GraphNode[]
+  readonly relationships: readonly GraphLink[]
+  readonly truncated: boolean
+}
+
 export interface GraphView {
   readonly nodes: readonly GraphNode[]
   readonly links: readonly GraphLink[]
@@ -101,6 +114,38 @@ export const expand = (view: GraphView, hood: Neighborhood): GraphView => {
     nodes: [...view.nodes, ...newNodes],
     links: [...view.links, ...newLinks],
     expanded: new Set(view.expanded).add(hood.root.id),
+  }
+}
+
+/** The whole graph, as the view a reader starts from.
+ *
+ * Replaces rather than merges, which is the opposite of `expand`. A whole
+ * graph is not one more piece of the picture; it *is* the picture, and
+ * folding it into whatever was already drawn would keep exactly the nodes
+ * the server has since dropped -- an entity removed by a merge on the write
+ * side would survive on the canvas forever because it once arrived in a
+ * neighbourhood. Existing node objects are still reused by id for the ids
+ * that survive, for the reason `expand` gives: d3-force stores each node's
+ * position on the object, and handing back fresh objects would re-simulate
+ * the whole drawing from scratch.
+ *
+ * **Why the whole graph counts as expanded.** `expanded` means "this node's
+ * neighbours are already on screen", which for a complete graph is true of
+ * every node in it -- so clicking one draws its detail panel without
+ * spending a request re-fetching edges already drawn, and the canvas's
+ * hollow-means-more-behind ring correctly shows nothing left to find. That
+ * claim fails the moment the cap bites: a truncated graph is missing both
+ * entities and the edges that reached them, so no node can be promised its
+ * neighbours are all here, and every one stays clickable for real.
+ */
+export const loadWhole = (view: GraphView, graph: WholeGraph): GraphView => {
+  const existingById = new Map(view.nodes.map((node) => [node.id, node]))
+  const nodes = graph.entities.map((entity) => existingById.get(entity.id) ?? entity)
+
+  return {
+    nodes,
+    links: graph.relationships,
+    expanded: graph.truncated ? new Set() : new Set(nodes.map((node) => node.id)),
   }
 }
 

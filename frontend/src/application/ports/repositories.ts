@@ -2,7 +2,7 @@ import type { Approval, ApprovalDecision } from '@domain/approval/approval.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
-import type { EntitySearchResult, Neighborhood } from '@domain/knowledge/graph.ts'
+import type { EntitySearchResult, Neighborhood, WholeGraph } from '@domain/knowledge/graph.ts'
 import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
@@ -219,10 +219,14 @@ export interface DocumentRange {
 }
 
 export interface GraphRepository {
+  /** The project's graph entire, up to the server's cap -- what the browser
+   *  draws before the reader has searched for anything. `truncated` says the
+   *  cap bit, which also means edges to whatever it cut off are absent. */
+  whole(projectId: ProjectId): Promise<WholeGraph>
   /** Entities matching a name substring and, optionally, an exact entity
-   *  type -- the browser's only entry point into the graph, since there is
-   *  no route that lists every node. `truncated` on the result says whether
-   *  the server held more back than the page returned. */
+   *  type -- how a reader finds one thing inside a graph too big to take in
+   *  whole. `truncated` on the result says whether the server held more back
+   *  than the page returned. */
   search(projectId: ProjectId, name: string, entityType?: string): Promise<EntitySearchResult>
   /** `entityId` and what lies within `depth` hops of it. Rejects with a 422
    *  `ApiError` for a depth past the server's bound, which the caller must

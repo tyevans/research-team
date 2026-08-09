@@ -6,7 +6,7 @@ import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Approval } from '@domain/approval/approval.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame, ExtractionStage } from '@domain/knowledge/extraction.ts'
-import type { GraphLink, GraphNode, Neighborhood } from '@domain/knowledge/graph.ts'
+import type { GraphLink, GraphNode, Neighborhood, WholeGraph } from '@domain/knowledge/graph.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
   Course,
@@ -508,6 +508,12 @@ export const toGraphLink = (raw: Dto<typeof dto.graphRelationshipDto>): GraphLin
   source: raw.source_id,
   target: raw.target_id,
   relationshipType: raw.relationship_type,
+})
+
+export const toWholeGraph = (raw: Dto<typeof dto.graphWholeDto>): WholeGraph => ({
+  entities: raw.entities.map(toGraphNode),
+  relationships: raw.relationships.map(toGraphLink),
+  truncated: raw.truncated,
 })
 
 export const toNeighborhood = (raw: Dto<typeof dto.graphNeighborhoodDto>): Neighborhood => ({

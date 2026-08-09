@@ -52,7 +52,22 @@ export const GraphPane = ({
   // instead (the same split `ExtractionPane` uses). Destructuring them here
   // would also detach them from the store instance the way an unbound method
   // detaches from `this`, which this project's lint config catches.
-  const { view, results, knownTypes, truncated, searching, error } = store()
+  const { view, results, knownTypes, truncated, searching, error, partial, loading } = store()
+
+  /** Draw the whole graph before the reader asks for anything.
+   *
+   * The pane used to open on an empty canvas and stay there until somebody
+   * searched, which put the burden the wrong way round: knowing an entity's
+   * name is the *result* of reading a project's graph, not the price of
+   * admission to it. Worse, the blank canvas said the same thing whether the
+   * project had nine hundred entities or none.
+   *
+   * Once per project, not per render: `store` is rebuilt when `projectId`
+   * changes and this rides along with it.
+   */
+  useEffect(() => {
+    void store.getState().loadAll()
+  }, [store])
 
   // Debounced rather than firing on every keystroke: `find_entities` fetches
   // the tenant's entire entity set per call (there is no store-side filter
@@ -108,10 +123,20 @@ export const GraphPane = ({
           down and a long result list pushed it off screen entirely -- the one
           element that wants the whole box was the one that kept losing it. */}
       <div className="graph-stage">
-        {view.nodes.length === 0 ? (
+        {loading && view.nodes.length === 0 ? (
+          <Loading what="the knowledge graph" />
+        ) : view.nodes.length === 0 ? (
+          // Nothing drawn now means nothing extracted, not "you have not
+          // searched yet" -- the pane has already asked for everything.
+          // Unless the ask failed, in which case the error below the canvas
+          // is the answer and this must not claim the graph is empty.
           <EmptyState
-            title="Nothing drawn yet"
-            detail="Search for an entity and pick a result to draw what connects to it."
+            title={error ? 'The graph could not be read' : 'This graph is empty'}
+            detail={
+              error
+                ? 'The project may still have entities; this page could not fetch them.'
+                : 'Nothing has been extracted into this project yet. Ingest a document to start building it.'
+            }
           />
         ) : (
           <Suspense fallback={<Loading what="the graph canvas" />}>
@@ -145,26 +170,40 @@ export const GraphPane = ({
               </option>
             ))}
           </select>
-          {/* Only once there is something to clear -- a control that does
-              nothing is a control a reader has to work out the meaning of. */}
+          {/* "Reset", not "Clear": with the whole graph drawn by default, an
+              empty canvas is no longer a state worth offering a button for --
+              it is the state a reader would immediately have to undo. What
+              they actually want back after pruning and expanding is
+              everything, which is what this restores. */}
           {view.nodes.length > 0 ? (
             <button
               type="button"
               className="btn btn-sm graph-clear"
               onClick={() => {
-                store.getState().clear()
-                // The canvas is empty now, so the URL must stop naming a node
-                // on it -- otherwise a reload would redraw the thing that was
-                // just cleared.
+                void store.getState().reset()
+                // The selection is dropped with it: whatever was being
+                // described was chosen out of the drawing that is now gone,
+                // and a reload should open on the whole graph rather than on
+                // one node of a view the reader had just abandoned.
                 onEntity(null)
               }}
             >
-              Clear
+              Reset view
             </button>
           ) : null}
         </div>
 
         {error ? <p className="graph-error">{error}</p> : null}
+
+        {/* A capped graph draws exactly like a complete one, and is missing
+            the edges to what was cut as well as the nodes themselves. Saying
+            so is also what points a reader at the search box, which is the
+            way through a graph too big to take in whole. */}
+        {partial ? (
+          <p className="graph-truncated">
+            Showing part of a larger graph -- search to find what is not drawn.
+          </p>
+        ) : null}
 
         {searching ? (
           <div className="graph-searching">

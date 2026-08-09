@@ -27,6 +27,7 @@ const hoodOf = (root: GraphNode, ...others: readonly GraphNode[]): Neighborhood 
 })
 
 const fakeGraphs = (over: Partial<GraphRepository> = {}): GraphRepository => ({
+  whole: vi.fn().mockResolvedValue({ entities: [], relationships: [], truncated: false }),
   search: vi.fn().mockResolvedValue({ entities: [], truncated: false }),
   neighborhood: vi.fn().mockRejectedValue(new Error('neighborhood was not stubbed for this test')),
   ...over,
@@ -112,6 +113,101 @@ it('does not re-fetch an already-expanded node', async () => {
   await graph.getState().expandNode('ada')
 
   expect(neighborhood).toHaveBeenCalledTimes(1)
+})
+
+it('draws the whole graph, wired, without being asked for a node', async () => {
+  const ada = node()
+  const grace = node({ id: 'grace', name: 'Grace Hopper' })
+  const whole = vi.fn().mockResolvedValue({
+    entities: [ada, grace],
+    relationships: [{ source: 'ada', target: 'grace', relationshipType: 'advised' }],
+    truncated: false,
+  })
+  const graph = store(fakeGraphs({ whole }))
+
+  await graph.getState().loadAll()
+
+  expect(graph.getState().view.nodes.map((n) => n.id)).toEqual(['ada', 'grace'])
+  expect(graph.getState().view.links).toHaveLength(1)
+  expect(graph.getState().partial).toBe(false)
+  expect(whole).toHaveBeenCalledWith(PROJECT)
+})
+
+it('treats a complete graph as fully expanded, so clicking costs no request', async () => {
+  const ada = node()
+  const neighborhood = vi.fn()
+  const whole = vi.fn().mockResolvedValue({ entities: [ada], relationships: [], truncated: false })
+  const graph = store(fakeGraphs({ whole, neighborhood }))
+
+  await graph.getState().loadAll()
+  await graph.getState().expandNode('ada')
+
+  expect(neighborhood).not.toHaveBeenCalled()
+  expect(graph.getState().selected).toBe('ada')
+})
+
+it('leaves a truncated graph expandable, since its edges are not all drawn', async () => {
+  const ada = node()
+  const grace = node({ id: 'grace', name: 'Grace Hopper' })
+  const whole = vi.fn().mockResolvedValue({ entities: [ada], relationships: [], truncated: true })
+  const neighborhood = vi.fn().mockResolvedValue(hoodOf(ada, grace))
+  const graph = store(fakeGraphs({ whole, neighborhood }))
+
+  await graph.getState().loadAll()
+  expect(graph.getState().partial).toBe(true)
+
+  await graph.getState().expandNode('ada')
+
+  expect(neighborhood).toHaveBeenCalledTimes(1)
+  expect(graph.getState().view.nodes.map((n) => n.id)).toEqual(['ada', 'grace'])
+})
+
+it('reports a failed load rather than showing an empty graph as an empty project', async () => {
+  const whole = vi.fn().mockRejectedValue(new ApiError('no graph read model is configured', 503))
+  const graph = store(fakeGraphs({ whole }))
+
+  await graph.getState().loadAll()
+
+  expect(graph.getState().error).toBe('no graph read model is configured')
+  expect(graph.getState().loading).toBe(false)
+  expect(graph.getState().view.nodes).toEqual([])
+})
+
+it('resets a pruned drawing by fetching the whole graph again', async () => {
+  const ada = node()
+  const grace = node({ id: 'grace', name: 'Grace Hopper' })
+  const whole = vi.fn().mockResolvedValue({
+    entities: [ada, grace],
+    relationships: [{ source: 'ada', target: 'grace', relationshipType: 'advised' }],
+    truncated: false,
+  })
+  const graph = store(fakeGraphs({ whole }))
+
+  await graph.getState().loadAll()
+  graph.getState().removeNode('grace')
+  expect(graph.getState().view.nodes.map((n) => n.id)).toEqual(['ada'])
+
+  await graph.getState().reset()
+
+  expect(graph.getState().view.nodes.map((n) => n.id)).toEqual(['ada', 'grace'])
+  // Re-read, not restored from a snapshot: the server's graph moves while
+  // the page is open.
+  expect(whole).toHaveBeenCalledTimes(2)
+})
+
+it('drops a selection the reloaded graph no longer contains', async () => {
+  const ada = node()
+  const whole = vi
+    .fn()
+    .mockResolvedValueOnce({ entities: [ada], relationships: [], truncated: false })
+    .mockResolvedValueOnce({ entities: [], relationships: [], truncated: false })
+  const graph = store(fakeGraphs({ whole }))
+
+  await graph.getState().loadAll()
+  graph.getState().select('ada')
+  await graph.getState().reset()
+
+  expect(graph.getState().selected).toBeNull()
 })
 
 it('surfaces a 422 from too deep a request rather than swallowing it', async () => {

@@ -12,7 +12,7 @@ from redstring import InMemoryGraphStore
 from redstring.domain.entity import Entity, ExtractionMethod
 from redstring.domain.relationship import Relationship
 
-from research_team.application.graph_read import MAX_NEIGHBORHOOD_DEPTH
+from research_team.application.graph_read import MAX_GRAPH_NODES, MAX_NEIGHBORHOOD_DEPTH
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 
 TENANT_ID = uuid4()
@@ -183,3 +183,91 @@ async def test_find_entities_name_filter_excludes_non_matches(graph_reader, seed
     page = await reader.find_entities(name="no-such-substring")
 
     assert page.entities == ()
+
+
+async def test_the_whole_graph_arrives_wired_in_one_call(graph_reader, seeded_graph):
+    """What a browser opens with: every entity, and every edge among them.
+
+    The outsider that `neighborhood` drops at depth=1 is here, and so is its
+    edge -- nothing is outside the whole graph, which is the point of it.
+    """
+    reader, _store = graph_reader
+    graph = await reader.whole()
+
+    assert {entity.name for entity in graph.entities} == {
+        "Ludwig Prandtl",
+        "Theodore von Kármán",
+        "Göttingen",
+        "Someone Two Hops Away",
+    }
+    assert {edge.relationship_type for edge in graph.relationships} == {
+        "advised",
+        "worked_at",
+    }
+    assert len(graph.relationships) == 3
+    assert graph.truncated is False
+
+
+async def test_an_empty_project_reads_as_an_empty_graph(graph_reader):
+    """A project with nothing extracted yet is the commonest way to reach
+    this read at all, and it must answer rather than fail."""
+    reader, _store = graph_reader
+    graph = await reader.whole()
+
+    assert graph.entities == ()
+    assert graph.relationships == ()
+    assert graph.truncated is False
+
+
+async def test_a_graph_larger_than_the_cap_says_it_was_truncated(graph_reader):
+    """Silence here would be a graph that looks complete and is not."""
+    reader, store = graph_reader
+    await store.upsert_entities([_entity(uuid4(), f"Node {n}") for n in range(5)])
+
+    graph = await reader.whole(limit=3)
+
+    assert len(graph.entities) == 3
+    assert graph.truncated is True
+
+
+async def test_a_graph_of_exactly_the_cap_is_not_truncated(graph_reader):
+    """The boundary the count-versus-limit test gets wrong: a graph that
+    fits exactly is complete, and reporting it as truncated would send a
+    reader looking for entities that do not exist."""
+    reader, store = graph_reader
+    await store.upsert_entities([_entity(uuid4(), f"Node {n}") for n in range(3)])
+
+    graph = await reader.whole(limit=3)
+
+    assert len(graph.entities) == 3
+    assert graph.truncated is False
+
+
+async def test_edges_to_entities_cut_off_by_the_cap_are_dropped(graph_reader):
+    """Under truncation a dangling edge is the ordinary case, not an edge
+    case: half of a relationship is not drawable."""
+    reader, store = graph_reader
+    ids = [uuid4() for _ in range(4)]
+    await store.upsert_entities([_entity(i, f"Node {n}") for n, i in enumerate(ids)])
+    await store.upsert_relationships(
+        [_relationship(uuid4(), ids[n], ids[n + 1], "next") for n in range(3)]
+    )
+
+    graph = await reader.whole(limit=2)
+
+    returned = {entity.entity_id for entity in graph.entities}
+    for edge in graph.relationships:
+        assert edge.source_id in returned
+        assert edge.target_id in returned
+
+
+async def test_the_cap_is_enforced_by_the_port_not_only_the_route(graph_reader):
+    """A route is not the last thing that can ask for the whole of a graph
+    too big to draw -- the same reasoning `depth` gets."""
+    reader, store = graph_reader
+    await store.upsert_entities([_entity(uuid4(), f"Node {n}") for n in range(3)])
+
+    graph = await reader.whole(limit=MAX_GRAPH_NODES + 1_000)
+
+    assert len(graph.entities) == 3
+    assert graph.truncated is False

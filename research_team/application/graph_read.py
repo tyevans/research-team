@@ -46,6 +46,15 @@ from typing import Protocol
 #: route to remember to check.
 MAX_NEIGHBORHOOD_DEPTH = 2
 
+#: How much of a project's graph `whole` will hand back in one call. A cap
+#: rather than everything for the same reason `MAX_NEIGHBORHOOD_DEPTH` is a
+#: cap: the response has to cross a wire and then be simulated by a
+#: force-directed layout in a browser, and both of those stop being free
+#: some way before a mature project's entity count does. Enforced inside the
+#: port, so no caller can ask for the whole of a graph that has outgrown one
+#: screen by skipping a layer above.
+MAX_GRAPH_NODES = 500
+
 
 @dataclass(frozen=True)
 class GraphEntity:
@@ -102,6 +111,25 @@ class Neighborhood:
     relationships: tuple[GraphRelationship, ...]
 
 
+@dataclass(frozen=True)
+class Graph:
+    """A whole project graph, up to the cap, wired the same way a
+    `Neighborhood` is.
+
+    `truncated` is what keeps the cap from being a silent lie. A browser
+    handed 500 of 900 entities and no flag draws a graph that looks complete
+    and is not -- and the missing 400 are invisible precisely because they
+    are missing. It is a flag rather than a cursor because this is not a
+    paged read: there is no "next screenful of graph" that means anything to
+    a force-directed drawing, and the answer to a graph too big to show whole
+    is to search within it, which is what `find_entities` is already for.
+    """
+
+    entities: tuple[GraphEntity, ...]
+    relationships: tuple[GraphRelationship, ...]
+    truncated: bool
+
+
 class GraphReadPort(Protocol):
     """One project's knowledge graph, browsed rather than searched.
 
@@ -131,6 +159,31 @@ class GraphReadPort(Protocol):
         contract -- `name` and `entity_type` combine with AND, `after`
         resumes strictly after that id in the store's total order. This is
         where a browser starts before it has anything to traverse from.
+        """
+        ...
+
+    async def whole(self, *, limit: int = MAX_GRAPH_NODES) -> Graph:
+        """The project's graph entire, up to `limit` entities, fully wired.
+
+        The read a browser opens with. `find_entities` and `neighborhood`
+        between them can only describe a graph one chosen entry point at a
+        time, which is the right shape for "tell me about this thing" and the
+        wrong one for "show me what is here": a reader who does not yet know
+        a single entity's name has nothing to type into a search box, and so
+        sees nothing at all. This is the answer to the question they actually
+        arrive with.
+
+        `limit` is clamped to `MAX_GRAPH_NODES` silently, the same way
+        `neighborhood` clamps `depth` and for the same reason -- the useful
+        answer to "give me all of it" is the largest graph this port will
+        hand back, plus `truncated` saying that is what happened.
+
+        Edges are resolved over the returned entity set in one call and kept
+        only when both ends survived into it, exactly as `neighborhood`
+        does: an edge to an entity the caller was not given is an edge it
+        cannot draw. Under truncation that is the ordinary case rather than
+        an edge case, which is the other half of why `truncated` has to be
+        reported -- the drawing is missing lines as well as dots.
         """
         ...
 

@@ -40,7 +40,11 @@ from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
 from research_team.application.grading import GradingError, grade
-from research_team.application.graph_read import MAX_NEIGHBORHOOD_DEPTH, GraphReadPort
+from research_team.application.graph_read import (
+    MAX_GRAPH_NODES,
+    MAX_NEIGHBORHOOD_DEPTH,
+    GraphReadPort,
+)
 from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
@@ -67,6 +71,7 @@ from research_team.interfaces.web.presenters import (
     event_rows,
     feed_event,
     file_history,
+    graph_view,
     item_view,
     neighborhood_view,
     preset_view,
@@ -827,6 +832,25 @@ def create_app(
             raise HTTPException(status_code=503, detail="no graph read model is configured")
         store = await graphs.open(project_id)
         return ProjectGraphReader(project_id=project_id, store=store)
+
+    @app.get("/api/projects/{project_id}/graph")
+    async def read_graph(project_id: UUID, limit: int = MAX_GRAPH_NODES):
+        """This project's whole graph, so a browser has something to draw
+        before the reader knows what to search for.
+
+        `limit` is clamped by the port rather than refused here, which is the
+        opposite of what `neighborhood` does with `depth` -- the two asks are
+        different. A depth past the bound is a request for a *shape* of answer
+        the server will not produce, and the caller needs to know its question
+        was the wrong one. A limit past the bound is a request for as much as
+        possible, and "as much as possible" is precisely what the clamp
+        returns; `truncated` in the body already says the graph did not fit,
+        so there is nothing a 422 would tell the caller that the answer does
+        not.
+        """
+        await _require_project(project_id)
+        reader = await _graph_reader(project_id)
+        return graph_view(await reader.whole(limit=limit))
 
     @app.get("/api/projects/{project_id}/graph/entities")
     async def list_graph_entities(
