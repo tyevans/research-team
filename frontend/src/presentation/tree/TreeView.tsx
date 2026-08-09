@@ -1,18 +1,14 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
-import { notify } from '@application/notifications/toast-store.ts'
-import { errorMessage } from '@application/ports/errors.ts'
 import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
 
 import { Button } from '../common/primitives.tsx'
-import { sessionHref } from '../routing/routes.ts'
-import { navigate } from '../routing/use-route.ts'
 import { DriftBanner } from './DriftBanner.tsx'
 import { NewProjectForm } from './NewProjectForm.tsx'
 import { ProjectList } from './ProjectList.tsx'
-import { LooseSessions, useSessionForest } from './SessionTree.tsx'
+import { useSessionForest } from './SessionTree.tsx'
 
 /** The console's landing page: projects, with their sessions inside them.
  *
@@ -24,8 +20,7 @@ import { LooseSessions, useSessionForest } from './SessionTree.tsx'
  * thing work outlives a conversation in.
  */
 export const TreeView = () => {
-  const { sessions, projects } = useContainer()
-  const queryClient = useQueryClient()
+  const { projects } = useContainer()
   const scrollRef = useRef<HTMLElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const [search, setSearch] = useState('')
@@ -52,13 +47,6 @@ export const TreeView = () => {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const create = useMutation({
-    mutationFn: () => sessions.create(),
-    onSuccess: (id) => navigate(sessionHref(id)),
-    onError: (error) => notify(`Could not create session: ${errorMessage(error)}`, 'bad'),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.tree() }),
-  })
-
   /** Nothing exists at all — so the whole page becomes the answer, rather than
    *  two empty boxes under two headings saying different things. Both reads
    *  have to have answered: an empty page shown while the queries are still in
@@ -70,7 +58,7 @@ export const TreeView = () => {
     !sessionsPending &&
     sessionRows.length === 0
 
-  if (firstRun) return <FirstRun onNewSession={() => create.mutate()} busy={create.isPending} />
+  if (firstRun) return <FirstRun />
 
   return (
     <section className="view view-home" ref={scrollRef}>
@@ -99,26 +87,17 @@ export const TreeView = () => {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
-          {/* Quiet, and deliberately so. A bare session has no filesystem
-            lineage, no knowledge graph, no course and no topic queue, and
-            cannot be given any of them later — so it is the right tool for
-            trying a prompt and a dead end for everything else. */}
-          <Button tone="quiet" disabled={create.isPending} onClick={() => create.mutate()}>
-            New session
-          </Button>
         </div>
 
         {creating ? <NewProjectForm onCreated={() => setCreating(false)} /> : null}
 
         <h2 className="section">Projects</h2>
-        <ProjectList scrollRef={scrollRef} search={search} />
-
-        <h2 className="section">Sessions outside any project</h2>
-        {/* In the page, not only as a badge in the topbar. This is the one page
-            whose entire content is that list, so "the list may be lying"
-            belongs where the list is. */}
+        {/* In the page, not only as a badge in the topbar. Every project row
+            counts its sessions and names its current one out of the same
+            projection, so "the session list may be lying" is a statement about
+            everything below this line, not about one region of it. */}
         <DriftBanner />
-        <LooseSessions scrollRef={scrollRef} />
+        <ProjectList scrollRef={scrollRef} search={search} />
       </div>
     </section>
   )
@@ -133,7 +112,7 @@ export const TreeView = () => {
  * never be given a project, a course or a topic queue — the aggregate refuses
  * a second choice — so it is a dead end for every feature this console has.
  */
-const FirstRun = ({ onNewSession, busy }: { onNewSession: () => void; busy: boolean }) => (
+const FirstRun = () => (
   <section className="view view-home view-first-run">
     <div className="first-run">
       <p className="purpose">
@@ -147,16 +126,14 @@ const FirstRun = ({ onNewSession, busy }: { onNewSession: () => void; busy: bool
 
       <NewProjectForm />
 
-      {/* Kept from the empty state this replaces, which had the right instinct
-          in the wrong place: the CLI genuinely is faster for a first prompt,
-          and both front ends share one database. It belongs on the page for
-          somebody who has nothing yet, not buried under a list. */}
+      {/* The CLI stays on this page, and the bare session no longer does.
+          Every session belongs to a project now, so "try a prompt without one"
+          is not a thing this console can offer -- but the terminal is still
+          genuinely faster for a first prompt, and both front ends share one
+          database, which is the part worth telling somebody who has nothing
+          yet. */}
       <p className="first-run-aside">
-        Only trying a prompt?{' '}
-        <button type="button" className="linkish" disabled={busy} onClick={onNewSession}>
-          Start a bare session
-        </button>{' '}
-        · or run <code>uv run main.py</code> in a terminal — both front ends share one database.
+        Prefer a terminal? Run <code>uv run main.py</code> — both front ends share one database.
       </p>
     </div>
   </section>

@@ -4,7 +4,7 @@ import type { Project } from './project.ts'
 import type { SessionSummary } from '../session/session.ts'
 import { ProjectId, SessionId } from '../shared/identifier.ts'
 
-import { flatten, forest, looseSessions, matches, recencyOf, rollups } from './landing.ts'
+import { currentSession, flatten, forest, matches, recencyOf, rollups } from './landing.ts'
 
 const ATLAS = ProjectId('11111111-1111-1111-1111-111111111111')
 const RETENTION = ProjectId('22222222-2222-2222-2222-222222222222')
@@ -98,14 +98,16 @@ it('makes a fork whose parent is in another project a root of its own', () => {
   expect(atlas!.sessions[0]!.children).toEqual([])
 })
 
-it('leaves project-less sessions flat and newest first', () => {
-  const rows = looseSessions([
-    session('older', { startedAt: '2026-01-01T00:00:00Z' }),
-    session('newer', { startedAt: '2026-08-01T00:00:00Z', forkedFrom: SessionId('older') }),
-    session('owned', { projectId: ATLAS, startedAt: '2026-09-01T00:00:00Z' }),
-  ])
+it('drops a session belonging to no project rather than grouping it anywhere', () => {
+  // Every session belongs to a project now, so a project-less one is a relic
+  // of a database written before that was true. It is not somebody's project's
+  // session, and the fold must not attach it to one.
+  const ranked = rollups(
+    [project(ATLAS, 'atlas')],
+    [session('owned', { projectId: ATLAS }), session('orphan', { projectId: null })],
+  )
 
-  expect(rows.map((row) => row.id)).toEqual(['newer', 'older'])
+  expect(flatten(ranked[0]!.sessions).map((row) => row.id)).toEqual(['owned'])
 })
 
 it('does not lose a session whose fork parent it has never heard of', () => {
@@ -137,4 +139,47 @@ it('buckets a project by the same timestamp its row prints', () => {
   expect(recencyOf(at('2026-08-06T09:00:00Z'), now)).toBe('week')
   expect(recencyOf(at('2026-01-06T09:00:00Z'), now)).toBe('older')
   expect(recencyOf(rollups([project(ATLAS, 'atlas')], [])[0]!, now)).toBe('empty')
+})
+
+it('picks the holding session as a project’s current one, not merely the newest', () => {
+  // "Where was I" is the holder: it is the session still open, and the one
+  // `Resume` goes to. A newer fork made from it is not where you were.
+  const [atlas] = rollups(
+    [project(ATLAS, 'atlas', { activeSessionId: SessionId('holder') })],
+    [
+      session('holder', { projectId: ATLAS, startedAt: '2026-01-01T00:00:00Z' }),
+      session('newer', { projectId: ATLAS, startedAt: '2026-08-01T00:00:00Z' }),
+    ],
+  )
+
+  expect(currentSession(atlas!)?.id).toBe('holder')
+})
+
+it('falls back to the newest session when nothing holds the project', () => {
+  const [atlas] = rollups(
+    [project(ATLAS, 'atlas')],
+    [
+      session('older', { projectId: ATLAS, startedAt: '2026-01-01T00:00:00Z' }),
+      session('newest', { projectId: ATLAS, startedAt: '2026-08-01T00:00:00Z' }),
+    ],
+  )
+
+  expect(currentSession(atlas!)?.id).toBe('newest')
+})
+
+it('falls back to the newest when the holder is missing from the session list', () => {
+  // A row showing no session at all would read as a project nothing has run
+  // in, which is a different and false statement.
+  const [atlas] = rollups(
+    [project(ATLAS, 'atlas', { activeSessionId: SessionId('not-listed') })],
+    [session('present', { projectId: ATLAS })],
+  )
+
+  expect(currentSession(atlas!)?.id).toBe('present')
+})
+
+it('has no current session for a project nothing has run in', () => {
+  const [atlas] = rollups([project(ATLAS, 'atlas')], [])
+
+  expect(currentSession(atlas!)).toBeNull()
 })

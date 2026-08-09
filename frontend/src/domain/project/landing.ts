@@ -86,17 +86,6 @@ export const forest = (summaries: readonly SessionSummary[]): readonly ForkNode[
 const byStartAscending = (a: SessionSummary, b: SessionSummary): number =>
   String(a.startedAt ?? '').localeCompare(String(b.startedAt ?? ''))
 
-/** Sessions belonging to no project, newest first and flat.
- *
- * Flat on purpose: lineage among orphans is shown as a `forked @` chip on the
- * row, because a pile of unrelated sessions is not a forest and nesting one
- * inside another mostly buries the newest arrival under a parent from March. */
-export const looseSessions = (summaries: readonly SessionSummary[]): readonly SessionSummary[] =>
-  summaries
-    .filter((summary) => summary.projectId === null)
-    .slice()
-    .sort((a, b) => byStartAscending(b, a))
-
 /** Every project, with its sessions inside it, ranked by last activity.
  *
  * A project with no sessions has no timestamp and sorts last — it is newly
@@ -139,6 +128,30 @@ export const rollups = (
       }
     })
     .sort((a, b) => String(b.lastActivity ?? '').localeCompare(String(a.lastActivity ?? '')))
+}
+
+/** The one session a project row shows without being asked.
+ *
+ * "Where was I" resolves to a project and then to a single session, and which
+ * one that is deserves an answer rather than whichever happens to sort first:
+ * the session *holding* the project, because that is the one still open and
+ * the one `Resume` goes to, and the newest otherwise. A project whose holder
+ * is missing from the summary list falls back to the newest rather than
+ * showing nothing -- a row with no session reads as a project nothing has run
+ * in, which would be a lie.
+ */
+export const currentSession = (rollup: ProjectRollup): SessionSummary | null => {
+  const all = flatten(rollup.sessions)
+  const holder = rollup.project.activeSessionId
+  if (holder) {
+    const held = all.find((session) => session.id === holder)
+    if (held) return held
+  }
+  return all.reduce<SessionSummary | null>(
+    (newest, session) =>
+      newest === null || byStartAscending(session, newest) > 0 ? session : newest,
+    null,
+  )
 }
 
 export type Recency = 'today' | 'week' | 'older' | 'empty'
