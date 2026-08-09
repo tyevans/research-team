@@ -11,11 +11,12 @@ one, and a web server has one per request -- so it belongs to the caller.
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
 
-from eventsource import DomainEvent
+from eventsource import DomainEvent, OptimisticLockError
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
@@ -38,6 +39,7 @@ from research_team.application.retry import with_retry
 from research_team.application.summaries import SessionSummary
 from research_team.domain import (
     AdvanceTip,
+    AutonomyChanged,
     ChangeAutonomy,
     CodingSession,
     CompactConversation,
@@ -111,6 +113,21 @@ _INHERITED_EVENT_FIELDS = frozenset(
         "aggregate_version",
     }
 )
+
+
+class _TurnConflict(Exception):
+    """Private: "do not retry this turn, and raise `cause` instead".
+
+    Exists only to get a decision out of `with_retry`'s `attempt`, which
+    retries every `OptimisticLockError` it sees and has no vocabulary for "this
+    one is real". Never escapes `_save_turn`, which unwraps it -- callers see
+    the `OptimisticLockError` they would have seen without any retrying.
+    """
+
+    def __init__(self, cause: OptimisticLockError) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
+
 
 _FILE_EVENT_TYPES = (FileWritten, FileEdited, FileDeleted)
 """What "inheriting a project's filesystem" copies. Deliberately narrower
@@ -520,8 +537,36 @@ class SessionService:
         Recording it is a use case, so the adapters do not have to reach past
         the service for a repository to write through.
         """
+        await self.record_autonomy_changes(session_id, {tool_name: level})
+
+    async def record_autonomy_changes(
+        self, session_id: UUID, levels: Mapping[str, str]
+    ) -> None:
+        """Note several tools' autonomy levels in one append.
+
+        Still one `AutonomyChanged` per tool -- the log says what a person
+        decided, and "relax everything" is a decision about each tool it moved.
+        What collapses is the *append*, not the events.
+
+        The distinction is not tidiness. "Allow all" moves several tools at
+        once, and recording them one at a time was one load-and-save per tool
+        against the session's own stream, issued as fast as the loop could
+        manage. A turn is holding a version of that stream for as long as the
+        model runs, so each of those appends was a chance for the turn to lose
+        its compare-and-swap; the turn now retries, but a burst of `n` appends
+        is `n` chances rather than one, and the retry is bounded. Removing the
+        burst is the half of the fix that stops the contention rather than
+        surviving it.
+
+        An empty map appends nothing. `AutonomyPolicy.relax_all` returns what
+        actually moved, and nothing moves when everything is already relaxed --
+        a save there would be a write recording no decision.
+        """
+        if not levels:
+            return
         aggregate = await self._repository.load(session_id)
-        aggregate.execute(ChangeAutonomy(tool_name=tool_name, level=level))
+        for tool_name, level in levels.items():
+            aggregate.execute(ChangeAutonomy(tool_name=tool_name, level=level))
         await self._repository.save(aggregate)
 
     @property
@@ -630,7 +675,6 @@ class SessionService:
         on_activity: ActivityReporter | None = None,
     ) -> TurnOutcome:
         aggregate = await self._repository.load(session_id)
-        first_index = aggregate.version + 1
         aggregate.execute(
             SendUserMessage(message=self._executor.encode_user_message(user_input))
         )
@@ -682,14 +726,108 @@ class SessionService:
                 aggregate.execute(RecordAssistantMessage(message=message.payload))
 
         aggregate.execute(CompleteTurn())
-        last_index = aggregate.version
-        await self._repository.save(aggregate)
+        appended = len(aggregate.uncommitted_events)
+        saved = await self._save_turn(session_id, aggregate)
         return TurnOutcome(
             reply=result.reply_text,
-            turn_index=aggregate.state.turn_index,
-            from_index=first_index,
-            to_index=last_index,
+            turn_index=saved.state.turn_index,
+            # Read off the saved aggregate, not off the one the turn built: a
+            # retry renumbers the turn's events onto whatever version the
+            # winner left, so the indices computed before the save can be
+            # wrong by however much landed underneath it.
+            from_index=saved.version - appended + 1,
+            to_index=saved.version,
         )
+
+    async def _save_turn(self, session_id: UUID, aggregate: CodingSession) -> CodingSession:
+        """Append the turn's events, re-appending them if the save loses.
+
+        A turn holds a version for as long as the model runs, which can be
+        minutes, so anything else appending to the session -- an autonomy
+        switch flipped from the UI is the one that did it in production --
+        makes the save fail and throws the whole turn away. That is the worst
+        possible thing to discard: it has already been paid for.
+
+        **Only the append repeats.** `with_retry`'s contract is that `attempt`
+        reloads and re-*decides*, which is right for a short write and wrong
+        here: re-deciding means re-running the model, so a retry would bill a
+        second turn and could repeat every tool call the first one made --
+        writing a file twice to avoid a lock error is not a trade worth making.
+        So the retry re-applies the events the turn already produced onto a
+        freshly loaded aggregate instead. `with_retry` is still what counts and
+        bounds the attempts; the deviation is in what `attempt` does, and it is
+        safe for the same reason a rebase is: none of the turn's events decide
+        anything against the state the interloper changed. `AutonomyChanged`
+        moves a policy the *executor* consulted while the turn ran, and the
+        turn's own events are records of what already happened.
+
+        The bound is `with_retry`'s. What it costs is that a session under
+        genuinely continuous write pressure loses the turn with the lock error
+        it would have raised anyway -- but that is a stream nobody could take a
+        turn on, and an unbounded retry there is a hang instead of an error.
+        """
+        events = list(aggregate.uncommitted_events)
+        base_version = aggregate.version - len(events)
+        pending: CodingSession | None = aggregate
+        lost: OptimisticLockError | None = None
+
+        async def attempt() -> CodingSession:
+            # The first attempt saves the aggregate the turn ran on; every
+            # later one rebuilds it, because an aggregate that lost a save
+            # still holds the version it lost at and would lose again.
+            nonlocal pending, lost
+            target = pending
+            pending = None
+            if target is None:
+                await self._refuse_unrebasable(session_id, base_version, lost)
+                target = await self._repository.load(session_id)
+                for event in events:
+                    target.apply_event(
+                        event.model_copy(
+                            update={"aggregate_version": target.get_next_version()}
+                        ),
+                        is_new=True,
+                    )
+            try:
+                await self._repository.save(target)
+            except OptimisticLockError as error:
+                lost = error
+                raise
+            return target
+
+        try:
+            return await with_retry(attempt, what=f"the turn on session {session_id}")
+        except _TurnConflict as conflict:
+            # The lock error itself, unwrapped: a caller mapping it to a 409
+            # should not have to learn that something tried to rebase first.
+            raise conflict.cause from None
+
+    async def _refuse_unrebasable(
+        self, session_id: UUID, base_version: int, lost: OptimisticLockError | None
+    ) -> None:
+        """Give up rather than rebase over a write the turn contradicts.
+
+        The danger in retrying a turn is that a lock error means two different
+        things. An autonomy switch flipped mid-turn is bookkeeping that
+        happened *beside* the turn, and re-appending over it loses nothing. A
+        second turn on the same session is the opposite: both turns read the
+        same conversation and answered it independently, so appending both
+        interleaves two replies to one message -- the all-or-nothing breakage
+        the compare-and-swap exists to prevent, laundered into a success.
+        `test_two_turns_at_once_on_one_session_conflict_rather_than_interleave`
+        is what fails if this check goes.
+
+        So the allowance is a named list of one, rather than "anything that is
+        not a turn". The cost is that a new benign concurrent writer will make
+        turns fail until someone adds it here -- which is the direction to be
+        wrong in: a spurious 409 is visible and recoverable, a silently
+        interleaved conversation is neither.
+        """
+        landed = (await self.history(session_id))[base_version:]
+        if all(isinstance(event, AutonomyChanged) for event in landed):
+            return
+        assert lost is not None, "only reached after a save has lost its version"
+        raise _TurnConflict(lost)
 
     async def _record_failure(self, session_id: UUID, error: BaseException) -> None:
         """Append a TurnFailed marker. Never masks the original error.
