@@ -12,6 +12,7 @@ import {
   approvalSettledFrameDto,
   frameEnvelopeDto,
   logFrameDto,
+  projectChangeFrameDto,
   seedingFrameDto,
   topicFrameDto,
 } from '../http/dto.ts'
@@ -167,6 +168,18 @@ export const decodeFrame = (data: string): FeedFrame | null => {
       const frame = topicFrameDto.safeParse(payload)
       return frame.success
         ? { kind: 'topic', topicId: TopicId(frame.data.topic_id), change: frame.data.change }
+        : null
+    }
+    case 'Graph': {
+      const frame = projectChangeFrameDto.safeParse(payload)
+      return frame.success
+        ? { kind: 'graph', projectId: frame.data.project_id, change: frame.data.change }
+        : null
+    }
+    case 'Corpus': {
+      const frame = projectChangeFrameDto.safeParse(payload)
+      return frame.success
+        ? { kind: 'corpus', projectId: frame.data.project_id, change: frame.data.change }
         : null
     }
     case 'TurnActivity': {

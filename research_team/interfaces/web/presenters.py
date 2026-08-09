@@ -495,6 +495,75 @@ def topic_change(topic_id: UUID, event: DomainEvent) -> dict[str, Any]:
     }
 
 
+def graph_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
+    """One knowledge-graph event, as pushed over SSE.
+
+    Its own frame type for the reason `topic_change` is: neither is a session,
+    and a document stream's `uuid5` aggregate id under `session_id` would have
+    the session tree refetching something that is not a session at all. Unlike
+    a topic, a document is not even an aggregate this application has a name
+    for -- the id identifies one document's extraction history inside
+    redstring, which nothing above this layer can do anything with. So it is
+    not on the frame.
+
+    **The project id is, and it comes free.** Every redstring event is a
+    `TenantDomainEvent` and a project *is* the tenant, so answering "whose
+    graph moved?" is a field read rather than the read-model lookup per frame
+    that made `topic_change` give up on the question. Which is what lets a
+    subscriber ignore another project's extraction outright instead of
+    re-reading its own graph to find nothing changed -- worth more here than
+    it would be for a topic list, because the read this saves is a whole
+    graph.
+
+    `change` is the event class name, matching `topic_change` and `event_row`.
+    A client that wants to tell an extraction from a merge has it without a
+    follow-up read; today nothing does, and both mean the same thing to the
+    pane -- redraw.
+
+    What this frame deliberately does not carry: the entities themselves.
+    `DocumentExtracted` has all of them, and passing them through would make
+    the pane's drawing a fold over the wire instead of a read of the graph --
+    which would have to agree with what `whole` returns after consolidation
+    has moved things, and would not. The frame is a nudge; the route stays the
+    single answer to what the graph is.
+    """
+    return {
+        "type": "Graph",
+        "project_id": str(project_id),
+        "change": type(event).__name__,
+        "occurred_at": event.occurred_at.isoformat(),
+    }
+
+
+def corpus_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
+    """One corpus event, as pushed over SSE.
+
+    Separate from `graph_change` even though a single ingest emits both, and
+    the separation is the point rather than tidiness: `_store_document` runs
+    *before* extraction and says why -- a document without a graph is
+    repairable, a graph without its document is not -- so an extraction that
+    fails leaves a stored source and no redstring event at all. A documents
+    pane refreshed on graph frames would therefore go quiet on exactly the
+    ingests a reader most needs to see the source of.
+
+    `project_id` is the corpus's own aggregate id: a corpus shares its
+    project's UUID (see `build_corpus_repository`), so this frame is
+    project-addressed for free, the same way a graph frame is by `tenant_id`.
+
+    Carries no document, only that one moved. The pane re-reads
+    `/api/projects/{id}/sources`, which is one query against a read model and
+    the same answer a reload would give -- against putting a source's metadata
+    on a frame that every browser holding a connection receives, and then
+    having two descriptions of one document that can disagree.
+    """
+    return {
+        "type": "Corpus",
+        "project_id": str(project_id),
+        "change": type(event).__name__,
+        "occurred_at": event.occurred_at.isoformat(),
+    }
+
+
 def source_view(summary: DocumentRecord) -> dict[str, Any]:
     """One row of `/api/projects/{id}/sources`: what a source is, not what it says.
 

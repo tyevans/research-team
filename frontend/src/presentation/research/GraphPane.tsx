@@ -5,6 +5,7 @@ import { useContainer } from '@app/container-context.tsx'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { EmptyState, Loading } from '../common/primitives.tsx'
+import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
 import { GraphDetail } from './GraphDetail.tsx'
 import { GraphLegend } from './GraphLegend.tsx'
 
@@ -68,6 +69,36 @@ export const GraphPane = ({
   useEffect(() => {
     void store.getState().loadAll()
   }, [store])
+
+  /** Draw what has been extracted since, without waiting to be reloaded.
+   *
+   * The effect above runs once per project, so before this the drawing was
+   * the graph as it stood when the tab opened -- a reader could watch a
+   * transcript report twelve entities against a canvas showing none of them,
+   * and the only way through was F5.
+   *
+   * `loadAll` rather than a merge of something on the frame: the frame
+   * carries no entities on purpose (`graph_change` says why), and the route
+   * stays the single answer to what the graph is. The cost is real and worth
+   * stating -- `loadWhole` replaces the drawing, so a reader who has pruned
+   * nodes gets them back. That is the same trade "Reset view" makes
+   * deliberately, made here by an extraction they did not ask for. Their
+   * *selection* survives (`loadAll` keeps it when the node is still in the
+   * graph), which is the part the detail panel depends on. A merge that kept
+   * pruning would have to decide what a removed node means once the server
+   * has merged it into one that is still there, and that is not a question
+   * this pane can answer correctly today.
+   *
+   * Corpus frames are ignored: they ride the same ingest, and a document
+   * being stored changes no entity. Asserted, along with the project scoping.
+   */
+  useFrameRefresh(
+    // Always on: this hook lives in the pane it refreshes, so being mounted
+    // is the "on screen" test `useTreeRefresh` needs its flag for.
+    true,
+    (frame) => frame.kind === 'graph' && frame.projectId === projectId,
+    () => void store.getState().loadAll(),
+  )
 
   // Debounced rather than firing on every keystroke: `find_entities` fetches
   // the tenant's entire entity set per call (there is no store-side filter

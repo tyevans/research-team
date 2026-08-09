@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import type { ReactElement } from 'react'
@@ -6,11 +6,14 @@ import { expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
+import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import { ApiError } from '@application/ports/errors.ts'
 import type { GraphRepository } from '@application/ports/repositories.ts'
 import type { GraphNode, Neighborhood } from '@domain/knowledge/graph.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
+import { StreamProvider } from '../shell/StreamProvider.tsx'
+import { FRAME_DEBOUNCE_MS } from '../shell/use-frame-refresh.ts'
 import { GraphPane } from './GraphPane.tsx'
 
 // Asserting on canvas pixels would test the library, not this pane -- the
@@ -53,9 +56,49 @@ const RoutedGraphPane = ({ start = null }: { start?: string | null }) => {
   return <GraphPane projectId={PROJECT} entity={entity} onEntity={setEntity} />
 }
 
-const renderWithContainer = (ui: ReactElement, parts: Partial<AppContainer>) => {
-  const container = parts as unknown as AppContainer
-  return render(<ContainerProvider container={container}>{ui}</ContainerProvider>)
+/** Mirrors `TopicList.test.tsx`'s fake stream, so a live-update assertion
+ *  drives the real `StreamProvider` fan-out rather than calling a prop. */
+const fakeStream = () => {
+  let listener: EventStreamListener | null = null
+  const stream: EventStream = {
+    connect: (received) => {
+      listener = received
+    },
+    disconnect: () => {
+      listener = null
+    },
+  }
+  return {
+    stream,
+    pushGraph: (projectId: string = PROJECT, change = 'DocumentExtracted') =>
+      act(() => {
+        listener?.onFrame({ kind: 'graph', projectId, change })
+      }),
+    pushCorpus: () =>
+      act(() => {
+        listener?.onFrame({
+          kind: 'corpus',
+          projectId: PROJECT,
+          change: 'SourceDocumentStored',
+        })
+      }),
+  }
+}
+
+/** The `StreamProvider` is not decoration: `GraphPane` subscribes to the feed,
+ *  and a harness without one would exercise a component the application never
+ *  renders. */
+const renderWithContainer = (
+  ui: ReactElement,
+  parts: Partial<AppContainer>,
+  stream: EventStream = fakeStream().stream,
+) => {
+  const container = { stream, ...parts } as unknown as AppContainer
+  return render(
+    <ContainerProvider container={container}>
+      <StreamProvider>{ui}</StreamProvider>
+    </ContainerProvider>,
+  )
 }
 
 it('populates results from a search', async () => {
@@ -494,4 +537,69 @@ it('keeps a type on offer after choosing it has narrowed the results to it', asy
   // control that just offered it has trapped the reader on their own choice.
   await waitFor(() => expect(search).toHaveBeenCalledTimes(2))
   expect(screen.getByRole('option', { name: 'study' })).toBeInTheDocument()
+})
+
+
+it('draws an entity extracted after the page loaded, without a reload', async () => {
+  // The bug this whole change exists for. `loadAll` runs once per project, so
+  // a pane opened before an ingest drew the graph as it was then and never
+  // again -- a reader watched the transcript report twelve entities against a
+  // canvas that showed none of them. Reverting either half (the `Graph` frame
+  // or this subscription) fails here.
+  const ada = node()
+  const whole = vi
+    .fn()
+    .mockResolvedValueOnce({ entities: [], relationships: [], truncated: false })
+    .mockResolvedValue({ entities: [ada], relationships: [], truncated: false })
+  const graphs = fakeGraphs({ whole })
+  const feed = fakeStream()
+
+  renderWithContainer(<RoutedGraphPane />, { graphs }, feed.stream)
+  await waitFor(() => expect(whole).toHaveBeenCalledTimes(1))
+
+  feed.pushGraph()
+
+  await waitFor(() => expect(whole).toHaveBeenCalledTimes(2), { timeout: 2_000 })
+  expect(await screen.findByText(/canvas/)).toBeInTheDocument()
+})
+
+it('re-reads the graph once for a burst of frames, not once each', async () => {
+  // An ingest emits one extraction and then one merge per entity it resolved,
+  // so a document yielding twelve entities can commit a dozen frames in a
+  // row. Without the debounce that is a dozen whole-graph reads for one
+  // repaint -- and this is the pane that redraws a force-directed layout.
+  const whole = vi.fn().mockResolvedValue({ entities: [], relationships: [], truncated: false })
+  const feed = fakeStream()
+
+  renderWithContainer(<RoutedGraphPane />, { graphs: fakeGraphs({ whole }) }, feed.stream)
+  await waitFor(() => expect(whole).toHaveBeenCalledTimes(1))
+
+  feed.pushGraph()
+  feed.pushGraph()
+  feed.pushGraph()
+
+  await waitFor(() => expect(whole).toHaveBeenCalledTimes(2))
+  await new Promise((resolve) => setTimeout(resolve, FRAME_DEBOUNCE_MS * 2))
+  expect(whole).toHaveBeenCalledTimes(2)
+})
+
+it('ignores another project’s graph frame, and a corpus frame', async () => {
+  // The frame names its project, so a second project extracting in another tab
+  // costs this pane nothing. A corpus frame is ignored for a different reason:
+  // it rides the same ingest, and a document being stored changes no entity --
+  // the graph frame that follows it is the one that means anything here.
+  //
+  // Stated plainly: this test passes with the subscription removed. It pins
+  // the scope of the fix, not the fix; the two above are the red ones.
+  const whole = vi.fn().mockResolvedValue({ entities: [], relationships: [], truncated: false })
+  const feed = fakeStream()
+
+  renderWithContainer(<RoutedGraphPane />, { graphs: fakeGraphs({ whole }) }, feed.stream)
+  await waitFor(() => expect(whole).toHaveBeenCalledTimes(1))
+
+  feed.pushGraph('99999999-9999-9999-9999-999999999999')
+  feed.pushCorpus()
+
+  await new Promise((resolve) => setTimeout(resolve, FRAME_DEBOUNCE_MS * 2))
+  expect(whole).toHaveBeenCalledTimes(1)
 })

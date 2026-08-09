@@ -16,6 +16,7 @@ from eventsource import (
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from eventsource.application.aggregates.repository import AggregateRepository
+from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 
 from research_team.application import FeedEntry
 from research_team.domain import CodingSession, Corpus, Project
@@ -24,6 +25,17 @@ from research_team.domain.learner import LearnerProgress
 from research_team.domain.topic import Topic
 
 SNAPSHOT_THRESHOLD = 50
+
+KNOWLEDGE_CATEGORIES = (DOCUMENT_CATEGORY, CONSOLIDATION_CATEGORY)
+"""redstring's stream categories, as they appear on this store's feed.
+
+Named here rather than at each use because two places have to agree on it and
+they are in different layers: `read_since` decides which categories reach the
+feed, and `_sse` decides how a frame from one is addressed. Split, a third
+category added upstream could be read and then rendered as a session -- which
+is a mislabelled frame rather than an absent one, and the harder of the two to
+notice.
+"""
 
 
 def build_project_repository(
@@ -352,13 +364,14 @@ class EventStoreSessionRepository:
         return await self._store.current_position()
 
     async def read_since(self, position: object | None) -> list[FeedEntry]:
-        """Session and topic events since `position`, in append order.
+        """What the research page and the session views watch, since `position`.
 
         Scoped by aggregate type rather than taking the whole feed. This store
-        is shared: redstring's `Document` and `Consolidation` streams live in
-        the same file, and their aggregate ids are document and tenant ids, not
-        sessions or topics. Unscoped, every one of them would arrive here as a
-        `FeedEntry` for an aggregate no subscriber can place.
+        is shared, and it holds streams belonging to aggregates nothing
+        subscribing here can place -- `Project`, `AutoResearchRun` and
+        `LearnerProgress` among them. Unscoped, every one of them would arrive
+        as a `FeedEntry` addressed to something no subscriber knows how to
+        route.
 
         The scoping is `FeedReadOptions.aggregate_type` (eventsource 0.12),
         which the SQLite adapter pushes into the same query that already
@@ -375,16 +388,54 @@ class EventStoreSessionRepository:
         neither claim held. A test that saves a `Topic` and asserts a feed
         entry for it is what would have failed.
 
+        **redstring's two categories are read as well, and that is the fix for
+        a graph pane that only showed new entities after a reload.** They are
+        the same case as `Topic` one layer out: an extraction appends
+        `DocumentExtracted` here, and the drawing on the research page *is*
+        what that event added, so a feed that filtered them out left the only
+        live signal the pane could have had unreachable. Their aggregate ids
+        are a document's and a tenant's rather than a session's, which is why
+        `_sse` addresses the resulting frame by `tenant_id` and never by
+        `aggregate_id`.
+
+        **`Corpus` is read for the documents pane, which had no live path at
+        all.** It is a separate admission from the two above even though one
+        ingest moves both, because a document is stored *before* it is
+        extracted and an extraction that fails emits nothing on redstring's
+        streams -- so a pane fed by graph frames would silently drop exactly
+        the sources whose failure a reader needs to see listed.
+
+        The redstring category names come from redstring rather than being
+        spelled out
+        here. This is the one module outside `infrastructure/knowledge/` that
+        imports it, and the import is the point: redstring is pre-1.0 with a
+        no-shim policy, so a renamed category should be an `ImportError` at
+        startup rather than a feed that silently reads nothing and a pane that
+        silently stops updating -- which is exactly the failure this method
+        already shipped once.
+
         One read per type rather than one unfiltered read, because the filter
-        is what keeps redstring's streams out; merged by position afterwards,
-        which is safe because positions are totally ordered within one store
-        and both reads start from the same cursor. Two indexed queries per
-        poll is the price, against reading and discarding a whole corpus's
-        document events on every one.
+        is what keeps the categories nobody can route out; merged by position
+        afterwards, which is safe because positions are totally ordered within
+        one store and every read starts from the same cursor. Five indexed
+        queries per poll is the price, up from two, against an unfiltered read
+        that would carry the same document events plus everything else.
+
+        The cost that is not the query count: `DocumentExtracted` carries every
+        entity and relationship the run found, so this deserialises a whole
+        extraction's payload in order to emit a frame that says only "the graph
+        moved". Measured against nothing -- it is reasoned, not benchmarked --
+        and it is the price of the log being the signal. See the commit for the
+        projection-into-our-own-event alternative and why it was not taken.
         """
         envelopes = [
             envelope
-            for aggregate_type in (CodingSession.aggregate_type, Topic.aggregate_type)
+            for aggregate_type in (
+                CodingSession.aggregate_type,
+                Topic.aggregate_type,
+                Corpus.aggregate_type,
+                *KNOWLEDGE_CATEGORIES,
+            )
             for envelope in await collect(
                 self._store.read_all(
                     from_position=position,
