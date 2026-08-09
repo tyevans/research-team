@@ -132,7 +132,17 @@ def service(app_and_client):
 
 
 async def _new_session(client) -> str:
-    response = await client.post("/api/sessions", json={})
+    """A session over HTTP, by the only route there is: a project, then a join.
+
+    `POST /api/sessions` is gone -- a session belongs to a project, and joining
+    one is where the project agrees to it. A project per call, with a unique
+    name: a project holds one session at a time and creation rejects a
+    duplicate name, so a shared one would fail the second caller in a rejection
+    about neither of their subjects.
+    """
+    project = await client.post("/api/projects", json={"name": f"test project {uuid4()}"})
+    assert project.status_code == 200
+    response = await client.post(f"/api/projects/{project.json()['id']}/join")
     assert response.status_code == 200
     return response.json()["id"]
 
@@ -155,13 +165,12 @@ async def test_get_session_reports_its_prompt_and_model(client):
     assert body["files"] == []
 
 
-async def test_create_session_honours_a_custom_prompt(client):
-    response = await client.post(
-        "/api/sessions", json={"system_prompt": "a distinctive prompt"}
-    )
-    session_id = response.json()["id"]
-    body = (await client.get(f"/api/sessions/{session_id}")).json()
-    assert body["system_prompt"] == "a distinctive prompt"
+# `test_create_session_honours_a_custom_prompt` was here. It posted a
+# `system_prompt` to `POST /api/sessions`; both the field and the endpoint are
+# gone, and there is nothing left to assert -- `start_in_project` composes the
+# prompt and takes no override, so no HTTP caller can choose one. The claim
+# that a session runs under its own prompt still has a home in
+# tests/application/test_session_service.py, driven at the aggregate.
 
 
 async def test_unknown_session_is_404(client):
@@ -392,7 +401,10 @@ async def test_sse_frames_each_event_as_a_data_line(repository, session_id):
     aggregate = repository.create(session_id)
     aggregate.execute(
         StartSession(
-            session_id=aggregate.aggregate_id, system_prompt="prompt", model_name="test-model"
+            session_id=aggregate.aggregate_id,
+            system_prompt="prompt",
+            model_name="test-model",
+            project_id=uuid4(),
         )
     )
     await repository.save(aggregate)
@@ -894,7 +906,10 @@ async def test_each_frame_carries_the_cursor_that_follows_it(repository, session
     aggregate = repository.create(session_id)
     aggregate.execute(
         StartSession(
-            session_id=aggregate.aggregate_id, system_prompt="prompt", model_name="test-model"
+            session_id=aggregate.aggregate_id,
+            system_prompt="prompt",
+            model_name="test-model",
+            project_id=uuid4(),
         )
     )
     await repository.save(aggregate)
@@ -921,7 +936,10 @@ async def test_reconnecting_with_a_cursor_delivers_what_was_missed(repository, s
     aggregate = repository.create(session_id)
     aggregate.execute(
         StartSession(
-            session_id=aggregate.aggregate_id, system_prompt="prompt", model_name="test-model"
+            session_id=aggregate.aggregate_id,
+            system_prompt="prompt",
+            model_name="test-model",
+            project_id=uuid4(),
         )
     )
     await repository.save(aggregate)
@@ -953,7 +971,10 @@ async def test_an_unplaceable_cursor_falls_back_to_the_live_end(repository, sess
     aggregate = repository.create(session_id)
     aggregate.execute(
         StartSession(
-            session_id=aggregate.aggregate_id, system_prompt="prompt", model_name="test-model"
+            session_id=aggregate.aggregate_id,
+            system_prompt="prompt",
+            model_name="test-model",
+            project_id=uuid4(),
         )
     )
     await repository.save(aggregate)  # already in the log, must not be replayed
@@ -1129,13 +1150,31 @@ async def test_releasing_a_session_frees_its_project_for_the_next_one(client):
     assert second.json()["id"] != first
 
 
-async def test_releasing_a_session_in_no_project_is_not_an_error(client):
-    session_id = (await client.post("/api/sessions")).json()["id"]
+async def test_releasing_a_session_twice_is_not_an_error(client):
+    """Releasing what you no longer hold answers calmly rather than raising.
+
+    This replaces a test that made a project-less session with
+    `POST /api/sessions` and released that, asserting
+    `{"released": False, "project_id": None}`. A session outside a project can
+    no longer be built, so that response shape is unreachable and the branch in
+    `release_session` that returns it is dead. The second release stands in as
+    the reachable way to release something you do not hold, which is the case
+    that has to stay quiet -- every REPL and browser exit path calls release
+    unconditionally.
+
+    Note what the second call answers: `released: True`, though nothing moved.
+    `release_project` no-ops when the session is not the holder and the route
+    reports success either way. Asserted as it stands rather than as it ought
+    to be; changing the route is not this test's to do.
+    """
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    session_id = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
+    assert (await client.post(f"/api/sessions/{session_id}/release")).status_code == 200
 
     response = await client.post(f"/api/sessions/{session_id}/release")
 
     assert response.status_code == 200
-    assert response.json() == {"released": False, "project_id": None}
+    assert response.json() == {"released": True, "project_id": project_id}
 
 
 async def test_release_advances_the_tip_so_the_next_session_inherits(client, service):

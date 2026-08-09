@@ -18,6 +18,7 @@ from uuid import uuid4
 import aiosqlite
 import pytest
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
+from pydantic import ValidationError
 
 from research_team.domain import (
     CodingSession,
@@ -71,7 +72,10 @@ async def started(repository, session_id, db_path):
     session = repository.create(session_id)
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         )
     )
     await repository.save(session)
@@ -194,7 +198,10 @@ async def test_a_schema_version_bump_falls_back_to_replay(repository, session_id
     session = repository.create(session_id)
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         )
     )
     for index in range(60):  # comfortably past the snapshot threshold
@@ -211,8 +218,24 @@ async def test_a_schema_version_bump_falls_back_to_replay(repository, session_id
     assert len(reloaded.state.messages) == 60
 
 
-async def test_session_started_without_project_id_still_loads(repository, started, db_path):
-    """A SessionStarted written before projects existed has no project_id key.
+async def test_session_started_without_project_id_no_longer_loads(
+    repository, started, db_path
+):
+    """The deliberate exception to everything else in this file.
+
+    Every other case here shows an old payload still reading correctly, by a
+    default or a validator. This one shows the one shape that was dropped
+    instead: `SessionStarted` with no `project_id`. It used to load with
+    `project_id=None`, meaning "written before projects existed". A session now
+    belongs to a project always, so `None` would mean a session with no
+    filesystem, no knowledge graph and no course -- nothing downstream has
+    handling for that, and there is no target shape to translate the old
+    payload *to*, which is what a validator would need.
+
+    So the payload is rejected, loudly, at read. Pinned here rather than left
+    implicit because "old data stops loading" is exactly the kind of decision
+    that should cost a test to change. It was affordable only because the
+    project is pre-release and holds no real data.
 
     Written against a fresh id rather than `started`'s own session_id:
     `SessionStarted` must be the stream's first event, and that fixture
@@ -236,11 +259,39 @@ async def test_session_started_without_project_id_still_loads(repository, starte
         },
     )
 
+    with pytest.raises(ValidationError, match="project_id"):
+        await repository.events_for(session_id)
+
+
+async def test_session_started_with_a_project_id_loads(repository, started, db_path):
+    """The shape that replaced it, read back the same way.
+
+    The counterpart to the rejection above: without this, that test would
+    still pass if `SessionStarted` had stopped loading for some other reason
+    entirely.
+    """
+    session_id = uuid4()
+    project_id = uuid4()
+    await _write_old_event(
+        db_path,
+        session_id,
+        version=1,
+        event_type="SessionStarted",
+        payload={
+            "aggregate_id": str(session_id),
+            "aggregate_type": "CodingSession",
+            "aggregate_version": 1,
+            "system_prompt": "p",
+            "model_name": "m",
+            "project_id": str(project_id),
+        },
+    )
+
     events = await repository.events_for(session_id)
 
     event = events[0]
     assert isinstance(event, SessionStarted)
-    assert event.project_id is None
+    assert event.project_id == project_id
 
 
 async def test_a_before_validator_can_reshape_an_old_payload(repository, started, db_path):

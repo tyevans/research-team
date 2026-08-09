@@ -18,14 +18,73 @@ from tests.conftest import start_session
 
 @pytest.fixture
 async def current(build_service, fake_model):
-    """A REPL pointed at a fresh session -- the terminal owns the cursor."""
-    return await repl.Repl.start(await build_service(model=fake_model))
+    """A REPL pointed at a fresh session -- the terminal owns the cursor.
+
+    `Repl.start` no longer supplies the session: a session belongs to a
+    project and the classmethod has nothing to choose one with. The fixture
+    puts one in place because almost every test in this file is about what a
+    command does once you have a session, not about how you got one. What
+    happens before you have one is tested on its own, below.
+    """
+    current = await repl.Repl.start(await build_service(model=fake_model))
+    current.session_id = await start_session(current.service)
+    return current
+
+
+# ---- before a session exists ----
+
+
+async def test_a_fresh_repl_has_no_session(build_service, fake_model):
+    """The visible half of "sessions live in projects", at the terminal."""
+    fresh = await repl.Repl.start(await build_service(model=fake_model))
+
+    assert fresh.session_id is None
+
+
+async def test_a_command_that_needs_a_session_says_how_to_get_one(build_service, fake_model):
+    fresh = await repl.Repl.start(await build_service(model=fake_model))
+
+    assert await repl.handle_command(fresh, "/diff /a.py") == repl.NO_SESSION
+
+
+async def test_plain_input_before_a_session_says_how_to_get_one(build_service, fake_model):
+    """Not only slash commands: text is a turn, and a turn needs a session."""
+    fresh = await repl.Repl.start(await build_service(model=fake_model))
+
+    assert await repl.handle_command(fresh, "hello there") == repl.NO_SESSION
+
+
+async def test_the_commands_that_get_you_a_session_still_work(build_service, fake_model):
+    """`/project` would be unreachable if the guard covered everything."""
+    fresh = await repl.Repl.start(await build_service(model=fake_model))
+
+    output = await repl.handle_command(fresh, "/project")
+
+    assert output != repl.NO_SESSION
+    assert "no projects" in output.lower()
+
+
+async def test_project_use_is_how_a_terminal_gets_a_session(build_service, fake_model):
+    """Create, then join: two steps, because `/project new` only creates."""
+    fresh = await repl.Repl.start(await build_service(model=fake_model))
+    await repl.handle_command(fresh, "/project new research")
+    assert fresh.session_id is None, "creating a project does not join it"
+
+    output = await repl.handle_command(fresh, "/project use research")
+
+    assert fresh.session_id is not None
+    assert str(fresh.session_id) in output
+    assert await repl.handle_command(fresh, "/diff /a.py") != repl.NO_SESSION
 
 
 def test_format_log_numbers_events():
     events = [
         SessionStarted(
-            aggregate_id=uuid4(), system_prompt="s", model_name="m", aggregate_version=1
+            aggregate_id=uuid4(),
+            system_prompt="s",
+            model_name="m",
+            project_id=uuid4(),
+            aggregate_version=1,
         ),
         TurnCompleted(aggregate_id=uuid4(), turn_index=1, aggregate_version=2),
     ]
@@ -198,11 +257,20 @@ async def test_resume_requires_argument(current):
     assert "usage" in (await repl.handle_command(current, "/resume")).lower()
 
 
-async def test_new_starts_a_fresh_session(current):
+async def test_new_explains_itself_rather_than_starting_anything(current):
+    """`/new` started a project-less session, which cannot exist now.
+
+    Kept as a command rather than removed so the one person with the old habit
+    gets told what replaced it instead of `unknown command '/new'`. It must
+    leave the session alone: answering while quietly switching would be worse
+    than either doing the job or refusing it.
+    """
     original = current.session_id
+
     output = await repl.handle_command(current, "/new")
-    assert current.session_id != original
-    assert "started" in output
+
+    assert current.session_id == original
+    assert "/project new" in output and "/project use" in output
 
 
 def test_format_diff_shows_old_and_new():
@@ -267,6 +335,7 @@ async def test_turn_reports_tool_activity(build_service, fake_model):
         AIMessage(content="wrote it", id="a2"),
     ]
     current = await repl.Repl.start(await build_service(model=fake_model))
+    current.session_id = await start_session(current.service)
 
     seen: list[str] = []
 
@@ -283,6 +352,9 @@ async def test_turn_reports_tool_activity(build_service, fake_model):
 
 async def test_no_activity_reported_for_a_plain_reply(build_service, fake_model):
     current = await repl.Repl.start(await build_service(model=fake_model))
+    # A session, or the turn is refused before it starts and "no activity"
+    # would be true for the wrong reason.
+    current.session_id = await start_session(current.service)
     seen: list[str] = []
 
     def collect_formatted(note):

@@ -29,7 +29,10 @@ async def test_rows_outlive_the_process(db_path, repository, session_id):
     session = repository.create(session_id)
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         )
     )
     session.execute(
@@ -61,6 +64,7 @@ async def test_sessions_are_listed_newest_first(db_path, repository):
                     session_id=session.aggregate_id,
                     system_prompt=SYSTEM_PROMPT,
                     model_name=MODEL_NAME,
+                    project_id=uuid4(),
                 )
             )
             session.execute(

@@ -8,6 +8,7 @@ a `Repl` over a fresh in-memory-backed service, and commands run through
 import pytest
 
 from research_team.interfaces.cli import repl
+from tests.conftest import start_session
 
 
 @pytest.fixture
@@ -15,9 +16,14 @@ async def current(build_service, fake_model):
     """A REPL pointed at a fresh session -- the terminal owns the cursor.
 
     Duplicated from `test_repl.py`'s fixture of the same name rather than
-    shared, because that fixture is module-local, not in `conftest.py`.
+    shared, because that fixture is module-local, not in `conftest.py`. Like
+    that one, it supplies the session `Repl.start` no longer can: these tests
+    are about what `/project` does, not about how a terminal gets its first
+    session, which `test_repl.py` covers on its own.
     """
-    return await repl.Repl.start(await build_service(model=fake_model))
+    current = await repl.Repl.start(await build_service(model=fake_model))
+    current.session_id = await start_session(current.service)
+    return current
 
 
 async def test_project_new_creates_and_reports(current):
@@ -48,8 +54,13 @@ async def test_creating_a_project_twice_reports_the_collision(current):
     assert listing.count("research") == 1
 
 
-async def test_listing_with_no_projects_says_so(current):
-    output = await repl.handle_command(current, "/project")
+async def test_listing_with_no_projects_says_so(build_service, fake_model):
+    """Not the `current` fixture: its session comes with a project of its own,
+    so an empty listing is only observable on a REPL that has neither. That is
+    exactly the state a terminal opens in now, which is the case worth naming."""
+    fresh = await repl.Repl.start(await build_service(model=fake_model))
+
+    output = await repl.handle_command(fresh, "/project")
 
     assert "no projects" in output.lower()
 
@@ -72,6 +83,7 @@ async def test_project_use_attaches_the_knowledge_graph(build_application, fake_
     """
     application = await build_application(model=fake_model)
     current = await repl.Repl.start(application.service)
+    current.session_id = await start_session(application.service)
 
     await repl.handle_command(current, "/project new research")
     await repl.handle_command(current, "/project use research")
@@ -118,11 +130,16 @@ async def test_switching_sessions_releases_a_held_project(current):
     Without `_switch_to` releasing the outgoing session's project, this
     second `/project use` would report "held by" forever -- there was no
     command that could clear it.
+
+    Switching away is a join of a second project now. It used to be `/new`,
+    which no longer switches anything; joining another project is the same
+    switch by the path a person actually takes.
     """
     await repl.handle_command(current, "/project new research")
+    await repl.handle_command(current, "/project new archive")
     await repl.handle_command(current, "/project use research")
 
-    await repl.handle_command(current, "/new")
+    await repl.handle_command(current, "/project use archive")
     output = await repl.handle_command(current, "/project use research")
 
     assert "joined project research" in output
@@ -177,15 +194,24 @@ async def test_resuming_a_project_session_reattaches_its_knowledge_graph(
     """
     application = await build_application(model=fake_model)
     current = await repl.Repl.start(application.service)
+    current.session_id = await start_session(application.service)
 
     await repl.handle_command(current, "/project new research")
+    await repl.handle_command(current, "/project new archive")
     await repl.handle_command(current, "/project use research")
     project_session_id = current.session_id
 
-    # Switch away: this detaches the graph and releases the lease (the
-    # project has no holder afterwards -- `/new` never joins one).
-    await repl.handle_command(current, "/new")
-    assert "remember" not in {tool.name for tool in application.turns_tools()}
+    # Switch away: this detaches "research"'s graph and releases its lease, so
+    # "research" has no holder afterwards. Joining a second project rather
+    # than `/new`, which no longer switches sessions at all -- and the switch
+    # is observed as *which* graph is attached rather than as no graph at all,
+    # because every session has a project now, so there is no session to land
+    # on that leaves the executor without knowledge tools.
+    archive_id = next(
+        pid for pid, name in await application.service.list_projects() if name == "archive"
+    )
+    await repl.handle_command(current, "/project use archive")
+    assert application.service.attached_project_id == archive_id
 
     output = await repl.handle_command(current, f"/resume {project_session_id}")
 
@@ -194,6 +220,9 @@ async def test_resuming_a_project_session_reattaches_its_knowledge_graph(
     assert "remember" in names
 
     # Resuming looked at the session, it did not take the project back.
-    project_id = (await application.service.list_projects())[0][0]
+    project_id = next(
+        pid for pid, name in await application.service.list_projects() if name == "research"
+    )
+    assert application.service.attached_project_id == project_id
     project = await application.service.projects.load(project_id)
     assert project.state.active_session_id is None

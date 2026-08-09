@@ -6,6 +6,8 @@ those events fold into survives a round trip through the repository. Anything
 here needs an aggregate or a store; anything that does not belongs next door.
 """
 
+from uuid import uuid4
+
 import pytest
 from eventsource import CommandRejectedError
 
@@ -25,7 +27,10 @@ def test_execute_applies_the_events_decide_returns(session_id):
 
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         )
     )
 
@@ -39,7 +44,10 @@ def test_execute_stamps_the_version_decide_cannot_know(session_id):
 
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         )
     )
     session.execute(SendUserMessage(message={"type": "human", "data": {}}))
@@ -73,7 +81,10 @@ async def test_state_survives_save_and_reload(aggregates, session_id):
     session = aggregates.create_new(session_id)
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         )
     )
     session.execute(WriteFile(path="/a.py", file_data=FILE_DATA))

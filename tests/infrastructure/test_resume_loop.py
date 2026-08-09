@@ -57,6 +57,7 @@ def _session() -> CodingSession:
             session_id=session.aggregate_id,
             system_prompt="You are a coding agent.",
             model_name="test-model",
+            project_id=uuid4(),
         )
     )
     return session

@@ -5,6 +5,8 @@ Snapshotting is an optimisation for later reads. Paying for it inside the
 which is the wrong way round -- replays are rare and turns are not.
 """
 
+from uuid import uuid4
+
 from research_team.domain import (
     CodingSession,
     SendUserMessage,
@@ -26,7 +28,10 @@ async def test_save_does_not_wait_for_the_snapshot_it_triggers(aggregates, sessi
     session = aggregates.create_new(session_id)
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         )
     )
     await _grow_past_threshold(session)
@@ -43,7 +48,10 @@ async def test_the_backgrounded_snapshot_still_gets_written(aggregates, session_
     session = aggregates.create_new(session_id)
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         )
     )
     await _grow_past_threshold(session)
@@ -68,7 +76,10 @@ async def test_closing_waits_for_snapshots_still_in_flight(repository, session_i
     session = repository.create(session_id)
     session.execute(
         StartSession(
-            session_id=session.aggregate_id, system_prompt=SYSTEM_PROMPT, model_name=MODEL_NAME
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
         )
     )
     await _grow_past_threshold(session)
