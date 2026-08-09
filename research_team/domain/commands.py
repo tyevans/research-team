@@ -37,7 +37,12 @@ class StartSession(Command):
     session_id: UUID
     system_prompt: str
     model_name: str
-    project_id: UUID | None = None
+    project_id: UUID
+    #: Which project the session belongs to. Required, so that "a session
+    #: outside a project" cannot be expressed as a request in the first place
+    #: -- `decide` never has to reject it, and no caller has to remember to
+    #: pass it. `SessionService.start_in_project` is the only thing that
+    #: issues this command.
 
 
 class SendUserMessage(Command):
