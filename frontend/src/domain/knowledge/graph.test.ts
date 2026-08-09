@@ -5,9 +5,11 @@ import {
   emptyGraph,
   expand,
   isExpanded,
+  loadWhole,
   remove,
   type GraphView,
   type Neighborhood,
+  type WholeGraph,
 } from './graph.ts'
 
 // A neighbourhood whose root is `root` and whose entities are `others`, with
@@ -206,5 +208,71 @@ describe('remove', () => {
     const after = remove(view, 'a')
 
     expect(isExpanded(after, 'a')).toBe(false)
+  })
+})
+
+describe('loadWhole', () => {
+  const graph = (
+    ids: readonly string[],
+    links: readonly (readonly [string, string])[] = [],
+    truncated = false,
+  ): WholeGraph => ({
+    entities: ids.map((id) => ({ id, name: id, entityType: 'concept' })),
+    relationships: links.map(([source, target]) => ({
+      source,
+      target,
+      relationshipType: 'advised',
+    })),
+    truncated,
+  })
+
+  it('draws every node and edge it was given', () => {
+    const view = loadWhole(emptyGraph, graph(['a', 'b'], [['a', 'b']]))
+
+    expect(view.nodes.map((n) => n.id)).toEqual(['a', 'b'])
+    expect(view.links).toHaveLength(1)
+  })
+
+  it('replaces the drawing rather than merging into it', () => {
+    // A node the server has since merged away would otherwise survive on the
+    // canvas forever, because it once arrived in a neighbourhood.
+    const before = expand(emptyGraph, hoodWith('gone', 'a'))
+
+    const view = loadWhole(before, graph(['a']))
+
+    expect(view.nodes.map((n) => n.id)).toEqual(['a'])
+  })
+
+  it('keeps the existing node object so d3 does not lose its position', () => {
+    const before = expand(emptyGraph, hoodWith('a'))
+    const original = before.nodes.find((n) => n.id === 'a')
+
+    const view = loadWhole(before, graph(['a', 'b']))
+
+    expect(view.nodes.find((n) => n.id === 'a')).toBe(original)
+  })
+
+  it('counts a complete graph as expanded everywhere, since nothing is behind it', () => {
+    const view = loadWhole(emptyGraph, graph(['a', 'b'], [['a', 'b']]))
+
+    expect(isExpanded(view, 'a')).toBe(true)
+    expect(isExpanded(view, 'b')).toBe(true)
+  })
+
+  it('promises nothing about a truncated graph, whose edges are also cut', () => {
+    const view = loadWhole(emptyGraph, graph(['a', 'b'], [['a', 'b']], true))
+
+    expect(isExpanded(view, 'a')).toBe(false)
+    expect(isExpanded(view, 'b')).toBe(false)
+  })
+
+  it('leaves no link dangling, the invariant d3-force crashes on', () => {
+    const view = loadWhole(emptyGraph, graph(['a', 'b'], [['a', 'b']]))
+    const ids = new Set(view.nodes.map((n) => n.id))
+
+    for (const link of view.links) {
+      expect(ids).toContain(link.source)
+      expect(ids).toContain(link.target)
+    }
   })
 })

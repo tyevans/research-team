@@ -5,6 +5,7 @@ import {
   emptyGraph,
   expand,
   isExpanded,
+  loadWhole,
   remove,
   type GraphNode,
   type GraphView,
@@ -44,15 +45,34 @@ export interface GraphState {
    * say what it is. Two pieces of state for one gesture would be two places
    * for the answer to disagree with the drawing. */
   readonly selected: string | null
+  /** Whether the drawing is the whole graph or the first `MAX_GRAPH_NODES` of
+   *  a bigger one. The reader has to be told: a capped graph looks exactly
+   *  like a complete one, and it is missing edges as well as nodes. */
+  readonly partial: boolean
+  readonly loading: boolean
+  /** Draw the project's whole graph. What the pane opens with, rather than
+   *  waiting for a search: a reader arriving at a project they have not read
+   *  yet has no entity name to type, and an empty canvas cannot tell them
+   *  whether that is because the graph is empty or because they have not
+   *  asked it anything. */
+  loadAll(): Promise<void>
   search(term: string, entityType?: string): Promise<void>
   expandNode(id: string): Promise<void>
   select(id: string | null): void
   /** Take one entity off the drawing. See `remove` for what goes with it. */
   removeNode(id: string): void
-  /** Start over with an empty canvas, keeping the search results as they are
-   *  -- clearing the drawing is not the same as forgetting what you searched
-   *  for, and having to retype the term to draw a second thing would be. */
-  clear(): void
+  /** Put back everything pruning and expanding have changed, by drawing the
+   *  whole graph again.
+   *
+   * Re-fetched rather than restored from a copy kept aside: what the server
+   * holds moves while the page is open -- extraction runs, entities merge --
+   * and a snapshot taken at mount would quietly become the stale answer to
+   * "show me everything" the longer the tab stayed open.
+   *
+   * The search results are left alone. Resetting the drawing is not the same
+   * as forgetting what you searched for, and having to retype the term to
+   * draw a second thing would be. */
+  reset(): Promise<void>
 }
 
 export type GraphStore = ReturnType<typeof createGraphStore>
@@ -72,6 +92,37 @@ export const createGraphStore = ({
     searching: false,
     error: null,
     selected: null,
+    partial: false,
+    loading: false,
+
+    async loadAll() {
+      set({ loading: true, error: null })
+      try {
+        const graph = await graphs.whole(projectId)
+        set((state) => ({
+          view: loadWhole(state.view, graph),
+          partial: graph.truncated,
+          loading: false,
+          // A selection that survived into the new drawing stays; one that
+          // did not would leave the detail panel describing a node the
+          // reader can no longer see or click.
+          selected:
+            state.selected && graph.entities.some((entity) => entity.id === state.selected)
+              ? state.selected
+              : null,
+        }))
+      } catch (err) {
+        // The canvas keeps whatever it had. On the opening load that is
+        // nothing, and the empty state stands with the error beside it --
+        // which is the honest reading: the graph is not known to be empty,
+        // it is unknown.
+        set({ loading: false, error: errorMessage(err) })
+      }
+    },
+
+    async reset() {
+      await get().loadAll()
+    },
 
     select(id) {
       set({ selected: id })
@@ -92,10 +143,6 @@ export const createGraphStore = ({
               : null,
         }
       })
-    },
-
-    clear() {
-      set({ view: emptyGraph, selected: null })
     },
 
     async search(term, entityType) {

@@ -36,6 +36,9 @@ const node = (over: Partial<GraphNode> = {}): GraphNode => ({
 const hoodOf = (root: GraphNode): Neighborhood => ({ root, entities: [root], relationships: [] })
 
 const fakeGraphs = (over: Partial<GraphRepository> = {}): GraphRepository => ({
+  // Empty by default so the existing search-and-expand tests still start from
+  // a bare canvas; the tests about the opening draw stub it themselves.
+  whole: vi.fn().mockResolvedValue({ entities: [], relationships: [], truncated: false }),
   search: vi.fn().mockResolvedValue({ entities: [], truncated: false }),
   neighborhood: vi.fn().mockRejectedValue(new Error('neighborhood was not stubbed for this test')),
   ...over,
@@ -311,8 +314,83 @@ it('takes an entity off the drawing, and the panel with it', async () => {
     screen.queryByRole('complementary', { name: /about ada lovelace/i }),
   ).not.toBeInTheDocument()
   // Babbage arrived only as Ada's neighbour and was never asked for, so he
-  // goes with her -- which empties the canvas back to its invitation.
-  expect(await screen.findByText(/nothing drawn yet/i)).toBeInTheDocument()
+  // goes with her -- which empties the canvas. This project's whole graph is
+  // stubbed empty, so an empty canvas is the truth here.
+  expect(await screen.findByText(/this graph is empty/i)).toBeInTheDocument()
+})
+
+it('draws the whole graph on arrival, before anybody searches', async () => {
+  // The complaint this answers: the page opened barren and only ever showed
+  // what you had already picked, which meant you had to know an entity's name
+  // to see that the project had any.
+  const ada = node()
+  const babbage = node({ id: 'babbage', name: 'Charles Babbage' })
+  const whole = vi.fn().mockResolvedValue({
+    entities: [ada, babbage],
+    relationships: [{ source: 'ada', target: 'babbage', relationshipType: 'collaborated_with' }],
+    truncated: false,
+  })
+
+  renderWithContainer(<RoutedGraphPane />, { graphs: fakeGraphs({ whole }) })
+
+  await waitFor(() => expect(whole).toHaveBeenCalledWith(PROJECT))
+  expect(await screen.findByRole('button', { name: 'canvas' })).toBeInTheDocument()
+  expect(screen.queryByText(/this graph is empty/i)).not.toBeInTheDocument()
+})
+
+it('says an empty canvas means an empty graph, not an unasked question', async () => {
+  const whole = vi.fn().mockResolvedValue({ entities: [], relationships: [], truncated: false })
+
+  renderWithContainer(<RoutedGraphPane />, { graphs: fakeGraphs({ whole }) })
+
+  expect(await screen.findByText(/this graph is empty/i)).toBeInTheDocument()
+  expect(screen.getByText(/nothing has been extracted/i)).toBeInTheDocument()
+})
+
+it('does not call a failed load an empty graph', async () => {
+  // The two look identical on a blank canvas and mean opposite things: one
+  // says the project has nothing in it, the other that this page could not
+  // find out.
+  const whole = vi.fn().mockRejectedValue(new ApiError('no graph read model is configured', 503))
+
+  renderWithContainer(<RoutedGraphPane />, { graphs: fakeGraphs({ whole }) })
+
+  expect(await screen.findByText(/could not be read/i)).toBeInTheDocument()
+  expect(screen.queryByText(/this graph is empty/i)).not.toBeInTheDocument()
+  expect(screen.getByText(/no graph read model is configured/i)).toBeInTheDocument()
+})
+
+it('says when the drawing is only part of a larger graph', async () => {
+  // A capped graph draws exactly like a complete one; without this the
+  // reader would take the first 500 nodes for the whole project.
+  const whole = vi
+    .fn()
+    .mockResolvedValue({ entities: [node()], relationships: [], truncated: true })
+
+  renderWithContainer(<RoutedGraphPane />, { graphs: fakeGraphs({ whole }) })
+
+  expect(await screen.findByText(/part of a larger graph/i)).toBeInTheDocument()
+})
+
+it('restores the whole graph after pruning, rather than emptying the canvas', async () => {
+  const ada = node()
+  const babbage = node({ id: 'babbage', name: 'Charles Babbage' })
+  const whole = vi.fn().mockResolvedValue({
+    entities: [ada, babbage],
+    relationships: [{ source: 'ada', target: 'babbage', relationshipType: 'collaborated_with' }],
+    truncated: false,
+  })
+  const user = userEvent.setup()
+
+  renderWithContainer(<RoutedGraphPane />, { graphs: fakeGraphs({ whole }) })
+  await waitFor(() => expect(whole).toHaveBeenCalledTimes(1))
+
+  await user.click(await screen.findByRole('button', { name: /reset view/i }))
+
+  // Re-read rather than restored from a snapshot: extraction runs while the
+  // tab is open, so "show me everything" has to mean everything there is now.
+  await waitFor(() => expect(whole).toHaveBeenCalledTimes(2))
+  expect(screen.getByRole('button', { name: 'canvas' })).toBeInTheDocument()
 })
 
 it('closes the detail panel on Escape, the way the drawers do', async () => {

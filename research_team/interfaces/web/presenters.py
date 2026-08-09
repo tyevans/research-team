@@ -30,6 +30,7 @@ from research_team.application.course import (
 from research_team.application.findings import Finding
 from research_team.application.graph_read import (
     EntityPage,
+    Graph,
     GraphEntity,
     GraphRelationship,
     Neighborhood,
@@ -518,6 +519,25 @@ def entity_page_view(page: EntityPage) -> dict[str, Any]:
     return {
         "entities": [entity_view(entity) for entity in page.entities],
         "next_after": page.next_after,
+    }
+
+
+def graph_view(graph: Graph) -> dict[str, Any]:
+    """A whole project graph, in the shape a browser draws it in one go.
+
+    Flat `entities`/`relationships` with no root, unlike `neighborhood_view`:
+    a whole graph has no entity the reader asked about, and inventing one to
+    match the other response's shape would be inventing a fact. `truncated`
+    is passed through rather than being left implicit in the entity count --
+    a client cannot tell a complete graph of 500 from the first 500 of 900 by
+    counting.
+    """
+    return {
+        "entities": [entity_view(entity) for entity in graph.entities],
+        "relationships": [
+            relationship_view(relationship) for relationship in graph.relationships
+        ],
+        "truncated": graph.truncated,
     }
 
 

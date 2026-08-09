@@ -13,8 +13,10 @@ from uuid import UUID
 from eventsource.domain.tenant_context import tenant_scope
 
 from research_team.application.graph_read import (
+    MAX_GRAPH_NODES,
     MAX_NEIGHBORHOOD_DEPTH,
     EntityPage,
+    Graph,
     GraphEntity,
     GraphRelationship,
     Neighborhood,
@@ -93,6 +95,45 @@ class ProjectGraphReader:
         # so there is nothing further to resume from.
         next_after = page[-1].entity_id if len(page) == limit else None
         return EntityPage(entities=page, next_after=next_after)
+
+    async def whole(self, *, limit: int = MAX_GRAPH_NODES) -> Graph:
+        """The project's whole graph, capped at `limit` entities.
+
+        The truncation test reads one entity past the cap rather than
+        comparing the kept count to `limit`: those two are only the same when
+        the store holds strictly more than `limit`, and a graph of exactly
+        `limit` entities would be reported as truncated by the comparison
+        despite being complete. `find_entities` already returns the tenant's
+        entire entity set (see the note on `find_entities` above), so the
+        extra entity costs nothing to look at.
+        """
+        capped = min(limit, MAX_GRAPH_NODES)
+        async with tenant_scope(self._project_id):
+            entities = await self._store.find_entities(self._project_id)
+            kept = list(entities)[:capped]
+            entity_ids = [entity.id for entity in kept]
+            # Skipped entirely for an empty graph: an adapter asked for the
+            # relationships of no entities has no useful answer to give, and
+            # a new project with nothing extracted yet is the commonest way
+            # to reach this route at all.
+            relationships = (
+                await self._store.get_relationships_for(entity_ids, self._project_id)
+                if entity_ids
+                else []
+            )
+
+        returned_ids = set(entity_ids)
+        edges = tuple(
+            _to_graph_relationship(relationship)
+            for relationship in relationships
+            if relationship.source_entity_id in returned_ids
+            and relationship.target_entity_id in returned_ids
+        )
+        return Graph(
+            entities=tuple(_to_graph_entity(entity) for entity in kept),
+            relationships=edges,
+            truncated=len(entities) > capped,
+        )
 
     async def neighborhood(self, entity_id: str, *, depth: int = 1) -> Neighborhood | None:
         try:

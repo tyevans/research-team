@@ -39,3 +39,14 @@ it('says what a hollow node means, which is the only place that rule is written'
 
   expect(screen.getByText(/hollow nodes have more to pull in/i)).toBeInTheDocument()
 })
+
+it('drops the hollow-node rule when the graph is drawn whole', () => {
+  // Every node expanded means every node filled, and a key describing a shape
+  // the canvas is not using sends the reader looking for one.
+  const drawn = viewOf([node('a', 'fact'), node('b', 'fact')])
+  render(<GraphLegend view={{ ...drawn, expanded: new Set(['a', 'b']) }} />)
+
+  expect(screen.queryByText(/hollow nodes have more to pull in/i)).not.toBeInTheDocument()
+  // The colour key is still the reason this box exists.
+  expect(screen.getAllByRole('listitem')).toHaveLength(1)
+})

@@ -52,10 +52,15 @@ export const GraphLegend = ({ view }: { view: GraphView }) => {
       </ul>
       {/* The shape rule, in the one place somebody would look for it. Worth a
           line of prose rather than a second swatch column: it is a rule about
-          what to do next -- click the hollow ones -- not another category. */}
-      <p className="graph-legend-note">
-        Hollow nodes have more to pull in. Click one to expand it.
-      </p>
+          what to do next -- click the hollow ones -- not another category.
+          Withheld when there are none: on a graph drawn whole every node is
+          filled, and a key explaining a shape that is not on the canvas sends
+          the reader hunting for one. */}
+      {view.nodes.some((node) => !view.expanded.has(node.id)) ? (
+        <p className="graph-legend-note">
+          Hollow nodes have more to pull in. Click one to expand it.
+        </p>
+      ) : null}
     </aside>
   )
 }

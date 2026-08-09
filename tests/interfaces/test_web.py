@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage
 
 from research_team.application import GATED_TOOLS, WorkerRoster
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL
+from research_team.application.graph_read import MAX_GRAPH_NODES
 from research_team.application.knowledge import ExtractionNote
 from research_team.application.ports import ActivityMessage
 from research_team.composition import build_application as _build_application
@@ -3017,14 +3018,88 @@ async def test_an_unknown_entity_is_a_404(app_and_client):
     assert response.json()["detail"] == f"no such entity in project {project_id}"
 
 
-async def test_an_unknown_project_is_a_404_on_both_graph_routes(client):
+async def test_reading_the_whole_graph_returns_every_entity_and_edge(app_and_client):
+    """What the browser opens with, before a reader knows a name to search
+    for: the graph entire, wired, in one response."""
+    application, client = app_and_client
+    project_id, ids = await _project_with_graph(application, client)
+
+    response = await client.get(f"/api/projects/{project_id}/graph")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert {row["entity_id"] for row in body["entities"]} == {
+        str(ids["prandtl_id"]),
+        str(ids["karman_id"]),
+    }
+    assert body["relationships"] == [
+        {
+            "source_id": str(ids["prandtl_id"]),
+            "target_id": str(ids["karman_id"]),
+            "relationship_type": "advised",
+        }
+    ]
+    assert body["truncated"] is False
+
+
+async def test_reading_the_whole_graph_of_an_empty_project_is_not_an_error(
+    app_and_client,
+):
+    """A project with nothing extracted yet is what most first visits to the
+    research page hit; it answers with an empty graph, not a failure."""
+    _application, client = app_and_client
+    created = await client.post("/api/projects", json={"name": f"graph-{uuid4()}"})
+    project_id = created.json()["id"]
+
+    response = await client.get(f"/api/projects/{project_id}/graph")
+
+    assert response.status_code == 200
+    assert response.json() == {"entities": [], "relationships": [], "truncated": False}
+
+
+async def test_an_oversized_limit_is_clamped_rather_than_refused(app_and_client):
+    """The opposite of `neighborhood`'s treatment of `depth`, deliberately:
+    "as much as possible" is a question this route can answer, and
+    `truncated` in the body is how it reports what that came to."""
+    application, client = app_and_client
+    project_id, _ids = await _project_with_graph(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph", params={"limit": MAX_GRAPH_NODES + 1_000}
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["entities"]) == 2
+
+
+async def test_a_truncated_graph_says_so(app_and_client):
+    """A client cannot tell a complete graph from the first page of a bigger
+    one by counting, so the flag has to travel with the body."""
+    application, client = app_and_client
+    project_id, _ids = await _project_with_graph(application, client)
+
+    response = await client.get(f"/api/projects/{project_id}/graph", params={"limit": 1})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["entities"]) == 1
+    assert body["truncated"] is True
+    # The one surviving entity's edge had its other end cut off, so there is
+    # nothing left to draw a line between.
+    assert body["relationships"] == []
+
+
+async def test_an_unknown_project_is_a_404_on_every_graph_route(client):
     missing = uuid4()
 
+    whole = await client.get(f"/api/projects/{missing}/graph")
     listing = await client.get(f"/api/projects/{missing}/graph/entities")
     neighborhood = await client.get(
         f"/api/projects/{missing}/graph/entities/{uuid4()}/neighborhood"
     )
 
+    assert whole.status_code == 404
+    assert whole.json()["detail"] == f"no project {missing}"
     assert listing.status_code == 404
     assert listing.json()["detail"] == f"no project {missing}"
     assert neighborhood.status_code == 404
