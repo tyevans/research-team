@@ -3,6 +3,8 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import pytest
+
 from research_team.application import SessionSummary
 from research_team.domain import (
     AssistantMessageAdded,
@@ -52,7 +54,9 @@ def text_message(kind: str, content: str) -> dict:
 
 
 def test_a_started_session_is_summarised_by_its_model():
-    event = make(SessionStarted, system_prompt="p", model_name="qwen3.6-27b")
+    event = make(
+        SessionStarted, system_prompt="p", model_name="qwen3.6-27b", project_id=uuid4()
+    )
     assert event_summary(event) == "qwen3.6-27b"
 
 
@@ -141,7 +145,7 @@ def test_a_tool_calling_message_is_summarised_by_the_calls():
 
 def test_rows_are_numbered_from_one():
     events = [
-        make(SessionStarted, system_prompt="p", model_name="m"),
+        make(SessionStarted, system_prompt="p", model_name="m", project_id=uuid4()),
         make(UserMessageSent, message=text_message("human", "hi")),
     ]
     assert [row["index"] for row in event_rows(events)] == [1, 2]
@@ -262,7 +266,7 @@ def test_a_feed_event_always_has_a_summary_string():
 
     for event in (
         make(FileWritten, path="/a.py", file_data={"content": "x"}),
-        make(SessionStarted, system_prompt="p", model_name="m"),
+        make(SessionStarted, system_prompt="p", model_name="m", project_id=uuid4()),
         make(TurnCompleted, turn_index=1),
     ):
         payload = feed_event(uuid4(), event, 1)
@@ -375,14 +379,26 @@ def test_a_session_summary_carries_its_project_so_rows_can_be_grouped():
     assert summary_view(summary)["project_id"] == str(project_id)
 
 
-def test_a_session_belonging_to_no_project_reports_null_rather_than_omitting_it():
-    """A loose session is a state the page renders, not a missing field."""
-    summary = SessionSummary(
-        session_id=AGGREGATE,
-        started_at=datetime(2026, 8, 2, 12, 0, tzinfo=UTC),
-        turns=0,
-        files=0,
-        first_message="",
-    )
+def test_a_summary_cannot_be_built_without_a_project():
+    """The state the old test rendered is now one this type refuses to hold.
 
-    assert summary_view(summary)["project_id"] is None
+    This replaces `test_a_session_belonging_to_no_project_reports_null_rather_
+    than_omitting_it`, which asserted that a loose session reported `null`
+    rather than omitting the key. That was right while a session could exist
+    outside a project. It cannot now, so the interesting claim moved one layer
+    down: the summary cannot be constructed at all, and `summary_view` never
+    gets the chance to decide what to render.
+
+    Asserted through the constructor rather than through `summary_view`
+    because that is where the refusal now lives -- a test that called the
+    presenter would be testing the dataclass through a function that never
+    sees the failure.
+    """
+    with pytest.raises(TypeError):
+        SessionSummary(
+            session_id=AGGREGATE,
+            started_at=datetime(2026, 8, 2, 12, 0, tzinfo=UTC),
+            turns=0,
+            files=0,
+            first_message="",
+        )
