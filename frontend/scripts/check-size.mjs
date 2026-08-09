@@ -77,7 +77,20 @@ const BUDGET_KB = {
   // had 0.3 kB of headroom left, so this is the raise that was going to be
   // needed by whatever landed next; it is spent here on the one page the
   // owner said was hard to use.
-  total: 236,
+  //
+  // 512, from 236, on the owner's instruction. This one bought nothing: it is
+  // headroom, not a change. Worth being clear about what it costs, since the
+  // note above is the last one that will be forced for a long while. At 235.5
+  // kB measured, this is 276 kB of slack -- more than the console currently
+  // ships in total -- so `total` stops being a gate that anything realistic
+  // will trip, and the per-chunk budgets above become the only real ones.
+  // Those still bite, and are where a dependency would show up: a new library
+  // lands in `vendor-` or `graph-`, and our own growth in `app-`. What is no
+  // longer caught here is the shape this file was written for -- several
+  // chunks each growing within their own limit while the page a reader
+  // actually downloads doubles. If that matters again, the number to move is
+  // this one.
+  total: 512,
 }
 
 const kb = (bytes) => Math.round((bytes / 1024) * 10) / 10

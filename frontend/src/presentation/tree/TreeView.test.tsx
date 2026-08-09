@@ -106,7 +106,16 @@ it('answers an empty database with one page and one action, not two empty boxes'
   // course or a topic queue, so it is a dead end for every feature here.
   renderPage(<TreeView />, containerWith({}))
 
-  expect(await screen.findByRole('button', { name: 'Create project' })).toBeInTheDocument()
+  // The only wait in this file that needs two queries to settle before the
+  // element exists at all: the first-run page renders once the projects list
+  // *and* the session list have both answered empty, since showing it while
+  // either is in flight would tell a returning reader their work is gone.
+  // Two settles plus the re-render is more than the default one second under
+  // a loaded full-suite run, which is what made this flake there and pass in
+  // isolation.
+  expect(
+    await screen.findByRole('button', { name: 'Create project' }, { timeout: 5000 }),
+  ).toBeInTheDocument()
   expect(screen.getByText(/outlives one conversation/i)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /start a bare session/i })).toBeInTheDocument()
   expect(screen.getByText(/uv run main\.py/)).toBeInTheDocument()
