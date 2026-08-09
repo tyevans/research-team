@@ -62,7 +62,6 @@ const idle: RunningTurn = {
 const defaultSessions = (): SessionRepository => ({
   list: vi.fn(async () => []),
   tree: vi.fn(async () => []),
-  create: vi.fn(async () => SESSION),
   read: vi.fn(async () => projection()),
   log: vi.fn(async () => [] as readonly LogEntry[]),
   fork: vi.fn(async () => SessionId('forked')),

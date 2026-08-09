@@ -98,13 +98,14 @@ export const ProjectList = ({
   }
   if (ranked.length === 0) {
     // Reached only when sessions exist — a database with neither is the
-    // first-run page, which `TreeView` renders instead of this list. Somebody
-    // has been working in the CLI without `/project new`, and the useful thing
-    // to say is what they are missing rather than "No projects yet."
+    // first-run page, which `TreeView` renders instead of this list. So these
+    // are sessions written before a session had to belong to a project, and
+    // there is nowhere on this page they can appear: saying that is better
+    // than an empty box that reads as "nothing has ever run here".
     return (
       <EmptyState
-        title="No projects yet — these sessions belong to none."
-        detail="A project gives successive sessions one filesystem and one knowledge graph, and is the only thing that can carry a course or a research queue. Sessions keep working without one."
+        title="No projects yet."
+        detail="Any sessions in this database predate projects and cannot be reached from here. Create a project to start work that successive sessions share a filesystem and a knowledge graph with."
       />
     )
   }

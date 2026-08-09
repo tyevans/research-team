@@ -86,17 +86,6 @@ export const forest = (summaries: readonly SessionSummary[]): readonly ForkNode[
 const byStartAscending = (a: SessionSummary, b: SessionSummary): number =>
   String(a.startedAt ?? '').localeCompare(String(b.startedAt ?? ''))
 
-/** Sessions belonging to no project, newest first and flat.
- *
- * Flat on purpose: lineage among orphans is shown as a `forked @` chip on the
- * row, because a pile of unrelated sessions is not a forest and nesting one
- * inside another mostly buries the newest arrival under a parent from March. */
-export const looseSessions = (summaries: readonly SessionSummary[]): readonly SessionSummary[] =>
-  summaries
-    .filter((summary) => summary.projectId === null)
-    .slice()
-    .sort((a, b) => byStartAscending(b, a))
-
 /** Every project, with its sessions inside it, ranked by last activity.
  *
  * A project with no sessions has no timestamp and sorts last — it is newly

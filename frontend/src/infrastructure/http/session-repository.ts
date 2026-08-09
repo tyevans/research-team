@@ -24,12 +24,6 @@ export class HttpSessionRepository implements SessionRepository {
     return roots.map(toForkNode)
   }
 
-  async create(systemPrompt?: string): Promise<SessionId> {
-    const body = systemPrompt === undefined ? {} : { system_prompt: systemPrompt }
-    const created = await this.http.post('/api/sessions', body, dto.idDto)
-    return SessionId(created.id)
-  }
-
   async read(id: SessionId, at: ScrubPoint): Promise<SessionProjection> {
     // HEAD and a scrubbed point are two routes answering one shape. Choosing
     // between them here rather than at the call site is what lets every caller

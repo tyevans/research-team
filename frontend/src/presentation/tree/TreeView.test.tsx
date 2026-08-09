@@ -65,7 +65,6 @@ const containerWith = ({
       // The fork tree is the flat rows with no children unless a test says
       // otherwise, which is what the server answers for unforked sessions.
       tree: vi.fn().mockResolvedValue((tree ?? sessions).map((row) => ({ ...row, children: [] }))),
-      create: vi.fn().mockResolvedValue(SessionId('new-session')),
     },
     projects: {
       list: vi.fn().mockResolvedValue(projects),
@@ -102,8 +101,7 @@ it('answers an empty database with one page and one action, not two empty boxes'
   // Both lists empty used to render an empty state for sessions suggesting the
   // CLI and a second one for projects saying something different, under two
   // headings. The whole page is the answer instead, and the action it offers
-  // is creating a project -- a bare session can never be given a project, a
-  // course or a topic queue, so it is a dead end for every feature here.
+  // is creating a project, which is now the only way to start work at all.
   renderPage(<TreeView />, containerWith({}))
 
   // The only wait in this file that needs two queries to settle before the
@@ -117,7 +115,9 @@ it('answers an empty database with one page and one action, not two empty boxes'
     await screen.findByRole('button', { name: 'Create project' }, { timeout: 5000 }),
   ).toBeInTheDocument()
   expect(screen.getByText(/outlives one conversation/i)).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /start a bare session/i })).toBeInTheDocument()
+  // The CLI stays; the bare session does not. Every session belongs to a
+  // project, so there is no prompt to try without one.
+  expect(screen.queryByRole('button', { name: /bare session/i })).not.toBeInTheDocument()
   expect(screen.getByText(/uv run main\.py/)).toBeInTheDocument()
   // No search and no section headings: there is nothing to search or head.
   expect(screen.queryByLabelText(/search projects/i)).not.toBeInTheDocument()
@@ -130,20 +130,20 @@ it('leads with projects and puts their sessions inside them', async () => {
       projects: [project(ATLAS, 'atlas')],
       sessions: [
         session('a', { projectId: ATLAS, firstMessage: 'How does spacing affect retention?' }),
-        session('b', { projectId: null, firstMessage: 'try the fizzbuzz thing' }),
+        session('b', { projectId: null, firstMessage: 'a relic with no project' }),
       ],
     }),
   )
 
   const row = (await screen.findByText('atlas')).closest('.project')!
   expect(within(row as HTMLElement).getByText('1 session')).toBeInTheDocument()
-
-  // The project's session is inside the project's row; the loose one is not.
   expect(
     within(row as HTMLElement).getByText(/How does spacing affect retention/),
   ).toBeInTheDocument()
-  expect(within(row as HTMLElement).queryByText(/fizzbuzz/)).not.toBeInTheDocument()
-  expect(screen.getByText(/fizzbuzz/)).toBeInTheDocument()
+
+  // A session belonging to no project has nowhere on this page to appear, and
+  // must not be counted into or drawn inside a project it is not in.
+  expect(screen.queryByText(/a relic with no project/)).not.toBeInTheDocument()
 })
 
 it('reaches all four of a project’s destinations from its row', async () => {
@@ -200,23 +200,26 @@ it('disables Course with the server’s own reason rather than relabelling it', 
   expect(screen.getByRole('button', { name: 'Research' })).toBeEnabled()
 })
 
-it('renders the flat session list when the tree projection has drifted empty', async () => {
+it('falls back to the session list when the tree projection has drifted empty', async () => {
   // The fallback this page has always had: `/api/tree` answering nothing while
-  // `/api/sessions` plainly has rows is a drifted projection, and rendering
-  // the flat list is a truthful degradation where "no sessions yet" is a lie.
+  // `/api/sessions` plainly has rows is a drifted projection, and using the
+  // flat list is a truthful degradation where "no sessions" would be a lie.
+  //
+  // It is read through a project now rather than through a loose-session list,
+  // which is the only place sessions appear -- so a drifted tree shows as a
+  // project reporting no sessions and naming none, which is exactly the lie
+  // the fallback exists to prevent.
   renderPage(
     <TreeView />,
     containerWith({
-      projects: [],
-      sessions: [session('a', { firstMessage: 'still here' })],
+      projects: [project(ATLAS, 'atlas')],
+      sessions: [session('a', { projectId: ATLAS, firstMessage: 'still here' })],
       tree: [],
     }),
   )
 
   expect(await screen.findByText('still here')).toBeInTheDocument()
-  // And the projects region says what is actually true, rather than the
-  // first-run page: sessions exist, they just belong to no project.
-  expect(screen.getByText(/belong to none/i)).toBeInTheDocument()
+  expect(screen.getByText('1 session')).toBeInTheDocument()
 })
 
 it('marks a project something is running in', async () => {
