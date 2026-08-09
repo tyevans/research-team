@@ -2,12 +2,14 @@
 
 import pytest
 
+from tests.conftest import start_session
+
 pytestmark = pytest.mark.live
 
 
 async def test_agent_writes_a_file_against_the_real_model(build_service):
     service = await build_service()
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(
         session_id,
         "Create a file /fizzbuzz.py containing a fizzbuzz function. "

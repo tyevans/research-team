@@ -13,6 +13,7 @@ from research_team.interfaces.cli.formatters import (
     format_files,
     format_log,
 )
+from tests.conftest import start_session
 
 
 @pytest.fixture
@@ -166,7 +167,7 @@ async def test_sessions_lists_and_marks_the_current_one(current):
 
 async def test_resume_by_list_position(current):
     original = current.session_id
-    current.session_id = await current.service.create_session()
+    current.session_id = await start_session(current.service)
     assert current.session_id != original
 
     # Newest first, so the original is position 2.
@@ -177,7 +178,7 @@ async def test_resume_by_list_position(current):
 
 async def test_resume_by_id_prefix(current):
     original = current.session_id
-    current.session_id = await current.service.create_session()
+    current.session_id = await start_session(current.service)
 
     await repl.handle_command(current, f"/resume {str(original)[:8]}")
     assert current.session_id == original
@@ -306,7 +307,7 @@ async def test_resume_by_a_prefix_that_is_all_digits(current, monkeypatch):
 
     digity = UUID("12345678-0000-4000-8000-00000000abcd")
     monkeypatch.setattr(session_service, "uuid4", lambda: digity)
-    await current.service.create_session()
+    await start_session(current.service)
     monkeypatch.undo()
 
     output = await repl.handle_command(current, "/resume 12345678")
@@ -317,7 +318,7 @@ async def test_resume_by_a_prefix_that_is_all_digits(current, monkeypatch):
 
 async def test_a_small_number_is_still_a_list_position(current):
     original = current.session_id
-    current.session_id = await current.service.create_session()
+    current.session_id = await start_session(current.service)
 
     await repl.handle_command(current, "/resume 2")
 
@@ -341,7 +342,7 @@ async def test_a_short_number_is_never_read_as_an_id_prefix(current, monkeypatch
     monkeypatch.setattr(
         session_service, "uuid4", lambda: UUID("97000000-0000-4000-8000-00000000dddd")
     )
-    await current.service.create_session()
+    await start_session(current.service)
     monkeypatch.undo()
     before = current.session_id
 
@@ -357,7 +358,7 @@ async def test_a_long_enough_prefix_is_still_a_prefix(current, monkeypatch):
 
     target = UUID("97001234-0000-4000-8000-00000000eeee")
     monkeypatch.setattr(session_service, "uuid4", lambda: target)
-    await current.service.create_session()
+    await start_session(current.service)
     monkeypatch.undo()
 
     await repl.handle_command(current, "/resume 9700")

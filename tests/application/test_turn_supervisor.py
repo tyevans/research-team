@@ -13,7 +13,7 @@ from research_team.application import (
     TurnSupervisor,
 )
 from research_team.domain import TurnCompleted, TurnFailed, UserMessageSent
-from tests.conftest import ToolAwareFakeChatModel
+from tests.conftest import ToolAwareFakeChatModel, start_session
 
 
 class SlowModel(ToolAwareFakeChatModel):
@@ -48,7 +48,7 @@ async def slow_supervisor(build_service, slow_model):
 
 async def test_a_turn_runs_and_reports_where_it_landed(fast_supervisor):
     supervisor, service = fast_supervisor
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     outcome = await supervisor.run(session_id, "hello")
 
@@ -61,7 +61,7 @@ async def test_a_turn_runs_and_reports_where_it_landed(fast_supervisor):
 async def test_a_second_turn_is_refused_while_one_is_running(slow_supervisor):
     """Refused up front, rather than after a minute of model time."""
     supervisor, service = slow_supervisor
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     first = asyncio.create_task(supervisor.run(session_id, "slow"))
     await asyncio.sleep(0.3)
@@ -76,8 +76,8 @@ async def test_a_second_turn_is_refused_while_one_is_running(slow_supervisor):
 
 async def test_turns_on_different_sessions_do_not_block_each_other(slow_supervisor):
     supervisor, service = slow_supervisor
-    first_id = await service.create_session()
-    second_id = await service.create_session()
+    first_id = await start_session(service)
+    second_id = await start_session(service)
 
     running = asyncio.create_task(supervisor.run(first_id, "slow"))
     await asyncio.sleep(0.3)
@@ -97,7 +97,7 @@ async def test_turns_on_different_sessions_do_not_block_each_other(slow_supervis
 
 async def test_a_finished_turn_frees_the_session(fast_supervisor):
     supervisor, service = fast_supervisor
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     await supervisor.run(session_id, "hello")
 
@@ -111,7 +111,7 @@ async def test_a_finished_turn_frees_the_session(fast_supervisor):
 async def test_cancelling_stops_the_turn_and_records_the_attempt(slow_supervisor):
     """The log gains a marker and nothing else: the turn is discarded whole."""
     supervisor, service = slow_supervisor
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     running = asyncio.create_task(supervisor.run(session_id, "slow one"))
     await asyncio.sleep(0.3)
@@ -130,7 +130,7 @@ async def test_cancelling_stops_the_turn_and_records_the_attempt(slow_supervisor
 
 async def test_a_cancelled_turn_does_not_advance_the_turn_index(slow_supervisor):
     supervisor, service = slow_supervisor
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     running = asyncio.create_task(supervisor.run(session_id, "slow one"))
     await asyncio.sleep(0.3)
@@ -146,7 +146,7 @@ async def test_a_cancelled_turn_does_not_advance_the_turn_index(slow_supervisor)
 
 async def test_the_cancellation_is_named_in_the_log(slow_supervisor):
     supervisor, service = slow_supervisor
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     running = asyncio.create_task(supervisor.run(session_id, "slow one"))
     await asyncio.sleep(0.3)
@@ -160,14 +160,14 @@ async def test_the_cancellation_is_named_in_the_log(slow_supervisor):
 
 async def test_cancelling_nothing_says_so(fast_supervisor):
     supervisor, service = fast_supervisor
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     assert (await supervisor.cancel(session_id)).cancelled is False
 
 
 async def test_cancelling_a_finished_turn_says_so(fast_supervisor):
     supervisor, service = fast_supervisor
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await supervisor.run(session_id, "hello")
 
     assert (await supervisor.cancel(session_id)).cancelled is False
@@ -177,7 +177,7 @@ async def test_the_session_is_usable_again_after_a_cancellation(build_service, s
     """Cancelling must not wedge the session: the next turn has to work."""
     service = await build_service(model=slow_model)
     supervisor = TurnSupervisor(service)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     running = asyncio.create_task(supervisor.run(session_id, "slow one"))
     await asyncio.sleep(0.3)
@@ -200,7 +200,7 @@ async def test_a_running_turn_reports_its_number_and_age(slow_supervisor):
     from datetime import UTC, datetime
 
     supervisor, service = slow_supervisor
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     running = asyncio.create_task(supervisor.run(session_id, "slow"))
     await asyncio.sleep(0.3)
@@ -218,7 +218,7 @@ async def test_a_running_turn_reports_its_number_and_age(slow_supervisor):
 async def test_the_running_turn_number_follows_the_completed_ones(build_service, slow_model):
     service = await build_service(model=slow_model)
     supervisor = TurnSupervisor(service)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     slow_model.delay = 0.0
     await supervisor.run(session_id, "first")
 
@@ -235,7 +235,7 @@ async def test_the_running_turn_number_follows_the_completed_ones(build_service,
 
 async def test_nothing_is_reported_running_when_nothing_is(fast_supervisor):
     supervisor, service = fast_supervisor
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     assert supervisor.running(session_id) is None
 
     await supervisor.run(session_id, "hello")
@@ -265,7 +265,7 @@ async def test_a_cancel_that_will_not_settle_says_so_rather_than_hanging(
         model=StubbornModel(responses=[AIMessage(content="never", id="n1")])
     )
     supervisor = TurnSupervisor(service, settle_timeout=0.1)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     running = asyncio.create_task(supervisor.run(session_id, "slow"))
     await asyncio.sleep(0.3)

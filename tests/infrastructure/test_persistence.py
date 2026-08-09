@@ -15,11 +15,12 @@ from research_team.infrastructure.persistence import (
     EventStoreSessionRepository,
     build_aggregate_repository,
 )
+from tests.conftest import start_session
 
 
 async def test_session_survives_a_closed_store(fake_model, db_path, build_service, repository):
     first = await build_service(model=fake_model, db_path=db_path)
-    session_id = await first.create_session()
+    session_id = await start_session(first)
     await first.run_turn(session_id, "remember this")
     await first.close()
 
@@ -31,7 +32,7 @@ async def test_session_survives_a_closed_store(fake_model, db_path, build_servic
 
 async def test_reopening_appends_no_second_session_started(fake_model, db_path, build_service):
     first = await build_service(model=fake_model, db_path=db_path)
-    session_id = await first.create_session()
+    session_id = await start_session(first)
     before = len(await first.history(session_id))
     await first.close()
 
@@ -47,7 +48,7 @@ async def test_reopened_session_continues_the_same_stream(
         AIMessage(content="two", id="a2"),
     ]
     first = await build_service(model=fake_model, db_path=db_path)
-    session_id = await first.create_session()
+    session_id = await start_session(first)
     await first.run_turn(session_id, "first")
     await first.close()
 
@@ -60,7 +61,7 @@ async def test_reopened_session_continues_the_same_stream(
 
 async def test_reopening_keeps_the_stored_system_prompt(fake_model, db_path, build_service):
     first = await build_service(model=fake_model, db_path=db_path, system_prompt="ORIGINAL")
-    session_id = await first.create_session()
+    session_id = await start_session(first)
     await first.close()
 
     reopened = await build_service(
@@ -90,7 +91,7 @@ async def test_files_survive_a_reopen(fake_model, db_path, build_service, reposi
         AIMessage(content="wrote", id="a2"),
     ]
     first = await build_service(model=fake_model, db_path=db_path)
-    session_id = await first.create_session()
+    session_id = await start_session(first)
     await first.run_turn(session_id, "write it")
     await first.close()
 
@@ -103,9 +104,9 @@ async def test_list_sessions_reports_every_session_newest_first(
     fake_model, db_path, build_service
 ):
     service = await build_service(model=fake_model, db_path=db_path)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "the first one")
-    second = await service.create_session()
+    second = await start_session(service)
 
     summaries = await service.list_sessions()
     assert len(summaries) == 2
@@ -115,7 +116,7 @@ async def test_list_sessions_reports_every_session_newest_first(
 
 async def test_session_summary_describes_the_session(fake_model, db_path, build_service):
     service = await build_service(model=fake_model, db_path=db_path)
-    session_id = await service.create_session()
+    session_id = await start_session(service)
     await service.run_turn(session_id, "a memorable opening line")
 
     summary = next(s for s in await service.list_sessions() if s.session_id == session_id)
@@ -127,8 +128,8 @@ async def test_create_session_leaves_the_previous_one_alone(
     fake_model, db_path, build_service, repository
 ):
     service = await build_service(model=fake_model, db_path=db_path)
-    original = await service.create_session()
-    new_id = await service.create_session()
+    original = await start_session(service)
+    new_id = await start_session(service)
 
     assert new_id != original
     assert (await repository.load(original)).version >= 1
@@ -138,9 +139,9 @@ async def test_sessions_are_isolated_from_each_other(
     fake_model, db_path, build_service, repository
 ):
     service = await build_service(model=fake_model, db_path=db_path)
-    first = await service.create_session()
+    first = await start_session(service)
     await service.run_turn(first, "in the first session")
-    second = await service.create_session()
+    second = await start_session(service)
 
     assert (await repository.load(second)).state.messages == []
 

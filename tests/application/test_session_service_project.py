@@ -12,6 +12,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from research_team.domain import CreateProject
+from tests.conftest import start_session
 
 
 @pytest.fixture
@@ -110,7 +111,7 @@ async def test_release_project_is_a_no_op_for_a_plain_session(service):
     know whether the session it is closing ever joined a project -- so this
     has to be safe to call on an ordinary session too.
     """
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     await service.release_project(session_id)
 
@@ -177,7 +178,7 @@ async def test_a_plain_session_does_not_mention_the_knowledge_graph(service):
     """No project, no knowledge tools -- so the prompt must not describe
     tools the session was never given.
     """
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     session = await service.load(session_id)
 
@@ -210,7 +211,7 @@ async def test_a_session_started_in_a_project_is_told_about_its_topic_tools(
 async def test_a_plain_session_is_not_told_about_topic_tools(service):
     """No project, no topic tools -- so the prompt must not describe them, for
     the same reason it must not describe the graph."""
-    session_id = await service.create_session()
+    session_id = await start_session(service)
 
     session = await service.load(session_id)
 

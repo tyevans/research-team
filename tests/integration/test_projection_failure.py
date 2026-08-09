@@ -17,6 +17,7 @@ import logging
 import pytest
 
 from research_team.infrastructure.persistence import read_models
+from tests.conftest import start_session
 
 
 def _breaking(method):
@@ -74,7 +75,7 @@ async def test_a_failed_event_is_recorded_in_the_dead_letter_queue(
     unrecorded, because then nothing can tell you a rebuild is needed.
     """
     application = await build_application(model=fake_model, db_path=db_path)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     await application.service.run_turn(session_id, "this message will be dropped")
     await application.summaries_caught_up()
 
@@ -97,7 +98,7 @@ async def test_the_row_is_wrong_but_the_rest_of_the_turn_still_lands(
     of the failure, which is worse and harder to notice.
     """
     application = await build_application(model=fake_model, db_path=db_path)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     await application.service.run_turn(session_id, "dropped")
     await application.summaries_caught_up()
 
@@ -121,7 +122,7 @@ async def test_a_rebuild_repairs_a_drifted_row(
         read_models.SessionSummaryProjection, "_on_user_message", _breaking(original)
     )
     application = await build_application(model=fake_model, db_path=db_path)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     await application.service.run_turn(session_id, "the real first message")
     await application.summaries_caught_up()
     assert (await application.service.list_sessions())[0].first_message == ""
@@ -145,7 +146,7 @@ async def test_a_rebuild_on_a_healthy_table_changes_nothing(
     is exactly when it is most useful.
     """
     application = await build_application(model=fake_model, db_path=db_path)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     await application.service.run_turn(session_id, "hello")
     await application.summaries_caught_up()
     before = await application.service.list_sessions()
@@ -159,7 +160,7 @@ async def test_a_healthy_projection_reports_itself_healthy(
     build_application, fake_model, db_path
 ):
     application = await build_application(model=fake_model, db_path=db_path)
-    await application.service.create_session()
+    await start_session(application.service)
     await application.summaries_caught_up()
 
     health = await application.service.summaries_health()
@@ -179,7 +180,7 @@ async def test_a_drifted_projection_reports_itself_unhealthy(
     the DLQ rather than from reading the list and squinting.
     """
     application = await build_application(model=fake_model, db_path=db_path)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     await application.service.run_turn(session_id, "dropped")
     await application.summaries_caught_up()
 
@@ -201,7 +202,7 @@ async def test_a_rebuild_clears_the_unhealthy_report(
         read_models.SessionSummaryProjection, "_on_user_message", _breaking(original)
     )
     application = await build_application(model=fake_model, db_path=db_path)
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     await application.service.run_turn(session_id, "the real first message")
     await application.summaries_caught_up()
     assert (await application.service.summaries_health()).healthy is False

@@ -22,7 +22,7 @@ from research_team.domain import (
     UserMessageSent,
 )
 from research_team.interfaces.web import TurnActivity
-from tests.conftest import ToolAwareFakeChatModel
+from tests.conftest import ToolAwareFakeChatModel, start_session
 
 
 class SlowWritingModel(ToolAwareFakeChatModel):
@@ -84,7 +84,7 @@ async def test_a_turns_events_all_become_visible_at_once(build_application, writ
     watcher = asyncio.create_task(_watch(application.feed, seen))
     await asyncio.sleep(0.2)
 
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     await _settle(seen, 1)  # the session's own creation event
     before_turn = len(seen)
 
@@ -116,7 +116,7 @@ async def test_a_cancelled_turns_events_never_become_visible(build_application, 
     watcher = asyncio.create_task(_watch(application.feed, seen))
     await asyncio.sleep(0.2)
 
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     turn = asyncio.create_task(application.turns.run(session_id, "write a file"))
     await asyncio.sleep(0.4)
     await application.turns.cancel(session_id)
@@ -140,7 +140,7 @@ async def test_the_reported_span_matches_what_the_watcher_saw(
     watcher = asyncio.create_task(_watch(application.feed, seen))
     await asyncio.sleep(0.2)
 
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
     await _settle(seen, 1)
     first_new = len(seen)
 
@@ -172,7 +172,7 @@ async def test_activity_streams_without_appending_to_the_log(build_application, 
     """
     application = await build_application(model=writing_model)
     activity = TurnActivity()
-    session_id = await application.service.create_session()
+    session_id = await start_session(application.service)
 
     observed: list[ActivityMessage | ActivityDelta] = []
     first_note = asyncio.Event()
