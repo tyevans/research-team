@@ -178,6 +178,36 @@ def knowledge_domain() -> str:
     return os.getenv("AGENT_KNOWLEDGE_DOMAIN", DEFAULT_KNOWLEDGE_DOMAIN)
 
 
+def extraction_thinking() -> bool:
+    """Whether the extraction model may reason before it answers. Off by default.
+
+    Off is redstring's own measured default (see `NO_THINKING` in
+    `redstring.llm.adapters.langchain`): on one graded corpus, thinking on
+    against thinking off was 155.1s against 27.3s of wall clock, 9 entity
+    false positives against 3 and 11 relationship false positives against 6,
+    with recall unchanged. Extraction asks what the text *states*, and a model
+    given room to deliberate spends it inferring -- every inference grades as
+    a false positive.
+
+    The cost of the default is that it is sent as `chat_template_kwargs`,
+    which only a server rendering the model's own chat template understands.
+    A backend without one -- OpenAI's hosted API is the case to expect -- will
+    reject the field with a 400 on the very first extraction call. Set
+    `AGENT_EXTRACTION_THINKING=1` there. This defaults to off anyway because
+    `base_url` points at a local OpenAI-compatible server, and the failure is
+    a loud 400 rather than a silent degradation.
+
+    Only extraction is affected. Whether the conversational agent should
+    reason is a separate question that nobody has measured.
+    """
+    return os.getenv("AGENT_EXTRACTION_THINKING", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def neo4j_uri() -> str:
     return os.getenv("AGENT_NEO4J_URI", DEFAULT_NEO4J_URI)
 
