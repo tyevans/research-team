@@ -41,11 +41,7 @@ export const useSessionForest = (): {
   const summaries = useMemo(() => list.data ?? [], [list.data])
   const roots = useMemo(() => {
     const fromTree = tree.data ?? []
-    return fromTree.length > 0
-      ? fromTree
-      : summaries.length > 0
-        ? summariesAsForest(summaries)
-        : []
+    return fromTree.length > 0 ? fromTree : summaries.length > 0 ? summariesAsForest(summaries) : []
   }, [tree.data, summaries])
 
   /** Every row, from whichever source has more of them.

@@ -78,10 +78,7 @@ export const ProjectList = ({
   })
 
   const ranked = useMemo(() => rollups(query.data ?? [], sessions), [query.data, sessions])
-  const shown = useMemo(
-    () => ranked.filter((rollup) => matches(rollup, search)),
-    [ranked, search],
-  )
+  const shown = useMemo(() => ranked.filter((rollup) => matches(rollup, search)), [ranked, search])
   // The clock comes from the container, not from `Date.now()` in render: the
   // headings are derived from it, so a test that wants a row under "This week"
   // has to be able to say when now is.
@@ -264,7 +261,8 @@ const ProjectRows = ({
     // variable-height thing on the page — so every row is measured rather than
     // trusted to the estimate, and the estimate only decides how far the
     // scrollbar thinks it has to go before a row has been drawn.
-    estimateSize: (index) => (items[index]?.kind === 'heading' ? HEADING_HEIGHT : PROJECT_ROW_HEIGHT),
+    estimateSize: (index) =>
+      items[index]?.kind === 'heading' ? HEADING_HEIGHT : PROJECT_ROW_HEIGHT,
     measureElement: (element) => element.getBoundingClientRect().height || PROJECT_ROW_HEIGHT,
     overscan: 4,
   })
@@ -429,7 +427,13 @@ const ProjectRow = ({
           open={menuOpen}
           onToggle={() => setMenuOpen(!menuOpen)}
         >
-          <Button small tone="danger" disabled={busy} title="Retire this project" onClick={onDelete}>
+          <Button
+            small
+            tone="danger"
+            disabled={busy}
+            title="Retire this project"
+            onClick={onDelete}
+          >
             Delete
           </Button>
         </Disclosure>

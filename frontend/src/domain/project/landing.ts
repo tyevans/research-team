@@ -91,9 +91,7 @@ const byStartAscending = (a: SessionSummary, b: SessionSummary): number =>
  * Flat on purpose: lineage among orphans is shown as a `forked @` chip on the
  * row, because a pile of unrelated sessions is not a forest and nesting one
  * inside another mostly buries the newest arrival under a parent from March. */
-export const looseSessions = (
-  summaries: readonly SessionSummary[],
-): readonly SessionSummary[] =>
+export const looseSessions = (summaries: readonly SessionSummary[]): readonly SessionSummary[] =>
   summaries
     .filter((summary) => summary.projectId === null)
     .slice()
