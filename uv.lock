@@ -404,16 +404,16 @@ wheels = [
 
 [[package]]
 name = "eventsource-py"
-version = "0.12.0"
+version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "orjson" },
     { name = "pydantic" },
     { name = "sqlalchemy", extra = ["asyncio"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/56/24/5cd0d851e1dd0682c21b57bfed50ad6228a48bb3e66a97e1cfe77f0e6069/eventsource_py-0.12.0.tar.gz", hash = "sha256:d173a3304c3dad22588a8cd57f8e1b80fd578114e6f70db373fbcb4a60f390b4", size = 2866078, upload-time = "2026-08-06T07:50:03.167Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/07/27/9839fac04cb768a205d2f887ec205d3e8a8bdc550687b7e936392e0a3e54/eventsource_py-0.13.0.tar.gz", hash = "sha256:4c8b75a88b29582bbb974ec66b177176bcd133d8c5594ae6f8f1b201d5d1c3db", size = 2895920, upload-time = "2026-08-09T20:25:35.96Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fc/b8/ebe94477843b8f2c9f5d4b64ba045d4ded074c76949f47b616a6317c2f58/eventsource_py-0.12.0-py3-none-any.whl", hash = "sha256:0714c4390766ec683dbd8990b8326fca48ee7901e3381b522703e93024d13205", size = 720074, upload-time = "2026-08-06T07:50:01.127Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/67/dbbf08ea0632521cdd389e7b80030990fec1c002480317567fdd7cc9b124/eventsource_py-0.13.0-py3-none-any.whl", hash = "sha256:d5243fec3ef29d2e3f6712b153e609dd4601893393a5b5a93c725a29a7b16f3a", size = 733011, upload-time = "2026-08-09T20:25:33.929Z" },
 ]
 
 [package.optional-dependencies]
@@ -1619,7 +1619,7 @@ wheels = [
 
 [[package]]
 name = "redstring"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dateparser" },
@@ -1629,9 +1629,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/04/a4/0ab1029a827b77e21f177f203831a3c348d053f93a4ca1b20d1fcf6dcbdc/redstring-0.3.0.tar.gz", hash = "sha256:09331f8b2e7a05b65ccd7b8607b31aadc16f75c4245e1c06a507a740a6f89325", size = 1266377, upload-time = "2026-08-07T01:00:11.479Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cf/64/8966ce35c64f678d250f4572d758e99524f4aafe33eb3a7882bcab24edf3/redstring-0.4.0.tar.gz", hash = "sha256:045670d1a315f0f45715c79ff5bc5599673585b7885cb318ed3b63034d410c12", size = 1594779, upload-time = "2026-08-09T21:55:33.375Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b0/09/c5a021f779a0a4d9e2cdd3520f3108facdd11fc837e93432fcf0945d1a5b/redstring-0.3.0-py3-none-any.whl", hash = "sha256:5cb88875f7476b575184d828834a91fbea0b1635462a107831142eb6e7160d4f", size = 246609, upload-time = "2026-08-07T01:00:09.876Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/d1/a21325eb4bda1e8d7d28d157179e4c2037d3e46dc4b0b24470887cace200/redstring-0.4.0-py3-none-any.whl", hash = "sha256:9a41ed6101f668ddac1737652ca535a7f7af9dcdb8515a5f0a8af50df2821cf4", size = 381049, upload-time = "2026-08-09T21:55:31.944Z" },
 ]
 
 [package.optional-dependencies]
@@ -1776,14 +1776,14 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "deepagents", specifier = ">=0.7.4,<0.8" },
-    { name = "eventsource-py", extras = ["sqlite"], specifier = ">=0.12.0,<0.13" },
-    { name = "eventsource-py", extras = ["telemetry"], marker = "extra == 'tracing'", specifier = ">=0.12.0,<0.13" },
+    { name = "eventsource-py", extras = ["sqlite"], specifier = ">=0.13.0,<0.14" },
+    { name = "eventsource-py", extras = ["telemetry"], marker = "extra == 'tracing'", specifier = ">=0.13.0,<0.14" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "langchain-openai", specifier = ">=1.4.1" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'tracing'", specifier = ">=1.0,<2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "redstring", extras = ["llm", "neo4j"], specifier = ">=0.3.0,<0.4" },
+    { name = "redstring", extras = ["llm", "neo4j"], specifier = ">=0.4.0,<0.5" },
     { name = "trafilatura", specifier = ">=2.2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.1" },
 ]
