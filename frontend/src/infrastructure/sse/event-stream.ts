@@ -4,7 +4,7 @@ import type {
   FeedFrame,
 } from '@application/ports/event-stream.ts'
 import { isEventIndex } from '@domain/session/event-index.ts'
-import { ApprovalId, SessionId } from '@domain/shared/identifier.ts'
+import { ApprovalId, SessionId, TopicId } from '@domain/shared/identifier.ts'
 
 import {
   activityFrameDto,
@@ -13,6 +13,7 @@ import {
   frameEnvelopeDto,
   logFrameDto,
   seedingFrameDto,
+  topicFrameDto,
 } from '../http/dto.ts'
 import { toActivityEntry, toApproval, toLogEntry, toSeedingRun } from '../http/mappers.ts'
 
@@ -161,6 +162,12 @@ export const decodeFrame = (data: string): FeedFrame | null => {
       // Without this case it fell through to the log branch and was dropped
       // for having no index — the pane would have stayed empty forever.
       return { kind: 'extraction', payload }
+    }
+    case 'Topic': {
+      const frame = topicFrameDto.safeParse(payload)
+      return frame.success
+        ? { kind: 'topic', topicId: TopicId(frame.data.topic_id), change: frame.data.change }
+        : null
     }
     case 'TurnActivity': {
       const frame = activityFrameDto.safeParse(payload)

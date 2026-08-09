@@ -83,6 +83,22 @@ describe('decodeFrame', () => {
     })
   })
 
+  it('reads a topic frame as a topic, not as a log entry', () => {
+    // A topic change is a durable log entry, but a topic is not a session:
+    // without this case it fell through to the log branch, where its
+    // aggregate id would arrive as a `sessionId` and set the tree refetching
+    // a session that does not exist -- and, having no `index`, it was in fact
+    // dropped outright, which is why a seeded topic only appeared on reload.
+    expect(
+      frame({
+        type: 'Topic',
+        topic_id: 't1',
+        change: 'TopicOpened',
+        occurred_at: '2026-01-01T00:00:00Z',
+      }),
+    ).toEqual({ kind: 'topic', topicId: 't1', change: 'TopicOpened' })
+  })
+
   it('drops a log frame with no index rather than guessing a position', () => {
     // Inserting a row at the wrong point is worse than dropping a frame a
     // reconnect will replay correctly.
