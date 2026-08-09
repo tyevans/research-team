@@ -571,6 +571,44 @@ not.
 Blocking for corpus construction at any real scale, which is the only reason it
 is not filed as a nicety.
 
+### B34. The live feed reads whole extractions to say "something happened"
+
+`EventStoreSessionRepository.read_since` admits redstring's `Document` and
+`Consolidation` categories so the graph pane can redraw without a reload. That
+means every poll deserialises `DocumentExtracted` payloads -- every entity and
+relationship an extraction found -- to emit a frame carrying a project id and
+an event class name, and nothing else. The waste is the whole payload.
+
+The fix, when it is worth it: a projection following those two categories that
+appends a small `GraphChanged` of our own, on a stream this feed already reads.
+The wire format does not change, because the frame already carries no entities;
+only `read_since` and the projection's own start/health/rebuild wiring do. It
+was not taken now because it adds a moving part -- another follower to start,
+catch up, rebuild and report health for -- and a second lag between an
+extraction landing and a browser hearing about it, in exchange for a cost that
+has never been measured.
+
+The trigger to act is a measurement, not a feeling: time one poll against a
+project whose corpus is a few hundred documents. Until someone has that number,
+this is speculation about a cost, which is the reason it is filed rather than
+fixed.
+
+### B35. A graph refresh discards what a reader pruned
+
+`GraphPane` redraws by calling `loadAll` when a graph frame arrives, and
+`loadWhole` replaces the view -- so an extraction that lands while a reader has
+pruned their way down to six interesting nodes puts the whole graph back. Their
+*selection* survives; their work does not. It is the same effect "Reset view"
+has, applied by something they did not do.
+
+Not fixed with the streaming change because the merge that would preserve
+pruning has an unanswered question in it: once consolidation has merged a
+removed node into one that is still on the canvas, "this node was pruned" no
+longer names anything the new graph contains. Any rule here is a guess until
+somebody decides what the reader meant. Worth deciding -- the pane's whole
+pruning feature exists because browsing accumulates -- but it is a design
+question, not an implementation gap.
+
 ## Security and multi-tenancy
 
 Found while researching course-design workflows
