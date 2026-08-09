@@ -1,20 +1,34 @@
-/* The session tree and the project list. */
+/* The landing page: projects, with their sessions inside them.
+   Also the loose-session list, which is the same row at a smaller weight.
 
-/* ======================================================================= */
-/* tree view                                                               */
-/* ======================================================================= */
-.view-tree {
+   Two rules govern the colour here. The accent is spent on *actions* and on
+   "someone has this", never on identifiers -- it used to colour a hex string
+   on every row, which drew the eye to the least useful field dozens of times
+   per screen. And nothing invents a colour: the event-kind tokens already
+   carry the console's second palette, so a live run is the amber the timeline
+   spends on tool activity and a failure is the red it spends on failures. */
+
+.view-home {
   overflow: auto;
-  padding: 26px 28px 60px;
+  padding: var(--space-6) var(--space-6) 60px;
 }
 
+.view-home > * {
+  max-width: 1100px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* The head shared by the course and research views, which is all that still
+   uses it: this page's own heading is `.section` below. Left here rather than
+   moved, because `research.css` already overrides it by this name. */
 .view-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 20px;
+  gap: var(--space-5);
   max-width: 1100px;
-  margin: 0 auto 22px;
+  margin: 0 auto var(--space-5);
 }
 .view-head h1 {
   margin: 0;
@@ -23,15 +37,300 @@
   letter-spacing: -0.02em;
 }
 .view-head .sub {
-  margin: 4px 0 0;
+  margin: var(--space-1) 0 0;
   color: var(--fg-dim);
   font-size: var(--t-sm);
 }
 
-.tree-wrap {
-  max-width: 1100px;
-  margin: 0 auto;
+/* --- purpose line and section headings --------------------------------- */
+
+.purpose {
+  margin: 0 0 var(--space-5);
+  color: var(--fg-dim);
+  font-size: var(--t-sm);
+  max-width: 78ch;
 }
+
+/* `--t-sm` uppercase, not `--t-2xl`. A heading labels a list; it is not the
+   most important text on the page, and at 23px it was the largest text in the
+   whole console. */
+.section {
+  margin: var(--space-6) 0 var(--space-3);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+/* --- action bar --------------------------------------------------------- */
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+.actions-search {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+/* `.view-head-actions` and `.node-actions` had no rule in any of the
+   seventeen stylesheets, so the project-creation row and every row's buttons
+   were raw inline-block elements with no gap and no wrap behaviour. */
+.view-head-actions,
+.node-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.node-actions {
+  margin-top: var(--space-3);
+}
+/* Pushes the two navigation buttons away from the two that start something,
+   so the row reads as two groups rather than four adjacent choices. */
+.node-actions-gap {
+  flex: 1 1 var(--space-4);
+  min-width: var(--space-4);
+}
+
+.input {
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--t-sm);
+  color: var(--fg);
+}
+.input:hover {
+  border-color: var(--line-strong);
+}
+
+/* --- new project -------------------------------------------------------- */
+
+.new-project {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.new-project-workflow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.new-project-workflow .input {
+  flex: 1 1 auto;
+}
+.new-project-label {
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+/* The server's `preset_label`, visible. It exists to say what a preset makes
+   and where it stops; inside an `<option>` that sentence was invisible until
+   the menu opened and gone the moment it closed. */
+.new-project-detail {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: var(--t-sm);
+  min-height: 1.5em;
+}
+.new-project-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* --- first run ---------------------------------------------------------- */
+
+.first-run {
+  max-width: 560px;
+  margin: 8vh auto 0;
+}
+.first-run .purpose {
+  font-size: var(--t-md);
+  color: var(--fg);
+}
+.first-run-aside {
+  margin-top: var(--space-5);
+  color: var(--fg-dim);
+  font-size: var(--t-sm);
+  line-height: 1.8;
+}
+.first-run-aside code {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  background: var(--bg-panel-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px var(--space-1);
+}
+.linkish {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* --- virtualized row lists ---------------------------------------------- */
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rows-heading {
+  margin: var(--space-4) 0 var(--space-1);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  display: flex;
+  gap: var(--space-2);
+}
+.rows-heading-count {
+  color: var(--fg-faint);
+  font-family: var(--mono);
+}
+
+/* Placeholder blocks at the row's real height. Text that appears and vanishes
+   where content is about to land is what makes a page invalidated on every log
+   frame feel unstable. */
+.rows-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.skeleton-row {
+  height: 84px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, var(--bg-panel), var(--bg-panel-2), var(--bg-panel));
+  background-size: 200% 100%;
+  animation: skeleton 1.4s ease-in-out infinite;
+}
+@keyframes skeleton {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-row {
+    animation: none;
+  }
+}
+
+/* --- a project ---------------------------------------------------------- */
+
+.project {
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-2) 0;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
+}
+.project:hover {
+  background: var(--bg-panel-2);
+  border-color: var(--line-strong);
+}
+.project-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.project-name {
+  font-size: var(--t-lg);
+  font-weight: 600;
+  color: var(--fg);
+  letter-spacing: -0.01em;
+  margin-right: var(--space-1);
+}
+.project-stats,
+.row-stats {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+  flex-wrap: wrap;
+}
+.project-stats b,
+.row-stats b {
+  color: var(--fg-dim);
+  font-weight: 600;
+}
+.project-sessions {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--space-2);
+}
+
+/* --- a session row ------------------------------------------------------ */
+
+.row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  margin: var(--space-1) 0;
+  cursor: pointer;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
+}
+.row:hover {
+  background: var(--bg-panel-2);
+  border-color: var(--line-strong);
+}
+.row-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+/* The first message leads, and is allowed to wrap. It was `nowrap` and clipped
+   by whatever width the chips left, so scanning for "the one about spaced
+   repetition" meant reading a truncated second column on every row. */
+.row-title {
+  flex: 1 1 240px;
+  min-width: 0;
+  color: var(--fg);
+  font-size: var(--t-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-title-empty {
+  color: var(--fg-faint);
+  font-style: italic;
+}
+/* Trailing, dim, monospace: metadata, which is what an id is. */
+.row-id,
+.project-id {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+  letter-spacing: -0.01em;
+}
+
+/* --- fork lineage, inside a project ------------------------------------- */
 
 ul.tree,
 ul.tree ul {
@@ -51,7 +350,7 @@ ul.tree ul > li::before {
   content: '';
   position: absolute;
   left: -17px;
-  top: 21px;
+  top: 18px;
   width: 13px;
   height: 1px;
   background: var(--line);
@@ -61,73 +360,18 @@ ul.tree ul > li:last-child::after {
   content: '';
   position: absolute;
   left: -18px;
-  top: 22px;
+  top: 19px;
   bottom: -1px;
   width: 1px;
   background: var(--bg);
 }
 
-.node {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: var(--bg-panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 9px 12px;
-  margin: 5px 0;
-  cursor: pointer;
-  transition:
-    border-color 0.12s,
-    background 0.12s;
-}
-.node:hover {
-  background: var(--bg-panel-2);
-  border-color: #34404e;
-}
-.node-top {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-  flex-wrap: wrap;
-}
-.node-id {
-  font-family: var(--mono);
-  font-size: var(--t-sm);
-  color: var(--accent);
-  letter-spacing: -0.01em;
-}
-.node-msg {
-  flex: 1 1 220px;
-  min-width: 0;
-  color: var(--fg);
-  font-size: var(--t-md);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.node-msg.empty {
-  color: var(--fg-faint);
-  font-style: italic;
-}
-.node-stats {
-  display: flex;
-  gap: 10px;
-  margin-top: 5px;
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  color: var(--fg-faint);
-  flex-wrap: wrap;
-}
-.node-stats b {
-  color: var(--fg-dim);
-  font-weight: 600;
-}
+/* --- chips -------------------------------------------------------------- */
 
 .chip {
   font-family: var(--mono);
   font-size: var(--t-xs);
-  padding: 1px 6px;
+  padding: 1px var(--space-2);
   border-radius: 3px;
   border: 1px solid var(--line);
   color: var(--fg-dim);
@@ -135,28 +379,93 @@ ul.tree ul > li:last-child::after {
 }
 .chip-fork {
   color: var(--k-session);
-  border-color: #3a3060;
-  background: #1a1630;
+  border-color: var(--tint-session-line);
+  background: var(--tint-session);
 }
 .chip-fail {
   color: var(--k-failure);
-  border-color: #45272a;
-  background: #241417;
+  border-color: var(--tint-fail-line);
+  background: var(--tint-fail);
 }
 /* project/lease state: "someone else has this" and "the agent cannot reach
  * its graph" are both things you want to notice before typing, not after */
 .chip-held {
   color: var(--accent);
   border-color: var(--accent-dim);
-  background: #241d10;
+  background: var(--tint-held);
 }
 .chip-ok {
   color: var(--k-file);
-  border-color: #24402c;
-  background: #131f17;
+  border-color: var(--tint-ok-line);
+  background: var(--tint-ok);
 }
 .chip-warn {
   color: var(--k-failure);
-  border-color: #45272a;
-  background: #241417;
+  border-color: var(--tint-fail-line);
+  background: var(--tint-fail);
+}
+
+/* --- the row menu ------------------------------------------------------- */
+
+/* A `Disclosure` with different chrome, which is all a menu is here. */
+.menu {
+  position: relative;
+}
+.menu > .disc-head {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel-2);
+  color: var(--fg-dim);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+.menu > .disc-head .disc-caret {
+  display: none;
+}
+.menu > .disc-body:not([hidden]) {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-1));
+  z-index: 20;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-2);
+}
+
+/* --- drift, said in the page -------------------------------------------- */
+
+.drift-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--tint-fail-line);
+  background: var(--tint-fail);
+  border-radius: var(--radius);
+  font-size: var(--t-sm);
+}
+.drift-banner strong {
+  color: var(--k-failure);
+}
+.drift-banner span {
+  color: var(--fg-dim);
+  flex: 1 1 300px;
+}
+
+/* --- confirmation ------------------------------------------------------- */
+
+.confirm p {
+  margin: 0 0 var(--space-4);
+  color: var(--fg-dim);
+  font-size: var(--t-sm);
+  line-height: 1.7;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
 }

@@ -6,7 +6,7 @@ import { queryKeys } from '@application/queries/keys.ts'
 import { createSessionStore, type SessionStore } from '@application/session/session-store.ts'
 import type { Course } from '@domain/project/course.ts'
 import { CourseView } from '@presentation/course/CourseView.tsx'
-import { courseHref, researchHref, treeHref, type Route } from '@presentation/routing/routes.ts'
+import { courseHref, researchHref, homeHref, type Route } from '@presentation/routing/routes.ts'
 import { navigate, useRoute } from '@presentation/routing/use-route.ts'
 import { ResearchView } from '@presentation/research/ResearchView.tsx'
 import { SessionView } from '@presentation/session/SessionView.tsx'
@@ -50,12 +50,12 @@ const Shell = () => {
   const head = sessionStore((state) => state.head)
   const [course, setCourse] = useState<Course | null>(null)
 
-  useTreeRefresh(route.name === 'tree')
+  useTreeRefresh(route.name === 'home')
 
   return (
     <>
       <header className="topbar">
-        <a className="brand" href={treeHref()}>
+        <a className="brand" href={homeHref()}>
           <span className="brand-mark" />
           <span className="brand-name">research&#8209;team</span>
         </a>
@@ -140,6 +140,13 @@ const useTreeRefresh = (active: boolean) => {
       timer.current = setTimeout(() => {
         void queryClient.invalidateQueries({ queryKey: queryKeys.tree() })
         void queryClient.invalidateQueries({ queryKey: queryKeys.sessions() })
+        // The landing page's live markers, refreshed off the same frames
+        // rather than off a timer of their own. A run's rounds *are* turns on
+        // a session, so the frames that move the counts are the frames that
+        // move the marker -- and a poll would be N more requests per interval
+        // on a page that already asks two per drawn row.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.allRuns() })
+        void queryClient.invalidateQueries({ queryKey: queryKeys.allWorkers() })
       }, 400)
     })
     return () => {

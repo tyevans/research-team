@@ -65,12 +65,28 @@
   .scrub-bar {
     flex-wrap: wrap;
   }
-  .view-tree {
+  .view-home {
     padding: 18px 14px 40px;
+  }
+  /* One column: the row's stats wrap to their own lines and the secondary
+     actions wrap below the primary ones, which the flex rules already do --
+     what narrow needs on top of that is for the action bar to stop trying to
+     be a row. */
+  .actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .actions-search {
+    flex: 1 1 auto;
   }
   .view-head {
     flex-direction: column;
     align-items: stretch;
+  }
+  .new-project-workflow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-1);
   }
   /* Stacked panes collapse to a horizontal strip, not a vertical rail, so the
      title reads the way the rest of the column does. */
@@ -110,5 +126,21 @@
   .research-workbench .pane-graph {
     height: 60vh;
     min-height: 320px;
+  }
+}
+
+/* The indent guides cost 32px per level, and below this there are only about
+   300px to spend on a row -- so a fork three deep would have a hundred pixels
+   of gutter and a title with nowhere to go. Lineage is still legible from the
+   `forked @` chip the row carries. */
+@media (max-width: 560px) {
+  ul.tree ul {
+    margin-left: 0;
+    padding-left: var(--space-3);
+    border-left: 0;
+  }
+  ul.tree ul > li::before,
+  ul.tree ul > li:last-child::after {
+    content: none;
   }
 }
