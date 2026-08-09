@@ -423,6 +423,49 @@ async def test_sse_frames_each_event_as_a_data_line(repository, session_id):
     assert payload["type"] == "UserMessageSent"
 
 
+async def test_sse_frames_a_topic_change_as_its_own_project_shaped_frame(repository):
+    """An opened topic reaches the live feed, and does not pretend to be a session.
+
+    The research page's topic list is refreshed off these frames. Two failures
+    this pins: no frame at all (what shipped -- the feed read only
+    `CodingSession` streams, so a topic appeared only on a reload), and a frame
+    carrying the topic's id under `session_id`, which would put the session
+    tree to work refetching a session that does not exist.
+
+    The `id:` line matters as much as the data: unlike `Seeding` and
+    `Extraction`, a topic change *is* a log entry, so a browser that drops
+    mid-run replays it from `Last-Event-ID` rather than losing it.
+    """
+    from research_team.application import LiveFeed
+    from research_team.interfaces.web.app import _sse
+
+    feed = LiveFeed(repository, poll_interval=0.01)
+    topics = build_topic_repository(repository.store)
+    topic = topics.create_new(uuid4())
+
+    frames: list[str] = []
+    generator = _sse(StubRequest(), feed)
+    task = asyncio.create_task(_drain(generator, frames, wanted=1))
+    await asyncio.sleep(0.05)
+    topic.execute(
+        OpenTopic(
+            topic_id=topic.aggregate_id,
+            project_id=uuid4(),
+            question="Does spacing help?",
+            rationale="the syllabus asserts it without a citation",
+        )
+    )
+    await topics.save(topic)
+    await asyncio.wait_for(task, timeout=5)
+
+    assert frames[0].startswith("id: ")
+    payload = json.loads(frames[0].split("data: ", 1)[1])
+    assert payload["type"] == "Topic"
+    assert payload["topic_id"] == str(topic.aggregate_id)
+    assert payload["change"] == "TopicOpened"
+    assert "session_id" not in payload
+
+
 async def _drain(generator, frames: list[str], *, wanted: int) -> None:
     """Collect `wanted` data frames, then shut the generator down.
 

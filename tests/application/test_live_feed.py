@@ -17,7 +17,14 @@ class FakeFeed:
 
     def push(self, name: str) -> None:
         position = len(self.entries) + 1
-        self.entries.append(FeedEntry(session_id=name, event=name, position=position))
+        self.entries.append(
+            FeedEntry(
+                aggregate_id=name,
+                aggregate_type="CodingSession",
+                event=name,
+                position=position,
+            )
+        )
         self._appended.set()
 
     async def wait_for_append(self, timeout: float) -> None:

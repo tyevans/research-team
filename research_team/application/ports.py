@@ -120,20 +120,31 @@ class SessionSummaries(Protocol):
 
 @dataclass(frozen=True)
 class FeedEntry:
-    """One event from the global feed, with the cursor that follows it."""
+    """One event from the global feed, with the cursor that follows it.
 
-    session_id: UUID
+    `aggregate_id` rather than `session_id`, and `aggregate_type` beside it,
+    because the feed no longer carries only sessions: a topic is its own
+    aggregate with its own stream, and calling its id a session id is how a
+    subscriber ends up looking for a session that does not exist. The two
+    fields together are what let `_sse` decide which kind of frame to write
+    without re-deriving it from the event class.
+    """
+
+    aggregate_id: UUID
+    aggregate_type: str
     event: DomainEvent
     position: object
     """Opaque to us: compared and persisted, never inspected or arithmetic'd."""
 
 
 class EventFeed(Protocol):
-    """Reads the store's global feed, across all sessions, in append order.
+    """Reads the store's global feed, in append order.
 
     Separate from `SessionRepository` because it answers a different question:
     not "what does this session look like" but "what has happened lately",
-    which is what a live view needs.
+    which is what a live view needs -- and "lately" spans aggregates, because
+    a reader watching a project cares about its topics moving as much as a
+    reader watching a session cares about its turns.
     """
 
     async def latest_position(self) -> object | None:

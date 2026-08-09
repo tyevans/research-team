@@ -10,6 +10,7 @@ from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import StartSession
 from research_team.domain.project import ProjectCreated
+from research_team.domain.topic import OpenTopic
 from research_team.infrastructure.agent.corpus_tools import CORPUS_PROMPT
 from research_team.infrastructure.agent.fetch import FETCH_CORPUS_PROMPT, FETCH_PROMPT
 from research_team.infrastructure.agent.knowledge_tools import KNOWLEDGE_PROMPT
@@ -18,6 +19,7 @@ from research_team.infrastructure.persistence import (
     EventStoreSessionRepository,
     build_aggregate_repository,
 )
+from research_team.infrastructure.persistence.event_store import build_topic_repository
 from tests.conftest import start_session
 
 
@@ -172,8 +174,42 @@ def test_aggregate_repository_snapshots_are_configured(store, snapshot_store):
     assert aggregates.has_snapshot_support
 
 
+async def test_read_since_carries_topic_events(tmp_path):
+    """The research page's whole live path starts here.
+
+    `open_topic` appends to this log, and both `seeding.py` and `ResearchView`
+    tell the reader that a client sees new topics by invalidating on those
+    frames. Until this test existed the feed filtered every `Topic` stream out,
+    so no topic event ever reached the SSE connection and a topic only appeared
+    on a reload. Asserting the aggregate type, not just the count: an entry
+    that arrives labelled `CodingSession` sends the browser looking for a
+    session that does not exist.
+    """
+    repository = EventStoreSessionRepository.open(str(tmp_path / "sessions.db"))
+    try:
+        topics = build_topic_repository(repository.store)
+        topic = topics.create_new(uuid4())
+        topic.execute(
+            OpenTopic(
+                topic_id=topic.aggregate_id,
+                project_id=uuid4(),
+                question="Does spacing help?",
+                rationale="the syllabus asserts it without a citation",
+            )
+        )
+        await topics.save(topic)
+
+        entries = await repository.read_since(None)
+
+        assert [(entry.aggregate_id, entry.aggregate_type) for entry in entries] == [
+            (topic.aggregate_id, "Topic")
+        ]
+    finally:
+        await repository.close()
+
+
 async def test_read_since_ignores_events_from_other_aggregate_types(tmp_path):
-    """A shared store carries foreign streams; the session feed must not see them."""
+    """A shared store carries foreign streams; the feed must not see them."""
     repository = EventStoreSessionRepository.open(str(tmp_path / "sessions.db"))
     try:
         session_id = uuid4()
@@ -198,6 +234,6 @@ async def test_read_since_ignores_events_from_other_aggregate_types(tmp_path):
         entries = await repository.read_since(None)
 
         assert entries, "the session's own events should still arrive"
-        assert all(entry.session_id == session_id for entry in entries)
+        assert all(entry.aggregate_id == session_id for entry in entries)
     finally:
         await repository.close()

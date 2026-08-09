@@ -465,6 +465,36 @@ def feed_event(session_id: UUID, event: DomainEvent, index: int | None) -> dict[
     }
 
 
+def topic_change(topic_id: UUID, event: DomainEvent) -> dict[str, Any]:
+    """One topic event, as pushed over SSE.
+
+    Its own frame type rather than a `feed_event` row, because a topic is not
+    a session: the session tree and the session views key everything they hold
+    off `session_id`, and a topic's aggregate id under that name would have
+    them looking for a session that does not exist. `Topic` sits beside
+    `Seeding` and `Extraction` in being project-shaped rather than
+    session-shaped -- but unlike those two it *is* a log entry, so it keeps
+    its feed position as an SSE id and a reconnect replays it.
+
+    **No project id, deliberately.** Only `TopicOpened` carries one; every
+    later event addresses the topic alone, and answering "which project?" for
+    those would mean a read-model lookup per frame on the connection every
+    browser holds open. A client scopes instead by the project it is already
+    showing -- at worst it re-reads one topic list when another project's
+    topic moves, which is one request against a query per frame here.
+
+    `change` is the event class name, the same field `event_row` puts under
+    `type` -- so a client that wants to tell an opened topic from a status
+    change has it without a follow-up read.
+    """
+    return {
+        "type": "Topic",
+        "topic_id": str(topic_id),
+        "change": type(event).__name__,
+        "occurred_at": event.occurred_at.isoformat(),
+    }
+
+
 def source_view(summary: DocumentRecord) -> dict[str, Any]:
     """One row of `/api/projects/{id}/sources`: what a source is, not what it says.
 

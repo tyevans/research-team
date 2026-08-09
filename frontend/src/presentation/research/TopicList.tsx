@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 
 import { queryKeys } from '@application/queries/keys.ts'
@@ -14,16 +14,19 @@ import {
 import type { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
 import { Button, EmptyState, ErrorBox, Loading } from '../common/primitives.tsx'
+import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
 import { TopicStatusDialog } from './TopicStatusDialog.tsx'
 
 /** The project's topic queue, ranked by `byUrgency`: blocked topics first,
  *  then ones flagged for attention, then everything still live, then
  *  everything closed.
  *
- * A plain query rather than a poll — unlike `Workers`, nothing here is
- * expected to move within the span of one page view, so there is no
- * `refetchInterval` to keep a stale badge honest. A manual action -- setting
- * a topic's status -- is what invalidates this cache.
+ * A query refreshed off the live feed rather than a poll: `Workers` polls
+ * because process state leaves no event behind, but a topic opening or moving
+ * *is* a log entry, so the frames that change this list are already on the
+ * connection the shell holds open. `useTopicRefresh` below is what reads them
+ * — without it this list only changed on a manual action or a reload, which
+ * is exactly what a reader watching a seeding run saw.
  */
 export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
   const { topics } = useContainer()
@@ -42,6 +45,8 @@ export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
     queryKey: queryKeys.topics(projectId),
     queryFn: () => topics.list(projectId),
   })
+
+  useTopicRefresh(projectId, managing)
 
   const detail = useQuery({
     queryKey: managing ? queryKeys.topic(projectId, managing) : ['topic', 'none'],
@@ -137,6 +142,43 @@ export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
         />
       ) : null}
     </div>
+  )
+}
+
+/** Re-read the queue when a topic frame says it moved.
+ *
+ * Two keys and no more. Re-reading everything on every frame would also fix
+ * the bug, and would cost a request storm on a page that is simultaneously
+ * drawing a force-directed graph and following an extraction — so the graph,
+ * the documents and the seeding status are deliberately left alone: none of
+ * them is what a topic frame changed.
+ *
+ * Scoped to `projectId` because a topic frame carries no project of its own
+ * (see `topic_change` in `presenters.py`: only the creation event knows one,
+ * and answering it per frame would be a read-model lookup on the connection
+ * every browser holds open). The cost of that is a single extra list read
+ * when another project's topic moves while this page is open, which is one
+ * request against one query per frame on the server.
+ *
+ * `managing` is the topic whose detail dialog is open, if any -- the one
+ * other cache entry a topic frame can stale. Its own key rather than a
+ * prefix over `['topic', project]`, because only one dialog can be open and
+ * invalidating the rest would refetch details nothing is showing.
+ */
+const useTopicRefresh = (projectId: ProjectId, managing: TopicId | null) => {
+  const queryClient = useQueryClient()
+
+  useFrameRefresh(
+    // Always on: this hook lives in the pane it refreshes, so being mounted
+    // is the "on screen" test `useTreeRefresh` needs its flag for.
+    true,
+    (frame) => frame.kind === 'topic',
+    () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.topics(projectId) })
+      if (managing) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.topic(projectId, managing) })
+      }
+    },
   )
 }
 
