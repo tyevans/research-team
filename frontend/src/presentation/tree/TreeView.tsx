@@ -74,48 +74,52 @@ export const TreeView = () => {
 
   return (
     <section className="view view-home" ref={scrollRef}>
-      {/* Not dismissible. It costs one line, and it is the only thing on the
+      {/* The scroll container is the section, so the virtualizers measure
+          against the whole page; the width lives on the wrapper inside it. */}
+      <div className="home-inner">
+        {/* Not dismissible. It costs one line, and it is the only thing on the
           page telling somebody who did not build this what they are looking
           at. The sentence it replaces — "Forks branch from an event index" —
           is true and parses only if you have already read the README. */}
-      <p className="purpose">
-        An agent whose whole session is one event log. A project is where that work outlives one
-        conversation — a filesystem and a knowledge graph its sessions share.
-      </p>
+        <p className="purpose">
+          An agent whose whole session is one event log. A project is where that work outlives one
+          conversation — a filesystem and a knowledge graph its sessions share.
+        </p>
 
-      <div className="actions">
-        <Button tone="accent" onClick={() => setCreating(!creating)} aria-expanded={creating}>
-          + New project
-        </Button>
-        <input
-          ref={searchRef}
-          type="search"
-          className="input actions-search"
-          placeholder="search projects and sessions  ( / )"
-          aria-label="Search projects and sessions"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-        />
-        {/* Quiet, and deliberately so. A bare session has no filesystem
+        <div className="actions">
+          <Button tone="accent" onClick={() => setCreating(!creating)} aria-expanded={creating}>
+            + New project
+          </Button>
+          <input
+            ref={searchRef}
+            type="search"
+            className="input actions-search"
+            placeholder="search projects and sessions  ( / )"
+            aria-label="Search projects and sessions"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          {/* Quiet, and deliberately so. A bare session has no filesystem
             lineage, no knowledge graph, no course and no topic queue, and
             cannot be given any of them later — so it is the right tool for
             trying a prompt and a dead end for everything else. */}
-        <Button tone="quiet" disabled={create.isPending} onClick={() => create.mutate()}>
-          New session
-        </Button>
+          <Button tone="quiet" disabled={create.isPending} onClick={() => create.mutate()}>
+            New session
+          </Button>
+        </div>
+
+        {creating ? <NewProjectForm onCreated={() => setCreating(false)} /> : null}
+
+        <h2 className="section">Projects</h2>
+        <ProjectList scrollRef={scrollRef} search={search} />
+
+        <h2 className="section">Sessions outside any project</h2>
+        {/* In the page, not only as a badge in the topbar. This is the one page
+            whose entire content is that list, so "the list may be lying"
+            belongs where the list is. */}
+        <DriftBanner />
+        <LooseSessions scrollRef={scrollRef} />
       </div>
-
-      {creating ? <NewProjectForm onCreated={() => setCreating(false)} /> : null}
-
-      <h2 className="section">Projects</h2>
-      <ProjectList scrollRef={scrollRef} search={search} />
-
-      <h2 className="section">Sessions outside any project</h2>
-      {/* In the page, not only as a badge in the topbar. This is the one page
-          whose entire content is that list, so "the list may be lying" belongs
-          where the list is. */}
-      <DriftBanner />
-      <LooseSessions scrollRef={scrollRef} />
     </section>
   )
 }

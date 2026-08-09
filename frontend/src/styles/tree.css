@@ -13,10 +13,25 @@
   padding: var(--space-6) var(--space-6) 60px;
 }
 
-.view-home > * {
+/* One centred column, rather than `max-width` and `auto` margins on every
+   direct child. The child version looked equivalent and was not: `.purpose`,
+   `.section` and `.rows` each set a `margin` shorthand for their vertical
+   rhythm, which resets the horizontal `auto` back to zero -- so those three
+   sat hard against the left while `.actions`, which happens to set only
+   `margin-bottom`, was the one element that stayed centred. A wrapper owns the
+   width in one place and leaves every child free to set whatever margin its
+   rhythm needs.
+
+   `width: 100%` is load-bearing, not belt-and-braces: `.view` is a column
+   flex container, and a flex item with `auto` side margins takes its
+   shrink-to-fit width instead of stretching. Without it this wrapper would
+   centre the page and collapse it to the width of its widest word. That is
+   also the whole of why `.actions` looked centred before -- it was the one
+   child whose auto margins survived, so it alone got that treatment. */
+.home-inner {
+  width: 100%;
   max-width: 1100px;
-  margin-left: auto;
-  margin-right: auto;
+  margin: 0 auto;
 }
 
 /* The head shared by the course and research views, which is all that still

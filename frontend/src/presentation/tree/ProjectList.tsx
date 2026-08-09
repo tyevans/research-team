@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useMemo, useState, type RefObject } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 
 import { notify } from '@application/notifications/toast-store.ts'
 import { errorMessage } from '@application/ports/errors.ts'
@@ -231,6 +231,18 @@ const withHeadings = (shown: readonly ProjectRollup[], now: number): readonly It
 const PROJECT_ROW_HEIGHT = 108
 const HEADING_HEIGHT = 30
 
+/** What identifies a row to React *and* to the virtualizer's measurement cache.
+ *
+ * The second is the one that bites. Measurements are cached against whatever
+ * key the virtualizer is given, and its default is the array index -- so when
+ * the projects query answers and every row shifts down by a heading, index 3
+ * keeps the height measured for whatever used to be at index 3. That is not
+ * theoretical: it put a project row's 155px against a 33px heading and left a
+ * 122px hole in the middle of the list. Keying by identity means a measurement
+ * follows its row. */
+const itemKey = (item: Item): string =>
+  item.kind === 'heading' ? `h-${item.recency}` : String(item.rollup.project.id)
+
 const ProjectRows = ({
   items,
   scrollRef,
@@ -250,6 +262,22 @@ const ProjectRows = ({
   onOpen: (project: Project) => void
   busy: boolean
 }) => {
+  const listRef = useRef<HTMLUListElement>(null)
+  const [listTop, setListTop] = useState(0)
+
+  // Deliberately without a dependency list: what moves this list down the page
+  // is everything above it -- the purpose line wrapping, the action bar, the
+  // new-project form opening -- and there is no value to depend on that
+  // captures "the layout above changed". Re-reading after every render is the
+  // honest way to track it, and the update is a no-op when the number has not
+  // changed, so React bails out rather than looping.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    const element = listRef.current
+    if (element)
+      setListTop((current) => (current === element.offsetTop ? current : element.offsetTop))
+  })
+
   // React Compiler cannot memoize `useVirtualizer`'s returned functions, so it
   // skips this component rather than risk a stale virtualizer — the same trade
   // `DocumentList` documents, and the same reason.
@@ -257,6 +285,13 @@ const ProjectRows = ({
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,
+    getItemKey: (index) => itemKey(items[index]!),
+    // How far down the scroll container this list starts. The virtualizer
+    // works in the scroll element's coordinates, and this list is not at the
+    // top of it -- there is a purpose line, an action bar and a heading above.
+    // Without this the window of drawn rows is offset by exactly that much,
+    // which is invisible at three projects and draws the wrong rows at fifty.
+    scrollMargin: listTop,
     // Rows are a fixed height until one is expanded, which is the single
     // variable-height thing on the page — so every row is measured rather than
     // trusted to the estimate, and the estimate only decides how far the
@@ -268,13 +303,17 @@ const ProjectRows = ({
   })
 
   return (
-    <ul className="rows" style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+    <ul
+      ref={listRef}
+      className="rows"
+      style={{ height: virtualizer.getTotalSize(), position: 'relative' }}
+    >
       {virtualizer.getVirtualItems().map((item) => {
         const row = items[item.index]
         if (!row) return null
         return (
           <li
-            key={row.kind === 'heading' ? `h-${row.recency}` : row.rollup.project.id}
+            key={itemKey(row)}
             ref={virtualizer.measureElement}
             data-index={item.index}
             className="rows-item"
@@ -283,7 +322,10 @@ const ProjectRows = ({
               top: 0,
               left: 0,
               right: 0,
-              transform: `translateY(${item.start}px)`,
+              // `start` is in the scroll container's coordinates, so the
+              // list's own offset comes back off it -- otherwise every row is
+              // pushed down the page by the height of everything above.
+              transform: `translateY(${item.start - virtualizer.options.scrollMargin}px)`,
             }}
           >
             {row.kind === 'heading' ? (
