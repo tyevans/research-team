@@ -342,7 +342,17 @@ export const toRoster = (raw: Dto<typeof dto.rosterDto>): Roster => ({
     // The server's vocabulary, narrowed. An unrecognised kind renders as a
     // plain row rather than being dropped: a worker this build cannot label
     // is still a worker, and hiding it is the failure mode that matters.
-    kind: worker.kind === 'run' || worker.kind === 'extraction' ? worker.kind : 'turn',
+    //
+    // `dispatch` is listed explicitly rather than left to the fallback. The
+    // fallback is `turn`, which is not a neutral label but a different
+    // specific kind -- a dispatch arriving from a newer server was being
+    // named a turn on screen, which is a confident wrong answer rather than a
+    // vague one. Anything genuinely unknown still lands on `turn`, and that
+    // remains the weakest part of this mapping.
+    kind:
+      worker.kind === 'run' || worker.kind === 'extraction' || worker.kind === 'dispatch'
+        ? worker.kind
+        : 'turn',
     ref: worker.ref,
     detail: worker.detail,
     sessionId: worker.session_id ? SessionId(worker.session_id) : null,

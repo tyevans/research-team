@@ -81,6 +81,16 @@ class ResearchSupervisor:
             return None
         return self._active.get(project_id)
 
+    def active_projects(self) -> tuple[UUID, ...]:
+        """Every project with a run going.
+
+        Already keyed by project, so this is the dict's own keys filtered
+        through `active` -- the cross-project roster's cheapest candidate
+        source, and the reason a build with only a run going never touches the
+        session read model.
+        """
+        return tuple(project_id for project_id in self._tasks if self.active(project_id))
+
     def start(
         self,
         project_id: UUID,

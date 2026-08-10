@@ -39,6 +39,7 @@ from research_team.application import (
     ProjectGraphs,
     ResearchSupervisor,
     SessionService,
+    SummaryProjects,
     TopicRoundRunner,
     TurnSupervisor,
     WorkerRoster,
@@ -970,6 +971,10 @@ def build_application(
         # queue the routes enqueue into and the one the roster reads must be
         # the same object, and only the process that owns both can say so.
         dispatches=dispatches,
+        # The projection, not the service: `everywhere` needs session -> project
+        # for the turns it finds, and asking the service would fold a session
+        # per running turn to learn something a read-model column already says.
+        summaries=SummaryProjects(summaries),
     )
 
     return Application(

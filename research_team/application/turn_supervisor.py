@@ -93,6 +93,21 @@ class TurnSupervisor:
         """Details of the in-flight turn, for a caller that arrived mid-turn."""
         return self._started.get(session_id) if self.is_running(session_id) else None
 
+    def running_sessions(self) -> dict[UUID, RunningTurn]:
+        """Every session mid-turn right now.
+
+        For a caller with no session to ask about -- the cross-project roster,
+        which would otherwise have to enumerate projects and fold each one just
+        to learn which sessions to ask after. Filtered by `is_running` for the
+        same reason `running` is: `_started` outlives the task by however long
+        it takes the done-callback to fire.
+        """
+        return {
+            session_id: turn
+            for session_id, turn in self._started.items()
+            if self.is_running(session_id)
+        }
+
     async def run(
         self,
         session_id: UUID,

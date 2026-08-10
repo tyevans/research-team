@@ -283,6 +283,14 @@ export interface WorkerRepository {
   /** Everything in flight on a project. Rejects when this build has no
    *  roster, which a caller must distinguish from an empty one. */
   on(projectId: ProjectId): Promise<Roster>
+  /** Every project that has something running, in one request.
+   *
+   * For a reader with no project in view -- the agent widget sits on every
+   * page, so asking `on` per project would be O(projects) requests on every
+   * page load. Only projects with a worker come back, so an empty array is the
+   * ordinary answer and is *not* the same as the rejection a build without a
+   * roster gives. */
+  everywhere(): Promise<readonly Roster[]>
 }
 
 export interface ExtractionRepository {
