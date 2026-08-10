@@ -11,16 +11,25 @@ import { useRunningAgents, type RunningAgent } from './use-running-agents.ts'
 
 /** Where the open/closed choice is remembered.
  *
- * `PreferenceStore` is keyed by group and stores *collapsed* names, so the
- * widget is one pane in its own group rather than a new method on the port --
- * the session and research views already remember a layout this way, and a
- * second mechanism for the same fact is how the two drift. Storing "collapsed"
- * rather than "expanded" means the default -- an empty list -- is open, which
- * is wrong for something on every page, so the sense is inverted at the one
- * place it is read. See `initiallyExpanded`.
+ * `PreferenceStore` is keyed by group and stores pane names, so this is one
+ * pane in its own group rather than a new method on the port -- the session and
+ * research views already remember a layout this way, and a second mechanism for
+ * the same fact is how the two drift.
+ *
+ * The name recorded here means **open**, which is the opposite of what the
+ * port's method is called, and that inversion is deliberate. The port's default
+ * is an empty list; as a floating panel that read as *open*, which was tolerable
+ * because the panel sat in the corner of its own accord. A popover hanging off
+ * the nav is over the page content, so a default of open is the occlusion this
+ * change exists to remove -- it would appear unbidden on the first load of every
+ * fresh browser that had anything running. The cost is that a reader inspecting
+ * `rt.collapsedPanes.agents` in devtools sees a name whose sense is reversed;
+ * paid here rather than widening the port with a boolean for one control.
+ * `stays shut on a console it has never been opened on` is what fails if the
+ * default drifts back.
  */
 const GROUP = 'agents'
-const PANE = 'widget'
+const OPEN = 'popover'
 
 /** What "actively running" resolves to.
  *
@@ -35,49 +44,144 @@ const PANE = 'widget'
  */
 export const AgentWidget = () => {
   const { preferences } = useContainer()
-  const [expanded, setExpanded] = useState(() => !preferences.collapsedPanes(GROUP).includes(PANE))
+  const [expanded, setExpanded] = useState(() => preferences.collapsedPanes(GROUP).includes(OPEN))
   const [watching, setWatching] = useState<RunningAgent | null>(null)
   const toggleRef = useRef<HTMLButtonElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const { agents, count, failed } = useRunningAgents(expanded)
 
   const setOpen = useCallback(
     (open: boolean) => {
       setExpanded(open)
-      preferences.setCollapsedPanes(GROUP, open ? [] : [PANE])
+      preferences.setCollapsedPanes(GROUP, open ? [OPEN] : [])
     },
     [preferences],
   )
 
+  const close = useCallback(() => {
+    setOpen(false)
+    toggleRef.current?.focus()
+  }, [setOpen])
+
   // Escape closes and gives focus back to the toggle. Not a focus *trap*: this
-  // is an overlay, not a modal -- the page behind it stays usable on purpose,
+  // is a popover, not a modal -- the page behind it stays usable on purpose,
   // because the whole point is to watch agents while doing something else.
   // `Drawer` traps focus and is right to; a panel that does not block the page
   // must not, or a keyboard user could never leave it. The feed opened from a
   // row is a `Drawer`, and does trap.
+  //
+  // Guarded on `watching` in both listeners: with a feed open the drawer is in
+  // front and owns Escape, and a click inside it is not a click on the page
+  // behind this popover.
   useEffect(() => {
-    if (!expanded) return
+    if (!expanded || watching) return
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || watching) return
+      if (event.key !== 'Escape') return
+      close()
+    }
+    // Anywhere else dismisses it. This is what earns a popover its place over
+    // page content: the floating panel could only be dismissed by finding its
+    // own toggle again, so a reader who wanted the thing underneath had to
+    // deal with the widget first -- which is the occlusion complaint.
+    // `pointerdown` rather than `click`, so it is gone before the press lands
+    // on whatever is underneath and that press still does its job.
+    const onDown = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Node && rootRef.current?.contains(target)) return
+      // No focus return here: the reader is pressing something else and is
+      // about to be somewhere else. Yanking focus back to the topbar is the
+      // right move for Escape and the wrong one for a pointer.
       setOpen(false)
-      toggleRef.current?.focus()
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [expanded, watching, setOpen])
+    window.addEventListener('pointerdown', onDown)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('pointerdown', onDown)
+    }
+  }, [expanded, watching, setOpen, close])
 
-  // Nothing running and closed: draw nothing at all. The widget exists to
-  // surface activity, and with none it has nothing to say -- so on an idle
-  // console, which is most of the time, it costs no pixels on any page. Open,
-  // it stays and says so, rather than vanishing under the reader's cursor the
-  // moment the last agent finishes.
+  // Focus lands in the popover on open, so a keyboard reader is not made to
+  // tab through the rest of the topbar to reach what they just asked for. The
+  // panel itself is the target rather than the first row: the rows re-order as
+  // agents come and go, and focusing one would make that reordering move the
+  // focus ring. It is `tabIndex={-1}` for that -- programmatic only, never a
+  // tab stop of its own.
+  useEffect(() => {
+    if (!expanded) return
+    // A button, not any row: an extraction's row is flat text with nothing to
+    // open, and `focus()` on a div silently does nothing.
+    const first = panelRef.current?.querySelector<HTMLElement>('button')
+    ;(first ?? panelRef.current)?.focus()
+  }, [expanded])
+
+  // Nothing running and closed: draw nothing at all. It exists to surface
+  // activity, and with none it has nothing to say -- so on an idle console,
+  // which is most of the time, it takes no width in the topbar and the
+  // breadcrumb gets it back. Open, it stays and says so, rather than vanishing
+  // under the reader's cursor the moment the last agent finishes.
   if (!expanded && count === 0 && !failed) return null
 
   return (
     <>
-      <div className="agents" data-open={expanded || undefined}>
+      <div className="agents" data-open={expanded || undefined} ref={rootRef}>
+        <button
+          type="button"
+          className="agents-toggle"
+          ref={toggleRef}
+          aria-expanded={expanded}
+          aria-controls="agents-popover"
+          // A real sentence, not the glyph. `Pane.tsx` announces its toggles
+          // as "◂"/"▸", which tells a screen-reader user nothing about what
+          // they control -- a known bug, and not one to spread.
+          aria-label={`${label(count, failed)}. ${expanded ? 'Hide' : 'Show'} what is running.`}
+          onClick={() => (expanded ? close() : setOpen(true))}
+        >
+          <span
+            className={clsx(
+              'agents-dot',
+              failed ? 'agents-dot-unknown' : count > 0 && 'agents-dot-live',
+            )}
+            aria-hidden="true"
+          />
+          {/* Polite rather than assertive, and on the count alone: a person
+              working in another part of the console should learn that a run
+              finished, but not have a screen reader interrupt them for it.
+
+              The numeral and the word are separate nodes so the word can go at
+              420px, where the topbar's fixed items are close to filling it and
+              the breadcrumb has already given up everything it has. The
+              announcement narrows to "3" there, which is the fact that
+              changed; the sentence is on the button and is never abbreviated.
+              The failure state keeps its words at every width -- it is rare,
+              and a lone "?" would say nothing. */}
+          <span className="agents-count" aria-live="polite">
+            {failed ? (
+              'agents unknown'
+            ) : (
+              <>
+                {count}
+                <span className="agents-count-word"> running</span>
+              </>
+            )}
+          </span>
+        </button>
+
+        {/* After the toggle in the document, because it now hangs *below* it.
+            Under the floating widget the panel came first, which was right when
+            it sat above. Tab order follows the document, and a popover a reader
+            has to tab backwards out of is a popover they get stuck in. */}
         {expanded ? (
-          <div className="agents-panel" role="group" aria-label="Agents running now">
+          <div
+            className="agents-panel"
+            id="agents-popover"
+            ref={panelRef}
+            tabIndex={-1}
+            role="group"
+            aria-label="Agents running now"
+          >
             <div className="agents-rows">
               {agents.map((agent) => (
                 <AgentRow
@@ -94,32 +198,6 @@ export const AgentWidget = () => {
             </div>
           </div>
         ) : null}
-
-        <button
-          type="button"
-          className="agents-toggle"
-          ref={toggleRef}
-          aria-expanded={expanded}
-          // A real sentence, not the glyph. `Pane.tsx` announces its toggles
-          // as "◂"/"▸", which tells a screen-reader user nothing about what
-          // they control -- a known bug, and not one to spread.
-          aria-label={`${label(count, failed)}. ${expanded ? 'Hide' : 'Show'} what is running.`}
-          onClick={() => setOpen(!expanded)}
-        >
-          <span
-            className={clsx(
-              'agents-dot',
-              failed ? 'agents-dot-unknown' : count > 0 && 'agents-dot-live',
-            )}
-            aria-hidden="true"
-          />
-          {/* Polite rather than assertive, and on the count alone: a person
-              working in another part of the console should learn that a run
-              finished, but not have a screen reader interrupt them for it. */}
-          <span className="agents-count" aria-live="polite">
-            {label(count, failed)}
-          </span>
-        </button>
       </div>
 
       {watching?.worker.sessionId ? (
