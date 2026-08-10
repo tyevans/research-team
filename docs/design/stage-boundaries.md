@@ -805,3 +805,139 @@ document). Naming it here so it is a known cost rather than a discovery.
    rename is a stored-shape change on an event that already exists, so it is a
    `domain/events.py` case-1 question rather than a free one, and it is not
    worth doing on its own — but it should ride along if `decision` lands.
+
+
+---
+
+## 10. Amendment: the tip is a pointer into a stream that keeps moving
+
+Appended rather than woven in, per the `landing-page.md` §8 convention, because
+§6.2's reasoning is most of why the runner looks the way it does and stays
+worth reading. What follows corrects one sentence in it, and the sentence was
+wrong in a way that cost real work.
+
+**§6.2 says:** "`release_project` executes `AdvanceTip`, so the next session
+inherits the files at the point this one left them."
+
+**"The point this one left them" is not the point the session stopped working.
+It is the point the session was released at**, and those are the same moment
+only if nothing happens in the session afterwards. Releasing does not close a
+session, does not detach it from its project, and does not stop it accepting
+turns. Everything written after a release lands past the recorded offset, on a
+stream the project is still pointing at, and is unreachable from the project
+from the instant it is written.
+
+### 10.1 What this actually did
+
+Found in the owner's database rather than reasoned about. Project "Tollers"
+(`9d6bd8d4`), reading its `Project` stream:
+
+```
+v11  SessionJoinedProject   03:40:15  08f37266
+v12  ProjectTipAdvanced     03:40:54  08f37266 @ 31
+v13  StageAdvanced          03:46:03  tyler.step0.intake -> hybrid.step1.framing
+v14  SessionJoinedProject   03:46:15  588102a5
+```
+
+and session `08f37266`'s own stream:
+
+```
+31  TurnCompleted   03:40:54
+32  TurnFailed      03:44:38
+33  UserMessageSent 03:44:55
+34  FileWritten     03:45:16  /course/00-source-claim.md
+35  FileWritten     03:45:17  /course/00-open-question.md
+36  FileWritten     03:45:17  /course/00-contested-queue.md
+37  FileWritten     03:45:18  /course/00-check-findings.md
+38  ToolCallDecided 03:46:03
+```
+
+An auto-research run had started that session (`AutoRunStarted` names it) and
+released the project in the `after` hook `start_auto_research` passes when the
+run stopped at 03:40:54 -- correct behaviour, and the route's own comment
+argues for it. The person then kept working in the session the run had left
+them in. The stage's four artifacts are events 34-37. The tip was frozen at 31.
+`588102a5` forked at 31 and has none of them, and `GET` on the project's files
+answered `{}` while four artifacts sat in the stream it was naming.
+
+### 10.2 Three things this is not, and one it is
+
+**It is not the stage runner, and #83 did not introduce it.** The runner has no
+route (#83 says so deliberately), and no session in this database was made by
+one. The defect is reachable from any two callers of `release_project` and
+`start_in_project`, both of which predate the runner: dispatch, seeding, the
+REPL and the web app.
+
+**It is not #74.** Ending the turn on an advance is orthogonal. The files were
+already stranded before `advance_stage` was called; the advance only made it
+visible, by causing a join that forked from the stale pointer.
+
+**It is not "fresh session versus fork".** This is worth stating flatly because
+it is the natural first hypothesis and it is wrong: `start_in_project` does not
+create an empty session. It calls `_fork_files_from`, which replays the source
+stream filtered to `_FILE_EVENT_TYPES` -- **files without the conversation**,
+which is precisely the trade §6.2 wanted and already had. A fresh session here
+*is* a fork. Nothing needs to change to make a stage inherit its predecessor's
+artifacts while inheriting none of its messages; that is what the call has
+always done, and `test_inheriting_does_not_copy_the_conversation` has pinned
+both halves since before the runner existed. There is no clean-context versus
+continuity-of-artifacts trade to make, and a proposal framed as making it is
+solving a problem this system does not have.
+
+**What it is: a snapshot pointer with a writer still attached to the stream
+behind it.** `ProjectTipAdvanced.at_event` is captured when the release
+happens, and read when the next fork happens, and the gap between those two
+moments is unbounded and usable.
+
+### 10.3 The fix, and the two it was chosen over
+
+**Taken: catch the tip up.** `AdvanceTip` gains a second accepted case -- the
+session the tip already names may move it further along its own stream, while
+nobody holds the project, forwards only. `start_in_project` does that before
+joining, so `inherited_at` and `SessionForkedFrom.at_event` both name the point
+the fork was actually taken from. `project_files` folds the tip session's whole
+stream rather than reading to the offset, which is the same correction on the
+read side.
+
+Cost: one extra append at a join that had something to catch, and a tip that is
+briefly behind between a release and the next join. No reader can observe the
+lag, because the two that read the tip both take the newer answer. No event
+shape changes; no stored payload is invalidated.
+
+**Rejected: advance the tip after every turn.** Correct and always current, and
+it puts a second aggregate load-and-save on the hot path of every turn in every
+project for a pointer two callers read. The lag it removes is unobservable.
+
+**Rejected: stop a released session from accepting turns.** The most honest
+statement of the invariant -- releasing would mean finished -- and it breaks
+the case that produced the bug rather than fixing it. The person had a session
+open and kept using it, which is the ordinary thing to do; the auto-research
+route released it out from under them. Refusing their next turn would answer a
+misfiled release with an error message aimed at them.
+
+### 10.4 What §6.2 should be read as saying now
+
+> `release_project` executes `AdvanceTip`, so the project points at this
+> session's stream. Where in that stream is caught up when the next session
+> forks, because a released session keeps working and the release offset stops
+> being the end of its work the moment it does.
+
+The five lines of `DispatchRun.run` §6.2 recommends are still the pattern, and
+the `finally` is still right. What was missing was never in those five lines --
+it was in what happens to the session *after* they finish with it.
+
+### 10.5 What is still open
+
+**A released session that keeps working is still surprising**, and nothing
+tells anyone it happened. The catch-up makes the work reachable; it does not
+make the situation legible. An operator reading the log sees a release, then
+file events on a released session, then a second `ProjectTipAdvanced` for the
+same session, and has to reconstruct why. Worth a name eventually.
+
+**`start_auto_research` releasing a session the person is still in is its own
+question.** The route made the session, so the route puts it away -- the
+comment's reasoning is sound and the alternative (a run that dies holding the
+project) is worse. But the session it puts away is the one the UI leaves the
+person sitting in. Not fixed here, because the catch-up makes it harmless
+rather than merely rarer, and because the route's ownership rule is the right
+one to keep.

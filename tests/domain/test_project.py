@@ -481,3 +481,82 @@ def test_the_three_decisions_that_are_not_advances_are_refused(verdict):
             ),
             _with_workflow(uuid4()),
         )
+
+
+# --- catching a tip up after its session was released -------------------------
+
+
+def _released(project_id, session_id, at):
+    """A project whose tip names `session_id` at `at`, held by nobody."""
+    state = initial_state()
+    for event in (
+        ProjectCreated(aggregate_id=project_id, name="research"),
+        SessionJoinedProject(aggregate_id=project_id, session_id=session_id, inherited_at=0),
+        ProjectTipAdvanced(aggregate_id=project_id, session_id=session_id, at_event=at),
+    ):
+        state = evolve(state, event)
+    return state
+
+
+def test_the_tip_session_may_move_the_tip_further_along_its_own_stream():
+    """Releasing does not close a session, so work continues past the release.
+
+    Without this arm that work is unreachable: the tip names the right stream
+    and a point before it. Fails with the change reverted on the rejection
+    `only_the_active_session_may_advance_the_tip` used to cover every case of.
+    """
+    project_id, session_id = uuid4(), uuid4()
+
+    events = decide(
+        AdvanceTip(session_id=session_id, at_event=12), _released(project_id, session_id, 7)
+    )
+
+    assert [type(e) for e in events] == [ProjectTipAdvanced]
+    assert events[0].at_event == 12
+
+
+def test_the_tip_may_not_move_backwards():
+    """Backwards is not a catch-up. It is a decision about which work counts,
+    and no caller means it -- a release passes `session.version`, which only
+    grows, and a catch-up passes the stream length, which only grows.
+
+    Passes with the change reverted, which is the point: this and the two
+    below are the fence around the new arm, not evidence of it. They fail on
+    a relaxation written one condition too wide, which is the likeliest way to
+    get this wrong.
+    """
+    project_id, session_id = uuid4(), uuid4()
+
+    with pytest.raises(CommandRejectedError, match="does not hold"):
+        decide(
+            AdvanceTip(session_id=session_id, at_event=3), _released(project_id, session_id, 7)
+        )
+
+
+def test_a_session_that_is_not_the_tip_may_not_catch_it_up():
+    """The relaxation is for the stream the project is already pointing at.
+
+    A stranger claiming the tip would repoint the project's whole filesystem at
+    a stream it never adopted, which is the failure the original holder check
+    was there to prevent and which is unchanged.
+    """
+    project_id, session_id = uuid4(), uuid4()
+
+    with pytest.raises(CommandRejectedError, match="does not hold"):
+        decide(
+            AdvanceTip(session_id=uuid4(), at_event=12), _released(project_id, session_id, 7)
+        )
+
+
+def test_a_held_project_refuses_a_catch_up_from_the_old_tip():
+    """Once somebody has forked from the tip, the old session's later work is a
+    real divergence rather than a continuation, and moving the tip to it would
+    discard the holder's inheritance. Whoever holds it is the only writer."""
+    project_id, old_tip, holder = uuid4(), uuid4(), uuid4()
+    state = evolve(
+        _released(project_id, old_tip, 7),
+        SessionJoinedProject(aggregate_id=project_id, session_id=holder, inherited_at=7),
+    )
+
+    with pytest.raises(CommandRejectedError, match="does not hold"):
+        decide(AdvanceTip(session_id=old_tip, at_event=12), state)

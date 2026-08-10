@@ -928,3 +928,38 @@ async def test_a_stage_being_driven_reports_itself_as_running(
     assert seen[0].preset_id == TWO_STAGES.id
     assert runner.in_flight(project_id) is None
     assert runner.active_projects() == ()
+
+
+async def test_a_stage_sees_artifacts_written_after_the_project_was_released(
+    service, project_id, workflows, policy
+):
+    """The owner's failure, in the shape the runner meets it.
+
+    Something released the project and the session carried on working -- which
+    is exactly what an auto-research run does, because it starts a session,
+    stops, releases in its `after` hook, and leaves the person in the session
+    it made. The stage's artifacts are written into a released session, so the
+    tip names that session and a point before the first of them.
+
+    Before the catch-up the runner started the stage from an empty filesystem,
+    ran a turn against work that already existed, and the artifacts stayed
+    where nothing could reach them. Proved red on `satisfied`.
+    """
+    stranded = await service.start_in_project(project_id)
+    await service.release_project(stranded)
+    await service.write_file(stranded, STAGE_ONE_ARTIFACT, _artifact("Intent", "s.one"))
+
+    files = await service.project_files(project_id)
+    assert STAGE_ONE_ARTIFACT in files
+    assert stage_exit_condition(TWO_STAGES, TWO_STAGES.stages[0], files).satisfied
+
+    approvals = _Approvals(ApprovalDecision(type="approve"))
+    turns = _Turns(service, {STAGE_TWO_ARTIFACT: _artifact("EvidenceSpec", "s.two")})
+    run = await _runner(service, turns, workflows, approvals, policy).run(project_id)
+
+    # The first stage advanced without a turn -- its work was already done --
+    # and the second stage's session can still see it, which is the property
+    # the whole boundary exists to provide.
+    assert run.stages[0].advanced
+    later = await service.load(run.stages[1].session_id)
+    assert STAGE_ONE_ARTIFACT in later.state.files
