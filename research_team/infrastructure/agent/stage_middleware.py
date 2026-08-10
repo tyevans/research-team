@@ -61,6 +61,17 @@ class StageLike(Protocol):
     and a screen stage carries no generator at all, so resolving a reference
     into text is composition's problem, not this one's. The resolved text
     arrives through the constructor instead.
+
+    That last sentence described an intention until `prompting_for` was wired
+    into `composition.py`; the text arriving through `instructions` was purely
+    mechanical -- artifact paths, the gate explanation, widget syntax -- and
+    `docs/design/workflow-engine.md` §1 cites this docstring as the statement of
+    that hole. It is now a description of what happens. The protocol is
+    deliberately unchanged: a stage still tells this module nothing about its
+    prompt, which is what keeps the gate's three fields the only coupling and
+    lets the degraded case (a ref with no file, still the common one) be
+    composition's decision to make rather than a shape this middleware has to
+    represent.
     """
 
     @property

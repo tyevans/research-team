@@ -17,10 +17,12 @@ from research_team.application.prompts import (
     ALLOWED_CROSS_STAGE_REFS,
     DirectoryPromptLibrary,
     PromptError,
+    StagePrompting,
     intended_for_disagreements,
     load_prompts,
     orphaned_refs,
     prompt_digest,
+    prompting_for,
     referenced_prompts,
     role_line,
     shared_ref_problems,
@@ -462,3 +464,100 @@ def test_no_generator_and_critic_in_one_stage_share_a_ref() -> None:
             assert generator.prompt_ref != critic.prompt_ref, (
                 f"{preset.id}/{stage.id} has one prompt for both roles"
             )
+
+
+# --- degrading a ref that does not resolve ----------------------------------
+
+
+def test_prompting_for_carries_the_resolved_text_and_reports_nothing_missing(
+    root: Path,
+) -> None:
+    for stage_id, field, ref in referenced_prompts(ubd_pure):
+        write_prompt(root, ref, kind=field, body=f"Methodology for {stage_id}.")
+    stage = ubd_pure.stages[2]
+    prompting = prompting_for(stage, DirectoryPromptLibrary.load(root))
+    assert prompting.missing is None
+    assert f"Methodology for {stage.id}." in prompting.text
+    assert "You are working as:" in prompting.text
+
+
+def test_prompting_for_degrades_to_a_notice_naming_the_ref(root: Path) -> None:
+    """The common case, and the decision this change turns on.
+
+    Neither raising nor returning today's silence: a stage with no prompt file
+    still runs, and says in-band that it is running without its methodology.
+    Raising would take `hybrid.default` -- missing 20 of its 22 refs -- offline
+    entirely; returning empty is `PromptError`'s documented mistake, a run
+    indistinguishable from the system before prompts existed.
+    """
+    stage = ubd_pure.stages[2]
+    prompting = prompting_for(stage, DirectoryPromptLibrary.load(root))
+    assert prompting.missing == "prompts/ubd/stage1_generate"
+    assert "prompts/ubd/stage1_generate" in prompting.text
+    assert "WITHOUT its methodology prompt" in prompting.text
+
+
+def test_a_malformed_prompt_degrades_the_same_way_an_absent_one_does(root: Path) -> None:
+    """Present but untrustworthy is the same fact to a stage as absent.
+
+    Written as a kind mismatch because that is the case with a live security
+    argument behind it: a `kind: critic` file under a `Generator.prompt_ref` is
+    the self-review failure arriving through the filesystem. Degrading rather
+    than raising keeps the run going, and the notice is what stops it being a
+    silent substitution.
+    """
+    for stage_id, field, ref in referenced_prompts(ubd_pure):
+        wrong = "critic" if field == "generator" else "generator"
+        write_prompt(root, ref, kind=wrong, intended_for=(f"{ubd_pure.id}/{stage_id}",))
+    prompting = prompting_for(ubd_pure.stages[2], DirectoryPromptLibrary.load(root))
+    assert prompting.missing == "prompts/ubd/stage1_generate"
+
+
+def test_the_notice_names_the_methodology_from_the_ref_not_the_frontmatter(
+    root: Path,
+) -> None:
+    """The frontmatter is exactly what cannot be read in this branch.
+
+    Would pass on an implementation that said "the methodology" every time,
+    which is why the assertion is on the word rather than on its presence.
+    """
+    prompting = prompting_for(ubd_pure.stages[2], DirectoryPromptLibrary.load(root))
+    assert "ubd guidance" in prompting.text
+
+
+def test_a_field_stage_is_not_reported_as_missing_a_prompt(root: Path) -> None:
+    """No generator and no critic is a property of the stage, not a fault.
+
+    A field stage's evidence comes from people outside the pipeline and no
+    agent executes it, so a notice telling a model it lacks its methodology
+    would be addressed to nobody.
+    """
+    field_stages = [
+        stage
+        for preset in PRESETS.values()
+        for stage in preset.stages
+        if getattr(stage, "generator", None) is None and getattr(stage, "critic", None) is None
+    ]
+    assert field_stages, "no field stage in the shipped presets; this test proves nothing"
+    for stage in field_stages:
+        prompting = prompting_for(stage, DirectoryPromptLibrary.load(root))
+        assert prompting == StagePrompting(text="", missing=None)
+
+
+def test_a_screen_stage_falls_back_to_its_critics_prompt(root: Path) -> None:
+    """A `ScreenStage` has no generator by construction and is not thereby unprompted."""
+    screen = [
+        stage
+        for preset in PRESETS.values()
+        for stage in preset.stages
+        if getattr(stage, "generator", None) is None
+        and getattr(stage, "critic", None) is not None
+    ]
+    assert screen, "no screen stage in the shipped presets; this test proves nothing"
+    stage = screen[0]
+    write_prompt(
+        root, stage.critic.prompt_ref, kind="critic", body="Screen against the filter."
+    )
+    prompting = prompting_for(stage, DirectoryPromptLibrary.load(root))
+    assert prompting.missing is None
+    assert "Screen against the filter." in prompting.text
