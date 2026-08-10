@@ -27,5 +27,12 @@
 @import './components.css';
 @import './agents.css';
 
+/* The layout primitives. Every selector in here is new and `lay-` prefixed,
+   so it adds rules and overrides none -- nothing above changes because this
+   is imported. It sits below the view stylesheets rather than beside
+   `panes.css` because it replaces them eventually and reads better as the
+   newer of the two systems. */
+@import './layout.css';
+
 /* Last, so it can correct the structural differences above. */
 @import './structure.css';
