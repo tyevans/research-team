@@ -33,11 +33,12 @@ from redstring import (
     AUTO,
     Adjudicator,
     Consolidator,
-    FeatureWeights,
+    EmbeddingProvider,
     GraphStore,
     LlmProvider,
     RedstringError,
     SourceDocument,
+    VectorStore,
     build_graph,
     document_stream,
 )
@@ -60,79 +61,30 @@ logger = logging.getLogger(__name__)
 MAX_DOCUMENT_CHARS = 200_000
 
 
-def _exact_name_with_no_shared_structure() -> float:
-    """The score two *identically named* entities get when they share no neighbour.
-
-    Not a tuning constant -- a number forced on us by redstring's defaults, and
-    derived from them rather than written down, so it moves if they move.
-
-    We run with no `VectorStore`, so scoring has two features: `name` and
-    `graph`. A cross-document duplicate scores `name = 1.0` and `graph = 0.0`,
-    and `combined_score` renormalizes over the present weights, giving
-    `name / (name + graph)` -- 0.5 / 0.7 = **0.7143** on redstring's defaults.
-    redstring's `LOW_SIMILARITY` is 0.75, so *an exact name match is rejected
-    before anything is asked about it*.
-
-    **The artefact this was written for is gone; the floor is not.** When PR
-    #84 added this, `graph = 0.0` was an artefact of the id scheme: neighbours
-    were compared by id, `entity_id_for` namespaces ids per document, so two
-    entities extracted from two documents *could not* share a neighbour however
-    obviously identical they were. redstring 0.5.0 compares neighbours by
-    normalized name instead, and a cross-document duplicate whose documents
-    describe the same neighbourhood now scores `graph = 1.0` and merges on its
-    own -- `test_two_documents_describing_the_same_pair_merge_without_a_floor`
-    pins that, and passes with this floor removed.
-
-    What is left is a real finding, and still not one worth rejecting on: two
-    documents can name the same thing while saying different things *about* it.
-    "Nova Scotia Duck Tolling Retriever" beside "Canada" in one document and
-    beside "Duck hunting" in another has genuinely disjoint neighbours, scores
-    `graph = 0.0` honestly, and lands on the same 0.7143 -- below
-    `LOW_SIMILARITY`, so it is dropped before anything is asked about it.
-    Removing this floor was tried against
-    `test_one_entity_named_the_same_in_two_documents_becomes_one_node` and that
-    test goes red: two nodes, one breed. A single graph signal disagreeing must
-    not outrank an exact name match to the point of refusing to *ask*, which is
-    what 0.75 does to a deployment with no embeddings.
-
-    Using this as `low` admits precisely the pairs an exact name match reaches
-    and nothing weaker, because `decide` bands inclusive-from-below. Measured
-    against the near-misses that make loosening dangerous, all of which stay
-    rejected: "Nova Scotia Duck Tolling Retriever(s)" 0.7102, "Robert Smith" /
-    "Roberta Smith" 0.7033, "World War I" / "World War II" 0.7024, "University
-    of York" / "University of Cork" 0.6984.
-
-    Those four were measured on 0.4.0, where every cross-document pair scored
-    `graph = 0.0`, so they are now the *floor* of what those pairs score rather
-    than the whole story: "Robert Smith" and "Roberta Smith" described in two
-    documents with the same neighbours score 0.9890 and merge unasked. The
-    numbers above are still what this constant admits, because they are what
-    the pairs score with no shared structure; what has changed is that shared
-    structure can now lift a near-miss past `high` without this constant being
-    involved. Embeddings are the signal that would separate them (upstream R1).
-
-    **Nothing merges unasked because of this.** This lowers `low`; it does not
-    touch `high`, so the merge-without-asking band is redstring's 0.92 as it
-    always was, and every pair *this* admits lands in the adjudicated band --
-    a model call, and a `no` by default. With `adjudicate=False` the band is
-    rejected and this is a no-op, which is why the fixture that disables
-    adjudication sees no change.
-
-    Unasked merges do now happen, and not because of this: since 0.5.0 a
-    cross-document pair with an identical name and a shared neighbour name
-    scores a flat 1.0 and merges without adjudication. That is redstring's
-    decision, reached by the same `high` a single-document pair has always
-    faced. It is worth knowing about, because before 0.5.0 no cross-document
-    pair could reach 0.92 at all.
-    """
-    weights = FeatureWeights()
-    return weights.name / (weights.name + weights.graph)
-
-
-#: Cached at import: `FeatureWeights()` is frozen and the value cannot vary
-#: between calls, so recomputing it per entity would be a division per
-#: candidate for no reason.
-EXACT_NAME_SCORE = _exact_name_with_no_shared_structure()
+#: Why there is no `low=` override here any more.
+#:
+#: PR #84 added `low=EXACT_NAME_SCORE` (0.7143) because a cross-document
+#: duplicate scored `name = 1.0`, `graph = 0.0` and nothing else, landing below
+#: redstring's `LOW_SIMILARITY` of 0.75 -- dropped before the adjudicator was
+#: ever offered it. PR #87 kept the override on redstring 0.5.0, correctly: the
+#: id-namespacing artefact 0.5.0 fixed was only one of the two ways that pair
+#: reaches `graph = 0.0`, and the other is honest. Two documents can name the
+#: same thing while describing different neighbourhoods, and then 0.0 is a true
+#: statement rather than an artefact.
+#:
+#: The embedding channel is what makes the override unnecessary rather than
+#: merely narrower. That same pair now scores **0.8000** and clears 0.75 on its
+#: own evidence, so the threshold is redstring's again and this module no
+#: longer has an opinion about it.
+#:
+#: Two things that did *not* improve, recorded here because a reader will
+#: assume both did. Discrimination is unchanged: redstring embeds `entity.name`
+#: and nothing else, so under a real model an exact duplicate and
+#: `University of York` / `University of Cork` land about 0.011 apart, and both
+#: are adjudicated. And auto-merge is still unreachable across documents -- a
+#: perfect name and a perfect embedding cap at 0.8 against `graph = 0.0`,
+#: below `HIGH_SIMILARITY` 0.92 -- so **every cross-document duplicate costs one
+#: adjudicator call**. `test_embedded_consolidation.py` pins all three facts.
 
 
 class _CountingProvider:
@@ -252,6 +204,8 @@ class RedstringKnowledge:
         corpus: AggregateRepository[Corpus],
         domain: str = "auto",
         adjudicate: bool = True,
+        embeddings: EmbeddingProvider | None = None,
+        vector_store: VectorStore | None = None,
     ) -> None:
         self._project_id = project_id
         self._store = store
@@ -268,15 +222,31 @@ class RedstringKnowledge:
         # substitutes an in-memory log and `undo` becomes session-only --
         # silently, which is why `remembers_merges_across_restarts` is asserted
         # in the tests rather than assumed here.
+        # Both or neither. A vector store with no provider is never written
+        # to and scores every pair with the embedding feature absent while
+        # costing a lookup per candidate; a provider with no store has nowhere
+        # to put what it computes. Either half alone is a configuration that
+        # looks enabled and behaves disabled, so the pair is collapsed to one
+        # fact here rather than left for `build_graph` to half-honour.
+        self._embeddings = embeddings if vector_store is not None else None
+        self._vectors = vector_store if embeddings is not None else None
+        #: None until the first ingest probes the endpoint; see
+        #: `_embedding_pair`. Not probed in `__init__` because that is not
+        #: async and because a project that is opened and never ingested into
+        #: should not pay for a round trip.
+        self._embeddings_usable: bool | None = None
         self._consolidator = Consolidator(
             store,
             event_store=event_store,
             snapshot_store=snapshot_store,
+            vector_store=self._vectors,
         )
         # Without an adjudicator the middle similarity band is rejected rather
-        # than merged, so consolidation would be name-and-structure-only. There
-        # are no embeddings to contribute a third signal (upstream R1), which
-        # makes the model's judgement worth more here, not less.
+        # than merged. That band is where cross-document duplicates live and
+        # where they stay: three-feature scoring caps such a pair at 0.8,
+        # below `HIGH_SIMILARITY` 0.92, so the adjudicator is the only thing
+        # that can merge one. Embeddings did not reduce how much the model's
+        # judgement is worth here -- they increased how often it is asked.
         self._adjudicator = Adjudicator(provider) if adjudicate else None
 
     @property
@@ -355,12 +325,15 @@ class RedstringKnowledge:
                 self._provider, lambda calls: announce("extracting", model_calls=calls)
             )
             async with tenant_scope(self._project_id):
+                embeddings, vectors = await self._embedding_pair()
                 built = await build_graph(
                     document,
                     provider=counting,
                     store=self._store,
                     tenant_id=self._project_id,
                     domain=self._domain,
+                    embedding_provider=embeddings,
+                    vector_store=vectors,
                 )
                 if built.event is None:
                     # `Document.record_extraction` found nothing new to record
@@ -422,6 +395,91 @@ class RedstringKnowledge:
             merges=tuple(merges),
             consolidation_failures=failures,
         )
+
+    async def _embedding_pair(self) -> tuple[EmbeddingProvider | None, VectorStore | None]:
+        """The embedding provider and store to extract with, if they work.
+
+        **Probed once, lazily, and latched.** `AGENT_VECTOR_STORE` now defaults
+        to on, and its endpoint defaults to the same local server that serves
+        the chat model -- which need not serve embeddings at all. llama.cpp
+        serves one model per process. So the common misconfiguration is not
+        exotic, and a default-on feature has to survive it.
+
+        Surviving it means *degrading*, not failing. `build_graph` embeds after
+        it has extracted, so an `EmbeddingProviderError` raised there would
+        throw away a document that had already been fetched and every model
+        call its extraction cost -- to lose an optional third scoring feature.
+        `_store_document` makes the same trade in the other direction and for
+        the same reason: the cheap failure is the one left possible.
+
+        So the probe is one `embed` of one short string, before the first
+        ingest uses it. If it raises, or the width disagrees with what the
+        provider declares, this logs at **warning with the exception** and
+        returns `(None, None)` for the rest of the process -- consolidation
+        falls back to two features, which is exactly what shipped before #88
+        and is a working configuration, not a broken one.
+
+        **This is a degradation and it is not silent, but it is also not
+        loud enough to stop anything.** That is the deliberate part: a person
+        who wanted embeddings and mistyped the model name gets a warning in the
+        log and worse consolidation, not a dead application. `AGENT_VECTOR_STORE
+        =none` is how to say you meant it and skip the probe.
+
+        Latched rather than retried per ingest: a wrong model name does not
+        become right, and retrying would pay a round trip per document to
+        re-learn it. The cost of the latch is that an endpoint which comes up
+        *after* the process did stays unused until a restart, which is the
+        right way round -- the alternative charges every healthy run for a
+        failure mode nobody is in.
+        """
+        if self._embeddings is None or self._vectors is None:
+            return None, None
+        if self._embeddings_usable is False:
+            return None, None
+        if self._embeddings_usable is None:
+            self._embeddings_usable = await self._probe_embeddings()
+            if not self._embeddings_usable:
+                return None, None
+        return self._embeddings, self._vectors
+
+    async def _probe_embeddings(self) -> bool:
+        """One embed of one string, to find out whether the endpoint is there.
+
+        Checks the width as well as the call, because the two failures need the
+        same handling and only one of them raises. A provider declaring 768
+        against a server returning 1024 would otherwise reach
+        `VectorProjection` and raise `DimensionMismatchError` -- a *poison
+        event*, which is unrecoverable rather than retryable, in the middle of
+        an ingest.
+        """
+        assert self._embeddings is not None and self._vectors is not None
+        try:
+            vectors = await self._embeddings.embed(["probe"])
+        except Exception:
+            # Broad on purpose: the transports underneath raise their own
+            # types, and every one of them means the same thing here -- no
+            # embeddings this run. `exc_info` is what makes it diagnosable.
+            logger.warning(
+                "the embedding endpoint (%s, model %r) did not answer a probe; "
+                "consolidating on name and graph only. Set AGENT_VECTOR_STORE=none "
+                "to skip this probe, or fix AGENT_EMBEDDING_MODEL / "
+                "AGENT_EMBEDDING_BASE_URL",
+                type(self._embeddings).__name__,
+                getattr(self._embeddings, "model", "?"),
+                exc_info=True,
+            )
+            return False
+        width = len(vectors[0]) if vectors else 0
+        if width != self._vectors.dimension:
+            logger.warning(
+                "the embedding endpoint returned %d components and the vector store "
+                "holds %d; consolidating on name and graph only. AGENT_EMBEDDING_MODEL "
+                "and AGENT_EMBEDDING_DIMENSION are set together or not at all",
+                width,
+                self._vectors.dimension,
+            )
+            return False
+        return True
 
     async def _store_document(self, source: SourceRef) -> None:
         """Keep the text before extracting it, and only if it is new bytes.
@@ -496,10 +554,10 @@ class RedstringKnowledge:
         after a merge lands, so a slow entity is visible while it is slow
         rather than only once it is done.
 
-        `low=EXACT_NAME_SCORE` overrides redstring's `LOW_SIMILARITY`, which is
-        too high for a deployment with no embeddings to consolidate anything
-        across documents. See `_exact_name_with_no_shared_structure` for the
-        arithmetic, what it admits, and why nothing merges unasked as a result.
+        `low` is redstring's own `LOW_SIMILARITY` again -- there is no override
+        here any more. The module-level note above `_CountingProvider` says what
+        the override was for, why PR #87 was right to keep it, and what the
+        embedding channel changed that made it unnecessary.
         """
         entities = list(entities)
         merges: list[MergeRecord] = []
@@ -509,7 +567,7 @@ class RedstringKnowledge:
             announce("consolidating", index=position, total=total, detail=entity.name)
             try:
                 report = await self._consolidator.resolve(
-                    entity, adjudicator=self._adjudicator, low=EXACT_NAME_SCORE
+                    entity, adjudicator=self._adjudicator
                 )
             except RedstringError as error:
                 # The comment that used to be here said this is "typically the

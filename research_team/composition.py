@@ -69,6 +69,7 @@ from research_team.domain.workflow import Preset
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import (
     DeepAgentTurnExecutor,
+    build_embedding_provider,
     build_extraction_model,
     build_model,
 )
@@ -108,7 +109,10 @@ from research_team.infrastructure.agent.workflow_tools import (
 )
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
-from research_team.infrastructure.knowledge.stores import build_graph_store
+from research_team.infrastructure.knowledge.stores import (
+    build_graph_store,
+    build_vector_store,
+)
 from research_team.infrastructure.persistence import (
     CorpusRunner,
     EventStoreSessionRepository,
@@ -750,6 +754,21 @@ def build_application(
     # borrows from it rather than building its own, which is what lets a read
     # route see the same store extraction just wrote to instead of
     # a second one rebuilt independently and stale from the moment it exists.
+    # One provider and one store for the process, not one per project.
+    # `OpenAIEmbeddings` holds a connection pool and the vectors are tenant-
+    # scoped inside the store, so a second set per project would buy isolation
+    # that redstring already provides and pay for it in sockets. Built eagerly
+    # rather than per `open_graph` so a misconfigured *name* -- the one failure
+    # that does not need the network to detect -- surfaces at startup; the
+    # endpoint itself is probed on first ingest, in the adapter.
+    #
+    # `None, None` when `AGENT_VECTOR_STORE=none`, which is the whole of
+    # switching the feature off: nothing is constructed and nothing is probed.
+    vector_store = build_vector_store(
+        config.vector_store(), dimension=config.embedding_dimension()
+    )
+    embedding_provider = build_embedding_provider() if vector_store is not None else None
+
     graphs = ProjectGraphs(
         build_store=lambda: build_graph_store(config.graph_store()),
         rebuild=lambda store, target_project_id: rebuild_graph(
@@ -786,6 +805,8 @@ def build_application(
                 repository.store, snapshot_store=repository.snapshot_store
             ),
             domain=config.knowledge_domain(),
+            embeddings=embedding_provider,
+            vector_store=vector_store,
         )
         # Both tool sets travel back through the one channel `KnowledgeAttachment`
         # already has. A second callable for the corpus would need its own copy of

@@ -12,7 +12,6 @@ from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 
 # `build_adapter` is a pytest fixture defined in test_redstring_adapter; importing
 # it into this module's namespace is how pytest shares fixtures across files.
-from tests.infrastructure.test_redstring_adapter import build_adapter  # noqa: F401
 
 
 @pytest.mark.asyncio
