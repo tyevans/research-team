@@ -100,12 +100,54 @@ variable:
 | `AGENT_NEO4J_USER` | `neo4j` | Neo4j username |
 | `AGENT_NEO4J_PASSWORD` | *(unset)* | Neo4j password; required when `AGENT_GRAPH_STORE=neo4j`, no default |
 | `AGENT_NEO4J_DATABASE` | *(unset)* | which database on the server; unset means the server's default |
-| `AGENT_VECTOR_STORE` | `memory` | what holds entity embeddings: `none`, `memory` or `pgvector`. `none` switches embedding off — see below |
+| `AGENT_VECTOR_STORE` | `memory` | what holds entity embeddings: `none`, `memory` or `pgvector`. `none` switches embedding off; `memory` loses every vector when the process ends and cannot get them back — see "Durable backends" below |
 | `AGENT_EMBEDDING_MODEL` | `nomic-embed-text` | the embedding model's name. **Not** `AGENT_MODEL`, which names a chat model. Set this and the dimension together |
 | `AGENT_EMBEDDING_DIMENSION` | `768` | how wide that model's vectors are — `nomic-embed-text`'s width. A property of the model, not a preference |
 | `AGENT_EMBEDDING_BASE_URL` | *(`AGENT_BASE_URL`)* | where embedding requests go, when that is not the chat endpoint. llama.cpp serves one model per process, so this is usually a second port |
 | `AGENT_EMBEDDING_API_KEY` | *(`AGENT_API_KEY`)* | key for the embedding endpoint, when it differs |
-| `AGENT_PGVECTOR_DSN` | *(unset)* | Postgres DSN; required when `AGENT_VECTOR_STORE=pgvector`, no default |
+| `AGENT_PGVECTOR_DSN` | *(unset)* | Postgres DSN; required when `AGENT_VECTOR_STORE=pgvector`, no default. Reached when the store is built, so a wrong one fails at startup rather than mid-ingest |
+
+### Durable backends
+
+Both defaults keep everything in this process, and neither needs a container.
+`docker-compose.yml` brings up the two servers that change that:
+
+```
+docker compose up -d
+export AGENT_GRAPH_STORE=neo4j
+export AGENT_NEO4J_PASSWORD=research
+export AGENT_VECTOR_STORE=pgvector
+export AGENT_PGVECTOR_DSN=postgresql://research:research@localhost:5432/research_team
+```
+
+The remaining Neo4j and embedding variables already default to what the compose
+file serves. **Nothing needs to be run against the database first** — the
+`vector` extension and the table are created on the first project open, by
+`ensure_schema`. The image has to be `pgvector/pgvector` rather than `postgres`,
+though: `vector` is a compiled extension and the stock image cannot create it.
+
+**The two are not the same kind of durable, and the difference is worth
+knowing before you choose:**
+
+- **`AGENT_GRAPH_STORE`** changes where a *derived* store lives. Extraction is
+  recorded in the event log as `DocumentExtracted`, and the graph is rebuilt
+  from it at every project open — so `memory` costs a fold at startup and
+  loses nothing. Switching to `neo4j` gives you a graph you can query with
+  Cypher and a startup that does not re-fold; switching back loses nothing
+  either.
+- **`AGENT_VECTOR_STORE`** changes whether embeddings survive at all. This
+  project does not append `EntitiesEmbedded`, so there is nothing in the log
+  for a replay to fold, and `memory` means **every vector is lost when the
+  process ends** — after a restart, consolidation silently drops to two
+  features for every entity extracted before it, which is the scoring the
+  default was turned off for. `pgvector` is currently the only setting under
+  which an embedding outlives the process. Re-ingesting a document re-embeds
+  it and repairs this; nothing else does.
+
+`docker-compose.test.yml` is a separate file for `pytest -m integration`. It
+binds the same two servers on different ports (7688, 55432) and keeps no data,
+so an integration run cannot reach the database you are actually using. Both
+can be up at once.
 
 ### Embeddings are on, and here is what they cost
 
@@ -252,7 +294,10 @@ process" at face value would not expect. Say it plainly: content passed to
 `remember` is sent out to be extracted. And with `AGENT_GRAPH_STORE=neo4j`, the
 graph itself leaves the process too, landing in a database rather than only in
 memory -- a second kind of egress, off by default, and distinct from the
-model call above.
+model call above. `AGENT_VECTOR_STORE=pgvector` is the same kind of egress for
+entity names and their vectors, and `AGENT_EMBEDDING_BASE_URL` a third: with
+embeddings on -- which is the default -- every extracted entity's name is sent
+to an embedding endpoint.
 
 Both graph store backends are real, not just the default. `memory` needs no
 server: it holds the graph in a plain in-process structure and rebuilds it
@@ -265,12 +310,15 @@ project *open*, not on the first query, so an unreachable one fails the
 command that opened the project rather than surfacing partway through an
 agent's turn.
 
-`docker-compose.test.yml` starts a Neo4j on port 7688 (not 7687, so a test run
-can never reach one anybody is actually using) for `uv run pytest -m
-integration` to run against locally. Nobody has to start it to commit,
-though: the default `pytest` run deselects `-m integration`, and CI starts its
-own Neo4j service container and runs that suite on every pull request, so the
-`neo4j` backend is exercised against a real server before anything merges.
+`docker-compose.test.yml` starts a Neo4j on port 7688 and a Postgres on 55432
+(not 7687 and 5432, so a test run can never reach a server anybody is actually
+using) for `uv run pytest -m integration` to run against locally. Nobody has to
+start either to commit, though: the default `pytest` run deselects `-m
+integration`, and CI starts both as service containers and runs that suite on
+every pull request, so both backends are exercised against real servers before
+anything merges. `docker-compose.yml` is the other file — the one for actually
+running the project against durable storage, on the ordinary ports and with
+volumes that survive `down`.
 
 ## Autonomous research
 
