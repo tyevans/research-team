@@ -30,9 +30,44 @@
   white-space: nowrap;
 }
 
-/* The five tones. `neutral` is the base above, so it adds nothing -- a status
-   with no opinion attached should look like the default rather than like a
-   choice somebody made. */
+/* `neutral` has no chrome at all, which is a fix rather than a default.
+
+   Measured in a browser: text-colour contrast between the `bad` and `neutral`
+   tones is **1.09**, and their borders did not rescue it -- relative
+   luminance 0.0288 against 0.0225, both dark and nearly equal. So "error",
+   "stalled" and "budget exhausted" were separated from "cancelled" by hue on
+   both channels with no luminance backup anywhere. Semantically that is *a run
+   that failed* against *a run a person deliberately stopped*, and in greyscale
+   or with a red deficiency they read the same.
+
+   Two fixes were rejected before this one.
+
+   **Making `bad` louder**: three of the six run endings are `bad`, and
+   shouting on half the set spends the emphasis that `held` -- "needs a
+   person", the one ending that actually wants somebody -- needs to keep. Its
+   border is nearly 3x the luminance of `good`'s, which is what makes it
+   survive greyscale, and that only works while it is the loudest thing here.
+
+   **Dimming `neutral`'s text to `--fg-faint`**: measured at 3.34 against the
+   page, which fails AA. `--fg-dim` is 6.40. The palette has no step between
+   them, and inventing one would be the second literal `tokens.css` exists to
+   prevent.
+
+   So the separation moves off the colour channel entirely: a status with an
+   opinion is a filled, bordered chip; a status without one is bare text.
+   Presence-versus-absence of an outline survives greyscale and every colour
+   deficiency, and it is also what the tone *means* -- `neutral` is the absence
+   of a verdict, and it should not look like a choice somebody made.
+
+   What this does not fix, stated because it would be easy to imply otherwise:
+   `bad` and `neutral` text remain 1.09 apart. Both have to clear AA against
+   the page and the palette offers no third step, so the text channel cannot
+   carry this distinction. The chrome does. */
+.ent-status-neutral {
+  background: none;
+  border-color: transparent;
+}
+
 .ent-status-live {
   border-color: var(--accent-dim);
   color: var(--accent);
@@ -78,11 +113,23 @@ a.ent-ref:hover .ent-ref-name {
   color: var(--accent);
 }
 
+/* Never the thing that shrinks. `held by` is two words and truncating them
+   turns a sentence into `held b…`, which reads as a broken name rather than as
+   a shortened one. */
 .ent-ref-prefix {
+  flex: 0 0 auto;
   color: var(--fg-faint);
 }
 
 .ent-ref-name {
+  /* `min-width: 0` is load-bearing and its absence was a real bug. A flex item
+     defaults to `min-width: auto`, which refuses to shrink below its content's
+     intrinsic width -- so `overflow: hidden` and `text-overflow: ellipsis`
+     never engage, and a long label overflows its container instead of
+     truncating. The rules below look correct and do nothing without this line,
+     which is exactly the kind of defect jsdom cannot see: no layout, no
+     overflow, no difference. */
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -106,6 +153,11 @@ a.ent-ref:hover .ent-ref-name {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  /* So the row can be placed in a flex row -- a queue beside a detail -- and
+     still clamp rather than push its container wider. Without it the row's
+     intrinsic width is its longest question, and every truncation rule below
+     is inert. */
+  min-width: 0;
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--line-soft);
   list-style: none;
@@ -121,11 +173,19 @@ a.ent-ref:hover .ent-ref-name {
   white-space: nowrap;
 }
 
+/* Clips rather than wraps, and that is the height contract rather than a
+   preference. A meta line that wrapped would make this row taller than its
+   neighbours, which is precisely the guarantee a virtualizer estimates
+   against -- and L-F8 records what a mis-measured row costs: a 122px hole at
+   three projects. In a rail too narrow for a chip, three counts and a button,
+   something has to give, and it must not be the height. */
 .ent-topic-meta {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .ent-topic-count {
