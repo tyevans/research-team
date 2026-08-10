@@ -308,6 +308,36 @@ thought to look.
 Found in review of the check library and deferred because it changes the
 contract between presets and the engine, which is a decision worth making
 deliberately rather than inside a review round.
+
+### B38. Four `matrix_density` bindings still have no axes, so they still report
+
+`stage_exit.course_matrices` builds the matrix a `matrix_density` binding is
+about, from `rows` and `columns` filters on the binding. Only
+`ubd.pure`'s `intent_x_evidence` names them, because that is the one this round
+was scoped to. The other four bindings -- `addie.pure`'s `objective_x_module`
+and `intent_x_evidence`, and `hybrid.default`'s `behaviour_x_content` and
+`thread_x_thread` -- still answer "no matrix was built for this stage" on every
+run of every course, which is the defect this round fixed for one of the five.
+
+Two of the four are ordinary and one is not:
+
+- `objective_x_module`, `intent_x_evidence` and `thread_x_thread` are
+  relational, and each needs its axis pair chosen and a course fixture written
+  against it. `thread_x_thread` additionally carries `min_contact_points`,
+  which `matrix_density_check` raises on rather than implements -- so it has a
+  second problem underneath the first.
+- `behaviour_x_content` is Tyler's **intrinsic** grid. Its axes are attribute
+  values, not artifact types, and `course_matrices` deliberately does not build
+  one: a grid whose rows are the behaviours somebody happened to write has no
+  empty rows by construction, which is the exact way `coverage.py` says the
+  diagnostic goes vacuous. It needs *declared* axes from somewhere -- most
+  likely the preset -- and that is a design decision, not a wiring one.
+
+Not fixed here because each needs a course written the way its methodology's
+prompts (which for ADDIE and Tyler do not exist yet) would write one, and a
+matrix bound to axes nobody has validated against real output is the same
+always-reports defect with a different message.
+
 ## Topics and autonomous research
 
 Added alongside the topic tracker and auto-research mode

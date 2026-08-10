@@ -6,8 +6,8 @@ methodology: ubd
 intended_for:
   - ubd.pure/ubd.stage1.desired_results
 summary: >
-  UbD Stage 1 — transfer goals, enduring understandings and essential
-  questions, over-generated and then pruned on the record.
+  UbD Stage 1 — transfer goals, enduring understandings, essential questions
+  and the acquisition tier, over-generated and then pruned on the record.
 ---
 
 This is Stage 1 of Understanding by Design: **desired results**. It is a
@@ -19,7 +19,7 @@ where somebody can see it die.
 Work in that order: generate a genuinely over-large pool, then cut it hard, then
 record what you cut and why.
 
-## The four tiers, and what distinguishes them
+## The tiers, and what distinguishes them
 
 **Established goals** arrive from outside and are not yours to write. They are
 the standards, outcomes and requirements the unit answers to. Your obligation to
@@ -83,6 +83,30 @@ The opposite failure is a question so broad it attaches to no content — "What 
 truth?" — which cannot be investigated with this unit's material and so becomes
 decoration.
 
+**Knowledge and skill** are the acquisition tier, and they are the tier this
+stage is most often written without. Knowledge is what learners must be able to
+recall — facts, vocabulary, conventions — written with the stem "Students will
+know …". Skill is the discrete processes they must be able to carry out,
+written with the stem "Students will be skilled at …".
+
+They are not the point of the unit and they are not optional either. Every
+understanding and every transfer goal presumes some acquisition, and the
+presumption is exactly what goes unexamined: a performance task set before
+anyone has been equipped to attempt it is the single most common way a
+well-designed unit fails in a classroom, and it is invisible in the document
+unless what the task presumes is written down as something the unit teaches.
+
+Two failures to avoid, in opposite directions. An acquisition tier padded out
+with everything the topic touches turns Stage 1 back into a coverage list, which
+is what the prune exists to prevent. An acquisition tier left empty makes the
+unit's presumptions unfalsifiable. Write what the understandings and the
+performance evidence will actually need, and nothing beyond it.
+
+Each skill carries a short `key` — a stable hyphenated handle, `weigh-two-accounts`
+rather than a sentence. Stage 2's tasks name the keys they presuppose, and the
+sequencing stage checks that whatever a task presupposes is equipped before the
+task needs it. A skill without a key can satisfy nothing.
+
 ## Predicted misunderstandings
 
 Write down what you expect learners to get wrong, and the *shape* of the error
@@ -114,6 +138,13 @@ a different unit. A reviewer's most useful question at this gate is "why did
 that one not make it", and an exclusion record that cannot answer it has wasted
 the over-generation entirely.
 
+Carry those entries in the opening block as `entries`, one mapping per cut with
+a `candidate_id` and a `reason`, with the argument for each in the prose beneath.
+The record is the only trace the pool ever leaves — the candidates you did not
+keep are never written anywhere else — so how hard the screen worked can only be
+read off this list. An exclusion record kept as prose alone is a screen nobody
+downstream can tell happened.
+
 A pool that was cut lightly is a sign the generation was timid, not that the
 candidates were strong.
 
@@ -132,6 +163,11 @@ here.
 
 For the transfer goals: `text` is a block scalar, one goal per line, each
 beginning with the stem above.
+
+For the knowledge and the skills: `text` is a block scalar, one per line, each
+beginning with its stem. The skills artifact additionally carries `key` as a
+list of the handles above, in the same order as the lines, and `position` — where
+in the unit the skills are equipped, as a number.
 
 `links` on the understandings names the essential questions artifact and the
 transfer goals it serves. Every understanding must have at least one essential
