@@ -114,11 +114,18 @@ const HostContext = createContext<HostState | null>(null)
  * The phase that introduced this host said plainly that the guarantee
  * "protects nothing that exists" until two further things landed: the existing
  * overlays moved onto it, and a rule forbidding a literal `z-index` so a ninth
- * could not appear. **The first of those is this commit.** `Drawer` (and
- * therefore `Confirm`, `WorkerDrawer` and the document reader) and the agent
- * dock's popover are layers now; `.drawer-backdrop` at 20 and `.agents-panel`
- * at 40 are deleted rather than retuned, and `scripts/check-deleted.mjs`
- * fails if either comes back.
+ * could not appear. **Both have now landed.** `Drawer` (and therefore
+ * `Confirm`, `WorkerDrawer` and the document reader) and the agent dock's
+ * popover are layers; `.drawer-backdrop` at 20 and `.agents-panel` at 40 are
+ * deleted rather than retuned, and `scripts/check-deleted.mjs` fails if either
+ * comes back. `scripts/stacking.test.ts` fails the build on any `z-index` that
+ * is not a `var(--z-*)` declared in `tokens.css`, and on a fourth role being
+ * added to that scale -- which is the loophole a rule about literals alone
+ * would leave wide open.
+ *
+ * So the claim is now the strong one: a new overlay cannot give itself a
+ * stacking order. It can only name one of three declared roles, and the only
+ * role that paints over the page is this host.
  *
  * Two things stayed off the host **on purpose**, because moving them would
  * have been worse:

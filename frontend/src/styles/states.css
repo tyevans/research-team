@@ -36,7 +36,7 @@
   position: fixed;
   right: 14px;
   top: calc(var(--topbar-h) + 10px);
-  z-index: 50;
+  z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
   gap: 7px;

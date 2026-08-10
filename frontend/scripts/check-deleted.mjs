@@ -146,6 +146,13 @@ const RULES = [
     where: 'presentation/agents',
     forbid: [/addEventListener\('keydown'/, /addEventListener\('pointerdown'/],
   },
+  {
+    phase: 'B',
+    what: 'stylesheets each carried their own stacking numbers',
+    why: 'Eight literal `z-index` declarations across five values, two of which produced a popover painting over an `aria-modal` dialog. Every one now names a role from `tokens.css`. `scripts/stacking.test.ts` is the real enforcement and is more precise than this -- it also rejects an undeclared token and a fourth role. This entry is here so the *count* is recorded where the other phase deletions are; if it ever fires, read that test first.',
+    where: 'styles',
+    forbid: [/z-index\s*:\s*\d/],
+  },
 ]
 
 /** Comments removed before matching, which `theme.test.ts` also does and for

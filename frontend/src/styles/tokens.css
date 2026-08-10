@@ -117,10 +117,23 @@
      nothing anywhere declaring which ought to win -- it is benign today only
      because one is fixed and one is absolute inside a row.
 
+     All eight are now gone: the two overlays moved onto the host, and the
+     other six name a role here instead of a number of their own.
+     `scripts/stacking.test.ts` is what keeps it that way -- a `z-index` that
+     is not a `var(--z-*)` declared in this block fails the build, and so does
+     adding a fourth token to the scale below. That second half is the one
+     worth knowing about, because it is the loophole: a rule about literals
+     alone is satisfied by declaring `--z-popover: 40` here and pointing at it,
+     which is the same defect one file further away and now blessed. A fourth
+     role should cost an argument, and that test is where the argument happens.
+
      `--z-sticky` is for things that float *within* a region and must not
-     escape it: sticky heads, and the graph's command bar, detail panel and
-     legend. Those three are pane-local and stay pane-local, which is why
-     there is no fourth "escape" level -- if a graph control ever does need to
+     escape it: sticky heads, the row menu on a project, and the graph's
+     command bar, detail panel and legend. All of them are region-local and
+     stay region-local, which is why there is no fourth "escape" level -- the
+     row menu joined this level rather than the overlay host because it is
+     anchored to its own row and the host offers no anchoring; `OverlayHost`
+     argues that where it is decided. If a graph control ever does need to
      leave its pane, this scale is wrong and needs a fourth level rather than
      an exception. Nothing does today.
 
