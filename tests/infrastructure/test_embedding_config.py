@@ -24,21 +24,24 @@ def unset(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_a_default_install_has_no_vector_store(unset):
-    """Off unless asked, which is the whole safety property of this change.
+def test_a_default_install_embeds(unset):
+    """On, and this test is the record of that being deliberate.
 
-    An install that had embeddings switched on by default would, on its first
-    ingest, make one embedding call per extracted entity against an endpoint
-    nobody configured -- and `AGENT_BASE_URL`'s default points at a local
-    server that serves a chat model and need not serve an embedding one. The
-    failure would land in the middle of an ingest the user had already paid to
-    fetch.
+    It was `none` when the provider first landed, because an install whose
+    endpoint does not serve embeddings would meet a 400 mid-ingest. That
+    hazard is unchanged and is now handled where it belongs -- the adapter
+    probes once and degrades to two-feature scoring with a warning, rather
+    than the whole feature being withheld from everyone to spare the
+    misconfigured.
 
-    This test would pass with `DEFAULT_VECTOR_STORE` set to `"memory"` only if
-    someone also changed the constant it reads, which is the point.
+    What the default buys: a cross-document duplicate scores 0.8000 instead of
+    0.7143 and clears `LOW_SIMILARITY` on evidence, which is what let the
+    `low=` override be deleted. What it costs: an embedding call per extracted
+    entity per ingest, and one adjudicator call per duplicate, because 0.8 is
+    below `HIGH_SIMILARITY` 0.92.
     """
-    assert config.vector_store() == "none"
-    assert config.embeddings_enabled() is False
+    assert config.vector_store() == "memory"
+    assert config.embeddings_enabled() is True
 
 
 def test_asking_for_a_vector_store_is_what_turns_embeddings_on(monkeypatch, unset):
@@ -62,35 +65,43 @@ def test_a_vector_store_that_does_not_exist_says_what_does(monkeypatch, unset):
         config.vector_store()
 
 
-def test_the_embedding_model_has_no_default(monkeypatch, unset):
+def test_the_embedding_model_is_never_the_chat_model(monkeypatch, unset):
     """A chat model and an embedding model are not the same model.
 
-    `AGENT_MODEL` defaults to a chat model, and defaulting the embedding model
-    to it would send embedding requests to a name that answers chat -- which
-    most OpenAI-compatible servers answer with a 400 and some answer with
-    something shaped like an embedding and numerically meaningless. There is no
-    name that is right for every install, so there is no default.
+    This is the property worth pinning, and it survived the default flipping
+    on. `AGENT_MODEL` names a chat model; pointing embeddings at it would send
+    embedding requests to a name that answers chat -- a 400 from most
+    OpenAI-compatible servers, and from the dangerous ones something
+    vector-shaped and numerically meaningless.
+
+    The model now has a default, because a default-on feature whose required
+    variables have none does not start. `AGENT_MODEL` is emphatically not that
+    default, and this test fails if anyone makes it one.
     """
-    monkeypatch.setenv("AGENT_VECTOR_STORE", "memory")
+    monkeypatch.setenv("AGENT_MODEL", "some-chat-model")
 
-    with pytest.raises(ValueError, match="AGENT_EMBEDDING_MODEL"):
-        config.embedding_model()
+    assert config.embedding_model() == config.DEFAULT_EMBEDDING_MODEL
+    assert config.embedding_model() != config.model_name()
 
 
-def test_the_embedding_dimension_has_no_default(monkeypatch, unset):
-    """The store's width is fixed at construction and cannot be discovered.
+def test_the_model_and_its_width_default_together(unset):
+    """The two defaults are one decision, and 768 is `nomic-embed-text`'s width.
 
-    redstring refuses to wire a provider to a store whose dimension disagrees,
-    *before* any text is embedded. That check is only worth having if the
-    number came from the deployment rather than from a guess here -- a wrong
-    default would make every install that forgot to set it fail identically
-    and late.
+    They have to agree or the provider declares one number while the server
+    returns another, which reaches `VectorProjection` as a
+    `DimensionMismatchError` -- a poison event, unrecoverable rather than
+    retryable. Overriding the model and leaving the width alone is exactly how
+    someone gets there, which is why both docstrings say "set both or
+    neither" and why the adapter's probe checks the width as well as the call.
     """
-    monkeypatch.setenv("AGENT_VECTOR_STORE", "memory")
-    monkeypatch.setenv("AGENT_EMBEDDING_MODEL", "nomic-embed-text")
+    assert config.embedding_model() == "nomic-embed-text"
+    assert config.embedding_dimension() == 768
 
-    with pytest.raises(ValueError, match="AGENT_EMBEDDING_DIMENSION"):
-        config.embedding_dimension()
+
+def test_an_explicit_dimension_still_wins(monkeypatch, unset):
+    monkeypatch.setenv("AGENT_EMBEDDING_DIMENSION", "1024")
+
+    assert config.embedding_dimension() == 1024
 
 
 def test_the_embedding_endpoint_defaults_to_the_one_everything_else_uses(monkeypatch, unset):

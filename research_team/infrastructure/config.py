@@ -29,10 +29,17 @@ DEFAULT_GRAPH_STORE = "memory"
 DEFAULT_KNOWLEDGE_DOMAIN = "auto"
 
 VECTOR_STORES = ("none", "memory", "pgvector")
-#: `none`, not `memory`, and the difference is a model call per entity on every
-#: ingest. See `vector_store` for why the cheap default is the off one here and
-#: the on one for the graph store.
-DEFAULT_VECTOR_STORE = "none"
+#: On, since the third scoring feature is what lets consolidation merge a
+#: cross-document duplicate on evidence rather than on an overridden threshold.
+#: See `vector_store` for what it costs and how it degrades.
+DEFAULT_VECTOR_STORE = "memory"
+
+#: A widely-served local embedding model, and the width it returns. Defaults
+#: exist for these two *because* the store now defaults to on: a default-on
+#: feature whose required variables have no defaults does not start. Both are
+#: overridden together or not at all -- see `embedding_dimension`.
+DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"
+DEFAULT_EMBEDDING_DIMENSION = 768
 
 DEFAULT_NEO4J_URI = "bolt://localhost:7687"
 DEFAULT_NEO4J_USER = "neo4j"
@@ -215,28 +222,44 @@ def extraction_thinking() -> bool:
 
 
 def vector_store() -> str:
-    """What backs entity embeddings, and `none` means the feature is off.
+    """What backs entity embeddings. `none` switches the feature off.
 
-    Mirrors `AGENT_GRAPH_STORE`'s shape deliberately -- same naming, same
-    named-and-refused error -- but **not** its default. The graph store
-    defaults to `memory` because building a graph is what this application is
-    for and an in-memory one costs nothing. Embeddings default to `none`
-    because turning them on costs an embedding call per extracted entity, on
-    every ingest, against an endpoint that need not exist: `AGENT_BASE_URL`'s
-    default is a local server serving one chat model, and llama.cpp serves one
-    model per process. An install that switched this on for itself would meet
-    a 400 in the middle of the first ingest it ran.
+    Mirrors `AGENT_GRAPH_STORE`'s shape -- same naming, same named-and-refused
+    error -- and now its default too.
 
-    This is the single switch. There is deliberately no separate
-    "embeddings on/off" knob, because two knobs permit a vector store with
-    nothing writing to it -- which scores every pair with the embedding
-    feature absent while paying to keep a store open, and looks from the
-    outside exactly like embeddings that are not working.
+    **On, because the third scoring feature is the difference between merging a
+    cross-document duplicate and dropping it.** Measured on the `#84` fixture
+    through a real `CandidateFinder`: two features score an identically-named
+    pair 0.7143, below redstring's `LOW_SIMILARITY` of 0.75, so it is dropped
+    before the adjudicator is offered it. Three features score it 0.8000 and it
+    clears 0.75 on its own evidence -- which is what let `low=EXACT_NAME_SCORE`
+    be deleted rather than merely narrowed.
 
-    Raises `ValueError` naming the unknown kind rather than falling back to
-    `none`, for `build_graph_store`'s reason: a deployment that asked for
-    pgvector and silently got no embeddings consolidates worse than it asked
-    to and says nothing.
+    **What it does not buy is discrimination.** redstring embeds `entity.name`
+    and nothing else, so the embedding feature is a blurrier second measurement
+    of the string the name feature already measured, and it moves near-misses
+    in step with true duplicates. Under a real model the exact duplicate and
+    `University of York` / `University of Cork` land about 0.011 apart. The
+    gain is that 0.75 is defensible; the cost is more traffic in the
+    adjudication band.
+
+    **What it costs to run.** One embedding call per extracted entity, batched
+    into one request per document, paid again on re-ingest -- `build_graph`
+    builds a fresh aggregate per call and re-embeds rather than suppressing a
+    repeat. And auto-merge stays out of reach: a perfect name and a perfect
+    embedding cap at 0.8 against `graph = 0.0`, below `HIGH_SIMILARITY` 0.92,
+    so **every cross-document duplicate still costs one adjudicator call**.
+
+    **What happens when the endpoint is not there.** `AGENT_BASE_URL` defaults
+    to a local server which may serve only a chat model, so a default-on
+    feature has to survive a 400. It does: the adapter probes the provider once
+    and falls back to two-feature scoring with a loud log if the probe fails --
+    see `RedstringKnowledge._embedding_pair`. Set `AGENT_VECTOR_STORE=none` to
+    skip the probe entirely.
+
+    Raises `ValueError` naming the unknown kind rather than falling back, for
+    `build_graph_store`'s reason: a deployment that asked for pgvector and
+    silently got none consolidates worse than it asked to and says nothing.
     """
     configured = os.getenv("AGENT_VECTOR_STORE", DEFAULT_VECTOR_STORE).strip().lower()
     if configured not in VECTOR_STORES:
@@ -252,49 +275,46 @@ def embeddings_enabled() -> bool:
 
 
 def embedding_model() -> str:
-    """Which model turns text into vectors. No default; raises when unset.
+    """Which model turns text into vectors.
 
-    **Not `AGENT_MODEL`.** The chat model and the embedding model are
-    different models, and defaulting to the chat one would send embedding
-    requests to a name that answers chat. Most OpenAI-compatible servers
-    answer that with a 400; the dangerous ones answer with something
-    vector-shaped and numerically meaningless, which would consolidate on
-    noise and never once look broken.
+    **Not `AGENT_MODEL`.** The chat model and the embedding model are different
+    models, and pointing this at the chat one sends embedding requests to a
+    name that answers chat. Most OpenAI-compatible servers answer that with a
+    400; the dangerous ones answer with something vector-shaped and
+    numerically meaningless, which would consolidate on noise and never once
+    look broken. So this has its own variable even though it usually shares an
+    endpoint with the chat model.
 
-    There is no name that is right for every install -- `nomic-embed-text`,
-    `bge-m3` and `text-embedding-3-small` are all reasonable and all
-    different widths -- so guessing one would only move the failure later.
+    It has a default only because `AGENT_VECTOR_STORE` now defaults to on, and
+    a default-on feature whose required variables have no defaults does not
+    start. `nomic-embed-text` is the guess -- widely served locally, and wrong
+    for plenty of installs, which is why the probe in
+    `RedstringKnowledge._embedding_pair` exists rather than a promise that this
+    name resolves.
     """
-    configured = os.getenv("AGENT_EMBEDDING_MODEL", "").strip()
-    if not configured:
-        raise ValueError(
-            "AGENT_EMBEDDING_MODEL must be set when AGENT_VECTOR_STORE is not 'none'; "
-            "it is not AGENT_MODEL, which names a chat model"
-        )
-    return configured
+    return os.getenv("AGENT_EMBEDDING_MODEL", "").strip() or DEFAULT_EMBEDDING_MODEL
 
 
 def embedding_dimension() -> int:
-    """How wide this model's vectors are. No default; raises when unset.
+    """How wide this model's vectors are. A property of the model, not a taste.
 
     A `VectorStore`'s width is fixed at construction -- at DDL time for
     pgvector -- and redstring refuses to wire a provider to a store whose
     number disagrees, before any text is embedded rather than after the call
-    has been paid for. That check is only worth having if the number came from
-    the deployment: a default here would make every install that forgot to set
-    it fail in the same way and later.
+    has been paid for.
+
+    Defaulted alongside `AGENT_EMBEDDING_MODEL` and for the same reason, which
+    makes the pair of them load-bearing together: **set both or neither.** 768
+    is `nomic-embed-text`'s width, so overriding the model and leaving this
+    alone produces a provider that declares one width and a server that returns
+    another. The probe catches that too, and says which two numbers disagreed.
 
     Changing this against an existing store means a **new store**, not a
-    widened one. Two models' vectors are not comparable even at equal
+    widened one -- two models' vectors are not comparable even at equal
     dimension, so a store holding both ranks on nonsense.
     """
     configured = os.getenv("AGENT_EMBEDDING_DIMENSION", "").strip()
-    if not configured:
-        raise ValueError(
-            "AGENT_EMBEDDING_DIMENSION must be set when AGENT_VECTOR_STORE is not "
-            "'none'; it is a property of AGENT_EMBEDDING_MODEL, not a preference"
-        )
-    return int(configured)
+    return int(configured) if configured else DEFAULT_EMBEDDING_DIMENSION
 
 
 def embedding_base_url() -> str:

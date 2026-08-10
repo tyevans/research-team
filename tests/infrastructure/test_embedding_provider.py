@@ -57,12 +57,24 @@ def test_it_points_at_the_embedding_endpoint_not_the_chat_one(monkeypatch, confi
     assert "8081" in str(provider._embeddings.openai_api_base)
 
 
-def test_no_model_configured_is_refused_before_any_request(monkeypatch):
-    """Loud and early. The alternative is a 400 mid-ingest, after the fetch
-    has been paid for -- which is the failure `config.extraction_thinking`
-    documents and this one is shaped to avoid."""
-    monkeypatch.setenv("AGENT_VECTOR_STORE", "memory")
-    monkeypatch.delenv("AGENT_EMBEDDING_MODEL", raising=False)
+def test_it_builds_with_nothing_configured_at_all(monkeypatch):
+    """A default install must construct, because the default is now on.
 
-    with pytest.raises(ValueError, match="AGENT_EMBEDDING_MODEL"):
-        build_embedding_provider()
+    This used to assert the opposite -- that an unset model was refused here.
+    That was right while the feature was off by default and is wrong now: a
+    default-on feature that raises at composition time on a fresh checkout is
+    an application that does not start.
+
+    The failure it was guarding against has not gone away, it has moved to
+    where it can be handled. Nothing here contacts the server, so a wrong
+    model name is still undetectable at this point; `RedstringKnowledge` probes
+    once before the first ingest and degrades to two-feature scoring with a
+    warning. See `config.vector_store`.
+    """
+    for name in ("AGENT_EMBEDDING_MODEL", "AGENT_EMBEDDING_DIMENSION", "AGENT_VECTOR_STORE"):
+        monkeypatch.delenv(name, raising=False)
+
+    provider = build_embedding_provider()
+
+    assert provider.model == "nomic-embed-text"
+    assert provider.dimension == 768

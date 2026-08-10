@@ -4,10 +4,8 @@ from uuid import uuid4
 import pytest
 from eventsource import StreamId, collect
 from eventsource.adapters.sqlite import SQLiteEventStore
-from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from redstring import (
     FakeLlmProvider,
-    InMemoryGraphStore,
     LlmProviderError,
     document_stream,
 )
@@ -34,59 +32,6 @@ _HOPPER = {
         }
     ],
 }
-
-
-@pytest.fixture
-async def build_adapter():
-    """Factory fixture for a `RedstringKnowledge` over a real `SQLiteEventStore`.
-
-    Both stores hold a long-lived `aiosqlite` connection with a non-daemon
-    worker thread, and both must be closed or that thread lingers past the
-    test and surfaces later as an unrelated test's "Event loop is closed".
-    Some tests call this factory only once, but it is shaped to support more --
-    everything it opens is tracked and closed in teardown, so nothing here can
-    be forgotten by a future test that calls it twice.
-
-    `SQLiteSnapshotStore` used to open a connection per operation and need no
-    closing. That stopped being true in eventsource 0.12, which gave it one
-    connection for its lifetime and a `close()` to match.
-    """
-    opened_event_stores = []
-    opened_snapshot_stores = []
-
-    def _build(tmp_path, project_id, *, provider=None, adjudicate=False):
-        db_path = str(tmp_path / "sessions.db")
-        store = SQLiteEventStore(db_path)
-        snapshot_store = SQLiteSnapshotStore(db_path)
-        opened_event_stores.append(store)
-        opened_snapshot_stores.append(snapshot_store)
-        return (
-            RedstringKnowledge(
-                project_id,
-                store=InMemoryGraphStore(),
-                event_store=store,
-                snapshot_store=snapshot_store,
-                provider=provider if provider is not None else fake_provider(),
-                corpus=build_corpus_repository(store, snapshot_store=snapshot_store),
-                domain="encyclopedia_wiki",
-                # Off by default: most tests here are about the adapter's own
-                # bookkeeping and an adjudicator would put a second, unrelated
-                # schema in every fake provider's way. Tests about *whether two
-                # things merge* must turn it on -- with it off the ambiguous
-                # band is rejected, which is redstring's stated behaviour and
-                # not something this adapter can work around.
-                adjudicate=adjudicate,
-            ),
-            store,
-            snapshot_store,
-        )
-
-    yield _build
-
-    for snapshot_store in opened_snapshot_stores:
-        await snapshot_store.close()
-    for store in opened_event_stores:
-        await store.close()
 
 
 @pytest.mark.asyncio
@@ -274,131 +219,12 @@ _SAYS_THEY_ARE_THE_SAME = {
 }
 
 
-@pytest.mark.asyncio
-async def test_one_entity_named_the_same_in_two_documents_becomes_one_node(
-    tmp_path, build_adapter
-):
-    """The reported duplicate, reduced: same name, same type, two documents.
-
-    This is the bug the repo owner saw -- "Nova Scotia Duck Tolling Retriever"
-    twice in one graph. It is not a blocking miss: an identical name and an
-    identical type share all three of redstring's default blocking keys, so the
-    pair is found and scored. It is scored **0.7143**, below redstring's
-    `LOW_SIMILARITY` of 0.75, and `resolve` is called with `minimum_score=low`
-    so the candidate is dropped before the adjudicator is ever offered it. No
-    exception, no verdict, no counted failure -- two nodes and silence.
-
-    The arithmetic, for a deployment with no `VectorStore` (which is ours):
-    name 1.0 at weight 0.5, graph 0.0 at weight 0.2, embedding absent, so
-    `0.5 / 0.7 = 0.7143`.
-
-    **Why the graph feature is 0.0 changed under redstring 0.5.0, and the
-    number did not.** When this was written, neighbours were compared by id and
-    `entity_id_for` namespaces ids per document, so a cross-document duplicate
-    was disjoint *by construction* -- "Canada" from one document and "Canada"
-    from another were two ids however identical they were. 0.5.0 compares
-    normalized neighbour names, which removes that artefact. This fixture is
-    still 0.0 because its two documents genuinely describe different
-    neighbourhoods: Canada in one, duck hunting in the other. So the test now
-    pins the case the upstream fix deliberately leaves alone rather than the
-    case it fixes, and `EXACT_NAME_SCORE` is what still carries it.
-
-    Re-run with `EXACT_NAME_SCORE` raised to redstring's own `LOW_SIMILARITY`
-    of 0.75 and this fails on 0.5.0 exactly as it did on 0.4.0: two canonical
-    nodes with the same name. The floor removal was tried, not assumed.
-    `test_two_documents_describing_the_same_pair_merge_without_a_floor` is the
-    other half -- the case 0.5.0 does fix, which needs no floor.
-    """
-    project_id = uuid4()
-    provider = FakeLlmProvider(
-        by_substring={
-            "duck hunting": _BREED_AND_HUNTING,
-            # `policy._render` numbers the pairs it asks about, so "Pair 1" is
-            # the one substring that identifies an adjudication prompt and
-            # cannot appear in a document being extracted.
-            "Pair 1": _SAYS_THEY_ARE_THE_SAME,
-        },
-        default=_BREED_IN_CANADA,
-    )
-    adapter, _, _ = build_adapter(tmp_path, project_id, provider=provider, adjudicate=True)
-
-    await adapter.ingest(SourceRef(source_id="a", text="The breed originates in Canada."))
-    await adapter.ingest(SourceRef(source_id="b", text="The breed is used for duck hunting."))
-
-    matches = await adapter.search("Nova Scotia Duck Tolling Retriever")
-    assert len(matches) == 1, f"one breed, one node; got {[match.name for match in matches]}"
-
-
-#: The same pair of people from two documents, related in two different ways.
-#: The *relationship type* differs and the neighbour name does not, which is
-#: the whole point: this is what redstring 0.5.0 fixed and what 0.4.0 could not
-#: see, because the neighbour ids were namespaced per document.
-_PAIR_WORKED_WITH = {
-    "entities": [
-        {"name": "Ada Lovelace", "entity_type": "Person"},
-        {"name": "Charles Babbage", "entity_type": "Person"},
-    ],
-    "relationships": [
-        {
-            "source_name": "Ada Lovelace",
-            "target_name": "Charles Babbage",
-            "relationship_type": "WORKED_WITH",
-        }
-    ],
-}
-
-_PAIR_CORRESPONDED_WITH = {
-    "entities": [
-        {"name": "Ada Lovelace", "entity_type": "Person"},
-        {"name": "Charles Babbage", "entity_type": "Person"},
-    ],
-    "relationships": [
-        {
-            "source_name": "Ada Lovelace",
-            "target_name": "Charles Babbage",
-            "relationship_type": "CORRESPONDED_WITH",
-        }
-    ],
-}
-
-
-@pytest.mark.asyncio
-async def test_two_documents_describing_the_same_pair_merge_without_a_floor(
-    tmp_path, build_adapter, monkeypatch
-):
-    """The case redstring 0.5.0 fixes, pinned with our floor taken away.
-
-    Two documents, the same two people, the same neighbourhood. Under 0.4.0
-    this scored `graph = 0.0` -- an artefact, because neighbour ids are
-    namespaced per document -- and landed on 0.7143 like everything else.
-    0.5.0 compares normalized neighbour *names*, so the two Adas share
-    "charles babbage", `graph = 1.0`, and the combined score is a flat 1.0:
-    above `HIGH_SIMILARITY` (0.92), so it merges with **no adjudicator at
-    all**, which is why this fixture leaves `adjudicate` off. Before 0.5.0 no
-    cross-document pair could reach that band whatever the evidence.
-
-    `EXACT_NAME_SCORE` is monkeypatched away to redstring's own
-    `LOW_SIMILARITY` so that the floor cannot be what makes this pass. It is
-    not: the floor moves `low`, and this pair clears `high`. Reverting the
-    version bump is what makes this fail -- with the floor in place and
-    redstring 0.4.0 the pair scores 0.7143, is admitted to adjudication, and is
-    rejected because there is no adjudicator to ask.
-    """
-    monkeypatch.setattr(redstring_adapter, "EXACT_NAME_SCORE", 0.75)
-    project_id = uuid4()
-    provider = FakeLlmProvider(
-        by_substring={"corresponded": _PAIR_CORRESPONDED_WITH},
-        default=_PAIR_WORKED_WITH,
-    )
-    adapter, _, _ = build_adapter(tmp_path, project_id, provider=provider)
-
-    await adapter.ingest(SourceRef(source_id="a", text="Ada Lovelace worked with Babbage."))
-    await adapter.ingest(
-        SourceRef(source_id="b", text="Ada Lovelace corresponded with Babbage.")
-    )
-
-    matches = await adapter.search("Ada Lovelace")
-    assert len(matches) == 1, f"one person, one node; got {[match.name for match in matches]}"
+# `test_one_entity_named_the_same_in_two_documents_becomes_one_node` lived
+# here from PR #84 until the floor it depended on was deleted. It is now two
+# tests in `test_embedded_consolidation.py` -- one showing the pair merging on
+# three-feature evidence, one showing it staying two nodes on two -- because
+# the single test could no longer say which of those it was pinning. The
+# fixtures it used stay here; both modules read them.
 
 
 @pytest.mark.asyncio
@@ -650,7 +476,6 @@ def captured_documents(monkeypatch):
     `IngestReport`, which carries none of them and so would pass whether or
     not they were ever set -- the exact bug these tests exist to catch.
     """
-    from research_team.infrastructure.knowledge import redstring_adapter
 
     documents = []
     real_build_graph = redstring_adapter.build_graph
