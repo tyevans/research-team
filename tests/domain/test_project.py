@@ -414,3 +414,70 @@ def test_selecting_a_workflow_keeps_everything_else_about_the_project():
     assert state.name == "atlas"
     assert state.active_session_id == session_id
     assert state.member_session_ids == [session_id]
+
+
+def test_the_reviewers_verdict_is_recorded_beside_the_evidence():
+    """`decision` is the human's verdict; `gate_decision` is what they were shown.
+
+    Fails with the change reverted: `AdvanceStage` has no `decision` to pass
+    and `StageAdvanced` no field to hold it, so this is a TypeError before it
+    is an assertion.
+    """
+    state = _with_workflow(uuid4())
+
+    [event] = decide(
+        AdvanceStage(
+            preset=hybrid_default,
+            to_stage="hybrid.step1.framing",
+            decided_by="human",
+            gate_decision="4 of 4 declared artifacts present; no invariant failures",
+            decision="approve_with_edits",
+        ),
+        state,
+    )
+
+    assert event.decision == "approve_with_edits"
+    assert event.gate_decision.startswith("4 of 4")
+
+
+def test_an_advance_with_no_stated_verdict_reads_as_an_approval():
+    """Case 1 of the evolution strategy: absence means what it always meant.
+
+    Every `StageAdvanced` written before this field existed was an advance a
+    human let through, so `approve` is the only default that does not invent a
+    verdict nobody gave.
+    """
+    [event] = decide(
+        AdvanceStage(
+            preset=hybrid_default,
+            to_stage="hybrid.step1.framing",
+            decided_by="human",
+            gate_decision="looks right",
+        ),
+        _with_workflow(uuid4()),
+    )
+
+    assert event.decision == "approve"
+
+
+@pytest.mark.parametrize("verdict", ["amend_upstream", "send_back", "halt"])
+def test_the_three_decisions_that_are_not_advances_are_refused(verdict):
+    """A verdict that means "do not advance" may not ride on an advance.
+
+    `workflow-engine.md` §3.4 records that four of the five `Decision` values
+    cannot be expressed; adding this field without this refusal would make
+    three of them *appear* expressible, on an event whose only meaning is that
+    the stage moved. A log saying a reviewer sent the work back, on the event
+    recording that the work went forward, is worse than one that says nothing.
+    """
+    with pytest.raises(CommandRejectedError, match=re.escape(verdict)):
+        decide(
+            AdvanceStage(
+                preset=hybrid_default,
+                to_stage="hybrid.step1.framing",
+                decided_by="human",
+                gate_decision="",
+                decision=verdict,
+            ),
+            _with_workflow(uuid4()),
+        )
