@@ -5,6 +5,7 @@ import { notify } from '@application/notifications/toast-store.ts'
 import { errorMessage } from '@application/ports/errors.ts'
 import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
+import { statusLabel } from '@domain/entity/status.ts'
 import { CLOSED_STATUSES, type TopicDetail, type TopicStatus } from '@domain/research/topic.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
@@ -153,7 +154,7 @@ export const TopicStatusDialog = ({
 
         <div className="drawer-body">
           <div className="topic-status-current">
-            Currently <strong>{topic.status.replace('_', ' ')}</strong>
+            Currently <strong>{statusLabel(topic.status)}</strong>
             {CLOSED_STATUSES.includes(topic.status) ? ' -- reopening is allowed.' : ''}
           </div>
 
@@ -170,7 +171,7 @@ export const TopicStatusDialog = ({
                 aria-pressed={chosen === status}
                 onClick={() => setChosen(status)}
               >
-                {status.replace('_', ' ')}
+                {statusLabel(status)}
               </button>
             ))}
           </div>

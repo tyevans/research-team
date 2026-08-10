@@ -62,9 +62,10 @@
 }
 
 /* Seeding is a control, not a list: it takes the height it needs and gives up
-   none of it. A folded pane is the same -- it is now only a head. */
-.research-rail > .pane-seeding,
-.research-rail > .pane.is-folded {
+   none of it. A folded pane is the same -- it is now only a head, and
+   `layout.css` already says so for `[data-collapse-to='strip']`, so the
+   `.is-folded` half of this rule is gone rather than restated. */
+.research-rail > [data-pane='seeding'] {
   flex: 0 0 auto;
 }
 
@@ -74,84 +75,71 @@
    documents would hand almost the whole rail to the topics again, which is
    the thing this is fixing.
 
-   `min-height` is the fix for the complaint that both panes are too short to
-   use: an even split of a laptop viewport across three regions left each list
-   showing three or four rows, which is a scrollbar rather than a list. 240px
-   is roughly seven document rows or five topic rows -- enough to compare two
-   entries without scrolling, which is the smallest thing either pane is for.
-   Below that the rail scrolls instead of squashing them further, and folding
-   a pane is how you get the space back on a short screen. */
-.research-rail > .pane-topics,
-.research-rail > .pane-documents {
+   The 240px floor that used to be here is now `minContent={240}` on the two
+   `Pane`s. It is the same number for the same reason -- an even split of a
+   laptop viewport across three regions left each list showing three or four
+   rows, which is a scrollbar rather than a list, and 240px is roughly seven
+   document rows or five topic rows -- but as a parameter it travels with the
+   pane instead of being a literal in one stylesheet selected by two pane
+   names. Below the floor the rail scrolls rather than squashing them further,
+   and folding a pane is how you get the space back on a short screen. */
+.research-rail > [data-pane='topics'],
+.research-rail > [data-pane='documents'] {
   flex: 1 1 0;
-  min-height: 240px;
   overflow: hidden;
 }
 
-/* Folded: the head stays, as a horizontal strip rather than the vertical rail
-   `panes.css` gives a collapsed session pane -- that one turns a column into a
-   spine, and these are rows in a column already. Hence `is-folded` rather than
-   reusing `collapsed`, whose rules would rotate the title. */
-.research-rail > .pane.is-folded > .pane-head {
-  border-bottom: none;
-}
+/* Folded, the pane is a strip: `layout.css` gives it `flex: 0 0 auto` and
+   leaves its title level, which is what `is-folded` existed to say. The second
+   class name is gone because `data-collapse-to` is the parameter it stood in
+   for. */
 
-.research-workbench .pane {
+.research-workbench > .lay-pane,
+.research-rail > .lay-pane {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg-panel);
+  /* `.lay-pane` carries a right-hand divider, which is right inside a `Split`
+     and wrong here: these four are free-standing cards, and the divider draws
+     a second line just inside the border. */
+  border-right: 1px solid var(--line);
 }
 
-/* The session pane's head lays out toggle · title · meta and pushes the two
-   ends apart. These heads carry no meta, so the same rule would strand the
-   title against the right edge with the toggle alone on the left. */
-.research-rail > .pane > .pane-head {
+/* The head lays out toggle · title · meta and pushes the ends apart. These
+   heads carry no meta, so the default would strand the title against the
+   right edge with the toggle alone on the left. */
+.research-workbench .lay-pane-head {
   justify-content: flex-start;
   gap: var(--space-2);
 }
 
-/* Seeding's body takes its height from its content. The base rule is
-   `flex: 1 1 auto; min-height: 0`, which is right inside a pane whose height
-   comes from a grid track and collapses to zero inside one sized by what it
-   holds -- a zero-height body with visible overflow is how the seeding
-   controls came to be drawn on top of the topics below them. */
-.research-rail > .pane-seeding > .pane-body {
+/* The rail's bodies carry the page's padding. The three rules this replaces
+   also each set `flex`, `min-height` and `overflow`, and two of them set
+   exactly what `data-scroll='regions'` now sets -- so topics and documents
+   declare `scroll="regions"` on the `Pane` and only their padding is left
+   here. That is the same trade as `minContent`: the shape is a parameter, the
+   spacing is this page's business. */
+.research-rail > .lay-pane > .lay-pane-body {
+  padding: 10px 12px 12px;
+}
+
+/* Seeding is the exception `regions` does not cover: its body takes its height
+   from its content. The primitive's default is `flex: 1 1 auto; min-height: 0`,
+   which is right inside a pane whose height comes from a track and collapses
+   to zero inside one sized by what it holds -- a zero-height body with visible
+   overflow is how the seeding controls came to be drawn on top of the topics
+   below them. */
+.research-rail > [data-pane='seeding'] > .lay-pane-body {
   flex: 0 0 auto;
   min-height: auto;
   overflow: visible;
-  padding: 10px 12px 12px;
 }
 
-/* Topics scroll in their body, bounded by the rail rather than by a hardcoded
-   pixel height. */
-.research-rail > .pane-topics > .pane-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  /* Hidden rather than scrolling, so the filter bar inside stays pinned while
-     the rows move under it -- the arrangement the documents pane already
-     uses, and the reason a filter is usable in a rail this short. */
-  overflow: hidden;
-  padding: 10px 12px 12px;
-}
-
-/* Documents do not: the virtualized list owns its own scroll container, and a
-   scrolling body around it would be a box scrolling inside a box, with the
-   virtualizer measuring the wrong one. The body only has to pass its height
-   down. */
-.research-rail > .pane-documents > .pane-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-  padding: 10px 12px 12px;
-}
-
-.research-workbench .pane-graph {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-  /* Reads as a surface the graph sits on rather than another card in the
-     stack -- the one place on this page where depth is doing work. */
+.research-workbench > [data-pane='graph'] {
+  /* Reads as a surface the graph sits on rather than another card in the stack
+     -- the one place on this page where depth is doing work. The flex column,
+     the zero minimum and the clipped overflow all come from
+     `scroll="regions"` now. */
   background: var(--bg);
 }
 
@@ -225,81 +213,37 @@
   overflow-y: auto;
 }
 
-.topic-row {
-  padding: 8px 10px;
-  border-left: 2px solid var(--line);
-  background: var(--bg-panel-2);
-}
-
-/* Worse than merely flagged: a blocked topic cannot move on its own, so it
- * gets the same loud edge `.finding-invariant` uses for a failure nothing
- * else in the row can explain. */
-.topic-blocked {
-  border-left-color: var(--k-failure);
-}
-.topic-attention {
-  border-left-color: var(--accent);
-}
-.topic-closed {
-  border-left-color: var(--line);
-  color: var(--fg-dim);
-}
-
-.topic-question {
-  font-size: var(--t-md);
-}
-
-.topic-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 3px;
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  color: var(--fg-dim);
-}
-
-.topic-status {
-  text-transform: capitalize;
-}
-
-.topic-triggers {
-  list-style: none;
-  margin: 4px 0 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.topic-trigger {
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  padding: 1px 6px;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
-  color: var(--fg-faint);
-}
-
-.topic-manage {
-  margin-left: auto;
-}
+/* The row itself is `.ent-topic-row` in `entity.css` now, and with it went
+   `.topic-row`, `.topic-blocked`, `.topic-attention`, `.topic-closed`,
+   `.topic-question`, `.topic-meta`, `.topic-status`, `.topic-manage` and the
+   two trigger rules. The urgency edge, the question, the meta line and the
+   three states all moved there unchanged; `.topic-status`'s
+   `text-transform: capitalize` did not, because `EntityStatus` spells the
+   status rather than asking CSS to sentence-case a wire value -- which is
+   what made `not_pursuing` render as "Not_pursuing". Triggers are gone from
+   the row entirely and live on `TopicDetail`: they are prose, and a row whose
+   height depends on its content is the contract L-F8 records a 122px hole
+   for. */
 
 /* --------------------------------------------------------------- dispatch
  *
- * The chip sits below the meta row rather than in it, because its text is a
- * sentence (a failure carries the model's own error) and the meta row is a
- * flex line of short counts that a long chip would wrap into unreadability.
+ * The chip sits *in* the meta row now rather than below it. It was moved out
+ * on the grounds that its text is a sentence and the meta row is a flex line
+ * of short counts -- true, and answered by clamping the chip rather than by
+ * giving it a line of its own, because the line of its own is what made the
+ * row's height depend on whether a dispatch had happened.
  */
 .topic-dispatch {
-  display: block;
-  margin-top: 4px;
   font-family: var(--mono);
   font-size: var(--t-xs);
   color: var(--fg-dim);
   /* A model's error message can be a paragraph. Clamped rather than wrapped:
      the row is in a 320px rail, and one failure must not push forty topics
-     off the screen. The full text is in the title attribute. */
+     off the screen. The full text is in the title attribute. `max-width` as
+     well as `nowrap`, because a nowrap flex item with no cap sets its own
+     base size from the untruncated text and pushes the row's other items out
+     instead of being clipped. */
+  max-width: 18ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
