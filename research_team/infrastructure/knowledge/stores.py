@@ -5,9 +5,19 @@ install needs no server -- and the rebuild path a Neo4j deployment would need
 is the same one used at every startup, exercised continuously rather than
 written under duress during a migration.
 
-The vector store is the same shape with one deliberate difference: its default
-is `none` rather than `memory`, because holding it costs a model call per
-entity on every ingest rather than nothing. See `config.vector_store`.
+The vector store is the same shape and now the same default -- `memory`, since
+#90, because the third scoring feature is what lets a cross-document duplicate
+merge on evidence instead of an overridden threshold. It was `none` when this
+module was written and this paragraph said so for one release longer than it
+was true. See `config.vector_store` for what it costs.
+
+The two differ in one way that matters to a caller: **`memory` is not the
+graph's `memory`.** A graph store lost with the process is rebuilt from the log
+at project open, so it costs a fold. A vector store lost with the process is
+*gone*: this project never appends `EntitiesEmbedded`, so there is nothing for
+a replay to fold, and consolidation silently drops to two features for every
+entity extracted before the restart. `pgvector` is currently the only setting
+under which an embedding outlives the process.
 """
 
 from redstring import GraphStore, InMemoryGraphStore, InMemoryVectorStore, VectorStore
@@ -39,7 +49,7 @@ def build_graph_store(kind: str) -> GraphStore:
     raise ValueError(f"unknown AGENT_GRAPH_STORE {kind!r}; expected 'memory' or 'neo4j'")
 
 
-def build_vector_store(kind: str, *, dimension: int) -> VectorStore | None:
+async def build_vector_store(kind: str, *, dimension: int) -> VectorStore | None:
     """The vector store named by `kind`, or None when `kind` is `none`.
 
     **`None` rather than an empty store**, and the difference is not cosmetic.
@@ -54,11 +64,26 @@ def build_vector_store(kind: str, *, dimension: int) -> VectorStore | None:
     of its arguments: the caller has already read it once to build the provider,
     and reading it twice is how the two come to disagree.
 
-    `PgVectorStore.connect` builds a pool without talking to the server, the
-    same way `Neo4jGraphStore.connect` does -- so an unreachable database
-    surfaces at the first write rather than here. The table must already exist
-    with a `vector(dimension)` column; redstring fixes the width at DDL time
-    and changing the embedding model means a new table, not an altered one.
+    **`async`, and that is `PgVectorStore.connect`'s doing rather than a
+    preference.** It is a coroutine -- unlike `Neo4jGraphStore.connect`, which
+    is an ordinary method building a lazy driver -- and it `await`s
+    `asyncpg.create_pool`, which opens `min_size` connections before it
+    returns. So the two adapters differ in both respects a caller cares about:
+    this one has to be awaited, and it reaches the server here rather than at
+    first use. An unreachable database is therefore refused *at this call*,
+    which is the better of the two behaviours and worth having said, because
+    the previous comment here claimed the opposite of both halves and the
+    function was `def`: it returned the un-awaited coroutine, and
+    `AGENT_VECTOR_STORE=pgvector` handed a coroutine object to everything
+    downstream that expected a store.
+
+    The table does **not** need to exist first. `PgVectorStore.ensure_schema`
+    issues `CREATE EXTENSION IF NOT EXISTS vector` along with the DDL, so a
+    database whose role may create extensions needs no init script -- but
+    something has to call it, and that is `ProjectGraphs`. redstring still
+    fixes the width at DDL time, so changing the embedding model means a new
+    table rather than an altered one; `ensure_schema` raises
+    `DimensionMismatchError` rather than letting the mismatch reach a write.
     """
     if kind == "none":
         return None
@@ -72,7 +97,7 @@ def build_vector_store(kind: str, *, dimension: int) -> VectorStore | None:
         # must not fail to import this module over a dependency it does not use.
         # `Neo4jGraphStore` is imported at the top because `redstring[neo4j]` is
         # pinned unconditionally; pgvector is not.
-        return PgVectorStore.connect(config.pgvector_dsn(), dimension=dimension)
+        return await PgVectorStore.connect(config.pgvector_dsn(), dimension=dimension)
     raise ValueError(
         f"unknown AGENT_VECTOR_STORE {kind!r}; expected 'none', 'memory' or 'pgvector'"
     )

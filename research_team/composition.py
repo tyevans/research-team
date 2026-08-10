@@ -814,18 +814,36 @@ def build_application(
     # that does not need the network to detect -- surfaces at startup; the
     # endpoint itself is probed on first ingest, in the adapter.
     #
-    # `None, None` when `AGENT_VECTOR_STORE=none`, which is the whole of
+    # `None` everywhere when `AGENT_VECTOR_STORE=none`, which is the whole of
     # switching the feature off: nothing is constructed and nothing is probed.
-    vector_store = build_vector_store(
-        config.vector_store(), dimension=config.embedding_dimension()
-    )
-    embedding_provider = build_embedding_provider() if vector_store is not None else None
+    #
+    # The *store* is no longer built here, and that is not a tidy-up.
+    # `PgVectorStore.connect` is a coroutine which awaits `asyncpg.create_pool`
+    # -- unlike `Neo4jGraphStore.connect`, which is an ordinary method building
+    # a lazy driver -- and this function is synchronous, so building it here
+    # produced an un-awaited coroutine that was passed onwards as if it were a
+    # store. `ProjectGraphs` owns the open instead, because `open` is the first
+    # `await` on the path to the store being used; the config is still *read*
+    # here, so `AGENT_VECTOR_STORE=chroma` is still refused at startup rather
+    # than at the first project open.
+    vector_kind = config.vector_store()
+    embedding_dimension = config.embedding_dimension()
+
+    async def open_vector_store():
+        return await build_vector_store(vector_kind, dimension=embedding_dimension)
+
+    # The provider stays eager: it needs no network to build, and a
+    # misconfigured model *name* is the one embedding failure that can be
+    # caught at startup. The endpoint itself is probed on first ingest, in the
+    # adapter.
+    embedding_provider = build_embedding_provider() if vector_kind != "none" else None
 
     graphs = ProjectGraphs(
         build_store=lambda: build_graph_store(config.graph_store()),
         rebuild=lambda store, target_project_id: rebuild_graph(
             store, feed=repository.store, project_id=target_project_id
         ),
+        open_vector_store=open_vector_store,
     )
 
     async def open_graph(
@@ -871,7 +889,12 @@ def build_application(
             ),
             domain=config.knowledge_domain(),
             embeddings=embedding_provider,
-            vector_store=vector_store,
+            # `graphs.vectors()` rather than a captured store: `graphs.open`
+            # above has already opened it, so this is a cached attribute read,
+            # and routing both through the same owner is what keeps "the store
+            # whose schema was ensured" and "the store this adapter writes to"
+            # the same object.
+            vector_store=await graphs.vectors(),
         )
         # Both tool sets travel back through the one channel `KnowledgeAttachment`
         # already has. A second callable for the corpus would need its own copy of

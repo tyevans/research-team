@@ -38,6 +38,12 @@ BuildStore = Callable[[], Any]
 #: from, the way `open_graph` used to close over `repository.store` directly.
 Rebuild = Callable[[Any, UUID], Awaitable[None]]
 
+#: Opens the one vector store this process shares, or returns None when
+#: embeddings are off. A callable rather than a store because opening one is
+#: asynchronous for pgvector and `build_application`, which builds this, is
+#: not -- see `ProjectGraphs.vectors`.
+OpenVectorStore = Callable[[], Awaitable[Any | None]]
+
 
 class ProjectGraphs:
     """Opens, caches, and closes one `GraphStore` per project.
@@ -52,9 +58,31 @@ class ProjectGraphs:
     each other for no reason; a lock per id only ever contends with itself.
     """
 
-    def __init__(self, *, build_store: BuildStore, rebuild: Rebuild) -> None:
+    def __init__(
+        self,
+        *,
+        build_store: BuildStore,
+        rebuild: Rebuild,
+        open_vector_store: OpenVectorStore | None = None,
+    ) -> None:
         self._build_store = build_store
         self._rebuild = rebuild
+        # One vector store for the process, not one per project: it scopes by
+        # tenant internally, and a second would buy isolation redstring already
+        # provides and pay for it in sockets. It is opened *here* rather than
+        # in `build_application` because opening it is asynchronous --
+        # `PgVectorStore.connect` is a coroutine that awaits `create_pool` --
+        # and `build_application` is not. See `vectors`.
+        self._open_vector_store = open_vector_store
+        self._vector_store: Any | None = None
+        self._vector_ready = False
+        # Its own lock, not `_lock_for`'s: the per-project locks deliberately
+        # never contend with each other, so two projects opening at once would
+        # each see the latch unset and open a *second* connection pool. One of
+        # them would then be dropped on the floor with its connections still
+        # held -- a leak that only appears when two projects open at once, and
+        # so not one a single-project test would ever show.
+        self._vector_lock = asyncio.Lock()
         self._stores: dict[UUID, Any] = {}
         self._locks: dict[UUID, asyncio.Lock] = {}
 
@@ -64,6 +92,47 @@ class ProjectGraphs:
         # callers to each believe they created the lock for this id.
         return self._locks.setdefault(project_id, asyncio.Lock())
 
+    async def vectors(self) -> Any | None:
+        """The process's vector store, opened and schema'd on first ask.
+
+        `None` when `AGENT_VECTOR_STORE=none`, which is the whole of switching
+        embeddings off.
+
+        **Two things were missing here, and both only failed against a real
+        server.** `build_vector_store` was `def` while `PgVectorStore.connect`
+        is `async` -- so `AGENT_VECTOR_STORE=pgvector` returned an un-awaited
+        coroutine and handed it to `RedstringKnowledge` as a store. And nothing
+        anywhere called `ensure_schema` on the vector store, though `open`
+        calls it on the graph store two methods down, so even once awaited the
+        store pointed at a table that did not exist and raised on the first
+        entity of the first ingest -- after the fetch and the extraction call
+        had been paid for. Constructible and unusable, twice over.
+
+        This lives here because it is the earliest `await` on the path to the
+        store being used: `build_application` is synchronous. It does not live
+        in `rebuild_graph`, which folds the log, because the vector store is
+        not part of that fold -- this project never appends `EntitiesEmbedded`,
+        so a `VectorProjection` would have nothing to replay.
+
+        `hasattr` rather than a type check, matching how `open` treats the
+        graph store: only the pgvector adapter has DDL, and
+        `InMemoryVectorStore` has no schema to ensure.
+        """
+        if self._open_vector_store is None or self._vector_ready:
+            return self._vector_store
+        async with self._vector_lock:
+            if self._vector_ready:
+                return self._vector_store
+            store = await self._open_vector_store()
+            if store is not None and hasattr(store, "ensure_schema"):
+                await store.ensure_schema()
+            self._vector_store = store
+            # Latched only after both steps succeeded, so a server that was
+            # down at the first open is retried at the next one rather than
+            # remembered as absent for the life of the process.
+            self._vector_ready = True
+            return self._vector_store
+
     async def open(self, project_id: UUID) -> Any:
         """This project's store, building and folding it in on first ask.
 
@@ -72,6 +141,10 @@ class ProjectGraphs:
         acquire when uncontended, and re-checking the cache first (outside
         the lock) would just be a second place for the same race to hide.
         """
+        # Before the per-project lock, not inside it: `vectors` takes its own
+        # lock, and taking the two in one order here while a future caller
+        # takes them in the other is how this grows a deadlock.
+        await self.vectors()
         async with self._lock_for(project_id):
             store = self._stores.get(project_id)
             if store is not None:
@@ -99,6 +172,19 @@ class ProjectGraphs:
             await store.close()
 
     async def close_all(self) -> None:
-        """Close every cached store. For process shutdown."""
+        """Close every cached store, and the shared vector store. For shutdown.
+
+        The vector store is closed here and nowhere else, because it is not
+        per project and `close(project_id)` must not take it down while
+        another project is still open. A `PgVectorStore` owns a connection
+        pool; leaving it unclosed is how a process that has finished holds
+        Postgres connections until it exits.
+        """
         for project_id in list(self._stores):
             await self.close(project_id)
+        store, self._vector_store = self._vector_store, None
+        # Reset the latch too: a `vectors()` after `close_all` must open a new
+        # store rather than hand back the closed one.
+        self._vector_ready = False
+        if store is not None and hasattr(store, "close"):
+            await store.close()

@@ -7,9 +7,10 @@
 # developer's machine and this gate is a bug rather than early warning.
 #
 # The integration job is the reason this file exists. The default suite
-# deselects `-m integration` because those tests need a real Neo4j, and a
-# developer should not have to run one to commit. CI is where a server is
-# free, so that is where they run -- on every pull request, not on a laptop.
+# deselects `-m integration` because those tests need a real Neo4j and a real
+# Postgres, and a developer should not have to run either to commit. CI is
+# where a server is free, so that is where they run -- on every pull request,
+# not on a laptop.
 #
 # Third-party actions are pinned to a full commit SHA with the tag in a
 # trailing comment. A tag is a mutable pointer: whoever controls the action
@@ -91,10 +92,33 @@ jobs:
           --health-timeout 10s
           --health-retries 10
 
+      # `pgvector/pgvector` rather than `postgres`: `vector` is a compiled
+      # extension, so the stock image cannot create it however the database is
+      # initialised. Nothing else has to be done to prepare it --
+      # `PgVectorStore.ensure_schema` issues `CREATE EXTENSION IF NOT EXISTS
+      # vector` alongside its DDL, and `POSTGRES_USER` owns the database it
+      # was created with, so it may.
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: redstring
+          POSTGRES_PASSWORD: redstring
+          POSTGRES_DB: redstring
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U redstring -d redstring"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
     env:
       AGENT_NEO4J_URI: bolt://localhost:7688
       AGENT_NEO4J_USER: neo4j
       AGENT_NEO4J_PASSWORD: redstring
+      # Matches `docker-compose.test.yml`'s port, so the same command runs the
+      # same way on a laptop and here.
+      AGENT_PGVECTOR_DSN: postgresql://redstring:redstring@localhost:55432/redstring
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

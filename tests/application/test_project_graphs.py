@@ -15,6 +15,8 @@ whatever `build_store`/`rebuild` are given.
 import asyncio
 from uuid import uuid4
 
+import pytest
+
 from research_team.application.project_graphs import ProjectGraphs
 
 
@@ -96,3 +98,179 @@ async def test_close_all_closes_every_cached_store():
 
     assert first.closed is True
     assert second.closed is True
+
+
+class _SchemaVectorStore:
+    """A vector store with DDL to run, like `PgVectorStore` and unlike the memory one."""
+
+    def __init__(self) -> None:
+        self.ensured = 0
+        self.closed = False
+
+    async def ensure_schema(self) -> None:
+        self.ensured += 1
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _NoSchemaVectorStore:
+    """`InMemoryVectorStore`'s shape: no schema, and nothing to close."""
+
+
+class _CountingOpen:
+    """An async `open_vector_store`, counting how many stores it was asked for.
+
+    Async because the real one is: `build_vector_store` awaits
+    `PgVectorStore.connect`, which awaits `asyncpg.create_pool`. A synchronous
+    fake here would not exercise the thing that was broken.
+    """
+
+    def __init__(self, store) -> None:
+        self.store = store
+        self.calls = 0
+
+    async def __call__(self):
+        self.calls += 1
+        await asyncio.sleep(0)
+        return self.store
+
+
+def _graphs_with_vectors(store):
+    return ProjectGraphs(
+        build_store=_FakeStore,
+        rebuild=_CountingRebuild(),
+        open_vector_store=_CountingOpen(store),
+    )
+
+
+async def test_the_vector_store_gets_its_schema_before_any_project_opens():
+    """`ensure_schema` runs on the vector store, which nothing used to do.
+
+    The gap: `ProjectGraphs.open` ensured the *graph* store's schema and no
+    caller anywhere ensured the vector store's, so `AGENT_VECTOR_STORE=pgvector`
+    produced a `PgVectorStore` against a table that did not exist and raised
+    `UndefinedTableError` on the first entity it tried to write -- mid-ingest,
+    after the fetch and the extraction model call had already been paid for.
+
+    Fails with the change reverted: `ensured` stays 0.
+    """
+    vectors = _SchemaVectorStore()
+
+    await _graphs_with_vectors(vectors).open(uuid4())
+
+    assert vectors.ensured == 1
+
+
+async def test_the_vector_store_is_opened_once_across_projects():
+    """One process-wide store: opened once, not once per project.
+
+    A pool per project is the cost this pins. `PgVectorStore.connect` awaits
+    `asyncpg.create_pool`, which opens `min_size` connections before it
+    returns, so a second open is real sockets rather than a wasted call.
+    """
+    opener = _CountingOpen(_SchemaVectorStore())
+    graphs = ProjectGraphs(
+        build_store=_FakeStore, rebuild=_CountingRebuild(), open_vector_store=opener
+    )
+
+    await graphs.open(uuid4())
+    await graphs.open(uuid4())
+    await graphs.open(uuid4())
+
+    assert opener.calls == 1
+    assert opener.store.ensured == 1
+
+
+async def test_concurrent_opens_build_one_vector_store():
+    """Five projects opening at once must not open five pools.
+
+    The per-project locks never contend with each other by design, so without a
+    lock of its own the latch is checked by five coroutines before any of them
+    sets it -- and four pools are opened and dropped with their connections
+    still held. A leak that needs two projects at once to appear.
+    """
+    opener = _CountingOpen(_SchemaVectorStore())
+    graphs = ProjectGraphs(
+        build_store=_FakeStore, rebuild=_CountingRebuild(), open_vector_store=opener
+    )
+
+    await asyncio.gather(*(graphs.open(uuid4()) for _ in range(5)))
+
+    assert opener.calls == 1
+
+
+async def test_the_opened_vector_store_is_the_one_handed_out():
+    """`vectors()` returns what `open_vector_store` produced, not a rebuild.
+
+    `open_graph` reaches for this to wire `RedstringKnowledge`, so "the store
+    whose schema was ensured" and "the store the adapter writes to" have to be
+    the same object.
+    """
+    vectors = _SchemaVectorStore()
+    graphs = _graphs_with_vectors(vectors)
+
+    assert await graphs.vectors() is vectors
+
+
+async def test_a_vector_store_with_no_schema_is_left_alone():
+    """`InMemoryVectorStore` has no `ensure_schema`, and must not be required to.
+
+    `hasattr` rather than a type check, matching how this class already treats
+    the graph store. Reverting the guard turns this into an `AttributeError`.
+    """
+    graphs = _graphs_with_vectors(_NoSchemaVectorStore())
+
+    assert await graphs.open(uuid4()) is not None
+
+
+async def test_no_vector_store_opens_a_project_as_before():
+    """`AGENT_VECTOR_STORE=none` builds nothing, and must stay openable."""
+    graphs = ProjectGraphs(build_store=_FakeStore, rebuild=_CountingRebuild())
+
+    assert await graphs.open(uuid4()) is not None
+    assert await graphs.vectors() is None
+
+
+async def test_closing_everything_closes_the_vector_store():
+    """The pool is released at shutdown, and only by `close_all`.
+
+    Not by `close(project_id)`: the store is shared, and closing it when one
+    project is evicted would take the pool out from under every other open
+    project.
+    """
+    vectors = _SchemaVectorStore()
+    graphs = _graphs_with_vectors(vectors)
+    project_id = uuid4()
+    await graphs.open(project_id)
+
+    await graphs.close(project_id)
+    assert not vectors.closed, "one project closing must not close a shared store"
+
+    await graphs.close_all()
+    assert vectors.closed
+
+
+async def test_a_failed_open_is_retried_rather_than_latched():
+    """A server down at the first open must not be remembered as absent.
+
+    Latching before the open succeeded would turn one unreachable-at-startup
+    moment into embeddings being off for the life of the process, silently.
+    """
+    attempts = []
+
+    async def _flaky():
+        attempts.append(None)
+        if len(attempts) == 1:
+            raise ConnectionError("server not up yet")
+        return _SchemaVectorStore()
+
+    graphs = ProjectGraphs(
+        build_store=_FakeStore, rebuild=_CountingRebuild(), open_vector_store=_flaky
+    )
+
+    with pytest.raises(ConnectionError):
+        await graphs.open(uuid4())
+
+    assert await graphs.vectors() is not None
+    assert len(attempts) == 2

@@ -20,7 +20,14 @@ dependencies = [
     # an undeclared dependency works right up until the day one of those three
     # drops it.
     "pyyaml>=6.0",
-    "redstring[llm,neo4j]>=0.5.0,<0.6",
+    # `pgvector` is named rather than left to resolve transitively. It brings
+    # `asyncpg`, which `build_vector_store` imports lazily for
+    # `AGENT_VECTOR_STORE=pgvector`; without the extra that import worked only
+    # because something else in the tree happened to pull asyncpg in, and a
+    # dependency nobody declared is one a resolver is free to drop. The window
+    # is unchanged, so `eventsource-py` and the `tracing` extra do not move
+    # with it -- an extra adds packages, it does not renegotiate the minor.
+    "redstring[llm,neo4j,pgvector]>=0.5.0,<0.6",
     "trafilatura>=2.2.0",
     "uvicorn[standard]>=0.52.1",
 ]

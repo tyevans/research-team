@@ -1,0 +1,62 @@
+# The durable backends, for running this project against something that
+# survives a restart. Nothing here is required: the default install stores the
+# graph in memory and the vectors in memory, needs no container, and the test
+# suite never starts one.
+#
+#     docker compose up -d
+#
+# then export the variables in the table below (README, "Durable backends") and
+# start the app as usual. The app is deliberately *not* a service here -- it
+# runs on the host against a local model endpoint, and putting it in a network
+# namespace of its own would put `AGENT_BASE_URL`'s `localhost` on the wrong
+# side of it.
+#
+# This is not `docker-compose.test.yml`. That file exists for `pytest -m
+# integration`, binds the same servers on *different* ports (7688, 55432), and
+# its Neo4j is wiped per test. Two files rather than one profile because the
+# ports have to differ: an integration run deletes its tenant's rows, and doing
+# that to the database somebody is actually using is a bad afternoon. Both can
+# be up at once.
+services:
+  # `pgvector/pgvector` rather than `postgres` plus a build step: the extension
+  # is a C extension and has to be compiled against the server, so the stock
+  # image cannot `CREATE EXTENSION vector` no matter what SQL is run against
+  # it. The tag pins the major of both, which is the pairing that matters.
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: research
+      POSTGRES_PASSWORD: research
+      POSTGRES_DB: research_team
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `-U`/`-d` explicitly: without them `pg_isready` asks as the `postgres`
+      # user for the `postgres` database, neither of which this container has,
+      # so the check fails against a perfectly healthy server.
+      test: ["CMD-SHELL", "pg_isready -U research -d research_team"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  neo4j:
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: neo4j/research
+    ports: ["7687:7687", "7474:7474"]
+    volumes:
+      - neo4jdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p research 'RETURN 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+# Named volumes, so `docker compose down` keeps the data and `down -v` is the
+# deliberate way to lose it. The whole point of these two services is that they
+# outlive the process; anonymous volumes would make "restart the containers"
+# silently equivalent to the in-memory default they replace.
+volumes:
+  pgdata:
+  neo4jdata:
