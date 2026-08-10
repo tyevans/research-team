@@ -916,3 +916,56 @@ landed, as a case-1 addition, because a runner writing machine prose into
 `Decision` values are refused rather than stored, which keeps §3.4's
 "unrepresentable" claim true instead of letting it become "representable and
 meaningless".
+
+---
+
+## 12. Amendment: an unresolved ref degrades, it does not refuse (2026-08-09)
+
+Appended rather than applied, same convention as §11. Where this disagrees with
+§2.3, this section wins.
+
+§2.3 says the composition root "should refuse to build with a preset whose
+prompts it cannot resolve, and say which ref and which stage". §1's own premise
+is why that cannot be the rule as written: the prompts were the thing that did
+not exist, and §5 then plans a first increment — `ubd.pure`, generators only,
+no critics — which is *by construction* a preset that does not fully resolve.
+§2.3 and §5 were already in tension; the library on disk settles it. Six prompt
+files exist against 38 distinct refs. `hybrid.default` is the default preset,
+listed first because the order is the recommendation, and is missing 20 of its
+22. `ubd.pure` has all six generator prompts and four `*_critique` refs that
+resolve to nothing.
+
+A build-time refusal against that library refuses all three presets. The wiring
+would ship as an outage, and — the part that matters more — it would refuse
+`ubd.pure`, the preset the six written prompts exist to serve.
+
+The rule `prompting_for` implements instead:
+
+> **Resolution is per stage, not per preset. A stage whose ref resolves runs
+> under its prompt. A stage whose ref does not resolve runs under an explicit
+> notice that names the missing ref and says the stage is running without its
+> methodology.** A malformed or mis-`kind`ed prompt degrades identically; a
+> library that will not *load* is still a startup failure.
+
+The notice is the whole of why this is not the silent fallback §2.3 rejects.
+That rejection is sound and is preserved: an ungated run is visibly ungated, and
+a stage with an *empty* prompt is indistinguishable from the system before
+prompts existed. A stage that tells the model, in band, that its methodology is
+absent and asks it to say so in what it writes is not indistinguishable from
+anything. It is §5's own answer for critics — "visibly labelled as such rather
+than quietly equivalent" — applied to generators, which need it more, because a
+missing critic subtracts a review and a missing generator subtracts the method.
+
+**What this does not do, and should.** The notice is a request to a model, not
+an enforcement. A degraded stage still writes artifacts and those artifacts
+still pass `checks.py`, because the structural checks are graph queries over
+`Intent` and cannot see which tradition wrote a node. Nothing yet records on the
+*run* — as against on the turn — that a stage was worked unprompted, so a course
+assembled from twenty degraded stages carries the fact only in the log. The
+place for it is the stage rail §5 already points at, and the honest statement is
+that this increment wires the prompt through and leaves the labelling of the
+finished course undone.
+
+`unresolved()` remains uncalled, for the reason §2.3 gave it a caller and the
+library then withdrew: it returns a non-empty list for every shipped preset. It
+stays the survey a prompt author reads, not a gate.
