@@ -17,7 +17,7 @@ from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 @pytest.mark.asyncio
 async def test_a_rebuilt_graph_matches_the_one_maintained_by_ingest(
     tmp_path,
-    build_adapter,  # noqa: F811
+    build_adapter,
 ):
     """The store is a projection. Rebuilding it must not change what it holds."""
     project_id = uuid4()
@@ -52,7 +52,7 @@ async def test_rebuilding_an_empty_project_yields_an_empty_graph(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_rebuilding_never_calls_the_model(tmp_path, build_adapter):  # noqa: F811
+async def test_rebuilding_never_calls_the_model(tmp_path, build_adapter):
     """Replay purity: extraction is recorded, never recomputed.
 
     `rebuild_graph` accepts no provider, and neither `GraphProjection` nor
