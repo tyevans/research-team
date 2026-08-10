@@ -73,15 +73,27 @@ def _exact_name_with_no_shared_structure() -> float:
     redstring's `LOW_SIMILARITY` is 0.75, so *an exact name match is rejected
     before anything is asked about it*.
 
-    The `graph = 0.0` is not evidence, it is an artefact of the id scheme.
-    `redstring.extraction.mapping.entity_id_for` namespaces entity ids **per
-    document**, so a duplicate's neighbours are different ids in each document
-    even when they name the same real things. Two entities extracted from two
-    documents therefore *cannot* share a neighbour at the moment they are first
-    judged, however obviously identical they are. The upstream fix belongs in
-    `CandidateFinder._graph_feature`, which already returns `None` -- absent --
-    when neither side has neighbours, for exactly the reason that applies here:
-    a feature with nothing to say must not vote.
+    **The artefact this was written for is gone; the floor is not.** When PR
+    #84 added this, `graph = 0.0` was an artefact of the id scheme: neighbours
+    were compared by id, `entity_id_for` namespaces ids per document, so two
+    entities extracted from two documents *could not* share a neighbour however
+    obviously identical they were. redstring 0.5.0 compares neighbours by
+    normalized name instead, and a cross-document duplicate whose documents
+    describe the same neighbourhood now scores `graph = 1.0` and merges on its
+    own -- `test_two_documents_describing_the_same_pair_merge_without_a_floor`
+    pins that, and passes with this floor removed.
+
+    What is left is a real finding, and still not one worth rejecting on: two
+    documents can name the same thing while saying different things *about* it.
+    "Nova Scotia Duck Tolling Retriever" beside "Canada" in one document and
+    beside "Duck hunting" in another has genuinely disjoint neighbours, scores
+    `graph = 0.0` honestly, and lands on the same 0.7143 -- below
+    `LOW_SIMILARITY`, so it is dropped before anything is asked about it.
+    Removing this floor was tried against
+    `test_one_entity_named_the_same_in_two_documents_becomes_one_node` and that
+    test goes red: two nodes, one breed. A single graph signal disagreeing must
+    not outrank an exact name match to the point of refusing to *ask*, which is
+    what 0.75 does to a deployment with no embeddings.
 
     Using this as `low` admits precisely the pairs an exact name match reaches
     and nothing weaker, because `decide` bands inclusive-from-below. Measured
@@ -90,13 +102,28 @@ def _exact_name_with_no_shared_structure() -> float:
     "Roberta Smith" 0.7033, "World War I" / "World War II" 0.7024, "University
     of York" / "University of Cork" 0.6984.
 
-    **Nothing merges unasked because of this.** `HIGH_SIMILARITY` is 0.92 and
-    the arithmetic above caps a graph-scored pair at 0.7143, so no
-    cross-document pair can reach the merge-without-asking band at all. Every
-    pair this admits goes to the adjudicator, which is a model call and a `no`
-    by default -- so the change buys adjudication for exact-name duplicates,
-    not merges. With `adjudicate=False` the band is rejected and this is a
-    no-op, which is why the fixture that disables adjudication sees no change.
+    Those four were measured on 0.4.0, where every cross-document pair scored
+    `graph = 0.0`, so they are now the *floor* of what those pairs score rather
+    than the whole story: "Robert Smith" and "Roberta Smith" described in two
+    documents with the same neighbours score 0.9890 and merge unasked. The
+    numbers above are still what this constant admits, because they are what
+    the pairs score with no shared structure; what has changed is that shared
+    structure can now lift a near-miss past `high` without this constant being
+    involved. Embeddings are the signal that would separate them (upstream R1).
+
+    **Nothing merges unasked because of this.** This lowers `low`; it does not
+    touch `high`, so the merge-without-asking band is redstring's 0.92 as it
+    always was, and every pair *this* admits lands in the adjudicated band --
+    a model call, and a `no` by default. With `adjudicate=False` the band is
+    rejected and this is a no-op, which is why the fixture that disables
+    adjudication sees no change.
+
+    Unasked merges do now happen, and not because of this: since 0.5.0 a
+    cross-document pair with an identical name and a shared neighbour name
+    scores a flat 1.0 and merges without adjudication. That is redstring's
+    decision, reached by the same `high` a single-document pair has always
+    faced. It is worth knowing about, because before 0.5.0 no cross-document
+    pair could reach 0.92 at all.
     """
     weights = FeatureWeights()
     return weights.name / (weights.name + weights.graph)
