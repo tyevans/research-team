@@ -78,6 +78,66 @@ export default tseslint.config(
     ...jsxA11y.flatConfigs.recommended,
   },
 
+  /** A class name built by interpolating into a template literal is a trap the
+   *  formatter arms.
+   *
+   *  `prettier-plugin-tailwindcss@0.8.1` rewrites
+   *  `` `artifact${present ? '' : ' artifact-missing'}` `` by deleting the
+   *  leading space inside the conditional, producing the single class
+   *  `artifactartifact-missing` and silently unstyling the element. It is a
+   *  bug in the plugin, it corrupts on `npm run format` rather than on
+   *  `format:check`, and the result typechecks and renders — so nothing else
+   *  in the chain notices.
+   *
+   *  Two files hit it when the plugin landed: `course/Artifacts.tsx` and
+   *  `course/StageRail.tsx`, the only two in the codebase not already using
+   *  `clsx`. Both were converted. This rule is what stops the third.
+   *
+   *  Considered and rejected: dropping the plugin. It is the piece of
+   *  anti-bikeshedding that makes class order mechanical rather than a matter
+   *  of opinion on every review, and that value grows with every component
+   *  moved onto utilities while this hazard stays a fixed two-line rule. The
+   *  trade is worth making *with* a guard and would not be without one.
+   *
+   *  **The shape was measured, not guessed**, because the first version of
+   *  this rule fired on every interpolated `className` and flagged eleven
+   *  sites the plugin does not touch. Running each form through Prettier and
+   *  diffing the output:
+   *
+   *      `k-${kind}`                          unchanged
+   *      `rev k-${kind}`                      unchanged
+   *      `base ${on ? 'a' : 'b'}`             unchanged
+   *      `base ${kind} tail`                  unchanged
+   *      'plain ' + (on ? 'a' : '')           unchanged
+   *      `artifact${on ? '' : ' missing'}`    CORRUPTED
+   *      `rail${short ? ' short' : ''}`       CORRUPTED
+   *
+   *  The discriminator is a **string literal beginning with a space inside the
+   *  interpolation** — that leading space is the class separator, and it is
+   *  the only thing the plugin eats. A template that separates its classes
+   *  with static text is safe, because the plugin leaves the quasis alone.
+   *
+   *  So the rule matches exactly that and nothing else. Firing on the safe
+   *  forms would have meant rewriting eleven working components in a phase
+   *  that promises to change no rendered page, to guard against a bug they do
+   *  not have — and a rule that flags mostly-false positives is one people
+   *  learn to disable. `eslint-config.test.ts` asserts it fires on the
+   *  corrupting form and stays quiet on the safe ones. */
+  {
+    files: ['src/**/*.tsx'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'JSXAttribute[name.name="className"] > JSXExpressionContainer > TemplateLiteral Literal[value=/^ /]',
+          message:
+            'Build class names with clsx, not by interpolating a space-prefixed string into a template literal: prettier-plugin-tailwindcss deletes that leading space and silently merges two class names into one.',
+        },
+      ],
+    },
+  },
+
   /** The domain is pure. No framework, no transport, no browser API — if a rule
    *  here fires, something that belongs in an adapter has drifted inward. */
   {
