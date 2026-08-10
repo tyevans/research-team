@@ -93,6 +93,7 @@ from research_team.application.workers import (
     ExtractionsInFlight,
     ExtractionSnapshot,
     Roster,
+    SummaryProjects,
     Worker,
     WorkerRoster,
 )
@@ -152,6 +153,7 @@ __all__ = [
     "SessionSummary",
     "SourceRef",
     "SummaryHealth",
+    "SummaryProjects",
     "TopicRoundRunner",
     "TurnAccountingError",
     "TurnAlreadyRunning",

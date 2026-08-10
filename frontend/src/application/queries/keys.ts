@@ -37,6 +37,13 @@ export const queryKeys = {
    * misspells one silently does nothing. */
   allRuns: () => ['run'] as const,
   allWorkers: () => ['workers'] as const,
+  /** Everything running anywhere, as one cached answer.
+   *
+   * Deliberately under the `allWorkers()` prefix rather than beside it, so the
+   * invalidation the landing page already fires refreshes this too. The widget
+   * is on every page and the landing page is one of them; two keys would have
+   * the row markers and the widget disagreeing about the same instant. */
+  runningAgents: () => ['workers', 'all'] as const,
   topics: (project: ProjectId) => ['topics', project] as const,
   topic: (project: ProjectId, topic: TopicId) => ['topic', project, topic] as const,
   seed: (project: ProjectId) => ['seed', project] as const,

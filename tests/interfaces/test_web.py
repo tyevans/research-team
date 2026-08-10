@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage
 from redstring.events.document import DocumentExtracted
 from redstring.events.streams import document_stream
 
-from research_team.application import GATED_TOOLS, WorkerRoster
+from research_team.application import GATED_TOOLS, SummaryProjects, WorkerRoster
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL
 from research_team.application.graph_read import MAX_GRAPH_NODES
 from research_team.application.knowledge import ExtractionNote
@@ -70,7 +70,15 @@ async def app_and_client(db_path, fake_model, extraction):
         application.turns,
         corpus=application.corpus,
         workers=WorkerRoster(
-            application.service, turns=application.turns, extractions=extraction
+            application.service,
+            turns=application.turns,
+            runs=application.research,
+            extractions=extraction,
+            # Wired as the composition root wires it, so `/api/workers` is
+            # exercised in its real shape: without this a running turn has no
+            # way back to its project and the cross-project route would answer
+            # empty while looking correct.
+            summaries=SummaryProjects(application.summaries),
         ),
         extraction=extraction,
         # The application's own policy, not a fresh one: the routes are only
@@ -2757,6 +2765,53 @@ async def test_workers_lists_an_idle_member_session(client):
 
 async def test_workers_404s_on_an_unknown_project(client):
     response = await client.get(f"/api/projects/{uuid4()}/workers")
+    assert response.status_code == 404
+
+
+async def test_all_workers_is_empty_while_nothing_anywhere_is_running(client):
+    """The ordinary answer, and the one the widget gets on almost every page.
+
+    An empty list rather than a row per project: a project with nothing running
+    is not in the answer at all, which is what keeps this from folding an
+    aggregate per project on every page load.
+    """
+    project_id = await make_project(client)
+    await join_session(client, project_id)
+
+    response = await client.get("/api/workers")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_all_workers_reports_the_project_that_is_working(client, extraction):
+    """One request answers "what is running", with no project in the URL.
+
+    The widget is on every page and has no project to ask about. Reverting the
+    route would leave the widget asking per project, which is the cost this
+    exists to remove.
+    """
+    busy = await make_project(client, "busy")
+    quiet = await make_project(client, "quiet")
+    await join_session(client, quiet)
+    extraction.reporter(busy)(
+        ExtractionNote(source_id="notes", stage="consolidating", index=3, total=9)
+    )
+
+    body = (await client.get("/api/workers")).json()
+
+    assert [row["project_id"] for row in body] == [str(busy)]
+    assert [worker["kind"] for worker in body[0]["workers"]] == ["extraction"]
+
+
+async def test_all_workers_is_404_when_the_roster_is_not_wired(client_without_workers):
+    """Matches the per-project route rather than answering an empty list.
+
+    An empty list is a real state here -- "nothing is running anywhere" -- so a
+    build that cannot tell must not produce one, or the widget would sit at
+    zero forever and look correct.
+    """
+    response = await client_without_workers.get("/api/workers")
     assert response.status_code == 404
 
 

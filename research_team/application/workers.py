@@ -18,7 +18,7 @@ Every source is process-local by necessity -- a task cannot be persisted --
 so a restart shows an empty roster, which is the truth: nothing is running.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
@@ -92,17 +92,49 @@ class TurnsInFlight(Protocol):
 
     def running(self, session_id: UUID): ...
 
+    def running_sessions(self) -> Mapping[UUID, object]:
+        """Every session mid-turn, keyed by session id.
+
+        Reading the supervisor's own dict rather than asking it once per
+        session: `everywhere` has no project to start from, so the alternative
+        is listing projects and folding each one to learn its members --
+        exactly the cost that method exists to avoid.
+        """
+        ...
+
 
 class RunsInFlight(Protocol):
     """Satisfied by `ResearchSupervisor`."""
 
     def active(self, project_id: UUID): ...
 
+    def active_projects(self) -> Iterable[UUID]:
+        """Every project with a run going. Already keyed by project, so this
+        is the supervisor's own keys and costs nothing."""
+        ...
+
 
 class ExtractionsInFlight(Protocol):
     """Satisfied by `ExtractionActivity` in the web layer."""
 
     def in_flight(self, project_id: UUID) -> ExtractionSnapshot | None: ...
+
+    def active_projects(self) -> Iterable[UUID]:
+        """Every project with an extraction going, from the buffer's keys."""
+        ...
+
+
+class SessionProjects(Protocol):
+    """Which project each session belongs to.
+
+    A turn is keyed by session and a roster is keyed by project, so something
+    has to bridge the two. This is a read-model lookup -- `SessionSummaryRow`
+    carries `project_id` and it is required -- rather than a fold, which is the
+    only reason `everywhere` can be cheap. Satisfied by an adapter over
+    `SessionSummaries`.
+    """
+
+    async def project_ids(self) -> Mapping[UUID, UUID]: ...
 
 
 class ExtractionChannel(ExtractionsInFlight, Protocol):
@@ -122,6 +154,27 @@ class ExtractionChannel(ExtractionsInFlight, Protocol):
     def reporter(self, project_id: UUID): ...
 
 
+class SummaryProjects:
+    """`SessionProjects` over the stored session list.
+
+    An adapter rather than a method on `SessionSummaries`, because "which
+    project is this session in" is the roster's question and the summary list
+    already answers it -- `project_id` is a required column on the row. Reading
+    the projection means this stays a query against a maintained view rather
+    than a fold, which is the whole basis of `everywhere`'s cost claim.
+
+    The list is read whole and reduced here. That is one indexed table scan
+    against a read model the landing page already reads on every load, and it
+    happens only when a turn is actually running -- see `everywhere`.
+    """
+
+    def __init__(self, summaries) -> None:
+        self._summaries = summaries
+
+    async def project_ids(self) -> dict[UUID, UUID]:
+        return {row.session_id: row.project_id for row in await self._summaries.list()}
+
+
 class WorkerRoster:
     """Assembles one project's roster from whoever knows a piece of it."""
 
@@ -132,11 +185,13 @@ class WorkerRoster:
         turns: TurnsInFlight,
         runs: RunsInFlight | None = None,
         extractions: ExtractionsInFlight | None = None,
+        summaries: SessionProjects | None = None,
     ) -> None:
         self._projects = projects
         self._turns = turns
         self._runs = runs
         self._extractions = extractions
+        self._summaries = summaries
 
     async def on(self, project_id: UUID) -> Roster:
         """Everything working on `project_id`, in a fixed order.
@@ -198,6 +253,50 @@ class WorkerRoster:
             workers=tuple(workers),
             idle_session_ids=tuple(session for session in members if session not in busy),
         )
+
+    async def everywhere(self) -> tuple[Roster, ...]:
+        """Every project that has something running, and what it is running.
+
+        One answer for a reader who is not looking at a project -- a widget on
+        every page cannot ask per project, and `/api/projects` folds one
+        aggregate per row, so a naive "list projects, roster each" would be
+        O(projects) folds on every page load of a console whose most common
+        state is that nothing is running at all.
+
+        Instead the candidates come from the three supervisors, which already
+        hold exactly what is in flight in process-local dicts: runs and
+        extractions are keyed by project, and turns are keyed by session and
+        bridged through the summaries read model -- one indexed lookup, not a
+        fold. Only the projects that survive that are folded, so **cost is
+        proportional to activity rather than to how many projects exist**, and
+        the idle case costs zero folds. `test_everywhere_folds_nothing_when_
+        nothing_is_running` is what fails if that stops being true.
+
+        Ordered by project id rather than by activity, so a widget listing them
+        does not reshuffle between reads for no reason a reader can see.
+        """
+        active: set[UUID] = set()
+
+        if self._runs is not None:
+            active.update(self._runs.active_projects())
+        if self._extractions is not None:
+            active.update(self._extractions.active_projects())
+
+        sessions = list(self._turns.running_sessions())
+        if sessions:
+            # Only paid for when a turn is actually running: a build with just
+            # a run going never touches the read model.
+            projects = await self._summaries.project_ids() if self._summaries else {}
+            # A session the projection has not caught up to is skipped rather
+            # than failing the read. It costs one hidden worker for as long as
+            # the projection lags; failing would hide every other one too.
+            active.update(
+                project
+                for session in sessions
+                if (project := projects.get(session)) is not None
+            )
+
+        return tuple([await self.on(project_id) for project_id in sorted(active, key=str)])
 
 
 def _extraction_detail(snapshot: ExtractionSnapshot) -> str:

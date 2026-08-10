@@ -38,6 +38,7 @@ from research_team.application import (
     ProjectGraphs,
     ResearchSupervisor,
     SessionService,
+    SummaryProjects,
     TopicRoundRunner,
     TurnSupervisor,
     WorkerRoster,
@@ -912,7 +913,14 @@ def build_application(
     # "an extraction is running" and the pane's frames are two reads of one
     # buffer, and two instances would let them disagree.
     worker_roster = WorkerRoster(
-        service, turns=turns, runs=research_supervisor, extractions=extractions
+        service,
+        turns=turns,
+        runs=research_supervisor,
+        extractions=extractions,
+        # The projection, not the service: `everywhere` needs session -> project
+        # for the turns it finds, and asking the service would fold a session
+        # per running turn to learn something a read-model column already says.
+        summaries=SummaryProjects(summaries),
     )
 
     return Application(
