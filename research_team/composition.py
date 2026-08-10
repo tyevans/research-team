@@ -782,8 +782,21 @@ def build_application(
             event_store=repository.store,
             snapshot_store=repository.snapshot_store,
             provider=LangChainLlmProvider(extraction_model, model=config.model_name()),
+            # `repository.publisher`, like every other repository built here,
+            # and it was the one that did not have it. The corpus read model
+            # follows the log through this bus, so without it a `remember`
+            # appended `SourceDocumentStored` and woke nothing: the event was
+            # in the log, `topic_corpus_facts` had it (that repository
+            # publishes), and `corpus_documents` stayed empty for the life of
+            # the process -- which is "Documents" listing nothing while
+            # research is visibly fetching pages. Not caught by a signature:
+            # `event_publisher` is optional and defaults to None, so the wrong
+            # wiring is the quiet one. See
+            # `tests/integration/test_corpus_publishing.py`.
             corpus=build_corpus_repository(
-                repository.store, snapshot_store=repository.snapshot_store
+                repository.store,
+                repository.publisher,
+                snapshot_store=repository.snapshot_store,
             ),
             domain=config.knowledge_domain(),
         )
