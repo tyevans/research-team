@@ -1,0 +1,226 @@
+/* The agent widget: what is running, on every page.
+
+   Every value here is a token. The one thing this file is entitled to invent
+   is geometry that exists nowhere else -- the widget's own max width, and the
+   two breakpoints at which a row sheds a field -- and those are declared as
+   custom properties at the top rather than sprinkled through the rules. */
+
+.agents {
+  --agents-width: 33rem;
+
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  /* The container spans only what it holds, so the page underneath stays
+     clickable everywhere the widget is not actually drawn. */
+  max-width: min(var(--agents-width), calc(100vw - var(--space-5)));
+}
+
+/* ---------------- the collapsed pill ---------------- */
+
+.agents-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  cursor: pointer;
+  box-shadow: var(--shadow-1);
+}
+
+.agents-toggle:hover {
+  border-color: var(--line-strong);
+  color: var(--fg);
+}
+
+.agents-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  flex: none;
+}
+
+/* Amber, because the timeline already spends amber on tool activity and a
+   running agent is tool activity. Nothing new enters the palette to say
+   "live". */
+.agents-dot-live {
+  background: var(--k-tool);
+}
+
+.agents-dot-unknown {
+  background: var(--k-failure);
+}
+
+/* ---------------- the expanded panel ---------------- */
+
+.agents-panel {
+  width: min(var(--agents-width), calc(100vw - var(--space-5)));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.agents-rows {
+  /* Eight rows before it scrolls. Past that the widget would be taller than
+     the content it floats over, which is the point at which it stops being an
+     overlay and starts being the page. */
+  max-height: calc(8 * (var(--t-md) + 2 * var(--space-2) + 2px));
+  overflow-y: auto;
+}
+
+.agents-quiet {
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--fg-faint);
+  font-size: var(--t-sm);
+}
+
+/* ---------------- one agent, one line ---------------- */
+
+.agents-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--t-sm);
+  text-align: left;
+  cursor: pointer;
+  /* The rule that makes this a widget rather than a list: no row wraps, and
+     no row changes height. A row that grew when an agent started talking
+     would move every other row under the reader's cursor. */
+  white-space: nowrap;
+}
+
+.agents-row:last-child {
+  border-bottom: 0;
+}
+
+.agents-row:hover {
+  background: var(--bg-hover);
+}
+
+.agents-row-flat {
+  cursor: default;
+}
+
+.agents-row-flat:hover {
+  background: transparent;
+}
+
+.agents-kind {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* The event-kind palette, doing the job it already does in the timeline: a
+   reader who has learned these four colours there does not learn them twice. */
+.agents-kind-run {
+  background: var(--k-tool);
+}
+
+.agents-kind-turn {
+  background: var(--k-message);
+}
+
+.agents-kind-extraction {
+  background: var(--k-file);
+}
+
+.agents-kind-dispatch {
+  background: var(--k-session);
+}
+
+.agents-what {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+  flex: none;
+}
+
+.agents-where {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg);
+  flex: none;
+  /* A long project name is the one fixed field that can misbehave. It is
+     capped and ellipsised rather than allowed to squeeze the statement out. */
+  max-width: 9ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agents-since {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+  flex: none;
+  /* Tabular so the column does not jitter as seconds tick over. */
+  font-variant-numeric: tabular-nums;
+  min-width: 3ch;
+  text-align: right;
+}
+
+/* The only flexible field. `min-width: 0` is what actually permits it to
+   shrink below its own content -- a flex item defaults to `min-width: auto`,
+   and without this the row would push the tool call off the edge rather than
+   ellipsising the prose. */
+.agents-say {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-dim);
+}
+
+.agents-tool {
+  flex: none;
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--line);
+}
+
+/* The drop order, stated once. The tool call goes first: it is the field a
+   reader can most often infer from the statement beside it. Elapsed goes
+   next. The statement never goes -- it is the only field that says what the
+   agent is actually doing. */
+@media (width <= 560px) {
+  .agents-tool {
+    display: none;
+  }
+}
+
+@media (width <= 420px) {
+  .agents-since {
+    display: none;
+  }
+
+  .agents {
+    left: var(--space-4);
+    align-items: stretch;
+  }
+}

@@ -59,30 +59,40 @@ export const remember = (
   if (known && known.at >= entry.index) return tails
 
   const next = new Map(tails)
+  // Deleted before being set so the key moves to the end of the insertion
+  // order. That is what makes the eviction below least-recently-*active*
+  // rather than least-recently-first-seen, which would drop a long-running
+  // agent in favour of a chattier newer one.
+  next.delete(sessionId)
   next.set(sessionId, {
     say: isSay ? summary : (known?.say ?? null),
     tool: isTool ? summary : (known?.tool ?? null),
     at: entry.index,
   })
+
+  while (next.size > MAX_TRACKED) {
+    const oldest = next.keys().next()
+    if (oldest.done) break
+    next.delete(oldest.value)
+  }
   return next
 }
 
-/** Drop every session that is no longer running.
+/** How many sessions are remembered at once.
  *
- * What bounds this map. Without it a tab left open for a day accumulates one
- * entry per session that ever ran through it, and the widget only ever reads
- * the handful that are running now. Returns the same map when nothing was
- * dropped, for the same no-re-render reason `remember` does.
+ * What bounds this map, and deliberately *not* "drop everything that is no
+ * longer running". That was the first implementation and it was wrong in a way
+ * worth recording: the live set is only known after the roster resolves, so a
+ * frame arriving before it did was folded in and then immediately pruned back
+ * out, and the row stayed blank. Bounding by size needs no such knowledge and
+ * cannot race with it.
+ *
+ * A console never has anywhere near this many agents running; the cap is here
+ * so a tab left open for a day cannot grow one entry per session that ever ran
+ * through it. Stale entries are invisible either way -- the widget only ever
+ * looks up sessions that are in the roster it just read.
  */
-export const prune = (tails: TranscriptTails, keep: ReadonlySet<SessionId>): TranscriptTails => {
-  let extra = 0
-  for (const sessionId of tails.keys()) if (!keep.has(sessionId)) extra += 1
-  if (extra === 0) return tails
-
-  const next = new Map<SessionId, TranscriptTail>()
-  for (const [sessionId, tail] of tails) if (keep.has(sessionId)) next.set(sessionId, tail)
-  return next
-}
+export const MAX_TRACKED = 64
 
 /** How much of a statement reaches the DOM.
  *
