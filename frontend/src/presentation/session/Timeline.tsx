@@ -104,6 +104,20 @@ export const Timeline = ({ log, scrub, fresh, discarded, onSelect, onFork }: Tim
   const atHead = scrub.kind === 'head'
 
   return (
+    /* The grid is not itself a tab stop, and that is correct: this is a roving
+       tabindex, so exactly one row carries `tabIndex={0}` and the rest carry
+       `-1`. The rule cannot see a tab stop that lives on a child, so it reads
+       a `grid` with a key handler and no `tabIndex` as unreachable. Adding
+       `tabIndex={0}` here to satisfy it would create a second tab stop in
+       front of the row that already has one.
+
+       This is the rule pointing at genuinely correct code. The genuinely
+       *wrong* code nearby is what §2 of the component-system spec calls S-D7 --
+       an invisible column cursor where `→` silently changes what Enter does --
+       and no lint rule finds that one. Worth saying plainly so a reader does
+       not take a clean lint here as a verdict on this component; phase 4 is
+       where that gets fixed. */
+    /* eslint-disable-next-line jsx-a11y/interactive-supports-focus */
     <div
       className="timeline"
       role="grid"
@@ -131,6 +145,12 @@ export const Timeline = ({ log, scrub, fresh, discarded, onSelect, onFork }: Tim
         )
       })}
 
+      {/* The keyboard route to every row, this one included, is the grid's own
+          `onKeyDown` above -- arrows move the selection and Enter acts on it.
+          The rule looks for a handler on the element carrying the `onClick`
+          and finds none, because handling keys per row in a list this long is
+          exactly the thing a roving tabindex exists to avoid. */}
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events */}
       <div
         className={clsx('head-marker', atHead && 'selected')}
         role="row"
@@ -176,6 +196,9 @@ const TimelineRow = ({
 
   return (
     <>
+      {/* Same as the HEAD marker above: keys are handled once on the grid, not
+          once per row. */}
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events */}
       <div
         ref={ref}
         className={clsx(

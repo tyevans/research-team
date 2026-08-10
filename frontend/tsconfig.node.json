@@ -7,5 +7,9 @@
   // The build tooling, and the tests that check the build tooling. They read
   // config files off disk, so they need `node` types that application code
   // deliberately cannot see.
-  "include": ["vite.config.ts", "scripts/**/*.ts"]
+  // `.storybook` joins them: its config is Node's too, and including it here
+  // is what makes `npm run typecheck` catch a broken workbench config. That is
+  // the reason `storybook build` is deliberately absent from `npm run verify`
+  // — it would spend a minute of CI to find what this finds in a second.
+  "include": ["vite.config.ts", "scripts/**/*.ts", ".storybook/**/*.ts"]
 }

@@ -82,7 +82,36 @@ const Revision = ({
   const subject = diffSubject(revision, previous)
   return (
     <div className={`rev k-${classifyEventType(revision.type)}`}>
-      <div className="rev-head" onClick={onToggle}>
+      {/* A real control rather than a clickable div. `jsx-a11y` found this on
+          the day it was installed and it is a genuine defect, not a false
+          positive: before this, the revision header could be opened with a
+          mouse and by no other means -- no role, no tab stop, no key handler
+          -- so the diff underneath it was unreachable for a keyboard user.
+
+          Deliberately `role="button"` on the existing div rather than a real
+          `<button>`: the header is a grid of five spans and a chip, and a
+          button element brings its own display, font and padding that would
+          have to be reset, which is a visual change in a phase that promises
+          none. The cost of that choice is that the Enter/Space handling below
+          is ours to get right, where a `<button>` would have brought it for
+          free -- `FileHistory.test.tsx` is what fails if it regresses. Phase 2
+          replaces the whole thing with `Disclosure` on Radix and this goes
+          away. */}
+      <div
+        className="rev-head"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={onToggle}
+        onKeyDown={(event) => {
+          // Space scrolls the page by default, which is the wrong answer when
+          // the thing under the cursor is a fold.
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onToggle()
+          }
+        }}
+      >
         <span>{open ? '▾' : '▸'}</span>
         <span className="rev-idx">#{revision.index}</span>
         <span className="rev-type">{humaniseEventType(revision.type)}</span>
