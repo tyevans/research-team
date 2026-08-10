@@ -12,6 +12,7 @@ from research_team.interfaces.web import (
     WebApprovals,
     create_app,
 )
+from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.seeding import SeedingActivity
 
 
@@ -29,7 +30,15 @@ def main() -> None:
     # Web-layer state, matching `extraction`: nothing durable backs a seeding
     # run's status, so this buffer is what a reconnecting tab catches up from.
     seeding = SeedingActivity()
-    application = build_application(approvals=approvals, extractions=extraction)
+    # Web-layer state again, and for once genuinely both halves of one channel:
+    # the routes enqueue into this and the roster reads what is running out of
+    # it. One object, following `ExtractionChannel`'s reasoning -- two would
+    # show a roster that disagreed with the topic rows beside it, and nothing
+    # in either signature would catch it.
+    dispatch = DispatchQueue()
+    application = build_application(
+        approvals=approvals, extractions=extraction, dispatches=dispatch
+    )
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -66,6 +75,8 @@ def main() -> None:
             graphs=application.graphs,
             topic_seeder=application.topic_seeder,
             seeding=seeding,
+            dispatcher=application.dispatcher,
+            dispatch=dispatch,
             # The same object the executor's gating predicate reads, which is
             # the only reason the routes over it can change anything: a copy
             # would answer reads correctly and change nothing. Instance-wide,

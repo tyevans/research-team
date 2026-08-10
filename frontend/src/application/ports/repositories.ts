@@ -9,6 +9,7 @@ import type { Course } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
+import type { Dispatch } from '@domain/research/dispatch.ts'
 import type { SeedingRun } from '@domain/research/seeding.ts'
 import type { TopicDetail, TopicStatus, TopicView } from '@domain/research/topic.ts'
 import type { EventIndex } from '@domain/session/event-index.ts'
@@ -202,6 +203,40 @@ export interface TopicRepository {
   seedStatus(
     projectId: ProjectId,
   ): Promise<{ readonly current: SeedingRun | null; readonly last: SeedingRun | null }>
+  /** Send an agent at one topic. Answers with the dispatch as *queued*, not
+   *  running: the server has scheduled it and not started it when this
+   *  resolves, and the `running` frame follows over the live feed.
+   *
+   *  Never rejects with a 409, unlike `startSeed` — a control that appears on
+   *  every topic row cannot answer "the project is busy" to every second
+   *  press, so a busy project queues. Rejects 404 for a topic this project
+   *  does not have and 422 for an action this build does not run. */
+  dispatch(projectId: ProjectId, topicId: TopicId, action: string): Promise<Dispatch>
+  /** What is running, what is queued and how each topic's last one went.
+   *
+   *  The catch-up read these frames cannot do without: they carry no feed
+   *  position, so `Last-Event-ID` cannot replay them and a reconnecting tab
+   *  would otherwise be unable to tell "still running" from "finished before
+   *  I got here". */
+  dispatchStatus(projectId: ProjectId): Promise<DispatchBoard>
+  /** Stop what is running on this project and drop everything queued.
+   *
+   *  Per project rather than per dispatch, matching the route and
+   *  `ResearchSupervisor.cancel` behind it. */
+  cancelDispatch(projectId: ProjectId): Promise<number>
+}
+
+/** Everything a project has dispatched, as one read.
+ *
+ * Three fields rather than one list with a status filter, because they are
+ * three different questions the UI asks in three different places: the pane
+ * header counts the first two, and a row reads only the third unless it is
+ * itself the running one.
+ */
+export interface DispatchBoard {
+  readonly running: Dispatch | null
+  readonly queued: readonly Dispatch[]
+  readonly finished: readonly Dispatch[]
 }
 
 export interface DocumentRepository {

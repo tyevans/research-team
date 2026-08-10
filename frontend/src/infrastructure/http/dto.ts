@@ -440,6 +440,37 @@ export const seedingCatchUpDto = z.object({
   last: seedingFrameDto.nullable().default(null),
 })
 
+/** One dispatch, in the one shape the 202, the catch-up read and the SSE
+ *  channel all send — `dispatch_view` on the server is what keeps them
+ *  identical, and this schema is what notices if they stop being.
+ *
+ * `action` and `status` are `z.string()` rather than enums, matching
+ * `seedingFrameDto` and `topicFrameDto`: a server that grows a `lesson`
+ * action or a status this build has not heard of must reach the mapper's
+ * fallback, not fail validation and blank the row. */
+export const dispatchFrameDto = z.object({
+  type: z.string(),
+  project_id: z.string(),
+  topic_id: z.string(),
+  dispatch_id: z.string(),
+  action: z.string(),
+  status: z.string(),
+  question: maybe(z.string()),
+  position: maybe(z.number()),
+  path: maybe(z.string()),
+  session_id: maybe(z.string()),
+  detail: maybe(z.string()),
+})
+
+/** `running` is nullable and the two lists default to empty, matching the
+ *  shapes their sources have: there is at most one running dispatch, and any
+ *  number queued or finished. */
+export const dispatchCatchUpDto = z.object({
+  running: dispatchFrameDto.nullable().default(null),
+  queued: z.array(dispatchFrameDto).default([]),
+  finished: z.array(dispatchFrameDto).default([]),
+})
+
 /** The autonomy policy, as all three routes shape it through one presenter.
  *
  * `levels` values are `z.string()` rather than an enum on purpose: a server

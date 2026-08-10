@@ -18,6 +18,7 @@ import type {
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
+import type { Dispatch, DispatchStatus } from '@domain/research/dispatch.ts'
 import type { SeedingRun, SeedingStatus } from '@domain/research/seeding.ts'
 import type { TopicDetail, TopicStatus, TopicView } from '@domain/research/topic.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
@@ -424,6 +425,38 @@ export const toSeedingRun = (raw: Dto<typeof dto.seedingFrameDto>): SeedingRun =
   status: toSeedStatus(raw.status),
   subject: raw.subject,
   reply: raw.reply,
+  detail: raw.detail,
+})
+
+const DISPATCH_STATUSES: readonly DispatchStatus[] = [
+  'queued',
+  'running',
+  'done',
+  'failed',
+  'cancelled',
+]
+
+/** An unrecognised status reads as `running` rather than being dropped.
+ *
+ * `running` and not `queued`, because the two differ in what the UI offers:
+ * a row believing itself queued when the server has moved on shows a
+ * position that will never change, while one believing itself running shows
+ * a spinner that a later frame corrects. Guessing toward the state that
+ * self-corrects is the cheaper mistake — the same reasoning `toSeedStatus`
+ * applies to its own default.
+ */
+const toDispatchStatus = (raw: string): DispatchStatus =>
+  DISPATCH_STATUSES.find((status) => status === raw) ?? 'running'
+
+export const toDispatch = (raw: Dto<typeof dto.dispatchFrameDto>): Dispatch => ({
+  dispatchId: raw.dispatch_id,
+  topicId: raw.topic_id,
+  action: raw.action,
+  status: toDispatchStatus(raw.status),
+  question: raw.question,
+  position: raw.position,
+  path: raw.path,
+  sessionId: raw.session_id,
   detail: raw.detail,
 })
 

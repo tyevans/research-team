@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from research_team.application.workers import (
+    DispatchSnapshot,
     ExtractionSnapshot,
     WorkerRoster,
 )
@@ -47,6 +48,14 @@ class FakeRuns:
 
 class FakeExtractions:
     def __init__(self, snapshot: ExtractionSnapshot | None) -> None:
+        self._snapshot = snapshot
+
+    def in_flight(self, project_id: UUID):
+        return self._snapshot
+
+
+class FakeDispatches:
+    def __init__(self, snapshot: DispatchSnapshot | None) -> None:
         self._snapshot = snapshot
 
     def in_flight(self, project_id: UUID):
@@ -172,6 +181,75 @@ async def test_a_project_with_nothing_running_has_no_workers():
 
     assert result.workers == ()
     assert result.idle_session_ids == (session_id,)
+
+
+@pytest.mark.asyncio
+async def test_a_running_dispatch_is_a_worker_with_its_action_and_topic():
+    """`Worker.detail` is composed server-side so the landing-page roster and
+    the topic row say the same words. Asserted on the exact string for that
+    reason -- two front ends phrasing it themselves is the failure."""
+    project_id, session_id = uuid4(), uuid4()
+    roster = WorkerRoster(
+        FakeProjects(state_with(project_id, [session_id])),
+        turns=FakeTurns({}),
+        dispatches=FakeDispatches(
+            DispatchSnapshot(
+                topic_id="t-1",
+                action="understanding",
+                question="spaced repetition",
+                queued=0,
+                started_at=AT,
+            )
+        ),
+    )
+
+    result = await roster.on(project_id)
+
+    assert [w.kind for w in result.workers] == ["dispatch"]
+    assert result.workers[0].detail == "understanding · spaced repetition"
+    assert result.workers[0].ref == "t-1"
+    assert result.workers[0].started_at == AT
+
+
+@pytest.mark.asyncio
+async def test_a_dispatch_says_how_many_are_waiting_behind_it():
+    """A reader who scrolled away from the running row still needs to know
+    something is queued. Would pass with the count omitted if the queue were
+    always empty, which is why this one is not."""
+    project_id = uuid4()
+    roster = WorkerRoster(
+        FakeProjects(state_with(project_id, [])),
+        turns=FakeTurns({}),
+        dispatches=FakeDispatches(
+            DispatchSnapshot(
+                topic_id="t-1", action="understanding", question="retention", queued=2
+            )
+        ),
+    )
+
+    result = await roster.on(project_id)
+
+    assert result.workers[0].detail == "understanding · retention · 2 queued"
+
+
+@pytest.mark.asyncio
+async def test_a_dispatch_comes_after_the_run_and_before_the_turns():
+    """The order is fixed rather than incidental, so the panel does not
+    reshuffle between polls."""
+    project_id, run_session, busy = uuid4(), uuid4(), uuid4()
+    run = FakeActiveRun(uuid4(), project_id, run_session)
+    roster = WorkerRoster(
+        FakeProjects(state_with(project_id, [busy])),
+        turns=FakeTurns({busy: FakeRunningTurn(busy, 3, AT)}),
+        runs=FakeRuns(run),
+        dispatches=FakeDispatches(
+            DispatchSnapshot(topic_id="t-1", action="understanding", question="q", queued=0)
+        ),
+    )
+
+    result = await roster.on(project_id)
+
+    assert [w.kind for w in result.workers] == ["run", "dispatch", "turn"]
 
 
 @pytest.mark.asyncio

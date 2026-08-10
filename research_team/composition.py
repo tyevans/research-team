@@ -30,6 +30,7 @@ from research_team.application import (
     AutonomyPolicy,
     AutoResearchDriver,
     ContextStrategy,
+    DispatchesInFlight,
     ElideToolResults,
     ExtractionChannel,
     FullHistory,
@@ -54,6 +55,7 @@ from research_team.application.stage_exit import (
     render_review,
     review_stage,
 )
+from research_team.application.topic_dispatch import TopicDispatcher
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
@@ -204,6 +206,18 @@ class Application:
     module already holds -- nothing a factory would buy over exposing the
     one instance directly, the way `topic_repository` is exposed rather than
     rebuilt per call."""
+
+    dispatcher: TopicDispatcher
+    """Writes down what this project understands about one topic, in one turn.
+
+    A field for the same reason `topic_seeder` is one, and built from the same
+    three things this module already holds -- `service`, `turns` and
+    `topic_readers`. The reader in particular must be *this* instance's: the
+    dispatcher numbers a topic's directory by its position in the project's
+    topic list, and a second reader over the same database would answer the
+    same question, which is exactly why building one here rather than
+    threading it through would look harmless and be a second source of a fact
+    the front end also reads."""
 
     workers: WorkerRoster
     """Everything in flight on a project, for a front end that wants to show it.
@@ -397,6 +411,7 @@ def build_application(
     tracer: Tracer | None = None,
     approvals: ApprovalPort | None = None,
     extractions: ExtractionChannel | None = None,
+    dispatches: DispatchesInFlight | None = None,
     policy: AutonomyPolicy | None = None,
     project_id: UUID | None = None,
 ) -> Application:
@@ -908,11 +923,23 @@ def build_application(
     # through -- a seeding turn is a turn like any other, and `TopicSeeder`
     # joins and releases the project the same way `start_auto_research` does.
     topic_seeder = TopicSeeder(service, turns)
+    # Same `service` and `turns` again: a dispatch turn is a turn like any
+    # other. `topic_reader` is the same factory the read routes close over, so
+    # the number in `/topics/<nn>-<slug>/` and the order the topic list renders
+    # in cannot come from two different reads.
+    dispatcher = TopicDispatcher(service, turns, topic_reader)
     # The same object the tools report through, not a second one: the roster's
     # "an extraction is running" and the pane's frames are two reads of one
     # buffer, and two instances would let them disagree.
     worker_roster = WorkerRoster(
-        service, turns=turns, runs=research_supervisor, extractions=extractions
+        service,
+        turns=turns,
+        runs=research_supervisor,
+        extractions=extractions,
+        # Passed in rather than built here for `extractions`' reason: the
+        # queue the routes enqueue into and the one the roster reads must be
+        # the same object, and only the process that owns both can say so.
+        dispatches=dispatches,
     )
 
     return Application(
@@ -928,6 +955,7 @@ def build_application(
         topic_repository=topic_repository,
         research=research_supervisor,
         topic_seeder=topic_seeder,
+        dispatcher=dispatcher,
         workers=worker_roster,
         policy=resolved_policy,
         _initial_project_id=project_id,

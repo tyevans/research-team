@@ -1,5 +1,6 @@
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Approval } from '@domain/approval/approval.ts'
+import type { Dispatch } from '@domain/research/dispatch.ts'
 import type { SeedingRun } from '@domain/research/seeding.ts'
 import type { LogEntry } from '@domain/session/log-entry.ts'
 import type { ApprovalId, SessionId, TopicId } from '@domain/shared/identifier.ts'
@@ -43,6 +44,18 @@ export type FeedFrame =
    * also gets from the catch-up route, which is not project-addressed once
    * it is in a per-project query cache. */
   | { readonly kind: 'seeding'; readonly projectId: string; readonly run: SeedingRun }
+  /** A dispatch was queued, started, finished or failed.
+   *
+   * Decoded rather than routed raw, for `seeding`'s reason: `DispatchQueue`
+   * hands back one flat frame that already is the full domain model. Like
+   * seeding and unlike `topic`, it carries no feed position — nothing about a
+   * dispatch is appended to the log, so `Last-Event-ID` cannot replay these
+   * and a reconnecting tab refetches `/projects/{id}/dispatch` instead.
+   *
+   * `projectId` rides alongside `dispatch` rather than inside it because
+   * `Dispatch` is also what the catch-up route hands back, which is not
+   * project-addressed once it is in a per-project query cache. */
+  | { readonly kind: 'dispatch'; readonly projectId: string; readonly dispatch: Dispatch }
   /** A topic was opened or moved.
    *
    * A durable log entry, unlike `extraction` and `seeding` beside it -- it

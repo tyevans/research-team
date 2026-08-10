@@ -6,7 +6,7 @@ import type { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, seg } from './http-client.ts'
-import { toSeedingRun, toTopicDetail, toTopicView } from './mappers.ts'
+import { toDispatch, toSeedingRun, toTopicDetail, toTopicView } from './mappers.ts'
 
 export class HttpTopicRepository implements TopicRepository {
   constructor(private readonly http: HttpClient) {}
@@ -77,5 +77,35 @@ export class HttpTopicRepository implements TopicRepository {
       current: body.current ? toSeedingRun(body.current) : null,
       last: body.last ? toSeedingRun(body.last) : null,
     }
+  }
+
+  async dispatch(projectId: ProjectId, topicId: TopicId, action: string) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/topics/${seg(topicId)}/dispatch`,
+      { action },
+      dto.dispatchFrameDto,
+    )
+    return toDispatch(body)
+  }
+
+  async dispatchStatus(projectId: ProjectId) {
+    const body = await this.http.get(
+      `/api/projects/${seg(projectId)}/dispatch`,
+      dto.dispatchCatchUpDto,
+    )
+    return {
+      running: body.running ? toDispatch(body.running) : null,
+      queued: body.queued.map(toDispatch),
+      finished: body.finished.map(toDispatch),
+    }
+  }
+
+  async cancelDispatch(projectId: ProjectId) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/dispatch/cancel`,
+      {},
+      z.object({ cancelled: z.number() }),
+    )
+    return body.cancelled
   }
 }
