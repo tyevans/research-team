@@ -47,6 +47,10 @@ export const queryKeys = {
    * topic rows share one cache entry and one invalidation, rather than forty
    * entries the same frame would have to know which of to touch. */
   dispatch: (project: ProjectId) => ['dispatch', project] as const,
+  /** Per topic, unlike `dispatch` above: this listing is one topic's directory
+   *  and a dispatch on another topic cannot change it. */
+  topicDocuments: (project: ProjectId, topic: TopicId) =>
+    ['topic-documents', project, topic] as const,
   documents: (project: ProjectId) => ['documents', project] as const,
   /** Ranged reads are their own key, distinct from the whole-document read
    *  `range` omitted gives -- a range and the full text are two different

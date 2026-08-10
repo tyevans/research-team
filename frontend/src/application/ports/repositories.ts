@@ -10,6 +10,7 @@ import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { Dispatch } from '@domain/research/dispatch.ts'
+import type { TopicDocuments } from '@domain/research/topic-document.ts'
 import type { SeedingRun } from '@domain/research/seeding.ts'
 import type { TopicDetail, TopicStatus, TopicView } from '@domain/research/topic.ts'
 import type { EventIndex } from '@domain/session/event-index.ts'
@@ -224,6 +225,11 @@ export interface TopicRepository {
    *  Per project rather than per dispatch, matching the route and
    *  `ResearchSupervisor.cancel` behind it. */
   cancelDispatch(projectId: ProjectId): Promise<number>
+  /** Everything written about one topic, and the session/scrub pair to read
+   *  it at. Answers an empty listing for a topic nobody has dispatched at —
+   *  that is a state, not a missing resource — and rejects 404 only for a
+   *  topic this project does not have. */
+  documents(projectId: ProjectId, topicId: TopicId): Promise<TopicDocuments>
 }
 
 /** Everything a project has dispatched, as one read.

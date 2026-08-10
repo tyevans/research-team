@@ -67,6 +67,9 @@ const fakeTopics = (over: Partial<TopicRepository> = {}): TopicRepository => ({
   cancelDispatch: vi.fn(() => {
     throw new Error('SubQuestions should never call cancelDispatch()')
   }),
+  documents: vi.fn(() => {
+    throw new Error('SubQuestions should never call documents()')
+  }),
   ...over,
 })
 
