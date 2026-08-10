@@ -360,6 +360,35 @@ not the plumbing.
 
 ### B36. A stage gate is decided against evidence that is not durable or visible
 
+**Closed for the runner path; still open, unchanged, for the tool path.**
+
+`StageRunner` poses the gate *between* turns, after `_save_turn` has committed.
+On that path both halves of this item evaporate structurally rather than being
+worked around: the artifacts and the `check-findings` report are in the store
+while the reviewer decides, so `GET /api/sessions/{id}/files` answers, and
+nothing about `run_turn` changed. `test_the_artifacts_are_in_the_store_when_
+the_gate_is_posed` is what fails if that stops being true.
+
+The visibility half that was genuinely worth having landed too, in the smaller
+form the diagnosis implies once durability is not the problem: `gate_context`
+carries `artifact_paths` -- the *list* of files this stage produced, so a
+reviewer does not have to know where a stage writes -- and not their contents,
+because the viewer can already open them.
+
+**What is left is the tool path, and it is left deliberately.** A model calling
+`advance_stage` still raises the interrupt before the tool body runs, and at
+that instant nothing the turn produced has reached the store; that is what
+`test_nothing_the_turn_wrote_is_durable_when_the_reviewer_is_asked` pins and it
+is still true. `gate_context` passes no `artifact_paths` there, because on that
+path the files genuinely are not there yet and listing paths that answer 404
+would be worse than listing none. The durability analysis below is why nobody
+should fix that by committing mid-turn; the fix is to use the runner, or to
+accept that a hand-driven advance is reviewed against the findings and the
+model's rationale, which is what it has always been.
+
+The original item, kept because its diagnosis is the reason the runner is
+shaped as it is:
+
 `EndTurnOnStageAdvance` made a successful `advance_stage` end its turn, so a
 crossed boundary is durable before anything is built on it. It did **not**
 change the other half: the approval is still posed *before* the tool runs, and

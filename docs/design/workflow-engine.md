@@ -843,3 +843,76 @@ an estimate. If it does not, the other 32 prompts were never worth writing.
    runnable six-stage preset beats an unrunnable fifteen-stage one, but the cost
    is that the first increment does not improve the default path and somebody has
    to choose UbD at project creation to see any of it.
+
+---
+
+## 11. Amendment: what may execute `AdvanceStage` (2026-08-09)
+
+Appended rather than applied, per the `landing-page.md` §8 convention: §3.2's
+reasoning is most of `stage-boundaries.md`'s foundation and stays readable
+here. Where the two disagree, this section wins and says so by name.
+
+§3.2 forbids a driver from calling `Project.execute(AdvanceStage(...))`
+directly, on the grounds that the domain command is not gated and the tool is.
+That is right about the hazard and wrong about where to close it.
+`stage-boundaries.md` §4.4 works it through; the short form is that §3.2 closed
+*who may execute the command* when the property that matters is *what must have
+happened before the command is executed*, and those coincide only because the
+tool is the sole caller today. The cost §3.2 does not price is that making the
+tool the sole caller makes the **model** the only thing that can propose a
+boundary — while the two facts that decide whether a stage is done,
+`stage_artifact_paths` and `review_stage`, are computable and cost no model
+call.
+
+The amended rule, which `StageRunner` implements:
+
+> **A component may execute `AdvanceStage` if and only if it has, immediately
+> beforehand and in the same function, obtained an approval through
+> `ApprovalPort` for that advance, or observed that the operator has set
+> `advance_stage` to `auto`.** It may never write `AutonomyPolicy`. The
+> prohibition in §3.2 is narrowed to this: the hazard was an advance with no
+> decision behind it, not the identity of the caller.
+
+Three things follow, and all three are enforced rather than asserted.
+
+**The test §3.2 asked for is replaced by a stronger one.** §3.2 wanted "drive a
+stage to completion and check no `StageAdvanced` was appended", which is the
+right test for a rule about callers. The amended version is *no `StageAdvanced`
+was appended without a corresponding approval*, which is strictly stronger and
+is `test_no_stage_advanced_without_a_decision_recorded_against_it`. Beside it,
+`test_advancing_is_only_reachable_through_the_function_that_asks` parses
+`research_team/application/` and fails if a second construction site of
+`AdvanceStage` appears, or if the one that exists stops calling
+`ApprovalPort.decide` — because splitting the ask from the advance across two
+functions would leave the second reachable without the first, and every
+behavioural test would still pass.
+
+**§3.2's corollary is narrowed, not deleted.** "A driver cannot finish a
+course" becomes: a driver cannot finish a course *unless an operator has
+already recorded that it may*. `relax_all(include_stage_gates=True)` is that
+act — built, HTTP-routed, argued for at length in `autonomy.py`, and recorded
+as `AutonomyChanged`. A runner that reads the policy is not creating the
+capability; it is the first thing to use it. §3.2's honest options ("run a
+shorter preset, or turn `advance_stage` to `auto` by hand and own the
+consequence") were already the right ones and this changes only who acts on the
+second.
+
+**The unattended run still has a floor.** An invariant failure from
+`review_stage` stops the run without asking anyone, at `auto` as well as at
+`ask`, because `stage_exit.py` is right that there is nothing there for a human
+to weigh either. So the two failures that would otherwise produce a course
+claiming reviews it cannot evidence are not reachable by relaxing a policy.
+
+What has **not** changed: §3.2's first route stays closed exactly as written.
+The runner holds `AutonomyPolicy` and never calls `set` or `relax_all`, and
+`test_the_runner_never_writes_the_autonomy_policy` fails if it does — including
+if a constructor grows an `attended=` flag, which would be the same hole
+through a different door. §3.4 is untouched: no `LoopPolicy`, no convergence
+check, no retry state in the runner.
+
+Open question 3 above is closed by the same work: `StageAdvanced.decision`
+landed, as a case-1 addition, because a runner writing machine prose into
+`gate_decision` leaves the human's verdict nowhere to live. Three of the five
+`Decision` values are refused rather than stored, which keeps §3.4's
+"unrepresentable" claim true instead of letting it become "representable and
+meaningless".

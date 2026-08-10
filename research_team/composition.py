@@ -56,6 +56,7 @@ from research_team.application.stage_exit import (
     render_review,
     review_stage,
 )
+from research_team.application.stage_runner import StageRunner
 from research_team.application.topic_dispatch import TopicDispatcher
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
@@ -220,6 +221,22 @@ class Application:
     same question, which is exactly why building one here rather than
     threading it through would look harmless and be a second source of a fact
     the front end also reads."""
+
+    stage_runner: StageRunner
+    """Drives a project's stages, asking at every boundary it reaches.
+
+    A field and not a route, deliberately. `workflow-engine.md` §5 and
+    `stage-boundaries.md` open question 1 both say the same thing: the runner
+    should be built *after* a human has prompted a preset through by hand,
+    because the thing that would falsify its design is a prompt, and no preset
+    resolves end to end yet. Exposing it here makes it usable and testable
+    without committing a front end to a button that would spend a budget on
+    stages whose prompts do not exist. `TopicDispatcher` was reachable the
+    same way before `/dispatch` existed.
+
+    Built from the same `service`, `turns`, `approvals` and `policy` the rest
+    of this module holds -- the policy especially, for the reason stated where
+    it is constructed."""
 
     workers: WorkerRoster
     """Everything in flight on a project, for a front end that wants to show it.
@@ -959,6 +976,20 @@ def build_application(
     # the number in `/topics/<nn>-<slug>/` and the order the topic list renders
     # in cannot come from two different reads.
     dispatcher = TopicDispatcher(service, turns, topic_reader)
+    # The same `service`, `turns` and `resolved_policy` again. The policy in
+    # particular must be *this* instance's and not a copy: it is what decides
+    # whether the runner asks at a boundary, and a second policy object would
+    # let a run cross gates the operator had not relaxed -- which is the one
+    # property `stage-boundaries.md` §4.4 insists no second mechanism may
+    # decide. `approvals` is the same port the tool gate poses through, so a
+    # reviewer sees one kind of request whichever route proposed the advance.
+    stage_runner = StageRunner(
+        service,
+        turns,
+        lambda target: ProjectWorkflow(repository.projects, target),
+        approvals,
+        resolved_policy,
+    )
     # The same object the tools report through, not a second one: the roster's
     # "an extraction is running" and the pane's frames are two reads of one
     # buffer, and two instances would let them disagree.
@@ -971,6 +1002,11 @@ def build_application(
         # queue the routes enqueue into and the one the roster reads must be
         # the same object, and only the process that owns both can say so.
         dispatches=dispatches,
+        # The same runner the `stage_runner` field exposes. A second instance
+        # would hold its own in-flight dict and the dock would show nothing
+        # while a stage was being driven -- the exact failure #79 fixed for
+        # extractions by insisting on one buffer.
+        stages=stage_runner,
         # The projection, not the service: `everywhere` needs session -> project
         # for the turns it finds, and asking the service would fold a session
         # per running turn to learn something a read-model column already says.
@@ -991,6 +1027,7 @@ def build_application(
         research=research_supervisor,
         topic_seeder=topic_seeder,
         dispatcher=dispatcher,
+        stage_runner=stage_runner,
         workers=worker_roster,
         policy=resolved_policy,
         _initial_project_id=project_id,

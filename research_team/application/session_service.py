@@ -58,9 +58,11 @@ from research_team.domain import (
     RecordAttempt,
     RecordChecklistState,
     RecordForkSource,
+    RecordToolDecision,
     RecordToolResult,
     SendUserMessage,
     StartSession,
+    WriteFile,
 )
 from research_team.domain.learner import initial_state as learner_initial_state
 
@@ -567,6 +569,54 @@ class SessionService:
         aggregate = await self._repository.load(session_id)
         for tool_name, level in levels.items():
             aggregate.execute(ChangeAutonomy(tool_name=tool_name, level=level))
+        await self._repository.save(aggregate)
+
+    async def write_file(self, session_id: UUID, path: str, content: str) -> None:
+        """Put one file on a session's filesystem, outside any turn.
+
+        The agent's own `write_file` goes through the executor's tools and lands
+        on the aggregate a turn is holding. This is for the caller that has no
+        turn: a stage runner writing the `check-findings` report between turns,
+        which must be in the store before the gate is posed rather than
+        whenever the next turn happens to commit.
+
+        Deliberately narrow. This is not a general filesystem API for the
+        application layer -- a caller writing a *stage's artifact* this way
+        would be producing course content with no model, no stage prompt and no
+        record of a turn behind it, which is the provenance failure the whole
+        workflow engine exists to prevent.
+        """
+        aggregate = await self._repository.load(session_id)
+        aggregate.execute(WriteFile(path=path, file_data={"content": content}))
+        await self._repository.save(aggregate)
+
+    async def record_tool_decision(
+        self,
+        session_id: UUID,
+        tool_name: str,
+        args: dict[str, Any],
+        decision: str,
+        decided_by: str,
+    ) -> None:
+        """Note in the log that a gated call was allowed, refused, or amended.
+
+        The turn executor records this on the aggregate it is already holding,
+        mid-turn, and needs no use case for it. A caller deciding
+        something *between* turns holds no aggregate, and this is the seam for
+        it -- a stage runner posing an advance through `ApprovalPort` is the
+        only one today.
+
+        Appends immediately rather than deferring to a turn, because there is
+        no turn to defer to: the decision is made and acted on before the next
+        one starts, and a decision that reached the store only if some later
+        turn succeeded would be missing from exactly the runs that went wrong.
+        """
+        aggregate = await self._repository.load(session_id)
+        aggregate.execute(
+            RecordToolDecision(
+                tool_name=tool_name, args=args, decision=decision, decided_by=decided_by
+            )
+        )
         await self._repository.save(aggregate)
 
     @property
