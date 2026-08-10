@@ -206,6 +206,72 @@ def test_a_declared_check_actually_runs_and_reports():
     assert [finding.check for finding in review.findings] == ["shared.provenance"]
 
 
+# --- the matrices a stage's bindings are about -------------------------------
+#
+# `review_stage` used to build its `CheckContext` with no matrices at all, so
+# every `matrix_density` binding in every shipped preset answered "no matrix was
+# built for this stage" on every run, about every course. The message was the
+# right one for a missing matrix and it was being produced by a missing caller,
+# which is the worst shape a check can take: permanently loud, never about the
+# work, indistinguishable to its reader from a real gap.
+
+
+def _matrix_stage(**extra: Any) -> SpecifyStage:
+    return specify(
+        "s.one",
+        Check(
+            check="shared.matrix_density",
+            params={"matrix": "intent_x_evidence", "no_empty_rows": True, **extra},
+        ),
+    )
+
+
+MATRIX_COURSE = {
+    "/course/00-intent.md": file(
+        "---\nartifact_type: Intent\nlinks:\n- /course/01-ev.md\n---\nb"
+    ),
+    "/course/01-ev.md": file("---\nartifact_type: EvidenceSpec\n---\nb"),
+    "/course/02-intent-b.md": file("---\nartifact_type: Intent\n---\nb"),
+}
+
+
+def test_a_matrix_binding_that_names_its_axes_is_run_against_a_built_matrix():
+    """The wiring, from both directions in one test.
+
+    The covered intent produces nothing and the uncovered one produces the
+    empty-row finding. Reverted, both answer "no matrix was built" -- so the
+    finding's *text* is what proves the matrix exists, not the count.
+    """
+    stage = _matrix_stage(rows="Intent", columns="EvidenceSpec")
+    findings = review_stage(preset_of(stage), stage, MATRIX_COURSE).findings
+    assert len(findings) == 1
+    assert "/course/02-intent-b.md is uncovered" in findings[0].message
+
+
+def test_a_matrix_binding_with_no_axes_still_reports_that_it_had_no_matrix():
+    """An intrinsic grid is two attribute values, not two artifact types.
+
+    It cannot be built from a rows/columns filter pair, and inventing axes from
+    whatever artifacts happen to exist is what `coverage.py` names as the way to
+    make the empty-row diagnostic vacuous. So the honest answer stays the old
+    one, and this pins that the fix did not quietly become a blanket pass.
+    """
+    stage = _matrix_stage()
+    findings = review_stage(preset_of(stage), stage, MATRIX_COURSE).findings
+    assert len(findings) == 1
+    assert "never checked" in findings[0].message
+
+
+def test_an_axis_pair_that_selects_one_artifact_twice_does_not_take_the_review_down():
+    """`matrix_from_links` rejects a duplicated id, and a raise here would cost
+    the stage every other finding it had. The overlap is dropped from the
+    columns instead. Reverted, this review carries a `raised ValueError`
+    finding rather than a matrix."""
+    stage = _matrix_stage(rows="Intent", columns="Intent")
+    findings = review_stage(preset_of(stage), stage, MATRIX_COURSE).findings
+    assert all("raised" not in finding.message for finding in findings)
+
+
 def test_a_binding_naming_no_registered_check_is_reported_not_ignored():
     """A declared check that silently does not run is worse than none at all."""
     # A name that is not and will not be registered. This used to be

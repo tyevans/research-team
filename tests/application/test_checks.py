@@ -725,6 +725,48 @@ def test_an_empty_candidate_pool_is_a_finding_not_a_division_by_zero() -> None:
     assert len(findings) == 1
 
 
+def test_a_prune_binding_that_names_no_pool_is_refused() -> None:
+    """The defect this parameter set was rewritten to make unrepresentable.
+
+    Both filters used to default to "any artifact", so pool and survivors were
+    the same set, the ratio was 1.0 whatever the screen did, and two shipped
+    presets reported a rubber stamp on every run. A check that always fires is
+    worse than no check, so a binding that cannot name a denominator is a
+    malformed binding rather than a permanent finding.
+    """
+    with pytest.raises(MalformedCheck):
+        run_check(bind("shared.prune_ratio", survivors="Intent"), context())
+    with pytest.raises(MalformedCheck):
+        run_check(bind("shared.prune_ratio", expected_range=[0.15, 0.4]), context())
+
+
+def test_a_prune_ratio_counts_items_inside_a_file_when_told_where_they_are() -> None:
+    """One file of three understandings is three survivors, not one.
+
+    `load_course` gives one artifact per declared output, so without
+    `items_field` a fifteen-to-three prune and a no-op are both one file against
+    one file. Reverted -- with `items_field` ignored -- this reads 1 of 1.
+    """
+    graph = context(
+        artifact("kept", INTENT, subtype="understanding", fields={"text": "a\nb\nc\n"}),
+        artifact(
+            "cut",
+            ArtifactType.EXCLUSION,
+            fields={"entries": [{"candidate_id": f"u{n}"} for n in range(12)]},
+        ),
+    )
+    binding = bind(
+        "shared.prune_ratio",
+        survivors={"artifact_type": "Intent", "subtype": "understanding"},
+        items_field="text",
+        excluded={"artifact_type": "Exclusion"},
+        expected_range=[0.15, 0.40],
+    )
+    assert run_check(binding, graph) == []
+    without_a_ledger = context(graph.artifacts[0])
+    assert "3 of 3" in run_check(binding, without_a_ledger)[0].message
+
+
 @given(st.integers(min_value=1, max_value=30), st.integers(min_value=0, max_value=30))
 def test_prune_ratio_fires_exactly_outside_the_range(candidates: int, survivors: int) -> None:
     ratio = survivors / candidates
@@ -917,6 +959,32 @@ def test_prerequisite_must_exist_and_come_first() -> None:
     )
     messages = " ".join(finding.message for finding in findings)
     assert "parsing" in messages and "regex" in messages
+
+
+def test_one_provider_may_equip_several_keys() -> None:
+    """A skills artifact is a file of skills, not one skill.
+
+    Reverted, `str(["regex", "parsing"])` is the only key on offer, nothing ever
+    requires it, and both requirements below are reported unprovided -- which is
+    a check that cannot be satisfied wearing the message of one that can.
+    """
+    graph = context(
+        artifact("skills", INTENT, fields={"position": 1, "key": ["regex", "parsing"]}),
+        artifact("task", EVIDENCE, fields={"position": 5, "requires": ["regex", "parsing"]}),
+    )
+    assert (
+        run_check(
+            bind(
+                "shared.prerequisite_satisfied",
+                **{
+                    "for": {"artifact_type": "EvidenceSpec"},
+                    "required_from": {"artifact_type": "Intent"},
+                },
+            ),
+            graph,
+        )
+        == []
+    )
 
 
 # --- source starvation and contradiction escalation -------------------------

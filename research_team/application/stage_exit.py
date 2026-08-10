@@ -41,15 +41,19 @@ from research_team.application.checks import (
     CheckContext,
     Link,
     MalformedCheck,
+    MatrixDensityParams,
+    TypeFilter,
     UnknownCheck,
     run_check,
 )
+from research_team.application.coverage import ArtifactAxis, CoverageMatrix, matrix_from_links
 from research_team.application.findings import Finding
 from research_team.domain.workflow import ArtifactType, Preset, StageBase
 
 __all__ = [
     "FINDINGS_ARTIFACT",
     "StageReview",
+    "course_matrices",
     "findings_path",
     "gate_context",
     "load_course",
@@ -190,6 +194,81 @@ def _links_from(source: str, raw: Any) -> list[Link]:
     return links
 
 
+def course_matrices(
+    stage: StageBase, artifacts: tuple[Artifact, ...], links: tuple[Link, ...]
+) -> tuple[CoverageMatrix, ...]:
+    """The matrices this stage's `matrix_density` bindings are about, built.
+
+    Without this the check had nothing to read: `review_stage` constructed its
+    `CheckContext` with no matrices at all, so every `matrix_density` binding in
+    every shipped preset reported "no matrix was built for this stage" on every
+    run. That message is the honest one for a missing matrix and it was being
+    produced by a missing *caller*, which is the worst version of a check --
+    permanently loud, never about the course, and indistinguishable from a real
+    gap to whoever read it.
+
+    Built here rather than inside the check for the reason `CheckContext.matrices`
+    already states: the join happens once per stage exit rather than once per
+    binding, and a matrix a human corrected can still be handed to the check.
+
+    Only relational matrices. The axes come from the binding's `rows` and
+    `columns` filters, so a binding naming neither -- an intrinsic grid, whose
+    axes are attribute values and not artifacts -- is skipped and left to report
+    that it had no matrix. That is still true of it, and inventing an axis from
+    the artifacts that happen to exist would give the empty-row diagnostic
+    nothing to find, which `coverage.py` names as the way to make it vacuous.
+    """
+    ids = {artifact.id for artifact in artifacts}
+    matrices: list[CoverageMatrix] = []
+    for binding in stage.checks:
+        if binding.check != "shared.matrix_density":
+            continue
+        try:
+            params = MatrixDensityParams.model_validate(dict(binding.params))
+        except Exception:  # noqa: BLE001 -- run_check reports the malformed binding
+            continue
+        if params.rows is None or params.columns is None:
+            continue
+        rows = [a.id for a in artifacts if params.rows.matches(a)]
+        columns = [a.id for a in artifacts if params.columns.matches(a)]
+        # An artifact matching both filters would be its own row and column, and
+        # `matrix_from_links` would reject the duplicate id outright. Skipping
+        # the overlap keeps a badly-drawn axis pair from taking the stage's whole
+        # review down with a raise.
+        columns = [column for column in columns if column not in rows]
+        row_set, column_set = set(rows), set(columns)
+        edges = {
+            (source, target)
+            for link in links
+            if link.source in ids and link.target in ids
+            for source, target in ((link.source, link.target), (link.target, link.source))
+            if source in row_set and target in column_set
+        }
+        matrices.append(
+            matrix_from_links(
+                params.matrix,
+                row_axis=_axis(params.rows),
+                column_axis=_axis(params.columns),
+                rows=rows,
+                columns=columns,
+                links=sorted(edges),
+            )
+        )
+    return tuple(matrices)
+
+
+def _axis(filter_: TypeFilter) -> ArtifactAxis:
+    """A `TypeFilter` as the axis it describes.
+
+    An axis needs a type; a filter is allowed not to carry one. A filter with no
+    `artifact_type` names every artifact, which is not an axis anybody meant, so
+    it raises here rather than producing a matrix whose label is a lie.
+    """
+    if filter_.artifact_type is None:
+        raise ValueError("a matrix axis must name an artifact_type")
+    return ArtifactAxis(artifact_type=filter_.artifact_type, subtype=filter_.subtype)
+
+
 def review_stage(
     preset: Preset, stage: StageBase, files: Mapping[str, Mapping[str, Any]]
 ) -> StageReview:
@@ -204,10 +283,18 @@ def review_stage(
     are properties of the workflow graph rather than of its output; without
     them `self_review_separation` has nothing to compare and reports that it
     could not check, which is the same as not being enforced.
+
+    It carries `course_matrices` for the same reason: a `matrix_density` binding
+    handed no matrix reports that it was handed none, on every run, about every
+    course.
     """
     artifacts, links, unreadable = load_course(files)
     context = CheckContext(
-        artifacts=artifacts, links=links, preset_stages=preset.stages, stage=stage
+        artifacts=artifacts,
+        links=links,
+        matrices=course_matrices(stage, artifacts, links),
+        preset_stages=preset.stages,
+        stage=stage,
     )
     findings: list[Finding] = []
     unimplemented: list[str] = []

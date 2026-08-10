@@ -18,22 +18,31 @@ not. `_course()` below is a course written exactly as the six prompts instruct,
 and `test_a_course_written_as_the_prompts_instruct_leaves_only_the_known_gaps`
 runs every stage's real checks over it.
 
-That test is also where three defects in `ubd.pure` are pinned, deliberately as
-expected findings rather than as passes, because no prompt can fix any of them:
+**`KNOWN_GAPS` used to pin four defects in `ubd.pure` as expected findings**,
+because no prompt could fix any of them. All four are now fixed and the
+expectation is silence; the pins are corrected here rather than deleted, because
+what they were and what happened to them is the part worth keeping:
 
-- `ubd.step0.intake` binds `must_cite: SourceDocument`, and no stage in the
-  preset declares a `SourceDocument` output, so there is nothing in the course
-  directory for a claim to cite.
-- `ubd.stage1.desired_results` binds `prune_ratio` with neither
-  `candidate_pool` nor `survivors`, so both default to "any artifact" and the
-  ratio is 1.0 by construction on every run.
-- `ubd.stage2.evidence` binds `matrix_density`, and `review_stage` builds its
-  `CheckContext` with no matrices, so the binding always reports.
-- `ubd.stage3.organization` requires prerequisites from `Intent.skill`, and
-  `ubd.pure` has no skill tier at all -- textbook UbD Stage 1 does.
+- `ubd.step0.intake` bound `must_cite: SourceDocument`. No stage in any preset
+  declares a `SourceDocument` output and source documents live in the corpus
+  rather than in `/course`, so the requirement was unsatisfiable by
+  construction. The binding is gone; the base provenance requirement, which is
+  what it was reaching for, stays.
+- `ubd.stage1.desired_results` bound `prune_ratio` with neither
+  `candidate_pool` nor `survivors`, so both defaulted to "any artifact" and the
+  ratio was 1.0 on every run. It is now bound to the understandings and the
+  exclusion ledger, counted by item rather than by file.
+- `ubd.stage2.evidence` bound `matrix_density` and `review_stage` built its
+  `CheckContext` with no matrices, so the binding reported a missing matrix
+  always. `stage_exit.course_matrices` now builds it from the binding's axes.
+- `ubd.stage3.organization` required prerequisites from `Intent.skill` and
+  `ubd.pure` had no acquisition tier. Template 2.0 has one, so the preset was
+  wrong rather than the check: Stage 1 now produces knowledge and skill.
 
-If one of those is fixed, this test fails and says so, which is the point of
-writing them down as expectations rather than as a comment.
+Each of the four has a companion test below proving the check can still *fire*
+against this course. A check that cannot fire and a check that always fires are
+the same defect, and fixing one by producing the other would pass the test above
+without improving anything.
 """
 
 from pathlib import Path
@@ -152,9 +161,15 @@ def _course() -> dict[str, dict[str, str]]:
     """
     intake, dossier = _paths("ubd.step0.intake")
     profile, register = _paths("ubd.step1.context")
-    goals, understandings, questions, exclusions, misconceptions = _paths(
-        "ubd.stage1.desired_results"
-    )
+    (
+        goals,
+        understandings,
+        questions,
+        knowledge,
+        skills,
+        exclusions,
+        misconceptions,
+    ) = _paths("ubd.stage1.desired_results")
     task, other, criteria, rubric, matrix2, facets = _paths("ubd.stage2.evidence")
     pre, events, order, resources, monitoring, matrix3 = _paths("ubd.stage3.learning_plan")
     final_order, final_matrix = _paths("ubd.stage3.organization")
@@ -187,13 +202,22 @@ def _course() -> dict[str, dict[str, str]]:
                 "appraise historical claims they meet outside this course."
             ),
         ),
+        # Three understandings against twelve entries in the exclusion ledger:
+        # the fifteen-to-three prune the stage's `over_generate_factor` asks for,
+        # written the way the prompt asks for it -- one per line in `text`, and
+        # the cut ones as ledger entries, which is the only record the pool
+        # leaves behind.
         understandings: _file(
             "ubd.stage1.desired_results",
             artifact_type="Intent",
             subtype="understanding",
             text=(
                 "Students will understand that a source's proximity to an event "
-                "raises its detail and its interest in the account equally."
+                "raises its detail and its interest in the account equally.\n"
+                "Students will understand that an absence in the record is "
+                "evidence about who kept records, not about what happened.\n"
+                "Students will understand that corroboration between two accounts "
+                "is worth less when both descend from one origin.\n"
             ),
             links=[questions, goals],
         ),
@@ -201,9 +225,43 @@ def _course() -> dict[str, dict[str, str]]:
             "ubd.stage1.desired_results",
             artifact_type="Intent",
             subtype="essential_question",
-            text="Whose account of this should we believe, and how would we know?",
+            text=(
+                "Whose account of this should we believe, and how would we know?\n"
+                "What does this silence in the record tell us?\n"
+            ),
         ),
-        exclusions: _file("ubd.stage1.desired_results", artifact_type="Exclusion"),
+        knowledge: _file(
+            "ubd.stage1.desired_results",
+            artifact_type="Intent",
+            subtype="knowledge",
+            text=(
+                "Students will know the difference between a primary and a "
+                "secondary source.\n"
+                "Students will know the conventions by which historians cite "
+                "archival material.\n"
+            ),
+        ),
+        skills: _file(
+            "ubd.stage1.desired_results",
+            artifact_type="Intent",
+            subtype="skill",
+            text=(
+                "Students will be skilled at weighing two accounts of one event "
+                "against each other.\n"
+                "Students will be skilled at tracing an account back to the "
+                "record it rests on.\n"
+            ),
+            key=["weigh-two-accounts", "trace-to-record"],
+            position=2,
+        ),
+        exclusions: _file(
+            "ubd.stage1.desired_results",
+            artifact_type="Exclusion",
+            entries=[
+                {"candidate_id": f"u{index}", "reason": "a truism with no plausible rival"}
+                for index in range(12)
+            ],
+        ),
         misconceptions: _file(
             "ubd.stage1.desired_results",
             artifact_type="RiskRegister",
@@ -217,11 +275,17 @@ def _course() -> dict[str, dict[str, str]]:
             requires=["weigh-two-accounts"],
             links=[goals, understandings],
         ),
+        # Other evidence carries the acquisition tier and the essential
+        # questions, which is what the stage 2 prompt asks of it: knowledge and
+        # discrete skill "well served by other evidence", and every intent
+        # needing evidence of some kind. Without these links they are empty rows
+        # in the intent-by-evidence matrix, which is the finding that matrix
+        # exists to produce.
         other: _file(
             "ubd.stage2.evidence",
             artifact_type="EvidenceSpec",
             subtype="other_evidence",
-            links=[understandings],
+            links=[understandings, questions, knowledge, skills],
         ),
         criteria: _file(
             "ubd.stage2.evidence",
@@ -290,16 +354,17 @@ def _course() -> dict[str, dict[str, str]]:
     return {path: {"content": content} for path, content in files.items()}
 
 
-#: The findings that survive a correctly written course, per stage, and why.
-#: Every one is a defect in `ubd.pure` or in the harness wiring that no prompt
-#: can reach. See the module docstring.
-KNOWN_GAPS = {
-    "ubd.step0.intake": ("shared.provenance",),
+#: The findings that survive a correctly written course, per stage.
+#: Four of these were non-empty and are not any more; see the module docstring
+#: for what each was. Nothing here is expected to stay empty by luck -- the
+#: `_is_caught` tests below fire each of the four deliberately.
+KNOWN_GAPS: dict[str, tuple[str, ...]] = {
+    "ubd.step0.intake": (),
     "ubd.step1.context": (),
-    "ubd.stage1.desired_results": ("shared.prune_ratio",),
-    "ubd.stage2.evidence": ("shared.matrix_density",),
+    "ubd.stage1.desired_results": (),
+    "ubd.stage2.evidence": (),
     "ubd.stage3.learning_plan": (),
-    "ubd.stage3.organization": ("shared.prerequisite_satisfied",),
+    "ubd.stage3.organization": (),
 }
 
 
@@ -317,6 +382,120 @@ def test_a_course_written_as_the_prompts_instruct_leaves_only_the_known_gaps(sta
     review = review_stage(ubd_pure, stage, _course())
     assert review.unreadable == ()
     assert tuple(finding.check for finding in review.findings) == KNOWN_GAPS[stage_id]
+
+
+def _checks(stage_id: str, course) -> list[str]:
+    stage = next(stage for stage in ubd_pure.stages if stage.id == stage_id)
+    return [finding.check for finding in review_stage(ubd_pure, stage, course).findings]
+
+
+def _messages(stage_id: str, course, check: str) -> list[str]:
+    stage = next(stage for stage in ubd_pure.stages if stage.id == stage_id)
+    review = review_stage(ubd_pure, stage, course)
+    return [finding.message for finding in review.findings if finding.check == check]
+
+
+def _replace(course, path: str, old: str, new: str):
+    course[path] = {"content": course[path]["content"].replace(old, new, 1)}
+    return course
+
+
+# --- the four, from the other direction --------------------------------------
+#
+# Each of these was silent before its defect was fixed, because each check was
+# either unsatisfiable or already reporting on a clean course -- there was
+# nothing a mutation could change. They are the half of the fix that the
+# `KNOWN_GAPS` test cannot supply: it says the check is quiet, and quiet is also
+# what a check that has been switched off sounds like.
+
+
+def test_an_uncited_source_claim_is_caught():
+    """Intake's provenance requirement still bites once `must_cite` is gone.
+
+    `must_cite: SourceDocument` was the unsatisfiable half and this is what
+    remains. Reverted -- with the provenance block restored -- this test fails.
+    """
+    course = _replace(
+        _course(),
+        _paths("ubd.step0.intake")[0],
+        "provenance:\n- source_id: src-1\n  start: 40\n  end: 210\n",
+        "provenance: []\n",
+    )
+    assert "shared.provenance" in _checks("ubd.step0.intake", course)
+
+
+def test_a_prune_that_cut_nothing_is_caught():
+    """The rubber stamp, now that the ratio is computed from something.
+
+    An empty exclusion ledger is a screen with no record of having screened, and
+    the pool collapses to the survivors -- 3 of 3.
+
+    The counts are asserted, not just the check name. Before the binding was
+    fixed this check fired on every course, so a test asserting only that it
+    fired would pass against the defect it was written to prove gone.
+    """
+    course = _course()
+    path = _paths("ubd.stage1.desired_results")[5]
+    course[path] = {"content": course[path]["content"].split("entries:")[0] + "---\n\nbody\n"}
+    assert _messages("ubd.stage1.desired_results", course, "shared.prune_ratio") == [
+        "3 of 3 survived (100%), expected 15%-40%: the screen kept almost "
+        "everything, which is what a rubber stamp looks like"
+    ]
+
+
+def test_an_unassessed_intent_is_caught():
+    """An empty row in the intent-by-evidence matrix, which is now built.
+
+    The essential questions are evidenced only by the other-evidence artifact, so
+    dropping that one link leaves an intent nothing assesses -- the finding the
+    stage 2 prompt describes as "a promise the unit does not keep".
+
+    The message is asserted rather than the count, and that is the whole point:
+    before `course_matrices` existed this binding produced exactly one finding
+    too -- "no matrix was built for this stage" -- so a count assertion would
+    have passed against the wiring fault it exists to prove fixed.
+    """
+    questions = _paths("ubd.stage1.desired_results")[2]
+    course = _replace(_course(), _paths("ubd.stage2.evidence")[1], f"- {questions}\n", "")
+    messages = _messages("ubd.stage2.evidence", course, "shared.matrix_density")
+    assert len(messages) == 1
+    assert f"{questions} is uncovered" in messages[0]
+
+
+def test_a_task_needing_a_skill_the_unit_never_teaches_is_caught():
+    """The prerequisite check, against an acquisition tier that now exists.
+
+    Reverted -- that is, with `ubd.pure` carrying no skill tier -- this test
+    passes for the wrong reason: the check fired on every task with any
+    `requires` at all, including the correct ones. The `KNOWN_GAPS` case above
+    is the load-bearing half of this pair, and this one exists so that a later
+    edit cannot make that one pass by making the check unfireable.
+    """
+    course = _replace(
+        _course(),
+        _paths("ubd.stage2.evidence")[0],
+        "weigh-two-accounts",
+        "read-latin-charters",
+    )
+    assert "shared.prerequisite_satisfied" in _checks("ubd.stage3.organization", course)
+
+
+def test_a_skill_equipped_after_the_task_that_needs_it_is_caught():
+    """The ordering half, which is the one that survives review.
+
+    A task at position 8 requiring a skill the unit equips at position 9 reads
+    perfectly well in the document. Nothing but the position comparison sees it.
+
+    Like the test above, this one would also pass against the unfixed preset --
+    which is why the message is asserted: "does not equip until later" is only
+    reachable once a provider exists at all.
+    """
+    course = _replace(
+        _course(), _paths("ubd.stage1.desired_results")[4], "position: 2", "position: 9"
+    )
+    messages = _messages("ubd.stage3.organization", course, "shared.prerequisite_satisfied")
+    assert len(messages) == 1
+    assert "does not equip until later" in messages[0]
 
 
 def test_dropping_the_understanding_stem_is_caught():

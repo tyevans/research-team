@@ -103,6 +103,7 @@ __all__ = [
     "FindingSeverity",
     "Link",
     "MalformedCheck",
+    "MatrixDensityParams",
     "TypeFilter",
     "UnknownCheck",
     "critic_gates",
@@ -1127,9 +1128,60 @@ def _self_review_separation(context: CheckContext, params: SeparationParams) -> 
 
 
 class PruneParams(Params):
-    candidate_pool: TypeFilter = Field(default_factory=TypeFilter)
-    survivors: TypeFilter = Field(default_factory=TypeFilter)
+    survivors: TypeFilter | None = None
+    candidate_pool: TypeFilter | None = None
+    excluded: TypeFilter | None = None
+    items_field: str | None = None
+    """Count the items *inside* each selected artifact rather than the artifacts.
+
+    `load_course` builds one `Artifact` per file and a stage writes one file per
+    declared output, so counting artifacts counts files: an understandings file
+    and a candidates file are one apiece however many lines each holds, and the
+    ratio is 1.0 whatever the screen did. Naming the field that holds the items
+    -- a list, or a block scalar written one per line -- is the only way the
+    numerator can be a number of understandings rather than a number of files.
+    """
+    entries_field: str = "entries"
+    """Where an `excluded` ledger keeps what it cut, one entry each."""
     expected_range: tuple[float, float] = (0.1, 0.6)
+
+    @model_validator(mode="after")
+    def _the_denominator_is_named(self) -> "PruneParams":
+        """Rejected at validation, not at run time, so a defective binding is a
+        preset error the whole-preset parameter test sees rather than a finding
+        one run of one stage produces."""
+        if self.survivors is None:
+            raise ValueError(
+                "prune_ratio needs `survivors`: without it the numerator is "
+                "every artifact in the course"
+            )
+        if self.candidate_pool is None and self.excluded is None:
+            raise ValueError(
+                "prune_ratio needs `candidate_pool` (where the candidates survive "
+                "as artifacts of their own) or `excluded` (the ledger of what was "
+                "cut); with neither, the ratio is 1.0 by construction"
+            )
+        return self
+
+
+def _count(artifacts: Sequence[Artifact], items_field: str | None) -> int:
+    """How many things these artifacts amount to: files, or items within them.
+
+    A string is counted by non-blank lines because that is how every shipped
+    prompt writes a multi-item `text` field. A field of any other shape counts
+    zero rather than one -- an item field nobody wrote is not one item, and
+    counting it as one is how a denominator quietly becomes a floor.
+    """
+    if items_field is None:
+        return len(artifacts)
+    total = 0
+    for artifact in artifacts:
+        value = artifact.fields.get(items_field)
+        if isinstance(value, list | tuple):
+            total += len(value)
+        elif isinstance(value, str):
+            total += len([line for line in value.splitlines() if line.strip()])
+    return total
 
 
 @_register("shared.prune_ratio", PruneParams)
@@ -1143,22 +1195,41 @@ def _prune_ratio(context: CheckContext, params: PruneParams) -> list[Result]:
     work; a ratio near 0 means the generator did none, or the criterion document
     is wrong.
 
+    **The denominator has to be named, and there are two honest ways to name
+    it.** Either the candidates survive as artifacts of their own and
+    `candidate_pool` selects them, or they do not -- UbD generates fifteen
+    understandings in one turn and writes three down -- and then the only record
+    of the pool is the survivors plus the ledger of what was cut, which is what
+    `excluded` is for. A binding supplying neither is `MalformedCheck` rather
+    than a finding: both filters defaulting to "any artifact" made pool and
+    survivors the same set and pinned the ratio at 1.0, so the check reported a
+    rubber stamp on every run of two shipped presets and taught its readers to
+    skip it. A check that always fires is worse than no check, and the cost of
+    refusing the binding is that a preset author must say what was screened.
+
     An empty pool is a finding rather than a division by zero: a screen with
     nothing to screen ran, reported success, and means nothing.
     """
-    pool = _select(context, params.candidate_pool)
-    kept = _select(context, params.survivors)
+    assert params.survivors is not None  # held by `_the_denominator_is_named`
+    kept_items = _select(context, params.survivors)
+    kept = _count(kept_items, params.items_field)
+    if params.candidate_pool is not None:
+        described = params.candidate_pool.describe()
+        pool = _count(_select(context, params.candidate_pool), params.items_field)
+    else:
+        assert params.excluded is not None
+        described = f"{params.excluded.describe()} entry"
+        pool = kept + _count(_select(context, params.excluded), params.entries_field)
     low, high = params.expected_range
     if not pool:
         return [
             (
-                f"no {params.candidate_pool.describe()} to prune, so the prune "
-                "ratio means nothing",
+                f"no {described} to prune, so the prune ratio means nothing",
                 (),
                 "check the generating stage actually produced a pool",
             )
         ]
-    ratio = len(kept) / len(pool)
+    ratio = kept / pool
     if low <= ratio <= high:
         return []
     verdict = (
@@ -1168,7 +1239,7 @@ def _prune_ratio(context: CheckContext, params: PruneParams) -> list[Result]:
     )
     return [
         (
-            f"{len(kept)} of {len(pool)} survived ({ratio:.0%}), expected "
+            f"{kept} of {pool} survived ({ratio:.0%}), expected "
             f"{low:.0%}-{high:.0%}: {verdict}",
             (),
             "review the rejections at the gate before accepting this",
@@ -1453,13 +1524,24 @@ def _prerequisite_satisfied(context: CheckContext, params: PrerequisiteParams) -
     named, while the task that requires a skill taught two weeks later reads
     perfectly well in the document and fails only in a classroom. Gagne's
     prerequisite ordering is the same constraint under a different name.
+
+    A provider may equip **several** keys, because `load_course` gives one
+    artifact per file and a stage writes one file per declared output: the
+    skills a unit teaches are lines in one artifact, not one artifact each. A
+    list-valued `key_field` is therefore every key that artifact equips. Reading
+    only a scalar there was not a smaller feature, it was a wrong answer --
+    `str(["a", "b"])` is a key nothing ever requires, so every requirement
+    reported as unprovided.
     """
     providers = _select(context, params.required_from)
-    supplied = {
-        str(provider.fields.get(params.key_field)): provider
-        for provider in providers
-        if provider.fields.get(params.key_field) is not None
-    }
+    supplied: dict[str, Artifact] = {}
+    for provider in providers:
+        raw_keys = provider.fields.get(params.key_field)
+        if raw_keys is None:
+            continue
+        keys = raw_keys if isinstance(raw_keys, list | tuple) else [raw_keys]
+        for key in keys:
+            supplied.setdefault(str(key), provider)
     results: list[Result] = []
     for consumer in _select(context, params.for_):
         raw = consumer.fields.get(params.via)
@@ -1679,6 +1761,17 @@ what it is rather than as a check that keeps failing.
 
 class MatrixDensityParams(Params):
     matrix: str
+    rows: TypeFilter | None = None
+    columns: TypeFilter | None = None
+    """The two axes of a relational matrix, as filters over the course.
+
+    Read by `stage_exit.course_matrices`, not by this check: naming the axes in
+    the binding is what lets the harness *build* the matrix a binding is about
+    before running it. They are optional because an intrinsic matrix (Tyler's
+    behaviour x content) is not two artifact types and cannot be built this way;
+    such a binding still needs a matrix supplied some other way, and reports
+    that it had none if nothing supplies one.
+    """
     no_empty_rows: bool = False
     no_empty_columns: bool = False
     max_cell_density: float | None = None
