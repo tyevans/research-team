@@ -67,6 +67,18 @@ const Shell = () => {
           course={route.name === 'course' || route.name === 'research' ? course : null}
         />
         <div className="topbar-right">
+          {/* In the bar rather than floating over the page: as a fixed panel at
+              the lower right it sat on top of whatever was there, and the only
+              way past it was to find its own toggle. Here because "what is
+              running" is not a property of the page you happen to be on --
+              which is the whole reason it exists -- and the topbar is the one
+              piece of chrome every route already shares.
+
+              Left of the badges: those two describe the connection, this
+              describes the work, and the connection is the thing you look for
+              when the work stops making sense -- so it stays at the edge where
+              it has always been rather than being pushed along. */}
+          <AgentWidget />
           <DriftBadge />
           <ConnectionBadge state={stream.connection} />
         </div>
@@ -77,12 +89,6 @@ const Shell = () => {
       <main id="app">
         <CurrentView route={route} store={sessionStore} onCourse={setCourse} />
       </main>
-
-      {/* Outside `main`, and last in the document: it floats over every route
-          and belongs to none of them. Rendered here rather than inside each
-          view because "what is running" is not a property of the page you
-          happen to be on -- which is the whole reason it exists. */}
-      <AgentWidget />
     </>
   )
 }
