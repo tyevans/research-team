@@ -208,6 +208,64 @@ async def test_the_whole_graph_arrives_wired_in_one_call(graph_reader, seeded_gr
     assert graph.truncated is False
 
 
+async def _merge_away(store, *, alias_id, canonical_id):
+    """Record `alias_id` as having been absorbed into `canonical_id`.
+
+    Written straight into the store rather than driven through `Consolidator`,
+    for the reason at the top of this module: what is under test is the read
+    side. An `Alias` row is exactly what redstring's own merge projection
+    leaves behind, so seeding one reproduces the post-merge state without an
+    LLM, an adjudicator or a similarity threshold in the way.
+    """
+    from datetime import UTC, datetime
+
+    from redstring.domain.alias import Alias
+
+    await store.upsert_alias(
+        Alias(
+            id=uuid4(),
+            tenant_id=TENANT_ID,
+            canonical_entity_id=canonical_id,
+            alias_entity_id=alias_id,
+            merged_at=datetime.now(UTC),
+            merge_reason="the same thing under two names",
+        )
+    )
+
+
+async def test_an_entity_merged_away_is_not_drawn_as_its_own_node(graph_reader):
+    """A merge is not a delete, and the canvas was drawing the difference.
+
+    `GraphStore.find_entities` returns absorbed entities too -- redstring
+    documents that deliberately, because the row is what `undo` restores. This
+    reader passed the result straight to the browser, so a *correctly*
+    consolidated pair still rendered as two nodes: the canonical one with all
+    the edges, and the alias sitting beside it with none, since the merge
+    redirected them. That is the duplicate a reader actually sees, and no
+    amount of fixing consolidation removes it.
+
+    This test would pass with the change reverted only if `find_entities` had
+    stopped returning aliases, which is not something this repository controls.
+    Proved red first: before the fix it found both names.
+    """
+    reader, store = graph_reader
+    canonical_id, alias_id = uuid4(), uuid4()
+    await store.upsert_entities(
+        [
+            _entity(canonical_id, "Nova Scotia Duck Tolling Retriever"),
+            _entity(alias_id, "Nova Scotia Duck Tolling Retriever"),
+        ]
+    )
+    await _merge_away(store, alias_id=alias_id, canonical_id=canonical_id)
+
+    graph = await reader.whole()
+
+    assert [entity.entity_id for entity in graph.entities] == [str(canonical_id)]
+
+    page = await reader.find_entities(name="Nova Scotia")
+    assert [entity.entity_id for entity in page.entities] == [str(canonical_id)]
+
+
 async def test_an_empty_project_reads_as_an_empty_graph(graph_reader):
     """A project with nothing extracted yet is the commonest way to reach
     this read at all, and it must answer rather than fail."""

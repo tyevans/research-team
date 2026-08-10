@@ -5,7 +5,12 @@ import pytest
 from eventsource import StreamId, collect
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
-from redstring import InMemoryGraphStore, document_stream
+from redstring import (
+    FakeLlmProvider,
+    InMemoryGraphStore,
+    LlmProviderError,
+    document_stream,
+)
 
 from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
@@ -31,7 +36,7 @@ async def build_adapter():
     opened_event_stores = []
     opened_snapshot_stores = []
 
-    def _build(tmp_path, project_id, *, provider=None):
+    def _build(tmp_path, project_id, *, provider=None, adjudicate=False):
         db_path = str(tmp_path / "sessions.db")
         store = SQLiteEventStore(db_path)
         snapshot_store = SQLiteSnapshotStore(db_path)
@@ -46,7 +51,13 @@ async def build_adapter():
                 provider=provider if provider is not None else fake_provider(),
                 corpus=build_corpus_repository(store, snapshot_store=snapshot_store),
                 domain="encyclopedia_wiki",
-                adjudicate=False,
+                # Off by default: most tests here are about the adapter's own
+                # bookkeeping and an adjudicator would put a second, unrelated
+                # schema in every fake provider's way. Tests about *whether two
+                # things merge* must turn it on -- with it off the ambiguous
+                # band is rejected, which is redstring's stated behaviour and
+                # not something this adapter can work around.
+                adjudicate=adjudicate,
             ),
             store,
             snapshot_store,
@@ -125,13 +136,20 @@ async def test_reconsolidate_is_scoped_to_one_documents_entities(tmp_path, build
     `source_id` and always re-resolved the same set -- or read the wrong
     stream -- would fail the disjointness check below even though its return
     value (empty merges, zero failures) would look identical either way. That
-    return value is otherwise uninformative here: a merged entity's
-    relationships are fully redirected onto its canonical, which drops its
-    own graph-similarity signal to `0.0` and keeps its score under
-    redstring's candidate threshold, so re-resolving it after an explicit
-    merge is a genuine no-op (redstring's own idempotence, not something this
-    adapter adds) -- which is exactly why the no-op alone cannot prove
-    `source_id` did any work.
+    return value is otherwise uninformative here: re-resolving after an
+    explicit merge is a genuine no-op, because `CandidateFinder._block` runs
+    `resolve_entity_ids` over the whole block and drops every entity that is
+    already an alias -- an absorbed entity cannot be merged again, so it is
+    never proposed. That is redstring's own idempotence rather than anything
+    this adapter adds, and it is why the no-op alone cannot prove `source_id`
+    did any work.
+
+    This docstring previously attributed the no-op to the merged entity's
+    graph-similarity signal dropping to `0.0` and holding its score under
+    redstring's threshold. That mechanism is real -- it is the bug
+    `test_one_entity_named_the_same_in_two_documents_becomes_one_node` pins --
+    but it is not what makes *this* case a no-op, and alias exclusion happens
+    first regardless of any score.
     """
     project_id = uuid4()
     adapter, _, _ = build_adapter(tmp_path, project_id)
@@ -174,6 +192,141 @@ async def test_reconsolidate_is_scoped_to_one_documents_entities(tmp_path, build
     assert a_merges == (), "the merge already happened; resolve has nothing to redo"
     assert b_failures == 0, "document b's entities were never touched"
     assert b_merges == (), "b's entities were never candidates for each other"
+
+
+#: One entity, named identically in two documents, each with a *different*
+#: neighbour. That difference is the whole point: entity ids are namespaced per
+#: document by `redstring.extraction.mapping.entity_id_for`, so the two
+#: neighbours are two ids no matter what they are called, and the neighbour sets
+#: of the duplicate pair are disjoint by construction.
+_BREED_IN_CANADA = {
+    "entities": [
+        {"name": "Nova Scotia Duck Tolling Retriever", "entity_type": "concept"},
+        {"name": "Canada", "entity_type": "concept"},
+    ],
+    "relationships": [
+        {
+            "source_name": "Nova Scotia Duck Tolling Retriever",
+            "target_name": "Canada",
+            "relationship_type": "ORIGINATES_IN",
+        }
+    ],
+}
+
+_BREED_AND_HUNTING = {
+    "entities": [
+        {"name": "Nova Scotia Duck Tolling Retriever", "entity_type": "concept"},
+        {"name": "Duck hunting", "entity_type": "concept"},
+    ],
+    "relationships": [
+        {
+            "source_name": "Nova Scotia Duck Tolling Retriever",
+            "target_name": "Duck hunting",
+            "relationship_type": "USED_FOR",
+        }
+    ],
+}
+
+
+#: What the adjudicator says when it is asked. One verdict, because the
+#: identical-name pair is the only thing that should ever reach the band --
+#: `zip(strict=True)` upstream turns a count mismatch into "no answer", so a
+#: second candidate arriving here would show up as a failed merge rather than
+#: as a silently mis-paired verdict.
+_SAYS_THEY_ARE_THE_SAME = {
+    "verdicts": [
+        {"same": True, "confidence": 0.99, "reason": "the same dog breed, named identically"}
+    ]
+}
+
+
+@pytest.mark.asyncio
+async def test_one_entity_named_the_same_in_two_documents_becomes_one_node(
+    tmp_path, build_adapter
+):
+    """The reported duplicate, reduced: same name, same type, two documents.
+
+    This is the bug the repo owner saw -- "Nova Scotia Duck Tolling Retriever"
+    twice in one graph. It is not a blocking miss: an identical name and an
+    identical type share all three of redstring's default blocking keys, so the
+    pair is found and scored. It is scored **0.7143**, below redstring's
+    `LOW_SIMILARITY` of 0.75, and `resolve` is called with `minimum_score=low`
+    so the candidate is dropped before the adjudicator is ever offered it. No
+    exception, no verdict, no counted failure -- two nodes and silence.
+
+    The arithmetic, for a deployment with no `VectorStore` (which is ours):
+    name 1.0 at weight 0.5, graph 0.0 at weight 0.2, embedding absent, so
+    `0.5 / 0.7 = 0.7143`. The graph feature is 0.0 because the two nodes'
+    neighbour sets are disjoint -- and for a cross-document duplicate they are
+    *always* disjoint, because `entity_id_for` namespaces ids per document.
+    "Canada" as extracted from one document and "Canada" as extracted from
+    another are two ids until something merges them, so a shared neighbour
+    cannot exist yet at the moment the pair is first judged.
+
+    This test would fail with the fix reverted: without it the assertion below
+    finds two canonical nodes with the same name.
+    """
+    project_id = uuid4()
+    provider = FakeLlmProvider(
+        by_substring={
+            "duck hunting": _BREED_AND_HUNTING,
+            # `policy._render` numbers the pairs it asks about, so "Pair 1" is
+            # the one substring that identifies an adjudication prompt and
+            # cannot appear in a document being extracted.
+            "Pair 1": _SAYS_THEY_ARE_THE_SAME,
+        },
+        default=_BREED_IN_CANADA,
+    )
+    adapter, _, _ = build_adapter(tmp_path, project_id, provider=provider, adjudicate=True)
+
+    await adapter.ingest(SourceRef(source_id="a", text="The breed originates in Canada."))
+    await adapter.ingest(SourceRef(source_id="b", text="The breed is used for duck hunting."))
+
+    matches = await adapter.search("Nova Scotia Duck Tolling Retriever")
+    assert len(matches) == 1, f"one breed, one node; got {[match.name for match in matches]}"
+
+
+@pytest.mark.asyncio
+async def test_a_consolidation_failure_says_which_entity_and_why(tmp_path, build_adapter):
+    """A swallowed `RedstringError` used to be indistinguishable from routine.
+
+    `_consolidate` caught every `RedstringError`, incremented a counter and
+    continued, on the stated assumption that the cause is "typically the entity
+    was absorbed by a merge earlier in this same loop". That is only true of
+    `ConsolidationInvariantError`. `RedstringError` is redstring's *base* class,
+    so `CircuitOpen`, `RateLimitExceeded`, `LlmProviderError`,
+    `MissingEntityError` and `AliasCycleError` all landed in the same arm --
+    a rate-limited adjudicator would consolidate nothing across a whole ingest
+    and report only a number.
+
+    The count itself was always reported (`format_ingest_report` prints it), so
+    what was missing is *which entity and why*. This asserts the note carries
+    the entity's name and the error's own text.
+
+    Reverting the change makes this fail: without it the only note for a failed
+    entity is the "consolidating" one made before `resolve` was called, which
+    names the entity but not the failure.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+
+    async def always_fails(entity, **kwargs):
+        raise LlmProviderError("the adjudicator is rate limited", model="test-model")
+
+    adapter._consolidator.resolve = always_fails
+
+    notes = []
+    report = await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage."),
+        report=notes.append,
+    )
+
+    assert report.consolidation_failures == report.entity_count
+    details = [note.detail for note in notes if note.detail]
+    assert any(
+        "could not be consolidated" in detail and "rate limited" in detail
+        for detail in details
+    ), details
 
 
 @pytest.mark.asyncio

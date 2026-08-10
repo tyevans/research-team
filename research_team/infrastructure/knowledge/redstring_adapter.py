@@ -33,6 +33,7 @@ from redstring import (
     AUTO,
     Adjudicator,
     Consolidator,
+    FeatureWeights,
     GraphStore,
     LlmProvider,
     RedstringError,
@@ -57,6 +58,54 @@ logger = logging.getLogger(__name__)
 
 #: Longest document accepted in one `remember`. Roughly a long article.
 MAX_DOCUMENT_CHARS = 200_000
+
+
+def _exact_name_with_no_shared_structure() -> float:
+    """The score two *identically named* entities get when they share no neighbour.
+
+    Not a tuning constant -- a number forced on us by redstring's defaults, and
+    derived from them rather than written down, so it moves if they move.
+
+    We run with no `VectorStore`, so scoring has two features: `name` and
+    `graph`. A cross-document duplicate scores `name = 1.0` and `graph = 0.0`,
+    and `combined_score` renormalizes over the present weights, giving
+    `name / (name + graph)` -- 0.5 / 0.7 = **0.7143** on redstring's defaults.
+    redstring's `LOW_SIMILARITY` is 0.75, so *an exact name match is rejected
+    before anything is asked about it*.
+
+    The `graph = 0.0` is not evidence, it is an artefact of the id scheme.
+    `redstring.extraction.mapping.entity_id_for` namespaces entity ids **per
+    document**, so a duplicate's neighbours are different ids in each document
+    even when they name the same real things. Two entities extracted from two
+    documents therefore *cannot* share a neighbour at the moment they are first
+    judged, however obviously identical they are. The upstream fix belongs in
+    `CandidateFinder._graph_feature`, which already returns `None` -- absent --
+    when neither side has neighbours, for exactly the reason that applies here:
+    a feature with nothing to say must not vote.
+
+    Using this as `low` admits precisely the pairs an exact name match reaches
+    and nothing weaker, because `decide` bands inclusive-from-below. Measured
+    against the near-misses that make loosening dangerous, all of which stay
+    rejected: "Nova Scotia Duck Tolling Retriever(s)" 0.7102, "Robert Smith" /
+    "Roberta Smith" 0.7033, "World War I" / "World War II" 0.7024, "University
+    of York" / "University of Cork" 0.6984.
+
+    **Nothing merges unasked because of this.** `HIGH_SIMILARITY` is 0.92 and
+    the arithmetic above caps a graph-scored pair at 0.7143, so no
+    cross-document pair can reach the merge-without-asking band at all. Every
+    pair this admits goes to the adjudicator, which is a model call and a `no`
+    by default -- so the change buys adjudication for exact-name duplicates,
+    not merges. With `adjudicate=False` the band is rejected and this is a
+    no-op, which is why the fixture that disables adjudication sees no change.
+    """
+    weights = FeatureWeights()
+    return weights.name / (weights.name + weights.graph)
+
+
+#: Cached at import: `FeatureWeights()` is frozen and the value cannot vary
+#: between calls, so recomputing it per entity would be a division per
+#: candidate for no reason.
+EXACT_NAME_SCORE = _exact_name_with_no_shared_structure()
 
 
 class _CountingProvider:
@@ -419,6 +468,11 @@ class RedstringKnowledge:
         and has no watcher; it is announced *before* each `resolve` as well as
         after a merge lands, so a slow entity is visible while it is slow
         rather than only once it is done.
+
+        `low=EXACT_NAME_SCORE` overrides redstring's `LOW_SIMILARITY`, which is
+        too high for a deployment with no embeddings to consolidate anything
+        across documents. See `_exact_name_with_no_shared_structure` for the
+        arithmetic, what it admits, and why nothing merges unasked as a result.
         """
         entities = list(entities)
         merges: list[MergeRecord] = []
@@ -428,12 +482,34 @@ class RedstringKnowledge:
             announce("consolidating", index=position, total=total, detail=entity.name)
             try:
                 report = await self._consolidator.resolve(
-                    entity, adjudicator=self._adjudicator
+                    entity, adjudicator=self._adjudicator, low=EXACT_NAME_SCORE
                 )
-            except RedstringError:
-                # Typically the entity was absorbed by a merge earlier in this
-                # same loop, which is a normal outcome rather than a fault.
+            except RedstringError as error:
+                # The comment that used to be here said this is "typically the
+                # entity was absorbed by a merge earlier in this same loop",
+                # and treated every `RedstringError` as that benign case. Only
+                # `ConsolidationInvariantError` is that case. `RedstringError`
+                # is redstring's base class, so this arm also caught
+                # `CircuitOpen`, `RateLimitExceeded`, `LlmProviderError`,
+                # `MissingEntityError` and `AliasCycleError` -- a rate-limited
+                # adjudicator would consolidate nothing across an entire
+                # ingest, count every entity as a "failure", and say nothing.
+                # Logged rather than raised: a genuine fault on one entity
+                # still must not abandon the rest, for the reason in the
+                # docstring. But it is no longer indistinguishable from an
+                # ordinary absorbed entity.
                 failures += 1
+                logger.warning(
+                    "consolidating %r failed; carrying on with the rest",
+                    entity.name,
+                    exc_info=True,
+                )
+                announce(
+                    "consolidating",
+                    index=position,
+                    total=total,
+                    detail=f"{entity.name} could not be consolidated: {error}",
+                )
                 continue
             if report is None:
                 continue
@@ -513,8 +589,23 @@ class RedstringKnowledge:
         try:
             async with tenant_scope(self._project_id):
                 entities = await self._store.find_entities(self._project_id)
+                # `find_entities` returns absorbed entities too -- a merge is
+                # not a delete, because the row is what `undo_merge` restores.
+                # Without this the agent's own search reports a consolidated
+                # pair as two hits, one of which has had all its edges
+                # redirected away and so answers `relationship_count=0`. The
+                # same filter guards the browser's read in `graph_reader.py`;
+                # both call sites exist because both read the store directly.
+                canonical = await self._store.resolve_entity_ids(
+                    [entity.id for entity in entities], self._project_id
+                )
                 matches = []
                 for entity in entities:
+                    # `==`, not `is`: an adapter may rebuild the UUID for an id
+                    # that is not an alias, and `is` would filter out
+                    # everything and answer that the project is empty.
+                    if canonical[entity.id] != entity.id:
+                        continue
                     if needle not in entity.name.lower():
                         continue
                     edges = await self._store.get_relationships_for(
