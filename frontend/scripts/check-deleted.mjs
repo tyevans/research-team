@@ -65,6 +65,33 @@ const RULES = [
     // before phase A, once in a hook and twice in `responsive.css`.
     forbid: [/(?<!--rail-w):\s*34px/, /min-width:\s*1180px/],
   },
+  {
+    phase: 'B',
+    what: 'the research rail had a fourth fold implementation of its own',
+    why: 'Replaced by `Pane` with `collapseTo="strip"` and `useResearchPanes`. `RailPane` was the third component in this codebase to write a fold, and the only one whose toggle announced itself correctly -- which is the tell that the behaviour belonged to a primitive rather than to a view.',
+    where: 'presentation/research',
+    forbid: [/\bRailPane\b/, /'is-folded'/, /className=\{?clsx\('pane'/],
+  },
+  {
+    phase: 'B',
+    what: 'the research view drew its own topic row and spelled its own status',
+    why: "Replaced by `entity/topic/TopicRow` and `EntityStatus`. `status.replace('_', ' ')` was the third copy of a domain vocabulary rule, and all three were wrong the same way: a string pattern replaces only the first underscore.",
+    where: 'presentation/research',
+    forbid: [/replace\('_'/, /className="topic-row/, /className="topic-question"/],
+  },
+  {
+    phase: 'B',
+    what: 'the research panes were folded and sized by class names the stylesheet keyed on',
+    why: '`.pane-seeding`, `.pane-topics`, `.pane-documents` and `.pane-graph` are gone; a research pane is `.lay-pane` selected by `data-pane`. The 240px floor those rules carried is `minContent` on the pane, which travels with it instead of being a literal two selectors reach.',
+    where: 'styles',
+    forbid: [
+      /\.pane-seeding/,
+      /\.pane-topics/,
+      /\.pane-documents/,
+      /\.pane-graph/,
+      /\.pane\.is-folded/,
+    ],
+  },
 ]
 
 /** Comments removed before matching, which `theme.test.ts` also does and for

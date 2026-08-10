@@ -130,9 +130,17 @@
   .research-rail {
     overflow: visible;
   }
-  .research-workbench .pane-graph {
+  .research-workbench > [data-pane='graph'] {
     height: 60vh;
     min-height: 320px;
+  }
+  /* `layout.css` caps every stacked pane body at 60vh, which is right for a
+     session pane in a scrolling column and wrong for the two rail lists: they
+     are already bounded by the pane, and a second cap on the body leaves the
+     document list scrolling inside a box that is itself shorter than the pane
+     around it. */
+  .research-rail > .lay-pane > .lay-pane-body {
+    max-height: none;
   }
 }
 

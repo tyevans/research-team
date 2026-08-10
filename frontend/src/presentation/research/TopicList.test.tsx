@@ -178,33 +178,42 @@ it('renders every topic’s question', async () => {
   expect(screen.getByText('When did it end?')).toBeInTheDocument()
 })
 
-it('renders a topic’s triggers under its own question, not mixed with another’s', async () => {
+/** Triggers are not on the row any more.
+ *
+ * This replaces a test that asserted the opposite — that each row carried its
+ * own triggers and not its neighbour's — and the reversal is deliberate rather
+ * than a casualty. A trigger is prose of unbounded length, and a row whose
+ * height depends on its content breaks the contract a virtualizer estimates
+ * against: L-F8 records that as a 122px hole at three projects. `TopicDetail`,
+ * which the Manage dialog shows, renders them.
+ *
+ * The row still *marks* the topic — `needs-attention` is asserted below — so
+ * what is lost is the wording, not the signal. And `matchesTopic` still
+ * searches triggers, which is tested in the domain: typing a trigger's name
+ * into the filter still finds the row it belongs to, which is the one job the
+ * text on the row was doing.
+ *
+ * Fails if the triggers list comes back: it asserts an absence.
+ */
+it('keeps a topic’s triggers off its row, where they would make its height depend on its content', async () => {
   const topics = fakeTopics(
     vi.fn<TopicRepository['list']>().mockResolvedValue([
       topic({
         topicId: TopicId('44444444-4444-4444-4444-444444444444'),
         question: 'Has a trigger',
         triggers: ['topic.never_investigated'],
-      }),
-      topic({
-        topicId: TopicId('55555555-5555-5555-5555-555555555555'),
-        question: 'Has none',
-        triggers: [],
+        needsAttention: true,
       }),
     ]),
   )
 
   renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
 
-  const withTrigger = await screen.findByText('Has a trigger')
-  const row = withTrigger.closest('.topic-row')
+  const row = (await screen.findByText('Has a trigger')).closest('.ent-topic-row')
   expect(row).not.toBeNull()
-  expect(row!.textContent).toContain('topic.never_investigated')
-
-  const withoutTrigger = screen.getByText('Has none')
-  expect(withoutTrigger.closest('.topic-row')!.textContent).not.toContain(
-    'topic.never_investigated',
-  )
+  expect(row!.textContent).not.toContain('topic.never_investigated')
+  // The signal survives the wording: this is what paints the urgency edge.
+  expect(row).toHaveClass('needs-attention')
 })
 
 it('sorts a blocked topic to the top of the list', async () => {
