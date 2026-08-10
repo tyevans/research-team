@@ -11,6 +11,8 @@ import { fileURLToPath, URL } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import { BREAKPOINTS, RAIL_WIDTH_PX } from '../src/presentation/layout/layout-tokens.ts'
+
 /** That `theme.css` and `tokens.css` still say the same thing.
  *
  * `tokens.css` opens with the rule this file enforces: "a second literal hex
@@ -75,10 +77,23 @@ const RENAMED: Readonly<Record<string, string>> = {
   '--space-6': '--spacing-6',
 }
 
-/** Layout constants, not theme values. §4 of the component-system spec keeps
- *  these out of `@theme` on purpose: there is no such thing as a `topbar-h`
- *  utility, and putting them there would offer one. */
-const NOT_PORTED = new Set(['--topbar-h'])
+/** Layout constants, not theme values, and kept out of `@theme` on purpose:
+ *  there is no such thing as a `topbar-h` utility or a `z-overlay` one, and
+ *  putting them in the theme block would offer both.
+ *
+ *  The z-scale in particular must not become a utility. Its whole value is
+ *  that there are three levels and that every dismissable layer shares one of
+ *  them; a `z-overlay` class is an invitation to write a fourth. */
+const NOT_PORTED = new Set([
+  '--topbar-h',
+  '--rail-w',
+  '--bp-wide',
+  '--bp-narrow',
+  '--bp-tight',
+  '--z-sticky',
+  '--z-overlay',
+  '--z-toast',
+])
 
 /** Everything not renamed above is a colour and takes Tailwind's `--color-*`
  *  namespace; `--shadow-1` is already in a namespace Tailwind understands. */
@@ -121,5 +136,54 @@ describe('theme.css and tokens.css', () => {
     // end. Breakpoints will be the first legitimate exception -- when phase 5
     // adds them, they belong on this exemption list with a note, not silently.
     expect(Array.from(theme.keys()).filter((name) => !ported.has(name))).toEqual([])
+  })
+})
+
+/** The layout constants exist twice for a reason neither language can avoid,
+ *  so the agreement is checked rather than trusted.
+ *
+ *  A stylesheet cannot import a TypeScript constant and `matchMedia` cannot
+ *  read a CSS custom property without `getComputedStyle`, which returns
+ *  nothing under jsdom. So the numbers are written in both places. That is the
+ *  arrangement `tokens.css` opens by warning about — and it is exactly what
+ *  the console has today, unchecked: `34px` in a hook and twice in a
+ *  stylesheet, and one breakpoint spelled `1180` in CSS and `1181` in
+ *  JavaScript.
+ *
+ *  Proved red by changing `--bp-wide` to `1180px`, which is the specific
+ *  historical drift this is aimed at. */
+describe('the layout constants', () => {
+  const tokens = () => declarations(read('tokens.css'), /:root\s*\{/)
+
+  it('match the breakpoints the JavaScript asks matchMedia about', () => {
+    const css = tokens()
+    const disagreements = Object.entries(BREAKPOINTS)
+      .map(([name, px]) => {
+        const declared = css.get(`--bp-${name}`)
+        return declared === `${String(px)}px`
+          ? null
+          : `--bp-${name} is ${String(declared)} in tokens.css and ${String(px)}px in layout-tokens.ts`
+      })
+      .filter((entry) => entry !== null)
+
+    expect(disagreements).toEqual([])
+  })
+
+  it('match the rail width', () => {
+    // `Split` writes the rail as `var(--rail-w)` rather than as a number, so
+    // this pair is only consulted by code that has to compare widths. It is
+    // held anyway: the number existing twice is the thing that goes wrong, not
+    // the number being read twice.
+    expect(tokens().get('--rail-w')).toBe(`${String(RAIL_WIDTH_PX)}px`)
+  })
+
+  it('keeps the z-scale to three levels', () => {
+    // Not a style rule. Four values with one written-down ordering rule is
+    // what the console has today, and the stylesheet contradicts the rule --
+    // the agent dock's popover at 40 paints over an `aria-modal` backdrop at
+    // 20. A fourth level is a decision to make deliberately, and this fails
+    // until someone does.
+    const scale = Array.from(tokens().keys()).filter((name) => name.startsWith('--z-'))
+    expect(scale).toEqual(['--z-sticky', '--z-overlay', '--z-toast'])
   })
 })

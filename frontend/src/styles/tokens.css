@@ -67,6 +67,81 @@
   --radius: 5px;
   --topbar-h: 44px;
 
+  /* Layout constants. The fourth family, and it exists for the reason this
+     file's opening rule gives about colour: a second literal is a second
+     source, discoverable only by reading both. These already were one.
+
+     `34px` is written at `use-panes.ts:17` and twice in `responsive.css`.
+     The three-column boundary is `max-width: 1180px` in `responsive.css` and
+     `(min-width: 1181px)` in `use-panes.ts` -- one boundary, two spellings,
+     off by one on purpose, in two languages, with nothing tying them
+     together. `560px` is in three stylesheets, one of which spells it
+     `width <= 560px` and the others `max-width`.
+
+     Nothing consumes these yet. They are declared with the layout primitives
+     that will, and the existing sites keep their literals until the migration
+     reaches them -- this phase changes no rendered page. `layout-tokens.ts`
+     holds the same numbers for the JavaScript half, and `theme.test.ts` fails
+     if the two disagree, which is the only thing that makes "one number" true
+     rather than aspirational. */
+  --rail-w: 34px;
+
+  /* Named for what they mean rather than for a device. Values unchanged from
+     the media queries they will replace: the widest is stated as the
+     min-width side of the 1180/1181 pair, because the JavaScript half has to
+     ask `matchMedia` a min-width question and only one of the two numbers can
+     survive. */
+  --bp-wide: 1181px;
+  --bp-narrow: 821px;
+  --bp-tight: 561px;
+
+  /* Three levels, and they are three *roles* rather than three numbers.
+
+     What they replace, measured in the running console rather than read out
+     of the source: eight declarations using five values --
+
+         .toasts                           50
+         .agents-panel                     40
+         .menu > .disc-body:not([hidden])  20
+         .drawer-backdrop                  20
+         .file-view-head                    2
+         .graph-command                     1
+         .graph-detail                      1
+         .graph-legend                      1
+
+     Two things in that list are wrong and one is undecided. The dock's
+     popover at 40 paints over the `aria-modal` drawer backdrop at 20, while
+     having switched off its own Escape handling because its comment asserts
+     the drawer is in front. And `.drawer-backdrop` merely *ties* with the row
+     menu at 20, so a menu against a modal is resolved by DOM order with
+     nothing anywhere declaring which ought to win -- it is benign today only
+     because one is fixed and one is absolute inside a row.
+
+     `--z-sticky` is for things that float *within* a region and must not
+     escape it: sticky heads, and the graph's command bar, detail panel and
+     legend. Those three are pane-local and stay pane-local, which is why
+     there is no fourth "escape" level -- if a graph control ever does need to
+     leave its pane, this scale is wrong and needs a fourth level rather than
+     an exception. Nothing does today.
+
+     `--z-overlay` is one value for every dismissable layer, on purpose.
+     They all render into a single portal host and order inside it is DOM
+     order, so nothing needs to outrank anything else numerically. A per-layer
+     number is precisely how the inversion above happened.
+
+     `--z-toast` is above the overlays, and that is a decision rather than an
+     inherited accident -- worth saying, because today's `50` produces the same
+     result by coincidence. A notification is not a dismissable layer: it is
+     not opened by the reader, it does not take focus, and it must stay
+     readable over whatever is open, including a modal. Something failing while
+     a dialog is up is exactly when the reader needs to hear about it, and a
+     toast that renders behind the modal it is reporting on is a message
+     nobody receives. So toasts are a third role, not a fourth number, and
+     they deliberately sit outside the overlay host. */
+  --z-sticky: 10;
+  --z-overlay: 100;
+  --z-toast: 200;
+
   /* The one elevation this UI has: a toast, and now the row menu. */
   --shadow-1: 0 6px 20px rgb(0 0 0 / 50%);
 
