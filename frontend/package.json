@@ -16,14 +16,23 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "size": "node scripts/check-size.mjs",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
     "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run size"
   },
   "engines": {
     "node": ">=22"
   },
+  "//overrides": "eslint-plugin-jsx-a11y@6.10.2 -- the latest published -- declares `eslint@^3 || … || ^9`, and this project is on eslint@10. There is no version of the plugin that accepts 10; `npm view` shows 6.10.2 as `latest` with no prerelease. So the choice was: drop the plugin from phase 0, install the whole tree with `--legacy-peer-deps` (which silences *every* peer conflict in the repository, including the next real one), or narrow the exception to the single package that needs it. This is the third. It pins the plugin's `eslint` to the root's rather than letting npm hunt for a second copy, which is also what we want on the merits: two eslint versions in one tree is its own bug. The cost is that the plugin now runs outside its author's declared support window, so a break would be ours to notice -- which is why the plugin is exercised by `npm run lint` over the whole of `src/` in this very commit, and why `eslint.config.test.ts` asserts the rules actually fire rather than merely that the config loads. Remove this override the moment the plugin declares eslint 10.",
+  "overrides": {
+    "eslint-plugin-jsx-a11y": {
+      "eslint": "$eslint"
+    }
+  },
   "dependencies": {
     "@tanstack/react-query": "^5.62.0",
     "@tanstack/react-virtual": "^3.14.9",
+    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "diff": "^9.0.0",
@@ -38,6 +47,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@storybook/react-vite": "^10.5.7",
+    "@tailwindcss/vite": "^4.3.3",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.1.0",
@@ -51,10 +62,14 @@
     "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.9.0",
     "jsdom": "^29.1.1",
     "prettier": "^3.9.6",
+    "prettier-plugin-tailwindcss": "^0.8.1",
+    "storybook": "^10.5.7",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.66.0",
     "vite": "^8.2.1",

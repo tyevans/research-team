@@ -1,3 +1,5 @@
+import clsx from 'clsx'
+
 import { writtenCount, type Course, type StageProgress } from '@domain/project/course.ts'
 
 import { Chip } from '../common/primitives.tsx'
@@ -31,7 +33,9 @@ export const Stage = ({
             with one written is a specific situation, and "50%" is not. */}
         {stage.outputs.length > 0 ? (
           <span
-            className={`rail-count${written < stage.outputs.length ? ' rail-short' : ''}`}
+            // `clsx` for the same reason as `Artifacts.tsx`: the plugin eats
+            // the leading space in a template literal's conditional branch.
+            className={clsx('rail-count', written < stage.outputs.length && 'rail-short')}
             title={`${written} of ${stage.outputs.length} declared artifacts written`}
           >
             {written}/{stage.outputs.length}

@@ -127,7 +127,14 @@ export const TopicStatusDialog = ({
   }, [onClose])
 
   return (
+    /* Same two suppressions as `Drawer.tsx`, for the same reasons, on a second
+       copy of the same markup -- which is the duplication `Drawer`'s own
+       comment predicted and this file is. Escape is handled in the effect
+       above; the `stopPropagation` below is plumbing, not an interaction.
+       Phase 1 deletes this hand-rolled trap and the copy goes with it. */
+    /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */
     <div className="drawer-backdrop" onClick={onClose}>
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
       <aside
         className="drawer topic-dialog"
         role="dialog"

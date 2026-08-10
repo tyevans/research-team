@@ -1,0 +1,167 @@
+/* The same tokens as `tokens.css`, expressed so Tailwind can generate
+   utilities from them.
+
+   `tokens.css` stays, still imported, still the thing every existing
+   stylesheet consumes. This file adds a second *spelling* of the same values,
+   not a second palette: `@theme` turns each entry into both a CSS custom
+   property and the utility classes that read it, so `--color-bg` here yields
+   `bg-bg`, `text-bg`, `border-bg` and the `--color-bg` variable. That is what
+   makes an off-palette colour unwritable later on -- there is no utility for a
+   colour that is not a token.
+
+   Two things about this file are uncomfortable and are better said than
+   discovered.
+
+   **It duplicates values, which is the exact failure `tokens.css` exists to
+   prevent.** Its own comment says "a second literal hex would be a second
+   palette, discoverable only by looking at both". This is that, deliberately,
+   for the length of the migration: the old stylesheets cannot read `@theme`
+   and the utilities cannot read `:root`, so during coexistence both spellings
+   have to exist. The mitigation is mechanical rather than a promise --
+   `theme.test.ts` parses both files and fails if any shared token disagrees,
+   so the drift this would otherwise invite is a failing test instead of a
+   colour that is subtly wrong on one page. Phase 5 deletes the `:root` block
+   and leaves this one.
+
+   **Preflight is deliberately not imported.** The usual `@import "tailwindcss"`
+   pulls in Tailwind's base reset, which would restyle every heading, list,
+   button and form control in the console -- a large visual change in a phase
+   whose entire promise is that nothing moves. Importing the theme and utility
+   layers alone is the documented way to opt out, and it is why this file lists
+   its layers by hand rather than using the one-line import. The cost is that a
+   future contributor reaching for a Tailwind feature that assumes preflight
+   (`space-x-*` relies on it least; `border-*` assumes a reset border style)
+   will find it behaves unlike the documentation. Phase 5 is where taking
+   preflight becomes worth the pixel diff, and it should be taken there in one
+   commit rather than drifted into. */
+
+/* Tailwind's *default* theme is deliberately not imported either, and this is
+   the load-bearing half of §4's promise rather than a size optimisation. With
+   `tailwindcss/theme.css` in, `bg-red-500` and `p-7` are valid utilities, and
+   "an off-palette value cannot be written" stops being true the moment the
+   tooling lands. With it out, the only colours, sizes and spacings that exist
+   are the ones declared below, and a typo is a class that generates no CSS
+   rather than a second palette.
+
+   Measured: importing the default theme cost 1.3 kB gzipped on `app-` for
+   variables nothing referenced. That is the smaller reason.
+
+   What it costs: `--breakpoint-*` is part of the default theme, so `md:` and
+   friends generate nothing until breakpoints are declared here. That is
+   correct for today -- `responsive.css` owns every media query in this console
+   and phase 5 is where the two meet -- but it is a trap for anyone who reaches
+   for a responsive variant before then, and it will fail silently, which is
+   the bad way to fail. Declaring the breakpoints belongs in the commit that
+   first needs one. */
+@layer theme, base, components, utilities;
+
+/* `source(none)` turns off Tailwind's automatic file discovery, and `@source`
+   opts back in exactly the files that can carry a `className`.
+
+   Automatic discovery walks the whole project, and the two things it picks up
+   here are both unwanted: the committed build output under
+   `research_team/interfaces/web/static/`, which would feed Tailwind's own
+   previous output back to it, and `src/styles/*.css`, where our class names
+   are declared. Naming the sources makes the input to the build the set of
+   files a person would guess it was.
+
+   **What this does not fix, and is worth knowing before reading the CSS
+   output.** Tailwind's scanner is deliberately naive -- it pulls candidate
+   tokens out of anything, including English prose in a comment or a `title`
+   string -- so words like `collapse`, `truncate`, `grid` and `ordinal`
+   appearing anywhere in a `.tsx` file generate the matching utility. Measured
+   at 1.2 kB gzipped of `app-` for rules nothing asked for.
+
+   Those rules were checked rather than assumed to be harmless, because a
+   utility that *did* apply would be a silent visual change in a phase that
+   promises none. Every emitted name is either one this codebase already
+   defines a rule for -- and ours wins, since unlayered CSS beats every cascade
+   layer, `@layer utilities` included -- or one that is never used as a class
+   at all. The two that looked like exceptions on a first pass, `absolute` and
+   `relative`, turned out to be inline `style={{ position: … }}` values rather
+   than class names. If that check needs redoing after a phase adds components,
+   it is: for each class in `@layer utilities`, does this repo define the same
+   selector, and is the name used in a `className`? */
+@import 'tailwindcss/utilities.css' layer(utilities) source(none);
+@source '../**/*.tsx';
+
+@theme {
+  /* Surfaces and lines. */
+  --color-bg: #0b0d10;
+  --color-bg-panel: #111418;
+  --color-bg-panel-2: #15191e;
+  --color-bg-raise: #1b2027;
+  --color-bg-hover: #1e242c;
+  --color-line: #232a33;
+  --color-line-soft: #1a2027;
+  --color-line-strong: #34404e;
+
+  /* Text. */
+  --color-fg: #d7dee7;
+  --color-fg-dim: #8a95a3;
+  --color-fg-faint: #5c6673;
+
+  /* The one accent. */
+  --color-accent: #e2a457;
+  --color-accent-dim: #7a5a2c;
+  --color-accent-fg: #17120a;
+
+  /* Event kinds carry the only other colour in the UI, so the log reads as a
+     legend for itself. `entity-colors.ts` reads these at runtime with
+     `getComputedStyle` for the graph canvas; `@theme` still emits them as
+     custom properties, so that code is untouched by this file existing. */
+  --color-k-session: #a78bfa;
+  --color-k-message: #6ba7f5;
+  --color-k-tool: #e2a457;
+  --color-k-file: #5ec98a;
+  --color-k-turn: #7e8b9b;
+  --color-k-failure: #f4736b;
+  --color-k-compaction: #5f7d8c;
+
+  /* Chip and box tints. */
+  --color-tint-session: #1a1630;
+  --color-tint-session-line: #3a3060;
+  --color-tint-fail: #241417;
+  --color-tint-fail-line: #45272a;
+  --color-tint-held: #241d10;
+  --color-tint-ok: #131f17;
+  --color-tint-ok-line: #24402c;
+
+  /* Diff. */
+  --color-add-fg: #82d9a4;
+  --color-add-bg: #0f2418;
+  --color-del-fg: #f08d86;
+  --color-del-bg: #2a1315;
+
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
+  --font-sans: ui-sans-serif, system-ui, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
+
+  /* Type scale, 1.2 minor third off 13px. Named `--text-*` because that is the
+     namespace Tailwind generates `text-md` from; the values are `tokens.css`'s
+     `--t-*` unchanged. */
+  --text-xs: 10.5px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15.5px;
+  --text-xl: 19px;
+  --text-2xl: 23px;
+
+  --radius-md: 5px;
+
+  /* The one elevation this UI has. */
+  --shadow-1: 0 6px 20px rgb(0 0 0 / 50%);
+
+  /* The spacing rhythm. Tailwind reads `--spacing-3` as the `3` step, so
+     `p-3` is `tokens.css`'s `--space-3`. */
+  --spacing-1: 3px;
+  --spacing-2: 6px;
+  --spacing-3: 10px;
+  --spacing-4: 14px;
+  --spacing-5: 20px;
+  --spacing-6: 28px;
+}
+
+/* Deliberately *not* in `@theme`: `--topbar-h`, and the panes' 34px rail.
+   Those are layout constants rather than theme values -- there is no such
+   thing as a `topbar-h` utility, and putting them here would offer one. They
+   stay as ordinary custom properties in `tokens.css`. */

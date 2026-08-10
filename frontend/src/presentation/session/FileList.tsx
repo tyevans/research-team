@@ -77,6 +77,17 @@ export const FileList = ({
       {files.map((file, index) => {
         const selected = file.path.equals(open)
         return (
+          /* An `option` in an `aria-activedescendant` listbox is deliberately
+             not focusable: the tab stop is the listbox above, which carries
+             `tabIndex={0}` and the arrow-key handler, and selection is
+             communicated by `aria-activedescendant` pointing at the row's id.
+             That is one of the two patterns the ARIA practices allow, and the
+             rule only models the other one (roving tabindex). Giving each row
+             its own tab stop -- which is what the rule asks for -- would put
+             every file in the tab order and is a regression, not a fix.
+             `click-events-have-key-events` is the same misreading: the keyboard
+             route is `onKeyDown` on the listbox. */
+          /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/interactive-supports-focus */
           <div
             key={file.path.value}
             className={clsx('file-row', selected && 'selected')}

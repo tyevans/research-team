@@ -1,0 +1,20 @@
+{
+  // The build tooling's own project, so eslint's `projectService` finds a real
+  // config for these files instead of falling back to the inferred "default
+  // project".
+  //
+  // Why it exists: tseslint caps the default project at eight files and
+  // reports `Too many files (>8) have matched the default project` past that.
+  // The component-system spec assumed `.storybook/*.ts` could simply join
+  // `allowDefaultProject`; adding two Storybook files and two script tests to
+  // the four already there crosses the cap, and the failure is badly
+  // disguised — the parse error names `vite.config.ts` while the *symptom* is
+  // eight `no-unsafe-*` errors in a different file, because a blown default
+  // project resolves no types and every expression becomes `error`.
+  //
+  // `projectService` picks the nearest `tsconfig.json` per file, so a config
+  // sitting in this directory takes these files off the default project
+  // entirely and leaves head-room there for whatever needs it next.
+  "extends": "../tsconfig.node.json",
+  "include": ["."]
+}

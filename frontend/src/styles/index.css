@@ -4,6 +4,11 @@
    everything below is written in terms of them. The rest are independent and
    are listed in the order a reader meets them on screen. */
 
+/* First, and above `tokens.css` rather than instead of it: `theme.css` is the
+   same values in the spelling Tailwind generates utilities from, and the two
+   coexist for the length of the migration. `theme.css` says why, and
+   `theme.test.ts` is what stops them drifting apart. */
+@import './theme.css';
 @import './tokens.css';
 @import './base.css';
 @import './shell.css';

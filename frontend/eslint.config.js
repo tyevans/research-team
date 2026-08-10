@@ -1,5 +1,6 @@
 import js from '@eslint/js'
 import prettier from 'eslint-config-prettier'
+import jsxA11y from 'eslint-plugin-jsx-a11y'
 import reactHooks from 'eslint-plugin-react-hooks'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
@@ -25,12 +26,16 @@ export default tseslint.config(
           // config is the browser's, and application code must not be able to
           // see `process` or `fs`. These files are still linted, against an
           // inferred program rather than a named project.
-          allowDefaultProject: [
-            'eslint.config.js',
-            'vite.config.ts',
-            'scripts/*.mjs',
-            'scripts/*.ts',
-          ],
+          //
+          // Keep this list short. tseslint caps the default project at eight
+          // files, and crossing the cap does not fail cleanly: it reports a
+          // parse error against one file and then, because a blown default
+          // project resolves no types at all, buries the cause under
+          // `no-unsafe-*` errors somewhere else entirely. `scripts/` and
+          // `.storybook/` each carry their own `tsconfig.json` instead —
+          // `projectService` picks the nearest one per file — and anything
+          // new should do the same rather than being added here.
+          allowDefaultProject: ['eslint.config.js', 'vite.config.ts', 'scripts/*.mjs'],
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -48,6 +53,29 @@ export default tseslint.config(
       // it read worse for no gain.
       '@typescript-eslint/require-await': 'off',
     },
+  },
+
+  /** Accessibility, checked rather than reviewed.
+   *
+   *  Scoped to `.tsx` because that is where JSX is; a `.ts` file cannot fail
+   *  one of these rules and including it only slows the run down.
+   *
+   *  This is the recommended set unmodified. The alternative considered was
+   *  `strict`, which adds rules about label nesting and anchor content that
+   *  would have needed markup changes to satisfy — and markup changes are out
+   *  of scope for a phase whose promise is that no pixel moves. `recommended`
+   *  is also what a new contributor will expect, which is the whole reason for
+   *  preferring a standard plugin to a house rule.
+   *
+   *  A caveat worth knowing: the plugin declares no support for eslint 10 and
+   *  is pinned into this tree by an override — see the note in
+   *  `package.json`. `eslint.config.test.ts` exists because of that: it feeds
+   *  known-bad JSX through this config and asserts the rules actually fire, so
+   *  a plugin that silently stops working is a failing test rather than a
+   *  quietly clean lint. */
+  {
+    files: ['src/**/*.tsx'],
+    ...jsxA11y.flatConfigs.recommended,
   },
 
   /** The domain is pure. No framework, no transport, no browser API — if a rule

@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from 'node:url'
 
+import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
@@ -70,7 +71,13 @@ const GRAPH_DEPENDENCIES = [
 ]
 
 export default defineConfig({
-  plugins: [react()],
+  /** Tailwind is a Vite plugin rather than a PostCSS step: v4's own guidance,
+   *  and it is the only integration that gets incremental rebuilds in `dev`.
+   *  It scans source files for class names and emits only the utilities it
+   *  finds, so with no component yet using one it contributes essentially
+   *  nothing to the bundle -- measured at +0.1 kB gzipped on `app-` in the
+   *  commit that added it, which is the theme variables and nothing else. */
+  plugins: [tailwindcss(), react()],
   base: '/static/',
   resolve: {
     alias: {
@@ -127,6 +134,21 @@ export default defineConfig({
           // anything else this project depends on today, and naming them
           // keeps a future unrelated dependency from silently landing here.
           if (GRAPH_DEPENDENCIES.some((pkg) => id.includes(`node_modules/${pkg}/`))) return 'graph'
+          // The component system's own bucket, carved out exactly as `graph-`
+          // was. The alternative was to let Radix land in `vendor-` and raise
+          // that limit, which works and destroys the bucket: `vendor-` is
+          // where a *new library* shows up, so it is the one place the gate
+          // still has real work to do, and giving it 40 kB of migration-shaped
+          // slack is the same as removing it.
+          //
+          // Declared in phase 0, before anything lands in it, so the budget
+          // exists at the moment the first Radix import is written rather than
+          // being added by the commit that needs it — which is the shape of
+          // raise this file was written to catch. Today it measures 0.0 kB:
+          // `class-variance-authority` is installed but not yet imported by
+          // any component, and an unimported dependency is not in the bundle.
+          if (id.includes('node_modules/@radix-ui/')) return 'ui'
+          if (id.includes('node_modules/class-variance-authority/')) return 'ui'
           return 'vendor'
         },
         entryFileNames: 'assets/app-[hash].js',
@@ -167,7 +189,23 @@ export default defineConfig({
       // Types carry no statements, the composition root is exercised by
       // running the application rather than by a unit test, and a `.test.ts`
       // file covering itself is not a measurement.
-      exclude: ['src/**/*.test.{ts,tsx}', 'src/main.tsx', 'src/app/**', 'src/**/*.d.ts'],
+      //
+      // Stories are excluded for a sharper reason than "they are not
+      // production code". They live in `src/` and would otherwise be counted
+      // as it: dozens of small modules, every line of them executed the moment
+      // a test composes one, which inflates every ratchet below. The
+      // thresholds are explicitly "just under what the suite actually reaches
+      // today", so a wave of trivially-covered files does not raise the floor
+      // — it stops the floor from measuring anything. This exclusion has to
+      // land in the same commit as the first story or the gate is already
+      // wrong; it did.
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/**/*.stories.tsx',
+        'src/main.tsx',
+        'src/app/**',
+        'src/**/*.d.ts',
+      ],
       /** Ratchets, not targets. Each number sits just under what the suite
        *  actually reaches today, so the gate catches a *regression* — a layer
        *  that loses its tests, or a new module that arrives without any — and

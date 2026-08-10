@@ -100,7 +100,20 @@ export const Drawer = ({
   }, [onClose])
 
   return (
+    /* A backdrop is not a control, and this one has a keyboard equivalent that
+       the rule cannot see: Escape closes the drawer, handled on `window` in the
+       effect above and asserted by `Drawer.test.tsx`. What `jsx-a11y` is asking
+       for here is a key handler on the backdrop itself, which would be a second
+       route to the same behaviour rather than a first route to a missing one.
+       Kept as a suppression rather than satisfied, because satisfying it would
+       add code that does nothing. Phase 1 removes the question entirely --
+       Radix's `Dialog.Overlay` owns dismissal. */
+    /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */
     <div className="drawer-backdrop" onClick={onClose}>
+      {/* Not an interaction: the handler exists only to stop a click inside the
+          drawer reaching the backdrop and closing what is being read. There is
+          no behaviour here for a keyboard user to be excluded from. */}
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
       <aside
         className="drawer"
         role="dialog"
