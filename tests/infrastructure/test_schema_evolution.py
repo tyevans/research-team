@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import aiosqlite
 import pytest
+from eventsource import StreamId, collect
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from pydantic import ValidationError
 
@@ -26,6 +27,7 @@ from research_team.domain import (
     Project,
     SendUserMessage,
     SessionStarted,
+    StageAdvanced,
     StartSession,
     ToolCallDecided,
     TurnFailed,
@@ -469,3 +471,62 @@ async def test_an_old_project_snapshot_without_workflow_fields_still_loads(
         assert project.state.stage_history == []
     finally:
         await snapshots.close()
+
+
+async def test_a_stage_advance_written_before_decision_existed_reads_as_approved(
+    store, repository, started, db_path
+):
+    """`StageAdvanced.decision` is a case-1 addition; absence must mean `approve`.
+
+    Every advance stored before the field existed had a human behind it -- the
+    tool floors at `ask` and nothing else could call the command -- so the
+    default reads the old payloads correctly rather than guessing at them.
+
+    Written as a raw payload with no `decision` key, which is the only shape
+    that proves the default fills in: constructing the event through today's
+    model would supply it. The assertion on `decision` is the load-bearing one;
+    the rest would pass against any build that could read the stream at all.
+    """
+    project_id = uuid4()
+    payloads = (
+        (1, "ProjectCreated", {"name": "atlas"}),
+        (2, "WorkflowSelected", {"preset_id": "hybrid.default", "preset_version": "1"}),
+        (
+            3,
+            "StageAdvanced",
+            {
+                "from_stage": "tyler.step0.intake",
+                "to_stage": "hybrid.step1.framing",
+                "decided_by": "human",
+                "gate_decision": "written before the field existed",
+            },
+        ),
+    )
+    for version, event_type, payload in payloads:
+        await _write_old_event(
+            db_path,
+            project_id,
+            version=version,
+            event_type=event_type,
+            payload={
+                "aggregate_id": str(project_id),
+                "aggregate_type": "Project",
+                "aggregate_version": version,
+                **payload,
+            },
+            aggregate_type="Project",
+        )
+
+    project = await repository.projects.load(project_id)
+    advanced = [
+        envelope.event
+        for envelope in await collect(
+            store.read_stream(StreamId(project_id, Project.aggregate_type))
+        )
+        if isinstance(envelope.event, StageAdvanced)
+    ]
+
+    assert advanced[-1].decision == "approve"
+    assert advanced[-1].gate_decision == "written before the field existed"
+    assert project.state.current_stage == "hybrid.step1.framing"
+    assert current_stage_of(project.state, hybrid_default).id == "hybrid.step1.framing"

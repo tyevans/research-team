@@ -18,7 +18,7 @@ from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, reg
 from pydantic import BaseModel, Field
 
 from research_team.domain.targeting import ChecksCommandTarget
-from research_team.domain.workflow import Preset, Stage
+from research_team.domain.workflow import Decision, Preset, Stage
 
 
 @register_event
@@ -93,6 +93,32 @@ class StageAdvanced(DomainEvent):
     to_stage: str
     decided_by: str
     gate_decision: str
+    """Why the gate was posed, as whoever posed it accounts for it.
+
+    Under the tool this is the model's own `rationale`. Under a stage runner
+    there is no model rationale and what the harness can honestly write is
+    machine prose -- "4 of 4 declared artifacts present; 3 advisory findings;
+    no invariant failures". Both are *evidence*, which is what this field has
+    always held; `decision` is the verdict, and the two were the same thing
+    only while a model was the only thing that could propose a boundary.
+    """
+    decision: Decision = "approve"
+    """What the reviewer decided, as opposed to what they were shown.
+
+    Case 1 of `events.py`'s evolution strategy: every `StageAdvanced` written
+    before this existed was an advance somebody let through, so `approve` is
+    the only default that does not invent a verdict nobody gave.
+
+    Three of the five `Decision` values are refused by `_advanced` rather than
+    stored -- see there. This field is worth having anyway for the one that is
+    not: `approve_with_edits` is the delta between what the machine produced
+    and what a human had to correct, which `workflow-engine.md` §6 argues is
+    the cheapest real signal about which stages need better prompts. Nothing
+    reads it yet. It is added now rather than later because a runner writing
+    machine prose into `gate_decision` leaves the human's verdict with nowhere
+    to live, and an audit of a driven run would then be able to say fifteen
+    boundaries were crossed and nothing about how.
+    """
 
 
 @dataclass(frozen=True)
@@ -140,6 +166,11 @@ class AdvanceStage:
     to_stage: str
     decided_by: str
     gate_decision: str
+    decision: Decision = "approve"
+    """The reviewer's verdict. Defaulted so every existing caller is unchanged:
+    the tool path has no verdict to supply -- the human's answer to the
+    interrupt is already recorded as `ToolCallDecided` -- and a required field
+    would force it to invent one."""
 
 
 ProjectCommand = (
@@ -290,6 +321,23 @@ def decide(command: ProjectCommand, state: ProjectState) -> list[DomainEvent]:
     raise CommandRejectedError(f"unhandled command {type(command).__name__}")
 
 
+_NOT_AN_ADVANCE: frozenset[str] = frozenset({"amend_upstream", "send_back", "halt"})
+"""`Decision` values that mean the stage did *not* move.
+
+Refused rather than stored. `StageAdvanced` is the only stage event there is
+and its whole content is that the project went forward one stage, so a payload
+carrying `send_back` would be a fact contradicting the event it rides on.
+`workflow-engine.md` §3.4 is the record that these three need their own events
+and their own answer to what `current_stage` means while one is outstanding;
+until that exists, refusing keeps "unrepresentable" true instead of letting it
+quietly become "representable and meaningless".
+
+`approve_with_edits` is absent deliberately: it *is* an advance -- the reviewer
+let it through having corrected something -- and it is the one value in the
+enum this field was added to carry.
+"""
+
+
 def _advanced(
     state: ProjectState, command: "AdvanceStage", preset: Preset, to_stage: str
 ) -> StageAdvanced:
@@ -304,9 +352,17 @@ def _advanced(
     re-run a gate it had already passed.
 
     Lifted out of `decide`'s match rather than written as more `case` arms
-    because these are four refusals over one situation, and as cases they would
+    because these are five refusals over one situation, and as cases they would
     each have to re-derive the current stage from the preset.
     """
+    if command.decision in _NOT_AN_ADVANCE:
+        raise CommandRejectedError(
+            f"{command.decision!r} is not an advance: it is a decision to stop, "
+            f"revise, or go back, and this event only records going forward. "
+            f"There is nowhere in this aggregate for it yet -- see "
+            f"workflow-engine.md §3.4 -- and recording it here would put it on "
+            f"the event that says the stage moved."
+        )
     ids = [stage.id for stage in preset.stages]
     current = state.current_stage or ids[0]
     at = ids.index(current)
@@ -325,6 +381,7 @@ def _advanced(
         to_stage=to_stage,
         decided_by=command.decided_by,
         gate_decision=command.gate_decision,
+        decision=command.decision,
     )
 
 
