@@ -122,14 +122,62 @@ export const OverlayHost = ({ children }: { children?: ReactNode }) => {
     [container, register, layers],
   )
 
+  const modalOpen = layers.some((layer) => layer.modal)
+
   return (
     <HostContext.Provider value={state}>
-      {children}
+      {/* The page, and the thing a modal has to take away.
+
+          This wrapper exists only to have something to mark. Before it,
+          `children` was rendered as a bare fragment, so a modal made every
+          *other layer* inert and left the whole shell reachable: pointer
+          events were blocked by the backdrop, and Tab was not. A keyboard user
+          tabbed out of an `aria-modal` dialog straight into page chrome, and a
+          screen-reader user was never confined. That is the primitive's
+          central promise and it was the one thing nothing asserted -- the
+          jsdom test checked `inert` on the sibling layer, which was true, and
+          said nothing about everything else. Found in a browser, which is
+          where it had to be found.
+
+          **Why the host owns this rather than `Shell` subscribing to modal
+          state.** Both work and the trade is which way the coupling points.
+          `Shell` reading the host would make "a modal disables the page" a
+          property of one component, so it would hold for a `Shell` and not for
+          any other tree an `OverlayHost` wraps -- including every story here
+          that mounts overlays without one, and any future host mounted around
+          something that is not the shell. Putting it here makes the guarantee
+          a property of *being inside a host*, which is the same scope as the
+          rest of the contract, and costs `Shell` no knowledge of overlays at
+          all. The price is this extra element in everyone's DOM.
+
+          `display: contents`, so the box does not exist for layout and the
+          tree lays out exactly as it did when this was a fragment --
+          `.lay-shell`'s `height: 100%` still resolves against the same
+          ancestor it did before.
+
+          **The one assumption in this fix that cannot be checked from here.**
+          Inertness is specified over the node tree rather than the box tree,
+          so an element generating no box should still make its descendants
+          inert. That is what the standard says and what every implementation
+          I know of does, and jsdom cannot confirm it because jsdom implements
+          the attribute's presence and none of its behaviour -- the tests
+          beside this file model reachability by walking for the attribute,
+          which would pass whether or not a browser honours it here. So this
+          is the line to check first if the fix appears not to work: if
+          `display: contents` turns out to defeat `inert`, the answer is to
+          give this element a real box that fills its parent rather than to
+          reach for `aria-hidden` alone. */}
+      <div className="lay-app-root" inert={modalOpen} aria-hidden={modalOpen ? true : undefined}>
+        {children}
+      </div>
       {/* `inset: 0` with `pointer-events: none`, so the host covers the page
           for painting purposes and intercepts nothing. Each layer turns
           pointer events back on for itself; a layer that wants to swallow
           clicks renders its own backdrop, which is a decision belonging to
-          the layer rather than to the host. */}
+          the layer rather than to the host.
+
+          A sibling of the wrapper above rather than inside it, which is what
+          keeps the layers reachable while the page is not. */}
       <div className="lay-overlay-host" ref={setContainer} />
     </HostContext.Provider>
   )

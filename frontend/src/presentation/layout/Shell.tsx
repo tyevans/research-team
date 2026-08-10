@@ -21,6 +21,11 @@ import { OverlayHost } from './OverlayHost.tsx'
  *   smallest one."
  * - **`overlay`** — one host, always mounted, described in `OverlayHost.tsx`.
  *
+ * `Shell` knows nothing about overlays beyond mounting the host, and that is
+ * deliberate: making a modal disable the page is the *host's* job, done to
+ * whatever it wraps, so the guarantee holds for any tree rather than only for
+ * a `Shell`. `OverlayHost.tsx` argues that choice where it is made.
+ *
  * The surface's no-scroll contract is currently suspended below 820px by
  * `responsive.css` setting `body { overflow: auto }` — a global overridden by
  * a media query, so nothing reading `Shell` would know it happens. Here it is

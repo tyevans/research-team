@@ -216,6 +216,15 @@
    the viewport so its children can position against it, and intercepts
    nothing on the way through. A layer that wants to swallow clicks renders a
    backdrop, which is the layer's decision rather than the host's. */
+/* The page, as one node a modal can mark `inert`. `display: contents` so it
+   is not a box: `OverlayHost` rendered its children as a bare fragment before
+   this existed, and the whole point is that adding the element changes no
+   layout. Inertness applies over the node tree rather than the box tree, so
+   `contents` costs nothing here. */
+.lay-app-root {
+  display: contents;
+}
+
 .lay-overlay-host {
   position: fixed;
   inset: 0;

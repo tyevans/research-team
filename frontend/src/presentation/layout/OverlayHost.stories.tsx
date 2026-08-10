@@ -18,10 +18,15 @@ import { Shell } from './Shell.tsx'
  *
  * What to check in `DockThenDrawer`, which is the reason the host exists: the
  * drawer must paint *over* the dock, the dock must be visibly dimmed and
- * refuse a click, and Tab must not reach the dock's button. On `main` all
- * three are wrong — the dock popover is `z-index: 40` and the drawer's
- * `aria-modal` backdrop is `z-index: 20`, so a live, clickable panel sits on
- * top of a dialog claiming to be modal.
+ * refuse a click, and — the part a browser caught and jsdom's first round of
+ * assertions did not — **Tab from inside the drawer must reach nothing
+ * outside it, including the chrome.** The first version of this host made
+ * every other *layer* inert and left the whole shell tabbable, so the pointer
+ * was blocked by the backdrop and the keyboard was not.
+ *
+ * On `main` the painting half is wrong too: the dock popover is `z-index: 40`
+ * and the drawer's `aria-modal` backdrop is `z-index: 20`, so a live,
+ * clickable panel sits on top of a dialog claiming to be modal.
  */
 /** Typed as a bare `Meta` rather than `satisfies Meta<typeof Component>`.
  *
@@ -79,7 +84,12 @@ const DockAndDrawer = () => {
       }
     >
       <p style={{ padding: 'var(--space-4)' }}>
-        The page behind. A modal must make everything except itself unreachable.
+        The page behind. A modal must make everything except itself unreachable — this text, the row
+        below it, and the <code>agents</code> button in the chrome, not merely the other overlay
+        layers.
+      </p>
+      <p style={{ padding: '0 var(--space-4)' }}>
+        <button type="button">a row on the page</button>
       </p>
 
       {dockOpen ? (
@@ -130,13 +140,28 @@ export const DockThenDrawer: Story = { render: () => <DockAndDrawer /> }
  *  a modal-over-modal is an ordinary case rather than a contrived one. */
 export const TwoDeep: Story = {
   render: () => (
-    <Shell chrome={<strong>research-team</strong>}>
-      <p style={{ padding: 'var(--space-4)' }}>The page behind.</p>
+    <Shell
+      chrome={
+        <>
+          <strong>research-team</strong>
+          <button type="button">agents</button>
+        </>
+      }
+    >
+      {/* A focusable element behind, and one in the layer beneath the top
+          modal, so the confinement is checkable here rather than merely
+          plausible: Tab must cycle within the confirm and reach neither. The
+          first version of this story had nothing focusable behind it, which
+          made it look like it demonstrated more than it did. */}
+      <p style={{ padding: 'var(--space-4)' }}>
+        The page behind. <button type="button">a row on the page</button>
+      </p>
       <Overlay label="Session detail" modal>
         <div style={{ position: 'fixed', inset: '10% 10% auto 10%' }}>
           <Panel>
             <h3>Session detail</h3>
             <p>Beneath the confirm: dimmed, inert, unreachable by Tab.</p>
+            <button type="button">a control in the drawer</button>
           </Panel>
         </div>
       </Overlay>

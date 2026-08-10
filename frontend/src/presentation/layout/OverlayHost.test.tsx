@@ -27,6 +27,34 @@ import { Overlay, OverlayHost } from './OverlayHost.tsx'
  * one.
  */
 
+/** Everything in the document a keyboard could actually land on.
+ *
+ * Written out rather than taken from a library, and it has to compute
+ * reachability itself: jsdom implements the *presence* of `inert` and none of
+ * its behaviour, so `querySelectorAll` over a tabbable selector cheerfully
+ * returns elements no browser would let you reach. Walking the ancestor chain
+ * for `inert`, `aria-hidden` and `hidden` is what a browser does, modelled
+ * here because the alternative is asserting nothing.
+ *
+ * This is the assertion that was missing. The previous tests asked whether a
+ * particular layer *had* `inert` — a positive, about one element, which was
+ * true while a modal left the entire shell tabbable. The negative over the
+ * whole document is the only shape that could have caught it: a modal's
+ * promise is about everything it is not.
+ */
+const CAN_FOCUS = 'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
+
+const reachable = () =>
+  Array.from(document.querySelectorAll<HTMLElement>(CAN_FOCUS)).filter((element) => {
+    if (element.hasAttribute('disabled')) return false
+    for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+      if (node.hasAttribute('inert')) return false
+      if (node.getAttribute('aria-hidden') === 'true') return false
+      if (node.hasAttribute('hidden')) return false
+    }
+    return true
+  })
+
 const Dock = ({ children }: { children?: React.ReactNode }) => (
   <Overlay label="Agents">
     <button type="button">watch a session</button>
@@ -135,6 +163,115 @@ it('leaves a layer stacked on top of a modal usable', () => {
   expect(
     screen.getByRole('dialog', { name: 'Drawer', hidden: true }).closest('.lay-layer'),
   ).toHaveAttribute('inert')
+})
+
+it('confines the keyboard to the modal — the page, not just the other layers', async () => {
+  const user = userEvent.setup()
+
+  /** The story this reproduces is `DockThenDrawer`, and this is the defect a
+   *  browser found and jsdom's earlier assertions did not: with the modal
+   *  open, the pointer was blocked by the backdrop and Tab was not. The
+   *  chrome's button had no `inert` and no `aria-hidden` anywhere in its
+   *  ancestor chain, so a keyboard user tabbed out of an `aria-modal` dialog
+   *  into page chrome, and a screen-reader user was never confined. */
+  const Page = () => {
+    const [watching, setWatching] = useState(false)
+    return (
+      <OverlayHost>
+        <header>
+          <button type="button">agents</button>
+        </header>
+        <main>
+          <button type="button">a row on the page</button>
+        </main>
+        <Overlay label="Agents">
+          <button type="button" onClick={() => setWatching(true)}>
+            open the feed
+          </button>
+        </Overlay>
+        {watching ? (
+          <Overlay label="Watching" modal onDismiss={() => setWatching(false)}>
+            <button type="button">Close</button>
+          </Overlay>
+        ) : null}
+      </OverlayHost>
+    )
+  }
+
+  render(<Page />)
+
+  // Before the modal: everything is reachable, including both layers. A host
+  // that confined the keyboard all the time would be a worse bug than the one
+  // being fixed, so the negative is bounded from both ends.
+  expect(reachable().map((node) => node.textContent)).toEqual([
+    'agents',
+    'a row on the page',
+    'open the feed',
+  ])
+
+  await user.click(screen.getByRole('button', { name: 'open the feed' }))
+
+  // With it: exactly the modal's own controls, and nothing else in the entire
+  // document. `agents` was the element that proved this wrong in a browser.
+  expect(reachable().map((node) => node.textContent)).toEqual(['Close'])
+
+  const modal = screen.getByRole('dialog', { name: 'Watching' })
+  for (const node of reachable()) expect(modal.contains(node)).toBe(true)
+
+  // `aria-hidden` asserted separately, because `reachable()` stops at the
+  // first `inert` it finds and so cannot tell the two apart — dropping
+  // `aria-hidden` left every assertion above green. In a browser `inert`
+  // already removes the subtree from the accessibility tree, so this is
+  // belt-and-braces for anything that implements one and not the other; it is
+  // claimed in the component, so it is checked here rather than trusted.
+  expect(document.querySelector('.lay-app-root')).toHaveAttribute('aria-hidden', 'true')
+})
+
+it('confines the keyboard to the topmost modal when modals are nested', async () => {
+  /** `TwoDeep`, checked for the same class of gap rather than assumed to
+   *  inherit the fix. It does not inherit it for free: the page wrapper is
+   *  marked by "is any layer modal", while a layer is marked by "is a *later*
+   *  layer modal" — two different rules, and the nested case is where they
+   *  could disagree. */
+  render(
+    <OverlayHost>
+      <main>
+        <button type="button">a row on the page</button>
+      </main>
+      <Overlay label="Session detail" modal>
+        <button type="button">a control in the drawer</button>
+      </Overlay>
+      <Overlay label="Delete this session?" modal>
+        <button type="button">Cancel</button>
+      </Overlay>
+    </OverlayHost>,
+  )
+
+  expect(reachable().map((node) => node.textContent)).toEqual(['Cancel'])
+
+  const confirm = screen.getByRole('dialog', { name: 'Delete this session?' })
+  for (const node of reachable()) expect(confirm.contains(node)).toBe(true)
+})
+
+it('leaves the page reachable when the only open layers are not modal', () => {
+  // The bound on the other side. A popover takes nothing away from the page,
+  // and a host that disabled the shell for every layer would break the dock,
+  // the row menu and every tooltip at once.
+  render(
+    <OverlayHost>
+      <main>
+        <button type="button">a row on the page</button>
+      </main>
+      <Overlay label="Row actions">
+        <button type="button">fork from here</button>
+      </Overlay>
+    </OverlayHost>,
+  )
+
+  expect(reachable().map((node) => node.textContent)).toEqual([
+    'a row on the page',
+    'fork from here',
+  ])
 })
 
 it('decides the menu-against-modal tie that nothing decides today', () => {
