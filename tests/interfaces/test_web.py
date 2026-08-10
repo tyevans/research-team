@@ -570,6 +570,66 @@ async def test_sse_frames_a_stored_document_as_a_corpus_frame(repository):
     assert "session_id" not in payload
 
 
+async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
+    """An advanced stage reaches the live feed addressed to its project.
+
+    The reported bug, at the layer where it is visible: `advance_stage`
+    appended `StageAdvanced` and the course page's rail moved only on a
+    reload, because the feed read `CodingSession`, `Topic`, `Corpus` and
+    redstring's categories and nothing else.
+
+    A `Project` frame rather than a log frame, for the reason `Topic` and
+    `Corpus` are: the session tree keys off `session_id`, and a project's
+    aggregate id under that name would send it after a session that does not
+    exist -- which is why `session_id` is asserted absent. And it carries an
+    SSE id, unlike a `Dispatch` or `Seeding` frame: a project event is
+    appended to the log, so a reconnect replays it from `Last-Event-ID`
+    rather than needing a catch-up route.
+
+    `change` rather than a stage name, so the frame stays independent of
+    `StageAdvanced`'s payload -- which is being extended under separate work.
+    """
+    from research_team.application import LiveFeed
+    from research_team.domain.project import AdvanceStage, CreateProject, SelectWorkflow
+    from research_team.interfaces.web.app import _sse
+    from research_team.workflows import hybrid_default
+
+    feed = LiveFeed(repository, poll_interval=0.01)
+    project_id = uuid4()
+    project = repository.projects.create_new(project_id)
+    project.execute(CreateProject(project_id=project_id, name="Spacing"))
+    project.execute(SelectWorkflow(preset=hybrid_default))
+    await repository.projects.save(project)
+
+    frames: list[str] = []
+    generator = _sse(StubRequest(), feed)
+    task = asyncio.create_task(_drain(generator, frames, wanted=1))
+    await asyncio.sleep(0.05)
+    project.execute(
+        AdvanceStage(
+            preset=hybrid_default,
+            to_stage="hybrid.step1.framing",
+            decided_by="human",
+            gate_decision="4 of 4 declared artifacts present",
+            decision="approve_with_edits",
+        )
+    )
+    await repository.projects.save(project)
+    await asyncio.wait_for(task, timeout=5)
+
+    assert frames[0].startswith("id: ")
+    payload = json.loads(frames[0].split("data: ", 1)[1])
+    assert payload["type"] == "Project"
+    assert payload["project_id"] == str(project_id)
+    assert payload["change"] == "StageAdvanced"
+    # The verdict, not only that a boundary was crossed (#80). The one payload
+    # field this frame carries, because unlike a stage name it describes the
+    # transition rather than the current state and so cannot disagree with the
+    # course read.
+    assert payload["decision"] == "approve_with_edits"
+    assert "session_id" not in payload
+
+
 async def _drain(generator, frames: list[str], *, wanted: int) -> None:
     """Collect `wanted` data frames, then shut the generator down.
 
@@ -634,8 +694,16 @@ async def test_stream_reaches_a_real_browser_over_a_real_socket(db_path, fake_mo
             assert response.status_code == 200
             assert "text/event-stream" in response.headers["content-type"]
             async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    received.append(json.loads(line[len("data: ") :]))
+                if not line.startswith("data: "):
+                    continue
+                received.append(json.loads(line[len("data: ") :]))
+                # Read until the session's own frame rather than stopping at
+                # the first one. `start_session` also writes to the `Project`
+                # stream, and since the feed learned to carry `Project` those
+                # frames arrive first -- so "the first frame" stopped being
+                # the session's and this test failed asserting the wire was
+                # broken when it was carrying more than before.
+                if received[-1].get("type") == "SessionStarted":
                     return
 
     listener = asyncio.create_task(listen())
@@ -652,8 +720,8 @@ async def test_stream_reaches_a_real_browser_over_a_real_socket(db_path, fake_mo
         await serving
         await application.close()
 
-    assert received[0]["session_id"] == str(session_id)
-    assert received[0]["type"] == "SessionStarted"
+    assert received[-1]["session_id"] == str(session_id)
+    assert received[-1]["type"] == "SessionStarted"
 
 
 # ---------------- the page itself ----------------

@@ -15,6 +15,7 @@ from research_team.application import FeedEntry, TurnCancelled
 from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.domain import (
     AssistantMessageAdded,
+    CodingSession,
     FileWritten,
     ToolResultRecorded,
     TurnCompleted,
@@ -56,8 +57,24 @@ def writing_model() -> SlowWritingModel:
 
 
 async def _watch(feed, collected: list[FeedEntry]) -> None:
+    """Collect the session's own frames, and only those.
+
+    Filtered rather than taking everything the feed hands over, because these
+    tests are about a *turn* and the feed carries more than one aggregate.
+    `start_session` writes to the `Project` stream as well as the session's,
+    and once the feed learned to carry `Project` those frames landed in this
+    list -- arriving on a later poll than the session's, so they counted as a
+    turn being visible while it ran and failed three tests here that were
+    describing something true.
+
+    Scoping to `CodingSession` is what these tests always meant. Left
+    unfiltered they would fail again on the next aggregate admitted to the
+    feed, and the failure would look like a broken atomicity guarantee rather
+    than a widened feed -- the expensive kind of wrong.
+    """
     async for entry in feed.follow():
-        collected.append(entry)
+        if entry.aggregate_type == CodingSession.aggregate_type:
+            collected.append(entry)
 
 
 async def _settle(seen: list[FeedEntry], count: int, timeout: float = 5.0) -> None:

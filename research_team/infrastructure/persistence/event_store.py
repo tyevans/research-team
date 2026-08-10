@@ -37,6 +37,53 @@ is a mislabelled frame rather than an absent one, and the harder of the two to
 notice.
 """
 
+FEED_AGGREGATE_TYPES = (
+    CodingSession.aggregate_type,
+    Project.aggregate_type,
+    Topic.aggregate_type,
+    Corpus.aggregate_type,
+    *KNOWLEDGE_CATEGORIES,
+)
+"""Every aggregate type `read_since` admits to the live feed.
+
+A module constant rather than a tuple literal inside `read_since` because it
+is now read twice: by the query loop, and by
+`test_every_aggregate_type_is_routed_or_deliberately_not`, which is the guard
+against this list falling behind the domain a fourth time. The guard can only
+compare against a list it can see.
+
+Order is presentation, not behaviour -- `read_since` sorts by position after
+merging -- so it is written to match the order `_sse` tests the types in.
+"""
+
+UNROUTED_AGGREGATE_TYPES = frozenset(
+    {
+        AutoResearchRun.aggregate_type,
+        LearnerProgress.aggregate_type,
+    }
+)
+"""Aggregate types deliberately kept off the feed, and the other half of the guard.
+
+Being *absent* from `FEED_AGGREGATE_TYPES` is not a decision anybody wrote
+down -- that is exactly how `Topic`, the graph, `Corpus` and `Project` each
+went a release with a live path that carried nothing. Listing the exclusions
+makes silence impossible: a new aggregate type is in one list or the other,
+and the guard fails until somebody says which.
+
+`AutoResearchRun` is off because the course page reads a run's state through
+`/api/projects/{id}/run`, refreshed off the session frames a round already
+emits -- its own frames would be a second signal for the same repaint. See
+`useTreeRefresh`, which invalidates `allRuns` on log frames.
+
+`LearnerProgress` is off because nothing renders it live: it is read on
+opening a lesson and written by the reader who is already looking at it, so a
+frame would arrive at the one client that does not need telling.
+
+Neither is a *correctness* argument, and if either grows a pane the answer is
+to move it into `FEED_AGGREGATE_TYPES` and give `_sse` a branch -- not to
+widen this set.
+"""
+
 
 def build_project_repository(
     store: SQLiteEventStore,
@@ -368,10 +415,19 @@ class EventStoreSessionRepository:
 
         Scoped by aggregate type rather than taking the whole feed. This store
         is shared, and it holds streams belonging to aggregates nothing
-        subscribing here can place -- `Project`, `AutoResearchRun` and
-        `LearnerProgress` among them. Unscoped, every one of them would arrive
-        as a `FeedEntry` addressed to something no subscriber knows how to
-        route.
+        subscribing here can place -- `AutoResearchRun` and `LearnerProgress`
+        among them. Unscoped, every one of them would arrive as a `FeedEntry`
+        addressed to something no subscriber knows how to route. What is
+        admitted is `FEED_AGGREGATE_TYPES` and what is held back is
+        `UNROUTED_AGGREGATE_TYPES`; both are named above, and a type in
+        neither fails a test.
+
+        This docstring named `Project` among the unplaceable until the fix
+        below, and it
+        was wrong twice over: the course page has always had a rail to move,
+        and the docstring below already said a live subscriber could place
+        one. A comment describing a live path that carries nothing is the
+        recurring accompaniment to this bug, not an incidental detail.
 
         The scoping is `FeedReadOptions.aggregate_type` (eventsource 0.12),
         which the SQLite adapter pushes into the same query that already
@@ -405,6 +461,22 @@ class EventStoreSessionRepository:
         streams -- so a pane fed by graph frames would silently drop exactly
         the sources whose failure a reader needs to see listed.
 
+        **`Project` is read for the course page, which had no live path at
+        all.** `StageAdvanced` and `WorkflowSelected` are appended here and the
+        rail is what they moved, so a stage that advanced while a tab was open
+        reached the browser through nothing and the page only moved on a
+        reload. It is the same shape as `Topic`, the graph and `Corpus` before
+        it -- the fourth time -- which is why `FEED_AGGREGATE_TYPES` and
+        `UNROUTED_AGGREGATE_TYPES` now exist instead of a literal here.
+
+        One admission covers the whole aggregate rather than `StageAdvanced`
+        alone, and that is deliberate: `WorkflowSelected` is what turns the
+        course page from a 409 into a rail, and the lifecycle events
+        (`SessionJoinedProject`, `ProjectTipAdvanced`, `ProjectDeleted`) move
+        the holding-session link and the project list. Filtering to one event
+        class would have fixed the reported symptom and left its siblings
+        invisible until the next report.
+
         The redstring category names come from redstring rather than being
         spelled out
         here. This is the one module outside `infrastructure/knowledge/` that
@@ -430,12 +502,7 @@ class EventStoreSessionRepository:
         """
         envelopes = [
             envelope
-            for aggregate_type in (
-                CodingSession.aggregate_type,
-                Topic.aggregate_type,
-                Corpus.aggregate_type,
-                *KNOWLEDGE_CATEGORIES,
-            )
+            for aggregate_type in FEED_AGGREGATE_TYPES
             for envelope in await collect(
                 self._store.read_all(
                     from_position=position,
