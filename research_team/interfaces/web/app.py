@@ -53,7 +53,7 @@ from research_team.application.topic_dispatch import (
 )
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
-from research_team.domain import Corpus, CreateProject, ProjectState, SelectWorkflow
+from research_team.domain import Corpus, CreateProject, Project, ProjectState, SelectWorkflow
 from research_team.domain.auto_research import Budget
 from research_team.domain.project import current_stage_of
 from research_team.domain.topic import (
@@ -86,6 +86,7 @@ from research_team.interfaces.web.presenters import (
     neighborhood_view,
     preset_view,
     progress_view,
+    project_change,
     project_view,
     roster_view,
     run_view,
@@ -1931,6 +1932,11 @@ async def _sse(
                 # one that was not would be a bug worth an `AttributeError`
                 # naming it rather than a frame quietly addressed to nobody.
                 payload = graph_change(item.event.tenant_id, item.event)
+            elif item.aggregate_type == Project.aggregate_type:
+                # Same free addressing as a corpus, and for the same reason:
+                # a project's aggregate id *is* the project id, so the frame
+                # names its project without a read model lookup.
+                payload = project_change(item.aggregate_id, item.event)
             elif item.aggregate_type == Corpus.aggregate_type:
                 # A corpus shares its project's UUID, so the aggregate id is
                 # the project id with no lookup -- unlike a topic, which is why

@@ -183,6 +183,15 @@ export const decodeFrame = (data: string): FeedFrame | null => {
         ? { kind: 'graph', projectId: frame.data.project_id, change: frame.data.change }
         : null
     }
+    case 'Project': {
+      // Same shape as a graph or corpus frame -- the server addresses all
+      // three by project id and names the event class -- so the same DTO
+      // parses it. The `type` is what separates them.
+      const frame = projectChangeFrameDto.safeParse(payload)
+      return frame.success
+        ? { kind: 'project', projectId: frame.data.project_id, change: frame.data.change }
+        : null
+    }
     case 'Corpus': {
       const frame = projectChangeFrameDto.safeParse(payload)
       return frame.success

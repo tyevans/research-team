@@ -93,6 +93,24 @@ export type FeedFrame =
    * pane keyed to graph frames would go quiet on exactly the ingests whose
    * source a reader needs to find. */
   | { readonly kind: 'corpus'; readonly projectId: string; readonly change: string }
+  /** The project itself moved -- a stage advanced, a workflow was chosen, a
+   * session took or released it.
+   *
+   * Project-addressed and durable, like `graph` and `corpus`: a project event
+   * is appended to the log, so it carries a feed position and a reconnect
+   * replays it from `Last-Event-ID`. That is what puts it here rather than in
+   * `dispatch`'s family, which needs a catch-up route because nothing about a
+   * dispatch is written down.
+   *
+   * Not a `log` frame, for `topic`'s reason: a project's aggregate id under
+   * `sessionId` would send the session tree after a session that is a project.
+   *
+   * One kind for every project event, told apart by `change`. `StageAdvanced`
+   * is the one that was reported, but `WorkflowSelected` is what turns the
+   * course page from an error into a rail and the lifecycle events move the
+   * holding-session link -- and all of them want the same invalidation, so
+   * five kinds would be five ways to spell one refetch. */
+  | { readonly kind: 'project'; readonly projectId: string; readonly change: string }
 
 export type ConnectionState = 'connecting' | 'open' | 'down'
 

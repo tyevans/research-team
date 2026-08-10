@@ -565,6 +565,43 @@ def corpus_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
     }
 
 
+def project_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
+    """One project event, as pushed over SSE.
+
+    Its own frame type for the reason `topic_change` and `corpus_change` are:
+    a project is not a session, and its aggregate id under `session_id` would
+    send the session tree after a session that does not exist. And it is a
+    *log* frame rather than a `Seeding`-family one -- a project event is
+    appended to the store, so it carries a feed position, is addressed by an
+    SSE id, and replays on `Last-Event-ID` after a reconnect. That is the test
+    `Dispatch` failed and why `Dispatch` got a catch-up route instead.
+
+    `project_id` is the project's own aggregate id, free the way a corpus's
+    is -- a corpus shares this same UUID, which is the identity both frames
+    lean on.
+
+    One frame type for the whole aggregate, and `change` is what tells its
+    events apart. `StageAdvanced` is what was reported, but `WorkflowSelected`
+    turns the course page from a 409 into a rail and the lifecycle events move
+    the holding-session link, so a frame per event class would be five frame
+    types where the client wants one invalidation.
+
+    Carries no stage. It would be `to_stage` off `StageAdvanced` and nothing at
+    all off the other four, so a client would need the read anyway and would
+    have two descriptions of the current stage that can disagree -- the same
+    argument `corpus_change` makes about a document. The frame is a nudge;
+    `/api/projects/{id}/course` stays the single answer to where the run is.
+    That also keeps this frame independent of `StageAdvanced`'s shape, which is
+    changing under a separate piece of work.
+    """
+    return {
+        "type": "Project",
+        "project_id": str(project_id),
+        "change": type(event).__name__,
+        "occurred_at": event.occurred_at.isoformat(),
+    }
+
+
 def source_view(summary: DocumentRecord) -> dict[str, Any]:
     """One row of `/api/projects/{id}/sources`: what a source is, not what it says.
 
