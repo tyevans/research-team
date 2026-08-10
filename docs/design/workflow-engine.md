@@ -575,7 +575,7 @@ each say so precisely:
 | Stage | Prompt | Taxonomy | Subtypes | Format check |
 |---|---|---|---|---|
 | `tyler.step1b.candidates` | `prompts/tyler/candidates` | none | `candidate` | provenance to `SourceDossier`; `over_generate_factor=5` |
-| `ubd.stage1.desired_results` | `prompts/ubd/stage1_generate` | none | `transfer_goal`, `understanding`, `essential_question` | stem `"Students will understand that"`; rejects essential questions matching `^(What year\|Who was\|How many…)` |
+| `ubd.stage1.desired_results` | `prompts/ubd/stage1_generate` | none | `transfer_goal`, `understanding`, `essential_question`, `knowledge`, `skill` | stem `"Students will understand that"`; rejects essential questions matching `^(What year\|Who was\|How many…)` |
 | `addie.d1.objective_formulation` | `prompts/addie/objectives` | `blooms_revised` | `terminal_objective`, `enabling_objective` | verb denylist including `know` |
 | `hybrid.step4.intent_spec` | `prompts/hybrid/intent_spec` | `hybrid_per_subtype` | none | *both* the UbD stem rule and the ADDIE verb denylist |
 
