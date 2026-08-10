@@ -345,8 +345,17 @@ class SessionService:
         and release. Two cases, and the order matters. A session holding the
         project has work in it that the tip does not yet know about -- the tip
         only advances on release -- so the holder is the newer answer and is
-        asked first. With nobody holding it, the tip pointer is the whole
-        truth.
+        asked first.
+
+        With nobody holding it, the tip *session* is the truth and the tip
+        *offset* is not. `at_event` is where that session was when it was
+        released, and releasing neither closes the session nor stops it
+        accepting turns, so anything written afterwards sits past the offset
+        on the very stream this is folding. Reading to the offset is what
+        made a project answer with an empty file list while four artifacts
+        were sitting in the stream it was pointing at. The offset earns its
+        keep only once something else has forked from it, and by then the tip
+        names that fork rather than this session.
 
         A project that has never been joined has no stream at all and answers
         with nothing, which is different from a project whose files are empty
@@ -362,7 +371,7 @@ class SessionService:
             return dict(session.state.files)
         if state.tip_session_id is None or state.tip_at_event < 1:
             return {}
-        session = await self.state_at(state.tip_session_id, state.tip_at_event)
+        session = await self.load(state.tip_session_id)
         return dict(session.state.files)
 
     async def delete_project(self, project_id: UUID) -> None:
@@ -470,8 +479,16 @@ class SessionService:
         The new session is created (or forked) before the project is saved as
         held by it: a project marked held by a session that was never
         created is a project nothing can take back.
+
+        The tip is caught up *before* joining, and that ordering is the whole
+        of it: `JoinProject` stamps `inherited_at` from the tip, and the fork
+        copies to the same point, so a catch-up that ran afterwards would
+        leave both of them naming a point that is not where anything was
+        copied from. See `_catch_up_tip` for what is being caught up and why
+        there is anything to catch.
         """
         project = await self._projects.load(project_id)
+        await self._catch_up_tip(project)
         session_id = uuid4()
         project.execute(JoinProject(session_id=session_id))
 
@@ -505,6 +522,45 @@ class SessionService:
 
         await self._projects.save(project)
         return session_id
+
+    async def _catch_up_tip(self, project: Any) -> None:
+        """Move the tip to the end of the stream it already names.
+
+        Releasing a project records `at_event=session.version` -- where that
+        session was at that instant -- and then lets the session carry on.
+        Everything it writes afterwards lands past the recorded point, on a
+        stream the project is still pointing at, and detaches: the next
+        session forks from the old offset and inherits a prefix of a
+        filesystem rather than the filesystem.
+
+        That is not hypothetical. It is what happened to project "Tollers" in
+        the owner's database: an auto-research run started a session, stopped,
+        released the project in its `after` hook, and the person kept working
+        in the session the run had left them in. Four `/course` artifacts
+        written afterwards were unreachable from the project the moment they
+        were written, and the session that came next forked three events short
+        of the first of them.
+
+        Called on load rather than on write. Advancing the tip after every
+        turn would be a second aggregate saved on the hot path of every turn
+        in every project, for a pointer only two callers read; catching it up
+        where those callers read it costs one append at a join and nothing at
+        all when there is nothing to catch. The trade is that the tip is
+        briefly behind, which no reader can observe -- `project_files` folds
+        the whole stream for exactly this reason.
+
+        A no-op unless the tip names a session, nobody holds the project, and
+        that session has grown. `execute` refuses everything else anyway; this
+        checks first so a join does not append a `ProjectTipAdvanced` saying
+        nothing changed.
+        """
+        state = project.state
+        if state.active_session_id is not None or state.tip_session_id is None:
+            return
+        at = len(await self.history(state.tip_session_id))
+        if at <= state.tip_at_event:
+            return
+        project.execute(AdvanceTip(session_id=state.tip_session_id, at_event=at))
 
     async def _fork_files_from(
         self,

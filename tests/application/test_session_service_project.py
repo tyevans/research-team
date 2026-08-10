@@ -274,3 +274,87 @@ async def test_a_joined_session_is_told_what_a_self_contained_question_is(servic
 
     assert SELF_CONTAINED_QUESTION in session.state.system_prompt
     assert "typical physical traits" in SELF_CONTAINED_QUESTION
+
+
+# --- work done after a release ------------------------------------------------
+#
+# The failure these pin was found in a real database, not reasoned about:
+# project "Tollers" (`9d6bd8d4`) has a session (`08f37266`) holding four
+# `/course/*.md` artifacts at events 34-37, and the session that succeeded it
+# (`588102a5`) forked at event 31 and has none of them. An auto-research run
+# had started that session and released it in its `after` hook when the run
+# stopped; the person kept working in it, and every file they wrote after that
+# release was invisible to the project from the moment it was written.
+
+
+async def test_a_release_does_not_freeze_the_project_at_the_moment_it_happened(
+    service, project_id, fake_model
+):
+    """Work done after a release still belongs to the project.
+
+    `release_project` records `at_event=session.version` -- a snapshot of where
+    the session was when it was released, not a live pointer. Nothing stops the
+    session from continuing, and until this it kept its later work to itself:
+    the tip named the right session and the wrong point in it.
+
+    Fails with the change reverted on the last assertion, and the value it
+    reports is the whole bug -- `/after.md` is absent while `/before.md` is
+    there, so the next session inherits a prefix of a stream rather than a
+    filesystem.
+    """
+    first = await service.start_in_project(project_id)
+    await _write_file(service, first, "/before.md", "early", fake_model)
+    await service.release_project(first)
+    await _write_file(service, first, "/after.md", "late", fake_model)
+
+    second = await service.start_in_project(project_id)
+
+    session = await service.load(second)
+    assert session.state.files["/before.md"]["content"] == "early"
+    assert session.state.files["/after.md"]["content"] == "late"
+
+
+async def test_the_project_shows_files_written_after_its_release(
+    service, project_id, fake_model
+):
+    """The same defect on the read side, which is the half the owner saw.
+
+    `project_files` asks the holder first and falls back to the tip pointer.
+    With the session released there is no holder, so the fallback is the whole
+    answer -- and it was reading the tip session at the frozen `at_event`. The
+    project's own file listing went blank of work that was sitting in the
+    stream it was pointing at.
+    """
+    first = await service.start_in_project(project_id)
+    await service.release_project(first)
+    await _write_file(service, first, "/after.md", "late", fake_model)
+
+    assert "/after.md" in await service.project_files(project_id)
+
+
+async def test_the_fork_point_recorded_is_the_one_actually_taken(
+    service, project_id, fake_model
+):
+    """`SessionForkedFrom.at_event` must name where the fork really happened.
+
+    Catching the tip up is a write, and the reason to do it rather than
+    quietly fork further along than the pointer says is this: `inherited_at`
+    on `SessionJoinedProject` and `at_event` on `SessionForkedFrom` are the
+    two records of where a session's filesystem came from, and a fork that
+    outran the pointer would leave both of them describing a point that is not
+    where anything was copied from.
+    """
+    first = await service.start_in_project(project_id)
+    await service.release_project(first)
+    await _write_file(service, first, "/after.md", "late", fake_model)
+
+    second = await service.start_in_project(project_id)
+
+    at = len(await service.history(first))
+    forked = [
+        event
+        for event in await service.history(second)
+        if event.__class__.__name__ == "SessionForkedFrom"
+    ]
+    assert [event.at_event for event in forked] == [at]
+    assert (await service.projects.load(project_id)).state.tip_at_event == at

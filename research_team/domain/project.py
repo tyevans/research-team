@@ -137,6 +137,15 @@ class JoinProject:
 
 @dataclass(frozen=True)
 class AdvanceTip:
+    """Point the project's filesystem at `session_id`'s stream, `at_event` in.
+
+    Issued from two places, and the second is why the holder check below is
+    not the only accepted case. Releasing a project issues it from the holder.
+    *Catching the tip up* issues it from a session that has already released
+    and then kept working -- a real and ordinary thing, because releasing does
+    not close a session or stop it accepting turns.
+    """
+
     session_id: UUID
     at_event: int
 
@@ -312,7 +321,26 @@ def decide(command: ProjectCommand, state: ProjectState) -> list[DomainEvent]:
             return [_advanced(state, command, preset, to_stage)]
 
         case AdvanceTip(session_id=session_id, at_event=at), _:
-            if state.active_session_id != session_id:
+            # Two ways to be allowed to move the tip, and the second one is
+            # what stops work from detaching. The holder may move it: that is
+            # a release. And the session the tip *already names* may move it
+            # further along its own stream while nobody else holds the
+            # project: that is a catch-up, and it is the only route by which
+            # work done after a release rejoins the project it was done in.
+            #
+            # Both arms are the same fact -- "this session's stream is the
+            # project's filesystem, this far in" -- so they produce the same
+            # event. What is refused is a session claiming a stream that is
+            # not the project's, and a tip that moves backwards: backwards is
+            # not a catch-up, it is a rewrite of which work counts, and there
+            # is no caller that means it.
+            holds = state.active_session_id == session_id
+            catching_up = (
+                state.active_session_id is None
+                and state.tip_session_id == session_id
+                and at > state.tip_at_event
+            )
+            if not (holds or catching_up):
                 raise CommandRejectedError(f"session {session_id} does not hold this project")
             return [
                 ProjectTipAdvanced(aggregate_id=project_id, session_id=session_id, at_event=at)
