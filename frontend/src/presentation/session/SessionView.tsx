@@ -13,6 +13,9 @@ import type { EventIndex } from '@domain/session/event-index.ts'
 import { shortId, type SessionId } from '@domain/shared/identifier.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
 
+import { Pane } from '../layout/Pane.tsx'
+import { Split } from '../layout/Split.tsx'
+
 import { ErrorBox } from '../common/primitives.tsx'
 import { plural } from '../formatting/format.ts'
 import { sessionHref, homeHref } from '../routing/routes.ts'
@@ -24,9 +27,8 @@ import { Conversation } from './Conversation.tsx'
 import { FileList } from './FileList.tsx'
 import { FileView } from './FileView.tsx'
 import { ScrubBar } from './ScrubBar.tsx'
-import { Pane } from './Pane.tsx'
 import { Timeline } from './Timeline.tsx'
-import { usePanes } from './use-panes.ts'
+import { SESSION_TRACKS, useSessionPanes } from './use-session-panes.ts'
 import { useSessionStream } from './use-session-stream.ts'
 
 export const SessionView = ({
@@ -49,7 +51,7 @@ export const SessionView = ({
   const container = useContainer()
   const queryClient = useQueryClient()
   const state = store()
-  const panes = usePanes()
+  const panes = useSessionPanes()
 
   useEffect(() => {
     void store.getState().open(sessionId, at)
@@ -179,13 +181,18 @@ export const SessionView = ({
         onEndSession={endSession}
       />
 
-      <div className="panes" style={{ gridTemplateColumns: panes.gridTemplateColumns }}>
+      <Split
+        id="session"
+        label="Session panes"
+        tracks={SESSION_TRACKS}
+        collapsed={panes.collapsed}
+        onCollapsedChange={panes.onCollapsedChange}
+        onRefuse={panes.onRefuse}
+      >
         <Pane
-          name="timeline"
-          title="Event log"
-          label="Event timeline"
-          meta={state.log.length > 0 ? plural(state.log.length, 'event') : ''}
-          panes={panes}
+          id="timeline"
+          label="Event log"
+          meta={state.log.length > 0 ? plural(state.log.length, 'event') : undefined}
           footer={<ActivityFeed store={store} />}
         >
           <Timeline
@@ -199,12 +206,12 @@ export const SessionView = ({
         </Pane>
 
         <Pane
-          name="workspace"
-          title="Workspace"
+          id="workspace"
           label="Workspace"
           meta={historicalAt !== null ? `@ event ${historicalAt}` : 'head'}
-          panes={panes}
-          bodyClassName="pane-body-split"
+          // The file list and the file viewer scroll independently, so the
+          // body must be a column that does not scroll around them.
+          scroll="regions"
         >
           {state.snapshotError ? (
             <ErrorBox
@@ -243,8 +250,7 @@ export const SessionView = ({
         </Pane>
 
         <Pane
-          name="conversation"
-          title="Conversation"
+          id="conversation"
           label="Conversation"
           meta={
             messages.length > 0
@@ -255,10 +261,12 @@ export const SessionView = ({
                 ]
                   .filter(Boolean)
                   .join(' · ')
-              : ''
+              : undefined
           }
-          panes={panes}
-          raw
+          // `Conversation` renders its own scroll container because it holds a
+          // ref on it to stick to the bottom, so this body is a column around
+          // it rather than a second scroller.
+          scroll="regions"
           footer={
             <>
               <Approvals
@@ -281,7 +289,7 @@ export const SessionView = ({
         >
           <Conversation view={view} error={state.snapshotError} historicalAt={historicalAt} />
         </Pane>
-      </div>
+      </Split>
     </section>
   )
 }

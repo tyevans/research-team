@@ -6,9 +6,18 @@ import { useWide } from './use-wide.ts'
 interface SplitState {
   readonly collapsed: ReadonlySet<string>
   readonly toggle: (id: string) => void
-  /** False below the widest breakpoint, where the stylesheet owns the shape.
-   *  Panes read it to choose between a vertical rail and a horizontal strip. */
+  /** False below the widest breakpoint, where the stylesheet owns the shape. */
   readonly wide: boolean
+  /** True below `narrow`, where the panes stop being columns at all.
+   *
+   *  Separate from `wide`, and the separation was found by migrating the
+   *  session view onto this rather than by reasoning about it. A pane chooses
+   *  between a vertical rail and a horizontal strip on *this*, not on `wide`:
+   *  between the two breakpoints the session panes are still columns -- two of
+   *  them, with the third wrapped to its own row -- and a collapsed one is
+   *  still a 34px rail with its title on its side. Switching on `wide` turned
+   *  every collapsed pane into a strip at 1000px, where today it is a rail. */
+  readonly stacked: boolean
 }
 
 /** How a `Pane` learns whether it is collapsed without every view threading it
@@ -60,18 +69,20 @@ export const Split = ({
   children: ReactNode
 }) => {
   const wide = useWide('wide')
+  const stacked = !useWide('narrow')
 
   const state = useMemo<SplitState>(
     () => ({
       collapsed,
       wide,
+      stacked,
       toggle: (paneId: string) => {
         const result = toggleCollapsed({ tracks, collapsed, id: paneId })
         if (result.refused) onRefuse?.()
         else onCollapsedChange(result.collapsed)
       },
     }),
-    [collapsed, wide, tracks, onCollapsedChange, onRefuse],
+    [collapsed, wide, stacked, tracks, onCollapsedChange, onRefuse],
   )
 
   return (
