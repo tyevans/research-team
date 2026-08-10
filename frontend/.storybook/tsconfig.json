@@ -1,0 +1,20 @@
+{
+  // Storybook's config is the workbench's, not the application's — it may see
+  // `process` and `fs`, which application code deliberately cannot. Same
+  // reason `vite.config.ts` lives under `tsconfig.node.json`, and same
+  // mechanism as `scripts/tsconfig.json`: a config here keeps these files off
+  // eslint's eight-file default project. See the note there.
+  //
+  // Story files themselves are *not* covered by this. They are ordinary source
+  // under `src/`, type-checked by `tsconfig.json` with the rest of the
+  // application, which is what makes `typecheck` the thing that catches a
+  // broken story and is why `storybook build` is not in `npm run verify`.
+  //
+  // `./*.ts` rather than `.`: TypeScript's glob expansion skips directories
+  // whose name begins with a dot, so a bare `.` matches nothing here and the
+  // files fall back to eslint's default project with a parse error that blames
+  // `allowDefaultProject`. The same reason `tsconfig.node.json` names
+  // `.storybook/**/*.ts` explicitly.
+  "extends": "../tsconfig.node.json",
+  "include": ["./*.ts"]
+}
