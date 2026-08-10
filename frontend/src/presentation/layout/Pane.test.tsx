@@ -100,6 +100,8 @@ it('follows the split it is inside, and reports a refusal to the view', async ()
   const user = userEvent.setup()
   const onRefuse = vi.fn()
 
+  const onCollapsedChange = vi.fn()
+
   const Workbench = () => {
     const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set(['timeline']))
     return (
@@ -108,7 +110,10 @@ it('follows the split it is inside, and reports a refusal to the view', async ()
         label="Session panes"
         tracks={TRACKS}
         collapsed={collapsed}
-        onCollapsedChange={setCollapsed}
+        onCollapsedChange={(next) => {
+          onCollapsedChange(next)
+          setCollapsed(next)
+        }}
         onRefuse={onRefuse}
       >
         <Pane id="timeline" label="Timeline">
@@ -131,6 +136,14 @@ it('follows the split it is inside, and reports a refusal to the view', async ()
   await user.click(screen.getByRole('button', { name: 'Collapse Workspace' }))
   expect(onRefuse).toHaveBeenCalledTimes(1)
   expect(screen.getByRole('button', { name: 'Collapse Workspace' })).toBeInTheDocument()
+
+  // *Instead of*, not *as well as*, which is what the prop's docstring claims
+  // and what nothing checked until a mutation pass went looking. Calling both
+  // is harmless today only because `toggleCollapsed` returns the set it was
+  // given when it refuses, so the write is a no-op -- two facts in two files
+  // holding one property up between them. Assert the one that is stated:
+  // whoever changes the other has to come past this.
+  expect(onCollapsedChange).not.toHaveBeenCalled()
 
   await user.click(screen.getByRole('button', { name: 'Expand Timeline' }))
   expect(screen.getByRole('button', { name: 'Collapse Timeline' })).toBeInTheDocument()
