@@ -17,6 +17,12 @@ is to compute the one legal `to_stage`, run the command, and turn either
 outcome into prose. Re-checking the rules here would put the most important
 invariant in the system in two places.
 
+Each outcome also carries one bit beside the prose -- did the project move --
+because a successful advance ends the turn and a refused one must not.
+`EndTurnOnStageAdvance` below is the half that acts on it, and it lives here
+rather than in `stage_middleware.py` so that the mark and the only thing that
+reads it cannot drift apart in separate files.
+
 Two situations are answered *before* the command rather than through it. A
 project sitting on the preset's last stage is not in error, and a
 `CommandRejectedError` would tell a model to try something when there is
@@ -26,14 +32,102 @@ a project into stage two of a workflow it never ran. Both come back as plain
 statements of where the project stands.
 """
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from eventsource import CommandRejectedError
+from langchain.agents.middleware import AgentMiddleware, hook_config
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, tool
 
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL
 from research_team.domain.project import AdvanceStage, ProjectState, current_stage_of
 from research_team.domain.workflow import Preset, Stage
+
+STAGE_ADVANCED: dict[str, Any] = {"stage_advanced": True}
+"""The marker an `advance_stage` result carries when the project actually moved.
+
+Carried on the `ToolMessage.artifact`, which exists for exactly this -- a
+structured companion to the prose, invisible to the model. The prose is what
+the model and the reviewer read and is free to be reworded; this is what
+`EndTurnOnStageAdvance` matches on, so a rewording cannot silently stop ending
+turns. A test on the wording alone would not have caught that.
+"""
+
+
+def _advanced(text: str) -> tuple[str, dict[str, Any]]:
+    return text, STAGE_ADVANCED
+
+
+def _refused(text: str) -> tuple[str, None]:
+    """A result that left the project where it was.
+
+    Every arm of the tool goes through one of these two, so "did this move the
+    project" is answered once per return rather than inferred later. `None`
+    rather than a `{"stage_advanced": False}` marker because absence is what
+    every other tool in the system already produces, and the middleware then
+    has one thing to look for instead of two.
+    """
+    return text, None
+
+
+class EndTurnOnStageAdvance(AgentMiddleware):
+    """Ends the turn once a stage boundary has actually been crossed.
+
+    Two reasons, both the owner's. A turn is the unit of durability -- events
+    are appended once, when it finishes -- so a stage advanced *mid*-turn is a
+    transition whose survival depends on the rest of the turn succeeding. And
+    the boundary exists to break the conversation: a stage that carries on in
+    the same context inherits the previous stage's messages, which is the one
+    thing the boundary is for.
+
+    **This runs `before_model`, not at the tool, because the tool cannot end
+    the graph.** A tool returning `Command(goto=END)` does not stop the loop
+    here: langchain wires `tools -> model` as a conditional edge
+    (`_make_tools_to_model_edge` in `langchain/agents/factory.py`), and a
+    `Command`'s `goto` is applied *alongside* that edge rather than instead of
+    it -- verified against 1.3.14, where the model ran anyway and produced a
+    further message. `return_direct` is the framework's own answer and is
+    wrong for a different reason: it is a property of the tool, so it would
+    end the turn on a *refused* advance too, and it only fires when every call
+    in the message has it, so a model that called `advance_stage` beside a
+    `write_file` would silently keep going. `jump_to` is the supported hook
+    that can be decided per result.
+
+    **A refused advance is not an advance.** Only a result carrying
+    `STAGE_ADVANCED` stops the turn; a domain rejection, a harness invariant
+    failure, a human saying no, and an empty rationale all leave the agent
+    running with its feedback delivered, which is the whole point of telling
+    it why.
+
+    **Other tool calls in the same step are not abandoned.** By the time this
+    runs the tool node has executed every call in that step and their results
+    are already in the transcript -- their file writes are already events on
+    the aggregate. What is given up is the model's chance to *read* those
+    results, which it would have read in the wrong stage anyway. A model that
+    wants to act on them should not have proposed the advance in the same
+    step.
+    """
+
+    name = "end_turn_on_stage_advance"
+
+    @hook_config(can_jump_to=["end"])
+    async def abefore_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        """Stop before the model is asked anything else.
+
+        Async because `DeepAgentTurnExecutor._invoke` streams, and the sync
+        hook is never called on that path -- the same constraint written up in
+        `stage_middleware.py`.
+
+        Scans backwards over the trailing tool results rather than only the
+        last message, because a step with several tool calls appends several
+        `ToolMessage`s and `advance_stage` need not be last among them.
+        """
+        for message in reversed(state.get("messages") or ()):
+            if not isinstance(message, ToolMessage):
+                break
+            if getattr(message, "artifact", None) == STAGE_ADVANCED:
+                return {"jump_to": "end"}
+        return None
 
 
 class WorkflowPort(Protocol):
@@ -44,13 +138,16 @@ class WorkflowPort(Protocol):
     supplies it, and a caller that could pass a different id is a caller that
     could advance somebody else's run.
 
-    `project_state` is a call rather than a value handed over at construction
-    because a turn can advance twice -- an approval per boundary -- and a tool
-    holding the state it was built with would compute the same `to_stage` the
-    second time and be rejected for skipping. The stage the *middleware* uses
-    is still folded once per turn; that one is a filter over tools and cannot
-    change mid-turn without rebuilding the agent, and this one is a decision
-    that can.
+    `project_state` is a call rather than a value handed over at construction.
+    The original reason -- that a turn could advance twice, an approval per
+    boundary -- stopped being true when `EndTurnOnStageAdvance` made the first
+    successful advance the end of the turn. It is still a call, and should
+    stay one: the state is read *before* the command that changes it, so the
+    tool would be computing `to_stage` from a fold taken at agent-build time
+    even within a single advance, and a stage moved by anything other than
+    this tool between build and call would be invisible to it. The stage the
+    *middleware* uses is still folded once per turn; that one is a filter over
+    tools and cannot change mid-turn without rebuilding the agent.
     """
 
     async def project_state(self) -> ProjectState: ...
@@ -117,15 +214,23 @@ def build_workflow_tools(
             return f"Stage not advanced: {error}. The project is unchanged."
         return None
 
-    @tool(ADVANCE_STAGE_TOOL)
-    async def advance_stage(rationale: str) -> str:
+    @tool(ADVANCE_STAGE_TOOL, response_format="content_and_artifact")
+    async def advance_stage(rationale: str) -> tuple[str, dict[str, Any] | None]:
         """Move this project to the next stage of its workflow.
 
         `rationale` says why this stage's work is finished and must be
         specific: it is recorded on the event and is what a reviewer reads.
+
+        Returns `(prose, artifact)`. The artifact is `STAGE_ADVANCED` on the
+        one path that actually moved the project and `None` on every path that
+        did not, which is what `EndTurnOnStageAdvance` reads to decide whether
+        this turn is over. Marking it here rather than having the middleware
+        recognise the prose is the point: only this function knows whether the
+        command went through, and a reader matching on message text would tie
+        a control-flow decision to wording anyone might reasonably reword.
         """
         if not rationale.strip():
-            return (
+            return _refused(
                 "Refused: `rationale` is required and must say why this stage's work "
                 "is finished. A stage boundary crossed for no stated reason is not a "
                 "gate -- call this again with what was produced and why it is enough."
@@ -139,8 +244,8 @@ def build_workflow_tools(
                 # answer, and it is one command away. Any `to_stage` reaches
                 # it, since that arm is checked before the stage list is.
                 refusal = await _attempt(preset.stages[0].id, rationale)
-                return refusal or "Stage advanced."
-            return (
+                return _refused(refusal) if refusal else _advanced("Stage advanced.")
+            return _refused(
                 f"This project's recorded stage {state.current_stage!r} is not a stage "
                 f"of workflow {preset.id}, so there is no next stage to move to. "
                 f"Report this rather than working around it: the project and the "
@@ -149,7 +254,7 @@ def build_workflow_tools(
 
         following = _next_stage(preset, current)
         if following is None:
-            return (
+            return _refused(
                 f"Already at the last stage of {preset.name} ({preset.id}): "
                 f"{describe_stage(current)}. There is nothing to advance to -- "
                 f"the remaining work is finishing this stage's artifacts."
@@ -157,13 +262,16 @@ def build_workflow_tools(
 
         refusal = await _attempt(following.id, rationale)
         if refusal is not None:
-            return refusal
+            return _refused(refusal)
 
-        return (
+        return _advanced(
             f"Advanced out of {describe_stage(current)}.\n"
             f"Now in {describe_stage(following)}.\n"
             f"Work in this stage only; the previous stage's artifacts are settled "
-            f"and revising one is an amendment, not a return to it."
+            f"and revising one is an amendment, not a return to it.\n"
+            f"This turn ends here, so that the transition is durable before "
+            f"anything is built on it and the next stage starts from a fresh "
+            f"session rather than inheriting this one's conversation."
         )
 
     return (advance_stage,)
@@ -177,5 +285,27 @@ WORKFLOW_PROMPT = (
     "run out of things to say. The `rationale` you pass is what the reviewer "
     "reads to decide, so name what was produced and what it rests on. A stage "
     "you advanced past is settled: revising its artifacts later is an "
-    "amendment recorded against it, never a return to it."
+    "amendment recorded against it, never a return to it.\n\n"
+    "A successful `advance_stage` ends your turn. Say what you have to say "
+    "before you call it, and do not plan work after it -- the next stage is a "
+    "new turn with a fresh session. `EndTurnOnStageAdvance` enforces this, so "
+    "these two sentences are not the guarantee; they are what lets you stop on "
+    "a finished thought instead of mid-sentence. A *refused* advance does not "
+    "end anything -- read what it says and keep working."
 )
+"""Explaining the gate to a model that has it bound.
+
+The last paragraph is the prompt half of the turn-ending change, and it is
+here rather than in the base system prompt for the reason
+`component_guidance` gives about widget syntax: this text is only true when
+`advance_stage` is bound, and a prompt carrying instructions that mostly do
+not apply teaches the model that its instructions mostly do not apply. It is
+appended by `StageMiddleware`'s instructions, so a session with no workflow
+never sees it.
+
+It is not load-bearing. `EndTurnOnStageAdvance` stops the turn whether or not
+the model intended to stop, which is the point -- a prompt gives a tendency and
+the tendency is weakest on long messy turns, which are exactly the turns where
+losing the transition costs most. What the prompt buys is a turn that ends on a
+sentence the model meant to finish rather than one cut off after a tool result.
+"""
