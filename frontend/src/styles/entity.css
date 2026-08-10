@@ -1,0 +1,340 @@
+/* The entity presentation components.
+
+   Every selector is new and `ent-` prefixed, for the same reason `layout.css`
+   is `lay-` prefixed: `.topic-row`, `.topic-question`, `.topic-status` and
+   `.project` already exist and are written for the views that own them. A new
+   component reusing those names would inherit rules built for a different
+   container, which is how `.pane` came to mean two different things in two
+   stylesheets. The prefix goes when the views migrate and the old rules are
+   deleted.
+
+   Nothing in the running console uses any of this yet. It is added with the
+   components so the gallery renders them as they will actually look, and it
+   changes no existing page. */
+
+/* ======================================================================= */
+/* status                                                                  */
+/* ======================================================================= */
+
+.ent-status {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 1px var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raise);
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+
+/* `neutral` has no chrome at all, which is a fix rather than a default.
+
+   Measured in a browser: text-colour contrast between the `bad` and `neutral`
+   tones is **1.09**, and their borders did not rescue it -- relative
+   luminance 0.0288 against 0.0225, both dark and nearly equal. So "error",
+   "stalled" and "budget exhausted" were separated from "cancelled" by hue on
+   both channels with no luminance backup anywhere. Semantically that is *a run
+   that failed* against *a run a person deliberately stopped*, and in greyscale
+   or with a red deficiency they read the same.
+
+   Two fixes were rejected before this one.
+
+   **Making `bad` louder**: three of the six run endings are `bad`, and
+   shouting on half the set spends the emphasis that `held` -- "needs a
+   person", the one ending that actually wants somebody -- needs to keep. Its
+   border is nearly 3x the luminance of `good`'s, which is what makes it
+   survive greyscale, and that only works while it is the loudest thing here.
+
+   **Dimming `neutral`'s text to `--fg-faint`**: measured at 3.34 against the
+   page, which fails AA. `--fg-dim` is 6.40. The palette has no step between
+   them, and inventing one would be the second literal `tokens.css` exists to
+   prevent.
+
+   So the separation moves off the colour channel entirely: a status with an
+   opinion is a filled, bordered chip; a status without one is bare text.
+   Presence-versus-absence of an outline survives greyscale and every colour
+   deficiency, and it is also what the tone *means* -- `neutral` is the absence
+   of a verdict, and it should not look like a choice somebody made.
+
+   What this does not fix, stated because it would be easy to imply otherwise:
+   `bad` and `neutral` text remain 1.09 apart. Both have to clear AA against
+   the page and the palette offers no third step, so the text channel cannot
+   carry this distinction. The chrome does. */
+.ent-status-neutral {
+  background: none;
+  border-color: transparent;
+}
+
+.ent-status-live {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+.ent-status-good {
+  border-color: var(--tint-ok-line);
+  background: var(--tint-ok);
+  color: var(--k-file);
+}
+.ent-status-held {
+  border-color: var(--accent-dim);
+  background: var(--tint-held);
+  color: var(--accent);
+}
+.ent-status-bad {
+  border-color: var(--tint-fail-line);
+  background: var(--tint-fail);
+  color: var(--k-failure);
+}
+
+/* The reason, when there is one. Dimmer than the status itself and allowed to
+   truncate: it is an explanation, and an explanation that pushes the status
+   off the row has cost more than it gave. */
+.ent-status-detail {
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 24ch;
+}
+
+/* ======================================================================= */
+/* ref                                                                     */
+/* ======================================================================= */
+
+.ent-ref {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35ch;
+  min-width: 0;
+  color: inherit;
+}
+a.ent-ref:hover .ent-ref-name {
+  color: var(--accent);
+}
+
+/* Never the thing that shrinks. `held by` is two words and truncating them
+   turns a sentence into `held b…`, which reads as a broken name rather than as
+   a shortened one. */
+.ent-ref-prefix {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+}
+
+.ent-ref-name {
+  /* `min-width: 0` is load-bearing and its absence was a real bug. A flex item
+     defaults to `min-width: auto`, which refuses to shrink below its content's
+     intrinsic width -- so `overflow: hidden` and `text-overflow: ellipsis`
+     never engage, and a long label overflows its container instead of
+     truncating. The rules below look correct and do nothing without this line,
+     which is exactly the kind of defect jsdom cannot see: no layout, no
+     overflow, no difference. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The fallback, made visible. A short id rendered in the same face as a name
+   reads *as* a name, and a reader cannot tell the console does not know what
+   the thing is called. Monospace at the small size says "identifier" without
+   needing a word for it. */
+.ent-ref-id {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+/* ======================================================================= */
+/* topic row                                                               */
+/* ======================================================================= */
+
+.ent-topic-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  /* So the row can be placed in a flex row -- a queue beside a detail -- and
+     still clamp rather than push its container wider. Without it the row's
+     intrinsic width is its longest question, and every truncation rule below
+     is inert. */
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+  list-style: none;
+}
+
+/* The row's height is a function of its kind, not of its content -- the
+   contract a virtualizer estimates against. One line, clamped, never wrapped:
+   a question that wrapped to two lines would make this row a card, and L-F8
+   records what a mis-measured row costs (a 122px hole at three projects). */
+.ent-topic-question {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Clips rather than wraps, and that is the height contract rather than a
+   preference. A meta line that wrapped would make this row taller than its
+   neighbours, which is precisely the guarantee a virtualizer estimates
+   against -- and L-F8 records what a mis-measured row costs: a 122px hole at
+   three projects. In a rail too narrow for a chip, three counts and a button,
+   something has to give, and it must not be the height. */
+.ent-topic-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.ent-topic-count {
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.ent-topic-overflow {
+  margin-left: auto;
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+/* The three conditions a queue is scanned for, in the order they outrank each
+   other -- blocked beats flagged beats closed, which is the order the domain's
+   own `byUrgency` sorts in. Written as one rule each rather than as a
+   combined selector so the precedence is legible rather than inferred. */
+.ent-topic-row.is-blocked {
+  border-left: 2px solid var(--k-failure);
+}
+.ent-topic-row.needs-attention {
+  border-left: 2px solid var(--accent);
+}
+.ent-topic-row.is-closed {
+  opacity: 0.6;
+}
+.ent-topic-row.is-selected {
+  background: var(--bg-hover);
+}
+
+/* ======================================================================= */
+/* topic detail                                                            */
+/* ======================================================================= */
+
+.ent-topic-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-4);
+  min-width: 0;
+}
+
+.ent-topic-detail-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Wraps, unlike the row's. A detail is the sole occupant of its region and the
+   question is the thing it is about, so cutting it off here would hide the
+   one field the whole region exists to show. */
+.ent-topic-detail-question {
+  margin: 0;
+  flex: 1 1 100%;
+  font-size: var(--t-lg);
+  line-height: 1.35;
+}
+
+.ent-topic-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ent-topic-section h3 {
+  margin: 0;
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--fg-dim);
+}
+.ent-topic-section p {
+  margin: 0;
+}
+
+.ent-topic-notes,
+.ent-topic-triggers,
+.ent-topic-sources {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.ent-topic-source-id {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.ent-topic-empty {
+  color: var(--fg-dim);
+}
+
+/* ======================================================================= */
+/* project card                                                            */
+/* ======================================================================= */
+
+.ent-project-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+.ent-project-card.is-selected {
+  border-color: var(--line-strong);
+}
+
+.ent-project-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ent-project-name {
+  font-weight: 600;
+}
+
+.ent-project-holder {
+  font-size: var(--t-xs);
+}
+
+.ent-project-free {
+  color: var(--k-file);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.ent-project-stats {
+  display: flex;
+  gap: var(--space-3);
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.ent-project-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.ent-project-sessions {
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--space-2);
+}

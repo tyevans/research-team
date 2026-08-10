@@ -28,3 +28,25 @@ declare module '*/eslint.config.js' {
   const config: any
   export default config
 }
+
+/** The mutation harness. `.mjs` because it is a CLI in the same family as
+ *  `check-size.mjs`, and its `classify` is imported by `mutate.test.ts`.
+ *
+ *  A real signature rather than `any`, unlike the two above: this is our
+ *  module, the shape is four words wide, and the test asserts against the
+ *  verdicts by name — so `any` here would let a renamed verdict typecheck and
+ *  fail at run time.
+ *
+ *  It does duplicate the JSDoc in `mutate.mjs`, and the way to remove the
+ *  duplication was tried and rejected: `allowJs` in `tsconfig.node.json` lets
+ *  TypeScript read that JSDoc as the single source, but it also pulls every
+ *  `.mjs` into the project, which collides with `allowDefaultProject` in
+ *  `eslint.config.js` and makes the eslint config itself typed — surfacing an
+ *  unrelated pre-existing mismatch in `eslint-config.test.ts`. Two lines of
+ *  duplication is the cheaper of the two. */
+declare module '*/mutate.mjs' {
+  export const classify: (output: string) => {
+    verdict: 'killed' | 'survived' | 'unparsed' | 'unknown'
+    killedBy: string[]
+  }
+}

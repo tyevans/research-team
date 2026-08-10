@@ -34,5 +34,10 @@
    newer of the two systems. */
 @import './layout.css';
 
+/* The entity presentation components. `ent-` prefixed throughout, so it adds
+   rules and overrides none — the views still use `.topic-row`, `.project` and
+   the rest until they migrate. */
+@import './entity.css';
+
 /* Last, so it can correct the structural differences above. */
 @import './structure.css';
