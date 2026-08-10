@@ -11,7 +11,8 @@ from redstring.events.streams import document_stream
 from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import StartSession, StoreSourceDocument
-from research_team.domain.project import ProjectCreated
+from research_team.domain.learner import ChecklistProgressRecorded
+from research_team.domain.project import AdvanceStage, CreateProject, SelectWorkflow
 from research_team.domain.topic import OpenTopic
 from research_team.infrastructure.agent.corpus_tools import CORPUS_PROMPT
 from research_team.infrastructure.agent.fetch import FETCH_CORPUS_PROMPT, FETCH_PROMPT
@@ -23,6 +24,7 @@ from research_team.infrastructure.persistence import (
     build_corpus_repository,
 )
 from research_team.infrastructure.persistence.event_store import build_topic_repository
+from research_team.workflows import hybrid_default
 from tests.conftest import start_session
 
 
@@ -212,7 +214,14 @@ async def test_read_since_carries_topic_events(tmp_path):
 
 
 async def test_read_since_ignores_events_from_other_aggregate_types(tmp_path):
-    """A shared store carries foreign streams; the feed must not see them."""
+    """A shared store carries foreign streams; the feed must not see them.
+
+    The foreign stream was `Project` until the feed was taught to carry it,
+    which made this test assert the opposite of the one beside it. It is
+    `LearnerProgress` now -- the exclusion `UNROUTED_AGGREGATE_TYPES` documents
+    and the guard checks -- so the two tests agree, and this one still fails if
+    the scoping is dropped in favour of an unfiltered read.
+    """
     repository = EventStoreSessionRepository.open(str(tmp_path / "sessions.db"))
     try:
         session_id = uuid4()
@@ -227,10 +236,17 @@ async def test_read_since_ignores_events_from_other_aggregate_types(tmp_path):
         )
         await repository.save(session)
 
-        project_id = uuid4()
+        learner_id = uuid4()
         await repository.store.append(
-            StreamId(aggregate_id=project_id, category="Project"),
-            [ProjectCreated(aggregate_id=project_id, name="research")],
+            StreamId(aggregate_id=learner_id, category="LearnerProgress"),
+            [
+                ChecklistProgressRecorded(
+                    aggregate_id=learner_id,
+                    path="lesson.md",
+                    component_id="check-1",
+                    checked=[0],
+                )
+            ],
             ExpectedVersion.any_(),
         )
 
@@ -314,6 +330,60 @@ async def test_read_since_carries_corpus_events(tmp_path):
 
         assert [(entry.aggregate_id, entry.aggregate_type) for entry in entries] == [
             (project_id, "Corpus")
+        ]
+    finally:
+        await repository.close()
+
+
+async def test_read_since_carries_project_events(tmp_path):
+    """The course page's live path, and the fourth instance of one bug.
+
+    `advance_stage` appends `StageAdvanced` to this log and the rail on the
+    course page *is* what that event moved. Until this test the feed admitted
+    `CodingSession`, `Topic`, `Corpus` and redstring's categories and nothing
+    else, so a stage advance reached the browser through nothing at all and the
+    rail only moved on a reload -- the same shape as topics before `c4d81a9`
+    and the graph before #70.
+
+    Asserting the aggregate type rather than only the count, for the reason
+    `test_read_since_carries_topic_events` gives: an entry arriving labelled
+    `CodingSession` sends the session tree after an aggregate that is a
+    project. Asserting the aggregate id too, because a project's aggregate id
+    *is* the project id and that identity is the whole of how `_sse` addresses
+    the frame -- there is no lookup behind it.
+
+    Both events, not just the advance. `WorkflowSelected` is what turns the
+    course page from a 409 into a rail, so a feed that carried the advance and
+    not the selection would leave the page reading "no course to show" until a
+    reload -- the same defect one event earlier.
+    """
+    repository = EventStoreSessionRepository.open(str(tmp_path / "sessions.db"))
+    try:
+        project_id = uuid4()
+        project = repository.projects.create_new(project_id)
+        project.execute(CreateProject(project_id=project_id, name="Spacing"))
+        project.execute(SelectWorkflow(preset=hybrid_default))
+        project.execute(
+            AdvanceStage(
+                preset=hybrid_default,
+                to_stage="hybrid.step1.framing",
+                decided_by="human",
+                gate_decision="approve",
+            )
+        )
+        await repository.projects.save(project)
+
+        entries = await repository.read_since(None)
+
+        assert [(entry.aggregate_id, entry.aggregate_type) for entry in entries] == [
+            (project_id, "Project"),
+            (project_id, "Project"),
+            (project_id, "Project"),
+        ]
+        assert [type(entry.event).__name__ for entry in entries] == [
+            "ProjectCreated",
+            "WorkflowSelected",
+            "StageAdvanced",
         ]
     finally:
         await repository.close()

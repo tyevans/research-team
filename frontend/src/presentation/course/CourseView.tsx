@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
 import { errorMessage } from '@application/ports/errors.ts'
@@ -8,6 +8,7 @@ import { allArtifacts, writtenCount, type Course } from '@domain/project/course.
 import type { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import { EmptyState, Loading } from '../common/primitives.tsx'
+import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
 import { researchHref, sessionHref } from '../routing/routes.ts'
 import { Artifact } from './Artifacts.tsx'
 import { AutonomyPanel } from './AutonomyPanel.tsx'
@@ -48,6 +49,7 @@ export const CourseView = ({
     queryFn: () => projects.course(projectId),
     retry: false,
   })
+  useCourseRefresh(projectId)
 
   useEffect(() => {
     onLoaded?.(course.data ?? null)
@@ -173,6 +175,52 @@ export const CourseView = ({
 
       {watching ? <WorkerDrawer sessionId={watching} onClose={() => onWatch(null)} /> : null}
     </section>
+  )
+}
+
+/** The rail moves when the project does, without a reload.
+ *
+ * It did not, and that was the whole of the reported bug: `advance_stage`
+ * appended `StageAdvanced` and this page showed the old stage until somebody
+ * refreshed. The missing half was on the server -- the feed filtered `Project`
+ * streams out, so no frame ever arrived -- but a subscription had to exist
+ * here too, and none did.
+ *
+ * Every project frame, not only a stage advance. `WorkflowSelected` is what
+ * turns this page from "No course to show" into a rail, and the lifecycle
+ * events move the holding-session link in the header; they all want this same
+ * read, so filtering by `change` would be a list to maintain for no fewer
+ * requests.
+ *
+ * Scoped to `projectId` off the frame's own project id, the way `DocumentList`
+ * scopes a corpus frame -- a project frame names its project because a
+ * project's aggregate id *is* the project id. Another project's advance
+ * changes nothing here.
+ *
+ * Deliberately not subscribing to log frames. A turn on the holding session
+ * writes files, and a written file can fill an artifact slot the rail draws --
+ * but refetching the course on every token of every turn is the cost
+ * `DocumentList` refused for the same reason, and the artifact list is one
+ * stage boundary behind at worst. If that becomes the complaint, the answer is
+ * a narrower frame from the server, not this hook widening.
+ */
+const useCourseRefresh = (projectId: ProjectId) => {
+  const queryClient = useQueryClient()
+
+  useFrameRefresh(
+    // Always on: this hook lives in the view it refreshes, so being mounted is
+    // the "on screen" test `useTreeRefresh` needs its flag for.
+    true,
+    (frame) => frame.kind === 'project' && frame.projectId === projectId,
+    () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.course(projectId) })
+      // The header's "Open holding session" link and the roster both come off
+      // a project's lifecycle events, and `SessionJoinedProject` is the frame
+      // that moves them. One frame, three reads -- cheaper than three
+      // subscriptions that would each fire on all of them anyway.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.workers(projectId) })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.projects() })
+    },
   )
 }
 

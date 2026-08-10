@@ -175,6 +175,65 @@ describe('decodeFrame', () => {
     ).toEqual({ kind: 'corpus', projectId: 'p1', change: 'SourceDocumentStored' })
   })
 
+  it('reads a project frame as its own kind, not as a session log entry', () => {
+    // The course page's rail redraws off these. Without this case the frame
+    // fell to the log branch, arrived with the project's UUID under
+    // `sessionId`, and -- having no `index` -- was dropped, which is why an
+    // advanced stage only showed up on a reload.
+    expect(
+      frame({
+        type: 'Project',
+        project_id: 'p1',
+        change: 'StageAdvanced',
+        decision: 'approve_with_edits',
+        occurred_at: '2026-01-01T00:00:00Z',
+      }),
+    ).toEqual({
+      kind: 'project',
+      projectId: 'p1',
+      change: 'StageAdvanced',
+      // What the reviewer decided, not only that a boundary was crossed --
+      // the difference between the live update being a notification and
+      // being the information.
+      decision: 'approve_with_edits',
+    })
+  })
+
+  it('reads every project event as one kind, told apart by change', () => {
+    // `WorkflowSelected` is what turns the course page from an error into a
+    // rail, so a decoder that admitted only `StageAdvanced` would have fixed
+    // the reported symptom and left its sibling invisible.
+    expect(
+      frame({
+        type: 'Project',
+        project_id: 'p1',
+        change: 'WorkflowSelected',
+        decision: null,
+        occurred_at: '2026-01-01T00:00:00Z',
+      }),
+    ).toEqual({
+      kind: 'project',
+      projectId: 'p1',
+      change: 'WorkflowSelected',
+      decision: null,
+    })
+  })
+
+  it('reads a project frame from a server that has no decision field', () => {
+    // `decision` arrived after the frame did. A server without it must still
+    // move the rail rather than fail validation and leave the page stale --
+    // the reason `change` is a plain string rather than an enum. Normalised to
+    // null so a consumer tests one thing, not two kinds of absence.
+    expect(
+      frame({
+        type: 'Project',
+        project_id: 'p1',
+        change: 'StageAdvanced',
+        occurred_at: '2026-01-01T00:00:00Z',
+      }),
+    ).toEqual({ kind: 'project', projectId: 'p1', change: 'StageAdvanced', decision: null })
+  })
+
   it('drops a log frame with no index rather than guessing a position', () => {
     // Inserting a row at the wrong point is worse than dropping a frame a
     // reconnect will replay correctly.
