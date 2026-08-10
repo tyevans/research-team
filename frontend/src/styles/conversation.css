@@ -1,5 +1,18 @@
 /* Messages, compaction, folded tool runs, approvals and provisional activity. */
 
+/* The conversation's own scroll container.
+ *
+ * `Conversation` holds a ref on this to stick to the bottom as a turn streams,
+ * which is why it renders its own scroller rather than letting the enclosing
+ * `Pane` be one -- the pane's body is `scroll="regions"` and deliberately does
+ * not scroll. These three declarations are what it borrowed from `.pane-body`
+ * while that class still existed; it is the last thing that did. */
+.conv-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
 /* --- conversation ------------------------------------------------------ */
 .conv {
   padding: 10px 12px 16px;

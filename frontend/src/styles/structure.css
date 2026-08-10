@@ -21,15 +21,11 @@
   display: contents;
 }
 
-/* React renders the pane toggle through the shared button component, which
-   carries `.btn`. The original was a bare element, so the button chrome is
-   removed back off it here rather than forking the component. */
-.pane-head .btn.pane-toggle {
-  padding: 0;
-  border: 0;
-  background: none;
-  min-width: 0;
-}
+/* The rule that undid `.btn`'s chrome on a pane toggle went with the last
+   component that built one out of the shared button -- `RailPane`, in the
+   research slice. `Pane`'s toggle is a bare `<button class="lay-pane-toggle">`
+   with its own rules in `layout.css`, so there is no chrome to remove back
+   off. */
 
 /* The root the application mounts into replaces the old `<main id="app">` as
    the flex child, so it has to carry the same growth. */

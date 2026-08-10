@@ -13,7 +13,7 @@
 @import './base.css';
 @import './shell.css';
 @import './tree.css';
-@import './panes.css';
+@import './scrub-bar.css';
 @import './timeline.css';
 @import './workspace.css';
 @import './markdown.css';
@@ -27,16 +27,23 @@
 @import './components.css';
 @import './agents.css';
 
-/* The layout primitives. Every selector in here is new and `lay-` prefixed,
-   so it adds rules and overrides none -- nothing above changes because this
-   is imported. It sits below the view stylesheets rather than beside
-   `panes.css` because it replaces them eventually and reads better as the
-   newer of the two systems. */
+/* The layout primitives, `lay-` prefixed throughout.
+
+   Imported *after* the view stylesheets, which is the opposite of what the
+   corrections above it need and works anyway -- and the reason is worth
+   stating, because it is the kind of thing that looks like luck. A view
+   correcting a primitive does it through a more specific selector:
+   `.lay-split[data-split='course'] > .lay-pane > .lay-pane-body` against
+   `.lay-pane-body`. Specificity outranks order, so the view wins wherever it
+   disagrees, and the primitive still supplies everything the view does not
+   mention. A view that tried to correct one with a bare `.lay-pane-body`
+   would lose -- and should, because at that point it is redefining the
+   primitive rather than adjusting it. */
 @import './layout.css';
 
-/* The entity presentation components. `ent-` prefixed throughout, so it adds
-   rules and overrides none — the views still use `.topic-row`, `.project` and
-   the rest until they migrate. */
+/* The entity presentation components. `ent-` prefixed throughout. The views
+   that still had their own row markup -- research's topics -- have migrated;
+   `.project` and the landing page's rows have not. */
 @import './entity.css';
 
 /* Last, so it can correct the structural differences above. */

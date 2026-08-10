@@ -1,0 +1,66 @@
+/* The session view's scrub bar.
+
+   Named for what it holds. This was `panes.css`, and its pane block -- `.panes`,
+   `.pane`, `.pane-head`, `.pane-meta`, `.pane-toggle`, `.pane-body` -- went
+   when the course page moved onto `Split` and `Pane`, which was the migration
+   that block's own comment named as the one it was waiting for. The scrub bar
+   was never a pane rule; it was in this file because the session view was. */
+
+/* ======================================================================= */
+/* session view                                                            */
+/* ======================================================================= */
+.scrub-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-panel);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  min-height: 38px;
+}
+.scrub-bar.historical {
+  background: linear-gradient(90deg, #2a1e0c, var(--bg-panel) 70%);
+  border-bottom-color: var(--accent-dim);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.scrub-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+.scrub-state.live {
+  color: var(--k-file);
+}
+.scrub-state.hist {
+  color: var(--accent);
+}
+.scrub-detail {
+  color: var(--fg-dim);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scrub-actions {
+  display: flex;
+  gap: 7px;
+}
+.scrub-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+/* a session that no longer holds its project can still be read and forked,
+ * so it is dimmed rather than alarmed -- the "not held" chip carries the
+ * actual warning */
+.scrub-project.stale-hold .chip:first-child {
+  opacity: 0.55;
+}

@@ -58,7 +58,14 @@ export const Conversation = ({
   const through = compactedThrough(view?.compactedThrough, messages.length)
 
   return (
-    <div className="pane-body" ref={box} onScroll={onScroll}>
+    // Its own class rather than `.pane-body`, which was the last thing in the
+    // console still borrowing the old pane stylesheet's name for a box that is
+    // not a pane body. This *is* the scroller -- the ref is on it so the view
+    // can stick to the bottom -- and it sits inside a `Pane` whose own body is
+    // `scroll="regions"` and therefore does not scroll. Two elements with one
+    // class name meaning two different things is how `.pane-body` came to be
+    // re-specified in three stylesheets.
+    <div className="conv-scroll" ref={box} onScroll={onScroll}>
       {error ? (
         <ErrorBox title="Unavailable" message={error} />
       ) : messages.length === 0 ? (

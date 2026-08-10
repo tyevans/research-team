@@ -15,6 +15,7 @@ import type {
 import type { Course, StageProgress } from '@domain/project/course.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
+import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
 
 import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { FRAME_DEBOUNCE_MS } from '../shell/use-frame-refresh.ts'
@@ -126,7 +127,16 @@ const quietParts = () => ({
 })
 
 const renderCourse = (projects: Partial<ProjectRepository>, stream: EventStream) => {
-  const container = { stream, projects, ...quietParts() } as unknown as AppContainer
+  // `preferences` joined this list when the two panes moved onto `Split`,
+  // which remembers which of them is folded. A real store rather than a stub:
+  // it is in-memory already, and a stub returning `[]` would let a fold that
+  // never persisted pass.
+  const container = {
+    stream,
+    projects,
+    preferences: new InMemoryPreferenceStore(),
+    ...quietParts(),
+  } as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>

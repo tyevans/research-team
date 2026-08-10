@@ -1,23 +1,21 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
-
 import { errorMessage } from '@application/ports/errors.ts'
-import { queryKeys } from '@application/queries/keys.ts'
-import { useContainer } from '@app/container-context.tsx'
 import { allArtifacts, writtenCount, type Course } from '@domain/project/course.ts'
 import type { ProjectId, SessionId } from '@domain/shared/identifier.ts'
+import { useSplitPanes } from '@presentation/layout/use-split-panes.ts'
 
 import { EmptyState, Loading } from '../common/primitives.tsx'
-import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
+import { Pane } from '../layout/Pane.tsx'
+import { Split } from '../layout/Split.tsx'
 import { researchHref, sessionHref } from '../routing/routes.ts'
-import { Artifact } from './Artifacts.tsx'
+import { ArtifactList } from './ArtifactList.tsx'
 import { AutonomyPanel } from './AutonomyPanel.tsx'
 import { ExtractionPane } from './ExtractionPane.tsx'
 import { Findings } from './Findings.tsx'
 import { RunPanel } from './RunPanel.tsx'
-import { Stage } from './StageRail.tsx'
+import { StageList, stagesLeftBehind } from './StageList.tsx'
 import { WorkerDrawer } from './WorkerDrawer.tsx'
 import { Workers } from './Workers.tsx'
+import { COURSE_GROUP, COURSE_TRACKS, useCourse } from './use-course.ts'
 
 /** The run seen whole: what the workflow was supposed to produce, and what it
  *  has.
@@ -41,20 +39,8 @@ export const CourseView = ({
   watching: SessionId | null
   onWatch: (sessionId: SessionId | null) => void
 }) => {
-  const { projects } = useContainer()
-  const [openStage, setOpenStage] = useState<string | null>(null)
-
-  const course = useQuery({
-    queryKey: queryKeys.course(projectId),
-    queryFn: () => projects.course(projectId),
-    retry: false,
-  })
-  useCourseRefresh(projectId)
-
-  useEffect(() => {
-    onLoaded?.(course.data ?? null)
-    return () => onLoaded?.(null)
-  }, [course.data, onLoaded])
+  const { course, openStage, onToggleStage } = useCourse(projectId, onLoaded)
+  const panes = useSplitPanes(COURSE_GROUP)
 
   return (
     <section className="view view-course">
@@ -120,107 +106,49 @@ export const CourseView = ({
           <div className="course-findings">
             <Findings course={course.data} />
           </div>
-          <div className="panes course-panes">
-            <section className="pane pane-rail" aria-label="Stage rail">
-              <header className="pane-head">
-                <h2>Stages</h2>
-                <span className="pane-meta">
-                  {course.data.stages.filter((stage) => stage.status === 'done').length} of{' '}
-                  {course.data.stageCount} left behind
-                </span>
-              </header>
-              <div className="pane-body">
-                <ol className="rail">
-                  {course.data.stages.map((stage) => (
-                    <Stage
-                      key={stage.id}
-                      stage={stage}
-                      course={course.data}
-                      open={openStage === stage.id}
-                      onToggle={() =>
-                        setOpenStage((current) => (current === stage.id ? null : stage.id))
-                      }
-                    />
-                  ))}
-                </ol>
-              </div>
-            </section>
+          {/* Two peer columns, which is exactly what `Split` is for -- and
+              what the page had, declared twice: `.panes` in `panes.css` set
+              `display: grid` and `.course-panes` in `course.css` set the
+              tracks, so neither file described the grid on its own.
+              `panes.css` said so in a comment and named this migration as
+              when the pair would go. It has.
 
-            <section className="pane pane-artifacts" aria-label="Artifacts">
-              <header className="pane-head">
-                <h2>Artifacts</h2>
-                <span className="pane-meta">
-                  {writtenCount(allArtifacts(course.data))} of {allArtifacts(course.data).length}{' '}
-                  written
-                </span>
-              </header>
-              <div className="pane-body">
-                {allArtifacts(course.data).length === 0 ? (
-                  <EmptyState
-                    title="This workflow declares no artifacts."
-                    detail="Nothing here is missing; the preset simply names no outputs."
-                  />
-                ) : (
-                  <ul className="artifacts">
-                    {allArtifacts(course.data).map((slot) => (
-                      <Artifact key={slot.path} slot={slot} course={course.data} />
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </section>
-          </div>
+              Collapsing is new here, and it comes with the primitive rather
+              than being added: a `Split` gives every `Pane` in it a toggle.
+              It is worth having on a page whose two lists are read against
+              each other -- a rail of twelve stages beside forty artifact rows
+              is a lot of scrolling to compare two things -- and `Split`
+              refuses to fold the last open one, which is the right rule for
+              two columns that both fill the width. */}
+          <Split
+            id="course"
+            label="Course panes"
+            tracks={COURSE_TRACKS}
+            collapsed={panes.collapsed}
+            onCollapsedChange={panes.onCollapsedChange}
+            onRefuse={panes.onRefuse}
+          >
+            <Pane
+              id="stages"
+              label="Stages"
+              meta={`${String(stagesLeftBehind(course.data))} of ${String(course.data.stageCount)} left behind`}
+            >
+              <StageList course={course.data} openStage={openStage} onToggleStage={onToggleStage} />
+            </Pane>
+
+            <Pane
+              id="artifacts"
+              label="Artifacts"
+              meta={`${String(writtenCount(allArtifacts(course.data)))} of ${String(allArtifacts(course.data).length)} written`}
+            >
+              <ArtifactList course={course.data} />
+            </Pane>
+          </Split>
         </>
       )}
 
       {watching ? <WorkerDrawer sessionId={watching} onClose={() => onWatch(null)} /> : null}
     </section>
-  )
-}
-
-/** The rail moves when the project does, without a reload.
- *
- * It did not, and that was the whole of the reported bug: `advance_stage`
- * appended `StageAdvanced` and this page showed the old stage until somebody
- * refreshed. The missing half was on the server -- the feed filtered `Project`
- * streams out, so no frame ever arrived -- but a subscription had to exist
- * here too, and none did.
- *
- * Every project frame, not only a stage advance. `WorkflowSelected` is what
- * turns this page from "No course to show" into a rail, and the lifecycle
- * events move the holding-session link in the header; they all want this same
- * read, so filtering by `change` would be a list to maintain for no fewer
- * requests.
- *
- * Scoped to `projectId` off the frame's own project id, the way `DocumentList`
- * scopes a corpus frame -- a project frame names its project because a
- * project's aggregate id *is* the project id. Another project's advance
- * changes nothing here.
- *
- * Deliberately not subscribing to log frames. A turn on the holding session
- * writes files, and a written file can fill an artifact slot the rail draws --
- * but refetching the course on every token of every turn is the cost
- * `DocumentList` refused for the same reason, and the artifact list is one
- * stage boundary behind at worst. If that becomes the complaint, the answer is
- * a narrower frame from the server, not this hook widening.
- */
-const useCourseRefresh = (projectId: ProjectId) => {
-  const queryClient = useQueryClient()
-
-  useFrameRefresh(
-    // Always on: this hook lives in the view it refreshes, so being mounted is
-    // the "on screen" test `useTreeRefresh` needs its flag for.
-    true,
-    (frame) => frame.kind === 'project' && frame.projectId === projectId,
-    () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.course(projectId) })
-      // The header's "Open holding session" link and the roster both come off
-      // a project's lifecycle events, and `SessionJoinedProject` is the frame
-      // that moves them. One frame, three reads -- cheaper than three
-      // subscriptions that would each fire on all of them anyway.
-      void queryClient.invalidateQueries({ queryKey: queryKeys.workers(projectId) })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.projects() })
-    },
   )
 }
 

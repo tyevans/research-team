@@ -590,11 +590,16 @@
   color: var(--k-failure);
 }
 
-@media (max-width: 900px) {
-  .course-panes {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
+/* The course grid's *third* declaration lived here, at a 900px breakpoint that
+   matches no `--bp-*` token and appears nowhere else in the project -- so the
+   page had two columns declared across `panes.css` and `course.css` and a
+   single column declared in a component stylesheet, and finding all three
+   meant knowing to look. It is now one rule in `responsive.css`, at
+   `--bp-narrow` -- because `theme.test.ts` refuses a media query in the layout
+   system's files whose boundary is not a `BREAKPOINTS` value, and 900 never
+   was one. The page therefore has two columns between 821px and 900px where it
+   had one; that is the cost of the number being made legitimate, and it is
+   recorded here because this file is where the 900 lived. */
 
 @media (prefers-reduced-motion: reduce) {
   * {
