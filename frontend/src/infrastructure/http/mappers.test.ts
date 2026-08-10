@@ -288,6 +288,31 @@ describe('toRoster', () => {
     expect(roster.workers[0]?.startedAt).toBeNull()
     expect(roster.workers[0]?.sessionId).toBeNull()
   })
+
+  it('keeps a stage runner labelled as a stage rather than folding it into turn', () => {
+    // The trap #79 fixed for dispatch, guarded for the kind added after it:
+    // the fallback is `turn`, which is a different specific kind, so an
+    // unmapped `stage` would render as a confident wrong answer. Fails if the
+    // server grows a kind the mapper is not told about.
+    const roster = toRoster(
+      parse(dto.rosterDto, {
+        project_id: '11111111-1111-1111-1111-111111111111',
+        workers: [
+          {
+            kind: 'stage',
+            ref: 'ubd.stage2.evidence',
+            detail: 'ubd.pure · ubd.stage2.evidence · turn 2',
+            session_id: '22222222-2222-2222-2222-222222222222',
+            parent: null,
+            started_at: null,
+          },
+        ],
+        idle_session_ids: [],
+      }),
+    )
+
+    expect(roster.workers[0]?.kind).toBe('stage')
+  })
 })
 
 describe('toNeighborhood', () => {

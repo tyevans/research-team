@@ -31,7 +31,7 @@ our bug, and charging the run for our bug is how a gate acquires a reputation
 for being in the way.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -459,13 +459,25 @@ def _cell(text: str) -> str:
     return " ".join(str(text).split()).replace("|", r"\|")
 
 
-def gate_context(review: StageReview, artifact_path: str) -> dict[str, Any]:
+def gate_context(
+    review: StageReview, artifact_path: str, artifact_paths: Sequence[str] = ()
+) -> dict[str, Any]:
     """The review as the `context` an `ApprovalRequest` carries.
 
     Primitives only, because this crosses to a browser as JSON. Findings are
     flattened into mappings rather than sent as dataclasses for the same
     reason, and the artifact path is included so a reviewer who wants the full
     report has somewhere to open rather than only the summary.
+
+    `artifact_paths` is what B36 has left. Paths, not contents: B36 proposed
+    carrying the artifacts inline because the gate was posed before anything
+    was committed, and under a stage runner the gate is posed *after*
+    `_save_turn`, so `GET /api/sessions/{id}/files` already answers and there
+    is nothing to smuggle. What remains is that a reviewer should not have to
+    know where a stage writes in order to look at what it wrote -- so this
+    names the files and the viewer opens them. Empty by default, which is what
+    the tool path passes: on that path the files genuinely are not there yet,
+    and listing paths that answer 404 would be worse than listing none.
 
     Deliberately not a rendered string: what a UI shows and how it groups it is
     a decision nobody has enough use to make yet, and shipping the fields keeps
@@ -474,6 +486,7 @@ def gate_context(review: StageReview, artifact_path: str) -> dict[str, Any]:
     return {
         "stage": review.stage_id,
         "findings_artifact": artifact_path,
+        "artifact_paths": list(artifact_paths),
         "blocked": review.blocked,
         "artifacts_reviewed": review.artifact_count,
         "links_reviewed": review.link_count,

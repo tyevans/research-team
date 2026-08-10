@@ -270,8 +270,10 @@ def build_workflow_tools(
             f"Work in this stage only; the previous stage's artifacts are settled "
             f"and revising one is an amendment, not a return to it.\n"
             f"This turn ends here, so that the transition is durable before "
-            f"anything is built on it and the next stage starts from a fresh "
-            f"session rather than inheriting this one's conversation."
+            f"anything is built on it. Whether the next stage starts in a "
+            f"fresh session depends on who is driving: a stage runner opens "
+            f"one, and a person continuing in this session carries this "
+            f"stage's conversation into the next."
         )
 
     return (advance_stage,)
@@ -288,10 +290,10 @@ WORKFLOW_PROMPT = (
     "amendment recorded against it, never a return to it.\n\n"
     "A successful `advance_stage` ends your turn. Say what you have to say "
     "before you call it, and do not plan work after it -- the next stage is a "
-    "new turn with a fresh session. `EndTurnOnStageAdvance` enforces this, so "
-    "these two sentences are not the guarantee; they are what lets you stop on "
-    "a finished thought instead of mid-sentence. A *refused* advance does not "
-    "end anything -- read what it says and keep working."
+    "new turn. `EndTurnOnStageAdvance` enforces this, so these two sentences "
+    "are not the guarantee; they are what lets you stop on a finished thought "
+    "instead of mid-sentence. A *refused* advance does not end anything -- "
+    "read what it says and keep working."
 )
 """Explaining the gate to a model that has it bound.
 
@@ -302,6 +304,18 @@ here rather than in the base system prompt for the reason
 not apply teaches the model that its instructions mostly do not apply. It is
 appended by `StageMiddleware`'s instructions, so a session with no workflow
 never sees it.
+
+**"a fresh session" was removed from both this text and the tool's own success
+prose.** It was true of what the turn boundary is *for* and false of what any
+code did: nothing in the workflow path called `start_in_project` or
+`release_project`, so a person whose agent advanced typed their next message
+into the same session, still holding the previous stage's whole conversation.
+`StageRunner` now keeps that promise for a driven run and cannot keep it for a
+hand-run one -- so the tool says which case is which and this prompt, which the
+model reads and cannot tell them apart from, says neither.
+`stage-boundaries.md` §2.3 is the finding; `gate_review`'s docstring, corrected
+in #74, is the precedent for why a prose claim about an ordering the code does
+not have is worth removing rather than leaving.
 
 It is not load-bearing. `EndTurnOnStageAdvance` stops the turn whether or not
 the model intended to stop, which is the point -- a prompt gives a tendency and

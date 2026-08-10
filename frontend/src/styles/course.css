@@ -386,6 +386,9 @@
 .worker-dot-extraction {
   background: var(--k-tool);
 }
+.worker-dot-stage {
+  background: var(--k-compaction);
+}
 
 .worker-kind {
   color: var(--fg-dim);

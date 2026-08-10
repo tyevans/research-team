@@ -21,10 +21,26 @@ so a restart shows an empty roster, which is the truth: nothing is running.
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
-WorkerKind = Literal["run", "turn", "extraction", "dispatch"]
+if TYPE_CHECKING:
+    # Under `TYPE_CHECKING` only, and this is the one snapshot type not
+    # declared here. `stage_runner` imports `session_service`, which is a
+    # heavier module than anything else this file touches, and the roster is
+    # read on every page load of the console -- so the import is kept off the
+    # runtime path rather than pulling the turn machinery in behind a protocol.
+    from research_team.application.stage_runner import StageRunSnapshot
+
+WorkerKind = Literal["run", "turn", "extraction", "dispatch", "stage"]
+"""What kind of thing is working.
+
+**A new member must be mapped deliberately in the browser.** `toRoster` in
+`mappers.ts` lists the kinds it recognises and falls back to `turn`, which is
+not a neutral label but a different specific kind -- #72's dispatches were
+displayed as turns for a while, which is a confident wrong answer rather than a
+vague one. Adding a member here without adding it there reproduces that.
+"""
 
 
 @dataclass(frozen=True)
@@ -173,6 +189,19 @@ class DispatchesInFlight(Protocol):
         ...
 
 
+class StagesInFlight(Protocol):
+    """Satisfied by `StageRunner`.
+
+    Keyed by project already, like runs and dispatches, so `everywhere` pays
+    nothing to ask -- the domain enforces one holder per project, so a runner
+    can never have two stages going on one project anyway.
+    """
+
+    def in_flight(self, project_id: UUID) -> "StageRunSnapshot | None": ...
+
+    def active_projects(self) -> Iterable[UUID]: ...
+
+
 class ExtractionChannel(ExtractionsInFlight, Protocol):
     """Both halves of the extraction channel: what is running, and how to say so.
 
@@ -222,6 +251,7 @@ class WorkerRoster:
         runs: RunsInFlight | None = None,
         extractions: ExtractionsInFlight | None = None,
         dispatches: DispatchesInFlight | None = None,
+        stages: StagesInFlight | None = None,
         summaries: SessionProjects | None = None,
     ) -> None:
         self._projects = projects
@@ -229,14 +259,22 @@ class WorkerRoster:
         self._runs = runs
         self._extractions = extractions
         self._dispatches = dispatches
+        self._stages = stages
         self._summaries = summaries
 
     async def on(self, project_id: UUID) -> Roster:
         """Everything working on `project_id`, in a fixed order.
 
-        Ordered run, then dispatch, then turns, then extraction -- fixed
-        rather than incidental, so the panel does not reshuffle between polls
-        and a test can assert on a sequence.
+        Ordered run, then stage, then dispatch, then turns, then extraction --
+        fixed rather than incidental, so the panel does not reshuffle between
+        polls and a test can assert on a sequence.
+
+        A stage sits with the run and the dispatch because it is the same kind
+        of thing: something a person asked for that holds the project and runs
+        turns inside itself. It is the longest-lived of the three -- a dispatch
+        holds the project for one turn and a stage runner for a whole stage --
+        which is the argument for it being visible rather than the argument for
+        it being special.
 
         A dispatch sits with the run rather than with the turns because it is
         the same kind of thing: something a person asked for that holds the
@@ -262,6 +300,26 @@ class WorkerRoster:
                     session_id=run.session_id,
                     parent=None,
                     started_at=None,
+                )
+            )
+        stage = self._stages.in_flight(project_id) if self._stages is not None else None
+        if stage is not None:
+            workers.append(
+                Worker(
+                    kind="stage",
+                    ref=stage.stage_id,
+                    detail=_stage_detail(stage),
+                    # Unlike a dispatch, which withholds its session because
+                    # that session is already in `turns` in its own right. A
+                    # stage runner's session is the same -- but its turns are
+                    # only in `turns` *while one is running*, and a stage
+                    # spends real time between turns computing its exit
+                    # condition and waiting at a gate. Naming the session here
+                    # is what keeps the transcript reachable during the wait,
+                    # which is exactly when somebody wants it.
+                    session_id=stage.session_id,
+                    parent=None,
+                    started_at=stage.started_at,
                 )
             )
         dispatch = (
@@ -340,6 +398,8 @@ class WorkerRoster:
             active.update(self._runs.active_projects())
         if self._dispatches is not None:
             active.update(self._dispatches.active_projects())
+        if self._stages is not None:
+            active.update(self._stages.active_projects())
         if self._extractions is not None:
             active.update(self._extractions.active_projects())
 
@@ -378,6 +438,17 @@ def _dispatch_detail(snapshot: DispatchSnapshot) -> str:
     if snapshot.queued:
         parts.append(f"{snapshot.queued} queued")
     return " · ".join(parts)
+
+
+def _stage_detail(snapshot: "StageRunSnapshot") -> str:
+    """Which stage of which workflow, and how many turns it has spent.
+
+    The turn count rather than a percentage, because there is nothing to take a
+    percentage of: a stage is finished when its artifacts exist, and how many
+    turns that takes is not knowable in advance. A progress bar here would be a
+    number the system does not have.
+    """
+    return f"{snapshot.preset_id} · {snapshot.stage_id} · turn {snapshot.turns + 1}"
 
 
 def _extraction_detail(snapshot: ExtractionSnapshot) -> str:
