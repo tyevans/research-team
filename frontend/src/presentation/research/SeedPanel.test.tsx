@@ -86,6 +86,15 @@ const fakeTopics = (over: Partial<TopicRepository> = {}) => ({
   }),
   seedStatus: vi.fn().mockResolvedValue(emptyStatus()),
   startSeed: vi.fn(),
+  dispatch: vi.fn(() => {
+    throw new Error('SeedPanel should never call dispatch()')
+  }),
+  dispatchStatus: vi.fn(() => {
+    throw new Error('SeedPanel should never call dispatchStatus()')
+  }),
+  cancelDispatch: vi.fn(() => {
+    throw new Error('SeedPanel should never call cancelDispatch()')
+  }),
   ...over,
 })
 

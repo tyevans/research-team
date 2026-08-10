@@ -403,6 +403,51 @@ has to change first, and it is a wider change than it looks: the positions are
 persisted in `TopicInvestigated.at_position` and in every acknowledgement's
 expiry, so redefining the scale invalidates both.
 
+### B36. Topic dispatch is web-only, and the REPL is a second composition site
+
+`docs/design/topic-dispatch.md` §9 asks for a deliberate answer rather than a
+silent absence, so here it is: **dispatch is wired in `web.py` and not in
+`main.py`.** The REPL has no `/dispatch`, and `TopicDispatcher` is reachable
+there only as `application.dispatcher`.
+
+That is a choice, not an oversight. `DispatchQueue` is the whole point of the
+feature -- one at a time per project, the rest waiting -- and a REPL has no
+way to show a queue draining, no place to put a per-topic status chip, and one
+operator who is already sitting in a session that *holds the project*, which a
+dispatch would then be refused from joining. `/research` works in the REPL
+because a run is a single thing with a single status line; a queue over forty
+topics is not.
+
+What must not happen is the failure `tests/interfaces/test_web_entrypoint.py`
+exists to catch, arriving at the other composition site. That guard reads
+`inspect.signature(create_app)` and does not cover `main.py` at all, so a REPL
+dependency added and not wired is still invisible. **Extending the guard to
+`main.py` is the work here**, and it is worth doing while the reasoning is
+fresh -- not adding `/dispatch`.
+
+### B37. A dispatch's queue does not survive a restart
+
+`DispatchQueue` is process-local, so a restart drops every pending dispatch and
+the catch-up route answers with an empty queue. `dispatch.py`'s module
+docstring states the trade and accepts it: it is the same trade every
+supervisor here makes, and `workers.py` already argues that "a restart shows an
+empty roster, which is the truth".
+
+The reason it is recorded anyway is that a queued dispatch is a *user
+intention* rather than a running process, and losing an intention silently is
+worse than losing a process. The UI does not currently say "these were
+dropped" -- the chips simply stop being there on reload, which is
+indistinguishable from never having pressed the button.
+
+The fix is not a bigger buffer. It is the `TopicDispatch` aggregate
+`docs/design/topic-dispatch.md` §7 rejects for now, and §7's argument for
+rejecting it is the thing to re-read before building it: four events in the
+permanent vocabulary, and a decision about what a `DispatchStarted` with no
+terminal event means when the process died. **Do not build it until someone has
+actually lost work to this.** The trigger to watch for is the first request for
+dispatch *history* -- "what have we ever asked about this topic" -- which the
+log genuinely cannot answer today.
+
 ## Interactive components
 
 What v1 of the markdown component system knowingly left out. The design is in

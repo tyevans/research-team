@@ -10,13 +10,20 @@ import {
   activityFrameDto,
   approvalRequestedFrameDto,
   approvalSettledFrameDto,
+  dispatchFrameDto,
   frameEnvelopeDto,
   logFrameDto,
   projectChangeFrameDto,
   seedingFrameDto,
   topicFrameDto,
 } from '../http/dto.ts'
-import { toActivityEntry, toApproval, toLogEntry, toSeedingRun } from '../http/mappers.ts'
+import {
+  toActivityEntry,
+  toApproval,
+  toDispatch,
+  toLogEntry,
+  toSeedingRun,
+} from '../http/mappers.ts'
 
 const INITIAL_BACKOFF_MS = 1_000
 const MAX_BACKOFF_MS = 30_000
@@ -190,6 +197,12 @@ export const decodeFrame = (data: string): FeedFrame | null => {
       const frame = seedingFrameDto.safeParse(payload)
       return frame.success
         ? { kind: 'seeding', projectId: frame.data.project_id, run: toSeedingRun(frame.data) }
+        : null
+    }
+    case 'Dispatch': {
+      const frame = dispatchFrameDto.safeParse(payload)
+      return frame.success
+        ? { kind: 'dispatch', projectId: frame.data.project_id, dispatch: toDispatch(frame.data) }
         : null
     }
     default: {

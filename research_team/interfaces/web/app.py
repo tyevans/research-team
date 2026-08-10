@@ -46,6 +46,10 @@ from research_team.application.graph_read import (
     GraphReadPort,
 )
 from research_team.application.project_graphs import ProjectGraphs
+from research_team.application.topic_dispatch import (
+    DISPATCH_ACTIONS,
+    TopicDispatcher,
+)
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
 from research_team.domain import Corpus, CreateProject, ProjectState, SelectWorkflow
@@ -64,11 +68,13 @@ from research_team.infrastructure.persistence.corpus_reader import ProjectCorpus
 from research_team.infrastructure.persistence.event_store import KNOWLEDGE_CATEGORIES
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
+from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.presenters import (
     autonomy_view,
     corpus_change,
     course_view,
+    dispatch_view,
     entity_page_view,
     event_rows,
     feed_event,
@@ -277,6 +283,23 @@ class NewSeed(BaseModel):
     max_topics: int = 8
 
 
+class NewDispatch(BaseModel):
+    """What an agent dispatched at one topic is being asked to do.
+
+    Plain `str` rather than a `Literal`, so a bad value comes back from the
+    route naming the actions that exist -- the same reasoning `AutonomyChoice`
+    gives for its two fields. FastAPI's 422 for a `Literal` mismatch is
+    machine-readable and names none of them, and `research` and `lesson` are
+    exactly the values a caller will reasonably try: both are designed, in
+    `docs/design/topic-dispatch.md`, and neither is built.
+
+    Defaults to the one action that exists rather than being required. A
+    client pressing the only button on offer should not have to name it.
+    """
+
+    action: str = "understanding"
+
+
 class Decision(BaseModel):
     """A human's answer to a parked approval. `type` is langchain's vocabulary."""
 
@@ -328,6 +351,8 @@ def create_app(
     graphs: ProjectGraphs | None = None,
     topic_seeder: TopicSeeder | None = None,
     seeding: SeedingActivity | None = None,
+    dispatcher: TopicDispatcher | None = None,
+    dispatch: DispatchQueue | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -695,6 +720,97 @@ def create_app(
             "current": seeding_view(seeding.current(project_id)),
             "last": seeding_view(seeding.last(project_id)),
         }
+
+    @app.post("/api/projects/{project_id}/topics/{topic_id}/dispatch")
+    async def dispatch_topic(
+        project_id: UUID, topic_id: UUID, body: NewDispatch | None = None
+    ):
+        """Send an agent at one topic. 202, because it has not run when this answers.
+
+        Registered ahead of `/topics/{topic_id}` for the reason `seed_topics`
+        gives: FastAPI matches in declaration order.
+
+        **202 with `queued`, never 409.** This is the one place this API
+        deliberately differs from `seed_topics` and `start_auto_research`, and
+        `dispatch.py`'s module docstring carries the argument: those two back a
+        control that appears once on a page, where refusing a second press is
+        correct. This one backs a control on every topic row, where refusing
+        would be the answer to nearly every second press.
+
+        The topic is resolved here rather than left to the queue so a bad id
+        comes back as a 404 the caller can see. Enqueued and failed
+        asynchronously, it would surface as a failure chip on a row that does
+        not exist -- which is to say, nowhere.
+
+        503 rather than 404 when unwired, matching every other optional
+        dependency here: this build is missing configuration, not the project.
+        """
+        if dispatcher is None or dispatch is None:
+            raise HTTPException(status_code=503, detail="topic dispatch is not configured")
+        await _require_project(project_id)
+
+        action = (body or NewDispatch()).action
+        if action not in DISPATCH_ACTIONS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"no dispatch action {action!r}; this build offers "
+                    f"{', '.join(sorted(DISPATCH_ACTIONS))}"
+                ),
+            )
+
+        detail = await _topic_reader(project_id).read_topic(topic_id)
+        if detail is None:
+            raise HTTPException(
+                status_code=404, detail=f"no such topic in project {project_id}"
+            )
+
+        frame = dispatch.start(
+            project_id,
+            topic_id,
+            action,
+            lambda dispatch_id: dispatcher.dispatch(
+                project_id, topic_id, action, dispatch_id=dispatch_id
+            ),
+            question=detail.view.summary.question,
+        )
+        return JSONResponse(status_code=202, content=dispatch_view(frame))
+
+    @app.get("/api/projects/{project_id}/dispatch")
+    async def get_dispatch(project_id: UUID):
+        """What is running, what is waiting, and how each topic's last one went.
+
+        The catch-up read these frames cannot do without: they carry no feed
+        position, so `Last-Event-ID` cannot replay them and a reconnecting tab
+        would otherwise be unable to tell "still running" from "finished
+        before I got here".
+
+        Three empty answers rather than a 503 when unwired, matching
+        `get_seed`: a build with no dispatch queue has nothing running, which
+        is a state and not an error. The POST above is where a client learns
+        the feature is absent.
+        """
+        await _require_project(project_id)
+        if dispatch is None:
+            return {"running": None, "queued": [], "finished": []}
+        return {
+            "running": dispatch_view(dispatch.current(project_id)),
+            "queued": [dispatch_view(frame) for frame in dispatch.queued(project_id)],
+            "finished": [dispatch_view(frame) for frame in dispatch.finished(project_id)],
+        }
+
+    @app.post("/api/projects/{project_id}/dispatch/cancel")
+    async def cancel_dispatch(project_id: UUID):
+        """Stop what is running and drop everything waiting, for this project.
+
+        Per project rather than per dispatch, matching `ResearchSupervisor`'s
+        own cancel. Answers how many went so the caller can say "stopped 3"
+        rather than guessing from a queue it re-reads a moment later.
+        """
+        await _require_project(project_id)
+        if dispatch is None:
+            raise HTTPException(status_code=503, detail="topic dispatch is not configured")
+        return {"cancelled": dispatch.cancel(project_id)}
 
     @app.get("/api/projects/{project_id}/topics/{topic_id}")
     async def read_topic(project_id: UUID, topic_id: UUID):
@@ -1630,7 +1746,9 @@ def create_app(
         """
         resume_from = request.headers.get("last-event-id")
         return StreamingResponse(
-            _sse(request, feed, resume_from, approvals, activity, extraction, seeding),
+            _sse(
+                request, feed, resume_from, approvals, activity, extraction, seeding, dispatch
+            ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -1653,6 +1771,7 @@ async def _sse(
     activity: TurnActivity | None = None,
     extraction: ExtractionActivity | None = None,
     seeding: SeedingActivity | None = None,
+    dispatch: DispatchQueue | None = None,
 ) -> AsyncIterator[str]:
     """Serialise the live feed as server-sent events.
 
@@ -1666,14 +1785,16 @@ async def _sse(
     starting at the live end shows less than the client wanted, while
     replaying the entire log at it would be worse than the gap.
 
-    Approval requests, turn activity notes, extraction progress, and seeding
-    status ride this same connection rather than one each of their own, for
-    the same reason as each other: none is a log entry -- an approval that is
-    never answered, provisional turn content, where an ingest has got to, and
-    whether a seeding run is still going all leave no event behind -- so none
-    carries an id, and a reconnecting browser refetches what it missed
-    (`/approvals`, the activity catch-up route, `/projects/{id}/extraction`,
-    or `/projects/{id}/topics/seed`) instead of replaying them. But a second
+    Approval requests, turn activity notes, extraction progress, seeding
+    status and dispatch status ride this same connection rather than one each
+    of their own, for the same reason as each other: none is a log entry -- an
+    approval that is never answered, provisional turn content, where an ingest
+    has got to, whether a seeding run is still going, and what a project has
+    queued at its topics all leave no event behind -- so none carries an id,
+    and a reconnecting browser refetches what it missed (`/approvals`, the
+    activity catch-up route, `/projects/{id}/extraction`,
+    `/projects/{id}/topics/seed`, or `/projects/{id}/dispatch`) instead of
+    replaying them. But a second
     channel per concern would multiply the ways a tab can be half-connected,
     and a turn that halts for a person, or is still streaming its reply, is
     exactly the moment when being half-connected is worst.
@@ -1730,6 +1851,16 @@ async def _sse(
 
         pumps.append(asyncio.create_task(pump_seeding()))
 
+    dispatching = None
+    if dispatch is not None:
+        dispatching = dispatch.listen()
+
+        async def pump_dispatch() -> None:
+            while True:
+                await queue.put(("dispatch", await dispatching.get()))
+
+        pumps.append(asyncio.create_task(pump_dispatch()))
+
     idle = 0.0
     try:
         while not await request.is_disconnected():
@@ -1744,7 +1875,7 @@ async def _sse(
                     idle = 0.0
                 continue
             idle = 0.0
-            if kind in ("approval", "activity", "extraction", "seeding"):
+            if kind in ("approval", "activity", "extraction", "seeding", "dispatch"):
                 yield f"data: {json.dumps(item)}\n\n"
                 continue
             if item.aggregate_type == Topic.aggregate_type:
@@ -1781,6 +1912,8 @@ async def _sse(
             extraction.stop_listening(extracting)
         if seeding is not None and seeded is not None:
             seeding.stop_listening(seeded)
+        if dispatch is not None and dispatching is not None:
+            dispatch.stop_listening(dispatching)
         for pumping in pumps:
             pumping.cancel()
             with suppress(asyncio.CancelledError):

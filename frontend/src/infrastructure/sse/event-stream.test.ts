@@ -83,6 +83,52 @@ describe('decodeFrame', () => {
     })
   })
 
+  it('reads a dispatch frame, decoded, addressed by project', () => {
+    // Like seeding: `DispatchQueue` hands back one flat frame that already is
+    // the domain model, so it is decoded here rather than routed raw. Without
+    // this case the frame falls through to the log branch, fails `logFrameDto`
+    // and is dropped with no error at all -- the failure mode the `Extraction`
+    // case above carries its own comment about.
+    const decoded = frame({
+      type: 'Dispatch',
+      project_id: 'p1',
+      topic_id: 't1',
+      dispatch_id: 'd1',
+      action: 'understanding',
+      status: 'running',
+      question: 'How does spacing work?',
+    })
+    expect(decoded).toMatchObject({
+      kind: 'dispatch',
+      projectId: 'p1',
+      dispatch: {
+        dispatchId: 'd1',
+        topicId: 't1',
+        action: 'understanding',
+        status: 'running',
+        question: 'How does spacing work?',
+        position: null,
+        path: null,
+      },
+    })
+  })
+
+  it('reads a dispatch status it does not recognise as running', () => {
+    // Guessing toward the state that self-corrects: a row believing itself
+    // queued shows a position that will never move, while one believing
+    // itself running shows a spinner the next frame corrects.
+    expect(
+      frame({
+        type: 'Dispatch',
+        project_id: 'p1',
+        topic_id: 't1',
+        dispatch_id: 'd1',
+        action: 'lesson',
+        status: 'deliberating',
+      }),
+    ).toMatchObject({ kind: 'dispatch', dispatch: { status: 'running', action: 'lesson' } })
+  })
+
   it('reads a topic frame as a topic, not as a log entry', () => {
     // A topic change is a durable log entry, but a topic is not a session:
     // without this case it fell through to the log branch, where its

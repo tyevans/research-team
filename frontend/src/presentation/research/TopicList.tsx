@@ -2,7 +2,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 
 import { queryKeys } from '@application/queries/keys.ts'
+import {
+  useCancelDispatch,
+  useDispatchBoard,
+  useDispatchTopic,
+} from '@application/research/use-dispatch.ts'
 import { useContainer } from '@app/container-context.tsx'
+import type { Dispatch } from '@domain/research/dispatch.ts'
 import {
   byUrgency,
   focusCounts,
@@ -47,6 +53,13 @@ export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
   })
 
   useTopicRefresh(projectId, managing)
+
+  // Read unconditionally rather than only when something is running: the
+  // point of the catch-up route is a tab that arrived *after* a dispatch
+  // started, which cannot be detected without asking.
+  const dispatches = useDispatchBoard(projectId)
+  const dispatching = useDispatchTopic(projectId)
+  const cancelling = useCancelDispatch(projectId)
 
   const detail = useQuery({
     queryKey: managing ? queryKeys.topic(projectId, managing) : ['topic', 'none'],
@@ -111,6 +124,27 @@ export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
         </div>
       </div>
 
+      {/* The aggregate, so a reader who scrolled away from the running row
+          still knows something is going. One stop control here rather than a
+          cancel per queued row, because cancel is per project on the server
+          and a per-row control would offer an action it cannot honour. */}
+      {dispatches.running || dispatches.queuedCount > 0 ? (
+        <div className="topic-dispatch-bar">
+          <span>
+            {dispatches.running ? '1 running' : 'none running'}
+            {dispatches.queuedCount > 0 ? `, ${dispatches.queuedCount} queued` : ''}
+          </span>
+          <Button
+            small
+            disabled={cancelling.isPending}
+            onClick={() => cancelling.mutate()}
+            title="Stop the running dispatch and drop everything queued"
+          >
+            Stop
+          </Button>
+        </div>
+      ) : null}
+
       {shown.length === 0 ? (
         // Distinct from "No topics" above, and the distinction is the whole
         // point: that one means the queue is empty, this one means the queue
@@ -125,7 +159,12 @@ export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
             <TopicRow
               key={topic.topicId}
               topic={topic}
+              dispatch={dispatches.byTopic.get(topic.topicId)}
+              isDispatching={dispatching.isPending}
               onManage={() => setManaging(topic.topicId)}
+              onDispatch={() =>
+                dispatching.mutate({ topicId: topic.topicId, action: 'understanding' })
+              }
             />
           ))}
         </ul>
@@ -191,38 +230,131 @@ const FOCUSES: readonly (readonly [TopicFocus, string])[] = [
   ['closed', 'Closed'],
 ]
 
-const TopicRow = ({ topic, onManage }: { topic: TopicView; onManage: () => void }) => (
-  <li
-    className={
-      topic.isBlocked
-        ? 'topic-row topic-blocked'
-        : topic.needsAttention
-          ? 'topic-row topic-attention'
-          : isClosed(topic)
-            ? 'topic-row topic-closed'
-            : 'topic-row'
-    }
-  >
-    <div className="topic-question">{topic.question}</div>
-    <div className="topic-meta">
-      <span className="topic-status">{topic.status.replace('_', ' ')}</span>
-      <span className="topic-count">{topic.sources} sources</span>
-      <span className="topic-count">{topic.findings} findings</span>
-      {topic.openSubQuestions > 0 ? (
-        <span className="topic-count">{topic.openSubQuestions} open</span>
+/** Nothing has been gathered for this topic yet.
+ *
+ * The one thing in this feature that disables a control, and it is worth it:
+ * synthesising a topic with no sources and no findings produces the model's
+ * own prior knowledge presented as project findings, which is confabulation
+ * that looks like a deliverable. Research is the action that fixes it, and
+ * research is not built yet — so the button says why rather than offering a
+ * next step it cannot take.
+ */
+const hasNothingToSynthesise = (topic: TopicView): boolean =>
+  topic.sources === 0 && topic.findings === 0
+
+/** `1st`, `2nd`, `3rd`, `4th`. Small enough that a dependency would be absurd,
+ *  and the bundle budget has 0.6 kB of headroom on `graph-` anyway. */
+const ordinal = (position: number): string => {
+  const tens = position % 100
+  if (tens >= 11 && tens <= 13) return `${position}th`
+  const suffix = ['th', 'st', 'nd', 'rd'][position % 10] ?? 'th'
+  return `${position}${suffix}`
+}
+
+/** What one dispatch reads as on the row that produced it.
+ *
+ * Kept for finished dispatches rather than cleared, deliberately: a chip that
+ * vanishes on the next render is how a reader concludes the button did
+ * nothing. A failure in particular has to persist, because the failure and
+ * the retry are the same row.
+ */
+const DispatchChip = ({ dispatch }: { dispatch: Dispatch }) => {
+  if (dispatch.status === 'queued') {
+    return (
+      <span className="topic-dispatch topic-dispatch-queued">
+        ⧗ queued · {dispatch.position === null ? 'waiting' : ordinal(dispatch.position)}
+      </span>
+    )
+  }
+  if (dispatch.status === 'running') {
+    return (
+      <span className="topic-dispatch topic-dispatch-running">⟳ {dispatch.action} · running</span>
+    )
+  }
+  if (dispatch.status === 'failed') {
+    return (
+      // `title` carries the untruncated text: the chip is clamped to one line
+      // in a 320px rail, and a model's error can be a paragraph.
+      <span className="topic-dispatch topic-dispatch-failed" title={dispatch.detail ?? undefined}>
+        ✕ {dispatch.action} · failed · {dispatch.detail ?? 'no reason given'}
+      </span>
+    )
+  }
+  if (dispatch.status === 'cancelled') {
+    return <span className="topic-dispatch">⊘ {dispatch.action} · cancelled</span>
+  }
+  return (
+    <span className="topic-dispatch topic-dispatch-done">
+      ✓ {dispatch.action} · {dispatch.path ?? 'written'}
+    </span>
+  )
+}
+
+const TopicRow = ({
+  topic,
+  dispatch,
+  onManage,
+  onDispatch,
+  isDispatching,
+}: {
+  topic: TopicView
+  dispatch: Dispatch | undefined
+  onManage: () => void
+  onDispatch: () => void
+  isDispatching: boolean
+}) => {
+  const empty = hasNothingToSynthesise(topic)
+  return (
+    <li
+      className={
+        topic.isBlocked
+          ? 'topic-row topic-blocked'
+          : topic.needsAttention
+            ? 'topic-row topic-attention'
+            : isClosed(topic)
+              ? 'topic-row topic-closed'
+              : 'topic-row'
+      }
+    >
+      <div className="topic-question">{topic.question}</div>
+      <div className="topic-meta">
+        <span className="topic-status">{topic.status.replace('_', ' ')}</span>
+        <span className="topic-count">{topic.sources} sources</span>
+        <span className="topic-count">{topic.findings} findings</span>
+        {topic.openSubQuestions > 0 ? (
+          <span className="topic-count">{topic.openSubQuestions} open</span>
+        ) : null}
+        {/* One button rather than the split control the design sketches: with
+            one action there is nothing to split, and a menu holding a single
+            item is a click in front of a button. It becomes a split button
+            when `research` and `lesson` land. */}
+        <Button
+          small
+          className="topic-dispatch-button"
+          disabled={empty || isDispatching || dispatch?.status === 'queued'}
+          title={
+            empty
+              ? 'Nothing gathered for this topic yet'
+              : 'Write down what this project understands about this topic'
+          }
+          onClick={onDispatch}
+        >
+          Write understanding
+        </Button>
+        <Button small className="topic-manage" onClick={onManage}>
+          Manage
+        </Button>
+      </div>
+      {dispatch ? <DispatchChip dispatch={dispatch} /> : null}
+      {topic.triggers.length > 0 ? (
+        <ul className="topic-triggers">
+          {topic.triggers.map((trigger) => (
+            <li key={trigger} className="topic-trigger">
+              {trigger}
+            </li>
+          ))}
+        </ul>
       ) : null}
-      <Button small className="topic-manage" onClick={onManage}>
-        Manage
-      </Button>
-    </div>
-    {topic.triggers.length > 0 ? (
-      <ul className="topic-triggers">
-        {topic.triggers.map((trigger) => (
-          <li key={trigger} className="topic-trigger">
-            {trigger}
-          </li>
-        ))}
-      </ul>
-    ) : null}
-  </li>
-)
+    </li>
+  )
+}

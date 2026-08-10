@@ -8,6 +8,7 @@ import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { TopicRepository } from '@application/ports/repositories.ts'
+import type { Dispatch } from '@domain/research/dispatch.ts'
 import type { TopicView } from '@domain/research/topic.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
 import { ProjectId, SessionId, TopicId } from '@domain/shared/identifier.ts'
@@ -35,12 +36,28 @@ const topic = (over: Partial<TopicView> = {}): TopicView => ({
   ...over,
 })
 
-/** `TopicList` only calls `list` and, on Manage, `read` -- it never sets a
- *  status or touches a sub-question itself, that is `TopicStatusDialog`'s job
- *  once it is open. Those three stay stubs that fail loudly if that
- *  assumption ever stops holding. */
-const fakeTopics = (list: TopicRepository['list']): TopicRepository => ({
+const emptyBoard = { running: null, queued: [], finished: [] }
+
+/** `TopicList` calls `list`, `dispatchStatus`, and on Manage `read` -- it
+ *  never sets a status or touches a sub-question itself, that is
+ *  `TopicStatusDialog`'s job once it is open. Those stay stubs that fail
+ *  loudly if that assumption ever stops holding.
+ *
+ * `dispatchStatus` defaults to an empty board rather than throwing, because
+ * every test here renders a list and the list reads it unconditionally --
+ * a throwing default would make every unrelated test assert on dispatch. */
+const fakeTopics = (
+  list: TopicRepository['list'],
+  over: Partial<TopicRepository> = {},
+): TopicRepository => ({
   list,
+  dispatchStatus: vi.fn<TopicRepository['dispatchStatus']>().mockResolvedValue(emptyBoard),
+  dispatch: vi.fn(() => {
+    throw new Error('dispatch was not stubbed for this test')
+  }),
+  cancelDispatch: vi.fn(() => {
+    throw new Error('cancelDispatch was not stubbed for this test')
+  }),
   read: vi.fn(() => {
     throw new Error('read was not stubbed for this test')
   }),
@@ -59,6 +76,7 @@ const fakeTopics = (list: TopicRepository['list']): TopicRepository => ({
   seedStatus: vi.fn(() => {
     throw new Error('TopicList should never call seedStatus()')
   }),
+  ...over,
 })
 
 /** Mirrors `SeedPanel.test.tsx`'s fake stream, so a live-update assertion
@@ -78,6 +96,24 @@ const fakeStream = () => {
     push: (change = 'TopicOpened') =>
       act(() => {
         listener?.onFrame({ kind: 'topic', topicId: OTHER, change })
+      }),
+    pushDispatch: (projectId: string) =>
+      act(() => {
+        listener?.onFrame({
+          kind: 'dispatch',
+          projectId,
+          dispatch: {
+            dispatchId: 'd1',
+            topicId: OTHER,
+            action: 'understanding',
+            status: 'running',
+            question: 'q',
+            position: null,
+            path: null,
+            sessionId: null,
+            detail: null,
+          },
+        })
       }),
     pushLog: () =>
       act(() => {
@@ -376,4 +412,162 @@ it('ignores a log frame, which says nothing about this project’s topics', asyn
 
   await new Promise((resolve) => setTimeout(resolve, FRAME_DEBOUNCE_MS * 2))
   expect(list).toHaveBeenCalledTimes(1)
+})
+
+// ---------------- dispatch ----------------
+
+const dispatched = (over: Partial<Dispatch> = {}): Dispatch => ({
+  dispatchId: 'd1',
+  topicId: '22222222-2222-2222-2222-222222222222',
+  action: 'understanding',
+  status: 'running',
+  question: 'q',
+  position: null,
+  path: null,
+  sessionId: null,
+  detail: null,
+  ...over,
+})
+
+it('offers to write our understanding of a topic', async () => {
+  const dispatch = vi.fn<TopicRepository['dispatch']>().mockResolvedValue(dispatched())
+  const topics = fakeTopics(
+    vi
+      .fn<TopicRepository['list']>()
+      .mockResolvedValue([topic({ question: 'Who funded the study?', sources: 2 })]),
+    { dispatch },
+  )
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
+
+  await screen.findByText('Who funded the study?')
+  await userEvent.click(screen.getByRole('button', { name: /understanding/i }))
+
+  await waitFor(() =>
+    expect(dispatch).toHaveBeenCalledWith(
+      PROJECT,
+      TopicId('22222222-2222-2222-2222-222222222222'),
+      'understanding',
+    ),
+  )
+})
+
+it('will not offer to synthesise a topic nothing has been gathered for', async () => {
+  // The one conditionally disabled control in this feature, and it earns it:
+  // with no sources and no findings there is nothing to synthesise, and the
+  // result would be the model's own prior knowledge presented as project
+  // findings. Confabulation that looks like a deliverable.
+  const topics = fakeTopics(
+    vi
+      .fn<TopicRepository['list']>()
+      .mockResolvedValue([topic({ question: 'Untouched?', sources: 0, findings: 0 })]),
+  )
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
+
+  await screen.findByText('Untouched?')
+  expect(screen.getByRole('button', { name: /understanding/i })).toBeDisabled()
+})
+
+it('shows a running dispatch on its own row and not on the others', async () => {
+  const other = TopicId('33333333-3333-3333-3333-333333333333')
+  const topics = fakeTopics(
+    vi
+      .fn<TopicRepository['list']>()
+      .mockResolvedValue([
+        topic({ question: 'Running one', sources: 1 }),
+        topic({ topicId: other, question: 'Quiet one', sources: 1 }),
+      ]),
+    {
+      dispatchStatus: vi.fn<TopicRepository['dispatchStatus']>().mockResolvedValue({
+        running: dispatched({ status: 'running' }),
+        queued: [],
+        finished: [],
+      }),
+    },
+  )
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
+
+  const running = await screen.findByText(/understanding · running/i)
+  expect(running).toBeInTheDocument()
+  expect(screen.getAllByText(/understanding · running/i)).toHaveLength(1)
+})
+
+it('shows a queued dispatch with its position', async () => {
+  const topics = fakeTopics(
+    vi
+      .fn<TopicRepository['list']>()
+      .mockResolvedValue([topic({ question: 'Waiting', sources: 1 })]),
+    {
+      dispatchStatus: vi.fn<TopicRepository['dispatchStatus']>().mockResolvedValue({
+        running: null,
+        queued: [dispatched({ status: 'queued', position: 2 })],
+        finished: [],
+      }),
+    },
+  )
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
+
+  expect(await screen.findByText(/queued · 2nd/i)).toBeInTheDocument()
+})
+
+it('keeps a failed dispatch on the row, with its reason', async () => {
+  // It must persist rather than vanish on the next render: a chip that
+  // disappears is how a reader concludes the button does nothing.
+  const topics = fakeTopics(
+    vi.fn<TopicRepository['list']>().mockResolvedValue([topic({ question: 'Broke', sources: 1 })]),
+    {
+      dispatchStatus: vi.fn<TopicRepository['dispatchStatus']>().mockResolvedValue({
+        running: null,
+        queued: [],
+        finished: [dispatched({ status: 'failed', detail: 'model timed out' })],
+      }),
+    },
+  )
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
+
+  expect(await screen.findByText(/model timed out/i)).toBeInTheDocument()
+})
+
+it('re-reads the board when a dispatch frame names this project', async () => {
+  const feed = fakeStream()
+  const dispatchStatus = vi
+    .fn<TopicRepository['dispatchStatus']>()
+    .mockResolvedValue({ running: null, queued: [], finished: [] })
+  const topics = fakeTopics(
+    vi.fn<TopicRepository['list']>().mockResolvedValue([topic({ question: 'Anything' })]),
+    { dispatchStatus },
+  )
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, { topics, stream: feed.stream })
+
+  await screen.findByText('Anything')
+  feed.pushDispatch(PROJECT)
+
+  await waitFor(() => expect(dispatchStatus).toHaveBeenCalledTimes(2), { timeout: 2_000 })
+})
+
+it('ignores a dispatch frame for another project', async () => {
+  // These frames are project-addressed precisely so a subscriber can tell.
+  // Without the check, every open research pane would re-read its own board
+  // whenever any project dispatched anything.
+  const feed = fakeStream()
+  const dispatchStatus = vi
+    .fn<TopicRepository['dispatchStatus']>()
+    .mockResolvedValue({ running: null, queued: [], finished: [] })
+  const topics = fakeTopics(
+    vi.fn<TopicRepository['list']>().mockResolvedValue([topic({ question: 'Anything' })]),
+    { dispatchStatus },
+  )
+
+  renderWithContainer(<TopicList projectId={PROJECT} />, { topics, stream: feed.stream })
+
+  await screen.findByText('Anything')
+  feed.pushDispatch(ProjectId('99999999-9999-9999-9999-999999999999'))
+
+  await new Promise((resolve) => setTimeout(resolve, FRAME_DEBOUNCE_MS * 2))
+  expect(dispatchStatus).toHaveBeenCalledTimes(1)
 })
