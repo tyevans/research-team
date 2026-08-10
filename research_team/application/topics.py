@@ -30,6 +30,42 @@ work hits it in minutes rather than days.
 """
 
 
+SELF_CONTAINED_QUESTION = (
+    "**A topic question must be self-contained.** It is read later by an agent "
+    "that is handed the question and nothing else -- no project, no heading, no "
+    "conversation it came from -- and by a person reading a file name. Write "
+    "every question so it names its own subject.\n\n"
+    "The failure looks like this. Asked to open topics for a project about the "
+    "Nova Scotia Duck Tolling Retriever, a topic opened as `typical physical "
+    "traits` is useless: physical traits of *what*? Opened as `What are the "
+    "typical physical traits of a Nova Scotia Duck Tolling Retriever?` it is "
+    "answerable by someone who has never seen this project. The subject is "
+    "obvious to you right now and invisible to everyone downstream, which is "
+    "exactly why it gets left out."
+)
+"""What `open_topic` requires of a question, stated as a failure rather than a virtue.
+
+"Be specific" and "be descriptive" are what this prompt used to say by
+implication, and a model satisfies them without naming the subject once: a list
+written under a `Subject:` heading does not repeat the heading, because in the
+context that produced it the heading is right there. The elision is a property
+of the shape, not of any one model -- Gemma 4 exposed it where Qwen 3.6 happened
+to hide it.
+
+The cost of the example is roughly ninety tokens on every project-joined
+session's system prompt, paid whether or not the session opens a topic. That is
+the price of the instruction being *checkable* by the model against its own
+output; the abstract version is not, which is how it was followed and violated
+at the same time.
+
+Lives here rather than in `topic_seeding.py` because seeding is not the only
+caller of `open_topic` -- an autonomous round opens topics mid-run and never
+sees the seeding prompt. `TOPICS_PROMPT` below is appended exactly where
+`build_topic_tools` binds the tool, so this arrives with the tool and with
+nothing else, the scoping `components.component_guidance` argues for.
+"""
+
+
 class TopicError(Exception):
     """Something a topic operation could not do, phrased for the agent.
 
@@ -123,5 +159,5 @@ TOPICS_PROMPT = (
     "one when you find a question worth answering that nothing is tracking yet. "
     "Do not open topics to look busy: an unanswered question you invented is "
     "worse than none, because it makes the queue longer without making the "
-    "project better understood."
+    "project better understood.\n\n" + SELF_CONTAINED_QUESTION
 )

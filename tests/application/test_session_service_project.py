@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessage
 
+from research_team.application.topics import SELF_CONTAINED_QUESTION
 from research_team.domain import CreateProject
 from tests.conftest import start_session
 
@@ -214,3 +215,62 @@ async def test_a_session_started_in_a_project_is_told_about_its_topic_tools(
 # `test_a_plain_session_is_not_told_about_topic_tools` was here, and went for
 # the same reason as its knowledge-graph twin above: the session it described
 # cannot be built.
+
+
+async def test_a_session_started_in_a_project_is_told_the_project_it_is_in(
+    service, project_id
+):
+    """An agent joined to a project could not name the project it was joined to.
+
+    Every project-scoped prompt in this build describes *tools* -- the graph,
+    the corpus, the topic queue -- and none of them says what the project is
+    about. That is what makes a topic question like "typical physical traits"
+    unrecoverable downstream: the subject is implicit in the project and the
+    project was never named, so there is nothing to disambiguate against.
+
+    Would pass with the change reverted only if `CreateProject`'s name
+    happened to appear in the default prompt, which it does not: the fixture
+    names this project `research` and no default text contains it.
+    """
+    session_id = await service.start_in_project(project_id)
+
+    session = await service.load(session_id)
+
+    assert "research" in session.state.system_prompt
+
+
+async def test_a_second_session_in_a_project_is_told_it_too(service, project_id, fake_model):
+    """The forking path builds its own `SessionStarted`, so it needs the name
+    threaded separately -- a second join that inherited files but not the
+    project's name would be the same defect, visible only on the second
+    session of a project and therefore never in a fresh-database test."""
+    first = await service.start_in_project(project_id)
+    await _write_file(service, first, "/notes.md", "something", fake_model)
+    await service.release_project(first)
+
+    second = await service.start_in_project(project_id)
+
+    session = await service.load(second)
+    assert "research" in session.state.system_prompt
+
+
+async def test_a_joined_session_is_told_what_a_self_contained_question_is(service, project_id):
+    """The rule travels with `open_topic`, not with the seeding turn.
+
+    Seeding is where the defect was *seen* -- a list written under a
+    "Subject:" heading elides the heading -- but an autonomous round opening a
+    topic mid-run elides just as readily and never sees `seeding_prompt`.
+    `TOPICS_PROMPT` is appended exactly where `build_topic_tools` binds the
+    tool, so the rule is present whenever the tool is and absent whenever it
+    is not -- the scoping `component_guidance` argues for.
+
+    Asserts the failure *example* survives, not just the phrase
+    "self-contained": the vague version of this instruction is the one the
+    model was already given and already believed it had followed.
+    """
+    session_id = await service.start_in_project(project_id)
+
+    session = await service.load(session_id)
+
+    assert SELF_CONTAINED_QUESTION in session.state.system_prompt
+    assert "typical physical traits" in SELF_CONTAINED_QUESTION

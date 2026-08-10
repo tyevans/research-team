@@ -13,7 +13,12 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from research_team.application import TurnSupervisor
-from research_team.application.topic_seeding import SEEDING_PROMPT, TopicSeeder
+from research_team.application.topic_seeding import (
+    SEEDING_PROMPT,
+    TopicSeeder,
+    seeding_prompt,
+)
+from research_team.application.topics import SELF_CONTAINED_QUESTION
 from research_team.domain import CreateProject
 
 
@@ -135,3 +140,25 @@ async def test_seeding_lets_a_later_seed_join_the_same_project(
 
     topics = await topic_reader.list_topics()
     assert [view.summary.question for view in topics] == ["second question"]
+
+
+def test_the_seeding_prompt_instantiates_the_rule_with_this_run_s_subject():
+    """A rule stated in the abstract is the rule that produced this bug.
+
+    `SEEDING_PROMPT` used to say "open topics covering this subject" and then
+    put the subject on its own line under a heading -- which is precisely the
+    shape a model elides, because a list written under a heading does not
+    repeat the heading. This asserts the *subject itself* appears inside the
+    self-containment instruction, not merely somewhere in the prompt: an
+    instruction that names "Nova Scotia Duck Tolling Retriever" is one the
+    model has to write out, where "name the subject" is one it can believe it
+    already followed.
+
+    Passes with the change reverted only if the old prompt happened to
+    interpolate the subject twice, which it did not -- it appeared once, as a
+    heading.
+    """
+    prompt = seeding_prompt("Nova Scotia Duck Tolling Retriever", 8)
+
+    assert prompt.count("Nova Scotia Duck Tolling Retriever") >= 2
+    assert SELF_CONTAINED_QUESTION in prompt
