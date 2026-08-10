@@ -95,6 +95,9 @@ const fakeTopics = (over: Partial<TopicRepository> = {}) => ({
   cancelDispatch: vi.fn(() => {
     throw new Error('SeedPanel should never call cancelDispatch()')
   }),
+  documents: vi.fn(() => {
+    throw new Error('SeedPanel should never call documents()')
+  }),
   ...over,
 })
 

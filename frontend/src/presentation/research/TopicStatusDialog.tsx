@@ -10,6 +10,7 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Button } from '../common/primitives.tsx'
 import { SubQuestions } from './SubQuestions.tsx'
+import { TopicDocuments } from './TopicDocuments.tsx'
 
 /** The statuses this build offers, in queue order rather than the wire's --
  *  a reader picking a next status wants "not pursuing"/"superseded" grouped
@@ -183,6 +184,16 @@ export const TopicStatusDialog = ({
           </div>
 
           <SubQuestions projectId={projectId} topic={topic} />
+
+          {/* Last, and inside this dialog rather than as a fifth pane: what a
+              dispatch wrote is the answer to the question this topic asks, so
+              it belongs behind the topic rather than beside the graph. The
+              dialog already traps focus and already grows -- `FOCUSABLE_SELECTOR`
+              is re-queried per keypress for exactly this reason. */}
+          <section className="topic-documents-section">
+            <h3 className="topic-section-heading">Documents</h3>
+            <TopicDocuments projectId={projectId} topicId={topic.topicId} />
+          </section>
         </div>
       </aside>
     </div>

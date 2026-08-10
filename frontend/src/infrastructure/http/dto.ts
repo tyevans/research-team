@@ -471,6 +471,19 @@ export const dispatchCatchUpDto = z.object({
   finished: z.array(dispatchFrameDto).default([]),
 })
 
+/** A topic's own documents, and the session/scrub pair to read them at.
+ *
+ * `session_id` and `at` are both nullable and mean different things: no
+ * session at all (a project never joined, which therefore has no documents
+ * either), and HEAD (a live holder, whose uncommitted work the tip does not
+ * yet know about). */
+export const topicDocumentsDto = z.object({
+  directory: z.string(),
+  session_id: maybe(z.string()),
+  at: maybe(z.number()),
+  documents: z.array(z.object({ path: z.string(), name: z.string() })).default([]),
+})
+
 /** The autonomy policy, as all three routes shape it through one presenter.
  *
  * `levels` values are `z.string()` rather than an enum on purpose: a server
