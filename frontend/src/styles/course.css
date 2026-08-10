@@ -17,17 +17,43 @@
   overflow: auto;
   padding: 26px 28px 60px;
 }
-.course-panes {
+/* The tracks are `COURSE_TRACKS` now, written inline by `Split` above
+   `--bp-wide` and by `responsive.css` in the band below it. What is left here
+   is what this page needs that the primitive does not assume.
+
+   `flex: 0 0 auto` against the primitive's `1 1 auto`: `Split` is built for a
+   view that owns the viewport and gives its columns the height, and this page
+   scrolls instead -- the rail and its artifact list are read together and top
+   to bottom. So the split takes its content's height and the page scrolls
+   around it. */
+.lay-split[data-split='course'] {
   flex: 0 0 auto;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
   gap: 14px;
 }
-.course-panes .pane {
+
+/* Cards rather than columns divided by a rule, which is what the gap above
+   already implies -- `.lay-pane`'s right-hand divider would draw a second line
+   just inside the border of the left one. */
+.lay-split[data-split='course'] > .lay-pane {
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  border-right: 1px solid var(--line);
 }
-.course-panes .pane-body {
+
+/* The one rule that has to fight the primitive, and the reason is the page's
+   scrolling: a pane body that scrolls on its own would put a second scrollbar
+   inside a page that already scrolls, and clip a rail of twelve stages to
+   whatever height the grid happened to give it. `visible` restores what
+   `.course-panes .pane-body` said, for the same reason it said it. */
+.lay-split[data-split='course'] > .lay-pane > .lay-pane-body {
   overflow: visible;
+}
+
+/* A folded pane must not keep the height of the open one beside it. Grid
+   stretches both to the row's height by default, which on a page that scrolls
+   means a 34px rail drawn as a 900px empty column. */
+.lay-split[data-split='course'] > .lay-pane.is-collapsed {
+  align-self: start;
 }
 
 .rail {

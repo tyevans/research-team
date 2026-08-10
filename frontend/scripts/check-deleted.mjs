@@ -29,8 +29,14 @@ const SRC = fileURLToPath(new URL('../src', import.meta.url))
 /** `where` is a path prefix under `src/`, so a rule can forbid a name in the
  *  files that replaced it without forbidding it in the ones that still
  *  legitimately use it. That distinction is the whole reason this is not a
- *  repository-wide grep: `.pane-body` is dead in the session view and alive in
- *  the research rail and the course page. */
+ *  repository-wide grep -- it was written when `.pane-body` was dead in the
+ *  session view and alive in the research rail and the course page.
+ *
+ *  Both have since migrated, so the phase-C rule below *is* repository-wide
+ *  over `styles`, which is the shape a rule takes once the last legitimate
+ *  user is gone. The scoping is still what lets the phase-B rules forbid
+ *  `replace('_', ' ')` under `presentation/research` while the landing page
+ *  has not migrated. */
 const RULES = [
   {
     phase: 'A',
@@ -90,6 +96,33 @@ const RULES = [
       /\.pane-documents/,
       /\.pane-graph/,
       /\.pane\.is-folded/,
+    ],
+  },
+  {
+    phase: 'C',
+    what: 'the course page built its own two-pane grid and its own pane markup',
+    why: 'Replaced by `Split`, `COURSE_TRACKS` and two `Pane`s. The grid was declared across two stylesheets -- `display: grid` in `panes.css`, the tracks in `course.css` -- so neither file described it alone, which is the same split-brain `SESSION_TRACKS` was written for.',
+    where: 'presentation/course',
+    forbid: [
+      /className="panes/,
+      /className="pane /,
+      /className="pane-head"/,
+      /className="pane-meta"/,
+    ],
+  },
+  {
+    phase: 'C',
+    what: 'the old pane stylesheet outlived the views that used it',
+    why: '`panes.css` is `scrub-bar.css` now and holds no pane rule. Its own comment named this migration as the one it was waiting for: "This rule and `.course-panes` go together when the course page migrates." A pane is `.lay-pane` in `layout.css`, and nothing else may re-declare these names.',
+    where: 'styles',
+    forbid: [
+      /^\.panes\b/m,
+      /^\.pane\b/m,
+      /^\.pane-head\b/m,
+      /^\.pane-body\b/m,
+      /^\.pane-meta\b/m,
+      /^\.pane-toggle\b/m,
+      /\.course-panes/,
     ],
   },
 ]

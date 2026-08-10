@@ -1,14 +1,19 @@
 /* The layout primitives' own rules.
 
-   Every selector here is new and prefixed `lay-`, and that prefix is the
-   entire reason this file is safe to add in a phase that promises no rendered
-   page changes: `panes.css` already owns `.pane`, `.pane-head` and
-   `.pane-body`, and `research.css` re-specifies the same elements through
+   Every selector here is prefixed `lay-`, and that prefix is the entire reason
+   this file was safe to add in a phase that promised no rendered page changes:
+   `panes.css` owned `.pane`, `.pane-head` and `.pane-body` at the time, and
+   `research.css` re-specified the same elements through
    `.research-workbench .pane`. Reusing those names would have meant the new
    primitives inheriting two sets of rules written for two other layouts, which
    is how the two pane systems came to share one class name in the first place.
-   The prefix goes away when the migration does, along with the files it is
-   avoiding.
+
+   Both of those are now gone -- the research and course slices took them, and
+   `panes.css` is `scrub-bar.css` with no pane rule in it. So the prefix has
+   outlived the collision it was avoiding and could be dropped. It is kept
+   because dropping it is a rename of every layout selector in the project for
+   no behaviour, and `check-deleted.mjs` now forbids the unprefixed names from
+   coming back, which is the part that actually mattered.
 
    Written as ordinary CSS rather than Tailwind utilities, deliberately. Two
    reasons, and the first is the real one: the breakpoint handoff needs a media

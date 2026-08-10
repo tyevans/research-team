@@ -1,0 +1,111 @@
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { useState } from 'react'
+
+import { Pane } from '../layout/Pane.tsx'
+import { Split } from '../layout/Split.tsx'
+import { ArtifactList } from './ArtifactList.tsx'
+import { StageList, stagesLeftBehind } from './StageList.tsx'
+import { artifact, course, stage } from './course-fixtures.ts'
+import { COURSE_TRACKS } from './use-course.ts'
+
+/** The course page's two panes, side by side, which is the only way to see the
+ *  thing they are for: a rail saying where the run is against a list saying
+ *  what it has produced.
+ *
+ * `Split` and `Pane` are real here rather than stubbed, because the layout is
+ * half of what these stories are showing -- the fold, the meta counts, and the
+ * fact that a folded pane becomes a 34px rail with its title on its side. None
+ * of that is assertable in jsdom, which is exactly why it earns a story.
+ */
+const meta: Meta = {
+  title: 'course/CoursePanes',
+  parameters: { layout: 'fullscreen' },
+}
+
+export default meta
+
+type Story = StoryObj
+
+const Panes = ({ data = course() }: { data?: ReturnType<typeof course> }) => {
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
+  const [openStage, setOpenStage] = useState<string | null>(null)
+
+  return (
+    <section className="view view-course">
+      <Split
+        id="course"
+        label="Course panes"
+        tracks={COURSE_TRACKS}
+        collapsed={collapsed}
+        onCollapsedChange={setCollapsed}
+      >
+        <Pane
+          id="stages"
+          label="Stages"
+          meta={`${String(stagesLeftBehind(data))} of ${String(data.stageCount)} left behind`}
+        >
+          <StageList
+            course={data}
+            openStage={openStage}
+            onToggleStage={(id) => {
+              setOpenStage((current) => (current === id ? null : id))
+            }}
+          />
+        </Pane>
+        <Pane id="artifacts" label="Artifacts" meta="2 of 4 written">
+          <ArtifactList course={data} />
+        </Pane>
+      </Split>
+    </section>
+  )
+}
+
+/** A run part-way through: one stage behind it, one current with a gate and a
+ *  half-written pair of artifacts, two ahead. The missing artifacts are dimmed
+ *  rather than hidden -- hiding them loses the gap the page exists to
+ *  surface. */
+export const Course: Story = { render: () => <Panes /> }
+
+/** A workflow that declares no artifacts at all. "Nothing here is missing" is
+ *  the distinction worth drawing: a preset naming no outputs is not a run that
+ *  failed to produce any. */
+export const NoArtifacts: Story = {
+  render: () => (
+    <Panes
+      data={course({
+        stages: [
+          stage({ outputs: [] }),
+          stage({ index: 2, id: 'step1.framing', name: 'Framing', status: 'current', outputs: [] }),
+        ],
+      })}
+    />
+  ),
+}
+
+/** Every artifact written, and none of them claiming anything. `claims
+ *  nothing` is the state the contract exists to make visible: an artifact with
+ *  neither a source nor an admission of inference is indistinguishable from
+ *  one never checked against anything. */
+export const ArtifactsClaimingNothing: Story = {
+  render: () => (
+    <Panes
+      data={course({
+        stages: [
+          stage({
+            outputs: [
+              artifact({
+                provenance: { sources: [], inferred: false, unreadable: 0, empty: true },
+              }),
+              artifact({ path: 'course/intake/scope.md', hasFrontmatter: false }),
+              artifact({
+                path: 'course/intake/notes.md',
+                missingFields: ['title', 'rests_on'],
+                provenance: { sources: [], inferred: true, unreadable: 2, empty: false },
+              }),
+            ],
+          }),
+        ],
+      })}
+    />
+  ),
+}
