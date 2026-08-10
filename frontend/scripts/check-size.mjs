@@ -69,6 +69,36 @@ const BUDGET_KB = {
   // leaves it able to do that work without stopping exploratory changes that
   // add no dependency at all.
   'vendor-': 48, // query, zustand, wouter, zod, date-fns, clsx, @tanstack/react-virtual
+  // The component system: `@radix-ui/*` and `class-variance-authority`. Its own
+  // bucket rather than a raise to `vendor-`, so the one place a surprise
+  // dependency still shows up keeps its 11 kB of slack and keeps biting.
+  //
+  // 56, measured at 0.0 kB, which needs explaining twice over.
+  //
+  // *Why it measures nothing:* phase 0 installs the toolchain and migrates no
+  // component. CVA is a dependency that nothing imports yet, so it is not in
+  // the bundle, and no Radix package is installed at all. The bucket is
+  // declared empty on purpose -- a budget that arrives with the code it
+  // budgets for is a budget nobody argued about, and this file exists because
+  // that is the argument worth having.
+  //
+  // *Why 56 rather than 20:* the spec's phase table walks this bucket from
+  // 16.6 kB (dialog) to 46.3 kB (twelve primitives) and proposes 52 as the
+  // standing limit. Sizing to the first phase would mean editing this number
+  // in four consecutive pull requests, and a limit that moves every time is a
+  // limit nobody reads. The owner's instruction is that exploration outranks
+  // bundle size at this stage, so this is deliberately generous: 56 is the
+  // spec's end-state 52 plus room for the wrapper components' own variants,
+  // and it is a tripwire rather than a squeeze. What it still catches is the
+  // thing worth catching -- a primitive that costs 20 kB instead of 3, or a
+  // second component library arriving beside the first.
+  //
+  // The honest cost, restated from §8.2 of the spec so it is not absorbed into
+  // a number: at the end state this is ~46 kB gzipped, 19% of what the console
+  // downloads today, spent entirely on interaction behaviour a user never sees
+  // *added* -- no feature, no pixel. It is paid in instalments and it is
+  // separately gated, which is what this line is for.
+  'ui-': 56,
   'rolldown-runtime-': 2, // the bundler's own module loader, emitted once
   // react-force-graph-2d, force-graph, d3-force and the rest of what draws
   // the research page's graph pane -- see `GRAPH_DEPENDENCIES` in
