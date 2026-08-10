@@ -15,11 +15,29 @@ import { useSplit } from './Split.tsx'
  * stylesheets standing in for one parameter. */
 export type CollapseTo = 'rail' | 'strip'
 
+/** Who scrolls inside a pane.
+ *
+ * `body` is the common case and the default: the pane's body is the scroll
+ * container and its content runs as long as it likes. `regions` is for a pane
+ * holding two or more independently scrolling areas -- the session workspace
+ * is a file list over a file viewer, each scrolling on its own -- where the
+ * body must be a flex column that does *not* scroll, or the outer scroller
+ * swallows the inner ones and neither behaves.
+ *
+ * `regions` also covers the case that was a separate `raw` prop in the session
+ * view: a child that renders its own scroll container because it needs a ref
+ * on it, as `Conversation` does to stick to the bottom. Two names for one
+ * shape was the accident; the shape is "the body is a column, its children
+ * scroll". */
+export type PaneScroll = 'body' | 'regions'
+
 export const Pane = ({
   id,
   label,
   meta,
   actions,
+  footer,
+  scroll = 'body',
   collapseTo = 'rail',
   minContent,
   unmountWhenCollapsed = false,
@@ -34,6 +52,15 @@ export const Pane = ({
   meta?: ReactNode
   /** Controls belonging to this pane's header, beside the collapse toggle. */
   actions?: ReactNode
+  /** Content pinned below the body rather than scrolling with it: a composer
+   *  under a conversation, a live feed under a log.
+   *
+   *  A slot rather than something the caller puts at the end of `children`,
+   *  because the whole point is that it is *outside* the scroll container.
+   *  Inside, it scrolls away, which for a composer means a text box that
+   *  leaves the screen as the conversation grows. */
+  footer?: ReactNode
+  scroll?: PaneScroll
   collapseTo?: CollapseTo
   /** The height, in pixels, below which this pane's content stops being worth
    *  showing.
@@ -68,10 +95,11 @@ export const Pane = ({
 
   const collapsed = collapsedProp ?? split?.collapsed.has(id) ?? false
   const onToggle = onToggleProp ?? (split ? () => split.toggle(id) : undefined)
-  // Below the widest breakpoint a pane is a row, not a column, so a rotated
-  // title would be lying about which way the layout runs. The split knows;
-  // a standalone pane keeps whatever it was told.
-  const form: CollapseTo = split && !split.wide ? 'strip' : collapseTo
+  // Once the panes stack, a pane is a row rather than a column, so a rotated
+  // title would be lying about which way the layout runs. `stacked` rather
+  // than `!wide`: between the two breakpoints these are still columns and a
+  // collapsed one is still a rail. A standalone pane keeps what it was told.
+  const form: CollapseTo = split?.stacked ? 'strip' : collapseTo
 
   return (
     <section
@@ -122,8 +150,22 @@ export const Pane = ({
           normally. `hidden` rather than a class, so the distinction is visible
           to assistive technology and to `:has()` rather than only to CSS. */}
       {collapsed && unmountWhenCollapsed ? null : (
-        <div className="lay-pane-body" id={bodyId} hidden={collapsed}>
+        <div className="lay-pane-body" data-scroll={scroll} id={bodyId} hidden={collapsed}>
           {children}
+        </div>
+      )}
+
+      {/* Outside the body, and folded away with it.
+          `display: contents` on the wrapper, so a footer holding two siblings
+          -- the session conversation pins an approvals list above a composer
+          -- stays two flex items of the pane rather than becoming one box with
+          two blocks inside it. The wrapper exists only to carry `hidden`,
+          which is what keeps a folded pane's composer out of the accessibility
+          tree as well as off the screen; the session view's rule folded it
+          with `display: none` alone, so a screen reader still found it. */}
+      {footer === undefined ? null : (
+        <div className="lay-pane-footer" hidden={collapsed}>
+          {footer}
         </div>
       )}
     </section>

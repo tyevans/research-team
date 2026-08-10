@@ -16,9 +16,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "size": "node scripts/check-size.mjs",
+    "deleted": "node scripts/check-deleted.mjs",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run size"
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run size && npm run deleted"
   },
   "engines": {
     "node": ">=22"

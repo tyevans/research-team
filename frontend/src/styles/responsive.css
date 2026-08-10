@@ -4,34 +4,55 @@
 /* responsive                                                              */
 /* ======================================================================= */
 @media (max-width: 1180px) {
-  .panes {
-    grid-template-columns: minmax(280px, 1fr) minmax(300px, 1.4fr);
-  }
   /* The rail gives up width before the stage does: the graph is the thing
      that stops being readable when it narrows, and the rail's rows are text
      that reflows. */
   .research-workbench {
     grid-template-columns: 280px minmax(0, 1fr);
   }
-  .pane-conversation {
+}
+
+/* The session split's middle arrangement: two columns, with the conversation
+   wrapped onto its own row beneath them.
+
+   Bounded at both ends, which the rule it replaces was not. `Split` stops
+   writing inline tracks below `--bp-wide` and `layout.css` stacks the panes
+   below `--bp-narrow`, so this band is the gap between the two -- and the
+   previous version, keyed on `.panes` with only an upper bound, also reached
+   the course page's grid and was saved from changing it only by `course.css`
+   being imported later. Scoping it to the split that wants it removes that
+   coincidence.
+
+   Range syntax rather than `max-width: 1180px`, so both boundaries are the
+   same literals `layout-tokens.ts` hands to `matchMedia` instead of one of
+   them being a number one smaller. `theme.test.ts` fails if they drift.
+
+   This is still a per-view rule in the shared breakpoint file, which is what
+   the layout system is meant to replace with a declared parameter. Phase A
+   does not do it: making the middle arrangement declarative means teaching
+   `Split` how many columns to fall back to and which pane may wrap, and that
+   is a redesign of the primitive rather than a migration onto it. */
+@media (width >= 821px) and (width < 1181px) {
+  .lay-split[data-split='session'] {
+    grid-template-columns: minmax(280px, 1fr) minmax(300px, 1.4fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, auto);
+  }
+  .lay-split[data-split='session'] > [data-pane='conversation'] {
     grid-column: 1 / -1;
     border-right: none;
     border-top: 1px solid var(--line);
     max-height: 46vh;
   }
-  .panes {
-    grid-template-rows: minmax(0, 1fr) minmax(0, auto);
+  /* Two columns, so `Split`'s inline template is absent and collapsing has to
+     shrink a track from here instead. The conversation spans the full width on
+     its own row, so only the top two need a rule. */
+  .lay-split[data-split='session']:has([data-pane='timeline'].is-collapsed) {
+    grid-template-columns: var(--rail-w) minmax(300px, 1.4fr);
   }
-  /* Two-column layout: app.js stops driving the tracks here, so collapsing
-     has to shrink them from the stylesheet instead. Conversation spans the
-     full width on its own row, so only the top two need a rule. */
-  .panes:has(.pane-timeline.collapsed) {
-    grid-template-columns: 34px minmax(300px, 1.4fr);
+  .lay-split[data-split='session']:has([data-pane='workspace'].is-collapsed) {
+    grid-template-columns: minmax(280px, 1fr) var(--rail-w);
   }
-  .panes:has(.pane-workspace.collapsed) {
-    grid-template-columns: minmax(280px, 1fr) 34px;
-  }
-  .pane-conversation.collapsed {
+  .lay-split[data-split='session'] > [data-pane='conversation'].is-collapsed {
     max-height: none;
   }
 }
@@ -43,6 +64,7 @@
   #app {
     overflow: visible;
   }
+  /* The course page's grid; the session split is stacked by `layout.css`. */
   .panes {
     display: flex;
     flex-direction: column;
@@ -58,9 +80,6 @@
   }
   .files {
     max-height: 200px;
-  }
-  .pane-conversation {
-    max-height: none;
   }
   .scrub-bar {
     flex-wrap: wrap;
@@ -87,18 +106,6 @@
     flex-direction: column;
     align-items: stretch;
     gap: var(--space-1);
-  }
-  /* Stacked panes collapse to a horizontal strip, not a vertical rail, so the
-     title reads the way the rest of the column does. */
-  .pane.collapsed .pane-head {
-    flex-direction: row;
-    height: auto;
-    justify-content: flex-start;
-    gap: 10px;
-    padding: 8px 12px;
-  }
-  .pane.collapsed .pane-head h2 {
-    writing-mode: horizontal-tb;
   }
   .drawer {
     width: 100%;

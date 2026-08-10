@@ -81,13 +81,33 @@
   display: grid;
 }
 
-/* Below the widest breakpoint the split stops being a row of columns. `Split`
-   writes no `grid-template-columns` here -- an inline style would outrank this
-   rule -- which is the handoff `splitTemplate` returns `undefined` for. */
-@media not all and (min-width: 1181px) {
+/* Below `narrow` the split stops being a row of columns at all. `Split` writes
+   no `grid-template-columns` below `wide` -- an inline style would outrank
+   this rule -- which is the handoff `splitTemplate` returns `undefined` for.
+
+   `narrow` rather than `wide`, and the difference is a band 360px across.
+   Between the two the split is still columns, just fewer of them, and it has
+   no *general* answer for how many: that depends on how many panes there are
+   and which one can afford to wrap. So the default here is a grid with no
+   template, which resolves to one column, and a view with three panes declares
+   its own middle arrangement -- the session view does, in `responsive.css`.
+   Stacking generically at `wide` instead was the first attempt and it
+   contradicted `Split`'s own `stacked` flag, which turns collapsed panes into
+   strips at `narrow`: at 1000px the panes would have been a vertical stack
+   while every pane still drew itself as a column. */
+@media not all and (min-width: 821px) {
   .lay-split {
     display: flex;
     flex-direction: column;
+  }
+
+  /* Stacked, a body takes its content's height unless it is told not to, and
+     one long event log then pushes every other pane off the screen. 60vh is
+     the cap `responsive.css` already applied to `.pane-body` at this width;
+     it moves here so it belongs to the primitive rather than to a list of
+     view class names. */
+  .lay-pane-body {
+    max-height: 60vh;
   }
 }
 
@@ -156,6 +176,33 @@
   flex: 1 1 auto;
   min-height: var(--pane-min-content, 0);
   overflow: auto;
+}
+
+/* The body holds independently scrolling regions, so it must not scroll
+   itself: an outer scroller around inner ones gives a box scrolling inside a
+   box, where the outer one absorbs the wheel and the inner one is reachable
+   only by dragging its bar. `min-height: 0` is restated rather than inherited
+   because the default above resolves to `--pane-min-content` when a floor is
+   declared, and a flex column with a non-zero floor cannot shrink its
+   children. */
+.lay-pane-body[data-scroll='regions'] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* No box of its own: the footer's children stay flex items of the pane, so a
+   composer under a conversation sits where it did when the view rendered it as
+   a bare sibling. The element exists to carry `hidden`. */
+.lay-pane-footer {
+  display: contents;
+}
+
+/* Both of these defeat a `display` that would otherwise win over the user
+   agent's `[hidden]` rule -- `flex` on the body, `contents` on the footer.
+   This is the usual reason `hidden` looks broken. */
+.lay-pane-footer[hidden] {
+  display: none;
 }
 
 /* --- collapsed: rail ----------------------------------------------------

@@ -186,4 +186,37 @@ describe('the layout constants', () => {
     const scale = Array.from(tokens().keys()).filter((name) => name.startsWith('--z-'))
     expect(scale).toEqual(['--z-sticky', '--z-overlay', '--z-toast'])
   })
+
+  /** A media query cannot read a custom property, so every `@media` prelude
+   *  that names a breakpoint writes the number out. The two tests above hold
+   *  `--bp-*` against `BREAKPOINTS`; this holds the *queries* against them,
+   *  which is the third copy and the one that has already gone wrong once --
+   *  `responsive.css` asks `max-width: 1180px` about the boundary
+   *  `use-panes.ts` asked `min-width: 1181px` about.
+   *
+   *  Scoped to the two files the layout system owns. The rest of
+   *  `responsive.css` still spells its boundaries the old way, on purpose:
+   *  rewriting rules this phase does not otherwise touch would be a diff with
+   *  no test behind it. Those are listed as unprotected rather than silently
+   *  included.
+   *
+   *  Proved red by changing `layout.css`'s stacking query to 820px. */
+  it('spells its media queries with the same numbers, in the files it owns', () => {
+    const legal = new Set(Object.values(BREAKPOINTS).map((px) => `${String(px)}px`))
+    const offenders = ['layout.css', 'responsive.css'].flatMap((name) =>
+      Array.from(read(name).matchAll(/@media[^{]+/g))
+        .flatMap((match) =>
+          Array.from(match[0].matchAll(/(?:min-width:\s*|width\s*[<>]=?\s*)(\d+px)/g)),
+        )
+        .map((match) => match[1]!)
+        .filter((px) => !legal.has(px))
+        .map((px) => `${name} asks about ${px}, which is not a breakpoint`),
+    )
+
+    // `responsive.css`'s untouched rules still use the `max-width: N - 1`
+    // spelling, which this pattern deliberately does not match -- it looks for
+    // the min-width and range forms, which are the ones the layout system
+    // writes. Widening it is the follow-up, not this phase.
+    expect(offenders).toEqual([])
+  })
 })

@@ -66,11 +66,19 @@
   margin-top: 8px;
 }
 
+/* Now only the course page's two-pane grid. The session view left this rule
+   in phase A, taking its three tracks with it -- and those tracks had never
+   applied on a wide screen anyway, because `use-panes.ts` wrote a different
+   set inline and an inline style outranks a stylesheet unconditionally. The
+   two disagreed by 20px on two columns and by a weight on the third, and only
+   one of them was ever on screen. `SESSION_TRACKS` is now the one declaration.
+
+   `.course-panes` supplies the tracks and the flex; what is left here is what
+   it relies on and does not set. This rule and `.course-panes` go together
+   when the course page migrates. */
 .panes {
-  flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(300px, 1.05fr) minmax(320px, 1.5fr) minmax(300px, 1.15fr);
 }
 .pane {
   min-width: 0;
@@ -82,35 +90,6 @@
 }
 .pane:last-child {
   border-right: none;
-}
-
-/* --- collapsed pane ------------------------------------------------------
- * A collapsed pane stays on screen as a labelled rail rather than vanishing:
- * the title is how you know what you closed, and the toggle is how you get
- * it back. Everything below the head is dropped from the layout, so a
- * collapsed log is not still streaming rows into a box nobody can see. */
-.pane.collapsed {
-  overflow: hidden;
-}
-.pane.collapsed > *:not(.pane-head) {
-  display: none;
-}
-.pane.collapsed .pane-head {
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  height: 100%;
-  padding: 8px 4px;
-  border-bottom: none;
-  background: var(--bg-panel);
-}
-.pane.collapsed .pane-head h2 {
-  writing-mode: vertical-rl;
-  letter-spacing: 0.16em;
-  white-space: nowrap;
-}
-.pane.collapsed .pane-meta {
-  display: none;
 }
 
 .pane-toggle {
@@ -172,9 +151,4 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-}
-.pane-body-split {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
