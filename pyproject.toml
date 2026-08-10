@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "deepagents>=0.7.4,<0.8",
+    "deepagents>=0.7.5,<0.8",
     # Capped below the next minor, as redstring caps it. Both libraries are
     # pre-1.0 with a stated no-shim policy, so a minor is where the breaking
     # renames land -- 0.12.0 alone carried four. An uncapped floor means a
@@ -13,7 +13,7 @@ dependencies = [
     "eventsource-py[sqlite]>=0.13.0,<0.14",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
-    "langchain-openai>=1.4.1",
+    "langchain-openai>=1.4.2",
     # Course artifacts carry YAML frontmatter, so something has to read it back.
     # Already present transitively (langchain, uvicorn, redstring all pull it),
     # and named here because `application/artifacts.py` imports it directly --
@@ -45,9 +45,9 @@ tracing = [
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
-    "hypothesis>=6.100",
+    "hypothesis>=6.165.2",
     "mutmut>=3.0",
-    "ruff==0.16.1",
+    "ruff==0.16.2",
 ]
 
 [tool.pytest.ini_options]
