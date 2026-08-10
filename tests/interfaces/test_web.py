@@ -31,6 +31,7 @@ from research_team.domain.topic import OpenTopic, RecordFinding
 from research_team.infrastructure.persistence import build_corpus_repository
 from research_team.infrastructure.persistence.event_store import build_topic_repository
 from research_team.interfaces.web import TurnActivity, create_app
+from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.seeding import SeedingActivity
 from tests.conftest import start_session
@@ -3440,3 +3441,283 @@ async def test_the_202s_run_id_is_the_id_the_finished_run_reports(seeding_client
     caught_up = await http.get(f"/api/projects/{project_id}/topics/seed")
 
     assert caught_up.json()["last"]["run_id"] == started.json()["run_id"]
+
+
+# ---------------- topic dispatch ----------------
+
+
+@pytest.fixture
+async def dispatch_client(db_path, fake_model):
+    """A client wired with a `TopicDispatcher` and its own `DispatchQueue`.
+
+    Separate from `client`, matching `seeding_client`: the default app is
+    built without a dispatcher, and that unwired case is one of the behaviours
+    these tests check.
+    """
+    application = await _started(model=fake_model, db_path=db_path)
+    queue = DispatchQueue()
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        topics=application.topic_readers,
+        topic_seeder=application.topic_seeder,
+        seeding=SeedingActivity(),
+        dispatcher=application.dispatcher,
+        dispatch=queue,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as http:
+        yield application, queue, http
+    await application.close()
+
+
+async def _project_with_a_topic(
+    application, http, fake_model, question="How does spacing work?"
+):
+    """A project holding exactly one topic, opened through a real seeding turn."""
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    fake_model.responses = [
+        AIMessage(
+            content="",
+            id="open",
+            tool_calls=[
+                {
+                    "name": "open_topic",
+                    "args": {"question": question, "rationale": "core"},
+                    "id": "t1",
+                }
+            ],
+        ),
+        AIMessage(content="opened", id="reply"),
+    ]
+    await application.topic_seeder.seed(UUID(project_id), "spaced repetition", max_topics=4)
+    topics = (await http.get(f"/api/projects/{project_id}/topics")).json()
+    return project_id, topics[0]["topic_id"]
+
+
+async def test_the_dispatch_routes_are_absent_unless_the_instance_was_wired(client):
+    """503 rather than 404, matching every other unwired route here: this build
+    is missing configuration, not the project the id names."""
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await client.post(
+        f"/api/projects/{project_id}/topics/{uuid4()}/dispatch",
+        json={"action": "understanding"},
+    )
+
+    assert response.status_code == 503
+
+
+async def test_dispatching_answers_202_before_the_work_is_done(dispatch_client, fake_model):
+    application, queue, http = dispatch_client
+    project_id, topic_id = await _project_with_a_topic(application, http, fake_model)
+    fake_model.responses = [AIMessage(content="written", id="a1")]
+
+    response = await http.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/dispatch",
+        json={"action": "understanding"},
+    )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["status"] == "queued"
+    assert body["topic_id"] == topic_id
+    assert body["action"] == "understanding"
+    assert body["dispatch_id"]
+    await queue.wait(UUID(project_id))
+
+
+async def test_a_second_dispatch_is_queued_rather_than_409(dispatch_client, fake_model):
+    """The behavioural difference from seeding, asserted at the route: a
+    control on every topic row cannot answer 409 to every second press."""
+    application, queue, http = dispatch_client
+    project_id, topic_id = await _project_with_a_topic(application, http, fake_model)
+    fake_model.responses = [
+        AIMessage(content="one", id="a1"),
+        AIMessage(content="two", id="a2"),
+    ]
+
+    first = await http.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/dispatch",
+        json={"action": "understanding"},
+    )
+    second = await http.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/dispatch",
+        json={"action": "understanding"},
+    )
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert second.json()["position"] >= 1
+    await queue.wait(UUID(project_id))
+
+
+async def test_dispatching_an_unknown_topic_is_404(dispatch_client, fake_model):
+    """Refused at the route rather than enqueued and failed asynchronously: a
+    typo'd id should come back as an error the caller can see, not as a
+    failure chip on a row that does not exist."""
+    application, _queue, http = dispatch_client
+    project_id, _topic_id = await _project_with_a_topic(application, http, fake_model)
+
+    response = await http.post(
+        f"/api/projects/{project_id}/topics/{uuid4()}/dispatch",
+        json={"action": "understanding"},
+    )
+
+    assert response.status_code == 404
+
+
+async def test_an_unsupported_action_is_refused_by_name(dispatch_client, fake_model):
+    """`research` and `lesson` are designed and deliberately not built. A 422
+    that named neither would read as a typo; this says which actions exist."""
+    application, _queue, http = dispatch_client
+    project_id, topic_id = await _project_with_a_topic(application, http, fake_model)
+
+    response = await http.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/dispatch", json={"action": "lesson"}
+    )
+
+    assert response.status_code == 422
+    assert "understanding" in response.text
+
+
+async def test_the_catch_up_route_reports_the_finished_dispatch(dispatch_client, fake_model):
+    """A tab that reconnected has no other way back -- these frames carry no
+    feed position, so `Last-Event-ID` cannot replay them."""
+    application, queue, http = dispatch_client
+    project_id, topic_id = await _project_with_a_topic(application, http, fake_model)
+
+    empty = await http.get(f"/api/projects/{project_id}/dispatch")
+    assert empty.status_code == 200
+    assert empty.json() == {"running": None, "queued": [], "finished": []}
+
+    fake_model.responses = [AIMessage(content="written", id="a1")]
+    await http.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/dispatch",
+        json={"action": "understanding"},
+    )
+    await queue.wait(UUID(project_id))
+
+    caught_up = (await http.get(f"/api/projects/{project_id}/dispatch")).json()
+    assert caught_up["running"] is None
+    assert caught_up["queued"] == []
+    [finished] = caught_up["finished"]
+    assert finished["status"] == "done"
+    assert finished["topic_id"] == topic_id
+    assert finished["path"].startswith("/topics/00-")
+
+
+async def test_the_202s_dispatch_id_is_the_id_the_finished_dispatch_reports(
+    dispatch_client, fake_model
+):
+    """A panel correlating "the dispatch I started" with "the one that just
+    finished" has to be able to do it by this field, the same way `run_id`
+    works for seeding."""
+    application, queue, http = dispatch_client
+    project_id, topic_id = await _project_with_a_topic(application, http, fake_model)
+    fake_model.responses = [AIMessage(content="written", id="a1")]
+
+    started = await http.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/dispatch",
+        json={"action": "understanding"},
+    )
+    await queue.wait(UUID(project_id))
+
+    caught_up = (await http.get(f"/api/projects/{project_id}/dispatch")).json()
+    assert caught_up["finished"][0]["dispatch_id"] == started.json()["dispatch_id"]
+
+
+async def test_cancelling_empties_the_queue(dispatch_client, fake_model):
+    application, queue, http = dispatch_client
+    project_id, topic_id = await _project_with_a_topic(application, http, fake_model)
+    fake_model.responses = [
+        AIMessage(content="one", id="a1"),
+        AIMessage(content="two", id="a2"),
+    ]
+
+    await http.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/dispatch",
+        json={"action": "understanding"},
+    )
+    await http.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/dispatch",
+        json={"action": "understanding"},
+    )
+    response = await http.post(f"/api/projects/{project_id}/dispatch/cancel")
+
+    assert response.status_code == 200
+    assert response.json()["cancelled"] >= 1
+    await queue.wait(UUID(project_id))
+    assert (await http.get(f"/api/projects/{project_id}/dispatch")).json()["queued"] == []
+
+
+async def test_a_dispatch_writes_a_file_the_project_can_read_back(dispatch_client, fake_model):
+    """End to end, and the only test here that proves the feature does its job:
+    the route, the queue, the dispatcher and the turn all ran, and a file
+    exists at the path the convention names."""
+    application, queue, http = dispatch_client
+    project_id, topic_id = await _project_with_a_topic(application, http, fake_model)
+    path = "/topics/00-how-does-spacing-work/understanding.md"
+    fake_model.responses = [
+        AIMessage(
+            content="",
+            id="w",
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {"file_path": path, "content": "# Understanding"},
+                    "id": "w1",
+                }
+            ],
+        ),
+        AIMessage(content="written", id="a1"),
+    ]
+
+    await http.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/dispatch",
+        json={"action": "understanding"},
+    )
+    await queue.wait(UUID(project_id))
+
+    files = await application.service.project_files(UUID(project_id))
+    assert path in files
+
+
+async def test_dispatch_frames_ride_the_stream_without_an_id(repository):
+    """Like seeding frames: no feed position, so no SSE id -- a browser must
+    not resume from one. A `Dispatch` frame carrying an id would have
+    `Last-Event-ID` asking the server to resume from a position the log does
+    not have."""
+    from research_team.application import LiveFeed
+    from research_team.application.topic_dispatch import DispatchRun
+    from research_team.interfaces.web.app import _sse
+
+    feed = LiveFeed(repository)
+    queue = DispatchQueue()
+    project_id = uuid4()
+    topic_id = uuid4()
+
+    generator = _sse(StubRequest(), feed, None, None, None, None, None, queue)
+
+    async def _run(dispatch_id):
+        return DispatchRun(
+            dispatch_id=dispatch_id,
+            project_id=project_id,
+            topic_id=topic_id,
+            session_id=uuid4(),
+            action="understanding",
+            question="q",
+            path="/topics/00-q/understanding.md",
+            reply="done",
+        )
+
+    queue.start(project_id, topic_id, "understanding", _run)
+    frames = [await anext(generator) for _ in range(2)]
+    await queue.wait(project_id)
+    await generator.aclose()
+
+    assert all(frame.startswith("data: ") for frame in frames)
+    assert all("id:" not in frame for frame in frames)
+    assert json.loads(frames[0].removeprefix("data: ").strip())["type"] == "Dispatch"

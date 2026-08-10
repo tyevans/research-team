@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Literal, Protocol
 from uuid import UUID
 
-WorkerKind = Literal["run", "turn", "extraction"]
+WorkerKind = Literal["run", "turn", "extraction", "dispatch"]
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,28 @@ class ExtractionSnapshot:
     detail: str = ""
     index: int | None = None
     total: int | None = None
+    started_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class DispatchSnapshot:
+    """One dispatch in flight, as the roster needs to describe it.
+
+    Declared here rather than in the web layer for `ExtractionSnapshot`'s
+    reason: `application` may not import `interfaces`, and `DispatchQueue` --
+    which produces these -- lives there.
+
+    Carries no session id, matching `ExtractionSnapshot`. A dispatch *does*
+    open a session, unlike an extraction, and it is deliberately not reported
+    here: that session is already in the roster as a `turn` worker in its own
+    right, the same way a run's session is. Naming it twice would have the
+    panel offer two rows that open the same transcript.
+    """
+
+    topic_id: str
+    action: str
+    question: str
+    queued: int
     started_at: datetime | None = None
 
 
@@ -105,6 +127,12 @@ class ExtractionsInFlight(Protocol):
     def in_flight(self, project_id: UUID) -> ExtractionSnapshot | None: ...
 
 
+class DispatchesInFlight(Protocol):
+    """Satisfied by `DispatchQueue` in the web layer."""
+
+    def in_flight(self, project_id: UUID) -> DispatchSnapshot | None: ...
+
+
 class ExtractionChannel(ExtractionsInFlight, Protocol):
     """Both halves of the extraction channel: what is running, and how to say so.
 
@@ -132,18 +160,26 @@ class WorkerRoster:
         turns: TurnsInFlight,
         runs: RunsInFlight | None = None,
         extractions: ExtractionsInFlight | None = None,
+        dispatches: DispatchesInFlight | None = None,
     ) -> None:
         self._projects = projects
         self._turns = turns
         self._runs = runs
         self._extractions = extractions
+        self._dispatches = dispatches
 
     async def on(self, project_id: UUID) -> Roster:
         """Everything working on `project_id`, in a fixed order.
 
-        Ordered run, then turns, then extraction -- fixed rather than
-        incidental, so the panel does not reshuffle between polls and a test
-        can assert on a sequence.
+        Ordered run, then dispatch, then turns, then extraction -- fixed
+        rather than incidental, so the panel does not reshuffle between polls
+        and a test can assert on a sequence.
+
+        A dispatch sits with the run rather than with the turns because it is
+        the same kind of thing: something a person asked for that holds the
+        project and runs turns inside itself. Its own turn still appears in
+        `turns` below, exactly as a run's does -- see `DispatchSnapshot` for
+        why that duplication is preferred to hiding it.
         """
         state = await self._projects.project_state(project_id)
         members = list(state.member_session_ids)
@@ -165,6 +201,21 @@ class WorkerRoster:
                     started_at=None,
                 )
             )
+        dispatch = (
+            self._dispatches.in_flight(project_id) if self._dispatches is not None else None
+        )
+        if dispatch is not None:
+            workers.append(
+                Worker(
+                    kind="dispatch",
+                    ref=dispatch.topic_id,
+                    detail=_dispatch_detail(dispatch),
+                    session_id=None,
+                    parent=None,
+                    started_at=dispatch.started_at,
+                )
+            )
+
         workers.extend(
             Worker(
                 kind="turn",
@@ -198,6 +249,26 @@ class WorkerRoster:
             workers=tuple(workers),
             idle_session_ids=tuple(session for session in members if session not in busy),
         )
+
+
+def _dispatch_detail(snapshot: DispatchSnapshot) -> str:
+    """What it is doing, and how much is behind it.
+
+    Composed here rather than in the browser for the reason `Worker.detail`
+    states: the roster on the landing page and the chip on the topic row must
+    say the same words about the same work, and two front ends composing it
+    separately is two phrasings that will drift.
+
+    The queue count is included because a reader who scrolled away from the
+    running row still needs to know something is waiting -- and omitting it
+    when the queue is empty keeps the ordinary case short.
+    """
+    parts = [snapshot.action]
+    if snapshot.question:
+        parts.append(snapshot.question)
+    if snapshot.queued:
+        parts.append(f"{snapshot.queued} queued")
+    return " · ".join(parts)
 
 
 def _extraction_detail(snapshot: ExtractionSnapshot) -> str:

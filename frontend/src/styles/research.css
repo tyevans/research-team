@@ -285,6 +285,52 @@
   margin-left: auto;
 }
 
+/* --------------------------------------------------------------- dispatch
+ *
+ * The chip sits below the meta row rather than in it, because its text is a
+ * sentence (a failure carries the model's own error) and the meta row is a
+ * flex line of short counts that a long chip would wrap into unreadability.
+ */
+.topic-dispatch {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+  /* A model's error message can be a paragraph. Clamped rather than wrapped:
+     the row is in a 320px rail, and one failure must not push forty topics
+     off the screen. The full text is in the title attribute. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topic-dispatch-running {
+  color: var(--accent);
+}
+
+.topic-dispatch-failed {
+  color: var(--k-failure);
+}
+
+.topic-dispatch-done {
+  color: var(--fg-faint);
+}
+
+.topic-dispatch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
 /* ------------------------------------------------------- topic status dialog
  *
  * Reuses `.drawer`/`.drawer-backdrop` from `course.css` -- the overlay shape

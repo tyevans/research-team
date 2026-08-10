@@ -89,6 +89,8 @@ from research_team.application.turn_supervisor import (
     TurnSupervisor,
 )
 from research_team.application.workers import (
+    DispatchesInFlight,
+    DispatchSnapshot,
     ExtractionChannel,
     ExtractionsInFlight,
     ExtractionSnapshot,
@@ -117,6 +119,8 @@ __all__ = [
     "CloseGraph",
     "Compaction",
     "ContextStrategy",
+    "DispatchSnapshot",
+    "DispatchesInFlight",
     "ElideToolResults",
     "EventFeed",
     "ExtractionChannel",

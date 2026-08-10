@@ -787,6 +787,22 @@ def seeding_view(frame: dict[str, Any] | None) -> dict[str, Any] | None:
     return frame
 
 
+def dispatch_view(frame: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A `DispatchQueue` frame, passed through as-is.
+
+    Exists for `seeding_view`'s reason rather than because it transforms
+    anything: the wire shape is decided in one place, not wherever a route
+    happens to need it. That matters more here than for seeding, because the
+    same frame goes out over three surfaces -- the 202, the catch-up read and
+    the SSE channel -- and a browser reconciling a reconnect against a
+    differently-shaped frame would render one dispatch two ways.
+
+    `None` passes through unchanged: nothing running is a state this reports
+    rather than an error.
+    """
+    return frame
+
+
 def worker_view(worker: Worker) -> dict[str, Any]:
     """One worker, in the browser's shape.
 

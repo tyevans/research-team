@@ -40,6 +40,13 @@ export const queryKeys = {
   topics: (project: ProjectId) => ['topics', project] as const,
   topic: (project: ProjectId, topic: TopicId) => ['topic', project, topic] as const,
   seed: (project: ProjectId) => ['seed', project] as const,
+  /** One key for the whole project's dispatches, not one per topic.
+   *
+   * The catch-up route answers running, queued and finished in a single read,
+   * and every dispatch frame changes at most one of those three -- so forty
+   * topic rows share one cache entry and one invalidation, rather than forty
+   * entries the same frame would have to know which of to touch. */
+  dispatch: (project: ProjectId) => ['dispatch', project] as const,
   documents: (project: ProjectId) => ['documents', project] as const,
   /** Ranged reads are their own key, distinct from the whole-document read
    *  `range` omitted gives -- a range and the full text are two different
