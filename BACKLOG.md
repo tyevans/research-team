@@ -328,6 +328,58 @@ registry already has the slot for it (`Trigger(run=None)` reports a standing
 human gate rather than a silent pass), so the work is the prompt and the gate,
 not the plumbing.
 
+### B36. A stage gate is decided against evidence that is not durable or visible
+
+`EndTurnOnStageAdvance` made a successful `advance_stage` end its turn, so a
+crossed boundary is durable before anything is built on it. It did **not**
+change the other half: the approval is still posed *before* the tool runs, and
+at that instant nothing the turn produced has reached the store.
+
+The ordering, verified rather than assumed:
+
+- `SessionService._save_turn` is the only thing that appends a turn's events,
+  and it runs after the executor returns. `DeepAgentTurnExecutor` is
+  constructed with no repository, so it could not commit early if it wanted to.
+- `advance_stage` floors at `ask`, so the interrupt fires before the tool body.
+- `GET /api/sessions/{id}/files` loads the aggregate from the store. So the
+  stage's artifacts, and the `check-findings` report `gate_review` writes, are
+  invisible to the reviewer's file viewer until the turn they are judging has
+  already finished.
+
+`test_nothing_the_turn_wrote_is_durable_when_the_reviewer_is_asked` pins this,
+and a comment in `gate_review` asserted the opposite for some time.
+
+**Two different fixes, and the cheap one is probably the right one.**
+
+*Visibility* is what the gate actually needs, and it does not require touching
+durability. `ApprovalRequest.context` already carries the findings inline over
+SSE -- that is why the gate is not blind today. Extending `gate_context` to
+carry the stage's artifact paths and contents would put the evidence in front
+of the reviewer with no change to when anything is written. Bounded work, no
+new invariant.
+
+*Durability* -- committing pending events before raising the interrupt -- is
+the larger and riskier change, and was rejected here rather than deferred by
+oversight:
+
+- It breaks the invariant `run_turn`'s docstring states and its `except`
+  clause enforces: "all events append atomically at the end, or not at all". A
+  crash after a mid-turn commit leaves a committed partial turn with no
+  `CompleteTurn` and a failure marker appended beside it, which is precisely
+  the half-applied turn the current design refuses to produce.
+- It interacts with the retry added in #69. `_save_turn` computes
+  `base_version` from the aggregate and `_refuse_unrebasable` allows a rebase
+  only over `AutonomyChanged`; a mid-turn save moves that baseline, and a
+  mid-turn save that *loses* its lock has no retry story at all.
+- It needs a new seam. The commit would have to happen inside
+  `DeepAgentTurnExecutor._decide`, which is infrastructure and deliberately
+  holds a `CodingSession` rather than a repository.
+
+Worth noting what a denied approval would then mean, since it is not obviously
+wrong: the artifacts would be committed and the stage not advanced, which is an
+accurate record -- the work was done, the boundary was not crossed. The problem
+is not that arm; it is the atomicity guarantee and the retry.
+
 ### B24. An auto-research run cannot fetch
 
 By design, and worth writing down so it is not "fixed" by accident. `fetch`

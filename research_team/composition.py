@@ -101,6 +101,7 @@ from research_team.infrastructure.agent.topic_tools import (
 )
 from research_team.infrastructure.agent.workflow_tools import (
     WORKFLOW_PROMPT,
+    EndTurnOnStageAdvance,
     build_workflow_tools,
 )
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
@@ -616,6 +617,13 @@ def build_application(
             ComponentFeedback(
                 read=lambda path: session.state.files.get(path, {}).get("content")
             ),
+            # In `base` rather than beside `StageMiddleware` below, because
+            # `advance_stage` is bound whenever a workflow is running -- which
+            # includes the arm where the stage is not one the preset defines
+            # and no stage gate is applied at all. It is inert without a result
+            # carrying `STAGE_ADVANCED`, so a session with no workflow pays a
+            # scan of the trailing tool messages and nothing else.
+            EndTurnOnStageAdvance(),
         )
 
         running = await running_workflow(session)
@@ -661,11 +669,33 @@ def build_application(
         The findings artifact is written straight onto the aggregate rather
         than through the agent's filesystem, because the agent is suspended
         inside an interrupt at this point and has no turn in which to write
-        anything. The consequence is worth naming: the file is in the log and
-        in the viewer immediately, and the *model* does not see it until its
-        next turn rebuilds state from the aggregate. That is the right way
-        round -- the report is for the reviewer, and a model that could read
-        its own report mid-decision would be tempted to argue with it.
+        anything.
+
+        **It is not visible to the reviewer while they decide, and neither are
+        the artifacts they are deciding about.** `session.execute` appends to
+        `uncommitted_events`; the only thing that writes to the store is
+        `_save_turn`, at the *end* of the turn, and `DeepAgentTurnExecutor`
+        holds no repository with which to do otherwise. `GET
+        /api/sessions/{id}/files` loads the aggregate from the store, so
+        everything this turn has written -- the stage's outputs and this report
+        -- is invisible to that route until the turn finishes. This paragraph
+        replaces a claim that the file was "in the log and in the viewer
+        immediately", which was never true.
+
+        What the reviewer actually gets at the interrupt is `gate_context`,
+        carried inline on the `ApprovalRequest` and delivered over SSE: the
+        findings, the counts, the checks that could not run. That is real
+        evidence and it is why the gate is not blind. What it is missing is the
+        artifacts themselves. Closing that gap is a visibility change (put the
+        stage's files in the context) rather than a durability one, and it is
+        deliberately not made here -- see the PR that added
+        `EndTurnOnStageAdvance`, which records why committing mid-turn was
+        rejected.
+
+        The *model* does not see the report until its next turn rebuilds state
+        from the aggregate. That is the right way round -- the report is for
+        the reviewer, and a model that could read its own report mid-decision
+        would be tempted to argue with it.
 
         A run whose project has no workflow, or whose stage the preset does
         not define, gets `None`: there is no stage to check, and inventing one
