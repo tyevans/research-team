@@ -610,7 +610,8 @@ async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
             preset=hybrid_default,
             to_stage="hybrid.step1.framing",
             decided_by="human",
-            gate_decision="approve",
+            gate_decision="4 of 4 declared artifacts present",
+            decision="approve_with_edits",
         )
     )
     await repository.projects.save(project)
@@ -621,6 +622,11 @@ async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
     assert payload["type"] == "Project"
     assert payload["project_id"] == str(project_id)
     assert payload["change"] == "StageAdvanced"
+    # The verdict, not only that a boundary was crossed (#80). The one payload
+    # field this frame carries, because unlike a stage name it describes the
+    # transition rather than the current state and so cannot disagree with the
+    # course read.
+    assert payload["decision"] == "approve_with_edits"
     assert "session_id" not in payload
 
 

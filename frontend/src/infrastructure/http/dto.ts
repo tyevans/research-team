@@ -372,6 +372,19 @@ export const topicFrameDto = z.object({ topic_id: z.string(), change: z.string()
  *  new event must move the pane, not fail validation and leave it stale. */
 export const projectChangeFrameDto = z.object({ project_id: z.string(), change: z.string() })
 
+/** A project event on the live feed: the shape above plus the reviewer's
+ *  verdict.
+ *
+ *  `decision` is optional *and* nullable, which is two different absences on
+ *  purpose. Null is what the server sends for the five project events that are
+ *  not a stage advance -- "this is not that kind of change". Absent is a server
+ *  older than the field, which must still move the rail rather than fail
+ *  validation and leave the page stale, for the reason `change` is a plain
+ *  string rather than an enum. */
+export const projectFrameDto = projectChangeFrameDto.extend({
+  decision: maybe(z.string()).optional(),
+})
+
 export const workerDto = z.object({
   kind: z.string(),
   ref: z.string(),

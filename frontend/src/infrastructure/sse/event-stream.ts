@@ -14,6 +14,7 @@ import {
   frameEnvelopeDto,
   logFrameDto,
   projectChangeFrameDto,
+  projectFrameDto,
   seedingFrameDto,
   topicFrameDto,
 } from '../http/dto.ts'
@@ -184,12 +185,18 @@ export const decodeFrame = (data: string): FeedFrame | null => {
         : null
     }
     case 'Project': {
-      // Same shape as a graph or corpus frame -- the server addresses all
-      // three by project id and names the event class -- so the same DTO
-      // parses it. The `type` is what separates them.
-      const frame = projectChangeFrameDto.safeParse(payload)
+      // The graph/corpus shape plus the reviewer's verdict, which only a
+      // stage advance has -- normalised to null here so a consumer tests one
+      // thing rather than distinguishing an old server from a project event
+      // that is not an advance.
+      const frame = projectFrameDto.safeParse(payload)
       return frame.success
-        ? { kind: 'project', projectId: frame.data.project_id, change: frame.data.change }
+        ? {
+            kind: 'project',
+            projectId: frame.data.project_id,
+            change: frame.data.change,
+            decision: frame.data.decision ?? null,
+          }
         : null
     }
     case 'Corpus': {

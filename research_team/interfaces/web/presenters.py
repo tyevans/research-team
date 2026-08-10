@@ -591,13 +591,29 @@ def project_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
     have two descriptions of the current stage that can disagree -- the same
     argument `corpus_change` makes about a document. The frame is a nudge;
     `/api/projects/{id}/course` stays the single answer to where the run is.
-    That also keeps this frame independent of `StageAdvanced`'s shape, which is
-    changing under a separate piece of work.
+
+    **`decision` is the exception, and the distinction is worth being precise
+    about.** It is not a description of current state, so it cannot disagree
+    with the course read the way a stage name could -- it is a fact about the
+    transition that just happened, and the course read does not report it at
+    all. A tab told only that a stage advanced has to ask what happened; one
+    told the reviewer chose `approve_with_edits` has been informed. That is the
+    whole point of the field (#80), which added it because an audit of a driven
+    run could otherwise say fifteen boundaries were crossed and nothing about
+    how.
+
+    Read through `getattr` with a `None` default rather than off the class,
+    because this frame serves all six project events and only `StageAdvanced`
+    has one. A client reads a null `decision` as "not that kind of change"
+    rather than as a missing verdict. Nothing on the page renders it yet; it is
+    on the frame so the live path does not have to be widened again the first
+    time something wants it.
     """
     return {
         "type": "Project",
         "project_id": str(project_id),
         "change": type(event).__name__,
+        "decision": getattr(event, "decision", None),
         "occurred_at": event.occurred_at.isoformat(),
     }
 

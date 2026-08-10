@@ -185,9 +185,18 @@ describe('decodeFrame', () => {
         type: 'Project',
         project_id: 'p1',
         change: 'StageAdvanced',
+        decision: 'approve_with_edits',
         occurred_at: '2026-01-01T00:00:00Z',
       }),
-    ).toEqual({ kind: 'project', projectId: 'p1', change: 'StageAdvanced' })
+    ).toEqual({
+      kind: 'project',
+      projectId: 'p1',
+      change: 'StageAdvanced',
+      // What the reviewer decided, not only that a boundary was crossed --
+      // the difference between the live update being a notification and
+      // being the information.
+      decision: 'approve_with_edits',
+    })
   })
 
   it('reads every project event as one kind, told apart by change', () => {
@@ -199,9 +208,30 @@ describe('decodeFrame', () => {
         type: 'Project',
         project_id: 'p1',
         change: 'WorkflowSelected',
+        decision: null,
         occurred_at: '2026-01-01T00:00:00Z',
       }),
-    ).toEqual({ kind: 'project', projectId: 'p1', change: 'WorkflowSelected' })
+    ).toEqual({
+      kind: 'project',
+      projectId: 'p1',
+      change: 'WorkflowSelected',
+      decision: null,
+    })
+  })
+
+  it('reads a project frame from a server that has no decision field', () => {
+    // `decision` arrived after the frame did. A server without it must still
+    // move the rail rather than fail validation and leave the page stale --
+    // the reason `change` is a plain string rather than an enum. Normalised to
+    // null so a consumer tests one thing, not two kinds of absence.
+    expect(
+      frame({
+        type: 'Project',
+        project_id: 'p1',
+        change: 'StageAdvanced',
+        occurred_at: '2026-01-01T00:00:00Z',
+      }),
+    ).toEqual({ kind: 'project', projectId: 'p1', change: 'StageAdvanced', decision: null })
   })
 
   it('drops a log frame with no index rather than guessing a position', () => {

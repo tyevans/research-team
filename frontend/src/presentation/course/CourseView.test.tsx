@@ -79,9 +79,13 @@ const fakeStream = () => {
   }
   return {
     stream,
-    pushProject: (projectId: string = PROJECT, change = 'StageAdvanced') =>
+    pushProject: (
+      projectId: string = PROJECT,
+      change = 'StageAdvanced',
+      decision: string | null = 'approve',
+    ) =>
       act(() => {
-        listener?.onFrame({ kind: 'project', projectId, change })
+        listener?.onFrame({ kind: 'project', projectId, change, decision })
       }),
     pushLog: () =>
       act(() => {
@@ -173,7 +177,7 @@ it('draws a rail when a workflow is chosen, without a reload', async () => {
   renderCourse({ course: list }, feed.stream)
   expect(await screen.findByText(/no course to show/i)).toBeInTheDocument()
 
-  feed.pushProject(PROJECT, 'WorkflowSelected')
+  feed.pushProject(PROJECT, 'WorkflowSelected', null)
 
   expect(await screen.findByText('Intake', {}, { timeout: 2_000 })).toBeInTheDocument()
 })
