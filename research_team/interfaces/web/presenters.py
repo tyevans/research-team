@@ -45,6 +45,7 @@ from research_team.domain import (
     FileDeleted,
     FileEdited,
     FileWritten,
+    ProjectState,
     SessionForkedFrom,
     SessionStarted,
     StageAdvanced,
@@ -801,6 +802,55 @@ def dispatch_view(frame: dict[str, Any] | None) -> dict[str, Any] | None:
     rather than an error.
     """
     return frame
+
+
+def topic_documents_view(
+    directory: str, files: dict[str, Any], state: ProjectState
+) -> dict[str, Any]:
+    """Everything written about one topic, and where to read it from.
+
+    **The `session_id` is the reason this is not just a list of paths.** Every
+    reader of a file in this API -- the raw route, the parsed route with its
+    components, the attempt route that grades against it -- is keyed by
+    `(session_id, path)`, and a dispatch writes on a session it creates and
+    releases. Nothing on the research view knows which session that was. This
+    resolves it once, so a viewer reuses those three routes unchanged instead
+    of a fourth project-scoped copy of each growing beside them.
+
+    `at` is the scrub point that goes with it, and the two must travel
+    together. A project nobody is holding has its files at the *tip*, which is
+    a position in a session that may have run on past it; reading that session
+    at HEAD would show files the project does not have. `None` means HEAD and
+    is correct only while a holder is live, because a holder's own uncommitted
+    work is exactly what the tip does not yet know about -- the same two cases
+    `project_files` resolves, reported rather than applied.
+
+    Filtered on `directory + "/"` rather than `directory`: without the
+    separator `/topics/0` would match `/topics/01-...` as well as
+    `/topics/00-...`, and the numeric prefix is the only thing keeping two
+    topics' documents apart.
+    """
+    prefix = f"{directory}/"
+    documents = [
+        {"path": path, "name": path[len(prefix) :]}
+        for path in sorted(files)
+        if path.startswith(prefix)
+    ]
+    if state.active_session_id is not None:
+        session_id, at = state.active_session_id, None
+    elif state.tip_session_id is not None and state.tip_at_event >= 1:
+        session_id, at = state.tip_session_id, state.tip_at_event
+    else:
+        # A project that has never been joined has no stream to read from.
+        # Reported as no session rather than an error: it is the same state as
+        # "nothing has been dispatched here yet", which is the ordinary case.
+        session_id, at = None, None
+    return {
+        "directory": directory,
+        "session_id": str(session_id) if session_id else None,
+        "at": at,
+        "documents": documents,
+    }
 
 
 def worker_view(worker: Worker) -> dict[str, Any]:

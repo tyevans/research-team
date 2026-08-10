@@ -3740,6 +3740,172 @@ async def test_a_dispatch_writes_a_file_the_project_can_read_back(dispatch_clien
     assert path in files
 
 
+# ---------------- the topic document viewer ----------------
+
+
+async def test_a_topic_with_no_documents_answers_an_empty_listing(dispatch_client, fake_model):
+    """An empty listing, not a 404: a topic nobody has dispatched at is the
+    ordinary case, and the directory it *would* be written to is the thing a
+    viewer wants to name in its empty state."""
+    application, _queue, http = dispatch_client
+    project_id, topic_id = await _project_with_a_topic(application, http, fake_model)
+
+    body = (await http.get(f"/api/projects/{project_id}/topics/{topic_id}/documents")).json()
+
+    assert body["documents"] == []
+    assert body["directory"] == "/topics/00-how-does-spacing-work"
+
+
+async def test_a_topic_lists_the_document_a_dispatch_wrote(dispatch_client, fake_model):
+    """The whole reason this route exists: without it a dispatch's output is
+    reachable only by knowing which session wrote it, and nothing on the
+    research view knows that."""
+    application, queue, http = dispatch_client
+    project_id, topic_id = await _project_with_a_topic(application, http, fake_model)
+    path = "/topics/00-how-does-spacing-work/understanding.md"
+    fake_model.responses = [
+        AIMessage(
+            content="",
+            id="w",
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {"file_path": path, "content": "# What we know"},
+                    "id": "w1",
+                }
+            ],
+        ),
+        AIMessage(content="written", id="a1"),
+    ]
+    await http.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/dispatch",
+        json={"action": "understanding"},
+    )
+    await queue.wait(UUID(project_id))
+
+    body = (await http.get(f"/api/projects/{project_id}/topics/{topic_id}/documents")).json()
+
+    assert [document["name"] for document in body["documents"]] == ["understanding.md"]
+    assert body["documents"][0]["path"] == path
+
+
+async def test_the_listing_says_which_session_to_read_the_file_from(
+    dispatch_client, fake_model
+):
+    """The point of the whole route, and the reason it is not just a list of
+    paths. Every reader of a file -- the raw route, the parsed route, the
+    attempt route -- is keyed by `(session_id, path)`, and a dispatch writes
+    on a session it creates and releases. This is the only thing that can
+    say which one, so a viewer can reuse all three unchanged."""
+    application, queue, http = dispatch_client
+    project_id, topic_id = await _project_with_a_topic(application, http, fake_model)
+    path = "/topics/00-how-does-spacing-work/understanding.md"
+    fake_model.responses = [
+        AIMessage(
+            content="",
+            id="w",
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {"file_path": path, "content": "hi"},
+                    "id": "w1",
+                }
+            ],
+        ),
+        AIMessage(content="written", id="a1"),
+    ]
+    await http.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/dispatch",
+        json={"action": "understanding"},
+    )
+    await queue.wait(UUID(project_id))
+
+    body = (await http.get(f"/api/projects/{project_id}/topics/{topic_id}/documents")).json()
+
+    assert body["session_id"] is not None
+    readable = await http.get(
+        f"/api/sessions/{body['session_id']}/files",
+        params={"path": path, **({"at": body["at"]} if body["at"] is not None else {})},
+    )
+    assert readable.status_code == 200
+    assert readable.json()["content"] == "hi"
+
+
+async def test_one_topic_s_listing_does_not_show_another_topic_s_documents(
+    dispatch_client, fake_model
+):
+    """The `<nn>-<slug>` directory is the only thing separating them, so a
+    prefix match that forgot the trailing slash would put `/topics/01-...`
+    under `/topics/0`. Two topics, asserted apart."""
+    application, queue, http = dispatch_client
+    project_id, first = await _project_with_a_topic(application, http, fake_model)
+
+    fake_model.responses = [
+        AIMessage(
+            content="",
+            id="open2",
+            tool_calls=[
+                {
+                    "name": "open_topic",
+                    "args": {"question": "Second question?", "rationale": "core"},
+                    "id": "t2",
+                }
+            ],
+        ),
+        AIMessage(content="opened", id="r2"),
+    ]
+    await application.topic_seeder.seed(UUID(project_id), "more", max_topics=4)
+    rows = (await http.get(f"/api/projects/{project_id}/topics")).json()
+    second = next(row["topic_id"] for row in rows if row["question"] == "Second question?")
+
+    for topic_id, path in (
+        (first, "/topics/00-how-does-spacing-work/understanding.md"),
+        (second, "/topics/01-second-question/understanding.md"),
+    ):
+        fake_model.responses = [
+            AIMessage(
+                content="",
+                id=f"w-{path}",
+                tool_calls=[
+                    {
+                        "name": "write_file",
+                        "args": {"file_path": path, "content": path},
+                        "id": f"c-{path}",
+                    }
+                ],
+            ),
+            AIMessage(content="ok", id=f"a-{path}"),
+        ]
+        await http.post(
+            f"/api/projects/{project_id}/topics/{topic_id}/dispatch",
+            json={"action": "understanding"},
+        )
+        await queue.wait(UUID(project_id))
+
+    one = (await http.get(f"/api/projects/{project_id}/topics/{first}/documents")).json()
+    two = (await http.get(f"/api/projects/{project_id}/topics/{second}/documents")).json()
+
+    assert [d["path"] for d in one["documents"]] == [
+        "/topics/00-how-does-spacing-work/understanding.md"
+    ]
+    assert [d["path"] for d in two["documents"]] == [
+        "/topics/01-second-question/understanding.md"
+    ]
+
+
+async def test_documents_for_an_unknown_topic_are_404(dispatch_client, fake_model):
+    """The status alone would pass with this route deleted -- FastAPI answers
+    404 for a path it does not serve. So the message is asserted too: this one
+    names the project, and a missing route's does not."""
+    application, _queue, http = dispatch_client
+    project_id, _topic_id = await _project_with_a_topic(application, http, fake_model)
+
+    response = await http.get(f"/api/projects/{project_id}/topics/{uuid4()}/documents")
+
+    assert response.status_code == 404
+    assert project_id in response.json()["detail"]
+
+
 async def test_dispatch_frames_ride_the_stream_without_an_id(repository):
     """Like seeding frames: no feed position, so no SSE id -- a browser must
     not resume from one. A `Dispatch` frame carrying an id would have

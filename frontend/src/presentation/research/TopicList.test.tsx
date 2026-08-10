@@ -11,6 +11,7 @@ import type { TopicRepository } from '@application/ports/repositories.ts'
 import type { Dispatch } from '@domain/research/dispatch.ts'
 import type { TopicView } from '@domain/research/topic.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
+import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { ProjectId, SessionId, TopicId } from '@domain/shared/identifier.ts'
 
 import { StreamProvider } from '../shell/StreamProvider.tsx'
@@ -57,6 +58,14 @@ const fakeTopics = (
   }),
   cancelDispatch: vi.fn(() => {
     throw new Error('cancelDispatch was not stubbed for this test')
+  }),
+  // Resolves rather than throwing: opening Manage renders the dialog, which
+  // renders `TopicDocuments`, which reads this.
+  documents: vi.fn().mockResolvedValue({
+    directory: '/topics/00-a-topic',
+    sessionId: null,
+    at: ScrubPoint.head(),
+    documents: [],
   }),
   read: vi.fn(() => {
     throw new Error('read was not stubbed for this test')

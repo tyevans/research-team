@@ -6,10 +6,13 @@ import { expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
+import type { EventStream } from '@application/ports/event-stream.ts'
 import type { TopicRepository } from '@application/ports/repositories.ts'
 import type { TopicDetail } from '@domain/research/topic.ts'
+import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
+import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { TopicStatusDialog } from './TopicStatusDialog.tsx'
 
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
@@ -67,15 +70,38 @@ const fakeTopics = (over: Partial<TopicRepository> = {}): TopicRepository => ({
   cancelDispatch: vi.fn(() => {
     throw new Error('TopicStatusDialog should never call cancelDispatch()')
   }),
+  // Resolves rather than throwing: the dialog now renders `TopicDocuments`,
+  // which reads this unconditionally. An empty listing keeps these tests
+  // about the status form, which is what they are for.
+  documents: vi.fn().mockResolvedValue({
+    directory: '/topics/00-a-topic',
+    sessionId: null,
+    at: ScrubPoint.head(),
+    documents: [],
+  }),
   ...over,
 })
 
+/** A stream that connects and never delivers anything.
+ *
+ * Not decoration: the dialog now renders `TopicDocuments`, which subscribes to
+ * dispatch frames for its own topic, and `useStream` throws outside a
+ * provider. A harness without one would be testing a component the
+ * application never renders. */
+const quietStream: EventStream = { connect: () => {}, disconnect: () => {} }
+
 const renderDialog = (ui: ReactElement, parts: Partial<AppContainer> = {}) => {
-  const container = { topics: fakeTopics(), ...parts } as unknown as AppContainer
+  const container = {
+    topics: fakeTopics(),
+    stream: quietStream,
+    ...parts,
+  } as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
-      <ContainerProvider container={container}>{children}</ContainerProvider>
+      <ContainerProvider container={container}>
+        <StreamProvider>{children}</StreamProvider>
+      </ContainerProvider>
     </QueryClientProvider>
   )
   return render(ui, { wrapper })

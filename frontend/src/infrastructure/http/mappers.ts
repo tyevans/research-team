@@ -19,6 +19,7 @@ import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { Dispatch, DispatchStatus } from '@domain/research/dispatch.ts'
+import type { TopicDocuments } from '@domain/research/topic-document.ts'
 import type { SeedingRun, SeedingStatus } from '@domain/research/seeding.ts'
 import type { TopicDetail, TopicStatus, TopicView } from '@domain/research/topic.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
@@ -27,6 +28,7 @@ import type { ForkNode, SessionProjection, SessionSummary } from '@domain/sessio
 import type { TurnRange } from '@domain/session/turn.ts'
 import type { Roster } from '@domain/worker/worker.ts'
 import type { FileRevision, WorkspaceFile } from '@domain/workspace/workspace-file.ts'
+import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { FilePath } from '@domain/shared/file-path.ts'
 import {
   ApprovalId,
@@ -468,6 +470,18 @@ export const toDispatch = (raw: Dto<typeof dto.dispatchFrameDto>): Dispatch => (
   path: raw.path,
   sessionId: raw.session_id,
   detail: raw.detail,
+})
+
+export const toTopicDocuments = (raw: Dto<typeof dto.topicDocumentsDto>): TopicDocuments => ({
+  directory: raw.directory,
+  sessionId: raw.session_id ? SessionId(raw.session_id) : null,
+  // `fromNullable` is the whole reason `at` is not carried as a raw number:
+  // it is what keeps "HEAD" from being spelled as `null` in a tenth place.
+  at: ScrubPoint.fromNullable(raw.at),
+  documents: raw.documents.map((document) => ({
+    path: FilePath.of(document.path),
+    name: document.name,
+  })),
 })
 
 /** The statuses this build knows. */

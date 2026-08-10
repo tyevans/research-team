@@ -36,10 +36,39 @@ const BUDGET_KB = {
   // console's own rather than the browser's. Roughly half of it is the two
   // things the page had none of -- state per region, and a project row with
   // more than a name on it.
-  'app-': 57, // our code: every component, store, mapper and stylesheet rule
+  // 80, from 57, on the owner's instruction, and the reason is a priority
+  // rather than a measurement: **bundle size is not what matters at this stage
+  // of the product.** Exploring what the console should be is worth more right
+  // now than keeping it small, and a gate with 0.6 kB of slack was firing on
+  // ordinary feature work rather than on the thing it was written to catch.
+  // The owner was explicit that this is not a rejection of the constraint --
+  // the instinct to keep things tight still stands -- so this is a deliberate,
+  // phase-specific loosening and should be revisited before release.
+  //
+  // Generous on purpose. Measured at 57.0 kB with the topic document viewer in
+  // (the viewer itself cost 0.6 kB: a listing, a document body reusing
+  // `useLesson`, and the stylesheet rules for both), and a floating
+  // agent-status widget is landing in this same chunk next. A raise sized to
+  // those two would be hit again immediately, which would not have done its
+  // job. 23 kB of room is roughly a third again of everything our own code
+  // currently ships.
+  //
+  // What is deliberately *kept*: the gate itself, and every note above and
+  // below this one. The limits being loose does not make them pointless -- a
+  // chunk that doubles overnight still trips this, which is the surprise worth
+  // hearing about. And the per-chunk history records what each earlier
+  // increase measured and bought, which stays useful reading even while nobody
+  // is designing against the numbers.
+  'app-': 80, // our code: every component, store, mapper and stylesheet rule
   'react-': 66, // react + react-dom + scheduler
   'text-': 34, // marked, dompurify, jsdiff — markdown and diff rendering
-  'vendor-': 38, // query, zustand, wouter, zod, date-fns, clsx, @tanstack/react-virtual
+  // 48, from 38, on the same instruction and the same reasoning as `app-`.
+  // Measured at 36.8 kB, which is 1.2 kB of slack -- close enough that one
+  // ordinary dependency bump would trip it. This is the bucket a *new library*
+  // lands in, so it is the one where the gate still has real work to do; 48
+  // leaves it able to do that work without stopping exploratory changes that
+  // add no dependency at all.
+  'vendor-': 48, // query, zustand, wouter, zod, date-fns, clsx, @tanstack/react-virtual
   'rolldown-runtime-': 2, // the bundler's own module loader, emitted once
   // react-force-graph-2d, force-graph, d3-force and the rest of what draws
   // the research page's graph pane -- see `GRAPH_DEPENDENCIES` in
@@ -47,7 +76,12 @@ const BUDGET_KB = {
   // is the tiny wrapper chunk Rollup emits for the `React.lazy()` import
   // itself, which does not get the `graph-` prefix because it is app code,
   // not a dependency, and manualChunks only renames node_modules code.
-  'graph-': 62,
+  // 74, from 62, on the same instruction. Measured at 61.4 kB -- 0.6 kB of
+  // slack, the tightest bucket here, and the graph pane is under active work.
+  // Like `vendor-`, this is a dependency bucket rather than a first-party one,
+  // so the raise is sized to stop it firing on pane changes while still
+  // noticing a new graphing library.
+  'graph-': 74,
   // Was 1 kB while this chunk was a bare `React.lazy` wrapper handing the
   // library a `graphData` prop. It now measures the container it is drawn in
   // and paints its own nodes -- a `ResizeObserver` that gives the canvas a

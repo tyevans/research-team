@@ -6,7 +6,13 @@ import type { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, seg } from './http-client.ts'
-import { toDispatch, toSeedingRun, toTopicDetail, toTopicView } from './mappers.ts'
+import {
+  toDispatch,
+  toSeedingRun,
+  toTopicDetail,
+  toTopicDocuments,
+  toTopicView,
+} from './mappers.ts'
 
 export class HttpTopicRepository implements TopicRepository {
   constructor(private readonly http: HttpClient) {}
@@ -98,6 +104,14 @@ export class HttpTopicRepository implements TopicRepository {
       queued: body.queued.map(toDispatch),
       finished: body.finished.map(toDispatch),
     }
+  }
+
+  async documents(projectId: ProjectId, topicId: TopicId) {
+    const body = await this.http.get(
+      `/api/projects/${seg(projectId)}/topics/${seg(topicId)}/documents`,
+      dto.topicDocumentsDto,
+    )
+    return toTopicDocuments(body)
   }
 
   async cancelDispatch(projectId: ProjectId) {

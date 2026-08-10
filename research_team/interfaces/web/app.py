@@ -49,6 +49,7 @@ from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.topic_dispatch import (
     DISPATCH_ACTIONS,
     TopicDispatcher,
+    topic_directory,
 )
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
@@ -96,6 +97,7 @@ from research_team.interfaces.web.presenters import (
     summary_view,
     topic_change,
     topic_detail_view,
+    topic_documents_view,
     topic_view,
     tree_view,
 )
@@ -720,6 +722,48 @@ def create_app(
             "current": seeding_view(seeding.current(project_id)),
             "last": seeding_view(seeding.last(project_id)),
         }
+
+    @app.get("/api/projects/{project_id}/topics/{topic_id}/documents")
+    async def list_topic_documents(project_id: UUID, topic_id: UUID):
+        """Everything a dispatch has written about one topic, and where to read it.
+
+        Registered ahead of `/topics/{topic_id}`, matching every other
+        sub-path here: FastAPI matches in declaration order.
+
+        **This is what makes a dispatch's output findable at all.** A dispatch
+        writes on a session it creates and releases, and the research view has
+        no handle on that session -- so without this route the file exists,
+        is on the feed, is scrubbable, and is reachable only by someone who
+        already knows which session id to look under.
+
+        The directory is recomputed from the topic's *current* position rather
+        than stored, which is the one real cost of numbering by position: a
+        topic that moved in the list since its document was written will have
+        this route look in a directory that does not exist, and answer an
+        empty listing. The alternative was a stored number, which means a new
+        field on an event, and this design adds none. Worth revisiting if
+        topic order turns out to churn.
+
+        An empty listing rather than a 404 for a topic nobody has dispatched
+        at: that is the ordinary case, and the directory it *would* be written
+        to is what an empty state wants to name. 404 is reserved for a topic
+        this project does not have.
+        """
+        await _require_project(project_id)
+        views = await _topic_reader(project_id).list_topics()
+        position = next(
+            (index for index, view in enumerate(views) if view.summary.topic_id == topic_id),
+            None,
+        )
+        if position is None:
+            raise HTTPException(
+                status_code=404, detail=f"no such topic in project {project_id}"
+            )
+        return topic_documents_view(
+            topic_directory(position, views[position].summary.question),
+            await service.project_files(project_id),
+            await service.project_state(project_id),
+        )
 
     @app.post("/api/projects/{project_id}/topics/{topic_id}/dispatch")
     async def dispatch_topic(
