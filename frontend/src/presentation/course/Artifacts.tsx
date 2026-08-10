@@ -1,3 +1,5 @@
+import clsx from 'clsx'
+
 import {
   formatSpan,
   type ArtifactSlot,
@@ -17,7 +19,15 @@ import { sessionHref } from '../routing/routes.ts'
 export const Artifact = ({ slot, course }: { slot: ArtifactSlot; course: Course }) => {
   const name = FilePath.of(slot.path).basename
   return (
-    <li className={`artifact${slot.present ? '' : ' artifact-missing'}`}>
+    // `clsx` rather than a template literal, and not as a matter of taste:
+    // `prettier-plugin-tailwindcss@0.8.1` rewrites
+    // `` `artifact${present ? '' : ' artifact-missing'}` `` by deleting the
+    // leading space inside the conditional, which yields the single class
+    // `artifactartifact-missing` and silently unstyles the row. It was one of
+    // exactly two places in this codebase building a class name that way --
+    // everywhere else already uses `clsx`, which the plugin handles correctly
+    // and which is listed in `tailwindFunctions` in `.prettierrc.json`.
+    <li className={clsx('artifact', !slot.present && 'artifact-missing')}>
       <div className="artifact-top">
         <span className="artifact-name">
           {slot.present ? (
