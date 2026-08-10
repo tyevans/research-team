@@ -1,0 +1,280 @@
+/* The entity presentation components.
+
+   Every selector is new and `ent-` prefixed, for the same reason `layout.css`
+   is `lay-` prefixed: `.topic-row`, `.topic-question`, `.topic-status` and
+   `.project` already exist and are written for the views that own them. A new
+   component reusing those names would inherit rules built for a different
+   container, which is how `.pane` came to mean two different things in two
+   stylesheets. The prefix goes when the views migrate and the old rules are
+   deleted.
+
+   Nothing in the running console uses any of this yet. It is added with the
+   components so the gallery renders them as they will actually look, and it
+   changes no existing page. */
+
+/* ======================================================================= */
+/* status                                                                  */
+/* ======================================================================= */
+
+.ent-status {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 1px var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raise);
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+
+/* The five tones. `neutral` is the base above, so it adds nothing -- a status
+   with no opinion attached should look like the default rather than like a
+   choice somebody made. */
+.ent-status-live {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+.ent-status-good {
+  border-color: var(--tint-ok-line);
+  background: var(--tint-ok);
+  color: var(--k-file);
+}
+.ent-status-held {
+  border-color: var(--accent-dim);
+  background: var(--tint-held);
+  color: var(--accent);
+}
+.ent-status-bad {
+  border-color: var(--tint-fail-line);
+  background: var(--tint-fail);
+  color: var(--k-failure);
+}
+
+/* The reason, when there is one. Dimmer than the status itself and allowed to
+   truncate: it is an explanation, and an explanation that pushes the status
+   off the row has cost more than it gave. */
+.ent-status-detail {
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 24ch;
+}
+
+/* ======================================================================= */
+/* ref                                                                     */
+/* ======================================================================= */
+
+.ent-ref {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35ch;
+  min-width: 0;
+  color: inherit;
+}
+a.ent-ref:hover .ent-ref-name {
+  color: var(--accent);
+}
+
+.ent-ref-prefix {
+  color: var(--fg-faint);
+}
+
+.ent-ref-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The fallback, made visible. A short id rendered in the same face as a name
+   reads *as* a name, and a reader cannot tell the console does not know what
+   the thing is called. Monospace at the small size says "identifier" without
+   needing a word for it. */
+.ent-ref-id {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+/* ======================================================================= */
+/* topic row                                                               */
+/* ======================================================================= */
+
+.ent-topic-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+  list-style: none;
+}
+
+/* The row's height is a function of its kind, not of its content -- the
+   contract a virtualizer estimates against. One line, clamped, never wrapped:
+   a question that wrapped to two lines would make this row a card, and L-F8
+   records what a mis-measured row costs (a 122px hole at three projects). */
+.ent-topic-question {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ent-topic-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ent-topic-count {
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.ent-topic-overflow {
+  margin-left: auto;
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+/* The three conditions a queue is scanned for, in the order they outrank each
+   other -- blocked beats flagged beats closed, which is the order the domain's
+   own `byUrgency` sorts in. Written as one rule each rather than as a
+   combined selector so the precedence is legible rather than inferred. */
+.ent-topic-row.is-blocked {
+  border-left: 2px solid var(--k-failure);
+}
+.ent-topic-row.needs-attention {
+  border-left: 2px solid var(--accent);
+}
+.ent-topic-row.is-closed {
+  opacity: 0.6;
+}
+.ent-topic-row.is-selected {
+  background: var(--bg-hover);
+}
+
+/* ======================================================================= */
+/* topic detail                                                            */
+/* ======================================================================= */
+
+.ent-topic-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-4);
+  min-width: 0;
+}
+
+.ent-topic-detail-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Wraps, unlike the row's. A detail is the sole occupant of its region and the
+   question is the thing it is about, so cutting it off here would hide the
+   one field the whole region exists to show. */
+.ent-topic-detail-question {
+  margin: 0;
+  flex: 1 1 100%;
+  font-size: var(--t-lg);
+  line-height: 1.35;
+}
+
+.ent-topic-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ent-topic-section h3 {
+  margin: 0;
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--fg-dim);
+}
+.ent-topic-section p {
+  margin: 0;
+}
+
+.ent-topic-notes,
+.ent-topic-triggers,
+.ent-topic-sources {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.ent-topic-source-id {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+.ent-topic-empty {
+  color: var(--fg-dim);
+}
+
+/* ======================================================================= */
+/* project card                                                            */
+/* ======================================================================= */
+
+.ent-project-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+.ent-project-card.is-selected {
+  border-color: var(--line-strong);
+}
+
+.ent-project-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ent-project-name {
+  font-weight: 600;
+}
+
+.ent-project-holder {
+  font-size: var(--t-xs);
+}
+
+.ent-project-free {
+  color: var(--k-file);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.ent-project-stats {
+  display: flex;
+  gap: var(--space-3);
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.ent-project-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.ent-project-sessions {
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--space-2);
+}
