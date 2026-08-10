@@ -186,16 +186,33 @@ class DispatchRun:
     reply: str
 
 
-def _briefing(detail: TopicDetail, path: str, at: datetime) -> str:
+def _briefing(detail: TopicDetail, path: str, at: datetime, project_name: str = "") -> str:
     """The specifics: which topic, what we already hold, and where to write it.
 
     Everything here is also reachable through the agent's own tools. It is
     stated up front anyway because a turn that has to discover its own subject
     spends its first tool calls doing so, and a dispatch is one turn -- those
     calls come out of the budget for the work itself.
+
+    `project_name` is the repair for topics *already stored* with an implicit
+    subject -- "typical physical traits" rather than "typical physical traits
+    of a Nova Scotia Duck Tolling Retriever". Those questions are in the log
+    and the log is not rewritten, so nothing can fix the stored text; what can
+    be fixed is what the agent reading it is told. Naming the project here
+    costs a line and makes a fragment actionable.
+
+    It does *not* make the fragment correct. The reading rule below is a
+    guess, and it is a wrong guess exactly when a topic legitimately concerns
+    something other than the project's headline subject -- a comparison
+    topic, say. Stated as "if the question does not name its own subject"
+    rather than unconditionally, so a question that already names one is left
+    alone.
     """
     summary = detail.view.summary
-    lines = [
+    lines: list[str] = []
+    if project_name.strip():
+        lines.append(f"Project: {project_name}")
+    lines += [
         f"Topic: {summary.question}",
         f"Topic id: {summary.topic_id}",
         f"Status: {summary.status}",
@@ -223,6 +240,18 @@ def _briefing(detail: TopicDetail, path: str, at: datetime) -> str:
             "resolving it -- the document should leave a reader knowing that "
             "the question is open."
         )
+    if project_name.strip():
+        # Last of the context, immediately before the write instruction, so
+        # the rule for reading a bare question is the thing most recently
+        # said when the model starts writing.
+        lines.append(
+            f"\nIf the topic question does not name its own subject, read it as "
+            f"a question about {project_name!r} -- topics opened before that was "
+            f"required were written down when the subject was obvious from "
+            f"context. Either way, write the document so a reader who has not "
+            f"seen this project can follow it: name the subject in the prose "
+            f"rather than leaving the question to carry it."
+        )
 
     lines.append(
         f"\nWrite exactly one file, at `{path}`, with `write_file`. Overwrite "
@@ -234,9 +263,17 @@ def _briefing(detail: TopicDetail, path: str, at: datetime) -> str:
     return "\n".join(lines)
 
 
-def understanding_input(detail: TopicDetail, path: str, at: datetime) -> str:
-    """The turn's user input: the rule, then the specifics it needs applied to."""
-    return f"{UNDERSTANDING_PROMPT}\n\n{_briefing(detail, path, at)}"
+def understanding_input(
+    detail: TopicDetail, path: str, at: datetime, project_name: str = ""
+) -> str:
+    """The turn's user input: the rule, then the specifics it needs applied to.
+
+    `project_name` defaults to empty so a caller that has no project state in
+    hand still builds a valid input -- the briefing then reads exactly as it
+    did before, which is the pre-existing behaviour rather than a degraded
+    one.
+    """
+    return f"{UNDERSTANDING_PROMPT}\n\n{_briefing(detail, path, at, project_name)}"
 
 
 class TopicDispatcher:
@@ -292,11 +329,17 @@ class TopicDispatcher:
         question = detail.view.summary.question
         path = understanding_path(position, question)
         at = datetime.now(UTC)
+        # Read before joining, alongside the topic resolution above and for the
+        # same reason: a read that failed after `start_in_project` would hold
+        # the project across a turn that never runs.
+        project_name = (await self._session.project_state(project_id)).name
 
         session_id = await self._session.start_in_project(project_id)
         try:
             await self._session.attach_project(project_id)
-            outcome = await self._turns.run(session_id, understanding_input(detail, path, at))
+            outcome = await self._turns.run(
+                session_id, understanding_input(detail, path, at, project_name)
+            )
         finally:
             await self._session.release_project(session_id)
 

@@ -26,6 +26,7 @@ from typing import Protocol
 from uuid import UUID, uuid4
 
 from research_team.application.session_service import SessionService
+from research_team.application.topics import SELF_CONTAINED_QUESTION
 
 SEEDING_PROMPT = (
     "Open a set of broad, orthogonal topics covering this subject. Work from "
@@ -67,8 +68,36 @@ class SeedingRun:
 
 
 def seeding_prompt(subject: str, max_topics: int) -> str:
-    """The turn's user input: the rule, then the specifics it needs applied to."""
-    return f"{SEEDING_PROMPT}\n\nSubject: {subject}\nOpen at most {max_topics} topics."
+    """The turn's user input: the rule, then the specifics it needs applied to.
+
+    `SELF_CONTAINED_QUESTION` is already in this turn's *system* prompt --
+    `TOPICS_PROMPT` carries it wherever `open_topic` is bound. It is repeated
+    here, and the repetition is deliberate rather than an oversight.
+
+    Seeding is the one path that hands the model a subject **once, as a
+    heading, above a list it is about to write**, and that shape is what
+    produces the elision: a list written under a heading does not repeat the
+    heading. The system prompt's copy states the rule; this states the rule
+    *instantiated on this run's subject*, with the subject spelled out inside
+    the instruction, so following it is a matter of copying a string that is
+    already on the page rather than of remembering a principle from a thousand
+    tokens earlier.
+
+    The cost is the subject appearing three times in one turn's input, which
+    is a few dozen tokens and reads repetitively to a human. Judged worth it:
+    the alternative -- stating the rule once, abstractly, far from the
+    subject -- is precisely the arrangement that shipped this bug.
+    """
+    return (
+        f"{SEEDING_PROMPT}\n\n"
+        f"Subject: {subject}\n"
+        f"Open at most {max_topics} topics.\n\n"
+        f"{SELF_CONTAINED_QUESTION}\n\n"
+        f"For this run that means every question you open names "
+        f"{subject!r} (or an unambiguous full form of it) in the question "
+        f"itself. A question that reads correctly only because "
+        f"{subject!r} appears above it in this message is not finished."
+    )
 
 
 class TopicSeeder:

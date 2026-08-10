@@ -87,6 +87,40 @@ without search it cannot *find* a page, but it can still read one a person
 pastes into the conversation, and a model told it is offline will not try."""
 
 
+def project_context(name: str) -> str:
+    """What project this session is in, for a session that is in one.
+
+    Every other project-scoped clause in this build describes a *tool* -- the
+    graph, the corpus, the topic queue -- and none of them said what the
+    project is about. An agent joined to a project could not name it, which is
+    the second half of why a topic question like "typical physical traits"
+    goes unnoticed: even an agent that wanted to disambiguate had nothing to
+    disambiguate against.
+
+    Built per session rather than folded into the static `knowledge_prompt`,
+    because the name is per project and that string is one constant shared by
+    every project in the process. It lands in `SessionStarted.system_prompt`
+    like the rest of the prompt, so a session resumed after a project is
+    renamed still runs under the name it started with -- deliberate: replaying
+    a session under a prompt it never saw is the failure that field exists to
+    prevent, and a stale project name is a much smaller cost than that.
+
+    Empty string for a project created without one. `ProjectState.name`
+    defaults to `""` and nothing forbids it, and "This project is called ``."
+    is worse than silence -- it reads as a bug in the prompt builder rather
+    than as a project nobody named.
+    """
+    if not name.strip():
+        return ""
+    return (
+        f"\n\nThis session is working in a project called {name!r}. That is the "
+        "subject everything here is about. It is context for you, not a "
+        "substitute for saying so: anything you write down -- a topic "
+        "question, a finding, a file -- is read later by someone who does not "
+        "have it."
+    )
+
+
 @dataclass(frozen=True)
 class TurnOutcome:
     """What one turn produced: the reply, and where it landed in the log.
@@ -447,7 +481,9 @@ class SessionService:
             session.execute(
                 StartSession(
                     session_id=session_id,
-                    system_prompt=self._default_system_prompt + self._knowledge_prompt,
+                    system_prompt=self._default_system_prompt
+                    + self._knowledge_prompt
+                    + project_context(state.name),
                     model_name=self._executor.model_name,
                     project_id=project_id,
                 )
@@ -459,6 +495,12 @@ class SessionService:
                 source_session_id=state.tip_session_id,
                 at_event=state.tip_at_event,
                 project_id=project_id,
+                # Threaded rather than re-loaded inside the fork: this is the
+                # *second and later* session of a project, so a build that
+                # named the project only on the first-join branch would leave
+                # every project past its first session unnamed -- and every
+                # test that creates one session would pass.
+                project_name=state.name,
             )
 
         await self._projects.save(project)
@@ -471,6 +513,7 @@ class SessionService:
         source_session_id: UUID,
         at_event: int,
         project_id: UUID,
+        project_name: str = "",
     ) -> None:
         """Start `session_id`, carrying only the source's file history in.
 
@@ -491,7 +534,9 @@ class SessionService:
         session.execute(
             StartSession(
                 session_id=session_id,
-                system_prompt=self._default_system_prompt + self._knowledge_prompt,
+                system_prompt=self._default_system_prompt
+                + self._knowledge_prompt
+                + project_context(project_name),
                 model_name=self._executor.model_name,
                 project_id=project_id,
             )

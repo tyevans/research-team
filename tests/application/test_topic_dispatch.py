@@ -259,3 +259,40 @@ async def test_the_number_follows_the_topic_s_position_in_the_project_s_list(
     run = await dispatcher.dispatch(project_id, second.summary.topic_id)
 
     assert run.path == understanding_path(position, "Second question?")
+
+
+async def test_a_dispatch_is_told_which_project_the_topic_belongs_to(
+    dispatcher, service, fake_model, project_id, topic_reader
+):
+    """The repair for topics already stored implicitly.
+
+    A question like "typical physical traits" is unactionable on its own, and
+    the log cannot be rewritten to fix it. What *can* be fixed is what the
+    consuming agent is told: the briefing names the project, so an agent
+    handed a fragment has the subject to read it against. This asserts the
+    name reaches the model's input rather than only the dispatcher's locals
+    -- the fixture names the project `research`, which appears nowhere in
+    `UNDERSTANDING_PROMPT`, so this fails with the change reverted.
+    """
+    await _seed_topic(service, dispatcher, fake_model, project_id, "typical physical traits")
+    [view] = await topic_reader.list_topics()
+
+    seen = []
+    original = fake_model._agenerate
+
+    async def capture(messages, *args, **kwargs):
+        seen.append(messages)
+        return await original(messages, *args, **kwargs)
+
+    fake_model._agenerate = capture  # type: ignore[method-assign]
+    fake_model.responses = [AIMessage(content="written", id="a2")]
+
+    await dispatcher.dispatch(project_id, view.summary.topic_id)
+
+    sent = "\n".join(
+        message.content
+        for messages in seen
+        for message in messages
+        if isinstance(getattr(message, "content", None), str)
+    )
+    assert "research" in sent

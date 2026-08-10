@@ -559,6 +559,42 @@ actually lost work to this.** The trigger to watch for is the first request for
 dispatch *history* -- "what have we ever asked about this topic" -- which the
 log genuinely cannot answer today.
 
+### B39. Topics already stored with an implicit subject cannot be restated
+
+A question opened before self-containment was required reads "typical physical
+traits" -- correct only against the project it was opened in. The prompt fix
+stops new ones being written that way and the dispatch briefing names the
+project so a *dispatched agent* can still act on an old one, but the stored
+text is unchanged and shows up unrepaired everywhere else: `list_topics` output,
+the topic list in the browser, and the `/topics/<nn>-<slug>/` directory names,
+which are derived from the question at dispatch time.
+
+**They are not repairable today, and the reason is that there is no command for
+it.** `domain/topic.py` has `SetTopicStatus`, `RecordFinding`, `LinkSource` and
+nine others; nothing restates a question. Repairing an existing topic therefore
+means a new event -- `TopicQuestionRestated`, say -- in the permanent
+vocabulary. That is the same cost `topic_dispatch.py`'s module docstring is
+proud of not paying ("a feature that adds no vocabulary to the log cannot break
+anyone's stored history"), so it is not a change to make casually.
+
+Rewriting `TopicOpened.question` in place was considered and rejected outright:
+events already written are not rewritten, and a migration that edited stored
+payloads would make the log disagree with every snapshot folded from it.
+
+If it is built, it should be a **human** action rather than an agent one, for
+the reason `TopicPort` gives about `close_topic`: deciding what a question was
+really asking is a judgement, and an agent that could restate its own topics
+could quietly redefine the work it failed to do. A restatement event also
+answers something the log cannot today -- what a topic was originally opened
+as, versus what it is now understood to be -- which is worth more than the
+repair on its own.
+
+The cheap interim, if a live project is unusable: open replacement topics with
+self-contained questions and set the old ones to `superseded`, which is exactly
+the status that exists for "another topic now covers this ground". That loses
+the findings attached to the originals, which is why it is an interim and not
+the answer.
+
 ## Interactive components
 
 What v1 of the markdown component system knowingly left out. The design is in

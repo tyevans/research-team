@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage
 from redstring.events.document import DocumentExtracted
 from redstring.events.streams import document_stream
 
-from research_team.application.session_service import NO_SEARCH_CLAUSE
+from research_team.application.session_service import NO_SEARCH_CLAUSE, project_context
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import StartSession, StoreSourceDocument
 from research_team.domain.learner import ChecklistProgressRecorded
@@ -71,7 +71,11 @@ async def test_reopened_session_continues_the_same_stream(
 
 async def test_reopening_keeps_the_stored_system_prompt(fake_model, db_path, build_service):
     first = await build_service(model=fake_model, db_path=db_path, system_prompt="ORIGINAL")
-    session_id = await start_session(first)
+    # Named rather than left to `start_session`'s per-call default, because the
+    # stored prompt now ends with the project's name and the assertion has to
+    # be able to spell it. The default is derived from a `uuid4`, which this
+    # test has no handle on.
+    session_id = await start_session(first, name="a named project")
     await first.close()
 
     reopened = await build_service(
@@ -80,9 +84,11 @@ async def test_reopening_keeps_the_stored_system_prompt(fake_model, db_path, bui
     session = await reopened.load(session_id)
     # Composition appends capability clauses (fetch always, and "no search"
     # because none is configured here) to whatever system_prompt it is given,
-    # and `start_in_project` appends the knowledge prompt on top -- so the
-    # stored value is the first process's prompt plus both suffixes, not
-    # "DIFFERENT" plus the second's.
+    # `start_in_project` appends the knowledge prompt on top, and
+    # `project_context` names the project last -- so the stored value is the
+    # first process's prompt plus all of those, not "DIFFERENT" plus the
+    # second's. The project name rides the *stored* prompt deliberately: a
+    # session resumed after a rename runs under the name it started with.
     assert session.state.system_prompt == (
         "ORIGINAL"
         + FETCH_PROMPT
@@ -91,6 +97,7 @@ async def test_reopening_keeps_the_stored_system_prompt(fake_model, db_path, bui
         + CORPUS_PROMPT
         + FETCH_CORPUS_PROMPT
         + TOPICS_PROMPT
+        + project_context("a named project")
     )
 
 
