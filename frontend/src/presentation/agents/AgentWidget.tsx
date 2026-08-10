@@ -7,6 +7,7 @@ import { sample } from '@domain/worker/transcript-tail.ts'
 
 import { WorkerDrawer } from '../course/WorkerDrawer.tsx'
 import { elapsed } from '../formatting/format.ts'
+import { Overlay } from '../layout/OverlayHost.tsx'
 import { useRunningAgents, type RunningAgent } from './use-running-agents.ts'
 
 /** Where the open/closed choice is remembered.
@@ -65,43 +66,24 @@ export const AgentWidget = () => {
     toggleRef.current?.focus()
   }, [setOpen])
 
-  // Escape closes and gives focus back to the toggle. Not a focus *trap*: this
-  // is a popover, not a modal -- the page behind it stays usable on purpose,
-  // because the whole point is to watch agents while doing something else.
-  // `Drawer` traps focus and is right to; a panel that does not block the page
-  // must not, or a keyboard user could never leave it. The feed opened from a
-  // row is a `Drawer`, and does trap.
+  // Escape, outside-pointer dismissal and the guard on `watching` were all
+  // here, in twenty lines, and are all deleted. The popover is an `Overlay`
+  // now and the host owns every one of them.
   //
-  // Guarded on `watching` in both listeners: with a feed open the drawer is in
-  // front and owns Escape, and a click inside it is not a click on the page
-  // behind this popover.
-  useEffect(() => {
-    if (!expanded || watching) return
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      close()
-    }
-    // Anywhere else dismisses it. This is what earns a popover its place over
-    // page content: the floating panel could only be dismissed by finding its
-    // own toggle again, so a reader who wanted the thing underneath had to
-    // deal with the widget first -- which is the occlusion complaint.
-    // `pointerdown` rather than `click`, so it is gone before the press lands
-    // on whatever is underneath and that press still does its job.
-    const onDown = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Node && rootRef.current?.contains(target)) return
-      // No focus return here: the reader is pressing something else and is
-      // about to be somewhere else. Yanking focus back to the topbar is the
-      // right move for Escape and the wrong one for a pointer.
-      setOpen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    window.addEventListener('pointerdown', onDown)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      window.removeEventListener('pointerdown', onDown)
-    }
-  }, [expanded, watching, setOpen, close])
+  // The guard is the interesting deletion, because it was *wrong* and the
+  // stylesheet is what made it wrong. It read "with a feed open the drawer is
+  // in front and owns Escape" -- true as a description of what should happen,
+  // false as a description of what did: `.agents-panel` was `z-index: 40` and
+  // `.drawer-backdrop` was `z-index: 20`, so this panel painted on top of the
+  // dialog it had politely stood down for, stayed clickable, and had switched
+  // off its own Escape handling. A component reasoning about what else is open
+  // is the coupling that produced that; under the host there is nothing to
+  // reason about, because a layer cannot see the layers around it.
+  //
+  // Still not a focus *trap*. This is a popover, not a modal -- the page
+  // behind it stays usable on purpose, because the whole point is to watch
+  // agents while doing something else. `modal` is left off for exactly that,
+  // and `Drawer` (the feed opened from a row) sets it.
 
   // Focus lands in the popover on open, so a keyboard reader is not made to
   // tab through the rest of the topbar to reach what they just asked for. The
@@ -168,20 +150,28 @@ export const AgentWidget = () => {
             )}
           </span>
         </button>
+      </div>
 
-        {/* After the toggle in the document, because it now hangs *below* it.
-            Under the floating widget the panel came first, which was right when
-            it sat above. Tab order follows the document, and a popover a reader
-            has to tab backwards out of is a popover they get stuck in. */}
-        {expanded ? (
-          <div
-            className="agents-panel"
-            id="agents-popover"
-            ref={panelRef}
-            tabIndex={-1}
-            role="group"
-            aria-label="Agents running now"
-          >
+      {/* The panel is a layer, so it is no longer a sibling of the toggle in
+          the document -- it is portalled into the overlay host.
+
+          **What that costs, stated because it is the one real regression.**
+          Tab order followed the document, and the panel was placed after the
+          toggle so a reader tabbed forwards into it. From the host it is at
+          the end of the document instead, so Tab from the toggle continues
+          into the page. That is why the focus effect below matters more than
+          it did: focus is *moved* into the panel on open, so the reader gets
+          there regardless of document order, and Escape returns it to the
+          toggle. The remaining gap is Tab *out* of the last row, which now
+          lands in the page rather than back on the toggle. Anchoring on the
+          host would fix it properly; a `tabIndex` shuffle here would not.
+
+          `anchor` is the toggle's own row, so a press on the toggle is not an
+          "outside" press -- without it the pointerdown would close the panel
+          and the click that follows would immediately reopen it. */}
+      {expanded ? (
+        <Overlay label="Agents running now" onDismiss={close} anchor={rootRef}>
+          <div className="agents-panel" id="agents-popover" ref={panelRef} tabIndex={-1}>
             <div className="agents-rows">
               {agents.map((agent) => (
                 <AgentRow
@@ -197,8 +187,8 @@ export const AgentWidget = () => {
               ) : null}
             </div>
           </div>
-        ) : null}
-      </div>
+        </Overlay>
+      ) : null}
 
       {watching?.worker.sessionId ? (
         <WorkerDrawer

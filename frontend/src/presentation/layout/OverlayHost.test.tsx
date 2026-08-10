@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { expect, it, vi } from 'vitest'
 
 import { Overlay, OverlayHost } from './OverlayHost.tsx'
@@ -323,6 +323,84 @@ it('gives Escape to the topmost layer only', async () => {
   // in front. Neither is necessary when a single owner decides.
   expect(dismissDrawer).toHaveBeenCalledTimes(1)
   expect(dismissDock).not.toHaveBeenCalled()
+})
+
+it('gives focus back only once the last modal has gone', async () => {
+  const user = userEvent.setup()
+
+  /** A confirm opened from a drawer, closed one at a time — a stack unwinding
+   *  one step per close, which is the case a "restore when the last modal
+   *  leaves" rule gets wrong.
+   *
+   *  The middle assertion is the interesting one: closing the confirm returns
+   *  focus to the control *inside the drawer* that opened it, not to the row
+   *  on the page. The drawer is still up, so the page is still inert and the
+   *  row is unreachable — handing focus there would strand the reader
+   *  somewhere no key could leave.
+   *
+   *  jsdom cannot show the browser half of this, that focusing into an inert
+   *  subtree is refused; that is exactly why the restore lives in the host at
+   *  all, and it is checked in a browser through `FocusReturnsToTheRow`. What
+   *  this asserts is the ordering the fix depends on.
+   *
+   *  Proved red by removing the host's restore effect, and by dropping
+   *  `returnFocus` from either `Overlay`. */
+  const Page = () => {
+    const [drawer, setDrawer] = useState(false)
+    const [confirm, setConfirm] = useState(false)
+    const row = useRef<Element | null>(null)
+    const inDrawer = useRef<Element | null>(null)
+    return (
+      <OverlayHost>
+        <button
+          type="button"
+          onClick={(event) => {
+            row.current = event.currentTarget
+            setDrawer(true)
+          }}
+        >
+          the row
+        </button>
+        {drawer ? (
+          <Overlay label="Drawer" modal onDismiss={() => setDrawer(false)} returnFocus={row}>
+            <button
+              type="button"
+              onClick={(event) => {
+                inDrawer.current = event.currentTarget
+                setConfirm(true)
+              }}
+            >
+              delete
+            </button>
+          </Overlay>
+        ) : null}
+        {confirm ? (
+          <Overlay label="Confirm" modal onDismiss={() => setConfirm(false)} returnFocus={inDrawer}>
+            <button type="button">Cancel</button>
+          </Overlay>
+        ) : null}
+      </OverlayHost>
+    )
+  }
+
+  render(<Page />)
+  // Held as a node rather than re-queried, because while a modal is open the
+  // page carries `aria-hidden` and `getByRole` correctly refuses to see it —
+  // which is the host working, and is asserted elsewhere in this file.
+  const theRow = screen.getByRole('button', { name: 'the row' })
+  await user.click(theRow)
+  const theDeleteButton = screen.getByRole('button', { name: 'delete' })
+  await user.click(theDeleteButton)
+
+  // Close the confirm: focus goes back one level, into the drawer, which is
+  // live. Not to the row, which is behind an inert page.
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(theDeleteButton).toHaveFocus())
+  expect(theRow).not.toHaveFocus()
+
+  // Close the drawer: now the page is live and focus goes back to the row.
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(theRow).toHaveFocus())
 })
 
 it('renders through a portal rather than in place', () => {

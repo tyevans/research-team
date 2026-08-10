@@ -10,6 +10,7 @@ import type { Project } from '@domain/project/project.ts'
 import type { SessionSummary } from '@domain/session/session.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
+import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { TreeView } from './TreeView.tsx'
 
 const ATLAS = ProjectId('11111111-1111-1111-1111-111111111111')
@@ -85,9 +86,14 @@ const containerWith = ({
 
 const renderPage = (ui: ReactElement, container: AppContainer) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  // An `OverlayHost`, because this page opens a `Drawer`/`Confirm`, both of
+  // which are `Overlay`s and render nothing without one. In the application
+  // this comes from `Shell`.
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
-      <ContainerProvider container={container}>{children}</ContainerProvider>
+      <ContainerProvider container={container}>
+        <OverlayHost>{children}</OverlayHost>
+      </ContainerProvider>
     </QueryClientProvider>
   )
   return render(ui, { wrapper })

@@ -4,6 +4,7 @@ import { useState } from 'react'
 // `OverlayHost` is not imported: every story here mounts it through `Shell`,
 // which is the only way a view should ever get one. A story that constructed
 // a bare host would be demonstrating an arrangement the design does not want.
+import { Drawer } from '../common/Drawer.tsx'
 import { Overlay } from './OverlayHost.tsx'
 import { Shell } from './Shell.tsx'
 
@@ -24,9 +25,16 @@ import { Shell } from './Shell.tsx'
  * every other *layer* inert and left the whole shell tabbable, so the pointer
  * was blocked by the backdrop and the keyboard was not.
  *
- * On `main` the painting half is wrong too: the dock popover is `z-index: 40`
- * and the drawer's `aria-modal` backdrop is `z-index: 20`, so a live,
- * clickable panel sits on top of a dialog claiming to be modal.
+ * Before the migration the painting half was wrong too: the dock popover was
+ * `z-index: 40` and the drawer's `aria-modal` backdrop was `z-index: 20`, so a
+ * live, clickable panel sat on top of a dialog claiming to be modal. Both
+ * declarations are deleted; these stories are what shows that the replacement
+ * behaves, because no test in this repository can.
+ *
+ * **The trap to know before reading a result here.** `inert` blocks
+ * *user-initiated* activation and does not block a programmatic `.click()`. A
+ * synthetic click landing on an inert element is the specification working, not
+ * a defect — check these by actually pressing and actually tabbing.
  */
 /** Typed as a bare `Meta` rather than `satisfies Meta<typeof Component>`.
  *
@@ -177,6 +185,56 @@ export const TwoDeep: Story = {
     </Shell>
   ),
 }
+
+/** Focus in on open, focus back on close — with the real `Drawer`, not a
+ *  hand-built panel.
+ *
+ * The other stories here compose bare `Overlay`s, which is right for showing
+ * the host's own contract and wrong for this one: moving focus is `Drawer`'s
+ * job, deliberately not the host's, and it changed shape in this migration. It
+ * used to be a mount effect; `Overlay` renders `null` until its host's
+ * container exists, so a mount effect read `null` off the ref and focused
+ * nothing. It is a callback ref now.
+ *
+ * **What to check, in this order.** Tab to `open the worker feed` and press
+ * Enter. Focus must land on `Close` — visibly, with a ring. Then press Escape.
+ * Focus must return to `open the worker feed`, not to `<body>`: press Tab
+ * immediately after and you should land on `after the row`, which is only true
+ * if the return actually happened. Then do the whole thing again with the
+ * mouse and check the *third* case: while the drawer is open, Tab repeatedly.
+ * It must never reach `before the row`, `after the row`, or the chrome, no
+ * matter how many times you press it.
+ */
+const DrawerFromARow = () => {
+  const [open, setOpen] = useState(false)
+  return (
+    <Shell
+      chrome={
+        <>
+          <strong>research-team</strong>
+          <button type="button">a control in the chrome</button>
+        </>
+      }
+    >
+      <p style={{ padding: 'var(--space-4)', display: 'flex', gap: 'var(--space-3)' }}>
+        <button type="button">before the row</button>
+        <button type="button" onClick={() => setOpen(true)}>
+          open the worker feed
+        </button>
+        <button type="button">after the row</button>
+      </p>
+      {open ? (
+        <Drawer title="Watching a worker" label="Worker detail" onClose={() => setOpen(false)}>
+          <p style={{ padding: 'var(--space-4)' }}>
+            The transcript. <button type="button">a control in the body</button>
+          </p>
+        </Drawer>
+      ) : null}
+    </Shell>
+  )
+}
+
+export const FocusReturnsToTheRow: Story = { render: () => <DrawerFromARow /> }
 
 /** A single non-modal layer, which takes nothing away from the page: no
  *  backdrop, nothing inert, the page still clickable behind it. A popover is

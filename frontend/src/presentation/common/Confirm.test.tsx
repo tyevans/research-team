@@ -1,8 +1,16 @@
-import { render, screen } from '@testing-library/react'
+import { render as renderBare, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactElement } from 'react'
 import { expect, it, vi } from 'vitest'
 
+import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { Confirm } from './Confirm.tsx'
+
+/** A host, because `Confirm` is a `Drawer` and a `Drawer` is an `Overlay`,
+ *  which renders nothing without one. That chain is the composition this file
+ *  is about, so needing the host here is the contract showing through rather
+ *  than test scaffolding. */
+const render = (ui: ReactElement) => renderBare(<OverlayHost>{ui}</OverlayHost>)
 
 /** What `Confirm` promises on top of `Drawer`: one paragraph per line, two
  *  buttons wired to two different callbacks, and the tone on the destructive

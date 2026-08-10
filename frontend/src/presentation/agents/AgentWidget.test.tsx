@@ -12,6 +12,7 @@ import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 import type { Roster, Worker } from '@domain/worker/worker.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
 
+import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { AgentWidget } from './AgentWidget.tsx'
 
@@ -61,10 +62,14 @@ const setup = (
     ...parts,
   } as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  // An `OverlayHost`, because the popover is an `Overlay` now and renders
+  // nothing without one. In the application this comes from `Shell`.
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
       <ContainerProvider container={container}>
-        <StreamProvider>{children}</StreamProvider>
+        <StreamProvider>
+          <OverlayHost>{children}</OverlayHost>
+        </StreamProvider>
       </ContainerProvider>
     </QueryClientProvider>
   )
@@ -87,7 +92,15 @@ const workersReturning = (rosters: Roster[]) => ({
  */
 const open = async () => {
   await userEvent.click(await screen.findByRole('button', { name: /Show what is running/i }))
-  return screen.findByRole('group', { name: /Agents running now/i })
+  // `dialog`, not `group`. The panel used to carry `role="group"` of its own;
+  // as an `Overlay` its role and name come from the layer's content element,
+  // which is a non-modal `dialog` -- `aria-modal="false"`, no backdrop,
+  // nothing behind it made inert. A popover announced as a dialog is the
+  // ordinary ARIA reading of "a named region that opened over the page"; a
+  // second `role="group"` inside the layer's `role="dialog"` would announce
+  // two containers for one panel, which is why it was deleted rather than
+  // kept.
+  return screen.findByRole('dialog', { name: /Agents running now/i })
 }
 
 const said = (summary: string): FeedFrame => ({
@@ -164,7 +177,7 @@ it('stays open when the last agent finishes', async () => {
   setup(<AgentWidget />, { stream, workers: workersReturning([rosterOf(PROJECT, [worker()])]) })
 
   await open()
-  expect(await screen.findByRole('group', { name: /Agents running now/i })).toBeInTheDocument()
+  expect(await screen.findByRole('dialog', { name: /Agents running now/i })).toBeInTheDocument()
 })
 
 it('names the toggle in words rather than a glyph', async () => {
@@ -191,7 +204,7 @@ it('stays shut on a console it has never been opened on', async () => {
   })
 
   expect(await screen.findByRole('button', { name: /Show what is running/i })).toBeInTheDocument()
-  expect(screen.queryByRole('group', { name: /Agents running now/i })).toBeNull()
+  expect(screen.queryByRole('dialog', { name: /Agents running now/i })).toBeNull()
 })
 
 it('remembers that it was opened, the way every other pane is remembered', async () => {
@@ -219,7 +232,7 @@ it('opens straight away when the reader left it open', async () => {
     workers: workersReturning([rosterOf(PROJECT, [worker()])]),
   })
 
-  expect(await screen.findByRole('group', { name: /Agents running now/i })).toBeInTheDocument()
+  expect(await screen.findByRole('dialog', { name: /Agents running now/i })).toBeInTheDocument()
 })
 
 it('closes on Escape and gives focus back to the toggle', async () => {
@@ -251,7 +264,7 @@ it('closes when the page behind it is used', async () => {
   await userEvent.click(screen.getByRole('button', { name: 'something else' }))
 
   await waitFor(() =>
-    expect(screen.queryByRole('group', { name: /Agents running now/i })).toBeNull(),
+    expect(screen.queryByRole('dialog', { name: /Agents running now/i })).toBeNull(),
   )
 })
 
