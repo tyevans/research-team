@@ -28,6 +28,12 @@ DEFAULT_SEARXNG_RESULTS = 5
 DEFAULT_GRAPH_STORE = "memory"
 DEFAULT_KNOWLEDGE_DOMAIN = "auto"
 
+VECTOR_STORES = ("none", "memory", "pgvector")
+#: `none`, not `memory`, and the difference is a model call per entity on every
+#: ingest. See `vector_store` for why the cheap default is the off one here and
+#: the on one for the graph store.
+DEFAULT_VECTOR_STORE = "none"
+
 DEFAULT_NEO4J_URI = "bolt://localhost:7687"
 DEFAULT_NEO4J_USER = "neo4j"
 
@@ -206,6 +212,120 @@ def extraction_thinking() -> bool:
         "yes",
         "on",
     }
+
+
+def vector_store() -> str:
+    """What backs entity embeddings, and `none` means the feature is off.
+
+    Mirrors `AGENT_GRAPH_STORE`'s shape deliberately -- same naming, same
+    named-and-refused error -- but **not** its default. The graph store
+    defaults to `memory` because building a graph is what this application is
+    for and an in-memory one costs nothing. Embeddings default to `none`
+    because turning them on costs an embedding call per extracted entity, on
+    every ingest, against an endpoint that need not exist: `AGENT_BASE_URL`'s
+    default is a local server serving one chat model, and llama.cpp serves one
+    model per process. An install that switched this on for itself would meet
+    a 400 in the middle of the first ingest it ran.
+
+    This is the single switch. There is deliberately no separate
+    "embeddings on/off" knob, because two knobs permit a vector store with
+    nothing writing to it -- which scores every pair with the embedding
+    feature absent while paying to keep a store open, and looks from the
+    outside exactly like embeddings that are not working.
+
+    Raises `ValueError` naming the unknown kind rather than falling back to
+    `none`, for `build_graph_store`'s reason: a deployment that asked for
+    pgvector and silently got no embeddings consolidates worse than it asked
+    to and says nothing.
+    """
+    configured = os.getenv("AGENT_VECTOR_STORE", DEFAULT_VECTOR_STORE).strip().lower()
+    if configured not in VECTOR_STORES:
+        raise ValueError(
+            f"AGENT_VECTOR_STORE={configured!r} is not one of {', '.join(VECTOR_STORES)}"
+        )
+    return configured
+
+
+def embeddings_enabled() -> bool:
+    """Whether anything should embed. A convenience over `vector_store`, not a knob."""
+    return vector_store() != "none"
+
+
+def embedding_model() -> str:
+    """Which model turns text into vectors. No default; raises when unset.
+
+    **Not `AGENT_MODEL`.** The chat model and the embedding model are
+    different models, and defaulting to the chat one would send embedding
+    requests to a name that answers chat. Most OpenAI-compatible servers
+    answer that with a 400; the dangerous ones answer with something
+    vector-shaped and numerically meaningless, which would consolidate on
+    noise and never once look broken.
+
+    There is no name that is right for every install -- `nomic-embed-text`,
+    `bge-m3` and `text-embedding-3-small` are all reasonable and all
+    different widths -- so guessing one would only move the failure later.
+    """
+    configured = os.getenv("AGENT_EMBEDDING_MODEL", "").strip()
+    if not configured:
+        raise ValueError(
+            "AGENT_EMBEDDING_MODEL must be set when AGENT_VECTOR_STORE is not 'none'; "
+            "it is not AGENT_MODEL, which names a chat model"
+        )
+    return configured
+
+
+def embedding_dimension() -> int:
+    """How wide this model's vectors are. No default; raises when unset.
+
+    A `VectorStore`'s width is fixed at construction -- at DDL time for
+    pgvector -- and redstring refuses to wire a provider to a store whose
+    number disagrees, before any text is embedded rather than after the call
+    has been paid for. That check is only worth having if the number came from
+    the deployment: a default here would make every install that forgot to set
+    it fail in the same way and later.
+
+    Changing this against an existing store means a **new store**, not a
+    widened one. Two models' vectors are not comparable even at equal
+    dimension, so a store holding both ranks on nonsense.
+    """
+    configured = os.getenv("AGENT_EMBEDDING_DIMENSION", "").strip()
+    if not configured:
+        raise ValueError(
+            "AGENT_EMBEDDING_DIMENSION must be set when AGENT_VECTOR_STORE is not "
+            "'none'; it is a property of AGENT_EMBEDDING_MODEL, not a preference"
+        )
+    return int(configured)
+
+
+def embedding_base_url() -> str:
+    """Where embedding requests go. Defaults to the endpoint everything else uses.
+
+    Separable because it often has to be: llama.cpp serves one model per
+    process, so an install running a chat model locally serves embeddings from
+    a second port, and a hosted embedding provider is a different host
+    entirely. Reusing `AGENT_BASE_URL` is the right default and would be a
+    wrong requirement.
+    """
+    configured = os.getenv("AGENT_EMBEDDING_BASE_URL", "").strip()
+    return configured or base_url()
+
+
+def embedding_api_key() -> str:
+    """The key for the embedding endpoint. Falls back to the shared one."""
+    return os.getenv("AGENT_EMBEDDING_API_KEY", "").strip() or api_key()
+
+
+def pgvector_dsn() -> str:
+    """Where the vectors live. Raises when unset.
+
+    No default, for `neo4j_auth`'s reason: a store that silently comes up
+    against `postgres://localhost/postgres` either fails confusingly or
+    connects to somebody's development database and writes to it.
+    """
+    configured = os.getenv("AGENT_PGVECTOR_DSN", "").strip()
+    if not configured:
+        raise ValueError("AGENT_PGVECTOR_DSN must be set when AGENT_VECTOR_STORE=pgvector")
+    return configured
 
 
 def neo4j_uri() -> str:

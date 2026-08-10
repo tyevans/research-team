@@ -100,6 +100,25 @@ variable:
 | `AGENT_NEO4J_USER` | `neo4j` | Neo4j username |
 | `AGENT_NEO4J_PASSWORD` | *(unset)* | Neo4j password; required when `AGENT_GRAPH_STORE=neo4j`, no default |
 | `AGENT_NEO4J_DATABASE` | *(unset)* | which database on the server; unset means the server's default |
+| `AGENT_VECTOR_STORE` | `none` | what holds entity embeddings: `none`, `memory` or `pgvector`. `none` means nothing embeds — see below |
+| `AGENT_EMBEDDING_MODEL` | *(unset)* | the embedding model's name; required when `AGENT_VECTOR_STORE` is not `none`, and **not** `AGENT_MODEL`, which names a chat model |
+| `AGENT_EMBEDDING_DIMENSION` | *(unset)* | how wide that model's vectors are; required alongside it. A property of the model, not a preference |
+| `AGENT_EMBEDDING_BASE_URL` | *(`AGENT_BASE_URL`)* | where embedding requests go, when that is not the chat endpoint. llama.cpp serves one model per process, so this is usually a second port |
+| `AGENT_EMBEDDING_API_KEY` | *(`AGENT_API_KEY`)* | key for the embedding endpoint, when it differs |
+| `AGENT_PGVECTOR_DSN` | *(unset)* | Postgres DSN; required when `AGENT_VECTOR_STORE=pgvector`, no default |
+
+### Embeddings are off by default, and that is a cost decision
+
+`AGENT_VECTOR_STORE=none` means no entity is embedded and consolidation scores
+on `name` and `graph` alone. Turning it on costs **one embedding call per
+extracted entity, on every ingest** — batched into one request per document,
+but paid again on re-ingest, because `build_graph` builds a fresh aggregate per
+call and re-embeds rather than suppressing a repeat.
+
+It is off rather than on because the default `AGENT_BASE_URL` points at a local
+server serving one chat model, and an install that switched this on for itself
+would meet a 400 partway through the first ingest it ran — after the fetch had
+been paid for. Set the three variables together or none of them.
 
 ## REPL commands
 

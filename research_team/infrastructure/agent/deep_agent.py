@@ -9,10 +9,12 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.tools import BaseTool
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
+from redstring import EmbeddingProvider
 from redstring.llm.adapters.langchain import NO_THINKING
+from redstring.llm.adapters.langchain_embedding import LangChainEmbeddingProvider
 
 from research_team.application import (
     ActivityReporter,
@@ -101,6 +103,42 @@ def build_extraction_model() -> BaseChatModel:
         api_key=config.api_key(),
         temperature=0,
         extra_body=None if config.extraction_thinking() else dict(NO_THINKING),
+    )
+
+
+def build_embedding_provider() -> EmbeddingProvider:
+    """The embedding endpoint, wrapped in redstring's port.
+
+    A third client rather than a third use of `build_model`, for the reason
+    `build_extraction_model` is a second one: this is a different model at a
+    possibly different address answering a different API, and the only thing
+    it shares with the chat client is that both speak OpenAI's protocol.
+
+    `dimensions` is passed to `OpenAIEmbeddings` **and** declared to
+    `LangChainEmbeddingProvider`, which looks redundant and is not. The first
+    asks the server for that width -- OpenAI's `text-embedding-3-*` honour it
+    and truncate, most local servers ignore it and return their native width.
+    The second is what redstring checks the `VectorStore` against before
+    embedding anything. Declaring only the second would let a server quietly
+    return 1024 components into a store built for 768, which fails at the
+    first write with `DimensionMismatchError` -- a poison event, so the ingest
+    that triggered it is unrecoverable rather than retryable.
+
+    Nothing here contacts the server. A wrong model name, a wrong width or an
+    endpoint that serves no embeddings all surface on the first `embed`, which
+    is during an ingest. `config.embedding_model` refuses an unset name here
+    instead, which is the one failure that can be moved earlier.
+    """
+    return LangChainEmbeddingProvider(
+        OpenAIEmbeddings(
+            model=config.embedding_model(),
+            base_url=config.embedding_base_url(),
+            api_key=config.embedding_api_key(),
+            dimensions=config.embedding_dimension(),
+            check_embedding_ctx_length=False,
+        ),
+        model=config.embedding_model(),
+        dimension=config.embedding_dimension(),
     )
 
 
