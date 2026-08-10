@@ -66,10 +66,14 @@ _INTAKE = GenerateStage(
     tools=("list_sources", "read_source", "graph_search"),
     generator=Generator(role="domain mapper", prompt_ref="prompts/ubd/intake"),
     checks=(
-        Check(
-            check="shared.provenance",
-            params={"type": "SourceClaim", "must_cite": "SourceDocument"},
-        ),
+        # `must_cite: SourceDocument` was here and was unsatisfiable: `must_cite`
+        # is a link requirement over the course directory, no stage in any preset
+        # declares a `SourceDocument` output, and source documents live in the
+        # corpus rather than in `/course` at all -- so every claim was reported
+        # as citing none, forever. The requirement it was reaching for is the one
+        # the base check already makes: a claim carries a `source_id` span or is
+        # marked as inference, and `prompts/ubd/intake` teaches both.
+        Check(check="shared.provenance", params={"type": "SourceClaim"}),
     ),
 )
 
@@ -131,6 +135,26 @@ _DESIRED_RESULTS = GenerateStage(
         Out(artifact_type=A.INTENT, subtype="transfer_goal", cardinality="1..n"),
         Out(artifact_type=A.INTENT, subtype="understanding", cardinality="1..n"),
         Out(artifact_type=A.INTENT, subtype="essential_question", cardinality="1..n"),
+        # Template 2.0's Acquisition tier, which this preset shipped without.
+        # `docs/research/course-design/backward-design.md` records Stage 1 as
+        # three tiers -- Transfer, Meaning, Acquisition -- and Acquisition is
+        # Knowledge ("students will know") and Skill ("students will be skilled
+        # at"). A preset whose renderer is `ubd_template_2_0` and which cannot
+        # fill two of the template's boxes is not the process trail a district
+        # adopting UbD is choosing this preset to get.
+        #
+        # It is also what made `prerequisite_satisfied` at [7] unsatisfiable: it
+        # requires skills from `Intent.skill`, nothing produced one, and a task
+        # declaring any prerequisite was reported unequipped whatever the design
+        # did. Relaxing that check was the alternative and it is the wrong one --
+        # the check is right about UbD and the preset was wrong about UbD.
+        #
+        # The cost is real: two more artifacts per unit, and Stage 2's evidence
+        # now has to serve them (which its prompt already tells it to do -- "an
+        # intent that names knowledge or discrete skill is well served by other
+        # evidence" was written against tiers that did not exist).
+        Out(artifact_type=A.INTENT, subtype="knowledge", cardinality="1..n"),
+        Out(artifact_type=A.INTENT, subtype="skill", cardinality="1..n"),
         Out(artifact_type=A.EXCLUSION, cardinality="0..n"),
         Out(
             artifact_type=A.RISK_REGISTER,
@@ -181,9 +205,25 @@ _DESIRED_RESULTS = GenerateStage(
                 "min": 1,
             },
         ),
+        # Bound to something. Unbound, both filters defaulted to "any artifact",
+        # pool and survivors were the same set, and the ratio was 1.0 on every
+        # run -- the rubber-stamp detector permanently reporting a rubber stamp.
+        #
+        # The pool is named through `excluded` rather than `candidate_pool`
+        # because UbD's candidates never become artifacts: the stage generates
+        # fifteen understandings in one turn and writes three down, so the only
+        # record of the other twelve is the exclusion ledger. `items_field` is
+        # what makes the numerator a count of understandings rather than of
+        # files -- `load_course` gives one artifact per file, so without it this
+        # is 1 survivor against 1 ledger however hard the screen worked.
         Check(
             check="shared.prune_ratio",
-            params={"expected_range": [0.15, 0.40]},
+            params={
+                "survivors": "Intent.understanding",
+                "items_field": "text",
+                "excluded": "Exclusion",
+                "expected_range": [0.15, 0.40],
+            },
             severity="advisory",
         ),
     ),
@@ -235,6 +275,12 @@ _EVIDENCE = SpecifyStage(
             check="shared.matrix_density",
             params={
                 "matrix": "intent_x_evidence",
+                # The axes, which is what lets the harness build the matrix at
+                # all. Without them `review_stage` passed no matrices and this
+                # binding reported "no matrix was built" on every run of every
+                # course -- a wiring fault wearing a real finding's message.
+                "rows": "Intent",
+                "columns": "EvidenceSpec",
                 "no_empty_rows": True,
                 "no_empty_columns": True,
             },

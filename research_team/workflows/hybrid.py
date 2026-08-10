@@ -298,9 +298,34 @@ _PHILOSOPHY = ScreenStage(
             check="shared.self_review_separation",
             params={"generator_stage": "tyler.step1b.candidates"},
         ),
+        # Both ends named, and the stage axis is what names them: a screen's
+        # input and its output are the same type and subtype, and only the stage
+        # that wrote the file tells them apart. Unbound -- as this was -- both
+        # filters matched every artifact, so the screen scored 100% survival on
+        # every run it ever did.
+        #
+        # `items_field` counts the candidates inside each file rather than the
+        # files: `load_course` gives one artifact per declared output, so a
+        # screen of thirty candidates is one file in and one file out. `text` is
+        # the field the check library defaults to everywhere else; there is no
+        # Tyler prompt yet to confirm it against, and when one is written this
+        # is the convention it has to meet.
         Check(
             check="shared.prune_ratio",
-            params={"expected_range": [0.15, 0.40]},
+            params={
+                "candidate_pool": {
+                    "artifact_type": "Intent",
+                    "subtype": "candidate",
+                    "stage": "tyler.step1b.candidates",
+                },
+                "survivors": {
+                    "artifact_type": "Intent",
+                    "subtype": "candidate",
+                    "stage": "tyler.step2.philosophy_screen",
+                },
+                "items_field": "text",
+                "expected_range": [0.15, 0.40],
+            },
             severity="advisory",
         ),
     ),
