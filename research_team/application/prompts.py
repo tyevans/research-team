@@ -9,11 +9,22 @@ front of the model instead of behind it.
 
 **What is here and what is deliberately not.** The file format, the loader,
 the resolver, and the validation that a preset's refs all resolve. Not the
-prompts -- those are weeks of instructional-design writing, not a coding task
--- and not the composition wiring, which cannot be exercised until enough of
-them exist that a preset resolves end to end. `unresolved()` is the function
-the composition root will call; it is written and tested and has no caller
-yet, which is stated here rather than left for someone to discover.
+prompts -- those are weeks of instructional-design writing, not a coding task.
+
+The composition wiring, once deferred here as unexercisable, is now
+`prompting_for`, which `composition.py` calls per turn. It did not wait for a
+preset to resolve end to end, because no preset does: 32 of the 38 refs have no
+file, `hybrid.default` is missing 20 of its 22, and `ubd.pure` -- the one with
+all six generator prompts written -- still has four `*_critique` refs that
+resolve to nothing. Waiting for a whole preset would have meant waiting past
+the point where the six prompts that exist could reach a model at all.
+
+`unresolved()` still has no caller, and that is still deliberate. It was
+written for a composition root that refuses to build, and against the library
+on disk it returns a non-empty list for all three presets, `ubd.pure`
+included. Wiring it as a gate today would refuse every preset the project
+ships. It stays as the survey it reads as -- the whole list is the work item --
+and `prompting_for` carries the run-time half instead, per stage.
 
 **A prompt is a markdown file with frontmatter**, for the reason artifacts are:
 `artifacts.parse_frontmatter` already exists, the viewer already renders it,
@@ -92,6 +103,22 @@ from research_team.domain.workflow import Generator, Preset, StageBase
 Kind = Literal["generator", "critic"]
 
 PROMPT_SUFFIX = ".md"
+
+DEFAULT_PROMPT_ROOT = Path(__file__).resolve().parents[2] / "prompts"
+"""Where the prompts are, derived from this file rather than from the cwd.
+
+`prompts/ubd/stage1_generate` is what the presets spell, and a library rooted
+at a relative `prompts` resolves to a different directory under pytest than
+under a uvicorn started from anywhere but the repository root. Since
+`load_prompts` raises on a root that is not a directory, that difference is not
+a degraded run but an application that refuses to start.
+
+Two levels up from this file is the repository root and stays that way: the
+project declares no `[build-system]` and is never installed, so `research_team`
+is only ever imported from the source tree it ships in, with `prompts/` beside
+it. If that changes, this is the line that breaks, and it breaks loudly at
+startup rather than quietly at the first stage.
+"""
 
 _REQUIRED_FIELDS = ("prompt_ref", "version", "kind", "methodology", "summary")
 
@@ -220,6 +247,12 @@ def load_prompts(root: Path) -> Mapping[str, Prompt]:
     editing, while a prompt library is a directory tree whose files were
     written at different times, and a list of forty errors from a tree is less
     useful than the first one with its path.
+
+    Raising here is what makes a *malformed* library a startup failure while a
+    *missing* ref is not. `composition.py` calls this at build and lets it
+    propagate; `prompting_for` degrades the missing-file case per stage. The
+    two are different facts -- the library is wrong, versus the library is
+    incomplete -- and only the first is a reason to refuse to start.
     """
     if not root.is_dir():
         raise PromptError(f"no prompt directory at {root}")
@@ -485,3 +518,105 @@ def stage_prompt(stage: StageBase, library: PromptLibrary) -> str:
     if critic is not None:
         return library.resolve(critic.prompt_ref, kind="critic")
     return ""
+
+
+UNPROMPTED_STAGE_NOTICE = (
+    "This stage is running WITHOUT its methodology prompt.\n\n"
+    "The instructions below say where to write and how the gate works. They do "
+    "not say how this stage is meant to be done, because {ref} has no prompt "
+    "file in this installation. Work the stage from the project's own materials "
+    "and from what the artifact block asks for, and state plainly in what you "
+    "produce that it was drafted without the {methodology} guidance for this "
+    "step -- a reader who is not told will read it as methodology-bearing work, "
+    "and it is not."
+)
+"""What a stage is told instead of the methodology it should have had.
+
+In-band, not merely logged, and that is the whole argument for it. `PromptError`
+already records why resolving-to-empty was rejected: an ungated run is visibly
+ungated, but a stage with an empty prompt is indistinguishable from the system
+before prompts existed and produces methodology-free output that passes every
+structural check. A notice the model reads and is asked to repeat in its output
+is what puts the difference back where somebody can see it, and it is the same
+answer `workflow-engine.md` §5 gives for a course built without its critics:
+"visibly labelled as such rather than quietly equivalent".
+
+Names the ref, because the notice is also the work item -- the reader who meets
+it is the person who would write the missing file, and a notice that says only
+"no prompt" sends them back to the presets to find out which.
+"""
+
+
+@dataclass(frozen=True)
+class StagePrompting:
+    """The text a stage runs under, and the ref that was missing if one was.
+
+    Two fields rather than a bare string because the caller has two jobs with
+    the answer -- put it in front of the model, and say something about the run
+    -- and re-deriving "was this degraded" by matching on the notice text would
+    tie the log line to the wording of a prompt.
+    """
+
+    text: str
+    missing: str | None
+
+
+def prompting_for(stage: StageBase, library: PromptLibrary) -> StagePrompting:
+    """`stage_prompt`, degraded to a visible notice when the ref does not resolve.
+
+    **Why not refuse to build.** `workflow-engine.md` §2.3 asks the composition
+    root to refuse a preset whose prompts it cannot resolve, and that is right
+    for the world the design doc assumed -- one where the prompts had been
+    written. In the world on disk, 32 of 38 refs have no file: `hybrid.default`
+    is missing 20 of its 22 and is the default preset, listed first because the
+    order is the recommendation. A build-time refusal ships this wiring as an
+    outage of the two presets nobody can currently replace, and it would refuse
+    `ubd.pure` too, whose four `*_critique` refs also resolve to nothing. The
+    feature would be unreachable on the day it landed.
+
+    **Why not fall back silently**, which is the other obvious answer and the
+    worse one: it reproduces exactly today's behaviour, and today's behaviour is
+    the bug. See `UNPROMPTED_STAGE_NOTICE`.
+
+    So: per *stage*, not per preset. A `ubd.pure` run gets its six generator
+    prompts because all six resolve; a `hybrid.default` run gets two prompted
+    stages and twenty that say what they are missing. Whole-preset gating would
+    throw away the six that work to punish the twenty that do not.
+
+    **The cost is real and is not hidden.** A degraded stage still writes
+    artifacts, and those artifacts still pass `checks.py`, because the structural
+    checks are graph queries and cannot see which tradition wrote a node. The
+    notice is a request to the model, not an enforcement; nothing here makes an
+    unprompted stage fail a gate. Making the degradation *refuse* the gate is the
+    stronger design and it needs a place to record the fact on the run rather
+    than on the turn -- see the report on this change.
+
+    A `FieldStage` has no generator and no critic, and gets an empty string with
+    `missing=None`: no agent executes it, so there is nothing absent to report.
+    """
+    ref = None
+    generator = getattr(stage, "generator", None)
+    critic = getattr(stage, "critic", None)
+    if generator is not None:
+        ref = generator.prompt_ref
+    elif critic is not None:
+        ref = critic.prompt_ref
+    if ref is None:
+        return StagePrompting(text="", missing=None)
+    try:
+        return StagePrompting(text=stage_prompt(stage, library), missing=None)
+    except PromptError:
+        # Caught rather than pre-checked with a membership test, so that a file
+        # present but malformed, or one whose `kind` disagrees with the field
+        # that referenced it, degrades the same way a missing one does. Those
+        # are the same fact to a stage: there is no trustworthy text for this
+        # ref. `DirectoryPromptLibrary` re-reads per resolution, so a file
+        # deleted mid-run arrives here too.
+        # The methodology name comes off the ref's own first segment
+        # (`prompts/ubd/...` -> `ubd`) rather than off a prompt's `methodology`
+        # frontmatter, which is precisely the field that is unreadable here.
+        segments = ref.split("/")
+        notice = UNPROMPTED_STAGE_NOTICE.format(
+            ref=ref, methodology=segments[1] if len(segments) > 2 else "methodology"
+        )
+        return StagePrompting(text=notice, missing=ref)

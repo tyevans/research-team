@@ -48,6 +48,11 @@ from research_team.application.artifacts import stage_artifact_instructions
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
 from research_team.application.components import component_guidance
 from research_team.application.ports import GateReview
+from research_team.application.prompts import (
+    DEFAULT_PROMPT_ROOT,
+    DirectoryPromptLibrary,
+    prompting_for,
+)
 from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.application.stage_exit import (
     findings_path,
@@ -452,6 +457,16 @@ def build_application(
     strategy, subagents, prompt_suffix = _context_parts(mode, resolved_model, system_prompt)
     resolved_policy = policy if policy is not None else AutonomyPolicy()
 
+    # Loaded once here, and allowed to raise: a prompt file that will not parse
+    # is a broken installation, and the useful moment to learn that is startup,
+    # exactly as `problems()` validates presets at import rather than at
+    # selection. What does *not* raise is a ref with no file at all -- that is
+    # the common case today (32 of 38) and `prompting_for` degrades it per
+    # stage. The two are different facts: one says the library is wrong, the
+    # other says the library is incomplete, and only the first is a reason to
+    # refuse to start.
+    prompt_library = DirectoryPromptLibrary.load(DEFAULT_PROMPT_ROOT)
+
     # Opened before the tools below so the knowledge adapter can share this
     # connection's event store and snapshot store rather than opening its own
     # (BACKLOG B5: a second `SQLiteSnapshotStore` leaks a non-daemon thread).
@@ -620,13 +635,21 @@ def build_application(
         some stage's `tools`, which would otherwise pull it into the managed
         set and hide it from every stage that did not.
 
-        The instructions are the stage's artifact block -- which files it owes,
-        at which paths, with which frontmatter -- derived from the stage's own
-        declared outputs, so a preset edit cannot leave the prompt describing
+        The instructions open with the stage's *methodology* -- the text its
+        `prompt_ref` names, or a notice saying that ref has no file -- and the
+        rest is mechanical. The artifact block says which files it owes, at
+        which paths, with which frontmatter, derived from the stage's own
+        declared outputs so a preset edit cannot leave the prompt describing
         files nothing looks for. `WORKFLOW_PROMPT` joins it because a bound
         tool nobody explained is a tool the model calls at the wrong moment:
         it says the gate asks a human, and that advancing is for when this
         stage's outputs exist, not for when the model has run out to say.
+
+        Resolved per turn rather than once at build, for the same reason the
+        middleware itself is: the executor outlives the stage. It also means a
+        prompt edited mid-run lands on the next turn, which is the behaviour
+        `DirectoryPromptLibrary` is explicitly built for -- the run in front of
+        you is how you find out a prompt is wrong.
         """
         # Reads off the aggregate the tool just wrote through, so an `edit_file`
         # is validated against the document it produced rather than the
@@ -657,13 +680,42 @@ def build_application(
                 preset.id,
             )
             return base
+        prompting = prompting_for(stage, prompt_library)
+        if prompting.missing is not None:
+            # Warned every turn rather than once at build, because which stage
+            # is current is a per-turn fact and a build-time survey would name
+            # refs for stages this run may never reach. Noisy on a long
+            # `hybrid.default` run, and that is the intended weight: twenty
+            # unprompted stages should read as twenty problems.
+            logger.warning(
+                "project %s stage %s has no prompt for %s; running with the "
+                "unprompted-stage notice instead of its methodology",
+                project_id,
+                stage.id,
+                prompting.missing,
+            )
         return (
             *base,
             StageMiddleware(
                 stage,
                 managed_tools=managed_tools_for(preset.stages) - {ADVANCE_STAGE_TOOL},
                 instructions=(
-                    stage_artifact_instructions(preset, stage)
+                    # First, and the ordering is the argument the prompt
+                    # contract rests on: a prompt must not name its paths, its
+                    # frontmatter, the gate or its tools, because the three
+                    # terms below already do. Placed after them it would read as
+                    # a correction to the mechanics; placed before, the mechanics
+                    # read as the means to what it asked for. `prompting_for`
+                    # carries `role_line` with it, which is where `role`,
+                    # `taxonomy_binding` and `over_generate_factor` are finally
+                    # read after being declared and never consulted.
+                    #
+                    # Conditional on the text rather than unconditional, so a
+                    # `FieldStage` -- no generator, no critic, nothing an agent
+                    # executes -- does not open its instructions with a blank
+                    # line where a methodology would be.
+                    (f"{prompting.text}\n\n" if prompting.text else "")
+                    + stage_artifact_instructions(preset, stage)
                     + WORKFLOW_PROMPT
                     # Derived from this stage's declared outputs, so a stage
                     # writing source claims is told nothing about widgets and a
