@@ -41,6 +41,9 @@ const triggerRefetch = async (client: QueryClient) => {
 
 it('names the work in flight and offers it as a button', async () => {
   const workers = {
+    // The widget's cross-project read, stubbed empty: these tests are about
+    // the course page's own per-project panel, which never asks for it.
+    everywhere: vi.fn<WorkerRepository['everywhere']>().mockResolvedValue([]),
     on: vi.fn<WorkerRepository['on']>().mockResolvedValue({
       ...empty,
       workers: [
@@ -65,7 +68,12 @@ it('names the work in flight and offers it as a button', async () => {
 })
 
 it('says nothing is running rather than showing an empty box', async () => {
-  const workers = { on: vi.fn<WorkerRepository['on']>().mockResolvedValue(empty) }
+  const workers = {
+    // The widget's cross-project read, stubbed empty: these tests are about
+    // the course page's own per-project panel, which never asks for it.
+    everywhere: vi.fn<WorkerRepository['everywhere']>().mockResolvedValue([]),
+    on: vi.fn<WorkerRepository['on']>().mockResolvedValue(empty),
+  }
 
   renderWithContainer(<Workers projectId={PROJECT} watching={null} onWatch={() => {}} />, {
     workers,
@@ -78,6 +86,9 @@ it('keeps the last roster and marks it stale when a poll fails', async () => {
   // The load-bearing case. Emptying the panel on a failed poll would say
   // "nothing is running", which is the exact lie this panel exists to kill.
   const workers = {
+    // The widget's cross-project read, stubbed empty: these tests are about
+    // the course page's own per-project panel, which never asks for it.
+    everywhere: vi.fn<WorkerRepository['everywhere']>().mockResolvedValue([]),
     on: vi
       .fn<WorkerRepository['on']>()
       .mockResolvedValueOnce({
@@ -115,6 +126,9 @@ it('keeps rendering the last roster’s rows, not just its stale chip, after a f
   // component opts into that. This asserts the row itself (not only the
   // stale chip) survives, which is what the panel's whole purpose rests on.
   const workers = {
+    // The widget's cross-project read, stubbed empty: these tests are about
+    // the course page's own per-project panel, which never asks for it.
+    everywhere: vi.fn<WorkerRepository['everywhere']>().mockResolvedValue([]),
     on: vi
       .fn<WorkerRepository['on']>()
       .mockResolvedValueOnce({
@@ -152,6 +166,9 @@ it('does not claim nothing is running while stale, even if the last roster was e
   // unqualified "Nothing is running" sentence, which is a present-tense claim
   // this render cannot actually back up.
   const workers = {
+    // The widget's cross-project read, stubbed empty: these tests are about
+    // the course page's own per-project panel, which never asks for it.
+    everywhere: vi.fn<WorkerRepository['everywhere']>().mockResolvedValue([]),
     on: vi
       .fn<WorkerRepository['on']>()
       .mockResolvedValueOnce(empty)
@@ -173,6 +190,9 @@ it('does not claim nothing is running while stale, even if the last roster was e
 
 it('indents a nested extraction under its parent', async () => {
   const workers = {
+    // The widget's cross-project read, stubbed empty: these tests are about
+    // the course page's own per-project panel, which never asks for it.
+    everywhere: vi.fn<WorkerRepository['everywhere']>().mockResolvedValue([]),
     on: vi.fn<WorkerRepository['on']>().mockResolvedValue({
       ...empty,
       workers: [

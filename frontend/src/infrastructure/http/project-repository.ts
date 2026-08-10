@@ -139,6 +139,11 @@ export class HttpWorkerRepository implements WorkerRepository {
   async on(projectId: ProjectId): Promise<Roster> {
     return toRoster(await this.http.get(`/api/projects/${seg(projectId)}/workers`, dto.rosterDto))
   }
+
+  async everywhere(): Promise<readonly Roster[]> {
+    const rows = await this.http.get('/api/workers', z.array(dto.rosterDto))
+    return rows.map(toRoster)
+  }
 }
 
 export class HttpExtractionRepository implements ExtractionRepository {

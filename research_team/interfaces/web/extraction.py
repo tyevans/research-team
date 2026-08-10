@@ -78,6 +78,17 @@ class ExtractionActivity:
             total=latest.get("total"),
         )
 
+    def active_projects(self) -> tuple[UUID, ...]:
+        """Every project with an extraction running.
+
+        Satisfies `ExtractionsInFlight` for the cross-project roster. Empty
+        lists are filtered out rather than counted: `_running` keeps a key
+        around after an extraction finishes, and a project whose buffer is
+        empty has nothing in flight -- `in_flight` already draws that
+        distinction and this has to agree with it.
+        """
+        return tuple(project_id for project_id, frames in self._running.items() if frames)
+
     def current(self, project_id: UUID) -> list[dict[str, Any]]:
         """The running extraction's frames, for a tab that arrived mid-ingest."""
         return list(self._running.get(project_id, []))

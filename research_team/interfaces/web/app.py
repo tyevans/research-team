@@ -1235,6 +1235,28 @@ def create_app(
             )
         return run_view(run, await research.state(run.run_id))
 
+    @app.get("/api/workers")
+    async def get_all_workers():
+        """Everything in flight anywhere, in one request.
+
+        For a reader who is not looking at a project: the console's agent
+        widget sits on every page and its collapsed state is a count across all
+        of them, which the per-project route below cannot answer without one
+        request per project on every page load.
+
+        Only projects with something running are returned, and the empty list
+        is the ordinary answer. That is not a shortcut for the client's benefit
+        -- it is what makes this cheap, because `everywhere` folds only the
+        projects its supervisors named rather than every project that exists.
+
+        404 when no roster is wired, matching the per-project route exactly: a
+        200 with an empty list would tell a browser that nothing is running,
+        which is a different claim from "this build cannot tell you".
+        """
+        if workers is None:
+            raise HTTPException(status_code=404, detail="the worker roster is not enabled")
+        return [roster_view(roster) for roster in await workers.everywhere()]
+
     @app.get("/api/projects/{project_id}/workers")
     async def get_workers(project_id: UUID):
         """Everything in flight on this project, right now.

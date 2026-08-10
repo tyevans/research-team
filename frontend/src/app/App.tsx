@@ -12,6 +12,7 @@ import { ResearchView } from '@presentation/research/ResearchView.tsx'
 import { SessionView } from '@presentation/session/SessionView.tsx'
 import { Breadcrumbs } from '@presentation/shell/Breadcrumbs.tsx'
 import { ConnectionBadge, DriftBadge } from '@presentation/shell/ConnectionBadge.tsx'
+import { AgentWidget } from '@presentation/agents/AgentWidget.tsx'
 import { StreamProvider, useStream } from '@presentation/shell/StreamProvider.tsx'
 import { useFrameRefresh } from '@presentation/shell/use-frame-refresh.ts'
 import { Toasts } from '@presentation/shell/Toasts.tsx'
@@ -76,6 +77,12 @@ const Shell = () => {
       <main id="app">
         <CurrentView route={route} store={sessionStore} onCourse={setCourse} />
       </main>
+
+      {/* Outside `main`, and last in the document: it floats over every route
+          and belongs to none of them. Rendered here rather than inside each
+          view because "what is running" is not a property of the page you
+          happen to be on -- which is the whole reason it exists. */}
+      <AgentWidget />
     </>
   )
 }

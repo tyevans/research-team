@@ -46,10 +46,20 @@ import { AutonomyAllowAll } from './AutonomyAllowAll.tsx'
  */
 export const WorkerDrawer = ({
   sessionId,
+  heading,
   onClose,
   makeStore = createSessionStore,
 }: {
   sessionId: SessionId
+  /** What to call the agent, when the id is not what the reader knows it by.
+   *
+   * The course page opens this from a roster it is already looking at, so
+   * `Watching 3f2a…` is enough there. The agent widget opens it from any page
+   * in the console, where the reader knows this agent as "the extraction in
+   * atlas" and may not recognise a single id on the screen. The id stays in
+   * the heading either way -- it is what a bug report needs -- but it stops
+   * being the only thing in it. */
+  heading?: string
   onClose: () => void
   /** Injected so a test can drive the drawer without a real store. */
   makeStore?: typeof createSessionStore
@@ -80,8 +90,8 @@ export const WorkerDrawer = ({
 
   return (
     <Drawer
-      title={`Watching ${shortId(sessionId)}`}
-      label={`Watching session ${shortId(sessionId)}`}
+      title={heading ? `${heading} · ${shortId(sessionId)}` : `Watching ${shortId(sessionId)}`}
+      label={heading ? `Watching ${heading}` : `Watching session ${shortId(sessionId)}`}
       onClose={onClose}
       actions={
         <a className="btn btn-sm" href={sessionHref(sessionId)}>

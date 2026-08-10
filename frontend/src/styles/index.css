@@ -20,6 +20,7 @@
 @import './course.css';
 @import './research.css';
 @import './components.css';
+@import './agents.css';
 
 /* Last, so it can correct the structural differences above. */
 @import './structure.css';

@@ -212,6 +212,16 @@ class DispatchQueue:
             started_at=self._started.get(project_id),
         )
 
+    def active_projects(self) -> tuple[UUID, ...]:
+        """Every project with a dispatch running. Satisfies `DispatchesInFlight`.
+
+        `_running` only, not `_pending`: a queued dispatch is not a worker --
+        `in_flight` reports it as `queued` *on* the running one, and a project
+        whose queue holds work but whose runner has not started it yet has
+        nothing for the roster to show.
+        """
+        return tuple(self._running)
+
     async def wait(self, project_id: UUID) -> None:
         """Block until this project's queue drains. For tests, not routes."""
         task = self._tasks.get(project_id)
