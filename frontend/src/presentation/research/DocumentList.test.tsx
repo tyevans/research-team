@@ -12,6 +12,7 @@ import type { DocumentSummary } from '@domain/research/document.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
 import { ProjectId, SessionId, SourceId } from '@domain/shared/identifier.ts'
 
+import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { FRAME_DEBOUNCE_MS } from '../shell/use-frame-refresh.ts'
 import { DocumentList } from './DocumentList.tsx'
@@ -91,10 +92,15 @@ const renderWithContainer = (
 ) => {
   const container = { stream, ...parts } as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  // An `OverlayHost`, because this page opens a `Drawer`/`Confirm`, both of
+  // which are `Overlay`s and render nothing without one. In the application
+  // this comes from `Shell`.
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
       <ContainerProvider container={container}>
-        <StreamProvider>{children}</StreamProvider>
+        <StreamProvider>
+          <OverlayHost>{children}</OverlayHost>
+        </StreamProvider>
       </ContainerProvider>
     </QueryClientProvider>
   )

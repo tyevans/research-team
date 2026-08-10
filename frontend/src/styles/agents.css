@@ -82,9 +82,15 @@
   position: fixed;
   top: var(--topbar-h);
   right: var(--space-4);
-  /* Above the page and its sticky headers (20), below the toasts (50), which
-     must stay readable over it. */
-  z-index: 40;
+  /* No `z-index`. This is the declaration the whole overlay migration exists
+     to delete: it was 40, against the modal drawer backdrop's 20, so this
+     panel painted on top of an `aria-modal` dialog while its own component
+     comment claimed the dialog was in front. The panel is an `Overlay` now,
+     inside the one host at `--z-overlay`, and its order against a drawer is
+     the order the two mounted. There is no number here to get wrong.
+
+     `position: fixed` stays, and is now anchoring against the same viewport
+     the host already covers rather than escaping a stacking context. */
   width: min(var(--agents-width), calc(100vw - 2 * var(--space-4)));
   border: 1px solid var(--line);
   /* Square at the top: it is hanging off the bar, not floating free. */

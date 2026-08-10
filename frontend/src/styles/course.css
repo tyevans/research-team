@@ -540,21 +540,28 @@
  * page is already showing rather than reflowing it, because watching a
  * worker is a glance, not a navigation. Right-anchored so it reads as
  * something laid over the page, the same convention as everything else here
- * that opens on top rather than beside. */
-.drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  justify-content: flex-end;
-  z-index: 20;
-}
-
+ * that opens on top rather than beside.
+ *
+ * `.drawer-backdrop` used to live here, at `z-index: 20`, and is deleted:
+ * `Drawer` is an `Overlay` now, so the dimming is `.lay-layer-backdrop` and
+ * the stacking is `--z-overlay` on the one host. That deletion is the fix for
+ * the dock popover painting over this dialog -- the popover was at 40 and this
+ * was at 20 -- and `scripts/check-deleted.mjs` fails if the class comes back.
+ *
+ * `position: fixed` rather than absolute inside the layer: `.lay-layer-content`
+ * is `position: relative` with no size of its own, so an absolute child would
+ * resolve against a zero-height box at the top of the viewport. Fixed is also
+ * what the host's own stories use for the same reason, and the host is a fixed
+ * box over the viewport anyway, so the two agree. */
 .drawer {
+  position: fixed;
+  /* Right-anchored, full height. Was `display: flex; justify-content:
+     flex-end` on the deleted backdrop; expressed on the panel itself now,
+     because there is no longer a flex parent to be the end of. */
+  inset: 0 0 0 auto;
   width: 42vw;
   max-width: 640px;
   min-width: 360px;
-  height: 100%;
   background: var(--bg-panel);
   border-left: 1px solid var(--line);
   display: flex;

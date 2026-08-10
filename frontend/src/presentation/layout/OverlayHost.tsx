@@ -3,11 +3,42 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
+
+/** What a layer tells the host, and can change its mind about.
+ *
+ * Behind a ref rather than stored in the registry, and this is load-bearing.
+ * Every caller writes `onDismiss={() => setOpen(false)}`, so the function has a
+ * new identity on every render; putting it in the registry made it a
+ * dependency of registration, which meant **every layer unregistered and
+ * re-registered on every render of its parent**.
+ *
+ * That was quietly wrong before it was loudly wrong. Re-registering appends,
+ * so a layer that re-rendered jumped to the top of the stack -- the ordering
+ * the whole host is built on, silently reshuffled by an unrelated state
+ * change. It became visible when the host started paying focus debts on
+ * unregister: a re-render looked exactly like a close, and focus was handed
+ * back to the page while the dialog was still open.
+ *
+ * So registration keys on identity and on `modal` alone -- the two things that
+ * are genuinely stable for a mounted layer -- and everything mutable is read
+ * through here at the moment it is needed. */
+interface LayerHandlers {
+  readonly onDismiss: (() => void) | undefined
+  /** Where focus goes when this layer closes, for a modal that took it.
+   *
+   * A ref rather than an element, because the layer captures it at the moment
+   * it opens -- before it moves focus into itself -- and the host only reads it
+   * much later, when the layer is being removed. */
+  readonly returnFocus: RefObject<Element | null> | undefined
+}
 
 /** One registered layer. `modal` is the only thing the host needs to know
  *  about a layer's content, because it is the only thing that changes what the
@@ -15,7 +46,7 @@ import { createPortal } from 'react-dom'
 interface Layer {
   readonly key: number
   readonly modal: boolean
-  readonly onDismiss: (() => void) | undefined
+  readonly handlers: RefObject<LayerHandlers>
 }
 
 interface HostState {
@@ -75,29 +106,78 @@ const HostContext = createContext<HostState | null>(null)
  * has to stay readable over whatever is open, because something failing while
  * a dialog is up is exactly when the reader needs to hear about it.
  *
- * **Where this is honestly not closed, stated plainly.** Among layers that use
- * this host the bad arrangement cannot be expressed: there is no per-layer
- * number to set, so a popover cannot outrank a modal, and a layer beneath a
- * modal is `inert` rather than merely painted-under. That is a real structural
- * guarantee.
+ * **Where this stands now.** Among layers that use this host the bad
+ * arrangement cannot be expressed: there is no per-layer number to set, so a
+ * popover cannot outrank a modal, and a layer beneath a modal is `inert`
+ * rather than merely painted-under.
  *
- * It is also a smaller guarantee than "fixed", because **nothing forces an
- * overlay to use the host.** A component can still write `position: fixed;
- * z-index: 40` in a stylesheet and reproduce the inversion exactly, and every
- * one of the eight declarations above still does. This phase migrates none of
- * them, so today the guarantee protects nothing that exists -- it is the floor
- * the migration stands on, not the migration. Closing it needs both halves:
- * the existing overlays moved onto this host, and a rule forbidding `z-index`
- * outside `tokens.css` so a ninth cannot appear. Neither is in this phase, and
- * claiming the defect is fixed before both have landed would be false.
+ * The phase that introduced this host said plainly that the guarantee
+ * "protects nothing that exists" until two further things landed: the existing
+ * overlays moved onto it, and a rule forbidding a literal `z-index` so a ninth
+ * could not appear. **The first of those is this commit.** `Drawer` (and
+ * therefore `Confirm`, `WorkerDrawer` and the document reader) and the agent
+ * dock's popover are layers now; `.drawer-backdrop` at 20 and `.agents-panel`
+ * at 40 are deleted rather than retuned, and `scripts/check-deleted.mjs`
+ * fails if either comes back.
+ *
+ * Two things stayed off the host **on purpose**, because moving them would
+ * have been worse:
+ *
+ * - **Toasts**, argued below and where `--z-toast` is declared: a toast is not
+ *   a dismissable layer.
+ * - **The row menu** in `ProjectList`. It is a `Disclosure` anchored to its
+ *   own row by ordinary absolute positioning. The host is one fixed box over
+ *   the viewport and deliberately offers no anchoring, so portalling a
+ *   row-anchored menu would mean measuring the row and tracking it on scroll
+ *   -- inventing a positioning engine to solve a stacking problem the menu no
+ *   longer has. Its tie with the modal backdrop was the whole complaint, and
+ *   the tie is gone because the backdrop is gone: the menu sits at
+ *   `--z-sticky` (10), a modal is at `--z-overlay` (100), and while a modal is
+ *   open the menu is inside `.lay-app-root` and therefore `inert`. If a menu
+ *   ever does need to escape its pane, the answer is anchoring on this host,
+ *   not a number on the menu.
  */
 export const OverlayHost = ({ children }: { children?: ReactNode }) => {
   const [container, setContainer] = useState<HTMLElement | null>(null)
   const [layers, setLayers] = useState<readonly Layer[]>([])
 
+  /** Where focus owes to go once the page stops being inert.
+   *
+   * **Why the host does this and not the layer that wants it.** A closing
+   * modal gives focus back to the row that opened it, and focusing into an
+   * inert subtree does nothing at all -- so the restore has to land *after*
+   * this component re-renders without `inert`. Nothing inside the closing
+   * layer can arrange that. Measured in Chromium by logging the attribute from
+   * a layer's own unmount cleanup while closing a drawer: still inert
+   * synchronously, still inert at the microtask checkpoint, still inert inside
+   * `requestAnimationFrame`, clear only by `setTimeout(0)`. `useLayoutEffect`
+   * on the registration does not fix it either -- React defers the resulting
+   * render past the closing layer's passive cleanup.
+   *
+   * So `Drawer` did the obvious correct-looking thing, focus was silently
+   * refused, and the reader was dropped on `<body>` -- back at the top of the
+   * document, which is the exact outcome focus restoration exists to prevent.
+   * The effect below runs after *this* component's own re-render, which is the
+   * render that removes the attribute, so by then the page is live and a plain
+   * `focus()` works. That is an ordering guarantee rather than a delay tuned to
+   * beat a scheduler.
+   *
+   * **jsdom cannot see any of this.** It implements `inert`'s presence and none
+   * of its behaviour, so every arrangement above passes every test in this
+   * repository. Found by tabbing in a browser; `FocusReturnsToTheRow` is the
+   * story that shows it. */
+  const owedFocus = useRef<Element | null>(null)
+
   const register = useCallback((layer: Layer) => {
     setLayers((current) => [...current, layer])
-    return () => setLayers((current) => current.filter((each) => each.key !== layer.key))
+    return () => {
+      // Read at removal rather than at registration: the layer captured it
+      // before moving focus into itself, and reading it here is what makes
+      // "the element that opened this" survive everything in between.
+      const owed = layer.handlers.current.returnFocus?.current
+      if (layer.modal && owed) owedFocus.current = owed
+      setLayers((current) => current.filter((each) => each.key !== layer.key))
+    }
   }, [])
 
   useEffect(() => {
@@ -109,9 +189,10 @@ export const OverlayHost = ({ children }: { children?: ReactNode }) => {
       // both close on one keypress -- which is why the session view's timeline
       // calls `stopPropagation` so "one Escape does not fold twice".
       const top = layers[layers.length - 1]
-      if (!top?.onDismiss) return
+      const dismiss = top?.handlers.current.onDismiss
+      if (!dismiss) return
       event.preventDefault()
-      top.onDismiss()
+      dismiss()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -123,6 +204,29 @@ export const OverlayHost = ({ children }: { children?: ReactNode }) => {
   )
 
   const modalOpen = layers.some((layer) => layer.modal)
+
+  // The restore itself. Keyed on `layers` rather than on "is anything still
+  // modal", because a stack has to unwind one step at a time: closing a
+  // confirm that was opened from a drawer owes focus to the control *inside
+  // the drawer* that opened it, and that control is live even though the page
+  // behind is not. Waiting for the last modal to leave would skip that step
+  // and strand the reader. Each layer names its own target, so each close
+  // returns focus exactly one level out.
+  //
+  // This runs after the host has re-rendered, which is the render that updates
+  // `inert`, so the target is reachable by the time it is focused -- the whole
+  // reason the restore lives here instead of in the layer.
+  //
+  // DOM membership is re-checked: the row may have been removed while the
+  // layer was open -- a list refetched underneath it -- and focusing a detached
+  // node throws in some environments and silently no-ops in others, neither of
+  // which puts focus anywhere useful.
+  useEffect(() => {
+    const owed = owedFocus.current
+    if (!owed) return
+    owedFocus.current = null
+    if (owed instanceof HTMLElement && document.contains(owed)) owed.focus()
+  }, [layers])
 
   return (
     <HostContext.Provider value={state}>
@@ -196,6 +300,8 @@ export const Overlay = ({
   label,
   modal = false,
   onDismiss,
+  anchor,
+  returnFocus,
   children,
 }: {
   /** The accessible name. Required rather than optional: an unnamed dialog is
@@ -209,6 +315,30 @@ export const Overlay = ({
    *  must not be dismissable, and understand that it then blocks Escape for
    *  everything beneath it. */
   onDismiss?: () => void
+  /** The control this layer hangs off, for a **non-modal** layer only.
+   *
+   * A popover is dismissed by pointing anywhere else, and "anywhere else" has
+   * to exclude the toggle that opened it or the press closes the layer and the
+   * click that follows immediately reopens it. That is the whole reason this
+   * prop exists, and it is the one fact about a popover the host cannot work
+   * out for itself: the toggle is in the page, the layer is in the portal, and
+   * nothing in the DOM connects them.
+   *
+   * Omit it and outside-pointer dismissal still runs -- a layer with no anchor
+   * simply has nothing to exclude, which is correct for a menu opened from
+   * something that is not a persistent toggle. */
+  anchor?: RefObject<HTMLElement | null>
+  /** Where focus goes when this layer closes, for a **modal** that moved focus
+   *  into itself.
+   *
+   * The layer captures the element as it opens and the host performs the
+   * restore, because only the host knows when the page stops being `inert` --
+   * argued at length beside `owedFocus`. A ref rather than an element so the
+   * caller can fill it in at the right moment rather than at render time.
+   *
+   * Ignored for a non-modal layer, which never took focus away from anything
+   * and has nothing to give back. */
+  returnFocus?: RefObject<Element | null>
   children: ReactNode
 }) => {
   const host = useContext(HostContext)
@@ -221,20 +351,100 @@ export const Overlay = ({
   // incidentally so.
   const [key] = useState(nextKey)
 
+  // Everything the host may want to call, kept current without making any of
+  // it a registration dependency -- see `LayerHandlers` for what went wrong
+  // when `onDismiss` was one.
+  //
+  // Updated in a layout effect rather than during render, because writing a
+  // ref during render is a real hazard and `react-hooks/refs` rejects it: a
+  // render React discards would leave the ref holding callbacks from a tree
+  // that never committed. A layout effect runs synchronously after the commit
+  // and before the browser can deliver any event, so nothing can read a stale
+  // callback in between -- which is the property the render-time write was
+  // reaching for, obtained safely.
+  const handlers = useRef<LayerHandlers>({ onDismiss, returnFocus })
+  useLayoutEffect(() => {
+    handlers.current = { onDismiss, returnFocus }
+  })
+
   const { register, layers, container } = host ?? {}
 
-  useEffect(() => {
+  // **`useLayoutEffect`, not `useEffect`, and the difference is observable.**
+  //
+  // Registration drives `inert` on `.lay-app-root`, so unregistering is what
+  // *lifts* it. Under `useEffect` that lift is a passive-effect state update,
+  // which React flushes on a later macrotask -- measured in Chromium by
+  // logging the attribute at four points while closing a drawer: still inert
+  // synchronously, still inert at the microtask checkpoint, still inert inside
+  // `requestAnimationFrame`, clear only by `setTimeout(0)`.
+  //
+  // That is not an abstract concern. A closing dialog gives focus back to the
+  // row that opened it, and focusing into an inert subtree does nothing at
+  // all, so with a passive registration the reader was dropped on `<body>` --
+  // the exact outcome focus restoration exists to prevent. A layout effect's
+  // state update is flushed before the browser paints and before passive
+  // cleanups run, so by the time `Drawer` restores focus the page is live
+  // again and a plain synchronous `focus()` works.
+  //
+  // The cost is that registration now runs on the layout path, which is
+  // synchronous and blocks paint. It is two `setState` calls on an array of at
+  // most a handful of layers, so the cost is real but tiny -- and the
+  // alternative was every consumer deferring its own focus call by a timer
+  // chosen to beat React's scheduler, which is a race dressed up as a fix.
+  //
+  // jsdom cannot see any of this: it implements `inert`'s presence and none of
+  // its behaviour, so both versions pass every test in this repository. Found
+  // in a browser, which is the only place it was ever visible.
+  useLayoutEffect(() => {
     if (!register) return
-    return register({ key, modal, onDismiss })
-  }, [register, key, modal, onDismiss])
-
-  if (!host || !container) return null
+    return register({ key, modal, handlers })
+  }, [register, key, modal, handlers])
 
   const mine = layers?.findIndex((layer) => layer.key === key) ?? -1
   // Inert if any *later* layer is modal. Later, not "any", because a modal
   // does not make itself inert and does not disable the layers stacked on top
   // of it -- a confirm opened from a drawer has to stay usable.
   const blocked = mine >= 0 && (layers ?? []).some((layer, index) => index > mine && layer.modal)
+
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  // Pointing anywhere else dismisses a non-modal layer.
+  //
+  // **Why this is the primitive's job and not each popover's.** It was the
+  // dock's, in twelve lines that had to know a drawer might be in front (`if
+  // (!expanded || watching) return`) -- a popover reasoning about what else
+  // was open, which is precisely the coupling this host exists to remove. One
+  // implementation here is also one place for the two decisions that are easy
+  // to get wrong separately, both inherited verbatim from the dock's version:
+  //
+  // - `pointerdown`, not `click`, so the layer is gone *before* the press
+  //   lands on whatever is underneath and that press still does its job. With
+  //   `click` the first press is spent closing the popover.
+  // - no focus return, deliberately. The reader is pressing something else and
+  //   is about to be somewhere else; yanking focus back to the toggle is right
+  //   for Escape and wrong for a pointer. Escape's focus return belongs to the
+  //   caller's `onDismiss`, which is where the dock still does it.
+  //
+  // Modal layers are excluded because a modal's backdrop already covers this
+  // and covers it better: a press outside a modal never reaches the page at
+  // all, and routing it through here would dismiss on presses the backdrop
+  // has already swallowed. `blocked` layers are excluded because a layer under
+  // a modal is inert -- it should not be reacting to presses it cannot see.
+  const dismissable = !modal && !blocked && onDismiss !== undefined
+  useEffect(() => {
+    if (!dismissable) return
+    const onDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (contentRef.current?.contains(target)) return
+      if (anchor?.current?.contains(target)) return
+      onDismiss?.()
+    }
+    window.addEventListener('pointerdown', onDown)
+    return () => window.removeEventListener('pointerdown', onDown)
+  }, [dismissable, onDismiss, anchor])
+
+  if (!host || !container) return null
 
   return createPortal(
     <div
@@ -260,7 +470,13 @@ export const Overlay = ({
           <div className="lay-layer-backdrop" onClick={onDismiss} />
         </>
       ) : null}
-      <div className="lay-layer-content" role="dialog" aria-modal={modal} aria-label={label}>
+      <div
+        className="lay-layer-content"
+        ref={contentRef}
+        role="dialog"
+        aria-modal={modal}
+        aria-label={label}
+      >
         {children}
       </div>
     </div>,

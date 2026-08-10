@@ -125,6 +125,27 @@ const RULES = [
       /\.course-panes/,
     ],
   },
+  {
+    phase: 'D',
+    what: 'the drawer and the agent dock each floated themselves',
+    why: 'Both are `Overlay` layers now, in the one host at `--z-overlay`. `.drawer-backdrop` was 20 and `.agents-panel` was 40, which is *why* a popover painted over an `aria-modal` dialog -- the two numbers were the defect, not a symptom of it. A reappearance of either class is that arrangement returning.',
+    where: 'styles',
+    forbid: [/\.drawer-backdrop/, /\.agents-panel\s*\{[^}]*z-index/],
+  },
+  {
+    phase: 'D',
+    what: 'Drawer hand-rolled a focus trap and its own Escape listener',
+    why: 'Replaced by `inert` on `.lay-app-root` and the host owning Escape. The trap cycled Tab among its own children, which is a simulation of confinement rather than confinement: it said nothing about the pointer, nothing about assistive technology, and nothing about the popover painting on top. `FOCUSABLE_SELECTOR` coming back means somebody is re-implementing it.',
+    where: 'presentation/common',
+    forbid: [/FOCUSABLE_SELECTOR/, /addEventListener\('keydown'/],
+  },
+  {
+    phase: 'D',
+    what: 'the agent dock reasoned about whether a drawer was in front of it',
+    why: 'The guard read `if (!expanded || watching) return` -- a popover deciding whether it still owned Escape based on what else was open. It was also *wrong*, because the stylesheet put the popover in front of the thing it had stood down for. The host gives Escape to the topmost layer and a layer cannot see its neighbours, so there is nothing left to reason about. Either listener coming back here is that coupling returning.',
+    where: 'presentation/agents',
+    forbid: [/addEventListener\('keydown'/, /addEventListener\('pointerdown'/],
+  },
 ]
 
 /** Comments removed before matching, which `theme.test.ts` also does and for

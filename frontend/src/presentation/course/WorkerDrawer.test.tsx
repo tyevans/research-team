@@ -15,6 +15,7 @@ import type { Approval } from '@domain/approval/approval.ts'
 import { ApprovalId, SessionId } from '@domain/shared/identifier.ts'
 import { TurnState } from '@domain/session/turn.ts'
 
+import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { WorkerDrawer } from './WorkerDrawer.tsx'
 
@@ -130,10 +131,16 @@ const renderDrawer = (
   // reads the instance-wide policy through the same query key the course
   // page's panel uses.
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  // An `OverlayHost`, because `WorkerDrawer` is a `Drawer` and a `Drawer` is
+  // an `Overlay`, which renders nothing without one. In the application this
+  // comes from `Shell`; here it is the innermost wrapper, matching the real
+  // tree where the host sits inside the providers and outside the page.
   const wrapper = ({ children }: { children: React.ReactNode }) => (
     <QueryClientProvider client={client}>
       <ContainerProvider container={container}>
-        <StreamProvider>{children}</StreamProvider>
+        <StreamProvider>
+          <OverlayHost>{children}</OverlayHost>
+        </StreamProvider>
       </ContainerProvider>
     </QueryClientProvider>
   )
@@ -241,68 +248,58 @@ it('moves focus into the drawer on open', () => {
   expect(screen.getByRole('button', { name: /close/i })).toHaveFocus()
 })
 
-it('returns focus to whatever opened it, on unmount', () => {
-  const opener = document.createElement('button')
-  opener.textContent = 'open drawer'
-  document.body.append(opener)
-  opener.focus()
-  expect(opener).toHaveFocus()
+/** **`returns focus to whatever opened it, on unmount` was deleted here**, and
+ *  what it was really testing is worth writing down.
+ *
+ *  It appended a button to `document.body`, focused it, rendered the drawer,
+ *  and then unmounted the *entire tree* — asserting that focus came back. That
+ *  worked because `Drawer` restored focus from its own unmount cleanup. It
+ *  does not any more, and it should not: the restore is the host's, because
+ *  only the host knows when the page stops being `inert`, and a cleanup that
+ *  fired while the page was still inert was silently doing nothing in a real
+ *  browser. `OverlayHost` carries that reasoning and the measurement.
+ *
+ *  Under the host, unmounting everything means unmounting the host too, so
+ *  there is nothing left to give focus back — which is the right behaviour for
+ *  a tree that has gone away, and a scenario no reader ever performs. The
+ *  scenario a reader *does* perform is closing the drawer while the app keeps
+ *  running, and that is asserted where the behaviour now lives: `Drawer.test`
+ *  for the single case and `OverlayHost.test` for a stack unwinding one level
+ *  at a time. Kept here: that focus moves *in*, which is still this
+ *  component's own doing. */
 
-  const { unmount } = renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />)
-  expect(opener).not.toHaveFocus()
-
-  unmount()
-
-  expect(opener).toHaveFocus()
-  opener.remove()
-})
-
-// jsdom does not implement real tab-order traversal — `userEvent.tab()` is
-// emulated and does not exercise the drawer's own keydown handler the way a
-// browser's native Tab would. So these dispatch a real `Tab`/`Shift+Tab`
-// KeyboardEvent by hand and assert on the handler's own `focus()` calls,
-// rather than leaning on `userEvent.tab()` to look like it proved more than
-// it does.
-it('wraps Tab from the last focusable element back to the first', () => {
-  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />)
-
-  const focusable = screen
-    .getByRole('dialog')
-    .querySelectorAll<HTMLElement>('a[href], button:not([disabled])')
-  const last = focusable[focusable.length - 1]
-  const first = focusable[0]
-  last?.focus()
-  expect(last).toHaveFocus()
-
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
-
-  expect(first).toHaveFocus()
-})
-
-it('includes approval buttons in the Tab trap once they are present', () => {
-  // The trap queries focusable descendants at keypress time (see
-  // FOCUSABLE_SELECTOR in WorkerDrawer.tsx) precisely so content that
-  // arrives after mount, like an approval, is swept in automatically.
-  //
-  // Asserted by membership rather than by treating an approval button as the
-  // last focusable: the drawer also renders the autonomy control below the
-  // approvals, so "last" is not an approval button and never was guaranteed
-  // to be one. Membership is the actual claim.
+/** **Three Tab-trap tests were deleted here**, and the deletion is the point
+ *  rather than a casualty.
+ *
+ *  They dispatched a synthetic `Tab` KeyboardEvent and asserted that
+ *  `Drawer`'s own keydown handler called `focus()` on the element it had
+ *  decided was next — wrapping forwards, wrapping backwards, and including an
+ *  approval button that arrived after mount. Their own preamble conceded what
+ *  they were: "jsdom does not implement real tab-order traversal", so they
+ *  asserted on the handler's behaviour and not on the reader's. They tested a
+ *  hand-rolled ring, exactly, and could not have told you whether a keyboard
+ *  user could leave the dialog — which is the only thing the ring was for.
+ *
+ *  `Drawer` has no ring now. Confinement is `inert` on `.lay-app-root`, which
+ *  is the platform's, covers pointer and assistive technology as well as Tab,
+ *  and is asserted over the whole document in `OverlayHost.test.tsx` rather
+ *  than over one element here. jsdom implements the attribute and not its
+ *  behaviour, so the browser half is checked in Storybook.
+ *
+ *  The one claim in those tests that was about *this* component rather than
+ *  the trap — an approval that arrives after mount is inside the dialog and
+ *  reachable — is kept, below, without the ring. */
+it('sweeps in an approval that arrives after it opened', () => {
   renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
     approvals: [anApproval('a-1')],
   })
 
-  const focusable = [
-    ...screen.getByRole('dialog').querySelectorAll<HTMLElement>('a[href], button:not([disabled])'),
-  ]
   const reject = screen.getByRole('button', { name: /reject/i })
-  expect(focusable).toContain(reject)
-
-  // And wrapping still works with the approval present.
-  const last = focusable[focusable.length - 1]
-  last?.focus()
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
-  expect(focusable[0]).toHaveFocus()
+  // Inside the dialog, so it is inside what `inert` leaves reachable when the
+  // rest of the page is not. Under the old trap this needed a per-keypress
+  // re-query to be true; under `inert` it is true because the button is a
+  // descendant, which is a fact that cannot go stale.
+  expect(screen.getByRole('dialog').contains(reject)).toBe(true)
 })
 
 it('offers the way to stop being asked, beside the approvals', async () => {
@@ -321,20 +318,16 @@ it('offers the way to stop being asked, beside the approvals', async () => {
   expect(screen.getByText(/every session on this instance/i)).toBeInTheDocument()
 })
 
-it('wraps Shift+Tab from the first focusable element to the last', () => {
+it('makes the page behind it unreachable rather than merely covered', () => {
+  // The claim the three deleted trap tests were reaching for, asserted the way
+  // that could actually catch the defect that shipped: not "Tab cycles inside
+  // the drawer" but "nothing outside the drawer is reachable at all".
+  //
+  // `.lay-app-root` is the single element a modal marks, which is why the
+  // assertion has somewhere to point. Before it existed, `Drawer` set
+  // `aria-modal="true"` and left the entire shell tabbable.
   renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />)
 
-  const focusable = screen
-    .getByRole('dialog')
-    .querySelectorAll<HTMLElement>('a[href], button:not([disabled])')
-  const last = focusable[focusable.length - 1]
-  const first = focusable[0]
-  first?.focus()
-  expect(first).toHaveFocus()
-
-  document.dispatchEvent(
-    new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }),
-  )
-
-  expect(last).toHaveFocus()
+  expect(document.querySelector('.lay-app-root')).toHaveAttribute('inert')
+  expect(document.querySelector('.lay-app-root')).toHaveAttribute('aria-hidden', 'true')
 })

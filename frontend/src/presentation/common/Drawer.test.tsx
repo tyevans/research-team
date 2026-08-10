@@ -1,29 +1,55 @@
-import { render, screen } from '@testing-library/react'
+import { render as renderBare, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState } from 'react'
+import { useState, type ReactElement } from 'react'
 import { expect, it, vi } from 'vitest'
 
+import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { Drawer } from './Drawer.tsx'
 
-/** The keyboard contract `Drawer` exists to own, asserted before anything
- *  re-implements it.
+/** The keyboard contract `Drawer` still owns, after the host took the rest.
  *
  *  `presentation/common/` had no tests at all when this file was written, and
- *  `Drawer` is the first thing the Radix migration replaces — so this is the
- *  net for that swap rather than coverage for its own sake. Every assertion
- *  here was proved red first against a deliberately broken `Drawer`: the focus
- *  effect removed, the DOM-membership check removed, the Escape branch
- *  removed, the Tab branch removed, and `stopPropagation` removed. Each failed
- *  for the reason it names and no other, which is the only thing separating
- *  these from reassurance.
+ *  every assertion that remains was proved red against a deliberately broken
+ *  `Drawer`: the focus effect removed, and the DOM-membership check removed.
+ *  Each failed for the reason it names and no other.
  *
- *  What is deliberately *not* asserted: appearance. The class names are here
- *  as selectors because the drawer's backdrop is not reachable by role, not
- *  because the styling is part of the contract. */
+ *  **Four tests were deleted from this file rather than repaired, and that is
+ *  the substance of the change.** They asserted the hand-rolled Tab trap —
+ *  wrapping forwards from the last element, wrapping backwards from the close
+ *  button, pulling focus back in from outside, and re-querying so elements
+ *  that arrived later were included. All four passed, and all four were
+ *  testing a *simulation* of confinement: they proved the drawer cycled the
+ *  Tab key among its own children, which is not the same claim as "nothing
+ *  outside this dialog is reachable". The console shipped with a dock popover
+ *  painting on top of this dialog and fully clickable throughout, and not one
+ *  of these tests could see it.
+ *
+ *  Confinement is `inert` on `.lay-app-root` now, so the assertion that
+ *  replaces all four is `OverlayHost.test.tsx`'s "confines the keyboard to the
+ *  modal — the page, not just the other layers", which enumerates everything
+ *  reachable in the whole document and requires it to be inside the dialog.
+ *  That is a negative over the document rather than a positive about one
+ *  element, and it is the shape that could have caught the defect. jsdom still
+ *  cannot run `inert`, so the browser half is checked in Storybook and
+ *  recorded in the pull request.
+ *
+ *  Escape moved too: it is the host's, given to the topmost layer only, and
+ *  tested there. The test here is kept because `Drawer` passes `onDismiss` and
+ *  a drawer that stopped closing on Escape would be a real regression whoever
+ *  owned the listener.
+ *
+ *  What is deliberately *not* asserted: appearance. */
 
-/** A drawer with a page behind it, so "focus returns to where it was" and
- *  "Tab cannot walk out into the page" are answerable at all — both need
- *  something focusable outside the drawer to be wrong about. */
+/** Every drawer needs a host, because `Overlay` renders nothing without one —
+ *  deliberately, so a layer whose host is missing is invisible rather than
+ *  silently escaping to `document.body` outside every stacking guarantee. That
+ *  makes the host a precondition of these tests rather than scenery, which is
+ *  why it is in the render helper rather than in each case. */
+const render = (ui: ReactElement) => renderBare(<OverlayHost>{ui}</OverlayHost>)
+
+/** A drawer with a page behind it, so "focus returns to where it was" is
+ *  answerable at all — it needs something focusable outside the drawer to be
+ *  wrong about. */
 const Page = ({ onClose = () => {} }: { onClose?: () => void }) => (
   <>
     <button type="button">behind the drawer</button>
@@ -34,12 +60,17 @@ const Page = ({ onClose = () => {} }: { onClose?: () => void }) => (
   </>
 )
 
-it('moves focus onto the close button when it opens', async () => {
+it('moves focus onto the close button when it opens', () => {
   render(<Page />)
 
   // The close button rather than the heading: a heading would need a
   // `tabIndex={-1}` to receive focus at all, which puts a fake control in the
   // tab order. Fails with the mount effect removed — focus stays on `<body>`.
+  //
+  // This matters *more* under the host than it did under the trap, not less.
+  // `inert` makes everything outside the dialog unreachable but moves nothing,
+  // so without this effect a reader is confined to a dialog while their focus
+  // sits on a row they can no longer reach or leave.
   expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus()
 })
 
@@ -68,10 +99,17 @@ it('gives focus back to the element that opened it', async () => {
   await user.click(screen.getByRole('button', { name: 'open' }))
   await user.click(screen.getByRole('button', { name: 'Close' }))
 
-  // Fails with the effect's cleanup removed: focus is left on `<body>`, so a
+  // `waitFor` because the restore happens a render later than the close: the
+  // host performs it, in an effect that runs once it has re-rendered without
+  // `inert`. That indirection is the fix for a browser-only defect and is
+  // argued in `OverlayHost`; here it just means the assertion cannot be
+  // synchronous.
+  //
+  // Fails with the host's restore effect removed, and with `returnFocus`
+  // dropped from `Drawer`'s `Overlay`: focus is left on `<body>`, so a
   // screen-reader user is returned to the top of the document rather than to
   // the row they were reading.
-  expect(screen.getByRole('button', { name: 'open' })).toHaveFocus()
+  await waitFor(() => expect(screen.getByRole('button', { name: 'open' })).toHaveFocus())
 })
 
 it('does not try to focus a row that was removed while it was open', async () => {
@@ -135,6 +173,10 @@ it('does not try to focus a row that was removed while it was open', async () =>
    *  behaviour under test is *that the call is not made*, and that is what is
    *  asserted. jsdom cannot show us the environment where it throws; it can
    *  show us that we never ask. */
+  // A frame has to actually elapse before this means anything: the restore now
+  // happens a render later, so an immediate assertion would pass even with the
+  // membership guard deleted, simply because the call had not happened yet.
+  await new Promise((resolve) => requestAnimationFrame(resolve))
   expect(focus).not.toHaveBeenCalled()
   expect(document.body).toHaveFocus()
 })
@@ -146,79 +188,11 @@ it('closes on Escape', async () => {
 
   await user.keyboard('{Escape}')
 
+  // The listener is the host's now, not this component's. Kept anyway: what a
+  // reader is owed is "Escape closes the drawer", and that promise should not
+  // depend on which file happens to hold the listener this month. Fails if
+  // `Drawer` stops passing `onDismiss`.
   expect(onClose).toHaveBeenCalledTimes(1)
-})
-
-/** The cycle is DOM order, and the close button sits in the header — so it is
- *  the *first* focusable in the drawer, not the last. Written down because the
- *  first draft of this file assumed the body came first and these three tests
- *  failed; the header-first order is a property of the markup that a
- *  re-implementation could silently change. */
-it('wraps Tab from the last focusable element back to the close button', async () => {
-  const user = userEvent.setup()
-  render(<Page />)
-
-  screen.getByRole('button', { name: 'last in body' }).focus()
-  await user.tab()
-
-  // Without the trap, Tab walks out to "behind the drawer" — the page is still
-  // rendered and still focusable, so a keyboard user leaves a modal dialog
-  // without closing it. Fails with the Tab branch removed.
-  expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus()
-})
-
-it('wraps Shift+Tab from the close button round to the last', async () => {
-  const user = userEvent.setup()
-  render(<Page />)
-
-  screen.getByRole('button', { name: 'Close' }).focus()
-  await user.tab({ shift: true })
-
-  expect(screen.getByRole('button', { name: 'last in body' })).toHaveFocus()
-})
-
-it('pulls focus back in when Tab is pressed from outside it', async () => {
-  const user = userEvent.setup()
-  render(<Page />)
-
-  // The page behind is inert to the reader but not to the browser: focus can
-  // still be put there programmatically, and the trap has to recover rather
-  // than assume focus is already inside.
-  screen.getByRole('button', { name: 'behind the drawer' }).focus()
-  await user.tab()
-
-  expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus()
-})
-
-it('finds focusable elements that arrived after it opened', async () => {
-  const user = userEvent.setup()
-
-  /** Why `FOCUSABLE_SELECTOR` is queried per keypress rather than cached at
-   *  mount: a drawer's body can be a live transcript. This test is the one
-   *  that would fail if anybody "optimised" that query into a mount-time
-   *  `useMemo`. */
-  const Growing = () => {
-    const [grown, setGrown] = useState(false)
-    return (
-      <Drawer title="Transcript" label="Transcript" onClose={() => {}}>
-        <button type="button" onClick={() => setGrown(true)}>
-          grow
-        </button>
-        {grown ? (
-          <button type="button" data-testid="arrived">
-            arrived later
-          </button>
-        ) : null}
-      </Drawer>
-    )
-  }
-
-  render(<Growing />)
-  await user.click(screen.getByRole('button', { name: 'grow' }))
-  screen.getByTestId('arrived').focus()
-  await user.tab()
-
-  expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus()
 })
 
 it('closes when the backdrop is clicked and stays open when its own body is', async () => {
@@ -226,12 +200,17 @@ it('closes when the backdrop is clicked and stays open when its own body is', as
   const onClose = vi.fn()
   const { container } = render(<Page onClose={onClose} />)
 
-  const backdrop = container.querySelector('.drawer-backdrop')
+  // `.lay-layer-backdrop`, the layer's, not `.drawer-backdrop`, which this
+  // component used to render at `z-index: 20` and no longer exists anywhere —
+  // `scripts/check-deleted.mjs` fails if it returns.
+  const backdrop = container.querySelector('.lay-layer-backdrop')
   expect(backdrop).not.toBeNull()
 
   await user.click(screen.getByRole('dialog'))
-  // Fails with `stopPropagation` removed: a click anywhere in the drawer
-  // bubbles to the backdrop and closes the thing being read.
+  // The `stopPropagation` this used to need is gone with the nesting that
+  // required it: the backdrop is the drawer's *sibling* inside the layer
+  // rather than its parent, so a click in the drawer has no backdrop to bubble
+  // to. Fails if anyone reintroduces a wrapping backdrop.
   expect(onClose).not.toHaveBeenCalled()
 
   await user.click(backdrop!)
@@ -246,9 +225,14 @@ it('names itself for a screen reader without borrowing the heading markup', () =
   )
 
   // `title` may carry markup and `aria-label` takes a string, which is why the
-  // two are separate props rather than one.
+  // two are separate props rather than one. The role and the name are on the
+  // layer's content element now rather than on this component's `aside`; that
+  // they are reachable by exactly this query is the point of asserting it
+  // here, because a second `role="dialog"` nested inside the layer's would
+  // announce two dialogs and this query would find the wrong one.
   const dialog = screen.getByRole('dialog', { name: 'Document: report.md' })
   expect(dialog).toHaveAttribute('aria-modal', 'true')
+  expect(screen.getAllByRole('dialog')).toHaveLength(1)
   expect(screen.getByRole('heading', { name: 'report.md' })).toBeInTheDocument()
 })
 
