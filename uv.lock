@@ -1619,7 +1619,7 @@ wheels = [
 
 [[package]]
 name = "redstring"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dateparser" },
@@ -1629,9 +1629,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cf/64/8966ce35c64f678d250f4572d758e99524f4aafe33eb3a7882bcab24edf3/redstring-0.4.0.tar.gz", hash = "sha256:045670d1a315f0f45715c79ff5bc5599673585b7885cb318ed3b63034d410c12", size = 1594779, upload-time = "2026-08-09T21:55:33.375Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0c/a4/2943a529269545c592f36b6870105db2aa3aacc88aec888728736fe09e9b/redstring-0.5.0.tar.gz", hash = "sha256:819bf54013bc057a0bb79d49106d643b573a2d63c676872a2965231e39dd5c18", size = 1605239, upload-time = "2026-08-10T03:04:43.737Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c3/d1/a21325eb4bda1e8d7d28d157179e4c2037d3e46dc4b0b24470887cace200/redstring-0.4.0-py3-none-any.whl", hash = "sha256:9a41ed6101f668ddac1737652ca535a7f7af9dcdb8515a5f0a8af50df2821cf4", size = 381049, upload-time = "2026-08-09T21:55:31.944Z" },
+    { url = "https://files.pythonhosted.org/packages/48/ec/d36b7e133938f24b629cc0153f28240d50e92304ad7fc6ffc2635c6123e8/redstring-0.5.0-py3-none-any.whl", hash = "sha256:62521bf6b5671103d5bdf329c2bae65dde6c119a04e5f5ce5c7c72cdda08f5e5", size = 382744, upload-time = "2026-08-10T03:04:41.884Z" },
 ]
 
 [package.optional-dependencies]
@@ -1783,7 +1783,7 @@ requires-dist = [
     { name = "langchain-openai", specifier = ">=1.4.1" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'tracing'", specifier = ">=1.0,<2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "redstring", extras = ["llm", "neo4j"], specifier = ">=0.4.0,<0.5" },
+    { name = "redstring", extras = ["llm", "neo4j"], specifier = ">=0.5.0,<0.6" },
     { name = "trafilatura", specifier = ">=2.2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.1" },
 ]

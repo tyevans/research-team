@@ -13,9 +13,27 @@ from redstring import (
 )
 
 from research_team.application.knowledge import KnowledgeError, SourceRef
+from research_team.infrastructure.knowledge import redstring_adapter
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.persistence.event_store import build_corpus_repository
-from tests.conftest import fake_provider
+from tests.conftest import TWO_PEOPLE, fake_provider
+
+#: A second document's worth of people, sharing nothing with `TWO_PEOPLE` --
+#: not the names, and (since redstring 0.5.0 compares neighbours by name) not
+#: the neighbourhood either.
+_HOPPER = {
+    "entities": [
+        {"name": "Grace Hopper", "entity_type": "Person"},
+        {"name": "Harvard Mark I", "entity_type": "Machine"},
+    ],
+    "relationships": [
+        {
+            "source_name": "Grace Hopper",
+            "target_name": "Harvard Mark I",
+            "relationship_type": "WORKED_ON",
+        }
+    ],
+}
 
 
 @pytest.fixture
@@ -150,9 +168,25 @@ async def test_reconsolidate_is_scoped_to_one_documents_entities(tmp_path, build
     `test_one_entity_named_the_same_in_two_documents_becomes_one_node` pins --
     but it is not what makes *this* case a no-op, and alias exclusion happens
     first regardless of any score.
+
+    The provider is explicit rather than `fake_provider()` because of
+    redstring 0.5.0. `fake_provider()` answers `TWO_PEOPLE` whatever it is
+    asked, so both documents used to extract Ada and Babbage, and the test
+    read as two documents about different things only in the prose it fed the
+    fake. Under 0.4.0 that was harmless -- the cross-document pair scored
+    0.7143 and was rejected -- but 0.5.0 compares neighbours by name, so the
+    two Adas share the neighbour "charles babbage", score 1.0, and *auto-merge
+    during the second ingest*. The fixture's own `merge_entities` then failed
+    on an entity that was already an alias. The two documents now genuinely
+    extract different people, which is what the assertions below have always
+    claimed and what the prose already said.
     """
     project_id = uuid4()
-    adapter, _, _ = build_adapter(tmp_path, project_id)
+    adapter, _, _ = build_adapter(
+        tmp_path,
+        project_id,
+        provider=FakeLlmProvider(by_substring={"Grace Hopper": _HOPPER}, default=TWO_PEOPLE),
+    )
     await adapter.ingest(
         SourceRef(source_id="a", text="Ada Lovelace worked with Charles Babbage.")
     )
@@ -256,15 +290,24 @@ async def test_one_entity_named_the_same_in_two_documents_becomes_one_node(
 
     The arithmetic, for a deployment with no `VectorStore` (which is ours):
     name 1.0 at weight 0.5, graph 0.0 at weight 0.2, embedding absent, so
-    `0.5 / 0.7 = 0.7143`. The graph feature is 0.0 because the two nodes'
-    neighbour sets are disjoint -- and for a cross-document duplicate they are
-    *always* disjoint, because `entity_id_for` namespaces ids per document.
-    "Canada" as extracted from one document and "Canada" as extracted from
-    another are two ids until something merges them, so a shared neighbour
-    cannot exist yet at the moment the pair is first judged.
+    `0.5 / 0.7 = 0.7143`.
 
-    This test would fail with the fix reverted: without it the assertion below
-    finds two canonical nodes with the same name.
+    **Why the graph feature is 0.0 changed under redstring 0.5.0, and the
+    number did not.** When this was written, neighbours were compared by id and
+    `entity_id_for` namespaces ids per document, so a cross-document duplicate
+    was disjoint *by construction* -- "Canada" from one document and "Canada"
+    from another were two ids however identical they were. 0.5.0 compares
+    normalized neighbour names, which removes that artefact. This fixture is
+    still 0.0 because its two documents genuinely describe different
+    neighbourhoods: Canada in one, duck hunting in the other. So the test now
+    pins the case the upstream fix deliberately leaves alone rather than the
+    case it fixes, and `EXACT_NAME_SCORE` is what still carries it.
+
+    Re-run with `EXACT_NAME_SCORE` raised to redstring's own `LOW_SIMILARITY`
+    of 0.75 and this fails on 0.5.0 exactly as it did on 0.4.0: two canonical
+    nodes with the same name. The floor removal was tried, not assumed.
+    `test_two_documents_describing_the_same_pair_merge_without_a_floor` is the
+    other half -- the case 0.5.0 does fix, which needs no floor.
     """
     project_id = uuid4()
     provider = FakeLlmProvider(
@@ -284,6 +327,78 @@ async def test_one_entity_named_the_same_in_two_documents_becomes_one_node(
 
     matches = await adapter.search("Nova Scotia Duck Tolling Retriever")
     assert len(matches) == 1, f"one breed, one node; got {[match.name for match in matches]}"
+
+
+#: The same pair of people from two documents, related in two different ways.
+#: The *relationship type* differs and the neighbour name does not, which is
+#: the whole point: this is what redstring 0.5.0 fixed and what 0.4.0 could not
+#: see, because the neighbour ids were namespaced per document.
+_PAIR_WORKED_WITH = {
+    "entities": [
+        {"name": "Ada Lovelace", "entity_type": "Person"},
+        {"name": "Charles Babbage", "entity_type": "Person"},
+    ],
+    "relationships": [
+        {
+            "source_name": "Ada Lovelace",
+            "target_name": "Charles Babbage",
+            "relationship_type": "WORKED_WITH",
+        }
+    ],
+}
+
+_PAIR_CORRESPONDED_WITH = {
+    "entities": [
+        {"name": "Ada Lovelace", "entity_type": "Person"},
+        {"name": "Charles Babbage", "entity_type": "Person"},
+    ],
+    "relationships": [
+        {
+            "source_name": "Ada Lovelace",
+            "target_name": "Charles Babbage",
+            "relationship_type": "CORRESPONDED_WITH",
+        }
+    ],
+}
+
+
+@pytest.mark.asyncio
+async def test_two_documents_describing_the_same_pair_merge_without_a_floor(
+    tmp_path, build_adapter, monkeypatch
+):
+    """The case redstring 0.5.0 fixes, pinned with our floor taken away.
+
+    Two documents, the same two people, the same neighbourhood. Under 0.4.0
+    this scored `graph = 0.0` -- an artefact, because neighbour ids are
+    namespaced per document -- and landed on 0.7143 like everything else.
+    0.5.0 compares normalized neighbour *names*, so the two Adas share
+    "charles babbage", `graph = 1.0`, and the combined score is a flat 1.0:
+    above `HIGH_SIMILARITY` (0.92), so it merges with **no adjudicator at
+    all**, which is why this fixture leaves `adjudicate` off. Before 0.5.0 no
+    cross-document pair could reach that band whatever the evidence.
+
+    `EXACT_NAME_SCORE` is monkeypatched away to redstring's own
+    `LOW_SIMILARITY` so that the floor cannot be what makes this pass. It is
+    not: the floor moves `low`, and this pair clears `high`. Reverting the
+    version bump is what makes this fail -- with the floor in place and
+    redstring 0.4.0 the pair scores 0.7143, is admitted to adjudication, and is
+    rejected because there is no adjudicator to ask.
+    """
+    monkeypatch.setattr(redstring_adapter, "EXACT_NAME_SCORE", 0.75)
+    project_id = uuid4()
+    provider = FakeLlmProvider(
+        by_substring={"corresponded": _PAIR_CORRESPONDED_WITH},
+        default=_PAIR_WORKED_WITH,
+    )
+    adapter, _, _ = build_adapter(tmp_path, project_id, provider=provider)
+
+    await adapter.ingest(SourceRef(source_id="a", text="Ada Lovelace worked with Babbage."))
+    await adapter.ingest(
+        SourceRef(source_id="b", text="Ada Lovelace corresponded with Babbage.")
+    )
+
+    matches = await adapter.search("Ada Lovelace")
+    assert len(matches) == 1, f"one person, one node; got {[match.name for match in matches]}"
 
 
 @pytest.mark.asyncio
