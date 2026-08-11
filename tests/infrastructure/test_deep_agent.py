@@ -17,8 +17,9 @@ from uuid import UUID, uuid4
 import httpx
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage
+from langchain_core.tools import tool
 
-from research_team.application import ApprovalDecision, AutonomyPolicy
+from research_team.application import ApprovalDecision, ApprovalRefused, AutonomyPolicy
 from research_team.application.ports import ActivityDelta, GateReview
 from research_team.domain import CodingSession, StartSession
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
@@ -215,6 +216,43 @@ async def test_a_tool_no_stage_claims_survives_the_filter():
     assert "web_search" in model.last_bound
 
 
+async def test_a_per_turn_tool_shadows_a_registered_tool_of_the_same_name():
+    """The per-turn tool must replace the registered one, not sit beside it.
+
+    Both tools below are named `web_search`; the registered one records a
+    call and raises if reached, the per-turn one answers. If `_invoke` ever
+    goes back to appending (`[*self._tools, *await self._resolved_tools(...)]`)
+    rather than shadowing, langgraph would bind two tools of one name -- and
+    whichever the model happened to reach could be either, including the one
+    that raises. This asserts the outcome as well as the identity: the
+    registered tool must never run.
+    """
+    registered_calls: list[str] = []
+
+    @tool("web_search")
+    def registered(query: str) -> str:
+        """The registered tool -- must be shadowed, never invoked."""
+        registered_calls.append(query)
+        raise AssertionError("the shadowed registered tool must never run")
+
+    @tool("web_search")
+    def per_turn(query: str) -> str:
+        """The per-turn tool -- must win over the registered one."""
+        return "shadow-response"
+
+    async def provide_tools(session: CodingSession) -> tuple[Any, ...]:
+        return (per_turn,)
+
+    model = _searching_model()
+    executor = DeepAgentTurnExecutor(
+        model,
+        tools=(registered,),
+        tools_provider=provide_tools,
+    )
+    await _run(executor, _session())
+    assert registered_calls == []
+
+
 async def test_the_builtin_filesystem_tools_survive_a_stage():
     model = ToolRecordingChatModel(responses=[AIMessage(content="done", id="a1")])
     stage = FakeStage(id="s.read", name="Read", tools=())
@@ -371,3 +409,60 @@ async def test_no_reviewer_means_no_context_and_no_change():
     approvals = ScriptedApprovals(ApprovalDecision("approve"))
     await _run(_gated_executor(approvals, None), _session())
     assert approvals.seen[0].context is None
+
+
+# --- a port that refuses instead of deciding ---------------------------------
+
+
+class RefusingApprovals:
+    """An `ApprovalPort` that raises `ApprovalRefused` rather than ever
+    returning a decision -- what `WebApprovals.decide` does when an
+    unattended session's timeout wins. Standing in for it here means this
+    behaviour is asserted against the `ApprovalPort` contract, not against
+    `WebApprovals`'s own internals a second time."""
+
+    def __init__(self, message: str = "nobody answered in time") -> None:
+        self._message = message
+        self.seen: list[Any] = []
+
+    async def decide(self, request: Any) -> ApprovalDecision:
+        self.seen.append(request)
+        raise ApprovalRefused(self._message)
+
+
+async def test_a_ports_refusal_is_recorded_as_policy_deciding_not_a_human():
+    """The invariant this test exists to protect: a timeout is not a person.
+
+    `_apply` stamps every `ApprovalDecision` it receives with
+    `decided_by="human"`, which is correct because every `ApprovalDecision`
+    a port returns is, by the port's own contract, what a human chose. A
+    port that instead raises `ApprovalRefused` is explicitly saying no human
+    chose anything -- and if a future refactor routed that exception through
+    `_apply` anyway (or turned it back into an ordinary reject decision), this
+    is the test that would catch a rejection nobody made getting logged as
+    one a person made.
+    """
+    approvals = RefusingApprovals()
+    session = _session()
+
+    await _run(_gated_executor(approvals, None), session)
+
+    [decided] = [
+        event
+        for event in session.uncommitted_events
+        if type(event).__name__ == "ToolCallDecided"
+    ]
+    assert decided.decision == "reject"
+    assert decided.decided_by == "policy"
+    assert decided.decided_by != "human"
+
+
+async def test_a_ports_refusal_still_lets_the_turn_finish():
+    """The turn must read the refusal and continue, not unwind into an
+    unhandled exception -- the same requirement `_decide`'s `deny` arm and
+    harness-refusal arm already meet."""
+    approvals = RefusingApprovals("timed out waiting for a person")
+
+    result = await _run(_gated_executor(approvals, None), _session())
+
+    assert "done" in result.reply_text

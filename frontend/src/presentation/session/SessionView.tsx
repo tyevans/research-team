@@ -22,7 +22,6 @@ import { plural } from '../formatting/format.ts'
 import { sessionHref, homeHref } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
 import { ActivityFeed } from './ActivityFeed.tsx'
-import { Approvals } from './Approvals.tsx'
 import { Composer } from './Composer.tsx'
 import { Conversation } from './Conversation.tsx'
 import { FileList } from './FileList.tsx'
@@ -294,11 +293,10 @@ export const SessionView = ({
           scroll="regions"
           footer={
             <>
-              <Approvals
-                approvals={state.approvals}
-                deciding={state.deciding}
-                onDecide={(approval, decision) => void store.getState().decide(approval, decision)}
-              />
+              {/* Approvals used to sit here, above the composer. They are now
+                  the shell's `DecisionBar`, for the reason that component
+                  states: a gated call parked in this footer was invisible from
+                  every other page in the console. */}
               <Composer
                 turn={state.turn}
                 note={state.note}

@@ -20,10 +20,13 @@ from research_team.application import (
     ActivityReporter,
     ApprovalDecision,
     ApprovalPort,
+    ApprovalRefused,
     ApprovalRequest,
     AutonomyPolicy,
     TurnResult,
 )
+from research_team.application.grants import GrantRegistry
+from research_team.application.knowledge_attachment import _compose
 from research_team.application.ports import (
     ActivityDelta,
     ActivityMessage,
@@ -261,6 +264,7 @@ class DeepAgentTurnExecutor:
         middleware_provider: MiddlewareProvider | None = None,
         tools_provider: ToolProvider | None = None,
         gate_reviewer: GateReviewer | None = None,
+        grants: GrantRegistry | None = None,
     ) -> None:
         self._model = model
         self._subagents = list(subagents)
@@ -285,6 +289,11 @@ class DeepAgentTurnExecutor:
         # exactly as it did before interrupts existed.
         self._policy = policy if policy is not None else AutonomyPolicy()
         self._approvals = approvals
+        # `None` by default so every existing caller -- and every existing
+        # test -- builds exactly the executor it always did: with no
+        # registry, `interrupt_config` below has no grant it could ever find,
+        # which is `_gate_for`'s own documented behaviour for this case.
+        self._grants = grants
 
     @property
     def model_name(self) -> str:
@@ -355,13 +364,22 @@ class DeepAgentTurnExecutor:
         Kept as a separate seam so tests can force a mid-turn failure.
         """
         middleware = [*self._middleware, *await self._resolved_middleware(session)]
-        turn_tools = [*self._tools, *await self._resolved_tools(session)]
+        # A per-turn tool must replace a registered one of the same name, not
+        # sit beside it -- two tools named `fetch` would leave langgraph to
+        # pick between them, which is not a decision this class delegates.
+        # `_compose` already encodes that rule for `set_tools`
+        # (application/knowledge_attachment.py); reused rather than
+        # reimplemented so the two lifetimes (per-turn here, persistent there)
+        # cannot silently drift into different shadowing rules.
+        turn_tools = _compose(self._tools, await self._resolved_tools(session))
         agent = create_deep_agent(
             model=self._model,
             tools=turn_tools or None,
             backend=EventSourcedBackend(session),
             system_prompt=system_prompt,
-            interrupt_on=interrupt_config(self._policy),
+            interrupt_on=interrupt_config(
+                self._policy, session_id=session.aggregate_id, grants=self._grants
+            ),
             # Resuming is impossible without one: `Command(resume=...)` needs
             # somewhere to have parked the halted graph. Per turn and in
             # memory, because nothing here outlives the turn -- the durable
@@ -501,16 +519,29 @@ class DeepAgentTurnExecutor:
                 )
             )
             return {"type": "reject", "message": gate.refusal}
-        decision = await self._approvals.decide(
-            ApprovalRequest(
-                session_id=session.aggregate_id,
-                tool_name=name,
-                args=args,
-                description=str(request.get("description") or ""),
-                allowed_decisions=tuple(review.get("allowed_decisions") or ()),
-                context=gate.context if gate is not None else None,
+        try:
+            decision = await self._approvals.decide(
+                ApprovalRequest(
+                    session_id=session.aggregate_id,
+                    tool_name=name,
+                    args=args,
+                    description=str(request.get("description") or ""),
+                    allowed_decisions=tuple(review.get("allowed_decisions") or ()),
+                    context=gate.context if gate is not None else None,
+                )
             )
-        )
+        except ApprovalRefused as refused:
+            # The port refused to keep waiting -- nobody answered, so nobody
+            # decided. Recorded the same way as the `deny` arm above rather
+            # than through `_apply`, because `_apply` always writes
+            # `decided_by="human"` and that would be a log entry claiming a
+            # person saw this call and rejected it. Nobody did.
+            session.execute(
+                RecordToolDecision(
+                    tool_name=name, args=args, decision="reject", decided_by="policy"
+                )
+            )
+            return {"type": "reject", "message": str(refused)}
         return self._apply(session, name, args, decision)
 
     async def _review_gate(

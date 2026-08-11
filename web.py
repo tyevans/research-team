@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 
+from research_team.application.grants import GrantRegistry
 from research_team.composition import build_application
 from research_team.infrastructure import config
 from research_team.interfaces.web import (
@@ -17,10 +18,19 @@ from research_team.interfaces.web.seeding import SeedingActivity
 
 
 def main() -> None:
+    # One instance, shared with `build_application` below, for the reason
+    # `approvals` is one object on both sides of the wire: `WebApprovals`
+    # needs it to tell a run's session from a person's (`is_unattended`), and
+    # the executor's gate and the grant-bound `fetch` tool need the very same
+    # grant a run registered under. Two registries would mean the gate could
+    # let a call through that `WebApprovals` still treats as unattended-but-
+    # ungranted, or the reverse -- see `application/grants.py` and
+    # `composition.py`'s `resolved_grants`.
+    grants = GrantRegistry()
     # One object on both sides of the wire: the executor asks it for decisions,
     # the HTTP routes hand it the answers. Built here because it is the seam
     # between them, and the composition root is where seams are chosen.
-    approvals = WebApprovals()
+    approvals = WebApprovals(grants=grants)
     activity = TurnActivity()
     # One instance, both sides, for the same reason `approvals` is one: the
     # `remember` tool reports into it and the roster and the pane read out of
@@ -37,7 +47,7 @@ def main() -> None:
     # in either signature would catch it.
     dispatch = DispatchQueue()
     application = build_application(
-        approvals=approvals, extractions=extraction, dispatches=dispatch
+        approvals=approvals, extractions=extraction, dispatches=dispatch, grants=grants
     )
 
     @asynccontextmanager
