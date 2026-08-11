@@ -13,7 +13,11 @@ langchain's `when` predicate lives in `infrastructure` instead.
 
 from typing import Literal
 
-from research_team.application.knowledge import REMEMBER_TOOL, UNMERGE_TOOL
+from research_team.application.knowledge import (
+    REMEMBER_PAGE_TOOL,
+    REMEMBER_TOOL,
+    UNMERGE_TOOL,
+)
 
 Level = Literal["auto", "ask", "deny"]
 """`auto` runs it, `ask` interrupts for a human, `deny` refuses without asking."""
@@ -36,6 +40,11 @@ GATED_TOOLS: tuple[str, ...] = (
     "edit_file",
     "delete_file",
     REMEMBER_TOOL,
+    # Gated beside `remember` for the same reason and not a weaker one: a
+    # commit changes what every later session in the project sees, however the
+    # bytes reached it. An ungated by-reference path would be a way around the
+    # gate on the by-value one.
+    REMEMBER_PAGE_TOOL,
     UNMERGE_TOOL,
 )
 """What can be gated. Read-only file tools are absent deliberately: they cost

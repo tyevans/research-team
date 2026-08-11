@@ -17,6 +17,7 @@ from uuid import UUID
 
 #: Tool names, in one place so the autonomy policy and the tools agree.
 REMEMBER_TOOL = "remember"
+REMEMBER_PAGE_TOOL = "remember_page"
 GRAPH_SEARCH_TOOL = "graph_search"
 UNMERGE_TOOL = "unmerge"
 
