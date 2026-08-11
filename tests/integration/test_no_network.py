@@ -12,12 +12,28 @@ default install would reach the open web unattended and nothing else in the
 suite would notice.
 """
 
+from uuid import uuid4
+
 from research_team.application import SEARCH_TOOL
 from research_team.application.autonomy import FETCH_TOOL
+from research_team.domain import CodingSession
 
 
 def _tool_names(application) -> set[str]:
     return {tool.name for tool in application.service._executor._tools}
+
+
+async def _middleware_names(application) -> set[str]:
+    """The names of this turn's middleware, for a session outside any project.
+
+    `CodingSession(uuid4())` with no `StartSession` executed is enough:
+    `running_workflow` answers `None` for a session with no project, which is
+    the branch every one of these tests exercises, and building further would
+    only test `StageMiddleware`'s wiring, which is covered elsewhere.
+    """
+    session = CodingSession(uuid4())
+    middleware = await application.service._executor._middleware_provider(session)
+    return {item.name for item in middleware}
 
 
 async def test_a_default_application_has_no_search_tool(build_application, monkeypatch):
@@ -58,3 +74,34 @@ async def test_a_configured_application_offers_search(build_application, monkeyp
 
     assert SEARCH_TOOL in _tool_names(application)
     assert SEARCH_TOOL in application.policy.levels()
+
+
+async def test_a_configured_application_installs_the_search_middleware(
+    build_application, monkeypatch
+):
+    """`search_attempts` resets the bound at the turn boundary -- see
+    `SearchAttemptsMiddleware`. Without it in `turn_middleware`'s output, the
+    counter `build_search_tool` was handed never clears, and an empty streak
+    from one turn wrongly bounds the next.
+    """
+    monkeypatch.setenv("AGENT_SEARXNG_URL", "http://localhost:8888")
+
+    application = await build_application()
+
+    assert "search_attempts" in await _middleware_names(application)
+
+
+async def test_a_default_application_installs_no_search_middleware(
+    build_application, monkeypatch
+):
+    """No instance, no tool -- and no middleware for a tool that was never
+    registered. Installing it anyway would be harmless today (the middleware
+    only resets a counter), but it would assert a dependency on a tool this
+    build does not have, which is the shape of bug this whole file exists to
+    catch early.
+    """
+    monkeypatch.delenv("AGENT_SEARXNG_URL", raising=False)
+
+    application = await build_application()
+
+    assert "search_attempts" not in await _middleware_names(application)

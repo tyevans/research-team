@@ -98,7 +98,12 @@ from research_team.infrastructure.agent.knowledge_tools import (
     build_knowledge_tools,
 )
 from research_team.infrastructure.agent.recall import PageMemo, Recall
-from research_team.infrastructure.agent.search import SEARCH_PROMPT, build_search_tool
+from research_team.infrastructure.agent.search import (
+    SEARCH_PROMPT,
+    SearchAttempts,
+    build_search_tool,
+)
+from research_team.infrastructure.agent.search_middleware import SearchAttemptsMiddleware
 from research_team.infrastructure.agent.stage_middleware import (
     StageMiddleware,
     managed_tools_for,
@@ -501,9 +506,27 @@ def build_application(
     tools: tuple[BaseTool, ...] = (build_fetch_tool(recall=recall, pages=pages),)
     prompt_suffix += FETCH_PROMPT
 
+    # `None` when unconfigured, same as the tool itself -- `turn_middleware`
+    # below only installs `SearchAttemptsMiddleware` when this is not `None`,
+    # so a build with no SearXNG instance carries no middleware that resets a
+    # counter for a tool it never registered.
+    search_attempts: SearchAttempts | None = None
     searxng = config.searxng_url()
     if searxng is not None:
-        tools += (build_search_tool(searxng, limit=config.searxng_results(), recall=recall),)
+        # One instance, handed to both the tool and the middleware below --
+        # not two `SearchAttempts()` calls. Two instances would mean the
+        # middleware resets a counter the tool never reads and the tool's own
+        # counter never resets, so an empty streak would silently outlive the
+        # turn that produced it and eventually wedge `web_search` for good.
+        search_attempts = SearchAttempts()
+        tools += (
+            build_search_tool(
+                searxng,
+                limit=config.searxng_results(),
+                recall=recall,
+                attempts=search_attempts,
+            ),
+        )
         prompt_suffix += SEARCH_PROMPT
     else:
         prompt_suffix += NO_SEARCH_CLAUSE
@@ -673,6 +696,17 @@ def build_application(
             # carrying `STAGE_ADVANCED`, so a session with no workflow pays a
             # scan of the trailing tool messages and nothing else.
             EndTurnOnStageAdvance(),
+            # Only when `search_attempts` is not `None` -- the same switch
+            # that decided whether `web_search` was registered at all.
+            # Installing this unconditionally would reset a counter that
+            # exists in every build, including ones with no search tool to
+            # bound, which is harmless today but asserts a dependency this
+            # build does not have.
+            *(
+                (SearchAttemptsMiddleware(search_attempts),)
+                if search_attempts is not None
+                else ()
+            ),
         )
 
         running = await running_workflow(session)

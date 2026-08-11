@@ -236,11 +236,17 @@ class AutoResearchDriver:
                     error_message=str(error),
                 )
             )
-            await self._record_look(topic_id, project_id, run.aggregate_id, summary="failed")
+            await self._record_look(
+                topic_id, project_id, run.aggregate_id, summary="failed", outcome="failed"
+            )
             return None
 
         await self._record_look(
-            topic_id, project_id, run.aggregate_id, summary=_summarize(outcome)
+            topic_id,
+            project_id,
+            run.aggregate_id,
+            summary=_summarize(outcome),
+            outcome="nothing" if outcome.produced_nothing else "produced",
         )
         run.execute(
             CompleteRound(
@@ -253,19 +259,33 @@ class AutoResearchDriver:
         return outcome
 
     async def _record_look(
-        self, topic_id: UUID, project_id: UUID, run_id: UUID, *, summary: str
+        self,
+        topic_id: UUID,
+        project_id: UUID,
+        run_id: UUID,
+        *,
+        summary: str,
+        outcome: str,
     ) -> None:
         """Stamp the topic with how far the corpus had got when it was looked at.
 
         Best-effort: a topic that cannot be stamped must not fail the round,
         because the work the round did is already in the log. It will simply be
         offered again, which is the safe direction to fail in.
+
+        `outcome` is required here though the domain's `RecordInvestigation`
+        and `TopicInvestigated.outcome` are `str | None` -- the driver always
+        knows how its own round ended, so there is no honest `None` to pass at
+        this call site. The nullability on the domain type exists only for
+        payloads written before the field did, not for this caller.
         """
         try:
             position = await self._queue.high_water(project_id)
             topic = await self._topics.load(topic_id)
             topic.execute(
-                RecordInvestigation(at_position=position, summary=summary, by_run_id=run_id)
+                RecordInvestigation(
+                    at_position=position, summary=summary, by_run_id=run_id, outcome=outcome
+                )
             )
             await self._topics.save(topic)
         except Exception as error:  # noqa: BLE001 - see the docstring

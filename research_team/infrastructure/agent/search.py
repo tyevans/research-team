@@ -30,6 +30,65 @@ _MALFORMED_PAYLOAD = (
     "this time."
 )
 
+MAX_EMPTY_SEARCHES = 3
+"""Consecutive `"No results."` answers before `web_search` stops asking.
+
+Not a floor and not a gate -- see `SearchAttempts`. The number is a guess at
+where "still worth trying a different phrasing" turns into "this is not
+findable," and it is cheap to change if the guess is wrong; nothing else
+depends on the exact value.
+"""
+
+
+class SearchAttempts:
+    """How many consecutive searches this turn came back with nothing.
+
+    Deliberately not a permission mechanism: it does not withhold `web_search`
+    from the tool list the way `TOOL_FLOORS` withholds `fetch`, and nothing
+    here touches the autonomy policy. It changes what the tool *returns* past
+    the bound, which the model is free to act on or ignore -- the same shape
+    `fetch`'s `UNREADABLE` notice uses for a page that will never render.
+
+    Only `"No results."` counts. An unreachable instance, a non-JSON payload,
+    or a malformed one is not an absent answer -- it is search failing to
+    happen at all, and counting it would tell the model to record a gap
+    (a claim that the search was tried and nothing was there) it has no
+    evidence for. `build_search_tool` enforces this by comparing the result
+    string, not by catching exceptions here.
+
+    **This instance is process-wide, not per-turn, though the name and every
+    docstring in this class say "this turn."** `build_application` constructs
+    one `SearchAttempts` for the one `web_search` tool the whole process
+    shares (`composition.py`), so two turns running concurrently -- different
+    sessions, or an auto-research run alongside a web turn -- share one
+    counter. One turn's empty searches can bound another's first search, and
+    either turn's boundary reset can clear the other's streak mid-turn. The
+    contract this class states is not true under concurrency.
+
+    Accepted for now because the blast radius is small and nothing durable
+    depends on the count: the failure modes are a spurious in-band notice
+    telling a model to stop searching when it hasn't really exhausted three
+    tries, or a bound that fails to apply when it should. Nothing is corrupted
+    and nothing silently persists the wrong thing -- worth fixing, not worth
+    the larger change of making the tool (and its dependency on a single
+    SearXNG client) rebuildable per turn. See BACKLOG.md.
+    """
+
+    def __init__(self) -> None:
+        self._empty = 0
+
+    def record_empty(self) -> int:
+        """One more consecutive empty result; returns the new count."""
+        self._empty += 1
+        return self._empty
+
+    def reset(self) -> None:
+        """Any non-empty result, or a new turn, clears the streak."""
+        self._empty = 0
+
+    def exhausted(self) -> bool:
+        return self._empty >= MAX_EMPTY_SEARCHES
+
 
 def format_results(payload: object, limit: int) -> str:
     """Flatten a SearXNG payload to title/url/snippet, capped at `limit`.
@@ -75,24 +134,47 @@ def format_recalled(recalled: Recalled, query: str) -> str:
     )
 
 
+def _exhausted_notice(count: int) -> str:
+    """What `web_search` says instead of searching, past the bound.
+
+    Names the count so the number in the notice always matches
+    `MAX_EMPTY_SEARCHES` even if that constant changes, and names
+    `record_gap` explicitly -- the tool the model should reach for is not
+    something it should have to infer from "stop searching."
+    """
+    return (
+        f"web_search has returned no results {count} times in a row this turn. "
+        "Searching again is unlikely to find something the last "
+        f"{count} attempts did not. If you looked and did not find it, call "
+        "`record_gap` to say so rather than searching again."
+    )
+
+
 def build_search_tool(
     base_url: str,
     *,
     limit: int = 5,
     client: httpx.AsyncClient | None = None,
     recall: Recall | None = None,
+    attempts: SearchAttempts | None = None,
 ) -> BaseTool:
     """A `web_search` tool against one SearXNG instance.
 
     `client` is injectable so tests can stub the transport; nothing in the
     suite touches the real network. `recall` is optional so callers that don't
     want the behavior (or Task 6's wiring, before it lands) still get a tool
-    that works.
+    that works. `attempts` is likewise optional -- nothing wires it into the
+    application yet; that is Task 6.
     """
 
     @tool(SEARCH_TOOL)
     async def web_search(query: str) -> str:
         """Search the web. Returns titles, URLs, and short snippets."""
+        if attempts is not None and attempts.exhausted():
+            # Past the bound, the request is never made -- the whole point is
+            # that another search would not help, so there is nothing to gain
+            # by spending the round trip to confirm it.
+            return _exhausted_notice(MAX_EMPTY_SEARCHES)
         if recall is not None:
             # Keyed explicitly rather than through `Recall`'s default, which
             # would key on the bare normalized query and collide with `fetch`'s
@@ -110,6 +192,15 @@ def build_search_tool(
             response.raise_for_status()
             payload = response.json()
             results = format_results(payload, limit)
+            if attempts is not None:
+                # Only the literal "No results." counts as an empty answer --
+                # everything else that reaches this line (a genuine result
+                # set, or the malformed-payload sentinel handled below) is not
+                # evidence that nothing is out there.
+                if results == "No results.":
+                    attempts.record_empty()
+                else:
+                    attempts.reset()
             if recall is not None and results is not _MALFORMED_PAYLOAD:
                 # Only a genuine result set is remembered -- and "No results."
                 # counts as one; it's an answer, not a failure. A 200 with a
@@ -126,9 +217,12 @@ def build_search_tool(
         except ValueError:
             # Not JSON. Overwhelmingly the default-settings case, and worth
             # naming precisely -- the model cannot fix it, but the person
-            # reading the log can.
+            # reading the log can. Not counted: the instance never answered
+            # the question, so this is not evidence of an absent result.
             return _JSON_DISABLED
         except httpx.HTTPError as error:
+            # Unreachable, not empty -- an outage is not the model having
+            # looked and found nothing, and must not be counted as if it were.
             return f"Could not reach the search instance: {error}"
         finally:
             if owned:

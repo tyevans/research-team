@@ -33,7 +33,6 @@ from eventsource import (
     create_async_engine,
     handles,
 )
-from eventsource.adapters.sql.readmodel_schema import generate_full_schema
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
@@ -58,6 +57,7 @@ from research_team.domain.topic import (
     TopicContestResolved,
     TopicEntityLinked,
     TopicFindingRecorded,
+    TopicGapRecorded,
     TopicInvestigated,
     TopicOpened,
     TopicSourceLinked,
@@ -68,7 +68,10 @@ from research_team.domain.topic import (
     TopicSubQuestionResolved,
     TopicTriggerAcknowledged,
 )
-from research_team.infrastructure.persistence.read_models import LOCAL_RETRY_POLICY
+from research_team.infrastructure.persistence.read_models import (
+    LOCAL_RETRY_POLICY,
+    apply_schema,
+)
 
 TOPIC_NAMESPACE = UUID("2b7c1f4a-9d3e-5a71-8c62-4e0b9f1d7a35")
 """Namespace for deriving a corpus-facts row id. See `CORPUS_NAMESPACE`.
@@ -104,6 +107,7 @@ class TopicRow(ReadModel):
     acknowledgements: dict = Field(default_factory=dict)
     investigations: int = 0
     findings: int = 0
+    gaps: int = 0
     last_investigated_at: str | None = None
     findings_at_last_investigation: int = 0
 
@@ -156,6 +160,7 @@ class TopicRow(ReadModel):
             },
             investigations=self.investigations,
             findings=self.findings,
+            gaps=self.gaps,
             last_investigated_at=self.last_investigated_at,
             findings_at_last_investigation=self.findings_at_last_investigation,
         )
@@ -294,6 +299,12 @@ class TopicProjection(DeclarativeProjection):
         row.findings += 1
         await self._rows.save(row)
 
+    @handles(TopicGapRecorded)
+    async def _on_gap(self, event: TopicGapRecorded) -> None:
+        row = await self._require(event.aggregate_id)
+        row.gaps += 1
+        await self._rows.save(row)
+
     @handles(TopicContested)
     async def _on_contested(self, event: TopicContested) -> None:
         row = await self._require(event.aggregate_id)
@@ -416,8 +427,14 @@ class TopicStore:
         cls, db_path: str, checkpoint_repo=None, dlq_repo=None, tracer=None, retry_policy=None
     ) -> "TopicStore":
         connection = await aiosqlite.connect(db_path)
-        await connection.executescript(generate_full_schema(TopicRow, dialect="sqlite"))
-        await connection.executescript(generate_full_schema(CorpusFactsRow, dialect="sqlite"))
+        # `apply_schema`, not a bare `executescript` -- `CREATE TABLE IF NOT
+        # EXISTS` does nothing to a table that already exists, so a field
+        # added to either row type would be silently missing from every
+        # database opened before the change. See its docstring for the
+        # `SessionSummaryRow` incident that made this the required path for a
+        # read model's DDL.
+        await apply_schema(connection, TopicRow)
+        await apply_schema(connection, CorpusFactsRow)
         # Every read here is by project, and the generated schema indexes only
         # `deleted_at`.
         for model in (TopicRow, CorpusFactsRow):

@@ -595,6 +595,31 @@ the status that exists for "another topic now covers this ground". That loses
 the findings attached to the originals, which is why it is an interim and not
 the answer.
 
+### B41. One `SearchAttempts` is shared by every concurrent turn
+
+`build_application` constructs a single `SearchAttempts` for the one
+`web_search` tool instance, and the tool tuple is process-wide
+(`composition.py`). Two turns running concurrently -- different sessions, or
+an auto-research run alongside a web turn -- share one counter: session A's
+three empty searches can bound session B's first search, and B's turn-boundary
+reset can clear A's streak mid-turn. `SearchAttempts`' whole contract is "this
+turn" (`search.py`), and that is not true once more than one turn is live.
+
+Not fixed here because scoping it properly is a larger change than the bug
+warrants: the tool would need to be rebuilt per turn rather than shared, which
+means threading a fresh `SearchAttempts` (and whatever holds the SearXNG
+client) through wherever turns are dispatched, not just adding a lock around
+the counter -- a lock would serialise unrelated turns' searches against each
+other, trading a rare wrong count for a real latency cost on every turn.
+
+Accepted for now because the blast radius is small: a spurious in-band notice
+telling a model to stop searching before it has really tried three times, or a
+bound that fails to fire when it should. Nothing durable depends on the count
+and nothing is corrupted by it being wrong. Worth fixing properly once turns
+run concurrently often enough for the wrong-bound case to actually bite --
+today, a single-user REPL and mostly-sequential web sessions rarely overlap
+two live turns at all.
+
 ## Interactive components
 
 What v1 of the markdown component system knowingly left out. The design is in
@@ -751,6 +776,56 @@ is correct" but "what were the two of them each assuming".
 
 Wants a first-class contradiction record with a "both true in different
 contexts" resolution state, and an escalation rather than an auto-resolve.
+
+Note B40 before designing that record as a graph node: consolidation would be
+just as likely to eat it.
+
+### B40. A node that is not a claim cannot safely live in the graph
+
+Established while designing `record_gap`
+(`docs/superpowers/specs/2026-08-10-representable-absence-design.md`), which
+started as an "open question" entity type and became a topic event instead.
+Recorded because the reasoning is not visible from the code, and the next
+person to want a question node, a contradiction record (B15) or an assumption
+node will reach for the same design.
+
+**Consolidation would eat it, and the loss would be silent.** A node named for
+the entity it concerns blocks with that entity on both the `p:` prefix key and
+the `s:` soundex key (`redstring/domain/blocking.py:115-124`), scores name
+similarity 1.0, and lands in the middle band, so it reaches the adjudicator.
+The adjudicator is shown only the *subject's* `entity_type`
+(`redstring/consolidation/policy.py:188-196`) and asked whether two mentions
+"refer to the same real-world thing". `entity_type` is neither a scoring
+feature nor a filter (`redstring/consolidation/candidates.py:126-153`), and
+there is no per-entity opt-out anywhere on `Entity` or `CandidateFinder`. A
+merged-away node then disappears from the browser
+(`infrastructure/knowledge/graph_reader.py:54-84`), so the node does not show
+as a duplicate — it vanishes.
+
+**It would have to masquerade as an extraction.** `DocumentExtracted`'s
+validator requires every entity's `source_id` to equal the event's
+(`redstring/events/document.py:118-124`), so a node with no document behind it
+needs a synthetic document identity.
+
+**The browser could not show its state.** Entity types are distinguished only
+by a hashed colour (`frontend/src/presentation/research/entity-colors.ts:21-48`);
+there is no shape, border, or node-state notion. Open-versus-answered would be
+new surface across `GraphEntity`, `GraphReadPort`, the presenter and the
+canvas.
+
+What is *not* a barrier, and is worth knowing: `entity_type` is an unvalidated
+free string end to end, domain schemas prompt but do not constrain (ADR 0011),
+`ExtractionMethod.MANUAL` already exists, and
+`Document.record_extraction(entities=...)` accepts caller-supplied entities and
+asks no model — so a non-extraction write path is reachable today without a
+redstring change. The obstacle is consolidation and rendering, not the write.
+
+If this is picked up, the redstring-side asks are: a deterministic public id
+helper (`entity_id_for` is behind a dotted path and therefore internal), an
+`EntityAsserted`-shaped event with a `GraphProjection` handler so a node need
+not be attributed to a document, and a per-entity consolidation opt-out. Note
+`rebuild.py` replays `strict=True` with one projection, so a new event type
+without a handler fails project open rather than degrading.
 
 ### B16. Bulk ingest reports no progress
 

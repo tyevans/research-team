@@ -18,6 +18,7 @@ from uuid import UUID
 LIST_TOPICS_TOOL = "list_topics"
 OPEN_TOPIC_TOOL = "open_topic"
 RECORD_FINDING_TOOL = "record_finding"
+RECORD_GAP_TOOL = "record_gap"
 LINK_SOURCE_TOOL = "link_source"
 
 MAX_OPEN_TOPICS = 50
@@ -111,6 +112,17 @@ class TopicPort(Protocol):
         self, topic_id: UUID, summary: str, source_ids: list[str]
     ) -> None: ...
 
+    async def record_gap(self, topic_id: UUID, looking_for: str, tried: list[str]) -> None:
+        """Record a search that came back empty.
+
+        Must not change `TopicStatus` and must not emit `TopicTriggerAcknowledged`.
+        A gap is a record of absence, not a verdict -- the only thing an agent may
+        conclude from having looked and found nothing is that it looked and found
+        nothing. Closing the topic or silencing the trigger that raised it would be
+        `close_topic` arriving by a side door, which is the ending this whole
+        design exists to prevent (see the class docstring above)."""
+        ...
+
     async def link_source(self, topic_id: UUID, source_id: str, note: str = "") -> None: ...
 
 
@@ -159,5 +171,11 @@ TOPICS_PROMPT = (
     "one when you find a question worth answering that nothing is tracking yet. "
     "Do not open topics to look busy: an unanswered question you invented is "
     "worse than none, because it makes the queue longer without making the "
-    "project better understood.\n\n" + SELF_CONTAINED_QUESTION
+    "project better understood.\n\n"
+    "`record_gap` is for when you looked and found nothing: say what an answer "
+    "would have looked like and what you actually tried. A gap is not a way to "
+    "close a question -- the topic stays open and stays in the queue. What a "
+    "gap does is stop the next session repeating your searches. Recording "
+    "nothing when you found nothing is the thing that costs later work.\n\n"
+    + SELF_CONTAINED_QUESTION
 )

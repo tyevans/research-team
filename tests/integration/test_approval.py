@@ -64,14 +64,17 @@ def searches(monkeypatch) -> Searches:
     recorder = Searches()
     monkeypatch.setenv("AGENT_SEARXNG_URL", "http://searx.local")
 
-    def build(base_url: str, *, limit: int = 5, client=None, recall=None):
+    def build(base_url: str, *, limit: int = 5, client=None, recall=None, attempts=None):
         # Mirrors `build_search_tool`'s signature rather than taking `**kwargs`,
-        # and forwards `recall` rather than dropping it: a stub that silently
-        # ignores an argument the real builder honours stops testing the thing
-        # it stands in for, and the divergence surfaces as a passing suite over
-        # code that behaves differently in production.
+        # and forwards `recall` and `attempts` rather than dropping them: a
+        # stub that silently ignores an argument the real builder honours
+        # stops testing the thing it stands in for, and the divergence
+        # surfaces as a passing suite over code that behaves differently in
+        # production. `attempts` is the object Task 6 wires the composition
+        # root's own `SearchAttempts` through -- dropping it here would still
+        # exercise the middleware but never the counter it resets.
         return build_search_tool(
-            base_url, limit=limit, client=recorder.client(), recall=recall
+            base_url, limit=limit, client=recorder.client(), recall=recall, attempts=attempts
         )
 
     monkeypatch.setattr(composition, "build_search_tool", build)

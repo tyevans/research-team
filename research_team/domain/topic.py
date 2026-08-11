@@ -147,6 +147,26 @@ class TopicInvestigated(DomainEvent):
 
     summary: str = ""
     by_run_id: UUID | None = None
+    outcome: str | None = None
+    """How the round ended: "produced", "nothing", or "failed".
+
+    `None` means the round predates this field, and is deliberately not one of
+    the three. Defaulting to "produced" would quietly stop `_rework_thrash`
+    counting historic fruitless rounds; defaulting to "nothing" would claim
+    every past round found nothing. Neither is a thing anybody observed.
+
+    `summary` stays free text for a person to read. This is the part something
+    can branch on -- and what nothing branches on today is exactly why a
+    crashed round and a fruitless one were indistinguishable.
+
+    Nothing reads this field yet -- a reader who greps for a consumer finds
+    none, and has no defence against deleting it on that evidence alone. It is
+    written anyway because the distinction it records is only capturable at
+    the instant a round ends: a log that did not capture it then can never be
+    back-filled later. Writing it now costs one nullable field and keeps a
+    future consumer possible; not writing it makes the distinction gone for
+    good for every round between now and whenever one is built.
+    """
 
 
 @register_event
@@ -161,6 +181,29 @@ class TopicFindingRecorded(DomainEvent):
     aggregate_type: str = "Topic"
     summary: str
     source_ids: list[str] = Field(default_factory=list)
+
+
+@register_event
+class TopicGapRecorded(DomainEvent):
+    """Something was looked for and not found. The unit of ruled-out effort.
+
+    The twin of `TopicFindingRecorded`, and recorded for the same reason: a
+    round that produced nothing otherwise leaves only free text, so every later
+    run re-derives the same absence from nothing.
+
+    `tried` is what the agent says it attempted, not what the search instance
+    was asked -- `format_results` flattens the payload to text at receipt and
+    nothing downstream can map a snippet back to its query. It is a claim,
+    useful because it tells the next reader what not to repeat, and it should
+    not be read as a record of requests actually made.
+
+    Recording a gap does not change status and does not silence anything. It is
+    evidence a person decides from.
+    """
+
+    aggregate_type: str = "Topic"
+    looking_for: str
+    tried: list[str] = Field(default_factory=list)
 
 
 @register_event
@@ -259,12 +302,19 @@ class RecordInvestigation:
     at_position: str
     summary: str = ""
     by_run_id: UUID | None = None
+    outcome: str | None = None
 
 
 @dataclass(frozen=True)
 class RecordFinding:
     summary: str
     source_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RecordGap:
+    looking_for: str
+    tried: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -303,6 +353,7 @@ TopicCommand = (
     | LinkEntity
     | RecordInvestigation
     | RecordFinding
+    | RecordGap
     | RecordContest
     | ResolveContest
     | SetTopicStatus
@@ -364,6 +415,13 @@ class TopicState(BaseModel):
     acknowledgements: dict[str, Acknowledgement] = Field(default_factory=dict)
     investigations: int = 0
     findings: int = 0
+    gaps: int = 0
+    """Looks that were written down as having found nothing.
+
+    A count, like `findings`, and not a reason to stop: a topic with twenty
+    gaps stays live and stays in the queue. Every response to that is a
+    person's."""
+
     last_investigated_at: str | None = None
     """The `at_position` of the most recent look. None means never looked."""
 
@@ -472,12 +530,21 @@ def decide(command: TopicCommand, state: TopicState) -> list[DomainEvent]:
                 return []
             return [TopicEntityLinked(aggregate_id=topic_id, entity_id=entity_id, name=name)]
 
-        case RecordInvestigation(at_position=at, summary=summary, by_run_id=run_id), _:
+        case (
+            RecordInvestigation(
+                at_position=at, summary=summary, by_run_id=run_id, outcome=outcome
+            ),
+            _,
+        ):
             if not at.strip():
                 raise CommandRejectedError("an investigation must say where the log stood")
             return [
                 TopicInvestigated(
-                    aggregate_id=topic_id, at_position=at, summary=summary, by_run_id=run_id
+                    aggregate_id=topic_id,
+                    at_position=at,
+                    summary=summary,
+                    by_run_id=run_id,
+                    outcome=outcome,
                 )
             ]
 
@@ -487,6 +554,20 @@ def decide(command: TopicCommand, state: TopicState) -> list[DomainEvent]:
             return [
                 TopicFindingRecorded(
                     aggregate_id=topic_id, summary=summary, source_ids=list(source_ids)
+                )
+            ]
+
+        case RecordGap(looking_for=looking_for, tried=tried), _:
+            if not looking_for.strip():
+                raise CommandRejectedError("a gap needs to say what was looked for")
+            if not [item for item in tried if item.strip()]:
+                # Both required, for `TopicOpened`'s reason. A gap with nothing
+                # tried says only "we do not know", which the topic already
+                # said by being open.
+                raise CommandRejectedError("a gap needs to say what was tried")
+            return [
+                TopicGapRecorded(
+                    aggregate_id=topic_id, looking_for=looking_for, tried=list(tried)
                 )
             ]
 
@@ -630,6 +711,11 @@ def evolve(state: TopicState, event: DomainEvent) -> TopicState:
 
         case TopicFindingRecorded():
             return state.model_copy(update={"findings": state.findings + 1})
+
+        case TopicGapRecorded():
+            # Counts, and nothing else. Deliberately does not touch status:
+            # see the event's docstring.
+            return state.model_copy(update={"gaps": state.gaps + 1})
 
         case TopicContested(key=key, nature=nature, source_ids=source_ids):
             return state.model_copy(
