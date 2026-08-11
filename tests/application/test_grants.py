@@ -47,6 +47,18 @@ class TestCovers:
         grant = _grant(hosts=frozenset({"Example.COM"}))
         assert grant.covers("https://example.com/page") is True
 
+    def test_stray_whitespace_in_a_stored_host_does_not_match(self) -> None:
+        """Pins the no-strip decision: whitespace is not silently forgiven.
+
+        `hosts` is lowercased but not trimmed. A host with leading or
+        trailing space is not a value this class should guess the meaning
+        of -- forgiving it here means guessing which host was actually
+        meant, so a stray space is treated as a different host and simply
+        does not match.
+        """
+        grant = _grant(hosts=frozenset({" example.com"}))
+        assert grant.covers("https://example.com/page") is False
+
     def test_userinfo_in_url_is_handled(self) -> None:
         grant = _grant()
         assert grant.covers("https://user:pass@example.com/page") is True
