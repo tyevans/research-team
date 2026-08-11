@@ -24,6 +24,7 @@ from trafilatura.metadata import extract_metadata
 
 from research_team.application.autonomy import FETCH_TOOL
 from research_team.application.corpus_read import CorpusReadError, CorpusReadPort
+from research_team.application.grants import FetchGrant
 from research_team.infrastructure.agent.corpus_tools import bounded, format_document
 from research_team.infrastructure.agent.recall import (
     PageMemo,
@@ -199,6 +200,7 @@ def build_fetch_tool(
     recall: Recall | None = None,
     corpus: CorpusReadPort | None = None,
     pages: PageMemo | None = None,
+    grant: FetchGrant | None = None,
 ) -> BaseTool:
     """A `fetch` tool for reading one web page.
 
@@ -207,6 +209,37 @@ def build_fetch_tool(
     (rather than the `max_chars` excerpt the model is shown) so a later
     `remember_page` can store more of a page than the model ever had to
     retype.
+
+    `grant` is the pre-authorization an unattended run was given (see
+    `application/grants.py`). It changes two things, both load-bearing:
+
+    - The owned client stops following redirects. `covers()` authorizes a
+      host, not a redirect chain a server can point anywhere -- without this,
+      an allowlisted URL that answers `302 Location: https://anywhere` would
+      be fetched from a host nobody granted, and the allowlist would be
+      decorative. A declined redirect is reported in band with the location
+      it named, so the model can fetch that URL itself if its host is also
+      granted -- one more call, one more check, one more decrement.
+    - A request that leaves the process spends one from the grant, right
+      after the response is confirmed not to be an error. A corpus hit and a
+      memo hit never reach this far, so neither spends; an httpx error or an
+      HTTP error status is not a use of the budget either, because nothing
+      was learned that a retry couldn't also fail to learn -- only a
+      response that actually came back counts.
+
+    A grant with no budget left should not reach this tool at all -- the
+    approval gate (a different task) refuses a call the grant no longer
+    covers before it gets here. But "the gate should have refused" is not a
+    guarantee this function can lean on, so a spent grant is checked again
+    here and refused in band, before any request is made. Attempting the
+    request anyway was rejected: it would silently spend a budget already at
+    zero (going negative, or requiring a second special case to clamp it),
+    and it would make a network call on an authorization that has already run
+    out -- exactly what the grant exists to prevent. Refusing here costs
+    nothing extra when the gate did its job, and is the honest answer when it
+    didn't. Cache lookups (corpus, memo) still work on a spent grant -- only
+    the network request they exist to avoid is refused, because reading
+    something already known was never what the budget bounded.
     """
 
     @tool(FETCH_TOOL)
@@ -237,13 +270,50 @@ def build_fetch_tool(
                         f"this process, not a fresh read. Pass refresh=True if the "
                         f"page is expected to have changed since.]\n\n{remembered.text}"
                     )
+        if grant is not None and grant.spent:
+            # See the docstring: the gate should have refused this call
+            # before it reached the tool, but "should have" is not a
+            # guarantee this function gets to assume. Refused here, before
+            # any request, rather than attempted and left to spend a budget
+            # already at zero.
+            return (
+                "This run's fetch budget is exhausted -- no further pages can "
+                "be fetched over the network this run. Pages already in the "
+                "corpus or read earlier this process are still available."
+            )
         owned = client is None
         http = client or httpx.AsyncClient(
-            timeout=TIMEOUT, follow_redirects=True, headers=_HEADERS
+            timeout=TIMEOUT,
+            follow_redirects=grant is None,
+            headers=_HEADERS,
         )
         try:
             response = await http.get(url, headers=_HEADERS)
+            if response.is_redirect:
+                # Checked before `raise_for_status()`: with redirects off, a
+                # 3xx with a Location is exactly what `raise_for_status`
+                # treats as an error (`HTTPStatusError` naming the location
+                # itself), which would fall into the "error, don't spend"
+                # branch below -- wrong, because the GET still left the
+                # process and got an answer. Spent and reported here instead,
+                # before that branch ever sees it.
+                if grant is not None:
+                    grant.spend()
+                location = response.headers.get("location", "(no Location header)")
+                return (
+                    f"That URL redirected to {location}, which was not followed -- "
+                    "a granted fetch does not follow redirects, because the "
+                    "grant authorizes the hosts named, not wherever they point. "
+                    "Fetch that URL directly if its host is also granted."
+                )
             response.raise_for_status()
+            if grant is not None:
+                # Spent here, not at `http.get()`: an HTTPStatusError is
+                # raised by `raise_for_status()`, one line above, and an
+                # error is not a use of the budget (see the docstring). A
+                # request that gets this far actually left the process and
+                # came back with a usable response.
+                grant.spend()
             content_type = response.headers.get("content-type", "")
             media_type = content_type.split(";")[0].strip().lower()
             if media_type and "html" not in media_type and "xml" not in media_type:

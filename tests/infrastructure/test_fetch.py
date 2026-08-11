@@ -7,13 +7,17 @@ a tool that raises costs the whole turn, and the model can do nothing useful
 with a traceback.
 """
 
+from uuid import uuid4
+
 import httpx
 import pytest
 
 from research_team.application import AutonomyPolicy
 from research_team.application.autonomy import FETCH_TOOL, GATED_TOOLS
 from research_team.application.corpus_read import CorpusReadError, StoredDocument
+from research_team.application.grants import FetchGrant
 from research_team.domain import DocumentRecord
+from research_team.infrastructure.agent import fetch as fetch_module
 from research_team.infrastructure.agent.fetch import (
     UNREADABLE,
     build_fetch_tool,
@@ -204,6 +208,162 @@ async def test_the_response_body_is_capped_before_extraction():
     )
     text = await fetch.ainvoke({"url": "https://ex.example/huge"})
     assert "truncated" in text.lower()
+
+
+# ---- grants ----
+
+
+def _grant(budget: int = 3, hosts: frozenset[str] | None = None) -> FetchGrant:
+    return FetchGrant(run_id=uuid4(), hosts=hosts or frozenset({"ex.example"}), budget=budget)
+
+
+def _redirect_response(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(302, headers={"location": "https://elsewhere.example/target"})
+
+
+@pytest.mark.asyncio
+async def test_under_a_grant_a_redirect_is_not_followed_and_names_the_location():
+    """The security point of this task: a granted host that answers 302 to an
+    ungranted one must not be silently followed, or the allowlist is
+    decorative. The client here has no explicit `follow_redirects`, so this
+    also pins that a 3xx reaching `fetch` is reported rather than treated as
+    a page.
+    """
+    fetch = build_fetch_tool(client=_client(_redirect_response), grant=_grant())
+    text = await fetch.ainvoke({"url": "https://ex.example/a"})
+    assert "https://elsewhere.example/target" in text
+    assert "not follow" in text.lower() or "did not follow" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_without_a_grant_the_owned_client_still_follows_redirects(monkeypatch):
+    """Ungranted `fetch` builds its own client exactly as it did before this
+    task -- `follow_redirects=True`. Captured via a spy on `httpx.AsyncClient`
+    because a client injected by a test (as everywhere else in this file)
+    bypasses the construction this test exists to check.
+    """
+    captured: dict = {}
+    real_async_client = httpx.AsyncClient
+
+    def spy(*args, **kwargs):
+        captured.update(kwargs)
+        kwargs["transport"] = httpx.MockTransport(_html_response)
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(fetch_module.httpx, "AsyncClient", spy)
+    fetch = build_fetch_tool()
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+    assert captured["follow_redirects"] is True
+
+
+@pytest.mark.asyncio
+async def test_under_a_grant_the_owned_client_does_not_follow_redirects(monkeypatch):
+    captured: dict = {}
+    real_async_client = httpx.AsyncClient
+
+    def spy(*args, **kwargs):
+        captured.update(kwargs)
+        kwargs["transport"] = httpx.MockTransport(_html_response)
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(fetch_module.httpx, "AsyncClient", spy)
+    fetch = build_fetch_tool(grant=_grant())
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+    assert captured["follow_redirects"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_successful_network_read_spends_one():
+    grant = _grant(budget=3)
+    fetch = build_fetch_tool(client=_client(_html_response), grant=grant)
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+    assert grant.remaining == 2
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_spends_one_too():
+    """A redirect is a request that left the process -- httpx sent the GET
+    and got a response back, same as any other. Not spending it would let a
+    grant be probed for free by chasing declined redirects.
+    """
+    grant = _grant(budget=3)
+    fetch = build_fetch_tool(client=_client(_redirect_response), grant=grant)
+    await fetch.ainvoke({"url": "https://ex.example/a"})
+    assert grant.remaining == 2
+
+
+@pytest.mark.asyncio
+async def test_a_corpus_hit_does_not_spend():
+    grant = _grant(budget=3)
+    corpus = _StubCorpus([_stored("s1", "https://ex.example/sev")])
+    fetch = build_fetch_tool(client=_client(_html_response), corpus=corpus, grant=grant)
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+    assert grant.remaining == 3
+
+
+@pytest.mark.asyncio
+async def test_a_memo_hit_does_not_spend():
+    grant = _grant(budget=3)
+    recall = Recall()
+    fetch = build_fetch_tool(client=_client(_html_response), recall=recall, grant=grant)
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+    assert grant.remaining == 2
+    await fetch.ainvoke({"url": "https://ex.example/sev"})
+    assert grant.remaining == 2
+
+
+@pytest.mark.asyncio
+async def test_an_error_does_not_spend():
+    grant = _grant(budget=3)
+    fetch = build_fetch_tool(client=_failing_client(), grant=grant)
+    await fetch.ainvoke({"url": "https://ex.example/a"})
+    assert grant.remaining == 3
+
+
+@pytest.mark.asyncio
+async def test_an_http_status_error_does_not_spend():
+    grant = _grant(budget=3)
+    fetch = build_fetch_tool(client=_client(lambda r: httpx.Response(404)), grant=grant)
+    await fetch.ainvoke({"url": "https://ex.example/gone"})
+    assert grant.remaining == 3
+
+
+@pytest.mark.asyncio
+async def test_a_spent_grant_refuses_in_band_rather_than_attempting_the_request():
+    """Not reachable through the gate (Task 3 refuses first), but "not
+    reachable" is not "cannot happen" -- an in-band refusal is chosen over
+    attempting the request because it is honest about why nothing came back,
+    rather than quietly making a network call the grant no longer covers.
+    """
+    calls: list[int] = []
+    grant = _grant(budget=1)
+    grant.spend()
+    assert grant.spent
+    fetch = build_fetch_tool(client=_client(_counting(calls)), grant=grant)
+    text = await fetch.ainvoke({"url": "https://ex.example/a"})
+    assert calls == []
+    assert "budget" in text.lower() or "exhausted" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_a_spent_grant_still_answers_from_the_corpus():
+    """The budget bounds requests that leave the process; a cache hit is not
+    one, so it should not be refused merely because the network budget ran
+    out.
+    """
+    grant = _grant(budget=1)
+    grant.spend()
+    corpus = _StubCorpus([_stored("s1", "https://ex.example/sev")])
+    fetch = build_fetch_tool(client=_client(_html_response), corpus=corpus, grant=grant)
+    text = await fetch.ainvoke({"url": "https://ex.example/sev"})
+    assert "stored prose" in text
+
+
+@pytest.mark.asyncio
+async def test_without_a_grant_nothing_spends_and_behaviour_is_unchanged():
+    fetch = build_fetch_tool(client=_client(_html_response))
+    text = await fetch.ainvoke({"url": "https://ex.example/sev"})
+    assert "revenue critical path" in text
 
 
 # ---- autonomy ----
