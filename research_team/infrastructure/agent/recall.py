@@ -34,6 +34,7 @@ import unicodedata
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from urllib.parse import urlsplit, urlunsplit
 
 CAPACITY = 128
@@ -198,5 +199,111 @@ class Recall:
         resolved = key if key is not None else normalize_query(request)
         self._entries[resolved] = (request, text, self._clock())
         self._entries.move_to_end(resolved)
+        while len(self._entries) > self._capacity:
+            self._entries.popitem(last=False)
+
+
+def _utc_now() -> str:
+    """The wall-clock moment a page was read, as text.
+
+    Text rather than a `datetime` because that is what it becomes:
+    `SourceDocumentStored.fetched_at` is a `str | None`, matching
+    `published_at`, which is text because sources report dates in whatever
+    shape they please. Converting here and back would buy nothing.
+    """
+    return datetime.now(UTC).isoformat()
+
+
+@dataclass(frozen=True)
+class RetainedPage:
+    """One page as `fetch` read it, kept for `remember_page`.
+
+    Distinct from `Recalled` in the two ways that matter. `text` is the whole
+    extraction rather than the excerpt the model was shown, so the corpus is
+    capped by its own limit rather than by the context budget. And the
+    provenance is fields, not a citation header to be parsed back out -- a page
+    whose own prose opens with something header-shaped would otherwise be
+    stored under whatever that text claimed.
+    """
+
+    text: str
+    uri: str
+    title: str | None
+    published_at: str | None
+    fetched_at: str
+
+
+class PageMemo:
+    """What `fetch` retained, by URL, for as long as the process lives.
+
+    Separate from `Recall` rather than an extension of it. `Recall` is shared
+    with `web_search`, whose entries are flattened result blocks with no `uri`,
+    no title and no fetch time; widening it would put four permanently-absent
+    fields on every search entry. The cost of the split is this class's
+    eviction logic, which is `Recall`'s again -- paid to keep one store with
+    one value type serving two tools.
+
+    Process-wide and shared across projects, under `Recall`'s invariant and for
+    its reason: this holds only responses from public URLs, which are the same
+    bytes whoever asked. **Nothing project-scoped may ever go in it** -- a
+    project-derived value here would turn a shared cache into a cross-project
+    read.
+
+    Not persistent. A durable record of every page ever fetched would make
+    fetching permanent, which `remember`'s own prompt says it is not. Retaining
+    more text in an ephemeral store is not that; retaining it across restarts
+    would be.
+    """
+
+    def __init__(
+        self,
+        *,
+        capacity: int = CAPACITY,
+        ttl_seconds: float = TTL_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+        stamp: Callable[[], str] = _utc_now,
+    ) -> None:
+        self._capacity = capacity
+        self._ttl = ttl_seconds
+        self._clock = clock
+        self._stamp = stamp
+        self._entries: OrderedDict[str, tuple[RetainedPage, float]] = OrderedDict()
+
+    def get(self, url: str) -> RetainedPage | None:
+        """The page retained for `url`, or None if it was never read here,
+        has expired, or was evicted. All three are ordinary."""
+        key = url_key(url)
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        page, stored_at = entry
+        if self._clock() - stored_at > self._ttl:
+            del self._entries[key]
+            return None
+        self._entries.move_to_end(key)
+        return page
+
+    def put(
+        self,
+        url: str,
+        *,
+        text: str,
+        uri: str,
+        title: str | None = None,
+        published_at: str | None = None,
+    ) -> None:
+        """Retain `url`'s full text and provenance, evicting the coldest if full."""
+        key = url_key(url)
+        self._entries[key] = (
+            RetainedPage(
+                text=text,
+                uri=uri,
+                title=title,
+                published_at=published_at,
+                fetched_at=self._stamp(),
+            ),
+            self._clock(),
+        )
+        self._entries.move_to_end(key)
         while len(self._entries) > self._capacity:
             self._entries.popitem(last=False)

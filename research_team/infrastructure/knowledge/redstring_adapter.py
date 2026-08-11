@@ -532,6 +532,7 @@ class RedstringKnowledge:
                     title=source.title,
                     published_at=source.published_at,
                     note=source.note,
+                    fetched_at=source.fetched_at,
                 )
             )
             await self._corpus.save(corpus)
