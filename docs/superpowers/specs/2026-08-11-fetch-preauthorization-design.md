@@ -220,13 +220,54 @@ allowlist would be a standing grant to every run on the instance, which is the
 unscoped elevation this spec exists to replace, arriving through the config file
 instead of the policy. Every grant is named by a person, per run.
 
+## 7. An approval nobody can answer is refused, not awaited
+
+A grant makes the *expected* fetch not reach the gate. It does nothing for the
+unexpected one, and today that hangs: `WebApprovals.decide` parks on a future
+with no timeout (`interfaces/web/approvals.py:83`), the round never returns, and
+the cancel flag is read only between rounds
+(`application/auto_research.py:191-192`) — so the run cannot be cancelled and
+`stop_all` hangs awaiting it (`research_supervisor.py:220-236`). One stray tool
+call wedges the process.
+
+**The registry already knows which sessions have nobody at the keyboard.** A
+session registered to a run is, by construction, unattended: the run drives it,
+and no browser is expected to answer for it. So an approval raised on a
+registered session waits a bounded time and is then refused.
+
+Refused, specifically — the same outcome the no-approvals-port build already
+produces (`deep_agent.py:481-490`), recorded the same way, with
+`decided_by="policy"` and a message saying the wait expired. The turn continues
+with a rejection the model can read, which is the behaviour that path is already
+built for.
+
+**A human's session is untouched.** An approval on an unregistered session waits
+forever, as it does today. Someone at a keyboard may be at lunch, and a timeout
+that refused their fetch because they took four minutes would be a worse
+failure than the one being fixed.
+
+**Rejected — a timeout on every approval.** It would need a number that is
+simultaneously long enough for a person and short enough for a loop, which does
+not exist. The distinction is not duration, it is whether anyone is listening.
+
+**Rejected — making cancel interrupt a turn.** `ResearchSupervisor.cancel` sets
+a flag rather than cancelling the task deliberately, so the stop event gets
+written (`research_supervisor.py:183-188`). Making cancellation preemptive is a
+real change to that guarantee and is not this spec's business — and with this
+section in place, the hang it would rescue no longer happens.
+
+This does not make cancellation preemptive. A run in a long turn still finishes
+that turn before the flag is read. What changes is that "long" is now bounded by
+something other than a person's attention.
+
 ## What this does not do
 
-**Nothing about the approval deadlock itself.** A run whose model calls `fetch`
-outside its grant still parks on `WebApprovals` forever, and still cannot be
-cancelled because the flag is read between rounds. This spec makes the common
-case not reach the gate; it does not fix the gate. That is a real bug, it is
-now written down, and it belongs to whoever fixes cancellation.
+**Cancellation is still not preemptive.** §7 bounds how long a turn can wait on
+an approval nobody will answer; it does not let a cancel reach into a running
+turn. The flag is still read between rounds, deliberately
+(`research_supervisor.py:183-188`), so a run cancelled mid-turn still finishes
+that turn. What changes is that "mid-turn" is now bounded by a timeout rather
+than by a person's attention.
 
 **No enforcement of `read_only`.** It stays a recorded claim. Making it a
 control is a separate change and would collide with this one.
@@ -269,3 +310,11 @@ documents, which is where it was already visible.
   the route, naming the missing half.
 - The registry entry is gone after the run stops.
 - A grant belonging to one session does not cover a fetch from another session.
+- An approval on a session registered to a run is refused after the bounded
+  wait, recorded with `decided_by="policy"`, and the turn continues.
+- An approval on an unregistered session is **not** bounded — it waits, as
+  today. A test that fails if a timeout is ever applied to a human's session.
+- A run whose registry entry is gone (it stopped) no longer has its approvals
+  bounded, because it should no longer be taking turns at all.
+- The bounded wait is long enough that a fetch answered promptly by a browser
+  still succeeds — the timeout is not so tight that it races normal operation.
