@@ -508,6 +508,36 @@ async def test_without_a_registry_a_run_behaves_exactly_as_before(runs):
     assert report.reason == "queue_empty"
 
 
+class _ExplodingQueue:
+    """Raises on the first `evaluate`, after the queue has been asked once
+    for the pending count `exhausted()` reads (there is none) -- so `run()`
+    reaches its own body and then dies mid-round, never reaching `_stop`."""
+
+    async def evaluate(self, project_id):
+        raise RuntimeError("the queue projection is down")
+
+
+async def test_a_crash_mid_run_still_releases_the_grant(runs):
+    """The gap a whole-branch review found: release lived only in `_stop`,
+    and `run()` had no `try`/`finally` -- so an exception escaping the loop
+    (from `self._queue.evaluate`, from `self._runs.save`, or a
+    `CancelledError`) left the grant, and the `is_unattended` flag Task 6's
+    bounded wait depends on, alive in the registry for the rest of the
+    process's life. This is that path, forced with a queue that raises.
+    """
+    grants = GrantRegistry()
+    session_id = uuid4()
+    driver = AutoResearchDriver(
+        runs, FakeTopics(), _ExplodingQueue(), run_round=_never_called, grants=grants
+    )
+
+    with pytest.raises(RuntimeError):
+        await driver.run(uuid4(), session_id, fetch_hosts=["a.example"], fetch_budget=1)
+
+    assert grants.get(session_id) is None
+    assert grants.is_unattended(session_id) is False
+
+
 async def test_a_run_works_the_queue_until_it_empties(runs):
     queue = FakeQueue(attention(), attention(), attention())
     topics = FakeTopics()
