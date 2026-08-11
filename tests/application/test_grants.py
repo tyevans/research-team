@@ -36,6 +36,17 @@ class TestCovers:
         grant = _grant()
         assert grant.covers("https://EXAMPLE.COM/page") is True
 
+    def test_matching_is_case_insensitive_on_the_stored_host(self) -> None:
+        """The other direction of case-insensitivity, missed the first time.
+
+        `hosts` arrives from `NewRun.fetch_hosts` -- strings a person typed
+        into an HTTP request body -- so a mixed-case stored host is a real
+        input, not just the URL side. A grant built with `Example.COM` must
+        still cover the lowercase URL, or it silently authorizes nothing.
+        """
+        grant = _grant(hosts=frozenset({"Example.COM"}))
+        assert grant.covers("https://example.com/page") is True
+
     def test_userinfo_in_url_is_handled(self) -> None:
         grant = _grant()
         assert grant.covers("https://user:pass@example.com/page") is True

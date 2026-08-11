@@ -23,11 +23,22 @@ from uuid import UUID
 class FetchGrant:
     """What one run was authorized to fetch, and how much of it is left.
 
-    `hosts` matches exactly, after lowercasing, against `urlsplit(url).hostname`
-    -- no wildcards, no suffix matching. `example.com` does not cover
-    `www.example.com`, `evil-example.com`, or `example.com.attacker.net`;
-    getting suffix matching right needs public-suffix knowledge this project
-    does not have, and a person granting three hosts can name three hosts.
+    `hosts` matches exactly, after lowercasing both sides, against
+    `urlsplit(url).hostname` -- no wildcards, no suffix matching. `example.com`
+    does not cover `www.example.com`, `evil-example.com`, or
+    `example.com.attacker.net`; getting suffix matching right needs
+    public-suffix knowledge this project does not have, and a person granting
+    three hosts can name three hosts.
+
+    `hosts` is lowercased in `__post_init__`, not just the URL side in
+    `covers()`. `hosts` arrives from `NewRun.fetch_hosts` -- strings out of an
+    HTTP request body, so `Example.COM` is a spelling a person will actually
+    type. Comparing an unlowered stored host against a lowered URL host fails
+    every match silently: the grant looks set and authorizes nothing, which is
+    worse than an error because nothing says so. Not stripped of whitespace,
+    deliberately: a host with leading or trailing space is not a value this
+    class should guess the meaning of, and guessing wrong here means guessing
+    which host was actually meant.
 
     The dataclass is frozen because a grant is what a person decided, not
     something a tool call should be able to rewrite -- but a budget that never
@@ -44,8 +55,10 @@ class FetchGrant:
     _remaining: list[int] = field(default_factory=list, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        # dataclass(frozen=True) blocks `self._remaining = ...`; object.__setattr__
-        # is the documented escape hatch for exactly this kind of derived init.
+        # dataclass(frozen=True) blocks `self.hosts = ...` and
+        # `self._remaining = ...`; object.__setattr__ is the documented
+        # escape hatch for exactly this kind of derived init.
+        object.__setattr__(self, "hosts", frozenset(host.lower() for host in self.hosts))
         object.__setattr__(self, "_remaining", [self.budget])
 
     @property
