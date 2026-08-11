@@ -17,6 +17,7 @@ import {
 import { shortId, type ProjectId } from '@domain/shared/identifier.ts'
 
 import { Confirm } from '../common/Confirm.tsx'
+import { Menu, MenuItem } from '../common/Menu.tsx'
 import { Button, Chip, Disclosure, EmptyState, ErrorBox } from '../common/primitives.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
 import { VirtualList } from '../common/VirtualList.tsx'
@@ -433,19 +434,46 @@ const ProjectRow = ({
         </Tooltip>
 
         {/* Destructive things behind one more click, so the row's default
-            reading is "ways in" rather than "ways to lose things". */}
-        <Disclosure
-          className="menu"
-          label={<span aria-label={`More actions for ${project.name}`}>⋯</span>}
+            reading is "ways in" rather than "ways to lose things".
+
+            **Was a `Disclosure` wearing menu chrome**, which is what
+            `tree.css` said it was and what it should not have been: a
+            disclosure announces `aria-expanded` over a region, and everything
+            else a menu owes -- `role="menu"`, Up and Down between items,
+            Escape closing it, focus coming back to the button -- was simply
+            absent. A keyboard reader tabbed in, tabbed straight through into
+            the rest of the row, and had no route back.
+
+            The `Tooltip` that wrapped Delete is deleted rather than moved.
+            "Retire this project" beside an item that says *Delete* is the
+            third of the three cases phase 3 sorted `title` attributes into --
+            an explanation that repeats the text next to it -- and a tooltip
+            inside a menu item is two floating layers arguing over one
+            keypress. The item's own label is the explanation.
+
+            `disabled` while busy rather than `aria-disabled`: unlike the
+            dispatch button in `TopicQueue`, this carries no sentence that
+            exists *because* it is off, so there is nothing a reader needs to
+            reach it to hear. Radix skips a disabled item in the arrow-key
+            order, which is the behaviour wanted. */}
+        <Menu
+          label={`More actions for ${project.name}`}
           open={menuOpen}
-          onToggle={() => setMenuOpen(!menuOpen)}
+          onOpenChange={setMenuOpen}
+          trigger={
+            <button
+              type="button"
+              className="menu-trigger"
+              aria-label={`More actions for ${project.name}`}
+            >
+              ⋯
+            </button>
+          }
         >
-          <Tooltip asChild explanation="Retire this project">
-            <Button small tone="danger" disabled={busy} onClick={onDelete}>
-              Delete
-            </Button>
-          </Tooltip>
-        </Disclosure>
+          <MenuItem tone="danger" disabled={busy} onSelect={onDelete}>
+            Delete
+          </MenuItem>
+        </Menu>
       </div>
 
       {/* One session, not a list of them. Which one is the question a landing

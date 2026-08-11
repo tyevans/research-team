@@ -154,6 +154,43 @@ it('gives Escape to the tooltip when nothing is in front of it', async () => {
   expect(screen.queryByText(EXPLANATION)).toBeNull()
 })
 
+/** **The cover this file did not have, and the reason it did not.**
+ *
+ * `Tooltip` was the fourth floating layer and the only one with no `blocked`
+ * computation at all -- `Overlay`, `Popover` and `Menu` each wrote out their
+ * own copy. It was left out because a tooltip takes no focus and has nothing to
+ * press, so "inert" seemed to buy nothing. What it buys is the accessibility
+ * tree: without it the explanation is still announced underneath an
+ * `aria-modal` dialog, describing a control the reader cannot reach.
+ *
+ * This is red against the state before that change -- checked by deleting the
+ * two attributes from `TooltipLayer`, not predicted.
+ */
+it('goes inert under a modal drawer', async () => {
+  const user = userEvent.setup()
+  const { rerender } = render(<Fixture />)
+
+  // Hover, not focus, for the reason argued on `Fixture`: the drawer takes
+  // focus and a focus-opened tooltip is gone before the drawer is up.
+  await user.hover(screen.getByRole('button', { name: 'why' }))
+  const content = await screen.findByText(EXPLANATION, undefined, { timeout: 3000 })
+  expect(content).not.toHaveAttribute('inert')
+
+  rerender(<Fixture drawerOpen />)
+  expect(await screen.findByRole('dialog', { name: 'Worker detail' })).toBeInTheDocument()
+
+  // Both attributes, for the reason `useLayer` gives: `inert` is the mechanism
+  // and jsdom implements none of its behaviour, so `aria-hidden` is what the
+  // assertion below can actually observe having an effect.
+  expect(content).toHaveAttribute('inert')
+  expect(content).toHaveAttribute('aria-hidden', 'true')
+  // And the observable consequence: `role="tooltip"` is how the explanation is
+  // reached, and a role query skips an `aria-hidden` subtree. This is the line
+  // that says the reader inside the drawer cannot get at it -- the attribute
+  // assertions above only say it was applied.
+  expect(screen.queryByRole('tooltip')).toBeNull()
+})
+
 it('renders the explanation inside the overlay host, not loose in the body', async () => {
   const user = userEvent.setup()
   render(<Fixture />)

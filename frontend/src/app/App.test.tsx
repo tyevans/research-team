@@ -124,7 +124,12 @@ it('opens a dialog, which needs the overlay host the shell mounts', async () => 
   renderApp()
 
   await user.click(await screen.findByRole('button', { name: /More actions for atlas/ }))
-  await user.click(screen.getByRole('button', { name: 'Delete' }))
+  // `findByRole`, and `menuitem` rather than `button`. Both changed with the
+  // row menu: a `Disclosure` opened synchronously inside the click's own act
+  // and held plain `<button>`s, where `Menu` portals its content through
+  // Radix's presence and gives each item `role="menuitem"`. A synchronous
+  // `getByRole` here found nothing.
+  await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
 
   const dialog = await screen.findByRole('dialog')
   expect(dialog).toHaveAttribute('aria-modal', 'true')

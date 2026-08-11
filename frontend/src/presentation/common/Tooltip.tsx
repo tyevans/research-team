@@ -153,7 +153,16 @@ const TooltipLayer = ({ onDismiss, children }: { onDismiss: () => void; children
   // host rather than left to Radix so that the *host* decides whether this
   // tooltip is the top layer; Radix would decide against its own stack, in
   // which a `Drawer` does not appear at all.
-  const { container } = useLayer({ modal: false, onDismiss, returnFocus: undefined })
+  //
+  // `blocked` is the host's answer to "is a modal in front of me", argued once
+  // beside it in `useLayer`. **This is the layer it was missing from**, and the
+  // reason it was missing is worth keeping: a tooltip takes no focus and has
+  // nothing to click, so leaving it live under a drawer looked harmless. It is
+  // not quite: the explanation stays in the accessibility tree beneath an
+  // `aria-modal` dialog, so a screen-reader user inside the drawer can still
+  // reach a sentence about a control they cannot. Harmless-today is also how
+  // the `Popover` hole got there, which is the stronger reason.
+  const { container, blocked } = useLayer({ modal: false, onDismiss, returnFocus: undefined })
 
   // No host, no content — see the trade-off argued above `Tooltip`.
   if (!container) return null
@@ -161,6 +170,8 @@ const TooltipLayer = ({ onDismiss, children }: { onDismiss: () => void; children
   return (
     <TooltipPrimitive.Portal container={container}>
       <TooltipPrimitive.Content
+        inert={blocked}
+        aria-hidden={blocked ? true : undefined}
         // Radix's documented seam for declining a dismissal. Not
         // `stopPropagation`: the event must still reach the host's `window`
         // listener, which is the thing that decides who owns this keypress.

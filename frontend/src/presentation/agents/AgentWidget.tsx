@@ -1,14 +1,14 @@
 import clsx from 'clsx'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import { useContainer } from '@app/container-context.tsx'
 import { shortId } from '@domain/shared/identifier.ts'
 import { sample } from '@domain/worker/transcript-tail.ts'
 
+import { Popover } from '../common/Popover.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
 import { WorkerDrawer } from '../course/WorkerDrawer.tsx'
 import { elapsed } from '../formatting/format.ts'
-import { Overlay } from '../layout/OverlayHost.tsx'
 import { useRunningAgents, type RunningAgent } from './use-running-agents.ts'
 
 /** Where the open/closed choice is remembered.
@@ -48,9 +48,6 @@ export const AgentWidget = () => {
   const { preferences } = useContainer()
   const [expanded, setExpanded] = useState(() => preferences.collapsedPanes(GROUP).includes(OPEN))
   const [watching, setWatching] = useState<RunningAgent | null>(null)
-  const toggleRef = useRef<HTMLButtonElement>(null)
-  const rootRef = useRef<HTMLDivElement>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
 
   const { agents, count, failed } = useRunningAgents(expanded)
 
@@ -62,43 +59,33 @@ export const AgentWidget = () => {
     [preferences],
   )
 
-  const close = useCallback(() => {
-    setOpen(false)
-    toggleRef.current?.focus()
-  }, [setOpen])
-
-  // Escape, outside-pointer dismissal and the guard on `watching` were all
-  // here, in twenty lines, and are all deleted. The popover is an `Overlay`
-  // now and the host owns every one of them.
+  // **Five things used to be written here and are all deleted.** Listed
+  // because the deletion is the change; the popover looks the same.
   //
-  // The guard is the interesting deletion, because it was *wrong* and the
-  // stylesheet is what made it wrong. It read "with a feed open the drawer is
-  // in front and owns Escape" -- true as a description of what should happen,
-  // false as a description of what did: `.agents-panel` was `z-index: 40` and
-  // `.drawer-backdrop` was `z-index: 20`, so this panel painted on top of the
-  // dialog it had politely stood down for, stayed clickable, and had switched
-  // off its own Escape handling. A component reasoning about what else is open
-  // is the coupling that produced that; under the host there is nothing to
-  // reason about, because a layer cannot see the layers around it.
+  // - Escape, outside-pointer dismissal and a guard on `watching` went when
+  //   this became a layer. The guard is the interesting one, because it was
+  //   *wrong*: it read "with a feed open the drawer is in front and owns
+  //   Escape" while `.agents-panel` was `z-index: 40` against the drawer
+  //   backdrop's 20, so this panel painted on top of the dialog it had
+  //   politely stood down for. A component reasoning about what else is open
+  //   is the coupling that produced that.
+  // - `close()`, which put focus back on the toggle by hand, and a
+  //   `useEffect` that reached into the panel with
+  //   `querySelector('button')` to move focus in on open. Radix's focus scope
+  //   does both, and does the second better: it focuses the first *tabbable*
+  //   thing rather than the first `<button>`, which is the same element here
+  //   and stops being so the moment a row gains a link.
+  // - `aria-expanded` and `aria-controls` on the toggle, written out against
+  //   a hand-chosen `id`. `Popover` puts both on the trigger, plus
+  //   `aria-haspopup`, and owns the id.
+  // - Three refs -- the toggle, the widget root, the panel -- of which the
+  //   root existed only to be `Overlay`'s `anchor`, so that a press on the
+  //   toggle did not count as an outside press. Radix knows its own trigger.
   //
-  // Still not a focus *trap*. This is a popover, not a modal -- the page
-  // behind it stays usable on purpose, because the whole point is to watch
-  // agents while doing something else. `modal` is left off for exactly that,
-  // and `Drawer` (the feed opened from a row) sets it.
-
-  // Focus lands in the popover on open, so a keyboard reader is not made to
-  // tab through the rest of the topbar to reach what they just asked for. The
-  // panel itself is the target rather than the first row: the rows re-order as
-  // agents come and go, and focusing one would make that reordering move the
-  // focus ring. It is `tabIndex={-1}` for that -- programmatic only, never a
-  // tab stop of its own.
-  useEffect(() => {
-    if (!expanded) return
-    // A button, not any row: an extraction's row is flat text with nothing to
-    // open, and `focus()` on a div silently does nothing.
-    const first = panelRef.current?.querySelector<HTMLElement>('button')
-    ;(first ?? panelRef.current)?.focus()
-  }, [expanded])
+  // Still not modal. The page behind stays live on purpose: the point is to
+  // watch agents while doing something else. `Popover` has no `modal` prop for
+  // exactly that reason, and `Drawer` (the feed opened from a row) is the
+  // thing that takes the page.
 
   // Nothing running and closed: draw nothing at all. It exists to surface
   // activity, and with none it has nothing to say -- so on an idle console,
@@ -109,87 +96,90 @@ export const AgentWidget = () => {
 
   return (
     <>
-      <div className="agents" data-open={expanded || undefined} ref={rootRef}>
-        <button
-          type="button"
-          className="agents-toggle"
-          ref={toggleRef}
-          aria-expanded={expanded}
-          aria-controls="agents-popover"
-          // A real sentence, not the glyph. `Pane.tsx` announces its toggles
-          // as "◂"/"▸", which tells a screen-reader user nothing about what
-          // they control -- a known bug, and not one to spread.
-          aria-label={`${label(count, failed)}. ${expanded ? 'Hide' : 'Show'} what is running.`}
-          onClick={() => (expanded ? close() : setOpen(true))}
+      <div className="agents" data-open={expanded || undefined}>
+        {/* The panel is still portalled into the overlay host -- what changed
+            is that it is now *anchored* to this toggle instead of pinned to
+            the viewport by `position: fixed; top: var(--topbar-h)`. That rule
+            worked only because the toggle happens to sit at the right-hand end
+            of the topbar, which is a fact about today's chrome that nothing
+            enforced; move the widget into a sidebar and the panel stays under
+            the bar. It also could not flip: at 420px a separate media query
+            re-laid the panel out full-width because a right-hugging column had
+            nowhere to go.
+
+            **The tab-order cost is unchanged and still real.** The panel is at
+            the end of the document, so Tab out of the last row lands in the
+            page rather than back on the toggle. Focus is moved *in* on open
+            and given back on Escape, which is what makes the panel reachable
+            at all; the way out by Tab is what a `Menu` would give and a
+            `Popover` does not.
+
+            `sideOffset={0}` so it still hangs off the bar's edge rather than
+            floating clear of it -- `border-top: 0` in the stylesheet is the
+            other half of that. */}
+        <Popover
+          open={expanded}
+          onOpenChange={setOpen}
+          label="Agents running now"
+          className="agents-panel"
+          sideOffset={0}
+          trigger={
+            <button
+              type="button"
+              className="agents-toggle"
+              // A real sentence, not the glyph. `Pane.tsx` announces its
+              // toggles as "◂"/"▸", which tells a screen-reader user nothing
+              // about what they control -- a known bug, and not one to spread.
+              aria-label={`${label(count, failed)}. ${expanded ? 'Hide' : 'Show'} what is running.`}
+            >
+              <span
+                className={clsx(
+                  'agents-dot',
+                  failed ? 'agents-dot-unknown' : count > 0 && 'agents-dot-live',
+                )}
+                aria-hidden="true"
+              />
+              {/* Polite rather than assertive, and on the count alone: a
+                  person working in another part of the console should learn
+                  that a run finished, but not have a screen reader interrupt
+                  them for it.
+
+                  The numeral and the word are separate nodes so the word can
+                  go at 420px, where the topbar's fixed items are close to
+                  filling it and the breadcrumb has already given up everything
+                  it has. The announcement narrows to "3" there, which is the
+                  fact that changed; the sentence is on the button and is never
+                  abbreviated. The failure state keeps its words at every width
+                  -- it is rare, and a lone "?" would say nothing. */}
+              <span className="agents-count" aria-live="polite">
+                {failed ? (
+                  'agents unknown'
+                ) : (
+                  <>
+                    {count}
+                    <span className="agents-count-word"> running</span>
+                  </>
+                )}
+              </span>
+            </button>
+          }
         >
-          <span
-            className={clsx(
-              'agents-dot',
-              failed ? 'agents-dot-unknown' : count > 0 && 'agents-dot-live',
-            )}
-            aria-hidden="true"
-          />
-          {/* Polite rather than assertive, and on the count alone: a person
-              working in another part of the console should learn that a run
-              finished, but not have a screen reader interrupt them for it.
-
-              The numeral and the word are separate nodes so the word can go at
-              420px, where the topbar's fixed items are close to filling it and
-              the breadcrumb has already given up everything it has. The
-              announcement narrows to "3" there, which is the fact that
-              changed; the sentence is on the button and is never abbreviated.
-              The failure state keeps its words at every width -- it is rare,
-              and a lone "?" would say nothing. */}
-          <span className="agents-count" aria-live="polite">
-            {failed ? (
-              'agents unknown'
-            ) : (
-              <>
-                {count}
-                <span className="agents-count-word"> running</span>
-              </>
-            )}
-          </span>
-        </button>
-      </div>
-
-      {/* The panel is a layer, so it is no longer a sibling of the toggle in
-          the document -- it is portalled into the overlay host.
-
-          **What that costs, stated because it is the one real regression.**
-          Tab order followed the document, and the panel was placed after the
-          toggle so a reader tabbed forwards into it. From the host it is at
-          the end of the document instead, so Tab from the toggle continues
-          into the page. That is why the focus effect below matters more than
-          it did: focus is *moved* into the panel on open, so the reader gets
-          there regardless of document order, and Escape returns it to the
-          toggle. The remaining gap is Tab *out* of the last row, which now
-          lands in the page rather than back on the toggle. Anchoring on the
-          host would fix it properly; a `tabIndex` shuffle here would not.
-
-          `anchor` is the toggle's own row, so a press on the toggle is not an
-          "outside" press -- without it the pointerdown would close the panel
-          and the click that follows would immediately reopen it. */}
-      {expanded ? (
-        <Overlay label="Agents running now" onDismiss={close} anchor={rootRef}>
-          <div className="agents-panel" id="agents-popover" ref={panelRef} tabIndex={-1}>
-            <div className="agents-rows">
-              {agents.map((agent) => (
-                <AgentRow
-                  key={`${agent.projectId}:${agent.worker.ref}`}
-                  agent={agent}
-                  onOpen={() => setWatching(agent)}
-                />
-              ))}
-              {agents.length === 0 ? (
-                <p className="agents-quiet">
-                  {failed ? 'Could not read what is running.' : 'Nothing is running right now.'}
-                </p>
-              ) : null}
-            </div>
+          <div className="agents-rows">
+            {agents.map((agent) => (
+              <AgentRow
+                key={`${agent.projectId}:${agent.worker.ref}`}
+                agent={agent}
+                onOpen={() => setWatching(agent)}
+              />
+            ))}
+            {agents.length === 0 ? (
+              <p className="agents-quiet">
+                {failed ? 'Could not read what is running.' : 'Nothing is running right now.'}
+              </p>
+            ) : null}
           </div>
-        </Overlay>
-      ) : null}
+        </Popover>
+      </div>
 
       {watching?.worker.sessionId ? (
         <WorkerDrawer

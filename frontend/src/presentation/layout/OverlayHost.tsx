@@ -127,22 +127,20 @@ const HostContext = createContext<HostState | null>(null)
  * stacking order. It can only name one of three declared roles, and the only
  * role that paints over the page is this host.
  *
- * Two things stayed off the host **on purpose**, because moving them would
- * have been worse:
+ * **Toasts** stay off the host on purpose, argued below and where `--z-toast`
+ * is declared: a toast is not a dismissable layer.
  *
- * - **Toasts**, argued below and where `--z-toast` is declared: a toast is not
- *   a dismissable layer.
- * - **The row menu** in `ProjectList`. It is a `Disclosure` anchored to its
- *   own row by ordinary absolute positioning. The host is one fixed box over
- *   the viewport and deliberately offers no anchoring, so portalling a
- *   row-anchored menu would mean measuring the row and tracking it on scroll
- *   -- inventing a positioning engine to solve a stacking problem the menu no
- *   longer has. Its tie with the modal backdrop was the whole complaint, and
- *   the tie is gone because the backdrop is gone: the menu sits at
- *   `--z-sticky` (10), a modal is at `--z-overlay` (100), and while a modal is
- *   open the menu is inside `.lay-app-root` and therefore `inert`. If a menu
- *   ever does need to escape its pane, the answer is anchoring on this host,
- *   not a number on the menu.
+ * **The row menu** in `ProjectList` also stayed off, and no longer does. The
+ * reason it stayed is worth keeping, because it was a real constraint and it
+ * is the one that lifted: it was a `Disclosure` anchored to its own row by
+ * ordinary absolute positioning, and this host is one fixed box over the
+ * viewport that deliberately offers no anchoring -- so portalling it would
+ * have meant measuring the row and tracking it on scroll, inventing a
+ * positioning engine to solve a stacking problem the menu no longer had. That
+ * paragraph ended "if a menu ever does need to escape its pane, the answer is
+ * anchoring on this host, not a number on the menu", and adopting Radix is
+ * exactly that: `Menu` brings the positioning engine, the host keeps the
+ * stacking, and `.menu > .disc-body`'s `z-index: var(--z-sticky)` is deleted.
  */
 export const OverlayHost = ({ children }: { children?: ReactNode }) => {
   const [container, setContainer] = useState<HTMLElement | null>(null)
@@ -389,12 +387,66 @@ export const useLayer = ({
     return register({ key, modal, handlers })
   }, [register, key, modal, handlers])
 
+  // This layer's position in the stack, or -1 before it has registered.
+  //
+  // Local rather than returned, along with `layers` itself: every consumer that
+  // had them used them for one thing, and that thing is `blocked` below. Handing
+  // out the raw stack is what let the same claim be written four different ways
+  // (three of them the same, one of them missing). If something genuinely needs
+  // the stack, returning it again is one line -- but it should have to argue for
+  // it rather than find it already there.
+  const mine = layers?.findIndex((layer) => layer.key === key) ?? -1
+
   return {
     host,
     container,
-    layers,
-    /** This layer's position in the stack, or -1 before it has registered. */
-    mine: layers?.findIndex((layer) => layer.key === key) ?? -1,
+    /** Whether a modal is in front of this layer, and therefore whether it must
+     *  be inert. **The host's central guarantee, computed once here.**
+     *
+     * *Later*, not "any": a modal does not make itself inert -- it would
+     * disable the thing the reader is looking at -- and must not disable what
+     * is stacked on top of it, because a confirm opened from a drawer has to
+     * stay usable. That half is load-bearing and observable: relaxing `index >
+     * mine` to `index >= 0` turns 20 tests red across `Drawer`, `Confirm`,
+     * `Popover`, `Menu`, `Tooltip`, `OverlayHost` and `AgentWidget`.
+     *
+     * `mine >= 0` covers the layer that has not registered yet -- the render
+     * before `useLayoutEffect` runs, where `findIndex` returns -1 and every
+     * modal in the stack would otherwise satisfy `index > -1`. **Deleting it
+     * leaves every test in this repository green**, checked rather than
+     * assumed, because registration is a layout effect and no test can observe
+     * the single pre-registration render it protects. It is kept as the
+     * conservative reading of "not in the stack yet is not underneath
+     * anything"; anyone deleting it should know they are trading a defensible
+     * default for nothing measurable either way.
+     *
+     * **Why the host owns this rather than each layer.** It was written out at
+     * three call sites for one release, and the fourth (`Tooltip`) simply did
+     * not have it -- harmless only because a tooltip is non-interactive, which
+     * is not a property anything enforces. Worse, the first hole was of exactly
+     * that shape: `Overlay` applies the attributes to `.lay-layer`, and a Radix
+     * layer portals straight into the container with no `.lay-layer` around it,
+     * so the guarantee silently did not hold for it. It was caught by
+     * `AgentWidget`'s `opens the agent's feed when its row is clicked` failing
+     * with `Found multiple elements with the role "dialog"` -- a test about
+     * something else entirely. A guarantee the host makes and each layer
+     * re-derives is a guarantee that holds until somebody adds a layer.
+     *
+     * Consumers get the boolean; **applying it is still theirs**, because there
+     * is no single element to apply it to -- `Overlay` marks `.lay-layer` and
+     * each Radix bridge marks the library's own content element.
+     *
+     * **What to apply, and why it is two attributes.** `inert` is the real
+     * mechanism: it removes the subtree from focus, from pointer events and
+     * from the accessibility tree. `aria-hidden` beside it is not redundancy
+     * for its own sake -- **jsdom implements `inert`'s presence and none of its
+     * behaviour**, so a test that queries by role sees an inert subtree exactly
+     * as it saw it before, and `aria-hidden` is what actually removes it from
+     * the tree the testing library walks. In a browser it is the belt to
+     * `inert`'s braces. The cost is that no test in this repository can hold
+     * that `inert` *works*; they hold that it is applied, and a browser is the
+     * only thing that closes that gap. */
+    blocked: mine >= 0 && (layers ?? []).some((layer, index) => index > mine && layer.modal),
   }
 }
 
@@ -468,11 +520,9 @@ export const Overlay = ({
   returnFocus?: RefObject<Element | null>
   children: ReactNode
 }) => {
-  const { host, container, layers, mine } = useLayer({ modal, onDismiss, returnFocus })
-  // Inert if any *later* layer is modal. Later, not "any", because a modal
-  // does not make itself inert and does not disable the layers stacked on top
-  // of it -- a confirm opened from a drawer has to stay usable.
-  const blocked = mine >= 0 && (layers ?? []).some((layer, index) => index > mine && layer.modal)
+  // `blocked` comes from the host rather than being derived here -- see
+  // `useLayer`, which is the one place that decides what a modal above means.
+  const { host, container, blocked } = useLayer({ modal, onDismiss, returnFocus })
 
   const contentRef = useRef<HTMLDivElement>(null)
 
@@ -518,10 +568,9 @@ export const Overlay = ({
     <div
       className="lay-layer"
       data-modal={modal ? '' : undefined}
-      // React 19 renders `inert` as a real attribute. jsdom does not implement
-      // what it *does*, so the tests here assert the attribute is present and
-      // cannot assert that focus is actually blocked; a browser check is the
-      // only thing that closes that.
+      // React 19 renders `inert` as a real attribute. Why both attributes, and
+      // what jsdom can hold about them, is argued once beside `blocked` in
+      // `useLayer`.
       inert={blocked}
       aria-hidden={blocked ? true : undefined}
     >

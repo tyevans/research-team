@@ -415,31 +415,27 @@ ul.tree ul > li:last-child::after {
 
 /* --- the row menu ------------------------------------------------------- */
 
-/* A `Disclosure` with different chrome, which is all a menu is here. */
-.menu {
-  position: relative;
-}
-.menu > .disc-head {
+/* The trigger, and only the trigger. Four rules used to live here -- `.menu`,
+   `.menu > .disc-head`, `.menu > .disc-head .disc-caret` and `.menu >
+   .disc-body:not([hidden])` -- because the menu was a `Disclosure` with
+   different chrome, which is what the comment above them said and what was
+   wrong with it. The panel is `Menu` content now: it is portalled into the
+   overlay host, positioned by Radix rather than by `position: absolute; right:
+   0` inside the row, and drawn with utilities on the content element. The
+   caret suppression goes with the caret, and `position: relative` goes with
+   the absolute box it was containing.
+
+   The three `>` selectors are the reason this deletion is written down in
+   `check-deleted.mjs` as well: a combinator is a claim about markup, and every
+   one of these three would have gone on parsing, matching nothing, and saying
+   nothing about it. */
+.menu-trigger {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg-panel-2);
   color: var(--fg-dim);
   padding: var(--space-1) var(--space-3);
   cursor: pointer;
-}
-.menu > .disc-head .disc-caret {
-  display: none;
-}
-.menu > .disc-body:not([hidden]) {
-  position: absolute;
-  right: 0;
-  top: calc(100% + var(--space-1));
-  z-index: var(--z-sticky);
-  background: var(--bg-raise);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-1);
-  padding: var(--space-2);
 }
 
 /* --- drift, said in the page -------------------------------------------- */
