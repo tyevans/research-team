@@ -6,6 +6,7 @@ import { queryKeys } from '@application/queries/keys.ts'
 import { createSessionStore, type SessionStore } from '@application/session/session-store.ts'
 import type { Course } from '@domain/project/course.ts'
 import { CourseView } from '@presentation/course/CourseView.tsx'
+import { Shell } from '@presentation/layout/Shell.tsx'
 import { courseHref, researchHref, homeHref, type Route } from '@presentation/routing/routes.ts'
 import { navigate, useRoute } from '@presentation/routing/use-route.ts'
 import { ResearchView } from '@presentation/research/ResearchView.tsx'
@@ -22,11 +23,20 @@ import { useContainer } from './container-context.tsx'
 
 export const App = () => (
   <StreamProvider>
-    <Shell />
+    <Console />
   </StreamProvider>
 )
 
-const Shell = () => {
+/** The composition root's own component: routing, the session store, and the
+ *  chrome every route shares.
+ *
+ * Named `Console` rather than `Shell` because `Shell` is now the layout
+ * primitive it renders. The old name was the whole reason this file kept its
+ * hand-built `<header>`/`<main>` through three slices that migrated everything
+ * underneath it -- a local `Shell` in scope makes an unused imported `Shell`
+ * invisible, and nothing in a component test can see a missing composition
+ * root. `App.test.tsx` is what sees it now. */
+const Console = () => {
   const route = useRoute()
   const stream = useStream()
   const container = useContainer()
@@ -55,41 +65,47 @@ const Shell = () => {
   useTreeRefresh(route.name === 'home')
 
   return (
-    <>
-      <header className="topbar">
-        <a className="brand" href={homeHref()}>
-          <span className="brand-mark" />
-          <span className="brand-name">research&#8209;team</span>
-        </a>
-        <Breadcrumbs
-          route={route}
-          session={route.name === 'session' ? head : null}
-          course={route.name === 'course' || route.name === 'research' ? course : null}
-        />
-        <div className="topbar-right">
-          {/* In the bar rather than floating over the page: as a fixed panel at
-              the lower right it sat on top of whatever was there, and the only
-              way past it was to find its own toggle. Here because "what is
-              running" is not a property of the page you happen to be on --
-              which is the whole reason it exists -- and the topbar is the one
-              piece of chrome every route already shares.
+    <Shell
+      chrome={
+        <>
+          <a className="brand" href={homeHref()}>
+            <span className="brand-mark" />
+            <span className="brand-name">research&#8209;team</span>
+          </a>
+          <Breadcrumbs
+            route={route}
+            session={route.name === 'session' ? head : null}
+            course={route.name === 'course' || route.name === 'research' ? course : null}
+          />
+          <div className="chrome-right">
+            {/* In the bar rather than floating over the page: as a fixed panel
+                at the lower right it sat on top of whatever was there, and the
+                only way past it was to find its own toggle. Here because "what
+                is running" is not a property of the page you happen to be on --
+                which is the whole reason it exists -- and the chrome is the one
+                piece every route already shares. That sentence is quoted in
+                `Shell.tsx` as the test for what belongs in this slot, so it is
+                the one thing here that is not merely description.
 
-              Left of the badges: those two describe the connection, this
-              describes the work, and the connection is the thing you look for
-              when the work stops making sense -- so it stays at the edge where
-              it has always been rather than being pushed along. */}
-          <AgentWidget />
-          <DriftBadge />
-          <ConnectionBadge state={stream.connection} />
-        </div>
-      </header>
-
+                Left of the badges: those two describe the connection, this
+                describes the work, and the connection is the thing you look for
+                when the work stops making sense -- so it stays at the edge where
+                it has always been rather than being pushed along. */}
+            <AgentWidget />
+            <DriftBadge />
+            <ConnectionBadge state={stream.connection} />
+          </div>
+        </>
+      }
+    >
+      {/* Inside the surface rather than beside it, which is a change of parent
+          and not of position: `.toasts` is `position: fixed`, so it is placed
+          against the viewport wherever it is mounted, and `Shell` takes
+          children for the surface alone. It stays outside the overlay host on
+          purpose -- argued where `--z-toast` is declared. */}
       <Toasts />
-
-      <main id="app">
-        <CurrentView route={route} store={sessionStore} onCourse={setCourse} />
-      </main>
-    </>
+      <CurrentView route={route} store={sessionStore} onCourse={setCourse} />
+    </Shell>
   )
 }
 

@@ -147,6 +147,13 @@ const RULES = [
     forbid: [/addEventListener\('keydown'/, /addEventListener\('pointerdown'/],
   },
   {
+    phase: 'E',
+    what: 'the application shell built its own header and main',
+    why: '`App.tsx` renders `Shell`, so `.topbar` and `<main id="app">` are gone -- both were the rules `.lay-chrome` and `.lay-surface` already declared, written a second time. This is not housekeeping: while the shell was hand-built it mounted no `OverlayHost`, and `Overlay` returns `null` without one, so every drawer, confirm and popover in the console rendered nothing. `App.test.tsx` is what fails now if the host goes; this fails if the markup that displaced it comes back.',
+    where: 'styles',
+    forbid: [/\.topbar\s*\{/, /^#app\s*\{/m],
+  },
+  {
     phase: 'B',
     what: 'stylesheets each carried their own stacking numbers',
     why: 'Eight literal `z-index` declarations across five values, two of which produced a popover painting over an `aria-modal` dialog. Every one now names a role from `tokens.css`. `scripts/stacking.test.ts` is the real enforcement and is more precise than this -- it also rejects an undeclared token and a fourth role. This entry is here so the *count* is recorded where the other phase deletions are; if it ever fires, read that test first.',

@@ -27,8 +27,14 @@
    with its own rules in `layout.css`, so there is no chrome to remove back
    off. */
 
-/* The root the application mounts into replaces the old `<main id="app">` as
-   the flex child, so it has to carry the same growth. */
+/* The root the application mounts into is not a layout box.
+
+   It stood between `<body>` and the shell's `<header>`/`<main>` when those were
+   siblings; it now stands between `<body>` and `.lay-shell`, which wants
+   `height: 100%` against the body. Either way the answer is the same and for
+   the same reason: the element exists to give React somewhere to mount, not to
+   participate in layout. `OverlayHost`'s `.lay-app-root` is `display: contents`
+   for the same reason and says more about what that costs. */
 #root {
   display: contents;
 }

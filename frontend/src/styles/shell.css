@@ -1,16 +1,19 @@
 /* The frame every view sits in: topbar, breadcrumbs, connection badges, buttons. */
 
-/* topbar ---------------------------------------------------------------- */
-.topbar {
-  flex: 0 0 auto;
-  height: var(--topbar-h);
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg-panel);
-}
+/* chrome ---------------------------------------------------------------- */
+
+/* The rule that drew this row is gone: it declared what `.lay-chrome` now
+   declares -- flex, centred, a bottom line and the panel background -- and the
+   two were the same rule written twice from the moment the layout primitives
+   landed. `Shell` renders the element and `App.tsx` fills it.
+
+   What changed on screen, stated because it is not nothing: the gap between
+   chrome items is `--space-3` (10px) where the old rule hard-coded 14px.
+   Padding is unchanged -- `--space-4` is 14px. The height is `min-height`
+   rather than `height`, so the bar grows if something in it wraps instead of
+   overflowing, which is what the breadcrumb does at 420px.
+
+   What follows is the content of that row, which is this file's business. */
 
 .brand {
   display: flex;
@@ -58,7 +61,7 @@
   color: var(--accent);
 }
 
-.topbar-right {
+.chrome-right {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -157,12 +160,10 @@
 }
 
 /* app shell ------------------------------------------------------------- */
-#app {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
+
+/* The `<main>` this file used to style went with the hand-built shell.
+   `.lay-surface` is the same four declarations plus `overflow: hidden`, which
+   is the surface's no-scroll contract stated rather than assumed. */
 .boot {
   padding: 40px;
   color: var(--fg-faint);
