@@ -10,6 +10,7 @@ import {
 import { FilePath } from '@domain/shared/file-path.ts'
 
 import { Chip } from '../common/primitives.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 import { sessionHref } from '../routing/routes.ts'
 
 /** One declared artifact, in one of four states a naive row would flatten into
@@ -88,28 +89,34 @@ const ProvenanceRow = ({
   return (
     <div className="artifact-prov">
       <span className="muted">rests on: </span>
+      {/* Three of this console's ~20 `title` attributes migrated to `Tooltip`,
+          and only three: the rest are the next commit, kept out of this one so
+          the bridge between Radix's floating layer and `OverlayHost` is
+          reviewable on its own. These are the two trigger modes side by side,
+          which is why they were picked — `asChild` over an anchor that is
+          already focusable and already passes a ref, and the default wrapper
+          over a `Chip`, which renders a `<span>` and is reachable by no
+          keyboard at all today. */}
       {provenance.sources.map((span, index) => (
-        <a
+        <Tooltip
           key={index}
-          className="prov-src"
-          href={sourceHref(course, span)}
-          title="Open this source at the offsets this artifact cites"
+          asChild
+          explanation="Open this source at the offsets this artifact cites"
         >
-          {formatSpan(span)}
-        </a>
+          <a className="prov-src" href={sourceHref(course, span)}>
+            {formatSpan(span)}
+          </a>
+        </Tooltip>
       ))}
       {provenance.inferred ? (
-        <Chip
-          tone="inferred"
-          title="Some of this was reasoned rather than drawn from a source, and says so."
-        >
-          inferred
-        </Chip>
+        <Tooltip explanation="Some of this was reasoned rather than drawn from a source, and says so.">
+          <Chip tone="inferred">inferred</Chip>
+        </Tooltip>
       ) : null}
       {provenance.unreadable > 0 ? (
-        <Chip tone="bad" title="Entries that are neither a source span nor the inference flag.">
-          {provenance.unreadable} unreadable
-        </Chip>
+        <Tooltip explanation="Entries that are neither a source span nor the inference flag.">
+          <Chip tone="bad">{provenance.unreadable} unreadable</Chip>
+        </Tooltip>
       ) : null}
       {provenance.empty ? (
         <Chip

@@ -304,8 +304,24 @@ export const OverlayHost = ({ children }: { children?: ReactNode }) => {
  * drawer and popover in the console. Listening on `window` itself, which is
  * what it did, is exactly the arrangement the host exists to remove: one
  * keypress closed the panel *and* whatever was in front of it.
+ *
+ * **Exported, as of `Tooltip`, and the export is the interesting part.** A
+ * third-party floating library brings its own positioning *and* its own
+ * dismissal stack, and the second of those is a competing Escape owner --
+ * which is the defect this host was built to delete, arriving in a package
+ * rather than in a component. `useEscape` cannot bridge it, because such a
+ * layer needs the host's `container` to portal into: portalling to `<body>`
+ * instead would put the content outside `--z-overlay` and require a `z-index`
+ * of its own, which `scripts/check-deleted.mjs` forbids and rightly.
+ *
+ * So the contract for an adopted floating primitive is: take `container` from
+ * here, portal into it, register while open, and switch the library's own
+ * Escape handling off at its own documented seam. `Tooltip` does exactly that
+ * in eleven lines, and `Tooltip.test.tsx` is what holds it -- if the bridge
+ * were dropped, one Escape would close a drawer *and* the tooltip behind it,
+ * which is the `GraphDetail` bug again with a different owner.
  */
-const useLayer = ({
+export const useLayer = ({
   modal,
   onDismiss,
   returnFocus,
