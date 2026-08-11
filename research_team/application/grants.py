@@ -28,7 +28,12 @@ class FetchGrant:
     does not cover `www.example.com`, `evil-example.com`, or
     `example.com.attacker.net`; getting suffix matching right needs
     public-suffix knowledge this project does not have, and a person granting
-    three hosts can name three hosts.
+    three hosts can name three hosts. Exactness is not normalization: a
+    trailing root dot (`example.com.`) and an IDN A-label/U-label pair
+    (`xn--...` vs. its Unicode form) are, to a browser, the same host as their
+    plain spelling, but neither side is folded here, so both fail closed --
+    the grantor's spelling is the only one that matches, which is a false
+    refusal a person can retype, not a false grant nobody would notice.
 
     `hosts` is lowercased in `__post_init__`, not just the URL side in
     `covers()`. `hosts` arrives from `NewRun.fetch_hosts` -- strings out of an
@@ -73,18 +78,30 @@ class FetchGrant:
         """Whether `url` may be fetched under this grant right now.
 
         Total: a URL too malformed for `urlsplit` to make sense of --
-        `urlsplit(...).port` raises `ValueError` on a non-numeric port, the
-        same case `normalize_url` guards -- is "not covered" rather than a
+        `urlsplit("https://[::1/x")` raises `ValueError: Invalid IPv6 URL`,
+        the same case `normalize_url` guards -- is "not covered" rather than a
         raised exception reaching the tool call. Does not mutate; a spent
         grant answers `False` for every host, forever, until something else
         calls `spend()`.
+
+        Scheme-checked, not just host-checked: this is the authorization check
+        both `fetch`'s gate and the tool itself consult, and it is written to
+        answer correctly on its own rather than lean on `fetch.py`'s own
+        scheme guard, which lives in a different file and can change under a
+        different task. Without this, `file://a.example/etc/passwd` and the
+        scheme-relative `//a.example/p` both yield hostname `a.example` and
+        would read as covered even though neither is the network request a
+        host grant is supposed to authorize.
         """
         if self.spent:
             return False
         try:
-            hostname = urlsplit(url).hostname
+            parts = urlsplit(url)
         except ValueError:
             return False
+        if parts.scheme.lower() not in ("http", "https"):
+            return False
+        hostname = parts.hostname
         if hostname is None:
             return False
         return hostname.lower() in self.hosts

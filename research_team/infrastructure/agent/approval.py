@@ -54,6 +54,18 @@ def _gate_for(
     This is what makes autonomy adjustable at any time: langchain calls the
     predicate once per tool call, so a level raised mid-turn is honoured on the
     very next call rather than at the next restart.
+
+    Also closes over `session_id`, which is the more dangerous binding of the
+    two. `interrupt_config` is called at `deep_agent.py:364`, inside `_invoke`,
+    with the session the current pass is actually running -- so the predicate
+    this returns is scoped to one turn of one session and must not outlive it.
+    Cross-session isolation depends entirely on that: if this config were ever
+    hoisted out of `_invoke` and built once for reuse across sessions, the
+    closure would pin whichever session built it, and every later session
+    would be checked against that session's grant. No test would catch a
+    refactor like that going wrong, because each existing test builds its own
+    config -- the invariant is "rebuild per pass", not anything this function
+    can enforce on its own.
     """
 
     def when(request: object) -> bool:

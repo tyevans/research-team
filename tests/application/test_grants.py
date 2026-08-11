@@ -78,6 +78,23 @@ class TestCovers:
         grant.spend()
         assert grant.covers("https://example.com/page") is False
 
+    def test_a_file_url_against_an_allowlisted_host_is_not_covered(self) -> None:
+        """`file://example.com/etc/passwd` yields hostname `example.com`, so a
+        host check alone would call this covered. `fetch.py` also refuses any
+        non-http(s) scheme before the transport, but the grant must refuse it
+        independently -- the authorization boundary should not depend on a
+        guard that lives in a different file, changed by a different task.
+        """
+        grant = _grant()
+        assert grant.covers("file://example.com/etc/passwd") is False
+
+    def test_a_scheme_relative_url_against_an_allowlisted_host_is_not_covered(self) -> None:
+        """`//example.com/p` has no scheme at all; `urlsplit` still resolves a
+        hostname, so this is the same failure mode as the `file://` case with
+        the scheme omitted rather than swapped."""
+        grant = _grant()
+        assert grant.covers("//example.com/page") is False
+
     def test_covers_does_not_spend(self) -> None:
         grant = _grant(budget=1)
         grant.covers("https://example.com/page")
