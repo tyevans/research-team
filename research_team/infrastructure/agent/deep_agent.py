@@ -25,6 +25,7 @@ from research_team.application import (
     AutonomyPolicy,
     TurnResult,
 )
+from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge_attachment import _compose
 from research_team.application.ports import (
     ActivityDelta,
@@ -263,6 +264,7 @@ class DeepAgentTurnExecutor:
         middleware_provider: MiddlewareProvider | None = None,
         tools_provider: ToolProvider | None = None,
         gate_reviewer: GateReviewer | None = None,
+        grants: GrantRegistry | None = None,
     ) -> None:
         self._model = model
         self._subagents = list(subagents)
@@ -287,6 +289,11 @@ class DeepAgentTurnExecutor:
         # exactly as it did before interrupts existed.
         self._policy = policy if policy is not None else AutonomyPolicy()
         self._approvals = approvals
+        # `None` by default so every existing caller -- and every existing
+        # test -- builds exactly the executor it always did: with no
+        # registry, `interrupt_config` below has no grant it could ever find,
+        # which is `_gate_for`'s own documented behaviour for this case.
+        self._grants = grants
 
     @property
     def model_name(self) -> str:
@@ -370,7 +377,9 @@ class DeepAgentTurnExecutor:
             tools=turn_tools or None,
             backend=EventSourcedBackend(session),
             system_prompt=system_prompt,
-            interrupt_on=interrupt_config(self._policy, session_id=session.aggregate_id),
+            interrupt_on=interrupt_config(
+                self._policy, session_id=session.aggregate_id, grants=self._grants
+            ),
             # Resuming is impossible without one: `Command(resume=...)` needs
             # somewhere to have parked the halted graph. Per turn and in
             # memory, because nothing here outlives the turn -- the durable

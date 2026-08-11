@@ -26,12 +26,15 @@ from research_team.application import (
     AutonomyPolicy,
     TurnCancelled,
 )
+from research_team.application.autonomy import FETCH_TOOL
+from research_team.application.grants import FetchGrant, GrantRegistry
 from research_team.domain import (
     AutonomyChanged,
     ToolCallDecided,
     ToolResultRecorded,
     TurnFailed,
 )
+from research_team.infrastructure.agent.fetch import build_fetch_tool
 from research_team.infrastructure.agent.search import build_search_tool
 from research_team.interfaces.cli import TerminalApprovals, repl
 from research_team.interfaces.web import WebApprovals, create_app
@@ -79,6 +82,164 @@ def searches(monkeypatch) -> Searches:
 
     monkeypatch.setattr(composition, "build_search_tool", build)
     return recorder
+
+
+class Fetches:
+    """Records every URL the stubbed transport was asked for."""
+
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.urls.append(str(request.url))
+        return httpx.Response(200, html="<html><body><p>a page.</p></body></html>")
+
+    def client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.MockTransport(self.handler))
+
+
+@pytest.fixture
+def fetches(monkeypatch) -> Fetches:
+    """`fetch` built over a `MockTransport`, for the same reason `searches` is:
+    Task 7's own wiring must be provable without ever reaching the network.
+    """
+    recorder = Fetches()
+
+    def build(
+        *,
+        max_chars=None,
+        max_bytes=None,
+        client=None,
+        recall=None,
+        corpus=None,
+        pages=None,
+        grant=None,
+    ):
+        # Mirrors `build_fetch_tool`'s signature and forwards every argument
+        # rather than dropping it -- `grant` especially, since that is the
+        # one this task adds and the one a silently-dropped stub would stop
+        # testing.
+        kwargs = {
+            "client": recorder.client(),
+            "recall": recall,
+            "corpus": corpus,
+            "pages": pages,
+            "grant": grant,
+        }
+        if max_chars is not None:
+            kwargs["max_chars"] = max_chars
+        if max_bytes is not None:
+            kwargs["max_bytes"] = max_bytes
+        return build_fetch_tool(**kwargs)
+
+    monkeypatch.setattr(composition, "build_fetch_tool", build)
+    return recorder
+
+
+def _fetch_asking_policy() -> AutonomyPolicy:
+    policy = AutonomyPolicy(default="auto")
+    policy.set(FETCH_TOOL, "ask")
+    return policy
+
+
+def _fetching_model(url: str) -> ToolAwareFakeChatModel:
+    """Asks to fetch one URL, then replies."""
+    return ToolAwareFakeChatModel(
+        responses=[
+            AIMessage(
+                content="",
+                id="a1",
+                tool_calls=[{"name": FETCH_TOOL, "args": {"url": url}, "id": "t1"}],
+            ),
+            AIMessage(content="done", id="a2"),
+        ]
+    )
+
+
+def _fetch_results(events) -> list[ToolResultRecorded]:
+    return [
+        event
+        for event in events
+        if isinstance(event, ToolResultRecorded)
+        and "a page." in str(event.message.get("data", {}).get("content", ""))
+    ]
+
+
+# ---------------- the grant: gate and tool wired together ----------------
+
+
+async def test_a_granted_fetch_is_not_decided_at_all(build_application, fetches):
+    """The negative of `test_an_approved_search_is_decided_before_it_is_run`:
+    a covered fetch under a grant never reaches a human, so there is no
+    `ToolCallDecided` in the log at all -- not one that approves it, one that
+    simply never happens.
+    """
+    grants = GrantRegistry()
+    application = await build_application(
+        model=_fetching_model("https://a.example/page"),
+        policy=_fetch_asking_policy(),
+        grants=grants,
+    )
+    session_id = await start_session(application.service)
+    # Registered directly, standing in for the driver's registration
+    # (Task 7's other half): the gate and the tool consult the registry, not
+    # how something got into it.
+    grants.register(
+        session_id,
+        FetchGrant(run_id=session_id, hosts=frozenset({"a.example"}), budget=1),
+    )
+
+    await application.service.run_turn(session_id, "read that page")
+
+    events = await application.service.history(session_id)
+    kinds = _types(events)
+    assert "ToolCallDecided" not in kinds, kinds
+    assert _fetch_results(events), "the granted fetch left no result in the log"
+    assert fetches.urls == ["https://a.example/page"]
+
+
+async def test_a_fetch_to_a_disallowed_host_under_a_grant_is_still_decided(
+    build_application, fetches
+):
+    """Scope holds regardless of the grant: a host it does not name still
+    goes to a human, the same as an ungranted run."""
+    port = FixedPort(ApprovalDecision("approve"))
+    grants = GrantRegistry()
+    application = await build_application(
+        model=_fetching_model("https://evil.example/page"),
+        policy=_fetch_asking_policy(),
+        approvals=port,
+        grants=grants,
+    )
+    session_id = await start_session(application.service)
+    grants.register(
+        session_id,
+        FetchGrant(run_id=session_id, hosts=frozenset({"a.example"}), budget=1),
+    )
+
+    await application.service.run_turn(session_id, "read that page")
+
+    events = await application.service.history(session_id)
+    assert "ToolCallDecided" in _types(events)
+    assert fetches.urls == ["https://evil.example/page"]
+
+
+async def test_a_run_with_no_grant_still_asks_a_human_for_fetch(build_application, fetches):
+    """Today's behaviour, unchanged: no registry entry for this session at
+    all, so `fetch` is decided exactly as it always was."""
+    port = FixedPort(ApprovalDecision("approve"))
+    application = await build_application(
+        model=_fetching_model("https://a.example/page"),
+        policy=_fetch_asking_policy(),
+        approvals=port,
+    )
+    session_id = await start_session(application.service)
+
+    await application.service.run_turn(session_id, "read that page")
+
+    events = await application.service.history(session_id)
+    assert "ToolCallDecided" in _types(events)
+    assert fetches.urls == ["https://a.example/page"]
 
 
 @pytest.fixture
