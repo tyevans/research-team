@@ -273,7 +273,10 @@ async def test_under_a_grant_the_owned_client_does_not_follow_redirects(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_a_successful_network_read_spends_one():
+async def test_a_covered_fetch_spends_one():
+    """`_grant()`'s default hosts include `ex.example`, so this URL is what
+    the grant actually authorized -- the spend is the grant's doing.
+    """
     grant = _grant(budget=3)
     fetch = build_fetch_tool(client=_client(_html_response), grant=grant)
     await fetch.ainvoke({"url": "https://ex.example/sev"})
@@ -281,7 +284,7 @@ async def test_a_successful_network_read_spends_one():
 
 
 @pytest.mark.asyncio
-async def test_a_redirect_spends_one_too():
+async def test_a_covered_redirect_spends_one_too():
     """A redirect is a request that left the process -- httpx sent the GET
     and got a response back, same as any other. Not spending it would let a
     grant be probed for free by chasing declined redirects.
@@ -290,6 +293,46 @@ async def test_a_redirect_spends_one_too():
     fetch = build_fetch_tool(client=_client(_redirect_response), grant=grant)
     await fetch.ainvoke({"url": "https://ex.example/a"})
     assert grant.remaining == 2
+
+
+@pytest.mark.asyncio
+async def test_an_uncovered_fetch_under_a_grant_does_not_spend_but_still_succeeds():
+    """A human approved this fetch at the gate -- `ex.other` is not in the
+    grant's hosts, so the gate would not have covered it and would have
+    interrupted for a person to decide. The person said yes. That approval,
+    not the grant, is what authorized the call, so the grant is not spent:
+    spending here would let human-approved fetches of any host silently
+    drain a budget the grantor scoped to specific hosts.
+    """
+    grant = _grant(budget=3, hosts=frozenset({"ex.example"}))
+    fetch = build_fetch_tool(client=_client(_html_response), grant=grant)
+    text = await fetch.ainvoke({"url": "https://ex.other/sev"})
+    assert "revenue critical path" in text
+    assert grant.remaining == 3
+
+
+@pytest.mark.asyncio
+async def test_the_budget_is_unchanged_after_an_uncovered_fetch():
+    grant = _grant(budget=1, hosts=frozenset({"ex.example"}))
+    fetch = build_fetch_tool(client=_client(_html_response), grant=grant)
+    await fetch.ainvoke({"url": "https://ex.other/sev"})
+    assert grant.remaining == 1
+    assert not grant.spent
+
+
+@pytest.mark.asyncio
+async def test_redirects_stay_off_for_an_uncovered_fetch_under_a_grant_too():
+    """The redirect asymmetry tracks whether this is a granted run at all,
+    not whether this particular call happened to be covered. A human
+    approved fetching *this* URL; nobody approved wherever it might redirect
+    to, so the same rule applies as a covered call: report the location
+    instead of following it.
+    """
+    grant = _grant(budget=3, hosts=frozenset({"ex.example"}))
+    fetch = build_fetch_tool(client=_client(_redirect_response), grant=grant)
+    text = await fetch.ainvoke({"url": "https://ex.other/a"})
+    assert "https://elsewhere.example/target" in text
+    assert grant.remaining == 3
 
 
 @pytest.mark.asyncio
@@ -329,11 +372,15 @@ async def test_an_http_status_error_does_not_spend():
 
 
 @pytest.mark.asyncio
-async def test_a_spent_grant_refuses_in_band_rather_than_attempting_the_request():
-    """Not reachable through the gate (Task 3 refuses first), but "not
-    reachable" is not "cannot happen" -- an in-band refusal is chosen over
-    attempting the request because it is honest about why nothing came back,
-    rather than quietly making a network call the grant no longer covers.
+async def test_a_spent_grant_no_longer_refuses_an_approved_fetch():
+    """Fix round 1: the tool no longer refuses outright when `grant.spent` is
+    true. `covers()` already answers `False` for every host once a grant is
+    spent, so a spent grant looks identical to an out-of-scope host from the
+    spend check's point of view -- and an out-of-scope host reaching this
+    tool got here because a human approved it at the gate. Refusing it in
+    band would block a fetch a person just said yes to, which is worse than
+    the case this used to guard against. Nothing is spent (already zero,
+    and `covers()` is `False`), but the request itself proceeds.
     """
     calls: list[int] = []
     grant = _grant(budget=1)
@@ -341,8 +388,9 @@ async def test_a_spent_grant_refuses_in_band_rather_than_attempting_the_request(
     assert grant.spent
     fetch = build_fetch_tool(client=_client(_counting(calls)), grant=grant)
     text = await fetch.ainvoke({"url": "https://ex.example/a"})
-    assert calls == []
-    assert "budget" in text.lower() or "exhausted" in text.lower()
+    assert len(calls) == 1
+    assert "revenue critical path" in text
+    assert grant.remaining == 0
 
 
 @pytest.mark.asyncio

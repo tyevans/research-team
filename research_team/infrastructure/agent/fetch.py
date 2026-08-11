@@ -213,33 +213,50 @@ def build_fetch_tool(
     `grant` is the pre-authorization an unattended run was given (see
     `application/grants.py`). It changes two things, both load-bearing:
 
-    - The owned client stops following redirects. `covers()` authorizes a
-      host, not a redirect chain a server can point anywhere -- without this,
-      an allowlisted URL that answers `302 Location: https://anywhere` would
-      be fetched from a host nobody granted, and the allowlist would be
-      decorative. A declined redirect is reported in band with the location
-      it named, so the model can fetch that URL itself if its host is also
-      granted -- one more call, one more check, one more decrement.
-    - A request that leaves the process spends one from the grant, right
-      after the response is confirmed not to be an error. A corpus hit and a
-      memo hit never reach this far, so neither spends; an httpx error or an
-      HTTP error status is not a use of the budget either, because nothing
-      was learned that a retry couldn't also fail to learn -- only a
-      response that actually came back counts.
+    - The owned client stops following redirects, for *every* call made
+      while a grant is attached to this tool -- not only ones the grant
+      covers. See the spend note below for why coverage and redirect
+      handling are not the same switch. A declined redirect is reported in
+      band with the location it named, so the model can fetch that URL
+      itself if a covered call would reach it.
+    - A request that leaves the process spends one from the grant, but only
+      when `grant.covers(url)` is true *at the moment the response comes
+      back* -- i.e. the grant is what let this specific call through, not
+      merely that a grant object exists. This is Fix 1: the approval gate
+      (a different task) lets a *covered* fetch through without asking, and
+      refers everything else -- including a fetch whose host was never
+      granted -- to a human. When that human approves an out-of-scope fetch,
+      the call reaches this tool with a grant attached but not covering it,
+      and spending in that case would silently drain a budget the grantor
+      scoped to specific hosts using an approval that was never the grant's
+      to charge. `covers()` folds the budget check in too (a spent grant
+      covers nothing), so this single condition also keeps a request from
+      spending past zero. A corpus hit and a memo hit never reach this
+      check at all, so neither spends regardless of coverage; an httpx
+      error or an HTTP error status also does not spend, because nothing was
+      learned that a retry couldn't also fail to learn -- only a response
+      that actually came back, for a call the grant covered, counts.
 
-    A grant with no budget left should not reach this tool at all -- the
-    approval gate (a different task) refuses a call the grant no longer
-    covers before it gets here. But "the gate should have refused" is not a
-    guarantee this function can lean on, so a spent grant is checked again
-    here and refused in band, before any request is made. Attempting the
-    request anyway was rejected: it would silently spend a budget already at
-    zero (going negative, or requiring a second special case to clamp it),
-    and it would make a network call on an authorization that has already run
-    out -- exactly what the grant exists to prevent. Refusing here costs
-    nothing extra when the gate did its job, and is the honest answer when it
-    didn't. Cache lookups (corpus, memo) still work on a spent grant -- only
-    the network request they exist to avoid is refused, because reading
-    something already known was never what the budget bounded.
+    This makes the host check appear twice -- once in the gate, once here --
+    for two different questions. The gate asks "may this call proceed
+    without waking a person up?" This tool asks "was the grant, specifically,
+    what authorized the call that already happened?" They read the same
+    `hosts` set but answer at different moments for different purposes (before
+    the call decides whether to ask; after it decides whether to charge), and
+    collapsing them into one shared check would either make the gate spend
+    budget it hasn't yet confirmed a human didn't already authorize, or make
+    this tool's spend depend on gate internals it has no access to. Do not
+    refactor them together.
+
+    A grant that is spent, or that simply does not cover this URL, no longer
+    causes the tool to refuse outright (an earlier version of this code did,
+    and that was a bug fixed in the same change that added the `covers()`
+    check above: a human who approves a fetch the grant does not cover is
+    the mechanism working as designed, and refusing that fetch here would
+    override an approval nobody asked this tool to second-guess). The tool
+    only ever declines to *spend*; it never declines to *fetch* on the
+    grant's account. Whether the fetch happens at all is decided once, at
+    the gate.
     """
 
     @tool(FETCH_TOOL)
@@ -270,17 +287,6 @@ def build_fetch_tool(
                         f"this process, not a fresh read. Pass refresh=True if the "
                         f"page is expected to have changed since.]\n\n{remembered.text}"
                     )
-        if grant is not None and grant.spent:
-            # See the docstring: the gate should have refused this call
-            # before it reached the tool, but "should have" is not a
-            # guarantee this function gets to assume. Refused here, before
-            # any request, rather than attempted and left to spend a budget
-            # already at zero.
-            return (
-                "This run's fetch budget is exhausted -- no further pages can "
-                "be fetched over the network this run. Pages already in the "
-                "corpus or read earlier this process are still available."
-            )
         owned = client is None
         http = client or httpx.AsyncClient(
             timeout=TIMEOUT,
@@ -296,8 +302,9 @@ def build_fetch_tool(
                 # itself), which would fall into the "error, don't spend"
                 # branch below -- wrong, because the GET still left the
                 # process and got an answer. Spent and reported here instead,
-                # before that branch ever sees it.
-                if grant is not None:
+                # before that branch ever sees it -- and only if the grant is
+                # what authorized *this* call (Fix 1: see the docstring).
+                if grant is not None and grant.covers(url):
                     grant.spend()
                 location = response.headers.get("location", "(no Location header)")
                 return (
@@ -307,12 +314,14 @@ def build_fetch_tool(
                     "Fetch that URL directly if its host is also granted."
                 )
             response.raise_for_status()
-            if grant is not None:
+            if grant is not None and grant.covers(url):
                 # Spent here, not at `http.get()`: an HTTPStatusError is
                 # raised by `raise_for_status()`, one line above, and an
                 # error is not a use of the budget (see the docstring). A
                 # request that gets this far actually left the process and
-                # came back with a usable response.
+                # came back with a usable response -- and `covers(url)` is
+                # what confirms the grant, not a human approval, is who
+                # authorized it.
                 grant.spend()
             content_type = response.headers.get("content-type", "")
             media_type = content_type.split(";")[0].strip().lower()
