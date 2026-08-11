@@ -1089,8 +1089,15 @@ The frontend gate is run because it is one of the four and CI runs it regardless
 
 - [ ] **Step 8: Commit**
 
+Stage by explicit path, never `git add -A`. This repository is worked in by
+more than one thing at a time, and a sweep commits whatever else is live in
+the tree under this message.
+
 ```bash
-git add -A
+git add research_team/composition.py \
+        research_team/infrastructure/agent/knowledge_tools.py \
+        research_team/infrastructure/agent/fetch.py \
+        tests/integration/test_no_knowledge.py
 git commit -m "$(cat <<'EOF'
 Wire remember_page, and stop asking the model to transcribe
 
