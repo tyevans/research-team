@@ -8,7 +8,7 @@ import { isCancellation, kindOf, type LogEntry } from '@domain/session/log-entry
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { truncate } from '@domain/conversation/message.ts'
 
-import { EmptyState } from '../common/primitives.tsx'
+import { Disclosure, EmptyState } from '../common/primitives.tsx'
 import { clockTime, fullTime } from '../formatting/format.ts'
 
 /** Which column of a row holds the tab stop: the event itself, or its fork
@@ -267,14 +267,32 @@ const TimelineRow = ({
  *
  * Ephemeral — gone on reload — which the summary says plainly rather than
  * letting a reader mistake it for part of the record. */
-const Discarded = ({ entries }: { entries: readonly ActivityEntry[] }) => (
-  <details className="discarded">
-    <summary>discarded — not recorded</summary>
-    {entries.map((entry) => (
-      <div key={entry.messageId} className={`provisional provisional-${entry.kind}`}>
-        <div className="provisional-tag">in progress — not yet recorded</div>
-        <div className="provisional-body">{activityBody(entry)}</div>
-      </div>
-    ))}
-  </details>
-)
+const Discarded = ({ entries }: { entries: readonly ActivityEntry[] }) => {
+  // `Disclosure` rather than the `<details>` this was, so the session view has
+  // one fold implementation and not two. The state is local because nothing
+  // outside needs to drive it; what phase 2 buys here is that the open state
+  // is *ownable* from above, not that anything owns it today.
+  //
+  // The find-in-page loss §9 records applies and is accepted: a browser can no
+  // longer open this fold to reveal a match. It is provisional content from a
+  // failed turn, measured in a handful of lines and gone on reload, so nobody
+  // is searching it.
+  const [open, setOpen] = useState(false)
+  return (
+    <Disclosure
+      className="discarded"
+      label="discarded — not recorded"
+      open={open}
+      onToggle={() => {
+        setOpen((was) => !was)
+      }}
+    >
+      {entries.map((entry) => (
+        <div key={entry.messageId} className={`provisional provisional-${entry.kind}`}>
+          <div className="provisional-tag">in progress — not yet recorded</div>
+          <div className="provisional-body">{activityBody(entry)}</div>
+        </div>
+      ))}
+    </Disclosure>
+  )
+}

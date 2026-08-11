@@ -154,6 +154,13 @@ const RULES = [
     forbid: [/\.topbar\s*\{/, /^#app\s*\{/m],
   },
   {
+    phase: '2',
+    what: 'the session view folded with DOM-owned state',
+    why: 'S-D14. `<details>` owns whether it is open, so a fold inside a view that refetches shuts under the reader -- and `Conversation` re-renders on every turn end. `Disclosure` takes `open` and `onToggle` so the state lives above the refetch. `Segments.test.tsx` is the real net -- six of its seven cases fail against a `<details>`-backed `Disclosure`, checked -- and this rule covers the rest of the directory, where a new `<details>` would be untested and silent. Scoped to `presentation/session` deliberately: `AutonomyPanel` keeps its `<details>` on purpose and says why. It has no refetch to survive and real find-in-page value over 24 controls, so the trade §9 makes globally does not hold there.',
+    where: 'presentation/session',
+    forbid: [/<details/, /<summary/],
+  },
+  {
     phase: '1',
     what: 'the topic dialog kept its own copy of the trap Drawer had already deleted',
     why: 'It carried a second `FOCUSABLE_SELECTOR`, a second focus-in/restore pair, a second `.drawer-backdrop` and a second `role="dialog"` aside -- the duplication `Drawer`\'s own comment predicted, written down, and then made anyway. Phase D deleted the copy in `presentation/common` and this rule covers where the other one lived. The trap is the part that matters: it cycled Tab among its own children while the agent dock painted on top of the dialog and stayed clickable, which is what a simulation of confinement cannot see and `inert` does not permit.',

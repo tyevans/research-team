@@ -58,6 +58,19 @@ export const AutonomyPanel = ({ sessionId }: { sessionId: SessionId | null }) =>
     // behaviour, the expanded/collapsed state a screen reader announces, and
     // find-in-page that opens the panel to reach a match -- none of which
     // would survive being reimplemented here.
+    //
+    // **This is the one fold in the console that is deliberately not a
+    // `Disclosure`, and phase 2 left it alone on purpose.** The spec (§9)
+    // takes the controlled arm everywhere and records losing find-in-page as
+    // "a real, small, permanent loss"; it is neither small nor worth it here.
+    // The argument for controlled state is S-F48 -- open state surviving a
+    // refetch -- and this panel has no refetch to survive: the policy is
+    // instance-wide and changes when somebody changes it. What it does have is
+    // eight tools by three levels behind one summary, which is precisely the
+    // content a reader finds by typing a tool's name into find-in-page. Paying
+    // a real loss for a benefit that does not apply is not consistency, it is
+    // tidiness. `scripts/check-deleted.mjs` scopes its no-`<details>` rule to
+    // `presentation/session` for this reason.
     <details className="autonomy-disclosure">
       <summary className="autonomy-head">
         <h3 className="autonomy-title">What the agent may do without asking</h3>
