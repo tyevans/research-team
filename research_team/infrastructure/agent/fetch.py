@@ -257,6 +257,28 @@ def build_fetch_tool(
     only ever declines to *spend*; it never declines to *fetch* on the
     grant's account. Whether the fetch happens at all is decided once, at
     the gate.
+
+    This tool's `covers(url)` and the gate's `covers(url)` (a different
+    call, in `approval.py`, made before this tool ever runs) are NOT
+    guaranteed to observe the same `remaining` count. Both calls read the
+    same `FetchGrant`, but the gate evaluates every `fetch` call in one
+    model message before any of them runs, and this tool's own check
+    happens after an `await http.get(...)` that the gate's check never
+    waited on -- so N covered calls dispatched in a single message can all
+    see the gate's "not yet spent" answer, all leave the process, and all
+    reach this `covers()` check before any of their `spend()`s has landed.
+    The result is at most N requests beyond the budget in one batch, N being
+    a number the model chooses by how many `fetch` calls it puts in one
+    message -- not unbounded across a run, because `spend()` still floors
+    `remaining` at zero and every subsequent call is refused at the gate
+    once it is. The *scope* holds regardless: every one of those N calls
+    still had to pass `covers()`'s host check, so this is an accounting gap
+    in the count, not a hole in which hosts are reachable. Closing it needs
+    a reservation taken at the gate before it decides not to interrupt, with
+    this tool consuming the reservation instead of a fresh check -- a change
+    to the gate/`FetchGrant` seam this task does not own. Tracked as a
+    follow-up against the gate (Task 3's `approval.py`) and its wiring
+    (Task 7), not fixed here.
     """
 
     @tool(FETCH_TOOL)
@@ -307,11 +329,16 @@ def build_fetch_tool(
                 if grant is not None and grant.covers(url):
                     grant.spend()
                 location = response.headers.get("location", "(no Location header)")
+                # Worded to be true whether or not `grant` is set: in
+                # production this branch is unreachable without one (the
+                # ungranted owned client has follow_redirects=True, so httpx
+                # resolves 3xx before this tool ever sees a response), but an
+                # injected client -- every test in this file uses one -- can
+                # still hand back a 3xx regardless of `grant`, and a message
+                # that named "a granted fetch" would be false in that case.
                 return (
-                    f"That URL redirected to {location}, which was not followed -- "
-                    "a granted fetch does not follow redirects, because the "
-                    "grant authorizes the hosts named, not wherever they point. "
-                    "Fetch that URL directly if its host is also granted."
+                    f"That URL redirected to {location}, which was not followed. "
+                    "Fetch that URL directly if you still want it."
                 )
             response.raise_for_status()
             if grant is not None and grant.covers(url):

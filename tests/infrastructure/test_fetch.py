@@ -223,11 +223,19 @@ def _redirect_response(request: httpx.Request) -> httpx.Response:
 
 @pytest.mark.asyncio
 async def test_under_a_grant_a_redirect_is_not_followed_and_names_the_location():
-    """The security point of this task: a granted host that answers 302 to an
-    ungranted one must not be silently followed, or the allowlist is
-    decorative. The client here has no explicit `follow_redirects`, so this
-    also pins that a 3xx reaching `fetch` is reported rather than treated as
-    a page.
+    """Pins the 3xx *reporting* branch, not the grant: `_client()` builds an
+    `httpx.AsyncClient` with httpx's own default (`follow_redirects=False`),
+    so this test would pass identically with `grant=None` -- a `grant` is
+    passed here only so the surrounding context reads like the feature this
+    file is about, not because the assertion depends on it. The actual
+    security property -- that a *granted* run's owned client is built
+    without following redirects at all, in contrast to an ungranted one --
+    is pinned by the two `monkeypatch` spy tests below
+    (`test_without_a_grant_the_owned_client_still_follows_redirects` and
+    `test_under_a_grant_the_owned_client_does_not_follow_redirects`), which
+    inspect the `follow_redirects` kwarg `fetch` itself chooses. Per
+    CLAUDE.md, a test that would pass with the change reverted must say so
+    rather than read as reassurance -- this docstring is that disclosure.
     """
     fetch = build_fetch_tool(client=_client(_redirect_response), grant=_grant())
     text = await fetch.ainvoke({"url": "https://ex.example/a"})

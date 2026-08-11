@@ -116,6 +116,17 @@ class GrantRegistry:
 
     In-memory and not thread-safe, on the same basis `Recall` gives for its
     own cache: one event loop, no interleaving, so nothing here needs a lock.
+    That guarantee covers `register`/`get`/`release` and `FetchGrant.spend`'s
+    own decrement (no `await` inside it, so nothing can interleave mid-line
+    and no update is lost) -- it does NOT cover a caller's check-then-act
+    that spans an `await` between the check and the act, which is exactly
+    the pattern `fetch.py` uses (`covers()` before a network read,
+    `spend()` after). Two coroutines can both observe `covers() -> True`
+    before either has called `spend()`, because "one event loop" only
+    means no two lines run at once -- it does not mean two `await`-separated
+    steps of the same logical operation run atomically. See
+    `infrastructure/agent/fetch.py`'s `build_fetch_tool` docstring for the
+    concrete gap this produces and why it is bounded rather than open-ended.
 
     Memory rather than a projection is load-bearing, not an oversight. A run
     whose stream has no stop event is abandoned (`research_supervisor.py:18-20`
