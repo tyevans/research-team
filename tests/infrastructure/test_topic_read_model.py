@@ -22,6 +22,7 @@ from research_team.domain.topic import (
     LinkSource,
     OpenTopic,
     RecordFinding,
+    RecordGap,
     RecordInvestigation,
     SetTopicStatus,
     Topic,
@@ -30,7 +31,7 @@ from research_team.infrastructure.persistence.event_store import (
     build_corpus_repository,
     build_topic_repository,
 )
-from research_team.infrastructure.persistence.topics import TopicRunner
+from research_team.infrastructure.persistence.topics import TopicRow, TopicRunner, TopicStore
 
 
 @pytest.fixture
@@ -281,3 +282,70 @@ async def test_the_runner_reports_no_failures_on_a_clean_log(running, topics):
     await running.caught_up()
 
     assert await running.failures() == []
+
+
+# ---------------- gaps reach the queue ----------------
+
+
+async def test_a_topic_with_recorded_gaps_still_appears_in_the_queue(running, topics):
+    """The case the final review found missing: every existing test of thrash
+    reporting built a bare `TopicState` by hand, so the projector never had a
+    `TopicGapRecorded` handler and `gaps` was silently always `0` in
+    production. This test goes through the real table `TopicQueue.evaluate`
+    reads, which is the only path that would have caught it.
+
+    Two looks with nothing recorded is `DEFAULT_THRASH_LOOKS`, so the topic is
+    still in the queue for the reason `test_thrash_still_fires...` in
+    `test_topic_attention.py` covers -- the gap is additional evidence on the
+    same finding, not a separate reason to appear."""
+    project_id = uuid4()
+    topic = await open_topic(
+        topics,
+        project_id,
+        RecordInvestigation(at_position="p1"),
+        RecordGap(looking_for="pricing history", tried=["site search"]),
+        RecordInvestigation(at_position="p2"),
+    )
+    await running.caught_up()
+
+    row = await running.get(topic.aggregate_id)
+    assert row.gaps == 1
+
+    [attention] = await running.queue.evaluate(project_id)
+    [finding] = [f for f in attention.findings if f.check == "topic.rework_thrash"]
+    assert "1" in finding.message
+    assert "gap" in finding.message.lower()
+
+
+async def test_a_topics_database_written_before_gaps_existed_gains_the_column(db_path):
+    """`gaps` postdates the table. A database opened before this change has a
+    `topics` row with no such column, and `TopicStore.open` used to create the
+    table with a bare `executescript` -- `CREATE TABLE IF NOT EXISTS`, which
+    does nothing to a table that already exists. That left the column missing
+    and every read of it silently defaulting to `0` forever, on top of the
+    trigger already not firing at all (finding 1). `TopicStore.open` now goes
+    through `apply_schema`, which is what this test pins.
+
+    Simulated by dropping the column back off, matching
+    `test_a_database_written_before_a_field_existed_gains_its_column` in
+    `test_summary_store.py`.
+    """
+    import aiosqlite
+
+    store = await TopicStore.open(db_path)
+    await store._connection.close()
+
+    async with aiosqlite.connect(db_path) as connection:
+        await connection.execute(f"ALTER TABLE {TopicRow.table_name()} DROP COLUMN gaps")
+        await connection.commit()
+
+    reopened = await TopicStore.open(db_path)
+    try:
+        columns = await reopened._connection.execute(
+            f"PRAGMA table_info({TopicRow.table_name()})"
+        )
+        assert "gaps" in {row[1] for row in await columns.fetchall()}
+        # And it still answers, which is the failure a schema check alone misses.
+        assert await reopened.list(uuid4()) == []
+    finally:
+        await reopened._connection.close()
