@@ -522,11 +522,18 @@
 }
 
 .extraction-summary {
-  cursor: pointer;
   font-family: var(--mono);
 }
 
-.extraction-failed > .extraction-summary {
+/* A descendant selector, not a child one. This was `.extraction-failed >
+ * .extraction-summary` against `<details>`/`<summary>`, where the two were
+ * parent and child. Under `Disclosure` the summary is a `<span>` inside
+ * `.disc-head`, so it is a grandchild and the child combinator matched
+ * nothing -- which would have shown up as a failed extraction losing its red
+ * heading and nothing else, the kind of silent loss that survives a review.
+ * `cursor: pointer` moved off with it: the button is what is clickable now,
+ * and `.disc-head` already says so. */
+.extraction-failed .extraction-summary {
   color: var(--k-failure);
 }
 

@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactElement, ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
@@ -157,8 +158,19 @@ it('keeps a failed extraction on screen with a failed tone', async () => {
 
   push(frame({ stage: 'failed', detail: 'the model refused' }))
 
-  const failed = screen.getByText(/the model refused/)
-  expect(failed.closest('.extraction-last')).toHaveClass('extraction-failed')
+  // The tone is claimed on the *summary*, which is what a reader sees without
+  // opening anything -- and that is what this test is named for. It used to
+  // anchor on the failure detail instead, which worked only because a closed
+  // `<details>` still holds its content in the DOM. `Disclosure` renders
+  // `null` while closed, so the old anchor is gone; the behaviour a reader
+  // experiences is unchanged, since neither one showed the detail.
+  const summary = screen.getByText(/The last extraction failed/)
+  expect(summary.closest('.extraction-last')).toHaveClass('extraction-failed')
+
+  // And the reason is one click away rather than absent, which is the half
+  // that would otherwise go untested now that it is not in the DOM by default.
+  await userEvent.click(screen.getByRole('button', { expanded: false }))
+  expect(screen.getByText(/the model refused/)).toBeInTheDocument()
 })
 
 it('ignores another project’s frames', async () => {

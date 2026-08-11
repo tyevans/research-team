@@ -377,7 +377,13 @@
   margin: 2px 0 8px;
   padding: 4px 10px 6px;
 }
-.discarded summary {
+/* `> .disc-head` rather than `summary`, and `[aria-expanded='true']` rather
+ * than `[open]`: this fold is a `Disclosure` now, so both hooks the
+ * `<details>` version keyed on are gone. `.disc-head` already carries the
+ * button reset and the caret; what stays here is only what is particular to a
+ * discarded turn -- struck through while closed, which is the fold saying
+ * "this was thrown away" before you open it. */
+.discarded > .disc-head {
   font-family: var(--mono);
   font-size: var(--t-xs);
   color: var(--k-failure);
@@ -385,7 +391,7 @@
   text-decoration: line-through;
   text-decoration-color: var(--k-failure);
 }
-.discarded[open] summary {
+.discarded > .disc-head[aria-expanded='true'] {
   text-decoration: none;
 }
 .discarded .provisional {

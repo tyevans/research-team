@@ -1,10 +1,11 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { createExtractionStore } from '@application/knowledge/extraction-store.ts'
 import { useContainer } from '@app/container-context.tsx'
 import type { Extraction } from '@domain/knowledge/extraction.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
+import { Disclosure } from '../common/primitives.tsx'
 import { useStream } from '../shell/StreamProvider.tsx'
 
 /** `remember`, while it is still happening.
@@ -162,23 +163,41 @@ const Running = ({ extraction }: { extraction: Extraction }) => {
  * what just happened. Collapsed because it is history, and open by default it
  * would compete with the extraction actually running.
  */
-const Last = ({ extraction }: { extraction: Extraction }) => (
-  <details className={extraction.failed ? 'extraction-last extraction-failed' : 'extraction-last'}>
-    <summary className="extraction-summary">
-      {extraction.failed ? 'The last extraction failed' : 'Last extraction'} · {extraction.sourceId}
-    </summary>
-    <p className="extraction-line">
-      {extraction.entities ?? 0} entities · {extraction.relationships ?? 0} relationships
-      {extraction.domain ? ` · ${extraction.domain}` : ''}
-      {confidenceText(extraction.domainConfidence)
-        ? ` (${confidenceText(extraction.domainConfidence)})`
-        : ''}
-    </p>
-    {extraction.failed ? (
-      <p className="extraction-line extraction-failed-detail">{failureDetail(extraction)}</p>
-    ) : null}
-  </details>
-)
+const Last = ({ extraction }: { extraction: Extraction }) => {
+  // `Disclosure` rather than the `<details>` this was. Here the controlled
+  // state earns itself rather than only tidying up: this pane is driven by a
+  // live frame subscription and re-renders whenever anything extracts, and the
+  // open state now lives in React where a parent can hold it across the
+  // remount that a *new* last-extraction causes. `<details>` could not be
+  // handed that, which is the S-D14 shape.
+  const [open, setOpen] = useState(false)
+  return (
+    <Disclosure
+      className={extraction.failed ? 'extraction-last extraction-failed' : 'extraction-last'}
+      open={open}
+      onToggle={() => {
+        setOpen((was) => !was)
+      }}
+      label={
+        <span className="extraction-summary">
+          {extraction.failed ? 'The last extraction failed' : 'Last extraction'} ·{' '}
+          {extraction.sourceId}
+        </span>
+      }
+    >
+      <p className="extraction-line">
+        {extraction.entities ?? 0} entities · {extraction.relationships ?? 0} relationships
+        {extraction.domain ? ` · ${extraction.domain}` : ''}
+        {confidenceText(extraction.domainConfidence)
+          ? ` (${confidenceText(extraction.domainConfidence)})`
+          : ''}
+      </p>
+      {extraction.failed ? (
+        <p className="extraction-line extraction-failed-detail">{failureDetail(extraction)}</p>
+      ) : null}
+    </Disclosure>
+  )
+}
 
 const failureDetail = (extraction: Extraction): string =>
   extraction.stages.find((entry) => entry.stage === 'failed')?.detail ?? 'No reason was reported.'
