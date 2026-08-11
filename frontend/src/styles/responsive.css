@@ -93,12 +93,20 @@
 }
 
 @media (max-width: 820px) {
-  body {
-    overflow: auto;
-  }
-  #app {
-    overflow: visible;
-  }
+  /* `body { overflow: auto }` and `#app { overflow: visible }` used to live
+     here: a global no-scroll contract switched off by a media query, so
+     nothing reading the shell would know it happened. It is a declared mode
+     now -- `Shell`'s `scroll="auto"` means `page` below `--bp-narrow` and
+     `viewport` above, and `layout.css` carries the same 821px boundary in one
+     place.
+
+     One behaviour changed with it. The scrolling element below 820px is the
+     surface rather than the body, so the chrome stays pinned at the top while
+     the page scrolls under it instead of scrolling away. That is the better
+     behaviour on a narrow screen -- the breadcrumb is how you know where you
+     are and the connection badge is how you know the console is alive -- but
+     it is a change, not a no-op, and it costs the chrome's height on a small
+     viewport. */
   /* Both splits are stacked by `layout.css` now that the course page is one.
      What the course page needs on top of that is for its panes to keep their
      content's height: `layout.css` caps a stacked pane body at 60vh, which is
