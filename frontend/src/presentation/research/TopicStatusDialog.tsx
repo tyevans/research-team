@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useId, useState } from 'react'
 
 import { notify } from '@application/notifications/toast-store.ts'
 import { errorMessage } from '@application/ports/errors.ts'
@@ -9,6 +9,7 @@ import { statusLabel } from '@domain/entity/status.ts'
 import { CLOSED_STATUSES, type TopicDetail, type TopicStatus } from '@domain/research/topic.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
+import { Drawer } from '../common/Drawer.tsx'
 import { Button } from '../common/primitives.tsx'
 import { SubQuestions } from './SubQuestions.tsx'
 import { TopicDocuments } from './TopicDocuments.tsx'
@@ -23,13 +24,6 @@ const ALL_STATUSES: readonly TopicStatus[] = [
   'not_pursuing',
   'superseded',
 ]
-
-/** Descendants a keyboard user can land on, queried fresh on every keypress --
- *  mirrors `WorkerDrawer`'s `FOCUSABLE_SELECTOR`. This dialog's body grows a
- *  sub-question row every time one is added, so a list captured once at mount
- *  would go stale exactly the way the drawer's transcript would. */
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), input, textarea, select, [tabindex]:not([tabindex="-1"])'
 
 /** Change a topic's status, with the sub-question breakdown alongside it.
  *
@@ -46,6 +40,22 @@ const FOCUSABLE_SELECTOR =
  * the Save control mirrors that here rather than letting a submit round-trip
  * to the server just to be told no. Trimmed before both the disabled check
  * and the request, so three spaces do not count as an explanation either.
+ *
+ * **The dialog shell is `Drawer`'s now.** This file used to render its own
+ * `.drawer-backdrop`, its own `role="dialog"` aside, its own focus-in/restore
+ * pair and its own Tab trap over a `FOCUSABLE_SELECTOR` re-queried per
+ * keypress -- a copy of what `Drawer` held, which `Drawer`'s comment predicted
+ * would happen and which this file then did. All of it is deleted. The trap in
+ * particular was a *simulation* of confinement: it cycled Tab among its own
+ * children and could say nothing about the agent dock painting on top of it,
+ * which it did. `Overlay` marks the page `inert` instead, which is the
+ * platform confining the pointer, the keyboard and a screen reader's virtual
+ * cursor at once.
+ *
+ * The two suppressions that sat on the old markup went with it, and that is
+ * the tell worth keeping: they were there because a `div` with an `onClick`
+ * and no key handler is not an interactive element, which was true, and the
+ * honest fix was never a comment.
  */
 export const TopicStatusDialog = ({
   projectId,
@@ -58,8 +68,6 @@ export const TopicStatusDialog = ({
 }) => {
   const { topics } = useContainer()
   const queryClient = useQueryClient()
-  const dialogRef = useRef<HTMLDivElement>(null)
-  const closeButtonRef = useRef<HTMLButtonElement>(null)
   const justificationId = useId()
 
   const [chosen, setChosen] = useState<TopicStatus | null>(null)
@@ -82,128 +90,63 @@ export const TopicStatusDialog = ({
 
   const canSave = chosen !== null && justification.trim().length > 0 && !save.isPending
 
-  // Move focus in on open, and give it back to whatever had it on close --
-  // see `WorkerDrawer`'s doc comment on the same pair of effects for why the
-  // close button is the target and why the previously-focused element is
-  // re-checked for DOM membership before being restored.
-  useEffect(() => {
-    const previouslyFocused = document.activeElement
-    closeButtonRef.current?.focus()
-    return () => {
-      if (previouslyFocused instanceof HTMLElement && document.contains(previouslyFocused)) {
-        previouslyFocused.focus()
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose()
-        return
-      }
-
-      if (event.key !== 'Tab' || !dialogRef.current) return
-
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-      )
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (!first || !last) return
-
-      const active = document.activeElement
-      if (event.shiftKey) {
-        if (active === first || !dialogRef.current.contains(active)) {
-          event.preventDefault()
-          last.focus()
-        }
-      } else if (active === last || !dialogRef.current.contains(active)) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   return (
-    /* Same two suppressions as `Drawer.tsx`, for the same reasons, on a second
-       copy of the same markup -- which is the duplication `Drawer`'s own
-       comment predicted and this file is. Escape is handled in the effect
-       above; the `stopPropagation` below is plumbing, not an interaction.
-       Phase 1 deletes this hand-rolled trap and the copy goes with it. */
-    /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */
-    <div className="drawer-backdrop" onClick={onClose}>
-      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
-      <aside
-        className="drawer topic-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Manage ${topic.question}`}
-        ref={dialogRef}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className="drawer-head">
-          <h3 className="drawer-title">{topic.question}</h3>
-          <span className="drawer-spacer" />
-          <button type="button" className="btn btn-sm" ref={closeButtonRef} onClick={onClose}>
-            Close
+    /* `label` is "Manage <question>" while `title` is the question alone: the
+       heading sits under a visible "Manage" affordance, but an accessible name
+       has no such context and "Where the audit trail lives" alone does not say
+       that this is the thing that changes it. The two props exist to differ. */
+    <Drawer title={topic.question} label={`Manage ${topic.question}`} onClose={onClose}>
+      <div className="topic-status-current">
+        Currently <strong>{statusLabel(topic.status)}</strong>
+        {CLOSED_STATUSES.includes(topic.status) ? ' -- reopening is allowed.' : ''}
+      </div>
+
+      <div className="topic-status-choices">
+        {choices.map((status) => (
+          <button
+            key={status}
+            type="button"
+            className={
+              chosen === status
+                ? 'btn btn-sm topic-status-choice topic-status-choice-active'
+                : 'btn btn-sm topic-status-choice'
+            }
+            aria-pressed={chosen === status}
+            onClick={() => setChosen(status)}
+          >
+            {statusLabel(status)}
           </button>
-        </header>
+        ))}
+      </div>
 
-        <div className="drawer-body">
-          <div className="topic-status-current">
-            Currently <strong>{statusLabel(topic.status)}</strong>
-            {CLOSED_STATUSES.includes(topic.status) ? ' -- reopening is allowed.' : ''}
-          </div>
+      <label htmlFor={justificationId}>Justification</label>
+      <textarea
+        id={justificationId}
+        className="input topic-status-justification"
+        value={justification}
+        onChange={(event) => setJustification(event.target.value)}
+        placeholder="why this change"
+      />
 
-          <div className="topic-status-choices">
-            {choices.map((status) => (
-              <button
-                key={status}
-                type="button"
-                className={
-                  chosen === status
-                    ? 'btn btn-sm topic-status-choice topic-status-choice-active'
-                    : 'btn btn-sm topic-status-choice'
-                }
-                aria-pressed={chosen === status}
-                onClick={() => setChosen(status)}
-              >
-                {statusLabel(status)}
-              </button>
-            ))}
-          </div>
+      <div className="topic-status-actions">
+        <Button tone="accent" disabled={!canSave} onClick={() => save.mutate()}>
+          {save.isPending ? 'Saving…' : 'Save'}
+        </Button>
+      </div>
 
-          <label htmlFor={justificationId}>Justification</label>
-          <textarea
-            id={justificationId}
-            className="input topic-status-justification"
-            value={justification}
-            onChange={(event) => setJustification(event.target.value)}
-            placeholder="why this change"
-          />
+      <SubQuestions projectId={projectId} topic={topic} />
 
-          <div className="topic-status-actions">
-            <Button tone="accent" disabled={!canSave} onClick={() => save.mutate()}>
-              {save.isPending ? 'Saving…' : 'Save'}
-            </Button>
-          </div>
-
-          <SubQuestions projectId={projectId} topic={topic} />
-
-          {/* Last, and inside this dialog rather than as a fifth pane: what a
-              dispatch wrote is the answer to the question this topic asks, so
-              it belongs behind the topic rather than beside the graph. The
-              dialog already traps focus and already grows -- `FOCUSABLE_SELECTOR`
-              is re-queried per keypress for exactly this reason. */}
-          <section className="topic-documents-section">
-            <h3 className="topic-section-heading">Documents</h3>
-            <TopicDocuments projectId={projectId} topicId={topic.topicId} />
-          </section>
-        </div>
-      </aside>
-    </div>
+      {/* Last, and inside this dialog rather than as a fifth pane: what a
+          dispatch wrote is the answer to the question this topic asks, so it
+          belongs behind the topic rather than beside the graph. That this
+          section arrives late and grows used to matter to the trap above it,
+          which re-queried its focusable children per keypress to keep up;
+          `inert` confines a subtree rather than a list, so a body that grows
+          is no longer a thing the dialog has to keep track of. */}
+      <section className="topic-documents-section">
+        <h3 className="topic-section-heading">Documents</h3>
+        <TopicDocuments projectId={projectId} topicId={topic.topicId} />
+      </section>
+    </Drawer>
   )
 }

@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 
 import { createSessionStore } from '@application/session/session-store.ts'
@@ -8,6 +9,7 @@ import type { Container } from '@app/container.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { SessionId } from '@domain/shared/identifier.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
+import { OverlayHost } from '@presentation/layout/OverlayHost.tsx'
 import { StreamProvider } from '@presentation/shell/StreamProvider.tsx'
 
 import { SessionView } from './SessionView.tsx'
@@ -80,8 +82,8 @@ const container = () =>
     approvals: { pending: vi.fn().mockResolvedValue([]) },
   }) as unknown as Container
 
-const show = () => {
-  const deps = container()
+const show = (over: Partial<Container> = {}) => {
+  const deps: Container = { ...container(), ...over }
   const store = createSessionStore({
     sessions: deps.sessions,
     turns: deps.turns,
@@ -89,17 +91,49 @@ const show = () => {
     now: deps.now,
     notify: () => {},
   })
-  return render(
-    <ContainerProvider container={deps}>
-      <QueryClientProvider
-        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-      >
-        <StreamProvider>
-          <SessionView store={store} sessionId={SESSION} at={ScrubPoint.head()} path={null} />
-        </StreamProvider>
-      </QueryClientProvider>
-    </ContainerProvider>,
-  )
+  // `OverlayHost` because the end-session confirmation is a `Drawer`, and
+  // `Overlay` renders `null` without a host in scope. That the application
+  // mounts one is `App.test.tsx`'s claim, not this file's.
+  return {
+    deps,
+    ...render(
+      <ContainerProvider container={deps}>
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <StreamProvider>
+            <OverlayHost>
+              <SessionView store={store} sessionId={SESSION} at={ScrubPoint.head()} path={null} />
+            </OverlayHost>
+          </StreamProvider>
+        </QueryClientProvider>
+      </ContainerProvider>,
+    ),
+  }
+}
+
+/** A session that holds a project, which is the only state in which the
+ *  end-session control is rendered at all.
+ *
+ *  Hands `release` back beside the port rather than leaving the caller to
+ *  reach in for `sessions.release`: plucking a method off an object to assert
+ *  on it is `@typescript-eslint/unbound-method`, and the rule is right here
+ *  for once -- the spy is the thing under test, so it should be named. */
+const holdingAProject = () => {
+  const release = vi.fn().mockResolvedValue(true)
+  const sessions = {
+    read: vi.fn().mockResolvedValue({
+      files: [],
+      messages: [],
+      compactedThrough: null,
+      ...head,
+      projectId: 'ffffffff-1111-2222-3333-444444444444',
+      holdsProject: true,
+    }),
+    log: vi.fn().mockResolvedValue([]),
+    release,
+  } as unknown as Container['sessions']
+  return { sessions, release }
 }
 
 it('mounts its three panes into a split the stylesheet can find', () => {
@@ -151,4 +185,58 @@ it('pins the composer and the activity feed outside the scrolling bodies', () =>
   expect(dom.querySelector('[data-pane="conversation"] .lay-pane-body')).not.toContainElement(
     screen.getByRole('textbox'),
   )
+})
+
+/** The two facts S-D1's replacement has to carry: the question is asked, and
+ *  answering "no" does nothing.
+ *
+ *  The second is the one worth a test. `window.confirm` returns a boolean and
+ *  the call site read it inline, so "cancel does not release the session" was
+ *  structurally true and untestable in the same breath -- jsdom's `confirm`
+ *  throws "not implemented", which is why no test in this directory ever went
+ *  near the control. Moving the question into a component splits it into two
+ *  events, and a wrong wiring (confirming on dismiss, or releasing before the
+ *  answer) is now a thing that can be observed rather than a thing the browser
+ *  made impossible to get wrong. */
+it('asks before ending a session, and does not end it if the answer is no', async () => {
+  const user = userEvent.setup()
+  const { sessions, release } = holdingAProject()
+  show({ sessions })
+
+  await user.click(await screen.findByRole('button', { name: 'End session' }))
+
+  // The wording, not just the presence of a dialog: these two sentences are
+  // what make an irreversible-sounding action legible, and they were the part
+  // `window.confirm` could only render as one run-on paragraph.
+  const dialog = screen.getByRole('dialog')
+  expect(dialog).toHaveTextContent('The log stays readable and forkable.')
+  expect(dialog).toHaveTextContent(/next session in it starts from this one's files/)
+
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+  // Fails if `onConfirm` and `onCancel` are transposed, which is the whole
+  // failure mode a boolean return value did not have.
+  expect(release).not.toHaveBeenCalled()
+})
+
+it('ends the session once the question is answered yes', async () => {
+  const user = userEvent.setup()
+  const { sessions, release } = holdingAProject()
+  show({ sessions })
+
+  await user.click(await screen.findByRole('button', { name: 'End session' }))
+  await user.click(screen.getByRole('button', { name: 'End the session' }))
+
+  await waitFor(() => expect(release).toHaveBeenCalledWith(SESSION))
+
+  // **This test survives both ways of wiring the dialog wrongly**, and saying
+  // so is the point of the note. Confirming on dismiss, and releasing on the
+  // control with the dialog as decoration in front of it, were each tried
+  // deliberately: this stayed green through both, because both still reach
+  // `release` on a path that goes through the confirm button. It is the
+  // *cancel* test above that fails, and it failed on both.
+  //
+  // Kept anyway, because the pair is the claim -- one asserts the release
+  // happens, the other that nothing else makes it happen -- and an ending that
+  // no test performs end to end is an ending nobody has run.
 })
