@@ -752,6 +752,56 @@ is correct" but "what were the two of them each assuming".
 Wants a first-class contradiction record with a "both true in different
 contexts" resolution state, and an escalation rather than an auto-resolve.
 
+Note B40 before designing that record as a graph node: consolidation would be
+just as likely to eat it.
+
+### B40. A node that is not a claim cannot safely live in the graph
+
+Established while designing `record_gap`
+(`docs/superpowers/specs/2026-08-10-representable-absence-design.md`), which
+started as an "open question" entity type and became a topic event instead.
+Recorded because the reasoning is not visible from the code, and the next
+person to want a question node, a contradiction record (B15) or an assumption
+node will reach for the same design.
+
+**Consolidation would eat it, and the loss would be silent.** A node named for
+the entity it concerns blocks with that entity on both the `p:` prefix key and
+the `s:` soundex key (`redstring/domain/blocking.py:115-124`), scores name
+similarity 1.0, and lands in the middle band, so it reaches the adjudicator.
+The adjudicator is shown only the *subject's* `entity_type`
+(`redstring/consolidation/policy.py:188-196`) and asked whether two mentions
+"refer to the same real-world thing". `entity_type` is neither a scoring
+feature nor a filter (`redstring/consolidation/candidates.py:126-153`), and
+there is no per-entity opt-out anywhere on `Entity` or `CandidateFinder`. A
+merged-away node then disappears from the browser
+(`infrastructure/knowledge/graph_reader.py:54-84`), so the node does not show
+as a duplicate — it vanishes.
+
+**It would have to masquerade as an extraction.** `DocumentExtracted`'s
+validator requires every entity's `source_id` to equal the event's
+(`redstring/events/document.py:118-124`), so a node with no document behind it
+needs a synthetic document identity.
+
+**The browser could not show its state.** Entity types are distinguished only
+by a hashed colour (`frontend/src/presentation/research/entity-colors.ts:21-48`);
+there is no shape, border, or node-state notion. Open-versus-answered would be
+new surface across `GraphEntity`, `GraphReadPort`, the presenter and the
+canvas.
+
+What is *not* a barrier, and is worth knowing: `entity_type` is an unvalidated
+free string end to end, domain schemas prompt but do not constrain (ADR 0011),
+`ExtractionMethod.MANUAL` already exists, and
+`Document.record_extraction(entities=...)` accepts caller-supplied entities and
+asks no model — so a non-extraction write path is reachable today without a
+redstring change. The obstacle is consolidation and rendering, not the write.
+
+If this is picked up, the redstring-side asks are: a deterministic public id
+helper (`entity_id_for` is behind a dotted path and therefore internal), an
+`EntityAsserted`-shaped event with a `GraphProjection` handler so a node need
+not be attributed to a document, and a per-entity consolidation opt-out. Note
+`rebuild.py` replays `strict=True` with one projection, so a new event type
+without a handler fails project open rather than degrading.
+
 ### B16. Bulk ingest reports no progress
 
 `build_graph` takes no progress callback, and `build_knowledge_tools`
