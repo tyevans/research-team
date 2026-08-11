@@ -31,7 +31,7 @@ export const FileList = ({
   if (files.length === 0) {
     return (
       <EmptyState
-        title="No files."
+        heading="No files."
         detail={
           historicalAt !== null
             ? `The workspace was empty at event ${historicalAt}.`
@@ -96,9 +96,7 @@ export const FileList = ({
             aria-selected={selected}
             onClick={() => onOpen(file.path)}
           >
-            <span className="file-path" title={file.path.value}>
-              {file.path.value}
-            </span>
+            <span className="file-path">{file.path.value}</span>
             <span className="file-meta">
               {typeof file.revisions === 'number' && file.revisions > 0
                 ? `r${file.revisions}  `

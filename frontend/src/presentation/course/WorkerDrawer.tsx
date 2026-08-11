@@ -90,7 +90,7 @@ export const WorkerDrawer = ({
 
   return (
     <Drawer
-      title={heading ? `${heading} · ${shortId(sessionId)}` : `Watching ${shortId(sessionId)}`}
+      heading={heading ? `${heading} · ${shortId(sessionId)}` : `Watching ${shortId(sessionId)}`}
       label={heading ? `Watching ${heading}` : `Watching session ${shortId(sessionId)}`}
       onClose={onClose}
       actions={

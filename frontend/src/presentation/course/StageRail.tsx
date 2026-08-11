@@ -25,7 +25,23 @@ export const Stage = ({
 
   return (
     <li className={`rail-item rail-item-${stage.status}`}>
-      <button type="button" className="rail-row" aria-expanded={open} onClick={onToggle}>
+      {/* The count is expanded in the row's own accessible name rather than in
+          a tooltip, and the choice is forced: this row is a `<button>`, and
+          `Tooltip`'s wrapper is another one. "4/6" and "—" are the two things
+          on this row a reader cannot expand for themselves, so they are said
+          in full here — which also replaces what the two `title`s carried, for
+          a reader the `title`s never reached. */}
+      <button
+        type="button"
+        className="rail-row"
+        aria-expanded={open}
+        aria-label={`Stage ${stage.index}: ${stage.name}, ${stage.status}, ${
+          stage.outputs.length > 0
+            ? `${written} of ${stage.outputs.length} declared artifacts written`
+            : 'declares no artifact of its own'
+        }`}
+        onClick={onToggle}
+      >
         <span className={`rail-dot rail-${stage.status}`} aria-hidden="true" />
         <span className="rail-index">{stage.index}</span>
         <span className="rail-name">{stage.name}</span>
@@ -36,14 +52,11 @@ export const Stage = ({
             // `clsx` for the same reason as `Artifacts.tsx`: the plugin eats
             // the leading space in a template literal's conditional branch.
             className={clsx('rail-count', written < stage.outputs.length && 'rail-short')}
-            title={`${written} of ${stage.outputs.length} declared artifacts written`}
           >
             {written}/{stage.outputs.length}
           </span>
         ) : (
-          <span className="rail-count empty" title="This stage declares no artifact of its own.">
-            —
-          </span>
+          <span className="rail-count empty">—</span>
         )}
         <Chip tone={stage.status}>{stage.status}</Chip>
       </button>

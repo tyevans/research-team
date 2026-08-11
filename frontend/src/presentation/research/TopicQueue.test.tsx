@@ -17,8 +17,12 @@ import * as stories from './TopicQueue.stories.tsx'
  *
  * What this cannot check is anything the browser computes. The failure chip's
  * clamp is `max-width` plus `text-overflow`, and jsdom lays out nothing -- so
- * the assertion below is that the full text is reachable through `title`,
- * which is the part that has to be true for the clamp to be acceptable at all.
+ * the assertion below is that the full text is reachable, which is the part
+ * that has to be true for the clamp to be acceptable at all. It used to be
+ * reachable through `title` and the test said so approvingly; `title` is
+ * reachable by a hovering mouse and by nothing else, so what it was really
+ * asserting was that the clamped text was available to everyone who did not
+ * need it.
  */
 const { Queue, Dispatched, FilteredToNothing, Empty, NothingToSynthesise } = composeStories(stories)
 
@@ -61,18 +65,37 @@ it('reports the running and queued totals in one bar rather than per row', async
 it('keeps a failed dispatch on the row, with its untruncated reason reachable', async () => {
   render(<Dispatched />)
 
-  const chip = await screen.findByTitle(
-    'the model returned a citation for a source this project does not hold, twice in a row',
-  )
+  const chip = await screen.findByRole('button', { name: /failed/ })
+  // Focus, not hover: hover is what `title` already did. The whole claim of
+  // this conversion is that the reason arrives for a reader who never touches
+  // a pointer, so the test reaches it the way that reader does.
+  chip.focus()
+  expect(
+    await screen.findByText(
+      'the model returned a citation for a source this project does not hold, twice in a row',
+    ),
+  ).toBeInTheDocument()
   expect(chip.textContent).toContain('failed')
 })
 
 it('disables the one verb for a topic with nothing gathered, and says why', async () => {
-  render(<NothingToSynthesise />)
+  const user = userEvent.setup()
+  const onDispatch = vi.fn()
+  render(<NothingToSynthesise onDispatch={onDispatch} />)
 
+  // `aria-disabled` rather than `disabled`, which is the whole point rather
+  // than a spelling: a `disabled` button takes no focus and no pointer events,
+  // so the sentence explaining why it is off could only ever be delivered by
+  // something that does not need the button to be interactive -- which is what
+  // `title` was, and why it reached nobody. The press still has to do nothing.
   const button = await screen.findByRole('button', { name: 'Write understanding' })
-  expect(button).toBeDisabled()
-  expect(button).toHaveAttribute('title', 'Nothing gathered for this topic yet')
+  expect(button).toHaveAttribute('aria-disabled', 'true')
+
+  button.focus()
+  expect(await screen.findByText('Nothing gathered for this topic yet')).toBeInTheDocument()
+
+  await user.click(button)
+  expect(onDispatch).not.toHaveBeenCalled()
 })
 
 /** Props-only, which is the claim the whole split rests on: every test in this

@@ -50,7 +50,7 @@ const Fixture = ({ drawerOpen = false }: { drawerOpen?: boolean }) => {
       <Tooltip explanation={EXPLANATION}>why</Tooltip>
       <button type="button">something else</button>
       {drawerOpen && !closed ? (
-        <Drawer title="Worker" label="Worker detail" onClose={() => setClosed(true)}>
+        <Drawer heading="Worker" label="Worker detail" onClose={() => setClosed(true)}>
           <p>drawer body</p>
         </Drawer>
       ) : null}

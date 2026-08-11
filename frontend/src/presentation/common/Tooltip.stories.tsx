@@ -127,7 +127,7 @@ export const OverADrawer: Story = {
         </div>
 
         {open ? (
-          <Drawer title="Worker" label="Worker detail" onClose={() => setOpen(false)}>
+          <Drawer heading="Worker" label="Worker detail" onClose={() => setOpen(false)}>
             <p>
               This must paint over the tooltip, and Escape must close this and leave the tooltip
               where it is.

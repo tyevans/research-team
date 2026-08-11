@@ -18,6 +18,7 @@ import { shortId, type ProjectId } from '@domain/shared/identifier.ts'
 
 import { Confirm } from '../common/Confirm.tsx'
 import { Button, Chip, Disclosure, EmptyState, ErrorBox } from '../common/primitives.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 import { VirtualList } from '../common/VirtualList.tsx'
 import { fullTime, plural, relativeTime } from '../formatting/format.ts'
 import { courseHref, researchHref, sessionHref } from '../routing/routes.ts'
@@ -90,7 +91,7 @@ export const ProjectList = ({
   if (query.isError) {
     return (
       <ErrorBox
-        title="Could not load projects"
+        heading="Could not load projects"
         message={errorMessage(query.error)}
         onRetry={() => void query.refetch()}
       />
@@ -104,13 +105,13 @@ export const ProjectList = ({
     // than an empty box that reads as "nothing has ever run here".
     return (
       <EmptyState
-        title="No projects yet."
+        heading="No projects yet."
         detail="Any sessions in this database predate projects and cannot be reached from here. Create a project to start work that successive sessions share a filesystem and a knowledge graph with."
       />
     )
   }
   if (shown.length === 0) {
-    return <EmptyState title={`Nothing matches “${search.trim()}”.`} />
+    return <EmptyState heading={`Nothing matches “${search.trim()}”.`} />
   }
 
   const toggle = (id: ProjectId) => {
@@ -165,7 +166,7 @@ interface Confirmation {
 const confirmCopy = ({ kind, project }: Confirmation) => {
   if (kind === 'takeOver') {
     return {
-      title: `End session ${shortId(project.activeSessionId)} and start a new one in ${project.name}?`,
+      heading: `End session ${shortId(project.activeSessionId)} and start a new one in ${project.name}?`,
       lines: ['Its files carry over to the new session. Its conversation does not.'],
       confirmLabel: 'End it and start a new session',
       tone: 'accent' as const,
@@ -182,7 +183,7 @@ const confirmCopy = ({ kind, project }: Confirmation) => {
       "The knowledge graph's contents are left in place.",
   )
   return {
-    title: `Delete project "${project.name}"?`,
+    heading: `Delete project "${project.name}"?`,
     lines,
     confirmLabel: 'Delete project',
     tone: 'danger' as const,
@@ -340,9 +341,9 @@ const ProjectRow = ({
         <span className="project-name">{project.name}</span>
         <WorkflowChip project={project} />
         {project.activeSessionId ? (
-          <Chip tone="held" title={`held by session ${project.activeSessionId}`}>
-            held by {shortId(project.activeSessionId)}
-          </Chip>
+          <Tooltip explanation={`held by session ${project.activeSessionId}`}>
+            <Chip tone="held">held by {shortId(project.activeSessionId)}</Chip>
+          </Tooltip>
         ) : (
           <Chip tone="ok">free</Chip>
         )}
@@ -352,12 +353,20 @@ const ProjectRow = ({
       <div className="project-stats">
         <span>{plural(sessionCount, 'session')}</span>
         <span>{plural(fileCount, 'file')}</span>
-        <span title={lastActivity ? fullTime(lastActivity) : 'nothing has run in this project'}>
+        {/* Both of these show an abbreviation of something exact — a relative
+            time over a timestamp, eight characters over a full id — so the
+            tooltip is not a duplicate of the visible text and cannot simply be
+            deleted. Neither span is interactive, so the wrapper trigger costs
+            two tab stops per project row and buys the exact value for a reader
+            who never had it. */}
+        <Tooltip
+          explanation={lastActivity ? fullTime(lastActivity) : 'nothing has run in this project'}
+        >
           {lastActivity ? relativeTime(lastActivity) : 'no sessions yet'}
-        </span>
-        <span className="project-id" title={project.id}>
+        </Tooltip>
+        <Tooltip explanation={project.id} className="project-id">
           {shortId(project.id)}
-        </span>
+        </Tooltip>
       </div>
 
       <div className="node-actions">
@@ -366,22 +375,19 @@ const ProjectRow = ({
             the project on. "Join" was only ever right for a free one. */}
         {project.activeSessionId ? (
           <>
-            <Button
-              small
-              title="Open the session currently holding this project"
-              onClick={() => navigate(sessionHref(project.activeSessionId!))}
+            <Tooltip asChild explanation="Open the session currently holding this project">
+              <Button small onClick={() => navigate(sessionHref(project.activeSessionId!))}>
+                Resume {shortId(project.activeSessionId)}
+              </Button>
+            </Tooltip>
+            <Tooltip
+              asChild
+              explanation="End the holding session, then start a new one from its work"
             >
-              Resume {shortId(project.activeSessionId)}
-            </Button>
-            <Button
-              small
-              tone="accent"
-              disabled={busy}
-              title="End the holding session, then start a new one from its work"
-              onClick={onTakeOver}
-            >
-              New session
-            </Button>
+              <Button small tone="accent" disabled={busy} onClick={onTakeOver}>
+                New session
+              </Button>
+            </Tooltip>
           </>
         ) : (
           <Button small tone="accent" disabled={busy} onClick={onOpen}>
@@ -396,25 +402,35 @@ const ProjectRow = ({
             and `get_course` 409s with exactly this sentence for one that chose
             none — so a button that said "Research" and went to the course page
             was hiding a permanent fact behind a wrong word. */}
-        <Button
-          small
-          disabled={!project.workflow}
-          title={
+        {/* `aria-disabled`, not `disabled`, and for the same reason as the
+            dispatch button in `TopicQueue`: the sentence this carries when it
+            is off is the *permanent* reason it is off, and a `disabled`
+            element cannot be focused, so the tooltip holding it would open for
+            nobody. The click is guarded below instead. */}
+        <Tooltip
+          asChild
+          explanation={
             project.workflow
               ? 'Every stage of this workflow, and every artifact it owes'
               : 'this project runs no workflow'
           }
-          onClick={() => navigate(courseHref(project.id))}
         >
-          Course
-        </Button>
-        <Button
-          small
-          title="Topics, documents and the knowledge graph for this project"
-          onClick={() => navigate(researchHref(project.id))}
-        >
-          Research
-        </Button>
+          <Button
+            small
+            aria-disabled={!project.workflow}
+            onClick={() => {
+              if (!project.workflow) return
+              navigate(courseHref(project.id))
+            }}
+          >
+            Course
+          </Button>
+        </Tooltip>
+        <Tooltip asChild explanation="Topics, documents and the knowledge graph for this project">
+          <Button small onClick={() => navigate(researchHref(project.id))}>
+            Research
+          </Button>
+        </Tooltip>
 
         {/* Destructive things behind one more click, so the row's default
             reading is "ways in" rather than "ways to lose things". */}
@@ -424,15 +440,11 @@ const ProjectRow = ({
           open={menuOpen}
           onToggle={() => setMenuOpen(!menuOpen)}
         >
-          <Button
-            small
-            tone="danger"
-            disabled={busy}
-            title="Retire this project"
-            onClick={onDelete}
-          >
-            Delete
-          </Button>
+          <Tooltip asChild explanation="Retire this project">
+            <Button small tone="danger" disabled={busy} onClick={onDelete}>
+              Delete
+            </Button>
+          </Tooltip>
         </Disclosure>
       </div>
 
@@ -477,15 +489,15 @@ const ProjectRow = ({
 const WorkflowChip = ({ project }: { project: Project }) => {
   if (!project.workflow) {
     return (
-      <Chip title="No workflow selected. Projects choose one when they are created.">
-        no workflow
-      </Chip>
+      <Tooltip explanation="No workflow selected. Projects choose one when they are created.">
+        <Chip>no workflow</Chip>
+      </Tooltip>
     )
   }
   const { stage, workflow } = project
   return (
-    <Chip
-      title={
+    <Tooltip
+      explanation={
         stage
           ? `Stage ${stage.index} of ${stage.of}: ${stage.name} (${stage.id})`
           : // No stage means the preset is not one this build ships, so there is
@@ -493,7 +505,7 @@ const WorkflowChip = ({ project }: { project: Project }) => {
             `Workflow ${workflow.id} is not available in this build`
       }
     >
-      {stage ? `${workflow.name} · ${stage.index}/${stage.of}` : workflow.name}
-    </Chip>
+      <Chip>{stage ? `${workflow.name} · ${stage.index}/${stage.of}` : workflow.name}</Chip>
+    </Tooltip>
   )
 }

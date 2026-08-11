@@ -77,7 +77,7 @@ export const TopicDocuments = ({
   if (query.isError) {
     return (
       <ErrorBox
-        title="Could not list this topic's documents"
+        heading="Could not list this topic's documents"
         message={errorMessage(query.error)}
         onRetry={() => void query.refetch()}
       />
@@ -88,7 +88,7 @@ export const TopicDocuments = ({
   if (board.documents.length === 0 || board.sessionId === null) {
     return (
       <EmptyState
-        title="Nothing written yet"
+        heading="Nothing written yet"
         // Names the directory rather than saying "no documents": a reader who
         // dispatched a moment ago wants to know *where* it will appear, and a
         // reader whose topic moved in the list needs the path to notice that
@@ -155,7 +155,7 @@ const DocumentBody = ({
   if (contents.isError) {
     return (
       <ErrorBox
-        title="Could not read this document"
+        heading="Could not read this document"
         message={errorMessage(contents.error)}
         onRetry={() => void contents.refetch()}
       />

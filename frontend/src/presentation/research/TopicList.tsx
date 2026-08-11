@@ -24,7 +24,7 @@ export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
   if (query.isError) {
     return (
       <ErrorBox
-        title="Could not read this project's topics"
+        heading="Could not read this project's topics"
         message={query.error instanceof Error ? query.error.message : String(query.error)}
         onRetry={() => void query.refetch()}
       />

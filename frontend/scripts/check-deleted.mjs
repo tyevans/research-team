@@ -180,6 +180,27 @@ const RULES = [
     forbid: [/window\.confirm\(/],
   },
   {
+    phase: '3',
+    what: 'explanations lived in `title` attributes',
+    why: 'S-D3. A `title` is announced on hover, after a delay the operating system owns, and on nothing else -- not on focus, not on touch, not to a screen reader reading a `<span>`. Fifty-one of them carried real sentences ("Also autos the workflow review gate, so a run can cross stage boundaries unattended") and every one of them reached a mouse and no other reader. They are `Tooltip`s where they explained something, accessible names where they named an icon, and deleted where they repeated the text beside them. A `title=` here is one of those three arriving as the fourth.',
+    // Repo-wide over `presentation`, which it can only be because no component
+    // under it has a prop called `title` any more: `Drawer`, `Confirm`,
+    // `EmptyState` and `ErrorBox` all take `heading`, renamed in the same
+    // commit precisely so this rule does not have to tell a heading from an
+    // attribute with a regex. It cannot -- both are `title=` in JSX -- and a
+    // rule that guesses is a rule somebody turns off.
+    //
+    // Two exemptions, both outside this scope and both legitimate.
+    // `infrastructure/rendering/markdown.ts` keeps `title` in `ALLOWED_ATTR`
+    // and sets it on links, because that is markdown's own `[text](href
+    // "title")` and stripping it would be this console editing documents it
+    // renders. And an `<iframe>` needs a `title` as a genuine accessibility
+    // requirement -- there is none in this codebase today, so widening the
+    // scope to all of `src` would forbid the one attribute nobody may remove.
+    where: 'presentation',
+    forbid: [/title=/],
+  },
+  {
     phase: 'B',
     what: 'stylesheets each carried their own stacking numbers',
     why: 'Eight literal `z-index` declarations across five values, two of which produced a popover painting over an `aria-modal` dialog. Every one now names a role from `tokens.css`. `scripts/stacking.test.ts` is the real enforcement and is more precise than this -- it also rejects an undeclared token and a fourth role. This entry is here so the *count* is recorded where the other phase deletions are; if it ever fires, read that test first.',

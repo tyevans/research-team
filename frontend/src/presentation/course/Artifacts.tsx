@@ -45,12 +45,9 @@ export const Artifact = ({ slot, course }: { slot: ArtifactSlot; course: Course 
         {slot.present ? (
           <Chip tone="present">written</Chip>
         ) : (
-          <Chip
-            tone="missing"
-            title={`The preset declares this artifact and no file is at ${slot.path}`}
-          >
-            not written
-          </Chip>
+          <Tooltip explanation={`The preset declares this artifact and no file is at ${slot.path}`}>
+            <Chip tone="missing">not written</Chip>
+          </Tooltip>
         )}
       </div>
 
@@ -89,14 +86,11 @@ const ProvenanceRow = ({
   return (
     <div className="artifact-prov">
       <span className="muted">rests on: </span>
-      {/* Three of this console's ~20 `title` attributes migrated to `Tooltip`,
-          and only three: the rest are the next commit, kept out of this one so
-          the bridge between Radix's floating layer and `OverlayHost` is
-          reviewable on its own. These are the two trigger modes side by side,
-          which is why they were picked — `asChild` over an anchor that is
-          already focusable and already passes a ref, and the default wrapper
-          over a `Chip`, which renders a `<span>` and is reachable by no
-          keyboard at all today. */}
+      {/* The two trigger modes side by side, which is why this row was the one
+          the bridge landed on first — `asChild` over an anchor that is already
+          focusable and already passes a ref, and the default wrapper over a
+          `Chip`, which renders a `<span>` and is reachable by no keyboard at
+          all without one. */}
       {provenance.sources.map((span, index) => (
         <Tooltip
           key={index}
@@ -119,15 +113,14 @@ const ProvenanceRow = ({
         </Tooltip>
       ) : null}
       {provenance.empty ? (
-        <Chip
-          tone="bad"
-          title={
+        <Tooltip
+          explanation={
             'Neither a source nor an admission of inference — indistinguishable from an ' +
             'artifact never checked against anything.'
           }
         >
-          claims nothing
-        </Chip>
+          <Chip tone="bad">claims nothing</Chip>
+        </Tooltip>
       ) : null}
     </div>
   )
@@ -156,17 +149,16 @@ export const CourseFileLink = ({
   const label = text ?? FilePath.of(path).basename
   if (!course.holdingSessionId) {
     return (
-      <span
-        className="muted"
-        title="No session is holding this project, so there is nothing to open the file in. Join the project to read it."
-      >
-        {label}
-      </span>
+      <Tooltip explanation="No session is holding this project, so there is nothing to open the file in. Join the project to read it.">
+        <span className="muted">{label}</span>
+      </Tooltip>
     )
   }
+  // The explanation is the full path, because the link shows a basename. Not a
+  // duplicate of the visible text and not deletable for that reason.
   return (
-    <a href={sessionHref(course.holdingSessionId, undefined, FilePath.of(path))} title={path}>
-      {label}
-    </a>
+    <Tooltip asChild explanation={path}>
+      <a href={sessionHref(course.holdingSessionId, undefined, FilePath.of(path))}>{label}</a>
+    </Tooltip>
   )
 }

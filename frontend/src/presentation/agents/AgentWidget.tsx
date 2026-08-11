@@ -5,6 +5,7 @@ import { useContainer } from '@app/container-context.tsx'
 import { shortId } from '@domain/shared/identifier.ts'
 import { sample } from '@domain/worker/transcript-tail.ts'
 
+import { Tooltip } from '../common/Tooltip.tsx'
 import { WorkerDrawer } from '../course/WorkerDrawer.tsx'
 import { elapsed } from '../formatting/format.ts'
 import { Overlay } from '../layout/OverlayHost.tsx'
@@ -267,9 +268,16 @@ const AgentRow = ({ agent, onOpen }: { agent: RunningAgent; onOpen: () => void }
 
   if (!readable) {
     return (
-      <div className="agents-row agents-row-flat" title="This has no transcript to open.">
+      // The readable row beside this one is a `<button>` with the same class,
+      // so making the trigger carry `agents-row` changes no pixel and adds the
+      // tab stop the flat row never had. It is a tab stop that presses
+      // nothing, which is the cost: a keyboard reader now stops on a row that
+      // does not open. What they get for it is the sentence saying why —
+      // previously the row was simply skipped, and the absence explained
+      // itself to nobody.
+      <Tooltip explanation="This has no transcript to open." className="agents-row agents-row-flat">
         {content}
-      </div>
+      </Tooltip>
     )
   }
 

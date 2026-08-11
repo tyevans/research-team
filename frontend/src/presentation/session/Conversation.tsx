@@ -67,10 +67,10 @@ export const Conversation = ({
     // re-specified in three stylesheets.
     <div className="conv-scroll" ref={box} onScroll={onScroll}>
       {error ? (
-        <ErrorBox title="Unavailable" message={error} />
+        <ErrorBox heading="Unavailable" message={error} />
       ) : messages.length === 0 ? (
         <EmptyState
-          title="No conversation yet."
+          heading="No conversation yet."
           detail={
             historicalAt !== null ? `Nothing had been said by event ${historicalAt}.` : emptyDetail
           }

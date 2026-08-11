@@ -200,10 +200,18 @@ it('disables Course with the server’s own reason rather than relabelling it', 
     }),
   )
 
+  // `aria-disabled`, not `disabled`. The reason is the sentence beside it: a
+  // `disabled` button is focusable by nothing, so the explanation of why it is
+  // off could not be reached from the keyboard at all -- and this reason is
+  // permanent, not a spinner. It was a `title` before, which is the same
+  // failure wearing a different attribute.
   const course = await screen.findByRole('button', { name: 'Course' })
-  expect(course).toBeDisabled()
-  expect(course).toHaveAttribute('title', 'this project runs no workflow')
-  expect(screen.getByRole('button', { name: 'Research' })).toBeEnabled()
+  expect(course).toHaveAttribute('aria-disabled', 'true')
+
+  course.focus()
+  expect(await screen.findByText('this project runs no workflow')).toBeInTheDocument()
+
+  expect(screen.getByRole('button', { name: 'Research' })).not.toHaveAttribute('aria-disabled')
 })
 
 it('falls back to the session list when the tree projection has drifted empty', async () => {

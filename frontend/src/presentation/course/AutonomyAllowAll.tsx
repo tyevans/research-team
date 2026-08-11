@@ -3,6 +3,7 @@ import { levelOf, stageGatesStillAsking } from '@domain/autonomy/autonomy.ts'
 import type { SessionId } from '@domain/shared/identifier.ts'
 
 import { Button } from '../common/primitives.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 import { INSTANCE_WIDE, NO_POLICY, STAGE_GATE_HELD } from './autonomy-copy.ts'
 
 /** "Stop asking me", where the asking happens.
@@ -74,15 +75,19 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
         </Button>
         {/* Deliberately separate, deliberately not the primary tone: this one
             removes the last place a person is guaranteed to be looking. */}
-        <Button
-          tone="quiet"
-          small
-          disabled={!canWrite || writing || held.length === 0}
-          onClick={() => allowAll(true)}
-          title="Also autos the workflow review gate, so a run can cross stage boundaries unattended"
+        <Tooltip
+          asChild
+          explanation="Also autos the workflow review gate, so a run can cross stage boundaries unattended"
         >
-          Also allow the review gate
-        </Button>
+          <Button
+            tone="quiet"
+            small
+            disabled={!canWrite || writing || held.length === 0}
+            onClick={() => allowAll(true)}
+          >
+            Also allow the review gate
+          </Button>
+        </Tooltip>
       </div>
 
       {lastAllowAll ? (

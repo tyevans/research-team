@@ -21,7 +21,7 @@ export const ArtifactList = ({ course }: { course: Course }) => {
   if (slots.length === 0) {
     return (
       <EmptyState
-        title="This workflow declares no artifacts."
+        heading="This workflow declares no artifacts."
         detail="Nothing here is missing; the preset simply names no outputs."
       />
     )

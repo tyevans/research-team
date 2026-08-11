@@ -1,4 +1,5 @@
 import * as TooltipPrimitive from '@radix-ui/react-tooltip'
+import clsx from 'clsx'
 import { useState, type ReactNode } from 'react'
 
 import { useLayer } from '../layout/OverlayHost.tsx'
@@ -64,6 +65,7 @@ export const Tooltip = ({
   explanation,
   children,
   asChild = false,
+  className,
 }: {
   /** The sentence a `title` was carrying. Plain text unless there is a reason
    *  -- it is announced through `aria-describedby`, and a screen reader reads
@@ -83,6 +85,17 @@ export const Tooltip = ({
    * mode is worth naming: `asChild` over a plain `<span>` renders a tooltip
    * that opens on hover and never on focus, and every test here passes. */
   asChild?: boolean
+  /** Classes for the wrapper trigger, ignored under `asChild`.
+   *
+   * Needed because the wrapper is a real element in the layout, not a
+   * transparent one: `.run-cell` is a flex child of `.run-cells` and
+   * `.agents-row-flat` is a full-width row with a bottom border. Wrapping
+   * either in an unclassed `<button>` puts an inline-sized box between the
+   * container and the thing it was laying out, and the row collapses. Passing
+   * the class *onto* the trigger keeps the element count the same as before
+   * the conversion, which is what makes this a reachability change rather than
+   * a visual one. */
+  className?: string
 }) => {
   const [open, setOpen] = useState(false)
 
@@ -95,7 +108,20 @@ export const Tooltip = ({
           // link or a button and already says what it does with its own
           // cursor; overriding that would be this component lying about what
           // pressing does.
-          className={asChild ? undefined : 'cursor-help'}
+          //
+          // The four reset utilities are not decoration. `theme.css`
+          // deliberately does not import Tailwind's preflight, so a bare
+          // `<button>` keeps the user agent's border, grey background and
+          // padding — which is what the first three tooltips in `Artifacts`
+          // shipped: a chip inside a visible button box. The wrapper exists to
+          // put the trigger in the tab order and must otherwise not be seen.
+          // `text-left` because a button's UA `text-align: center` would
+          // re-centre whatever it wraps.
+          className={
+            asChild
+              ? undefined
+              : clsx('p-0 cursor-help border-0 bg-transparent text-left', className)
+          }
         >
           {children}
         </TooltipPrimitive.Trigger>

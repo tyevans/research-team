@@ -95,7 +95,7 @@ export const TopicStatusDialog = ({
        heading sits under a visible "Manage" affordance, but an accessible name
        has no such context and "Where the audit trail lives" alone does not say
        that this is the thing that changes it. The two props exist to differ. */
-    <Drawer title={topic.question} label={`Manage ${topic.question}`} onClose={onClose}>
+    <Drawer heading={topic.question} label={`Manage ${topic.question}`} onClose={onClose}>
       <div className="topic-status-current">
         Currently <strong>{statusLabel(topic.status)}</strong>
         {CLOSED_STATUSES.includes(topic.status) ? ' -- reopening is allowed.' : ''}
