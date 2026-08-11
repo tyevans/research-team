@@ -234,21 +234,22 @@ it('does not walk off either end', async () => {
   expect(tabStop()).toHaveAttribute('id', 'ev-head')
 })
 
-/** **S-D7, pinned as it is rather than as it should be.**
+/** **S-D7, closed.**
  *
- *  `→` moves an invisible cursor to the fork column, after which `Enter` forks
- *  instead of scrubbing. Nothing in the DOM says so: `column` is React state,
- *  never an attribute, never a class, and the fork button is `tabIndex={-1}`
- *  so focus does not move either. A keyboard user who presses `→` once has
- *  silently rearmed `Enter` to create a session, and there is no way to tell
- *  from the screen.
+ *  This case previously asserted the *defect*: that the row's markup was
+ *  byte-identical before and after `→`, so a keyboard user had silently
+ *  rearmed `Enter` from "scrub to this event" to "fork a new session" with no
+ *  way to tell. Its note said that when phase 4 landed a visible cursor this
+ *  test should fail and be rewritten rather than deleted. It did, and this is
+ *  the rewrite.
  *
- *  This test asserts that this is what happens, which is *not* an endorsement.
- *  It exists because phase 4 changes this on purpose and an untested defect
- *  gets "fixed" by accident, without anyone deciding what should replace it.
- *  When phase 4 lands a visible column cursor, this test should fail, and the
- *  right response is to rewrite it -- not to delete it. */
-it('the column cursor is invisible: → silently rearms Enter to fork', async () => {
+ *  What replaces it asserts the same mode change is still real -- `Enter`
+ *  after `→` still forks, which is the useful behaviour -- and that it is now
+ *  *announced*: the cell carries an id and an `aria-colindex`, and the focused
+ *  row points `aria-activedescendant` at it. The visible ring is CSS and jsdom
+ *  computes none, so the class is asserted here and the appearance is phase
+ *  6's. */
+it('announces which column the cursor is on, and forks from the fork column', async () => {
   const user = userEvent.setup()
   const onFork = vi.fn()
   render(<Log start={ScrubPoint.at(EventIndex(2))} onFork={onFork} />)
@@ -256,15 +257,59 @@ it('the column cursor is invisible: → silently rearms Enter to fork', async ()
   const row = tabStop()
   row.focus()
 
-  // Nothing about the row changes when the cursor moves. `aria-colindex` would
-  // be the standard way to say it, and the grid declares `aria-colcount={2}`
-  // without ever announcing which column it is on.
-  const before = row.outerHTML
-  await user.keyboard('{ArrowRight}')
-  expect(tabStop().outerHTML).toBe(before)
+  // Starts on the event column, which is what makes `Enter` mean "scrub" until
+  // somebody says otherwise.
+  expect(row).toHaveAttribute('aria-activedescendant', 'ev-2-c1')
 
+  await user.keyboard('{ArrowRight}')
+
+  // The mode is now three separate things a reader or a screen reader can
+  // observe, where before it was none: the descendant pointer moved, the cell
+  // says which column it is, and it carries the class the stylesheet rings.
+  const cursorCell = document.getElementById('ev-2-c2')
+  expect(tabStop()).toHaveAttribute('aria-activedescendant', 'ev-2-c2')
+  expect(cursorCell).toHaveAttribute('aria-colindex', '2')
+  expect(cursorCell).toHaveClass('ev-cursor')
+
+  // And the behaviour it announces is unchanged -- this is a fix to the
+  // *reporting* of the mode, not a removal of it. Forking from the keyboard is
+  // still reachable, which is the thing the column exists for.
   await user.keyboard('{Enter}')
   expect(onFork).toHaveBeenCalledWith(EventIndex(2))
+})
+
+it('will not put the cursor on HEAD, whose action cell is empty', async () => {
+  const user = userEvent.setup()
+  const onFork = vi.fn()
+  const onSelect = vi.fn()
+  render(<Log onFork={onFork} onSelect={onSelect} />)
+
+  const head = tabStop()
+  expect(head).toHaveAttribute('id', 'ev-head')
+  head.focus()
+
+  await user.keyboard('{ArrowRight}')
+  expect(tabStop()).not.toHaveAttribute('aria-activedescendant')
+
+  await user.keyboard('{Enter}')
+  expect(onFork).not.toHaveBeenCalled()
+  expect(onSelect).toHaveBeenLastCalledWith(ScrubPoint.head())
+
+  // **The assertion that makes this test falsifiable is the next one**, and
+  // finding it was the point of applying the break rather than reasoning about
+  // it. Everything above passes with the `selectedIndex === null` guard
+  // removed, because HEAD's row renders no cursor either way and `Enter` on
+  // HEAD already fell through to "scrub" via a *different* guard.
+  //
+  // The guard earns itself on this path: `→` on HEAD arms the column, a
+  // *click* selects a row without going through the vertical branch that would
+  // have reset it, and the next `Enter` forks a session the reader only meant
+  // to scrub to. Clicking is how the cursor escapes the keyboard model, and it
+  // is the one route that does not reset.
+  await user.click(screen.getByText('event 2'))
+  await user.keyboard('{Enter}')
+
+  expect(onFork).not.toHaveBeenCalled()
 })
 
 it('puts the cursor back on the event column when the selection moves', async () => {

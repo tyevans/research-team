@@ -53,9 +53,16 @@ export const Timeline = ({ log, scrub, fresh, discarded, onSelect, onFork }: Tim
       if (total === 0) return
 
       // Column navigation stays within the focused row.
+      //
+      // Refused on HEAD, which is the one row with nothing in its action cell.
+      // Before this the cursor moved there happily and `Enter` then did
+      // nothing at all, because the fork branch is guarded on
+      // `selectedIndex !== null` -- a mode that was invisible *and* inert. A
+      // cursor that cannot go somewhere useless is one less thing to explain.
       if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
         event.preventDefault()
         event.stopPropagation()
+        if (selectedIndex === null) return
         setColumn(event.key === 'ArrowRight' ? 1 : 0)
         return
       }
@@ -136,6 +143,7 @@ export const Timeline = ({ log, scrub, fresh, discarded, onSelect, onFork }: Tim
             entry={entry}
             position={position}
             selected={selected}
+            cursor={selected ? column : null}
             future={scrub.kind === 'historical' && entry.index > scrub.at}
             fresh={fresh.has(entry.index)}
             discarded={discarded.get(entry.index)}
@@ -161,10 +169,13 @@ export const Timeline = ({ log, scrub, fresh, discarded, onSelect, onFork }: Tim
         ref={atHead ? selectedRef : undefined}
         onClick={() => onSelect(ScrubPoint.head())}
       >
-        <div className="ev-cell" role="gridcell">
+        {/* No `ev-cursor` and no `aria-activedescendant` on this row: the
+            column cursor cannot reach HEAD, because HEAD's action cell is
+            empty and `ArrowRight` now refuses to move there. */}
+        <div className="ev-cell" role="gridcell" aria-colindex={1}>
           {atHead ? '● HEAD — live' : '○ HEAD — click to return to live'}
         </div>
-        <div className="ev-cell ev-cell-act" role="gridcell" />
+        <div className="ev-cell ev-cell-act" role="gridcell" aria-colindex={2} />
       </div>
     </div>
   )
@@ -175,6 +186,7 @@ const TimelineRow = ({
   entry,
   position,
   selected,
+  cursor,
   future,
   fresh,
   discarded,
@@ -185,6 +197,12 @@ const TimelineRow = ({
   entry: LogEntry
   position: number
   selected: boolean
+  /** Which cell the column cursor is on, or `null` on every row that is not
+   *  the selected one. Threaded down rather than left in the grid's state
+   *  because a cursor nothing renders is S-D7: `→` silently rearmed `Enter`
+   *  from "scrub to this event" to "fork a new session", and the only way to
+   *  find out which one you had was to press it. */
+  cursor: Column | null
   future: boolean
   fresh: boolean
   discarded: readonly ActivityEntry[] | undefined
@@ -193,6 +211,7 @@ const TimelineRow = ({
 }) => {
   const cancelled = isCancellation(entry)
   const summary = entry.summary ?? ''
+  const cellId = (column: Column) => `ev-${entry.index}-c${column + 1}`
 
   return (
     <>
@@ -215,12 +234,23 @@ const TimelineRow = ({
         aria-selected={selected}
         // Roving tabindex: exactly one row is in the tab order at a time.
         tabIndex={selected ? 0 : -1}
+        // The row holds focus and names the cell within it that is current --
+        // the same pattern `FileList` uses at listbox level, and the only way
+        // to announce a column cursor without moving focus off the row and
+        // losing the roving tabindex. Absent on unselected rows because a
+        // cursor that is not on this row is not this row's business.
+        aria-activedescendant={cursor === null ? undefined : cellId(cursor)}
         title={`${humaniseEventType(entry.type)}\n${fullTime(entry.occurredAt)}${
           summary ? `\n${summary}` : ''
         }`}
         onClick={onSelect}
       >
-        <div className="ev-cell" role="gridcell">
+        <div
+          className={clsx('ev-cell', cursor === 0 && 'ev-cursor')}
+          role="gridcell"
+          id={cellId(0)}
+          aria-colindex={1}
+        >
           <span className="ev-idx">{entry.index}</span>
           <span className="ev-rail" />
           <span className="ev-main">
@@ -241,7 +271,12 @@ const TimelineRow = ({
           </span>
           <span className="ev-time">{clockTime(entry.occurredAt)}</span>
         </div>
-        <div className="ev-cell ev-cell-act" role="gridcell">
+        <div
+          className={clsx('ev-cell', 'ev-cell-act', cursor === 1 && 'ev-cursor')}
+          role="gridcell"
+          id={cellId(1)}
+          aria-colindex={2}
+        >
           <button
             type="button"
             className="btn btn-ghost ev-fork"
