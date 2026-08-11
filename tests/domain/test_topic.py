@@ -232,7 +232,7 @@ def test_an_investigation_must_say_where_the_log_stood():
 
 
 def test_an_investigation_can_say_how_it_ended():
-    """ "nothing recorded" and "failed" were the same field with different
+    """\"nothing recorded\" and "failed" were the same field with different
     English, so nothing downstream could tell a fruitless round from a broken
     one."""
     events = decide(RecordInvestigation(at_position="p1", outcome="failed"), opened())

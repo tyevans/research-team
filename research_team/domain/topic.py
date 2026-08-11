@@ -158,6 +158,14 @@ class TopicInvestigated(DomainEvent):
     `summary` stays free text for a person to read. This is the part something
     can branch on -- and what nothing branches on today is exactly why a
     crashed round and a fruitless one were indistinguishable.
+
+    Nothing reads this field yet -- a reader who greps for a consumer finds
+    none, and has no defence against deleting it on that evidence alone. It is
+    written anyway because the distinction it records is only capturable at
+    the instant a round ends: a log that did not capture it then can never be
+    back-filled later. Writing it now costs one nullable field and keeps a
+    future consumer possible; not writing it makes the distinction gone for
+    good for every round between now and whenever one is built.
     """
 
 

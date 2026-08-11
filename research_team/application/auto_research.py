@@ -272,6 +272,12 @@ class AutoResearchDriver:
         Best-effort: a topic that cannot be stamped must not fail the round,
         because the work the round did is already in the log. It will simply be
         offered again, which is the safe direction to fail in.
+
+        `outcome` is required here though the domain's `RecordInvestigation`
+        and `TopicInvestigated.outcome` are `str | None` -- the driver always
+        knows how its own round ended, so there is no honest `None` to pass at
+        this call site. The nullability on the domain type exists only for
+        payloads written before the field did, not for this caller.
         """
         try:
             position = await self._queue.high_water(project_id)
