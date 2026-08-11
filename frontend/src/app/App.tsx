@@ -13,6 +13,7 @@ import { ResearchView } from '@presentation/research/ResearchView.tsx'
 import { SessionView } from '@presentation/session/SessionView.tsx'
 import { Breadcrumbs } from '@presentation/shell/Breadcrumbs.tsx'
 import { ConnectionBadge, DriftBadge } from '@presentation/shell/ConnectionBadge.tsx'
+import { DecisionBar } from '@presentation/shell/DecisionBar.tsx'
 import { AgentWidget } from '@presentation/agents/AgentWidget.tsx'
 import { StreamProvider, useStream } from '@presentation/shell/StreamProvider.tsx'
 import { useFrameRefresh } from '@presentation/shell/use-frame-refresh.ts'
@@ -104,6 +105,12 @@ const Console = () => {
           children for the surface alone. It stays outside the overlay host on
           purpose -- argued where `--z-toast` is declared. */}
       <Toasts />
+      {/* Above the route's content and inside the surface, on every page.
+          A gated call blocks an agent until a person answers it, and the
+          person is wherever they happen to be — which is why this is one bar
+          in the shell rather than the three per-session call sites it
+          replaces. It renders nothing when nothing is pending. */}
+      <DecisionBar />
       <CurrentView route={route} store={sessionStore} onCourse={setCourse} />
     </Shell>
   )

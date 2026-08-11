@@ -13,10 +13,8 @@ import { shortId, type SessionId } from '@domain/shared/identifier.ts'
 import { Drawer } from '../common/Drawer.tsx'
 import { sessionHref } from '../routing/routes.ts'
 import { ActivityFeed } from '../session/ActivityFeed.tsx'
-import { Approvals } from '../session/Approvals.tsx'
 import { Conversation } from '../session/Conversation.tsx'
 import { useSessionStream } from '../session/use-session-stream.ts'
-import { AutonomyAllowAll } from './AutonomyAllowAll.tsx'
 
 /** A worker's real transcript, over the course page.
  *
@@ -26,17 +24,16 @@ import { AutonomyAllowAll } from './AutonomyAllowAll.tsx'
  * The store is closed on unmount, or every open-and-close of the drawer
  * would leak a live SSE subscriber onto a store nobody can reach any more.
  *
- * **Read-only means no composing, not no deciding.** Composing a message
- * changes where a session goes, and typing into a session you opened in
- * order to *observe* is a different intention — that still costs a
- * navigation, so there is no `Composer` here. But answering a pending
- * approval only unblocks work already in flight, and the person watching is
- * exactly the person positioned to decide, so the drawer renders the real
- * `Approvals` component wired to its own store rather than a chip pointing
- * elsewhere. `Approvals` is presentational and answers through
- * `ApprovalSettled` like every other path (see its own doc comment), so
- * deciding here composes with the REPL and another tab exactly the way it
- * already does for those two.
+ * **Read-only, and no longer the place decisions are taken.** Composing a
+ * message changes where a session goes, and typing into a session you opened
+ * in order to *observe* is a different intention — that still costs a
+ * navigation, so there is no `Composer` here. This drawer used to carry
+ * `Approvals` and `AutonomyAllowAll` as well, on the argument that the person
+ * watching is exactly the person positioned to decide. That argument was
+ * right and the placement was too narrow: it only held while this drawer was
+ * open. Both now live in the shell's `DecisionBar`, which reaches the reader
+ * on every route, so a watcher can still decide without navigating — from
+ * here or from anywhere else.
  *
  * The drawer always opens at HEAD rather than deriving a scrub position:
  * "watching" means following the log as it grows, and a drawer opened at a
@@ -99,21 +96,12 @@ export const WorkerDrawer = ({
         </a>
       }
     >
-      {/* Approvals sit above the conversation: a blocked agent is the most
-          urgent thing this drawer can contain, and a watcher should see it
-          without scrolling past a possibly-long transcript first. */}
-      <Approvals
-        approvals={state.approvals}
-        deciding={state.deciding}
-        onDecide={(approval, decision) => void store.getState().decide(approval, decision)}
-      />
-      {/* Directly under the approvals, because this is the control that
-          answers "I wish I could stop being asked" — and asking somebody to
-          navigate to a settings surface in order to say that is how the
-          REPL's `/autonomy` came to be the only way to do it. The scope
-          warning it renders is load-bearing: the policy is instance-wide
-          even though this drawer is one session's. */}
-      <AutonomyAllowAll sessionId={sessionId} />
+      {/* `Approvals` and `AutonomyAllowAll` used to sit here, above the
+          conversation. Both are now the shell's `DecisionBar`, which is
+          strictly more of what putting them here was reaching for: a watcher
+          could answer a gated call without navigating, but only for the
+          session whose drawer happened to be open. The bar reaches them on
+          every route, including with no drawer open at all. */}
       {/* historicalAt is always null: the drawer only ever shows HEAD, so
           there is no scrub position to report — see the doc comment above.
           emptyDetail overrides Conversation's default, which invites the

@@ -205,12 +205,46 @@ export const activityDto = z.object({
   discarded: z.array(activityEntryDto).default([]),
 })
 
+/** One finding from `stage_exit.gate_context()`. */
+export const gateFindingDto = z.object({
+  check: z.string(),
+  severity: z.string(),
+  message: z.string(),
+  cites: z.array(z.string()).default([]),
+  suggested_edit: maybe(z.string()),
+})
+
+/** `stage_exit.gate_context()`, field for field.
+ *
+ * Written out rather than left `opaque` because the card renders every one of
+ * these; the cost is that a server-side rename here breaks parsing rather than
+ * silently blanking the panel, which is the failure we would rather have. */
+export const gateContextDto = z.object({
+  stage: z.string(),
+  findings_artifact: z.string(),
+  artifact_paths: z.array(z.string()).default([]),
+  blocked: z.boolean(),
+  artifacts_reviewed: z.number(),
+  links_reviewed: z.number(),
+  unimplemented_checks: z.array(z.string()).default([]),
+  unreadable_artifacts: z.array(z.string()).default([]),
+  findings: z.array(gateFindingDto).default([]),
+})
+
 export const approvalDto = z.object({
   id: z.string(),
   session_id: z.string(),
   tool_name: z.string(),
   description: maybe(z.string()),
   args: opaque,
+  /** Plain strings, not an enum: an unknown decision from a newer server is
+   *  dropped in `toApproval`, and failing the whole parse instead would lose
+   *  the three decisions we do understand along with it. */
+  allowed_decisions: z.array(z.string()).default([]),
+  /** Present only on a stage gate. `presenters` omits the key rather than
+   *  nulling it, deliberately, so absence is the reliable signal — hence
+   *  `.optional()` and not `maybe()`, which would erase the difference. */
+  context: gateContextDto.optional(),
 })
 
 export const workflowRefDto = z.object({

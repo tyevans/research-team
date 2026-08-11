@@ -6,7 +6,7 @@ import type {
   TurnRepository,
 } from '@application/ports/repositories.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
-import type { Approval, ApprovalDecision } from '@domain/approval/approval.ts'
+import type { Approval, ApprovalAnswer } from '@domain/approval/approval.ts'
 import type { TurnRange } from '@domain/session/turn.ts'
 import type { ApprovalId, SessionId } from '@domain/shared/identifier.ts'
 
@@ -70,10 +70,10 @@ export class HttpApprovalRepository implements ApprovalRepository {
     return rows.map(toApproval)
   }
 
-  async decide(id: SessionId, approvalId: ApprovalId, decision: ApprovalDecision): Promise<void> {
+  async decide(id: SessionId, approvalId: ApprovalId, answer: ApprovalAnswer): Promise<void> {
     await this.http.post(
       `/api/sessions/${seg(id)}/approvals/${seg(approvalId)}`,
-      { type: decision },
+      { type: answer.decision, edited_args: answer.editedArgs, message: answer.message },
       dto.okDto,
     )
   }

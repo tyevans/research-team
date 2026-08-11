@@ -3,7 +3,7 @@ import type { z } from 'zod'
 import type { ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { ComponentBlock, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
-import type { Approval } from '@domain/approval/approval.ts'
+import type { Approval, ApprovalDecision, GateContext } from '@domain/approval/approval.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame, ExtractionStage } from '@domain/knowledge/extraction.ts'
 import type { GraphLink, GraphNode, Neighborhood, WholeGraph } from '@domain/knowledge/graph.ts'
@@ -211,12 +211,42 @@ export const toActivityEntry = (raw: Dto<typeof dto.activityEntryDto>): Activity
   payload: raw.payload,
 })
 
+const KNOWN_DECISIONS: readonly ApprovalDecision[] = ['approve', 'edit', 'reject', 'respond']
+
+const isKnownDecision = (value: string): value is ApprovalDecision =>
+  (KNOWN_DECISIONS as readonly string[]).includes(value)
+
+const toGateContext = (raw: Dto<typeof dto.gateContextDto>): GateContext => ({
+  stage: raw.stage,
+  findingsArtifact: raw.findings_artifact,
+  artifactPaths: raw.artifact_paths,
+  blocked: raw.blocked,
+  artifactsReviewed: raw.artifacts_reviewed,
+  linksReviewed: raw.links_reviewed,
+  unimplementedChecks: raw.unimplemented_checks,
+  unreadableArtifacts: raw.unreadable_artifacts,
+  findings: raw.findings.map((finding) => ({
+    check: finding.check,
+    severity: finding.severity,
+    message: finding.message,
+    cites: finding.cites,
+    suggestedEdit: finding.suggested_edit,
+  })),
+})
+
 export const toApproval = (raw: Dto<typeof dto.approvalDto>): Approval => ({
   id: ApprovalId(raw.id),
   sessionId: SessionId(raw.session_id),
   toolName: raw.tool_name,
   description: raw.description,
   args: raw.args,
+  // A decision this build does not know is dropped rather than carried
+  // through. Passing it on would render a button that posts a `type` the
+  // server rejects — a control that fails when pressed is worse than one that
+  // was never offered, because the gate stays open either way and only the
+  // second wastes the reviewer's trust.
+  allowedDecisions: raw.allowed_decisions.filter(isKnownDecision),
+  context: raw.context ? toGateContext(raw.context) : null,
 })
 
 export const toProject = (raw: Dto<typeof dto.projectDto>): Project => ({

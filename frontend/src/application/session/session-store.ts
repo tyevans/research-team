@@ -7,7 +7,7 @@ import {
   type ActivityBuffer,
   type ActivityEntry,
 } from '@domain/activity/activity.ts'
-import type { Approval, ApprovalDecision } from '@domain/approval/approval.ts'
+import type { Approval, ApprovalAnswer } from '@domain/approval/approval.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
 import {
   appendEntry,
@@ -84,7 +84,7 @@ export interface SessionActions {
   send(input: string): Promise<void>
   cancel(): Promise<void>
   fork(at: EventIndex): Promise<SessionId | null>
-  decide(approval: Approval, decision: ApprovalDecision): Promise<void>
+  decide(approval: Approval, answer: ApprovalAnswer): Promise<void>
   dismissNote(): void
   handleFrame(frame: FeedFrame): void
   handleReconnect(resumable: boolean): Promise<void>
@@ -423,11 +423,11 @@ export const createSessionStore = (deps: SessionStoreDeps): SessionStore =>
         }
       },
 
-      async decide(approval, decision) {
+      async decide(approval, answer) {
         if (get().deciding) return
         set({ deciding: approval.id })
         try {
-          await deps.approvals.decide(approval.sessionId, approval.id, decision)
+          await deps.approvals.decide(approval.sessionId, approval.id, answer)
         } catch (error) {
           // A 404 means somebody else already answered it; `ApprovalSettled`
           // will have cleared the card, so there is nothing left to undo.

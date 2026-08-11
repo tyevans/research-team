@@ -355,6 +355,8 @@ describe('session store — approvals', () => {
       toolName: 'fetch',
       description: null,
       args: {},
+      allowedDecisions: ['approve', 'reject'] as const,
+      context: null,
     }
 
     store.getState().handleFrame({ kind: 'approvalRequested', approval })
@@ -375,13 +377,47 @@ describe('session store — approvals', () => {
     const { store, notify } = makeStore({ approvals: { decide } })
     await store.getState().open(SESSION, ScrubPoint.head())
 
-    await store
-      .getState()
-      .decide(
-        { id: 'a1' as never, sessionId: SESSION, toolName: 'fetch', description: null, args: {} },
-        'approve',
-      )
+    await store.getState().decide(
+      {
+        id: 'a1' as never,
+        sessionId: SESSION,
+        toolName: 'fetch',
+        description: null,
+        args: {},
+        allowedDecisions: ['approve', 'reject'],
+        context: null,
+      },
+      { decision: 'approve' },
+    )
     expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('hands the repository the whole answer, not just its verb', async () => {
+    const decide = vi.fn(async () => {})
+    const { store } = makeStore({ approvals: { decide } })
+    await store.getState().open(SESSION, ScrubPoint.head())
+
+    await store.getState().decide(
+      {
+        id: 'a1' as never,
+        sessionId: SESSION,
+        toolName: 'advance_stage',
+        description: null,
+        args: {},
+        allowedDecisions: ['approve', 'edit', 'reject', 'respond'],
+        context: null,
+      },
+      { decision: 'edit', editedArgs: { stage: 'design' }, message: 'wrong stage' },
+    )
+
+    // `edit` and `respond` are inert without their payload, so dropping it on
+    // the way through the store would look like a working button and settle
+    // the gate with the reviewer's correction thrown away.
+    expect(decide).toHaveBeenCalledWith(SESSION, 'a1', {
+      decision: 'edit',
+      editedArgs: { stage: 'design' },
+      message: 'wrong stage',
+    })
   })
 })
 
