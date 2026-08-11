@@ -7,7 +7,6 @@ import {
   type ActivityBuffer,
   type ActivityEntry,
 } from '@domain/activity/activity.ts'
-import type { Approval, ApprovalAnswer } from '@domain/approval/approval.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
 import {
   appendEntry,
@@ -21,16 +20,11 @@ import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { SessionProjection } from '@domain/session/session.ts'
 import { TurnEndLedger } from '@domain/session/turn-end-ledger.ts'
 import { TurnState, turnNote, type TurnNote } from '@domain/session/turn.ts'
-import type { ApprovalId, SessionId } from '@domain/shared/identifier.ts'
+import type { SessionId } from '@domain/shared/identifier.ts'
 
 import { ApiError, errorMessage } from '../ports/errors.ts'
 import type { FeedFrame } from '../ports/event-stream.ts'
-import type {
-  ApprovalRepository,
-  RunningTurn,
-  SessionRepository,
-  TurnRepository,
-} from '../ports/repositories.ts'
+import type { RunningTurn, SessionRepository, TurnRepository } from '../ports/repositories.ts'
 
 /** How long a newly-arrived event stays highlighted. */
 const FRESH_MS = 1_500
@@ -38,7 +32,6 @@ const FRESH_MS = 1_500
 export interface SessionStoreDeps {
   readonly sessions: SessionRepository
   readonly turns: TurnRepository
-  readonly approvals: ApprovalRepository
   /** Injected so tests can drive it. Everything time-dependent in this store
    *  goes through it rather than calling `Date.now()` inline. */
   readonly now: () => number
@@ -69,9 +62,6 @@ export interface SessionState {
   /** Failed-turn index → the provisional content that turn discarded. */
   readonly discarded: ReadonlyMap<EventIndex, readonly ActivityEntry[]>
 
-  readonly approvals: ReadonlyMap<ApprovalId, Approval>
-  readonly deciding: ApprovalId | null
-
   /** Event index → the moment it arrived, for the arrival highlight. */
   readonly fresh: ReadonlyMap<EventIndex, number>
 }
@@ -84,7 +74,6 @@ export interface SessionActions {
   send(input: string): Promise<void>
   cancel(): Promise<void>
   fork(at: EventIndex): Promise<SessionId | null>
-  decide(approval: Approval, answer: ApprovalAnswer): Promise<void>
   dismissNote(): void
   handleFrame(frame: FeedFrame): void
   handleReconnect(resumable: boolean): Promise<void>
@@ -111,8 +100,6 @@ const initialState = (): SessionState => ({
   awaitingUnwind: false,
   activity: emptyActivity(),
   discarded: new Map(),
-  approvals: new Map(),
-  deciding: null,
   fresh: new Map(),
 })
 
@@ -243,22 +230,16 @@ export const createSessionStore = (deps: SessionStoreDeps): SessionStore =>
 
     const load = async (id: SessionId): Promise<void> => {
       try {
-        const [head, log, running, approvals] = await Promise.all([
+        const [head, log, running] = await Promise.all([
           deps.sessions.read(id, ScrubPoint.head()),
           deps.sessions.log(id),
           // Advisory: a failure here must not fail the whole load. A turn may
           // already be running in another tab, or this may be a reload
           // mid-turn.
           fetchRunning(id).catch(() => null),
-          deps.approvals.pending(id).catch(() => [] as readonly Approval[]),
         ])
         if (!stillOn(id)) return
-        set({
-          head,
-          log,
-          error: null,
-          approvals: new Map(approvals.map((approval) => [approval.id, approval])),
-        })
+        set({ head, log, error: null })
         if (running) applyRunning(running)
         await loadSnapshot(id, get().scrub)
         void catchUpActivity(id)
@@ -423,22 +404,6 @@ export const createSessionStore = (deps: SessionStoreDeps): SessionStore =>
         }
       },
 
-      async decide(approval, answer) {
-        if (get().deciding) return
-        set({ deciding: approval.id })
-        try {
-          await deps.approvals.decide(approval.sessionId, approval.id, answer)
-        } catch (error) {
-          // A 404 means somebody else already answered it; `ApprovalSettled`
-          // will have cleared the card, so there is nothing left to undo.
-          if (!(error instanceof ApiError && error.isNotFound)) {
-            deps.notify(`Could not record decision: ${errorMessage(error)}`, 'bad')
-          }
-        } finally {
-          if (get().deciding === approval.id) set({ deciding: null })
-        }
-      },
-
       dismissNote() {
         if (get().note) set({ note: null })
       },
@@ -446,23 +411,9 @@ export const createSessionStore = (deps: SessionStoreDeps): SessionStore =>
       handleFrame(frame) {
         const state = get()
 
-        if (frame.kind === 'approvalRequested') {
-          if (frame.approval.sessionId !== state.sessionId) return
-          set({ approvals: new Map(state.approvals).set(frame.approval.id, frame.approval) })
-          return
-        }
-
-        if (frame.kind === 'approvalSettled') {
-          if (frame.sessionId !== state.sessionId) return
-          const approvals = new Map(state.approvals)
-          approvals.delete(frame.approvalId)
-          set({
-            approvals,
-            deciding: state.deciding === frame.approvalId ? null : state.deciding,
-          })
-          return
-        }
-
+        // Approval frames are deliberately not handled here. They are the
+        // shell's `DecisionBar`, which subscribes to the same `EventSource`
+        // and is not scoped to one session — see `use-approval-feed.ts`.
         if (frame.kind === 'activity') {
           if (frame.entry.sessionId !== state.sessionId) return
           set({ activity: putActivity(state.activity, frame.entry) })
@@ -547,22 +498,13 @@ export const createSessionStore = (deps: SessionStoreDeps): SessionStore =>
           return
         }
         if (TurnState.isOurs(get().turn)) return
-        // Approval and activity frames carry no feed position, so the cursor
-        // resumed the log but not these. `refreshRunning` runs first and is
-        // awaited on purpose: a turn may have started entirely during the gap,
-        // and `catchUpActivity`'s guard trusts the turn state, so that belief
-        // has to be current before the guard checks it.
-        await Promise.all([
-          deps.approvals
-            .pending(id)
-            .then((pending) => {
-              if (stillOn(id)) set({ approvals: new Map(pending.map((a) => [a.id, a])) })
-            })
-            .catch(() => undefined),
-          get()
-            .refreshRunning()
-            .then(() => (stillOn(id) ? catchUpActivity(id) : undefined)),
-        ])
+        // Activity frames carry no feed position, so the cursor resumed the log
+        // but not these. `refreshRunning` runs first and is awaited on purpose:
+        // a turn may have started entirely during the gap, and
+        // `catchUpActivity`'s guard trusts the turn state, so that belief has
+        // to be current before the guard checks it.
+        await get().refreshRunning()
+        if (stillOn(id)) await catchUpActivity(id)
       },
 
       async refreshRunning(announce = false) {

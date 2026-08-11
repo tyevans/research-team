@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@application/ports/errors.ts'
 import type { FeedFrame } from '@application/ports/event-stream.ts'
 import type {
-  ApprovalRepository,
   RunningTurn,
   SessionRepository,
   TurnRepository,
@@ -72,7 +71,6 @@ const makeStore = (
   over: {
     sessions?: Partial<SessionRepository>
     turns?: Partial<TurnRepository>
-    approvals?: Partial<ApprovalRepository>
     now?: () => number
   } = {},
 ): { store: SessionStore; notify: ReturnType<typeof vi.fn> } => {
@@ -86,11 +84,6 @@ const makeStore = (
       activity: vi.fn(async () => ({ running: [], discarded: [] })),
       ...over.turns,
     },
-    approvals: {
-      pending: vi.fn(async () => []),
-      decide: vi.fn(async () => undefined),
-      ...over.approvals,
-    },
     now: over.now ?? (() => 1_000),
     notify,
   })
@@ -98,7 +91,7 @@ const makeStore = (
 }
 
 describe('session store — opening', () => {
-  it('loads head, log, running state and approvals together', async () => {
+  it('loads head, log and running state together', async () => {
     const { store } = makeStore({
       sessions: { log: async () => [entry({ index: 1 })] },
     })
@@ -345,81 +338,19 @@ describe('session store — log frames', () => {
   })
 })
 
-describe('session store — approvals', () => {
-  it('clears a card when it settles anywhere, not only here', async () => {
-    const { store } = makeStore()
-    await store.getState().open(SESSION, ScrubPoint.head())
-    const approval = {
-      id: 'a1' as never,
-      sessionId: SESSION,
-      toolName: 'fetch',
-      description: null,
-      args: {},
-      allowedDecisions: ['approve', 'reject'] as const,
-      context: null,
-    }
-
-    store.getState().handleFrame({ kind: 'approvalRequested', approval })
-    expect(store.getState().approvals.size).toBe(1)
-
-    store.getState().handleFrame({
-      kind: 'approvalSettled',
-      sessionId: SESSION,
-      approvalId: approval.id,
-    })
-    expect(store.getState().approvals.size).toBe(0)
-  })
-
-  it('stays quiet when a decision races somebody else’s', async () => {
-    const decide = vi.fn(async () => {
-      throw new ApiError('gone', 404)
-    })
-    const { store, notify } = makeStore({ approvals: { decide } })
-    await store.getState().open(SESSION, ScrubPoint.head())
-
-    await store.getState().decide(
-      {
-        id: 'a1' as never,
-        sessionId: SESSION,
-        toolName: 'fetch',
-        description: null,
-        args: {},
-        allowedDecisions: ['approve', 'reject'],
-        context: null,
-      },
-      { decision: 'approve' },
-    )
-    expect(notify).not.toHaveBeenCalled()
-  })
-
-  it('hands the repository the whole answer, not just its verb', async () => {
-    const decide = vi.fn(async () => {})
-    const { store } = makeStore({ approvals: { decide } })
-    await store.getState().open(SESSION, ScrubPoint.head())
-
-    await store.getState().decide(
-      {
-        id: 'a1' as never,
-        sessionId: SESSION,
-        toolName: 'advance_stage',
-        description: null,
-        args: {},
-        allowedDecisions: ['approve', 'edit', 'reject', 'respond'],
-        context: null,
-      },
-      { decision: 'edit', editedArgs: { stage: 'design' }, message: 'wrong stage' },
-    )
-
-    // `edit` and `respond` are inert without their payload, so dropping it on
-    // the way through the store would look like a working button and settle
-    // the gate with the reviewer's correction thrown away.
-    expect(decide).toHaveBeenCalledWith(SESSION, 'a1', {
-      decision: 'edit',
-      editedArgs: { stage: 'design' },
-      message: 'wrong stage',
-    })
-  })
-})
+/** **The `session store — approvals` describe was deleted here**, and the
+ *  deletion is the change rather than a casualty.
+ *
+ *  Its three tests asserted that an `ApprovalSettled` frame clears the card
+ *  whoever answered it, that a 404 from `decide` stays quiet because somebody
+ *  else got there first, and that the whole answer — `editedArgs`, `message` —
+ *  reaches the repository rather than only its verb. All three were true, and
+ *  all three were about a store the shell's `DecisionBar` replaced: the store
+ *  can only see one session's approvals, and the bar sees every session's.
+ *
+ *  Those claims now live in `DecisionBar.test.tsx`, against
+ *  `use-approval-feed.ts` and the real `StreamProvider`.
+ */
 
 describe('session store — scrubbing', () => {
   it('folds to a point and back to live', async () => {

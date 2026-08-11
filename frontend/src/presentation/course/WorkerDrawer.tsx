@@ -68,7 +68,6 @@ export const WorkerDrawer = ({
       makeStore({
         sessions: container.sessions,
         turns: container.turns,
-        approvals: container.approvals,
         now: container.now,
         notify,
       }),

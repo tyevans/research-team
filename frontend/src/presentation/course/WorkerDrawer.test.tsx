@@ -11,8 +11,7 @@ import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { AutonomyRepository } from '@application/ports/repositories.ts'
 import { emptyActivity } from '@domain/activity/activity.ts'
-import type { Approval } from '@domain/approval/approval.ts'
-import { ApprovalId, SessionId } from '@domain/shared/identifier.ts'
+import { SessionId } from '@domain/shared/identifier.ts'
 import { TurnState } from '@domain/session/turn.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
@@ -20,16 +19,6 @@ import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { WorkerDrawer } from './WorkerDrawer.tsx'
 
 const SESSION = SessionId('22222222-2222-2222-2222-222222222222')
-
-const anApproval = (id: string): Approval => ({
-  id: ApprovalId(id),
-  sessionId: SESSION,
-  toolName: 'fetch',
-  description: null,
-  args: { url: 'https://example.com' },
-  allowedDecisions: ['approve', 'reject'],
-  context: null,
-})
 
 /** A policy with something still asking, so the drawer's `AutonomyAllowAll`
  *  renders enabled controls. A policy where everything was already auto would
@@ -68,8 +57,6 @@ const fakeStream = (): EventStream => ({
 const fakeStore = (overrides: {
   open?: SessionStore['getState'] extends never ? never : (...args: never[]) => Promise<void>
   close?: () => void
-  approvals?: readonly Approval[]
-  decide?: SessionStore['getState'] extends never ? never : (...args: never[]) => Promise<void>
 }): SessionStore => {
   const state = {
     sessionId: SESSION,
@@ -84,8 +71,6 @@ const fakeStore = (overrides: {
     note: null,
     activity: emptyActivity(),
     discarded: new Map(),
-    approvals: new Map((overrides.approvals ?? []).map((approval) => [approval.id, approval])),
-    deciding: null,
     fresh: new Map(),
     open: overrides.open ?? vi.fn().mockResolvedValue(undefined),
     close: overrides.close ?? vi.fn(),
@@ -94,7 +79,6 @@ const fakeStore = (overrides: {
     send: vi.fn().mockResolvedValue(undefined),
     cancel: vi.fn().mockResolvedValue(undefined),
     fork: vi.fn().mockResolvedValue(null),
-    decide: overrides.decide ?? vi.fn().mockResolvedValue(undefined),
     dismissNote: vi.fn(),
     handleFrame: vi.fn(),
     handleReconnect: vi.fn().mockResolvedValue(undefined),
@@ -123,8 +107,6 @@ const renderDrawer = (
   parts: {
     open?: (...args: never[]) => Promise<void>
     close?: () => void
-    approvals?: readonly Approval[]
-    decide?: (...args: never[]) => Promise<void>
   } = {},
 ) => {
   const store = fakeStore(parts)
@@ -182,9 +164,7 @@ it('does not tell an empty session to send a turn it has no composer for', () =>
 })
 
 it('still offers a link to open the full session', () => {
-  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
-    approvals: [anApproval('a-1')],
-  })
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />)
 
   const link = screen.getByRole('link', { name: /open the session/i })
   expect(link).toHaveAttribute('href', expect.stringContaining(SESSION))
@@ -212,9 +192,14 @@ it('no longer offers a decision, because the shell does on every page', () => {
   // back here: two decision surfaces over one gate is exactly the arrangement
   // the bar replaced, and the drawer's would again be the one that only works
   // while it happens to be open.
-  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
-    approvals: [anApproval('a-1')],
-  })
+  //
+  // No approval is seeded into the fake store any more, because the store has
+  // no approvals to seed: the parallel copy it kept was deleted once nothing
+  // rendered it. Putting `Approvals` back here would therefore also mean
+  // rebuilding that state, which is a louder change than the one-line import
+  // this test was originally guarding against — but it is still the change
+  // this test refuses.
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />)
 
   expect(screen.queryByRole('button', { name: /^approve$/i })).toBeNull()
   expect(screen.queryByRole('button', { name: /^reject$/i })).toBeNull()

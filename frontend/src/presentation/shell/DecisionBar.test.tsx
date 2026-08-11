@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
+import { useToasts } from '@application/notifications/toast-store.ts'
+import { ApiError } from '@application/ports/errors.ts'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { ApprovalRepository, AutonomyRepository } from '@application/ports/repositories.ts'
 import type { Container as AppContainer } from '@app/container.ts'
@@ -84,9 +86,11 @@ const controllableStream = () => {
   }
 }
 
-const renderBar = () => {
+const renderBar = ({ decide: decideResult }: { decide?: () => Promise<void> } = {}) => {
   const feed = controllableStream()
-  const decide = vi.fn<ApprovalRepository['decide']>().mockResolvedValue(undefined)
+  const decide = decideResult
+    ? vi.fn<ApprovalRepository['decide']>().mockImplementation(decideResult)
+    : vi.fn<ApprovalRepository['decide']>().mockResolvedValue(undefined)
   const approvals: ApprovalRepository = {
     pending: vi.fn<ApprovalRepository['pending']>().mockResolvedValue([]),
     decide,
@@ -286,6 +290,37 @@ it('clears a card when the approval settles, whoever answered it', () => {
   })
 
   expect(screen.queryByRole('region', { name: /decisions waiting/i })).toBeNull()
+})
+
+/** Moved here from `session-store.test.ts`, which owned this claim while the
+ *  store had its own `decide`. The store's copy is gone; the behaviour is not.
+ *
+ *  A 404 means the REPL, another tab, or a timeout settled the gate first.
+ *  `ApprovalSettled` takes the card down either way, so a toast would be an
+ *  error message about nothing having gone wrong — and it would fire on the
+ *  ordinary race, not on a rare one. The second half is the load-bearing half:
+ *  a `catch {}` that swallowed everything would pass the first assertion alone
+ *  while hiding a real failure to record a decision.
+ */
+it('stays quiet when a decision races somebody else’s, but not when it fails', async () => {
+  const user = userEvent.setup()
+  useToasts.setState({ toasts: [] })
+
+  const raced = renderBar({
+    decide: () => Promise.reject(new ApiError('gone', 404)),
+  })
+  raced.deliver({ kind: 'approvalRequested', approval: anApproval('a-1') })
+  await user.click(screen.getByRole('button', { name: /^approve$/i }))
+  expect(useToasts.getState().toasts).toHaveLength(0)
+
+  raced.unmount()
+  const broken = renderBar({
+    decide: () => Promise.reject(new ApiError('the server fell over', 500)),
+  })
+  broken.deliver({ kind: 'approvalRequested', approval: anApproval('a-2') })
+  await user.click(screen.getByRole('button', { name: /^approve$/i }))
+  expect(useToasts.getState().toasts).toHaveLength(1)
+  expect(useToasts.getState().toasts[0]?.message).toMatch(/the server fell over/i)
 })
 
 it('offers the way to stop being asked, beside the approvals', async () => {
