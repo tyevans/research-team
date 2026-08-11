@@ -26,6 +26,30 @@
 .head-marker:focus-visible {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
+
+/* The column cursor, which used to exist only in React state -- S-D7.
+ *
+ * `→` moves it to the fork cell, and from then until the selection moves,
+ * Enter forks a new session instead of scrubbing to the event. That is a
+ * *mode*, and an unannounced mode whose action is irreversible is the most
+ * dangerous thing in this console.
+ *
+ * Drawn only while the row has focus, because the cursor is a keyboard
+ * concept: painting it for a mouse user would be explaining a mechanism they
+ * are not using and cannot reach. An outline rather than the row's
+ * `box-shadow`, so a focused row and the cursor inside it stay two
+ * distinguishable marks rather than one thicker one. */
+.ev:focus-visible .ev-cursor {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+/* The action cell is `position: absolute` and shrink-wrapped around its
+   button, so an outline on it reads as a ring around "fork here" -- which is
+   precisely what the cursor being there means. No inset needed. */
+.ev:focus-visible .ev-cell-act.ev-cursor {
+  outline-offset: 0;
+}
 .ev > .ev-cell:first-child {
   flex: 1 1 auto;
   min-width: 0;
