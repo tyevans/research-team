@@ -24,6 +24,7 @@ from research_team.application import (
     AutonomyPolicy,
     TurnResult,
 )
+from research_team.application.knowledge_attachment import _compose
 from research_team.application.ports import (
     ActivityDelta,
     ActivityMessage,
@@ -355,7 +356,14 @@ class DeepAgentTurnExecutor:
         Kept as a separate seam so tests can force a mid-turn failure.
         """
         middleware = [*self._middleware, *await self._resolved_middleware(session)]
-        turn_tools = [*self._tools, *await self._resolved_tools(session)]
+        # A per-turn tool must replace a registered one of the same name, not
+        # sit beside it -- two tools named `fetch` would leave langgraph to
+        # pick between them, which is not a decision this class delegates.
+        # `_compose` already encodes that rule for `set_tools`
+        # (application/knowledge_attachment.py); reused rather than
+        # reimplemented so the two lifetimes (per-turn here, persistent there)
+        # cannot silently drift into different shadowing rules.
+        turn_tools = _compose(self._tools, await self._resolved_tools(session))
         agent = create_deep_agent(
             model=self._model,
             tools=turn_tools or None,

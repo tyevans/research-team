@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 import httpx
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage
+from langchain_core.tools import tool
 
 from research_team.application import ApprovalDecision, AutonomyPolicy
 from research_team.application.ports import ActivityDelta, GateReview
@@ -213,6 +214,43 @@ async def test_a_tool_no_stage_claims_survives_the_filter():
     )
     await _run(executor, _session())
     assert "web_search" in model.last_bound
+
+
+async def test_a_per_turn_tool_shadows_a_registered_tool_of_the_same_name():
+    """The per-turn tool must replace the registered one, not sit beside it.
+
+    Both tools below are named `web_search`; the registered one records a
+    call and raises if reached, the per-turn one answers. If `_invoke` ever
+    goes back to appending (`[*self._tools, *await self._resolved_tools(...)]`)
+    rather than shadowing, langgraph would bind two tools of one name -- and
+    whichever the model happened to reach could be either, including the one
+    that raises. This asserts the outcome as well as the identity: the
+    registered tool must never run.
+    """
+    registered_calls: list[str] = []
+
+    @tool("web_search")
+    def registered(query: str) -> str:
+        """The registered tool -- must be shadowed, never invoked."""
+        registered_calls.append(query)
+        raise AssertionError("the shadowed registered tool must never run")
+
+    @tool("web_search")
+    def per_turn(query: str) -> str:
+        """The per-turn tool -- must win over the registered one."""
+        return "shadow-response"
+
+    async def provide_tools(session: CodingSession) -> tuple[Any, ...]:
+        return (per_turn,)
+
+    model = _searching_model()
+    executor = DeepAgentTurnExecutor(
+        model,
+        tools=(registered,),
+        tools_provider=provide_tools,
+    )
+    await _run(executor, _session())
+    assert registered_calls == []
 
 
 async def test_the_builtin_filesystem_tools_survive_a_stage():
