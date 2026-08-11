@@ -333,6 +333,30 @@ cost a stage transition the model has already earned.
 """
 
 
+class ApprovalRefused(Exception):
+    """Raised by an `ApprovalPort` instead of a decision, when there is no
+    decision a human actually made.
+
+    `ApprovalDecision` is a record of what a person chose, and every existing
+    caller that receives one records `decided_by="human"` -- see
+    `deep_agent.py`'s `_apply`. That is correct for every port that only ever
+    returns a decision a person gave. A port can also *refuse to keep
+    waiting* -- a bounded session's timeout expiring is the first case, but
+    the shape is general -- and that refusal did not come from a person, so
+    it must not be wearable as one. Raising rather than returning is what
+    keeps `_apply`'s blanket `"human"` honest: a port that raises this is a
+    port telling the executor "attribute this decision to policy, not to
+    whoever the browser was waiting on."
+
+    `message` is shown to the model, the same as `ApprovalDecision.message`
+    would be -- the turn continues on a legible rejection, not an exception
+    that unwinds the pass. It exists as an exception rather than a third
+    `ApprovalDecision.type` because a value in that enum-like field is
+    something `_apply` treats as `decided_by="human"` by construction; a new
+    channel was needed, not a new value on the old one.
+    """
+
+
 class ApprovalPort(Protocol):
     """Asks a human to approve, edit, or reject a gated tool call.
 
@@ -340,6 +364,9 @@ class ApprovalPort(Protocol):
     calls this port knowing only that a human will receive the request and
     return a decision -- whether they are at a terminal, in a web browser, or
     somewhere else is an infrastructure detail, not the executor's concern.
+
+    May raise `ApprovalRefused` instead of returning, when the port itself
+    -- not a human -- decided the call cannot proceed.
     """
 
     async def decide(self, request: ApprovalRequest) -> ApprovalDecision: ...

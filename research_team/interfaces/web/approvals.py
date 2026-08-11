@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
 
-from research_team.application import ApprovalDecision, ApprovalRequest
+from research_team.application import ApprovalDecision, ApprovalRefused, ApprovalRequest
 from research_team.application.grants import GrantRegistry
 
 REQUESTED = "ApprovalRequested"
@@ -153,21 +153,21 @@ class WebApprovals:
             )
             if approval.future in done:
                 return approval.future.result()
-            # The timer won: nobody answered in time. Refused rather than
-            # errored, the same shape `_decide` produces when there is no
-            # approval port to ask at all (`deep_agent.py:489-498`) -- a
-            # `reject` the turn's model reads and carries on from, not an
-            # exception that ends the pass. `decide`'s own `finally` still
-            # forgets this approval from `_pending` right after we return, so
-            # a late `POST` already 404s; cancelling the future too just
-            # keeps nothing waiting on it that nobody will ever check.
+            # The timer won: nobody answered in time. `ApprovalRefused`
+            # rather than an `ApprovalDecision`, because no human decided
+            # anything here -- returning `ApprovalDecision(type="reject",
+            # ...)` would have `_apply` record `decided_by="human"`, which
+            # is a log entry inventing a person who was never asked. Raising
+            # instead lets the executor record this the way it already
+            # records a policy-level refusal, at `deep_agent.py:489-498`.
+            # `decide`'s own `finally` still forgets this approval from
+            # `_pending` right after we raise, so a late `POST` already
+            # 404s; cancelling the future too just keeps nothing waiting on
+            # it that nobody will ever check.
             if not approval.future.done():
                 approval.future.cancel()
-            return ApprovalDecision(
-                type="reject",
-                message=(
-                    f"No one answered this request within {self._timeout:g}s; it was refused."
-                ),
+            raise ApprovalRefused(
+                f"No one answered this request within {self._timeout:g}s; it was refused."
             )
         finally:
             timer.cancel()

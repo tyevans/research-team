@@ -16,7 +16,9 @@ what duration that fake was asked to wait for, not by waiting it out.
 import asyncio
 from uuid import uuid4
 
-from research_team.application import ApprovalDecision, ApprovalRequest
+import pytest
+
+from research_team.application import ApprovalDecision, ApprovalRefused, ApprovalRequest
 from research_team.application.grants import FetchGrant, GrantRegistry
 from research_team.interfaces.web.approvals import UNATTENDED_TIMEOUT_S, WebApprovals
 
@@ -60,26 +62,30 @@ class _RecordingSleep:
 
 
 async def test_a_registered_sessions_approval_is_refused_after_the_bound():
+    """`WebApprovals.decide` raises `ApprovalRefused` rather than returning a
+    `reject` `ApprovalDecision` -- an `ApprovalDecision` is what a human
+    chose, and nobody chose this. See `ApprovalRefused`'s docstring: the
+    executor (`deep_agent.py`'s `_decide`) is what turns this into a `reject`
+    the model reads, recording `decided_by="policy"` rather than the
+    `decided_by="human"` every `ApprovalDecision` gets stamped with."""
     session_id = uuid4()
     approvals = WebApprovals(grants=_registry_knowing(session_id), sleep=_fires_immediately)
 
-    decision = await approvals.decide(_request(session_id))
-
-    assert decision.type == "reject"
+    with pytest.raises(ApprovalRefused):
+        await approvals.decide(_request(session_id))
 
 
 async def test_the_refusal_carries_a_message_the_model_can_read():
-    """Matches the shape `_decide` already produces with no approval port at
-    all (`deep_agent.py:489-498`): a `reject` decision with a message, not an
-    exception that would end the turn."""
+    """The exception's message is what a caller shows the model, the same
+    role `ApprovalDecision.message` plays on the ordinary reject path -- it
+    must not be empty, and it must not require the caller to invent one."""
     session_id = uuid4()
     approvals = WebApprovals(grants=_registry_knowing(session_id), sleep=_fires_immediately)
 
-    decision = await approvals.decide(_request(session_id))
+    with pytest.raises(ApprovalRefused) as excinfo:
+        await approvals.decide(_request(session_id))
 
-    assert decision.type == "reject"
-    assert decision.message
-    assert isinstance(decision.message, str)
+    assert str(excinfo.value)
 
 
 async def test_the_timeout_used_is_the_named_default():
@@ -87,7 +93,8 @@ async def test_the_timeout_used_is_the_named_default():
     recorder = _RecordingSleep()
     approvals = WebApprovals(grants=_registry_knowing(session_id), sleep=recorder)
 
-    await approvals.decide(_request(session_id))
+    with pytest.raises(ApprovalRefused):
+        await approvals.decide(_request(session_id))
 
     assert recorder.seconds == [UNATTENDED_TIMEOUT_S]
 

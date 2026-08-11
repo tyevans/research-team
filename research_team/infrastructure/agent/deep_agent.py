@@ -20,6 +20,7 @@ from research_team.application import (
     ActivityReporter,
     ApprovalDecision,
     ApprovalPort,
+    ApprovalRefused,
     ApprovalRequest,
     AutonomyPolicy,
     TurnResult,
@@ -509,16 +510,29 @@ class DeepAgentTurnExecutor:
                 )
             )
             return {"type": "reject", "message": gate.refusal}
-        decision = await self._approvals.decide(
-            ApprovalRequest(
-                session_id=session.aggregate_id,
-                tool_name=name,
-                args=args,
-                description=str(request.get("description") or ""),
-                allowed_decisions=tuple(review.get("allowed_decisions") or ()),
-                context=gate.context if gate is not None else None,
+        try:
+            decision = await self._approvals.decide(
+                ApprovalRequest(
+                    session_id=session.aggregate_id,
+                    tool_name=name,
+                    args=args,
+                    description=str(request.get("description") or ""),
+                    allowed_decisions=tuple(review.get("allowed_decisions") or ()),
+                    context=gate.context if gate is not None else None,
+                )
             )
-        )
+        except ApprovalRefused as refused:
+            # The port refused to keep waiting -- nobody answered, so nobody
+            # decided. Recorded the same way as the `deny` arm above rather
+            # than through `_apply`, because `_apply` always writes
+            # `decided_by="human"` and that would be a log entry claiming a
+            # person saw this call and rejected it. Nobody did.
+            session.execute(
+                RecordToolDecision(
+                    tool_name=name, args=args, decision="reject", decided_by="policy"
+                )
+            )
+            return {"type": "reject", "message": str(refused)}
         return self._apply(session, name, args, decision)
 
     async def _review_gate(
