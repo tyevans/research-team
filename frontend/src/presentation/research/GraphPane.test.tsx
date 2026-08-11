@@ -12,6 +12,7 @@ import type { GraphRepository } from '@application/ports/repositories.ts'
 import type { GraphNode, Neighborhood } from '@domain/knowledge/graph.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
+import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { FRAME_DEBOUNCE_MS } from '../shell/use-frame-refresh.ts'
 import { GraphPane } from './GraphPane.tsx'
@@ -85,7 +86,15 @@ const fakeStream = () => {
   }
 }
 
-/** The `StreamProvider` is not decoration: `GraphPane` subscribes to the feed,
+/** `OverlayHost` joined this harness when `GraphDetail` stopped listening for
+ *  Escape on `window` and started taking its turn in the host's layer stack.
+ *  Without a host in scope the panel simply does not register, so Escape does
+ *  nothing -- the same contract `Overlay` has, where a hostless layer renders
+ *  `null` rather than escaping to `document.body`. That the *application*
+ *  mounts one is `App.test.tsx`'s claim, and it deliberately supplies none of
+ *  its own.
+ *
+ *  The `StreamProvider` is not decoration: `GraphPane` subscribes to the feed,
  *  and a harness without one would exercise a component the application never
  *  renders. */
 const renderWithContainer = (
@@ -96,7 +105,9 @@ const renderWithContainer = (
   const container = { stream, ...parts } as unknown as AppContainer
   return render(
     <ContainerProvider container={container}>
-      <StreamProvider>{ui}</StreamProvider>
+      <StreamProvider>
+        <OverlayHost>{ui}</OverlayHost>
+      </StreamProvider>
     </ContainerProvider>,
   )
 }
