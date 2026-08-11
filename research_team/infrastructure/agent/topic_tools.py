@@ -1,10 +1,11 @@
-"""Topics, as four tools the agent can call.
+"""Topics, as five tools the agent can call.
 
-Three read-or-record and one that creates. None is gated, and the asymmetry is
+Four read-or-record and one that creates. None is gated, and the asymmetry is
 deliberate: `autonomy.py` argues that an approval which fires on something
 nobody would refuse makes every other approval mean less, and recording what you
 learned about a question this project already tracks is not a decision anyone
-would stop.
+would stop. That includes `record_gap`: a record of failure is not a hazard, and
+gating it would discourage the honesty it collects.
 
 `open_topic` is the one that grows the queue, and it is capped rather than
 gated -- see `MAX_OPEN_TOPICS`. A cap works unattended; a gate does not, and the
@@ -22,6 +23,7 @@ from research_team.application.topics import (
     MAX_OPEN_TOPICS,
     OPEN_TOPIC_TOOL,
     RECORD_FINDING_TOOL,
+    RECORD_GAP_TOOL,
     TopicError,
     TopicPort,
     TopicSummary,
@@ -31,6 +33,7 @@ from research_team.domain.topic import (
     LinkSource,
     OpenTopic,
     RecordFinding,
+    RecordGap,
     Topic,
 )
 
@@ -109,6 +112,14 @@ class RepositoryTopics(TopicPort):
 
         await with_retry(record, what=f"recording a finding on {topic_id}")
 
+    async def record_gap(self, topic_id: UUID, looking_for: str, tried: list[str]) -> None:
+        async def record() -> None:
+            topic = await self._load(topic_id)
+            topic.execute(RecordGap(looking_for=looking_for, tried=list(tried)))
+            await self._topics.save(topic)
+
+        await with_retry(record, what=f"recording a gap on {topic_id}")
+
     async def link_source(self, topic_id: UUID, source_id: str, note: str = "") -> None:
         """Link a source, retrying if a concurrent write to this topic wins.
 
@@ -148,7 +159,7 @@ class RepositoryTopics(TopicPort):
 
 
 def build_topic_tools(topics: TopicPort, project_id: UUID) -> tuple[BaseTool, ...]:
-    """The four topic tools, bound to one project.
+    """The five topic tools, bound to one project.
 
     Bound at construction rather than taking a project argument, for the reason
     the knowledge tools are: a project id the model can supply is a project id
@@ -194,6 +205,28 @@ def build_topic_tools(topics: TopicPort, project_id: UUID) -> tuple[BaseTool, ..
         cited = f" citing {', '.join(source_ids)}" if source_ids else ""
         return f"Recorded against {parsed}{cited}."
 
+    @tool(RECORD_GAP_TOOL)
+    async def record_gap(topic_id: str, looking_for: str, tried: list[str]) -> str:
+        """Record that you looked for something and did not find it.
+
+        `looking_for` says what an answer would have looked like; `tried` says
+        what you actually searched. Does not close the topic and does not
+        silence any trigger -- it only saves the next session from repeating
+        your searches.
+        """
+        if not looking_for.strip():
+            return "A gap needs to say what was looked for. Nothing was recorded."
+        if not [item for item in tried if item.strip()]:
+            return "A gap needs to say what was tried. Nothing was recorded."
+        parsed = _parse_id(topic_id)
+        if parsed is None:
+            return f"{topic_id!r} is not a topic id. Use `list_topics` to see them."
+        try:
+            await topics.record_gap(parsed, looking_for, tried)
+        except TopicError as error:
+            return str(error)
+        return f"Recorded a gap against {parsed}."
+
     @tool(LINK_SOURCE_TOOL)
     async def link_source(topic_id: str, source_id: str, note: str = "") -> str:
         """Attach a corpus document to the topic it bears on."""
@@ -206,7 +239,7 @@ def build_topic_tools(topics: TopicPort, project_id: UUID) -> tuple[BaseTool, ..
             return str(error)
         return f"Linked {source_id} to {parsed}."
 
-    return (list_topics, open_topic, record_finding, link_source)
+    return (list_topics, open_topic, record_finding, record_gap, link_source)
 
 
 def _parse_id(raw: str) -> UUID | None:

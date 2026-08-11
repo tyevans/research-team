@@ -31,6 +31,7 @@ class FakeTopics:
         self.live = live
         self.opened: list[tuple[str, str]] = []
         self.findings: list[tuple[UUID, str, list[str]]] = []
+        self.gaps: list[tuple[UUID, str, list[str]]] = []
         self.links: list[tuple[UUID, str]] = []
         self.known: set[UUID] = set()
 
@@ -52,6 +53,11 @@ class FakeTopics:
         if topic_id not in self.known:
             raise TopicError(f"no topic {topic_id} in this project. Use `list_topics`.")
         self.findings.append((topic_id, summary, list(source_ids)))
+
+    async def record_gap(self, topic_id, looking_for, tried):
+        if topic_id not in self.known:
+            raise TopicError(f"no topic {topic_id} in this project. Use `list_topics`.")
+        self.gaps.append((topic_id, looking_for, list(tried)))
 
     async def link_source(self, topic_id, source_id, note=""):
         if topic_id not in self.known:
@@ -177,6 +183,50 @@ async def test_a_finding_without_a_summary_is_refused():
     assert port.findings == []
 
 
+async def test_record_gap_writes_what_was_tried():
+    port = FakeTopics()
+    tools = tools_for(port)
+    topic_id = await port.open_topic(uuid4(), "q?", "r")
+
+    answer = await tools["record_gap"].ainvoke(
+        {
+            "topic_id": str(topic_id),
+            "looking_for": "a critique of backward design",
+            "tried": ["backward design critique", "wiggins criticism"],
+        }
+    )
+
+    recorded = port.gaps[0]
+    assert recorded[0] == topic_id
+    assert recorded[1] == "a critique of backward design"
+    assert recorded[2] == ["backward design critique", "wiggins criticism"]
+    assert str(topic_id) in answer
+
+
+async def test_a_gap_without_what_was_looked_for_is_refused():
+    port = FakeTopics()
+    topic_id = await port.open_topic(uuid4(), "q?", "r")
+
+    answer = await tools_for(port)["record_gap"].ainvoke(
+        {"topic_id": str(topic_id), "looking_for": "   ", "tried": ["x"]}
+    )
+
+    assert "looked for" in answer
+    assert port.gaps == []
+
+
+async def test_a_gap_without_what_was_tried_is_refused():
+    port = FakeTopics()
+    topic_id = await port.open_topic(uuid4(), "q?", "r")
+
+    answer = await tools_for(port)["record_gap"].ainvoke(
+        {"topic_id": str(topic_id), "looking_for": "x", "tried": []}
+    )
+
+    assert "tried" in answer
+    assert port.gaps == []
+
+
 async def test_linking_a_source_attaches_it():
     port = FakeTopics()
     tools = tools_for(port)
@@ -199,10 +249,12 @@ def _args_for(tool_name: str, topic_id: str) -> dict:
     """
     if tool_name == "record_finding":
         return {"topic_id": topic_id, "summary": "x", "source_ids": []}
+    if tool_name == "record_gap":
+        return {"topic_id": topic_id, "looking_for": "x", "tried": ["y"]}
     return {"topic_id": topic_id, "source_id": "s1"}
 
 
-@pytest.mark.parametrize("tool_name", ["record_finding", "link_source"])
+@pytest.mark.parametrize("tool_name", ["record_finding", "record_gap", "link_source"])
 async def test_something_that_is_not_an_id_is_answered_rather_than_raised(tool_name):
     """A model will sometimes hand back a question where an id belongs."""
     tools = tools_for(FakeTopics())
@@ -213,7 +265,7 @@ async def test_something_that_is_not_an_id_is_answered_rather_than_raised(tool_n
     assert "list_topics" in answer
 
 
-@pytest.mark.parametrize("tool_name", ["record_finding", "link_source"])
+@pytest.mark.parametrize("tool_name", ["record_finding", "record_gap", "link_source"])
 async def test_an_unknown_topic_names_the_remedy(tool_name):
     tools = tools_for(FakeTopics())
 
@@ -285,6 +337,110 @@ async def test_two_findings_recorded_at_once_both_land(tmp_path):
 
         state = (await topics.load(topic_id)).state
         assert state.findings == 2
+    finally:
+        await snapshot_store.close()
+        await store.close()
+
+
+# --- the hazard `record_gap` must not become ---------------------------
+#
+# `TopicPort` has no `close_topic`: an autonomous run that could close its own
+# topics could empty its queue without answering anything, which is the
+# confabulated ending this whole design exists to prevent (see the class
+# docstring on `TopicPort`). A tool that lets an agent declare a question
+# unanswerable is that failure arriving by a side door, so these two tests
+# exist to fail the moment `record_gap` starts touching status or
+# acknowledgements -- both go through the real aggregate rather than
+# `FakeTopics`, because a fake port cannot tell you what `evolve` actually did.
+
+
+@pytest.mark.asyncio
+async def test_record_gap_does_not_change_the_topic_status(tmp_path):
+    """The hazard this whole design is shaped around: a gap is not a close."""
+    from eventsource.adapters.sqlite import SQLiteEventStore
+    from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
+
+    from research_team.domain.topic import OpenTopic
+    from research_team.infrastructure.agent.topic_tools import RepositoryTopics
+    from research_team.infrastructure.persistence import build_topic_repository
+
+    db_path = str(tmp_path / "sessions.db")
+    store = SQLiteEventStore(db_path)
+    snapshot_store = SQLiteSnapshotStore(db_path)
+    try:
+        topics = build_topic_repository(store, snapshot_store=snapshot_store)
+        project_id = uuid4()
+        port = RepositoryTopics(topics, None, project_id)
+
+        topic = topics.create_new(uuid4())
+        topic.execute(
+            OpenTopic(
+                topic_id=topic.aggregate_id,
+                project_id=project_id,
+                question="What did the pilot study find about attention span?",
+                rationale="cited but never located",
+            )
+        )
+        await topics.save(topic)
+        topic_id = topic.aggregate_id
+        status_before = (await topics.load(topic_id)).state.status
+
+        await port.record_gap(
+            topic_id, "a critique of backward design", ["backward design critique"]
+        )
+
+        state = (await topics.load(topic_id)).state
+        assert state.status == status_before
+        assert state.gaps == 1
+    finally:
+        await snapshot_store.close()
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_record_gap_does_not_acknowledge_any_trigger(tmp_path):
+    """`TopicTriggerAcknowledged` is the silencing mechanism and nothing emits
+    it from an agent tool. Wiring gaps to it would hand an autonomous run the
+    ability to mute its own alarms. This test exists only to fail if that
+    changes."""
+    from eventsource.adapters.sqlite import SQLiteEventStore
+    from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
+
+    from research_team.domain.topic import OpenTopic
+    from research_team.infrastructure.agent.topic_tools import RepositoryTopics
+    from research_team.infrastructure.persistence import build_topic_repository
+
+    db_path = str(tmp_path / "sessions.db")
+    store = SQLiteEventStore(db_path)
+    snapshot_store = SQLiteSnapshotStore(db_path)
+    try:
+        topics = build_topic_repository(store, snapshot_store=snapshot_store)
+        project_id = uuid4()
+        port = RepositoryTopics(topics, None, project_id)
+
+        topic = topics.create_new(uuid4())
+        topic.execute(
+            OpenTopic(
+                topic_id=topic.aggregate_id,
+                project_id=project_id,
+                question="What did the pilot study find about attention span?",
+                rationale="cited but never located",
+            )
+        )
+        await topics.save(topic)
+        topic_id = topic.aggregate_id
+
+        await port.record_gap(
+            topic_id, "a critique of backward design", ["backward design critique"]
+        )
+
+        # `evolve`'s only response to `TopicGapRecorded` is incrementing
+        # `gaps` (`research_team/domain/topic.py`) -- if a gap ever started
+        # emitting `TopicTriggerAcknowledged` too, `acknowledgements` would
+        # stop being empty here.
+        state = (await topics.load(topic_id)).state
+        assert state.acknowledgements == {}
+        assert state.gaps == 1
     finally:
         await snapshot_store.close()
         await store.close()
