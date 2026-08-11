@@ -23,15 +23,22 @@ from research_team.domain import (
     UserMessageSent,
 )
 from research_team.interfaces.web import TurnActivity
-from tests.conftest import ToolAwareFakeChatModel, start_session
+from tests.application.test_turn_supervisor import CountingModel, once_inside_the_model
+from tests.conftest import start_session
 
 
-class SlowWritingModel(ToolAwareFakeChatModel):
-    """Writes a file, slowly enough that a watcher could see it mid-turn."""
+class SlowWritingModel(CountingModel):
+    """Writes a file, slowly enough that a watcher could see it mid-turn.
+
+    A `CountingModel` so a test can wait for "the turn has reached the model"
+    rather than sleeping for longer than it hopes that takes. That distinction
+    is `BACKLOG.md` B4's, and this file had four sleeps standing in for it.
+    """
 
     delay: float = 1.0
 
     async def _agenerate(self, *args: Any, **kwargs: Any):
+        self._enter()
         await asyncio.sleep(self.delay)
         return await super()._agenerate(*args, **kwargs)
 
@@ -56,7 +63,26 @@ def writing_model() -> SlowWritingModel:
     )
 
 
-async def _watch(feed, collected: list[FeedEntry]) -> None:
+async def _watching(feed, collected: list[FeedEntry]):
+    """Start a watcher and return once it is genuinely subscribed.
+
+    The position is taken *here*, before the task exists, so "the watcher is
+    listening" is established rather than waited out -- `feed.follow()` would
+    take it on the task's first turn, some time after `create_task` returns,
+    and every test below writes immediately afterwards. Three of them used
+    `await asyncio.sleep(0.2)` to cover that gap.
+
+    `from_start` when the log is empty, for the reason `_sse` does the same:
+    an empty log has no position, and `None` is also how `follow` is told to
+    choose for itself. `test_web.py`'s
+    `first_event_in_an_empty_log_still_reaches_a_subscriber` is where that is
+    pinned.
+    """
+    start_at = await feed.position_now()
+    return asyncio.create_task(_watch(feed, collected, start_at))
+
+
+async def _watch(feed, collected: list[FeedEntry], start_at=None) -> None:
     """Collect the session's own frames, and only those.
 
     Filtered rather than taking everything the feed hands over, because these
@@ -72,7 +98,7 @@ async def _watch(feed, collected: list[FeedEntry]) -> None:
     feed, and the failure would look like a broken atomicity guarantee rather
     than a widened feed -- the expensive kind of wrong.
     """
-    async for entry in feed.follow():
+    async for entry in feed.follow(from_position=start_at, from_start=start_at is None):
         if entry.aggregate_type == CodingSession.aggregate_type:
             collected.append(entry)
 
@@ -98,15 +124,15 @@ async def test_a_turns_events_all_become_visible_at_once(build_application, writ
     """
     application = await build_application(model=writing_model)
     seen: list[FeedEntry] = []
-    watcher = asyncio.create_task(_watch(application.feed, seen))
-    await asyncio.sleep(0.2)
+    watcher = await _watching(application.feed, seen)
 
     session_id = await start_session(application.service)
     await _settle(seen, 1)  # the session's own creation event
     before_turn = len(seen)
 
     turn = asyncio.create_task(application.turns.run(session_id, "write a file"))
-    await asyncio.sleep(0.5)  # mid-turn: the model has not answered yet
+    # Mid-turn: inside the model, which has not answered yet.
+    await once_inside_the_model(writing_model)
     during_turn = len(seen)
 
     await turn
@@ -130,12 +156,11 @@ async def test_a_cancelled_turns_events_never_become_visible(build_application, 
     writing_model.delay = 5.0
     application = await build_application(model=writing_model)
     seen: list[FeedEntry] = []
-    watcher = asyncio.create_task(_watch(application.feed, seen))
-    await asyncio.sleep(0.2)
+    watcher = await _watching(application.feed, seen)
 
     session_id = await start_session(application.service)
     turn = asyncio.create_task(application.turns.run(session_id, "write a file"))
-    await asyncio.sleep(0.4)
+    await once_inside_the_model(writing_model)
     await application.turns.cancel(session_id)
     with pytest.raises(TurnCancelled):
         await turn
@@ -154,8 +179,7 @@ async def test_the_reported_span_matches_what_the_watcher_saw(
     """A watching tab can derive the turn's span from the frames alone."""
     application = await build_application(model=writing_model)
     seen: list[FeedEntry] = []
-    watcher = asyncio.create_task(_watch(application.feed, seen))
-    await asyncio.sleep(0.2)
+    watcher = await _watching(application.feed, seen)
 
     session_id = await start_session(application.service)
     await _settle(seen, 1)

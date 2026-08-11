@@ -34,6 +34,7 @@ from research_team.interfaces.web import TurnActivity, create_app
 from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.seeding import SeedingActivity
+from tests.application.test_turn_supervisor import once_inside_the_model
 from tests.conftest import start_session
 
 
@@ -423,8 +424,8 @@ async def test_sse_frames_each_event_as_a_data_line(repository, session_id):
 
     frames: list[str] = []
     generator = _sse(StubRequest(), feed)
+    await _subscribed(generator)
     task = asyncio.create_task(_drain(generator, frames, wanted=1))
-    await asyncio.sleep(0.05)
     aggregate.execute(SendUserMessage(message={"type": "human", "data": {"content": "hi"}}))
     await repository.save(aggregate)
     await asyncio.wait_for(task, timeout=5)
@@ -433,6 +434,52 @@ async def test_sse_frames_each_event_as_a_data_line(repository, session_id):
     payload = json.loads(frames[0].split("data: ", 1)[1])
     assert payload["session_id"] == str(session_id)
     assert payload["type"] == "UserMessageSent"
+
+
+async def test_the_first_event_in_an_empty_log_still_reaches_a_subscriber(repository):
+    """Subscribing to a database nothing has been written to yet.
+
+    An empty log has no position, so `latest_position()` answers `None` -- and
+    `None` is also how `follow` is told "you decide where to start", which it
+    does on the pump task's first turn, some time after the response has begun.
+    Anything appended in that window was dropped, permanently: the subscriber's
+    cursor ended up *after* it.
+
+    Narrow, but not hypothetical -- it is the first run of a fresh install,
+    where the console connects to an empty database and the first thing that
+    happens is the first thing anyone does. `_sse` reads the position itself
+    and passes `from_start` when there was none, which is not a wider replay:
+    the log was empty when it looked, so from the start *is* from now.
+
+    Reverting either half of that fix fails here. The test is only meaningful
+    because `: ready` makes "the subscriber is placed" observable; with the
+    0.05s sleep this file used to use, the append landed after the cursor was
+    taken by luck and the bug was invisible.
+    """
+    from research_team.application import LiveFeed
+    from research_team.interfaces.web.app import _sse
+
+    feed = LiveFeed(repository, poll_interval=0.01)
+    topics = build_topic_repository(repository.store)
+    topic = topics.create_new(uuid4())
+
+    frames: list[str] = []
+    generator = _sse(StubRequest(), feed)
+    await _subscribed(generator)
+    task = asyncio.create_task(_drain(generator, frames, wanted=1))
+    topic.execute(
+        OpenTopic(
+            topic_id=topic.aggregate_id,
+            project_id=uuid4(),
+            question="Is anybody there?",
+            rationale="the log is empty and something has to be first",
+        )
+    )
+    await topics.save(topic)
+    await asyncio.wait_for(task, timeout=5)
+
+    payload = json.loads(frames[0].split("data: ", 1)[1])
+    assert payload["change"] == "TopicOpened"
 
 
 async def test_sse_frames_a_topic_change_as_its_own_project_shaped_frame(repository):
@@ -457,8 +504,8 @@ async def test_sse_frames_a_topic_change_as_its_own_project_shaped_frame(reposit
 
     frames: list[str] = []
     generator = _sse(StubRequest(), feed)
+    await _subscribed(generator)
     task = asyncio.create_task(_drain(generator, frames, wanted=1))
-    await asyncio.sleep(0.05)
     topic.execute(
         OpenTopic(
             topic_id=topic.aggregate_id,
@@ -504,8 +551,8 @@ async def test_sse_frames_a_graph_change_addressed_to_its_project(repository):
 
     frames: list[str] = []
     generator = _sse(StubRequest(), feed)
+    await _subscribed(generator)
     task = asyncio.create_task(_drain(generator, frames, wanted=1))
-    await asyncio.sleep(0.05)
     await repository.store.append(
         stream,
         [
@@ -552,8 +599,8 @@ async def test_sse_frames_a_stored_document_as_a_corpus_frame(repository):
 
     frames: list[str] = []
     generator = _sse(StubRequest(), feed)
+    await _subscribed(generator)
     task = asyncio.create_task(_drain(generator, frames, wanted=1))
-    await asyncio.sleep(0.05)
     aggregate.execute(
         StoreSourceDocument(
             corpus_id=project_id, source_id="paper-1", text="Ada worked with Charles."
@@ -603,8 +650,8 @@ async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
 
     frames: list[str] = []
     generator = _sse(StubRequest(), feed)
+    await _subscribed(generator)
     task = asyncio.create_task(_drain(generator, frames, wanted=1))
-    await asyncio.sleep(0.05)
     project.execute(
         AdvanceStage(
             preset=hybrid_default,
@@ -628,6 +675,24 @@ async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
     # course read.
     assert payload["decision"] == "approve_with_edits"
     assert "session_id" not in payload
+
+
+async def _subscribed(generator) -> None:
+    """Advance a stream to the point where it is actually listening.
+
+    `_sse` takes its feed position and then yields `: ready`, so receiving that
+    comment is a *fact* about the subscription rather than a guess about how
+    long one takes to establish. Every test below that appends an event and
+    expects to see it needs this first: an append that lands before the cursor
+    is taken is not in the stream, and the test reads as "the feed is broken".
+
+    It replaces `await asyncio.sleep(0.05)` -- and in the two tests that talk
+    to a real server, `sleep(0.4)`. `BACKLOG.md` B4 is what those cost: a
+    precondition expressed as a duration fails on a machine that is merely
+    busy, and the failure looks exactly like a defect in the thing under test.
+    """
+    ready = await anext(generator)
+    assert ready.startswith(": ready"), f"expected the ready comment, got {ready!r}"
 
 
 async def _drain(generator, frames: list[str], *, wanted: int) -> None:
@@ -656,6 +721,7 @@ async def test_sse_emits_a_keepalive_while_the_log_is_idle(repository, monkeypat
 
     monkeypatch.setattr(web_app, "KEEPALIVE_SECONDS", 0.05)
     generator = _sse(StubRequest(), LiveFeed(repository, poll_interval=0.01))
+    await _subscribed(generator)
     frame = await asyncio.wait_for(anext(generator), timeout=5)
     assert frame == ": keepalive\n\n"
     await generator.aclose()
@@ -669,7 +735,9 @@ async def test_sse_stops_when_the_client_goes_away(repository, monkeypatch):
     monkeypatch.setattr(web_app, "KEEPALIVE_SECONDS", 0.01)
     generator = _sse(StubRequest(disconnect_after=2), LiveFeed(repository, poll_interval=0.01))
     frames = [frame async for frame in generator]
-    assert all(frame == ": keepalive\n\n" for frame in frames)  # then it ended
+    # The stream announces itself, then keeps the connection warm, then ends.
+    assert frames[0] == ": ready\n\n"
+    assert all(frame == ": keepalive\n\n" for frame in frames[1:])
 
 
 async def test_stream_reaches_a_real_browser_over_a_real_socket(db_path, fake_model):
@@ -685,6 +753,11 @@ async def test_stream_reaches_a_real_browser_over_a_real_socket(db_path, fake_mo
         await asyncio.sleep(0.02)
 
     received: list[dict] = []
+    # Set when the server says it is subscribed. `response.headers` arriving is
+    # not that -- the route returns before the generator has taken its feed
+    # position -- which is why this used to be a 0.4s sleep and why a busy
+    # machine could put the write in front of the subscription.
+    subscribed = asyncio.Event()
 
     async def listen() -> None:
         async with (
@@ -694,6 +767,9 @@ async def test_stream_reaches_a_real_browser_over_a_real_socket(db_path, fake_mo
             assert response.status_code == 200
             assert "text/event-stream" in response.headers["content-type"]
             async for line in response.aiter_lines():
+                if line.startswith(": ready"):
+                    subscribed.set()
+                    continue
                 if not line.startswith("data: "):
                     continue
                 received.append(json.loads(line[len("data: ") :]))
@@ -708,7 +784,7 @@ async def test_stream_reaches_a_real_browser_over_a_real_socket(db_path, fake_mo
 
     listener = asyncio.create_task(listen())
     try:
-        await asyncio.sleep(0.4)  # let the subscriber take its position
+        await asyncio.wait_for(subscribed.wait(), timeout=10)
         session_id = await start_session(application.service)
         await asyncio.wait_for(listener, timeout=10)
     finally:
@@ -957,13 +1033,13 @@ async def slow_app(db_path):
 
 
 async def test_an_in_flight_turn_is_visible_and_cancellable(slow_app):
-    application, client, _ = slow_app
+    application, client, model = slow_app
     session_id = await start_session(application.service)
 
     turn = asyncio.create_task(
         client.post(f"/api/sessions/{session_id}/turns", json={"input": "slow"})
     )
-    await asyncio.sleep(0.4)
+    await once_inside_the_model(model)
 
     running = (await client.get(f"/api/sessions/{session_id}/turns/current")).json()
     assert running["running"] is True
@@ -983,13 +1059,13 @@ async def test_an_in_flight_turn_is_visible_and_cancellable(slow_app):
 
 async def test_a_second_turn_is_refused_while_one_is_running(slow_app):
     """Refused immediately, rather than after spending a minute in the model."""
-    application, client, _ = slow_app
+    application, client, model = slow_app
     session_id = await start_session(application.service)
 
     turn = asyncio.create_task(
         client.post(f"/api/sessions/{session_id}/turns", json={"input": "slow"})
     )
-    await asyncio.sleep(0.4)
+    await once_inside_the_model(model)
 
     second = await client.post(f"/api/sessions/{session_id}/turns", json={"input": "me too"})
     assert second.status_code == 409
@@ -1005,7 +1081,7 @@ async def test_the_session_still_works_after_a_cancellation(slow_app):
     turn = asyncio.create_task(
         client.post(f"/api/sessions/{session_id}/turns", json={"input": "slow"})
     )
-    await asyncio.sleep(0.4)
+    await once_inside_the_model(model)
     await client.post(f"/api/sessions/{session_id}/turns/cancel")
     await turn
 
@@ -1018,13 +1094,13 @@ async def test_the_session_still_works_after_a_cancellation(slow_app):
 
 async def test_a_running_turn_is_described_not_just_flagged(slow_app):
     """A tab arriving mid-turn should be able to say which turn, and for how long."""
-    application, client, _ = slow_app
+    application, client, model = slow_app
     session_id = await start_session(application.service)
 
     turn = asyncio.create_task(
         client.post(f"/api/sessions/{session_id}/turns", json={"input": "slow"})
     )
-    await asyncio.sleep(0.4)
+    await once_inside_the_model(model)
 
     body = (await client.get(f"/api/sessions/{session_id}/turns/current")).json()
     assert body["running"] is True
@@ -1049,13 +1125,13 @@ async def test_a_quiet_session_reports_no_running_turn_details(client):
 
 async def test_a_cancellation_is_marked_as_such_in_the_log(slow_app):
     """Stopped on purpose must be distinguishable from broke, without prose."""
-    application, client, _ = slow_app
+    application, client, model = slow_app
     session_id = await start_session(application.service)
 
     turn = asyncio.create_task(
         client.post(f"/api/sessions/{session_id}/turns", json={"input": "slow"})
     )
-    await asyncio.sleep(0.4)
+    await once_inside_the_model(model)
     body = (await client.post(f"/api/sessions/{session_id}/turns/cancel")).json()
     await turn
 
@@ -1100,16 +1176,19 @@ def _cursor_of(frame: str) -> str:
 async def _watch(feed, resume_from=None, wanted: int = 1):
     """Start an `_sse` stream and collect frames in the background.
 
-    Returns the task and the list it fills. Starting the drain *before* the
-    events are appended is what makes the test meaningful: a stream takes its
-    position when it is first iterated, not when it is constructed.
+    Returns the task and the list it fills. Subscribing *before* the events are
+    appended is what makes the test meaningful: a stream takes its position
+    when it is first iterated, not when it is constructed. `_subscribed` is
+    what makes "before" a fact rather than a hope -- it used to be a 0.05s
+    sleep, and the whole point of these tests is which side of the cursor an
+    event landed on.
     """
     from research_team.interfaces.web.app import _sse
 
     frames: list[str] = []
     generator = _sse(StubRequest(), feed, resume_from)
+    await _subscribed(generator)
     task = asyncio.create_task(_drain(generator, frames, wanted=wanted))
-    await asyncio.sleep(0.05)
     return task, frames
 
 
@@ -1586,8 +1665,8 @@ async def test_activity_frames_ride_the_stream_without_an_id(repository, session
 
     frames: list[str] = []
     generator = _sse(StubRequest(), feed, None, None, activity)
+    await _subscribed(generator)
     task = asyncio.create_task(_drain(generator, frames, wanted=1))
-    await asyncio.sleep(0.05)
     activity.begin(session_id)
     activity.reporter(session_id)(
         ActivityMessage(message_id="a1", kind="assistant", payload={"content": "hi"})
@@ -2955,8 +3034,8 @@ async def test_extraction_frames_ride_the_stream_without_an_id(repository):
 
     frames: list[str] = []
     generator = _sse(StubRequest(), feed, None, None, None, activity)
+    await _subscribed(generator)
     task = asyncio.create_task(_drain(generator, frames, wanted=1))
-    await asyncio.sleep(0.05)
     activity.reporter(project_id)(ExtractionNote(source_id="notes", stage="chunking"))
     await asyncio.wait_for(task, timeout=5)
 
@@ -2986,8 +3065,8 @@ async def test_seeding_frames_ride_the_stream_without_an_id(repository):
 
     frames: list[str] = []
     generator = _sse(StubRequest(), feed, None, None, None, None, seeding)
+    await _subscribed(generator)
     task = asyncio.create_task(_drain(generator, frames, wanted=1))
-    await asyncio.sleep(0.05)
 
     async def _run(run_id):
         raise RuntimeError("boom")
@@ -4002,6 +4081,7 @@ async def test_dispatch_frames_ride_the_stream_without_an_id(repository):
             reply="done",
         )
 
+    await _subscribed(generator)
     queue.start(project_id, topic_id, "understanding", _run)
     frames = [await anext(generator) for _ in range(2)]
     await queue.wait(project_id)
