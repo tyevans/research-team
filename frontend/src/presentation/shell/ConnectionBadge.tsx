@@ -19,7 +19,10 @@ export const ConnectionBadge = ({ state }: { state: ConnectionState }) => (
     className="conn"
     id="conn"
     data-state={state === 'open' ? 'open' : state === 'down' ? 'down' : 'init'}
-    title="event stream"
+    // `aria-label`, not `title`: this names the live region rather than
+    // explaining it. "live" alone announces nothing about what is live, and a
+    // `title` is not what a screen reader reads for a name on a `<span>`.
+    aria-label="event stream"
     role="status"
     aria-live="polite"
     aria-atomic="true"

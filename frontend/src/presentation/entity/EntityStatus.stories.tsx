@@ -24,10 +24,10 @@ export default meta
 
 type Story = StoryObj
 
-const Set = ({ title, statuses }: { title: string; statuses: readonly string[] }) => (
+const Set = ({ heading, statuses }: { heading: string; statuses: readonly string[] }) => (
   <section style={{ padding: 'var(--space-3)' }}>
     <h3 style={{ font: 'inherit', color: 'var(--fg-dim)', margin: '0 0 var(--space-2)' }}>
-      {title}
+      {heading}
     </h3>
     <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
       {statuses.map((status) => (
@@ -43,7 +43,7 @@ const Set = ({ title, statuses }: { title: string; statuses: readonly string[] }
 export const TopicStatuses: Story = {
   render: () => (
     <Set
-      title="topic"
+      heading="topic"
       statuses={['open', 'investigating', 'answered', 'not_pursuing', 'superseded']}
     />
   ),
@@ -53,7 +53,7 @@ export const TopicStatuses: Story = {
  *  reader has to do something about. */
 export const DispatchStatuses: Story = {
   render: () => (
-    <Set title="dispatch" statuses={['queued', 'running', 'done', 'cancelled', 'failed']} />
+    <Set heading="dispatch" statuses={['queued', 'running', 'done', 'cancelled', 'failed']} />
   ),
 }
 
@@ -63,7 +63,7 @@ export const DispatchStatuses: Story = {
 export const RunEndings: Story = {
   render: () => (
     <Set
-      title="run ending"
+      heading="run ending"
       statuses={['queue_empty', 'budget_exhausted', 'human_gate', 'stalled', 'error', 'cancelled']}
     />
   ),
@@ -90,5 +90,5 @@ export const WithAReason: Story = {
 /** A status this build has never heard of. Neutral, not red: a backend that
  *  grew a status should not make a queue look broken. */
 export const UnknownStatus: Story = {
-  render: () => <Set title="unknown" statuses={['from_a_newer_backend']} />,
+  render: () => <Set heading="unknown" statuses={['from_a_newer_backend']} />,
 }

@@ -29,7 +29,7 @@ type Story = StoryObj<typeof meta>
  *  survives it. */
 export const TakeOver: Story = {
   args: {
-    title: 'Take over this session?',
+    heading: 'Take over this session?',
     lines: [
       'The agent stops where it is.',
       'Everything written so far survives, and you continue from the last event.',
@@ -43,7 +43,7 @@ export const TakeOver: Story = {
  *  `window.confirm` could not do legibly and the reason this component exists. */
 export const Delete: Story = {
   args: {
-    title: 'Delete this session?',
+    heading: 'Delete this session?',
     lines: [
       'The session and its event log are removed.',
       'Files it wrote into the workspace are left where they are.',

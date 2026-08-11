@@ -8,6 +8,7 @@ import { truncate } from '@domain/conversation/message.ts'
 import { shortId } from '@domain/shared/identifier.ts'
 
 import { Button, Chip } from '../common/primitives.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 import { plural } from '../formatting/format.ts'
 
 interface ScrubBarProps {
@@ -67,13 +68,14 @@ export const ScrubBar = ({
             project's tip. Named for the thing the user is trying to do; the
             lease is an implementation detail of it. */}
         {!historical && head?.projectId && head.holdsProject ? (
-          <Button
-            small
-            title="Hand this session's files back to the project and stop working here"
-            onClick={onEndSession}
+          <Tooltip
+            asChild
+            explanation="Hand this session's files back to the project and stop working here"
           >
-            End session
-          </Button>
+            <Button small onClick={onEndSession}>
+              End session
+            </Button>
+          </Tooltip>
         ) : null}
         {historical ? (
           <>
@@ -120,25 +122,30 @@ const ProjectChips = ({ head }: { head: SessionProjection | null }) => {
   if (!head?.projectId) return null
   const attached = head.knowledgeAttached
   return (
-    <span
-      className={clsx('scrub-project', !head.holdsProject && 'stale-hold')}
-      title={
-        head.holdsProject
-          ? 'This session holds the project. End it to pass its files on.'
-          : 'Another session has taken this project over; work here no longer reaches it.'
-      }
-    >
-      <Chip>project {shortId(head.projectId)}</Chip>
-      <Chip
-        tone={attached ? 'ok' : 'warn'}
-        title={
+    // The hold explanation moved from this wrapper onto the chip it is about.
+    // It could not stay: a `Tooltip` here would be a trigger containing the
+    // graph chip's own trigger, and nesting one button inside another is the
+    // arrangement the wrapper mode exists to avoid. Two sibling triggers say
+    // the same two things and each one names what it explains.
+    <span className={clsx('scrub-project', !head.holdsProject && 'stale-hold')}>
+      <Tooltip
+        explanation={
+          head.holdsProject
+            ? 'This session holds the project. End it to pass its files on.'
+            : 'Another session has taken this project over; work here no longer reaches it.'
+        }
+      >
+        <Chip>project {shortId(head.projectId)}</Chip>
+      </Tooltip>
+      <Tooltip
+        explanation={
           attached
             ? 'The knowledge graph is attached; remember/graph_search are available.'
             : 'No knowledge graph attached — the agent has no remember/graph_search here.'
         }
       >
-        {attached ? 'graph on' : 'graph off'}
-      </Chip>
+        <Chip tone={attached ? 'ok' : 'warn'}>{attached ? 'graph on' : 'graph off'}</Chip>
+      </Tooltip>
       {head.holdsProject ? null : <Chip tone="warn">not held</Chip>}
     </span>
   )

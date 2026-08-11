@@ -10,6 +10,7 @@ import {
 import { FilePath } from '@domain/shared/file-path.ts'
 
 import { Chip } from '../common/primitives.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 import { sessionHref } from '../routing/routes.ts'
 
 /** One declared artifact, in one of four states a naive row would flatten into
@@ -44,12 +45,9 @@ export const Artifact = ({ slot, course }: { slot: ArtifactSlot; course: Course 
         {slot.present ? (
           <Chip tone="present">written</Chip>
         ) : (
-          <Chip
-            tone="missing"
-            title={`The preset declares this artifact and no file is at ${slot.path}`}
-          >
-            not written
-          </Chip>
+          <Tooltip explanation={`The preset declares this artifact and no file is at ${slot.path}`}>
+            <Chip tone="missing">not written</Chip>
+          </Tooltip>
         )}
       </div>
 
@@ -88,39 +86,41 @@ const ProvenanceRow = ({
   return (
     <div className="artifact-prov">
       <span className="muted">rests on: </span>
+      {/* The two trigger modes side by side, which is why this row was the one
+          the bridge landed on first — `asChild` over an anchor that is already
+          focusable and already passes a ref, and the default wrapper over a
+          `Chip`, which renders a `<span>` and is reachable by no keyboard at
+          all without one. */}
       {provenance.sources.map((span, index) => (
-        <a
+        <Tooltip
           key={index}
-          className="prov-src"
-          href={sourceHref(course, span)}
-          title="Open this source at the offsets this artifact cites"
+          asChild
+          explanation="Open this source at the offsets this artifact cites"
         >
-          {formatSpan(span)}
-        </a>
+          <a className="prov-src" href={sourceHref(course, span)}>
+            {formatSpan(span)}
+          </a>
+        </Tooltip>
       ))}
       {provenance.inferred ? (
-        <Chip
-          tone="inferred"
-          title="Some of this was reasoned rather than drawn from a source, and says so."
-        >
-          inferred
-        </Chip>
+        <Tooltip explanation="Some of this was reasoned rather than drawn from a source, and says so.">
+          <Chip tone="inferred">inferred</Chip>
+        </Tooltip>
       ) : null}
       {provenance.unreadable > 0 ? (
-        <Chip tone="bad" title="Entries that are neither a source span nor the inference flag.">
-          {provenance.unreadable} unreadable
-        </Chip>
+        <Tooltip explanation="Entries that are neither a source span nor the inference flag.">
+          <Chip tone="bad">{provenance.unreadable} unreadable</Chip>
+        </Tooltip>
       ) : null}
       {provenance.empty ? (
-        <Chip
-          tone="bad"
-          title={
+        <Tooltip
+          explanation={
             'Neither a source nor an admission of inference — indistinguishable from an ' +
             'artifact never checked against anything.'
           }
         >
-          claims nothing
-        </Chip>
+          <Chip tone="bad">claims nothing</Chip>
+        </Tooltip>
       ) : null}
     </div>
   )
@@ -149,17 +149,16 @@ export const CourseFileLink = ({
   const label = text ?? FilePath.of(path).basename
   if (!course.holdingSessionId) {
     return (
-      <span
-        className="muted"
-        title="No session is holding this project, so there is nothing to open the file in. Join the project to read it."
-      >
-        {label}
-      </span>
+      <Tooltip explanation="No session is holding this project, so there is nothing to open the file in. Join the project to read it.">
+        <span className="muted">{label}</span>
+      </Tooltip>
     )
   }
+  // The explanation is the full path, because the link shows a basename. Not a
+  // duplicate of the visible text and not deletable for that reason.
   return (
-    <a href={sessionHref(course.holdingSessionId, undefined, FilePath.of(path))} title={path}>
-      {label}
-    </a>
+    <Tooltip asChild explanation={path}>
+      <a href={sessionHref(course.holdingSessionId, undefined, FilePath.of(path))}>{label}</a>
+    </Tooltip>
   )
 }

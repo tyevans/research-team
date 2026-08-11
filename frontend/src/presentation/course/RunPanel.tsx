@@ -17,6 +17,7 @@ import {
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Button, Chip } from '../common/primitives.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 import { sessionHref } from '../routing/routes.ts'
 
 const POLL_MS = 2_000
@@ -176,27 +177,24 @@ export const RunView = ({
           <StatusChip progress={current!.progress} />
         )}
         {current?.progress?.readOnly ? (
-          <Chip
-            tone="readonly"
-            title={
+          <Tooltip
+            explanation={
               'This run is under a policy that floors fetch at ask, so it works from material ' +
               'already in hand rather than deadlocking on an approval nobody is there to answer.'
             }
           >
-            read-only
-          </Chip>
+            <Chip tone="readonly">read-only</Chip>
+          </Tooltip>
         ) : null}
         <span className="run-spacer" />
         {/* The rounds are turns on that session, so it is where everything the
             agent actually said is readable. Counters here are only the shape. */}
         {current ? (
-          <a
-            className="btn btn-sm"
-            href={sessionHref(current.sessionId)}
-            title="The run’s rounds are turns on this session"
-          >
-            Open the run’s session
-          </a>
+          <Tooltip asChild explanation="The run’s rounds are turns on this session">
+            <a className="btn btn-sm" href={sessionHref(current.sessionId)}>
+              Open the run’s session
+            </a>
+          </Tooltip>
         ) : null}
       </div>
 
@@ -218,14 +216,14 @@ export const RunView = ({
           {current ? <Counters run={current} live={live} /> : null}
           {live ? (
             <div className="run-actions">
-              <Button
-                tone="quiet"
-                disabled={stopping}
-                title="Asks the run to stop after the round it is in; it is not killed"
-                onClick={onStop}
+              <Tooltip
+                asChild
+                explanation="Asks the run to stop after the round it is in; it is not killed"
               >
-                {stopping ? 'Asking it to stop…' : 'Stop after this round'}
-              </Button>
+                <Button tone="quiet" disabled={stopping} onClick={onStop}>
+                  {stopping ? 'Asking it to stop…' : 'Stop after this round'}
+                </Button>
+              </Tooltip>
             </div>
           ) : (
             <Ending
@@ -263,28 +261,28 @@ const Counters = ({ run, live }: { run: ResearchRun; live: boolean }) => {
         <Cell
           label="rounds"
           value={`${progress?.rounds ?? 0} / ${cap}`}
-          title="Rounds worked, against the cap this run started under"
+          explanation="Rounds worked, against the cap this run started under"
         />
-        <Cell label="turns" value={String(progress?.turns ?? 0)} title="One turn per round" />
+        <Cell label="turns" value={String(progress?.turns ?? 0)} explanation="One turn per round" />
         {/* Counted by folding the topic before and after the turn, not by
             reading the reply — a round that describes a breakthrough and
             records nothing is an empty round. */}
         <Cell
           label="findings"
           value={String(progress?.findings ?? 0)}
-          title="Appended to topic streams, folded rather than claimed"
+          explanation="Appended to topic streams, folded rather than claimed"
         />
         <Cell
           label="quiet rounds"
           value={`${progress?.quietRounds ?? 0}${
             progress?.budget.quietRounds ? ` / ${progress.budget.quietRounds}` : ''
           }`}
-          title="Consecutive rounds that recorded nothing; enough of them stop the run"
+          explanation="Consecutive rounds that recorded nothing; enough of them stop the run"
         />
         <Cell
           label="failures"
           value={String(progress?.failures ?? 0)}
-          title="Consecutive failed turns; enough of them stop the run"
+          explanation="Consecutive failed turns; enough of them stop the run"
         />
       </div>
       <div className="run-working">
@@ -303,11 +301,26 @@ const Counters = ({ run, live }: { run: ResearchRun; live: boolean }) => {
   )
 }
 
-const Cell = ({ label, value, title }: { label: string; value: string; title: string }) => (
-  <div className="run-cell" title={title}>
+/** A counter and what it counts.
+ *
+ * The explanation is on the trigger itself rather than on a `<div>` inside it:
+ * `.run-cells` is a flex row and `.run-cell` is its child, so a wrapper
+ * element between the two would be the flex item instead and the column would
+ * collapse. Passing the class through leaves the DOM the same shape it was
+ * with a `title`, one tag name different. */
+const Cell = ({
+  label,
+  value,
+  explanation,
+}: {
+  label: string
+  value: string
+  explanation: string
+}) => (
+  <Tooltip explanation={explanation} className="run-cell">
     <span className="run-cell-value">{value}</span>
     <span className="run-cell-label">{label}</span>
-  </div>
+  </Tooltip>
 )
 
 /** How a run ended, in words rather than as an enum value.

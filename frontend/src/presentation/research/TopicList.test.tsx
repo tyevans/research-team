@@ -495,8 +495,14 @@ it('will not offer to synthesise a topic nothing has been gathered for', async (
 
   renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
 
+  // `aria-disabled` rather than `disabled`, because the button owes the reader
+  // the sentence above and a `disabled` button cannot be focused to receive
+  // it. `TopicQueue.test.tsx` is where the guard on the press itself lives.
   await screen.findByText('Untouched?')
-  expect(screen.getByRole('button', { name: /understanding/i })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /understanding/i })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  )
 })
 
 it('shows a running dispatch on its own row and not on the others', async () => {

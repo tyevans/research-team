@@ -128,14 +128,19 @@
      role should cost an argument, and that test is where the argument happens.
 
      `--z-sticky` is for things that float *within* a region and must not
-     escape it: sticky heads, the row menu on a project, and the graph's
-     command bar, detail panel and legend. All of them are region-local and
-     stay region-local, which is why there is no fourth "escape" level -- the
-     row menu joined this level rather than the overlay host because it is
-     anchored to its own row and the host offers no anchoring; `OverlayHost`
-     argues that where it is decided. If a graph control ever does need to
-     leave its pane, this scale is wrong and needs a fourth level rather than
-     an exception. Nothing does today.
+     escape it: sticky heads, and the graph's command bar, detail panel and
+     legend. All of them are region-local and stay region-local, which is why
+     there is no fourth "escape" level.
+
+     **The row menu used to be on this list and is not any more**, and the
+     reason it was here is the reason it left. It joined `--z-sticky` because
+     it was anchored to its own row and the host offered no anchoring -- an
+     honest constraint at the time. Adopting a positioning library removed it:
+     `Menu` measures its trigger, so the menu is a layer at `--z-overlay` like
+     everything else dismissable, and `.menu > .disc-body`'s `z-index:
+     var(--z-sticky)` is deleted rather than retuned. If a graph control ever
+     does need to leave its pane, the answer is now the same one -- the host,
+     not a fourth level.
 
      `--z-overlay` is one value for every dismissable layer, on purpose.
      They all render into a single portal host and order inside it is DOM

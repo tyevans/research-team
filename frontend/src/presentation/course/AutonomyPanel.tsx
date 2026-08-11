@@ -10,6 +10,7 @@ import {
 import type { SessionId } from '@domain/shared/identifier.ts'
 
 import { Chip } from '../common/primitives.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 import { INSTANCE_WIDE, NO_POLICY, NO_SESSION, STAGE_GATE_HELD } from './autonomy-copy.ts'
 
 /** Every gated tool, and what the agent may do with it without asking.
@@ -142,26 +143,35 @@ const ToolRow = ({
         <legend className="autonomy-tool">
           <span className="autonomy-tool-name">{tool}</span>
           {gate ? (
-            <Chip
-              tone="readonly"
-              title={`“Allow everything” leaves this alone — it is ${STAGE_GATE_HELD}`}
+            <Tooltip
+              explanation={`“Allow everything” leaves this alone — it is ${STAGE_GATE_HELD}`}
             >
-              review gate
-            </Chip>
+              <Chip tone="readonly">review gate</Chip>
+            </Tooltip>
           ) : null}
         </legend>
 
         <div className="autonomy-levels">
           {levelsToOffer(current).map((level) => (
-            <label key={level} className="autonomy-level" title={levelMeaning(level)}>
-              <input
-                type="radio"
-                name={`autonomy-${tool}`}
-                value={level}
-                checked={current === level}
-                disabled={disabled}
-                onChange={() => onChoose(level)}
-              />
+            <label key={level} className="autonomy-level">
+              {/* The trigger is the radio rather than the label around it. The
+                  label is what a mouse hovered before, and it is wider, but it
+                  is not focusable and Tooltip's own wrapper is a `<button>` —
+                  wrapping a label that contains a radio in a button nests one
+                  interactive element inside another, which is the arrangement
+                  `aria` has no reading for. A radio passes a ref and is
+                  already a tab stop, so `asChild` costs one element and gains
+                  the keyboard. */}
+              <Tooltip asChild explanation={levelMeaning(level)}>
+                <input
+                  type="radio"
+                  name={`autonomy-${tool}`}
+                  value={level}
+                  checked={current === level}
+                  disabled={disabled}
+                  onChange={() => onChoose(level)}
+                />
+              </Tooltip>
               <span>{level}</span>
             </label>
           ))}

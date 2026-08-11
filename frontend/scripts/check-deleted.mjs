@@ -133,6 +133,36 @@ const RULES = [
     forbid: [/\.drawer-backdrop/, /\.agents-panel\s*\{[^}]*z-index/],
   },
   {
+    phase: '4',
+    what: 'the agent dock positioned its own popover',
+    why: '`.agents-panel` was `position: fixed; top: var(--topbar-h); right: var(--space-4)`, with a second rule at 420px re-laying it out full-width. That is a hand-rolled anchor: right only while the widget sits at the right-hand end of a full-width bar, unable to flip off a viewport edge, and describing the topbar from a file that cannot see it. The panel is `Popover` content now and Radix measures the trigger, so any positioning here fights the inline transform the positioner writes. The 420px override went with it.',
+    where: 'styles',
+    // `(?:[^}]*;)?\s*top:` rather than `[^}]*top:`, because the rule legitimately keeps
+    // `border-top: 0` -- the panel is square where it meets the bar. A pattern
+    // that cannot tell a shorthand from a longhand fires on correct code,
+    // which is the failure mode this whole file's own comment warns about.
+    forbid: [/\.agents-panel\s*\{(?:[^}]*;)?\s*position:/, /\.agents-panel\s*\{(?:[^}]*;)?\s*top:/],
+  },
+  {
+    phase: '4',
+    what: 'the agent dock moved focus into its own panel and back out again',
+    why: "A `useEffect` reached into the panel with `querySelector('button')` on open, and a `close()` helper called `toggleRef.current?.focus()`. Radix's focus scope does both, and does the first better -- it focuses the first *tabbable* node rather than the first `<button>`, which is the same element today and stops being so the moment a row gains a link. A `querySelector` for a focus target here means somebody is re-implementing a focus scope beside one that is already running, and two of those disagree the first time the panel's markup changes.",
+    where: 'presentation/agents',
+    // Narrow on purpose. A bare `/querySelector/` fired on `AgentWidget.test.tsx`,
+    // which reaches into the DOM for entirely legitimate reasons, and a rule
+    // that fails on correct code is a rule somebody turns off. These two name
+    // the deleted lines instead: the panel query, and the ref that existed only
+    // to be focused by hand.
+    forbid: [/querySelector<HTMLElement>\('button'\)/, /\btoggleRef\b/],
+  },
+  {
+    phase: '4',
+    what: 'the row menu was a Disclosure wearing menu chrome',
+    why: '`.menu > .disc-head`, `.menu > .disc-head .disc-caret` and `.menu > .disc-body:not([hidden])` dressed a disclosure up as a menu and got the ARIA contract wrong doing it: `aria-expanded` over a region, no `role="menu"`, no arrow-key movement between items, no typeahead, and no focus return. It is a `Menu` now. The three `>` selectors are the reason this rule is over `styles` as well -- a combinator is a claim about markup, and this one silently stopped matching the moment the markup moved.',
+    where: 'styles',
+    forbid: [/^\.menu\s*\{/m, /\.menu\s*>/],
+  },
+  {
     phase: 'D',
     what: 'Drawer hand-rolled a focus trap and its own Escape listener',
     why: 'Replaced by `inert` on `.lay-app-root` and the host owning Escape. The trap cycled Tab among its own children, which is a simulation of confinement rather than confinement: it said nothing about the pointer, nothing about assistive technology, and nothing about the popover painting on top. `FOCUSABLE_SELECTOR` coming back means somebody is re-implementing it.',
@@ -178,6 +208,27 @@ const RULES = [
     // this way, it is that nothing starts.
     where: '',
     forbid: [/window\.confirm\(/],
+  },
+  {
+    phase: '3',
+    what: 'explanations lived in `title` attributes',
+    why: 'S-D3. A `title` is announced on hover, after a delay the operating system owns, and on nothing else -- not on focus, not on touch, not to a screen reader reading a `<span>`. Fifty-one of them carried real sentences ("Also autos the workflow review gate, so a run can cross stage boundaries unattended") and every one of them reached a mouse and no other reader. They are `Tooltip`s where they explained something, accessible names where they named an icon, and deleted where they repeated the text beside them. A `title=` here is one of those three arriving as the fourth.',
+    // Repo-wide over `presentation`, which it can only be because no component
+    // under it has a prop called `title` any more: `Drawer`, `Confirm`,
+    // `EmptyState` and `ErrorBox` all take `heading`, renamed in the same
+    // commit precisely so this rule does not have to tell a heading from an
+    // attribute with a regex. It cannot -- both are `title=` in JSX -- and a
+    // rule that guesses is a rule somebody turns off.
+    //
+    // Two exemptions, both outside this scope and both legitimate.
+    // `infrastructure/rendering/markdown.ts` keeps `title` in `ALLOWED_ATTR`
+    // and sets it on links, because that is markdown's own `[text](href
+    // "title")` and stripping it would be this console editing documents it
+    // renders. And an `<iframe>` needs a `title` as a genuine accessibility
+    // requirement -- there is none in this codebase today, so widening the
+    // scope to all of `src` would forbid the one attribute nobody may remove.
+    where: 'presentation',
+    forbid: [/title=/],
   },
   {
     phase: '3',

@@ -2,6 +2,7 @@ import { isBusy, nest, type Roster, type WorkerNode } from '@domain/worker/worke
 import { shortId, type SessionId } from '@domain/shared/identifier.ts'
 
 import { Chip } from '../common/primitives.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 
 /** What is running on a project, drawn from a roster somebody else fetched.
  *
@@ -39,9 +40,9 @@ export const WorkerList = ({
       <h3 className="worker-title">Working now</h3>
       {isBusy(roster) ? <Chip tone="current">{roster!.workers.length} running</Chip> : null}
       {stale ? (
-        <Chip tone="run-short" title="The last poll failed; this is the last roster that arrived">
-          stale
-        </Chip>
+        <Tooltip explanation="The last poll failed; this is the last roster that arrived">
+          <Chip tone="run-short">stale</Chip>
+        </Tooltip>
       ) : !isBusy(roster) ? (
         <Chip>idle</Chip>
       ) : null}

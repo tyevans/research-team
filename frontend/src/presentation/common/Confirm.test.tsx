@@ -26,7 +26,7 @@ const render = (ui: ReactElement) => renderBare(<OverlayHost>{ui}</OverlayHost>)
  *  would fail if `Confirm` ever grew its own container. */
 
 const props = {
-  title: 'Take over this session?',
+  heading: 'Take over this session?',
   lines: ['The agent stops where it is.', 'Everything written so far survives.'],
   confirmLabel: 'Take over',
 }

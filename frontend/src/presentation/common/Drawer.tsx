@@ -36,15 +36,16 @@ import { Overlay } from '../layout/OverlayHost.tsx'
  * behaviour that must not vary between two dialogs in the same console.
  */
 export const Drawer = ({
-  title,
+  heading,
   label,
   actions,
   onClose,
   children,
 }: {
-  /** Rendered as the drawer's heading. */
-  title: ReactNode
-  /** The accessible name, as plain text. Separate from `title` because a
+  /** Rendered as the drawer's heading. Named `heading` and not `title`: see
+   *  `primitives.tsx`, where the same rename is argued for the same reason. */
+  heading: ReactNode
+  /** The accessible name, as plain text. Separate from `heading` because a
    *  heading may carry markup, and `aria-label` takes a string. */
   label: string
   /** Controls sitting beside the close button -- a link out, usually. */
@@ -113,7 +114,7 @@ export const Drawer = ({
           a click inside the drawer never reaches it in the first place. */}
       <aside className="drawer">
         <header className="drawer-head">
-          <h3 className="drawer-title">{title}</h3>
+          <h3 className="drawer-title">{heading}</h3>
           <span className="drawer-spacer" />
           {actions}
           <button type="button" className="btn btn-sm" ref={closeButtonRef} onClick={onClose}>

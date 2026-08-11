@@ -2,6 +2,7 @@ import type { AttemptsApi } from '@application/lesson/use-attempts.ts'
 import type { ComponentBlock, LessonDocument as Doc } from '@domain/lesson/document.ts'
 
 import { Markdown } from '../common/content.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 import { Checklist } from './Checklist.tsx'
 import { Cloze } from './Cloze.tsx'
 import { Flashcards } from './Flashcards.tsx'
@@ -61,16 +62,15 @@ const Component = ({ block, attempts }: { block: ComponentBlock; attempts: Attem
       <div className="cmp-kind">
         <span className="cmp-kind-name">{block.type}</span>
         {block.withheld.length > 0 ? (
-          <span
-            className="cmp-withheld"
-            title={
+          <Tooltip
+            explanation={
               'The answer key was removed from this response and is graded on the server. ' +
               'The raw file is still readable from the source toggle, so this keeps answers ' +
               'off the page rather than out of reach.'
             }
           >
-            answers withheld
-          </span>
+            <span className="cmp-withheld">answers withheld</span>
+          </Tooltip>
         ) : null}
       </div>
       <Renderer block={block} attempts={attempts} />

@@ -224,7 +224,7 @@ const DrawerFromARow = () => {
         <button type="button">after the row</button>
       </p>
       {open ? (
-        <Drawer title="Watching a worker" label="Worker detail" onClose={() => setOpen(false)}>
+        <Drawer heading="Watching a worker" label="Worker detail" onClose={() => setOpen(false)}>
           <p style={{ padding: 'var(--space-4)' }}>
             The transcript. <button type="button">a control in the body</button>
           </p>

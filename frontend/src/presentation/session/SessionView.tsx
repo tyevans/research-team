@@ -153,7 +153,7 @@ export const SessionView = ({
     return (
       <section className="view view-session">
         <ErrorBox
-          title="Session unavailable"
+          heading="Session unavailable"
           message={state.error}
           onRetry={() => void store.getState().reload()}
         />
@@ -191,7 +191,7 @@ export const SessionView = ({
           changed. */}
       {endPending ? (
         <Confirm
-          title="End this session and hand its files back to the project?"
+          heading="End this session and hand its files back to the project?"
           lines={[
             'The log stays readable and forkable.',
             "The project becomes free, and the next session in it starts from this one's files.",
@@ -239,7 +239,7 @@ export const SessionView = ({
         >
           {state.snapshotError ? (
             <ErrorBox
-              title={`Could not fold to event ${historicalAt}`}
+              heading={`Could not fold to event ${historicalAt}`}
               message={state.snapshotError}
               onRetry={() => void store.getState().scrubTo(state.scrub)}
             />

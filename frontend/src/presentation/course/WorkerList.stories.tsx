@@ -44,10 +44,10 @@ const roster = (workers: readonly Worker[], idle: readonly SessionId[] = []): Ro
   idleSessionIds: idle,
 })
 
-const Frame = ({ title, children }: { title: string; children: React.ReactNode }) => (
+const Frame = ({ heading, children }: { heading: string; children: React.ReactNode }) => (
   <section style={{ padding: 'var(--space-3)', maxWidth: 520 }}>
     <h4 style={{ font: 'inherit', color: 'var(--fg-dim)', margin: '0 0 var(--space-2)' }}>
-      {title}
+      {heading}
     </h4>
     {children}
   </section>
@@ -59,7 +59,7 @@ const noop = () => {}
  *  it is text rather than a dead button — the one rule `Row` encodes. */
 export const Busy: Story = {
   render: () => (
-    <Frame title="Working">
+    <Frame heading="Working">
       <WorkerList
         roster={roster([
           worker({ kind: 'run', ref: 'r1', detail: 'round 3 of 10', sessionId: SESSION }),
@@ -82,7 +82,7 @@ export const Busy: Story = {
 /** Nothing running, and the console knows that as a fact. */
 export const Idle: Story = {
   render: () => (
-    <Frame title="Idle">
+    <Frame heading="Idle">
       <WorkerList roster={roster([], [SESSION])} watching={null} onWatch={noop} />
     </Frame>
   ),
@@ -97,13 +97,13 @@ export const Idle: Story = {
 export const AfterAFailedPoll: Story = {
   render: () => (
     <>
-      <Frame title="Stale, with a roster to show">
+      <Frame heading="Stale, with a roster to show">
         <WorkerList roster={roster([worker()])} stale watching={SESSION} onWatch={noop} />
       </Frame>
-      <Frame title="Stale, and the last roster was empty">
+      <Frame heading="Stale, and the last roster was empty">
         <WorkerList roster={roster([])} stale watching={null} onWatch={noop} />
       </Frame>
-      <Frame title="No roster has ever arrived">
+      <Frame heading="No roster has ever arrived">
         <WorkerListUnavailable />
       </Frame>
     </>

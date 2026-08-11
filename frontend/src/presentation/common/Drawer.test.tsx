@@ -53,7 +53,7 @@ const render = (ui: ReactElement) => renderBare(<OverlayHost>{ui}</OverlayHost>)
 const Page = ({ onClose = () => {} }: { onClose?: () => void }) => (
   <>
     <button type="button">behind the drawer</button>
-    <Drawer title="Worker" label="Worker detail" onClose={onClose}>
+    <Drawer heading="Worker" label="Worker detail" onClose={onClose}>
       <button type="button">first in body</button>
       <button type="button">last in body</button>
     </Drawer>
@@ -87,7 +87,7 @@ it('gives focus back to the element that opened it', async () => {
           open
         </button>
         {open ? (
-          <Drawer title="Worker" label="Worker detail" onClose={() => setOpen(false)}>
+          <Drawer heading="Worker" label="Worker detail" onClose={() => setOpen(false)}>
             body
           </Drawer>
         ) : null}
@@ -137,7 +137,7 @@ it('does not try to focus a row that was removed while it was open', async () =>
           </button>
         )}
         {open ? (
-          <Drawer title="Worker" label="Worker detail" onClose={() => setOpen(false)}>
+          <Drawer heading="Worker" label="Worker detail" onClose={() => setOpen(false)}>
             <button type="button" onClick={() => setRowGone(true)}>
               refetch the list
             </button>
@@ -219,7 +219,7 @@ it('closes when the backdrop is clicked and stays open when its own body is', as
 
 it('names itself for a screen reader without borrowing the heading markup', () => {
   render(
-    <Drawer title={<em>report.md</em>} label="Document: report.md" onClose={() => {}}>
+    <Drawer heading={<em>report.md</em>} label="Document: report.md" onClose={() => {}}>
       body
     </Drawer>,
   )
@@ -239,7 +239,7 @@ it('names itself for a screen reader without borrowing the heading markup', () =
 it('renders the caller’s actions beside the close button', () => {
   render(
     <Drawer
-      title="Worker"
+      heading="Worker"
       label="Worker detail"
       actions={<a href="/session/1">open session</a>}
       onClose={() => {}}
