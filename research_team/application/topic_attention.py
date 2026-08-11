@@ -356,13 +356,29 @@ def _rework_thrash(state: TopicState, corpus: CorpusFacts, params: dict) -> list
     not a defect in it, and the queue does that by ranking.
     """
     looks = params.get("looks", DEFAULT_THRASH_LOOKS)
+    # Deliberately independent of `gaps` and of `RecordInvestigation.outcome`:
+    # both postdate this trigger, so a condition reading either would report
+    # differently about the *same* topic depending on when its rounds
+    # happened relative to when those fields were added. `investigations` and
+    # `findings` exist for every topic regardless of history, so they are the
+    # only safe firing condition. Gap count is fine to *report* below, because
+    # a topic with no recorded gaps still gets the old message -- reporting is
+    # additive, firing is not.
     if state.investigations < looks:
         return []
     if state.findings > state.findings_at_last_investigation:
         return []
+    if state.gaps:
+        message = (
+            f"{state.investigations} look(s) with nothing recorded since the last one "
+            f"({state.gaps} recorded as gaps -- open the topic to see what was already "
+            "tried)"
+        )
+    else:
+        message = f"{state.investigations} look(s) with nothing recorded since the last one"
     return [
         (
-            f"{state.investigations} look(s) with nothing recorded since the last one",
+            message,
             (),
             "Change what you are asking; re-reading the same material is not working.",
         )

@@ -34,6 +34,7 @@ from research_team.domain.topic import (
     OpenTopic,
     RecordContest,
     RecordFinding,
+    RecordGap,
     RecordInvestigation,
     ResolveContest,
     ResolveSubQuestion,
@@ -272,6 +273,57 @@ def test_thrash_is_advisory_rather_than_blocking():
         f for f in attention_for(state, facts()).findings if f.check == "topic.rework_thrash"
     ]
     assert finding.severity == "advisory"
+
+
+def test_thrash_names_what_was_already_tried():
+    """ "Change what you are asking" is unactionable unless it says what not to
+    repeat."""
+    state = run(
+        opened(),
+        RecordInvestigation(at_position="p1"),
+        RecordGap(looking_for="pricing history", tried=["site search", "grep the corpus"]),
+        RecordInvestigation(at_position="p2"),
+        RecordGap(looking_for="pricing history", tried=["site search again"]),
+    )
+
+    [finding] = [
+        f for f in attention_for(state, facts()).findings if f.check == "topic.rework_thrash"
+    ]
+    assert "2" in finding.message
+    assert "gap" in finding.message.lower()
+
+
+def test_thrash_fires_on_exactly_the_same_condition_as_before():
+    """The firing condition is deliberately untouched. A condition depending on
+    `outcome` or on gaps would report differently about one topic depending on
+    when its rounds happened, because history predates both fields. This test
+    fails if the condition is ever made to depend on them."""
+    state = run(
+        opened(),
+        RecordInvestigation(at_position="p1"),
+        RecordInvestigation(at_position="p2"),
+    )
+    # No gaps recorded at all -- history predating `RecordGap` -- and the
+    # trigger still fires purely on look-count vs. finding-count.
+    assert state.gaps == 0
+    assert "topic.rework_thrash" in triggers_of(state, facts())
+
+
+def test_thrash_still_fires_with_its_old_message_when_no_gaps_are_recorded():
+    state = run(
+        opened(),
+        RecordInvestigation(at_position="p1"),
+        RecordInvestigation(at_position="p2"),
+    )
+
+    [finding] = [
+        f for f in attention_for(state, facts()).findings if f.check == "topic.rework_thrash"
+    ]
+    assert finding.message == "2 look(s) with nothing recorded since the last one"
+    assert (
+        finding.suggested_edit
+        == "Change what you are asking; re-reading the same material is not working."
+    )
 
 
 # ---------------- status and acknowledgement ----------------
