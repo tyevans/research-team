@@ -266,6 +266,18 @@ def test_a_gap_with_nothing_tried_is_refused() -> None:
         decide(RecordGap(looking_for="a critique", tried=[]), state)
 
 
+def test_a_gap_with_only_blank_entries_in_tried_is_refused() -> None:
+    """`tried=["  "]` names nothing attempted, same as `tried=[]` -- but would
+    pass a naive `if not tried:` check, since the list itself is non-empty.
+    This is the regression the blank-filtering guards against: simplify the
+    check to a length test and this test fails while the one above still
+    passes."""
+    state = opened()
+
+    with pytest.raises(CommandRejectedError, match="tried"):
+        decide(RecordGap(looking_for="a critique", tried=["  ", ""]), state)
+
+
 def test_a_gap_with_nothing_looked_for_is_refused() -> None:
     state = opened()
 
