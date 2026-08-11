@@ -56,6 +56,44 @@
   box-shadow: var(--shadow-1);
   animation: toast-in 0.16s ease-out;
   overflow-wrap: anywhere;
+  /* A row, so the close button sits beside the message rather than under it.
+     `align-items: start` keeps the button on the first line of a message that
+     wraps to three, where centring it would leave it floating in the middle of
+     a paragraph with nothing to align to. */
+  display: flex;
+  align-items: start;
+  gap: 10px;
+}
+.toast-message {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Not a `.btn`: those carry a border, a background and a padding scale built
+   for a form row, and inside a 8px-padded toast they read as a second panel.
+   This is the glyph on its own with a hit area around it. */
+.toast-close {
+  flex: 0 0 auto;
+  border: 0;
+  background: none;
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: var(--t-sm);
+  line-height: 1;
+  padding: 2px 4px;
+  margin: -2px -4px 0 0;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.toast-close:hover {
+  color: var(--fg);
+  background: var(--bg-panel-2);
+}
+/* Explicit, because this is the affordance L-F37 existed for: a keyboard user
+   who cannot see where focus landed has gained nothing. */
+.toast-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  color: var(--fg);
 }
 .toast.bad {
   border-left-color: var(--k-failure);
