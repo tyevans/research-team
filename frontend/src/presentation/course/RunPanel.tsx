@@ -81,16 +81,7 @@ export const RunPanel = ({ projectId }: { projectId: ProjectId }) => {
     onSettled: invalidate,
   })
 
-  if (run.error instanceof ResearchDisabledError) {
-    return (
-      <div className="run-off">
-        <strong>Autonomous research is off on this instance. </strong>
-        Start the server with AGENT_AUTO_RESEARCH=1 to expose it. It is off by default because
-        nothing authenticates this port, and this is the one route that would spend an hour of model
-        time for whoever called it.
-      </div>
-    )
-  }
+  if (run.error instanceof ResearchDisabledError) return <ResearchDisabledNotice />
 
   const current = run.data ?? null
   // A run this panel was watching that has left the live route: it ended, and
@@ -101,6 +92,67 @@ export const RunPanel = ({ projectId }: { projectId: ProjectId }) => {
 
   const live = isLive(current) && !gone
 
+  return (
+    <RunView
+      run={current}
+      gone={gone}
+      live={live}
+      cap={cap}
+      onCap={setCap}
+      starting={start.isPending}
+      stopping={cancel.isPending}
+      onStart={() => start.mutate()}
+      onStop={() => cancel.mutate()}
+    />
+  )
+}
+
+/** The route is not exposed on this instance.
+
+    Its own component because it is not a state of the panel -- there is no
+    run, no controls and nothing to poll -- and because it is the one thing
+    here worth reading on the gallery page without a server that refuses. */
+export const ResearchDisabledNotice = () => (
+  <div className="run-off">
+    <strong>Autonomous research is off on this instance. </strong>
+    Start the server with AGENT_AUTO_RESEARCH=1 to expose it. It is off by default because nothing
+    authenticates this port, and this is the one route that would spend an hour of model time for
+    whoever called it.
+  </div>
+)
+
+/** The panel, given a run rather than fetching one.
+ *
+ * `live` and `gone` are props rather than derived here, and that is the point
+ * of the split: both are facts about the *history* of the polling -- "this
+ * page watched it run" and "it has since left the live route" -- which only
+ * the container can know. Passing them in is what makes "ended, and this page
+ * missed the reason" a state a story can show, where before it needed a fake
+ * repository that answered a run and then `null`.
+ */
+export const RunView = ({
+  run: current,
+  gone,
+  live,
+  cap,
+  onCap,
+  starting,
+  stopping,
+  onStart,
+  onStop,
+}: {
+  run: ResearchRun | null
+  /** A run this page watched has left the live route without a reason. */
+  gone: boolean
+  /** Going now: the controls offer stopping rather than starting. */
+  live: boolean
+  cap: string
+  onCap: (value: string) => void
+  starting: boolean
+  stopping: boolean
+  onStart: () => void
+  onStop: () => void
+}) => {
   const capInput = (
     <input
       type="number"
@@ -108,7 +160,7 @@ export const RunPanel = ({ projectId }: { projectId: ProjectId }) => {
       className="input run-rounds"
       placeholder="max rounds (optional)"
       value={cap}
-      onChange={(event) => setCap(event.target.value)}
+      onChange={(event) => onCap(event.target.value)}
     />
   )
 
@@ -156,8 +208,8 @@ export const RunPanel = ({ projectId }: { projectId: ProjectId }) => {
           </p>
           <div className="run-actions">
             {capInput}
-            <Button tone="accent" disabled={start.isPending} onClick={() => start.mutate()}>
-              {start.isPending ? 'Starting…' : 'Start a run'}
+            <Button tone="accent" disabled={starting} onClick={onStart}>
+              {starting ? 'Starting…' : 'Start a run'}
             </Button>
           </div>
         </>
@@ -168,11 +220,11 @@ export const RunPanel = ({ projectId }: { projectId: ProjectId }) => {
             <div className="run-actions">
               <Button
                 tone="quiet"
-                disabled={cancel.isPending}
+                disabled={stopping}
                 title="Asks the run to stop after the round it is in; it is not killed"
-                onClick={() => cancel.mutate()}
+                onClick={onStop}
               >
-                {cancel.isPending ? 'Asking it to stop…' : 'Stop after this round'}
+                {stopping ? 'Asking it to stop…' : 'Stop after this round'}
               </Button>
             </div>
           ) : (
@@ -180,8 +232,8 @@ export const RunPanel = ({ projectId }: { projectId: ProjectId }) => {
               progress={current?.progress ?? null}
               gone={gone}
               capInput={capInput}
-              starting={start.isPending}
-              onStart={() => start.mutate()}
+              starting={starting}
+              onStart={onStart}
             />
           )}
         </>
