@@ -26,6 +26,7 @@ from research_team.application.autonomy import FETCH_TOOL
 from research_team.application.corpus_read import CorpusReadError, CorpusReadPort
 from research_team.infrastructure.agent.corpus_tools import bounded, format_document
 from research_team.infrastructure.agent.recall import (
+    PageMemo,
     Recall,
     describe_age,
     normalize_url,
@@ -68,19 +69,16 @@ _HEADERS = {
 }
 
 
-def format_page(html: str, url: str, limit: int = MAX_CHARS) -> str:
-    """Extract one page's main content as markdown, headed by its citation.
+def extract_page(html: str, url: str) -> tuple[str, str | None, str | None] | None:
+    """One page's main content and metadata, or None when there is no prose.
 
-    Total by construction, like `format_results`: a server can send anything at
-    all under a `text/html` content type, and an app shell that extracts to
-    nothing is an ordinary thing for the web to be rather than an exception for
-    the agent to reason about. Both arrive here as `None` from trafilatura and
-    leave as the same sentence.
+    Split out of `format_page` so the text kept for `remember_page` and the
+    text shown to the model come from a single extraction. Two extractions
+    would eventually disagree, and the disagreement would surface as a corpus
+    document that does not match the citation the model was reading from.
 
-    The URL leads the output because the citation is the reason for fetching.
-    Text that arrives without its address cannot be cited by anything
-    downstream, and a model that has lost a source will confabulate one rather
-    than say so.
+    Metadata is best-effort for `_citation`'s original reason: it reaches into
+    a foreign document, and a page with no title is worth reading anyway.
     """
     text = trafilatura.extract(
         html,
@@ -89,19 +87,7 @@ def format_page(html: str, url: str, limit: int = MAX_CHARS) -> str:
         include_tables=True,
     )
     if not text or not text.strip():
-        return UNREADABLE
-    if len(text) > limit:
-        text = text[:limit].rstrip() + _TRUNCATED
-    return "\n\n".join(part for part in (_citation(html, url), text.strip()) if part)
-
-
-def _citation(html: str, url: str) -> str:
-    """A `url` line, plus title and date when the page offers them.
-
-    Best-effort on purpose: metadata extraction reaches into a foreign
-    document, and a page with no title is worth reading anyway. Anything it
-    raises is treated as an absent title rather than a failed fetch.
-    """
+        return None
     title = date = None
     try:
         metadata = extract_metadata(html)
@@ -110,12 +96,50 @@ def _citation(html: str, url: str) -> str:
     if metadata is not None:
         title = (getattr(metadata, "title", None) or "").strip() or None
         date = (getattr(metadata, "date", None) or "").strip() or None
+    return text.strip(), title, date
+
+
+def _citation(url: str, title: str | None, date: str | None) -> str:
+    """A `url` line, plus title and date when the page offered them.
+
+    The URL leads the output because the citation is the reason for fetching.
+    Text that arrives without its address cannot be cited by anything
+    downstream, and a model that has lost a source will confabulate one rather
+    than say so.
+    """
     lines = [f"url: {url}"]
     if title:
         lines.append(f"title: {title}")
     if date:
         lines.append(f"date: {date}")
     return "\n".join(lines)
+
+
+def truncate_page(citation: str, text: str, limit: int) -> str:
+    """A citation plus as much of `text` as fits under `limit`, marked if cut.
+
+    Silent truncation is worse than visible truncation: the model would
+    reason about a partial page believing it had the whole one.
+    """
+    if len(text) > limit:
+        text = text[:limit].rstrip() + _TRUNCATED
+    return "\n\n".join(part for part in (citation, text) if part)
+
+
+def format_page(html: str, url: str, limit: int = MAX_CHARS) -> str:
+    """Extract one page's main content as markdown, headed by its citation.
+
+    Total by construction: a server can send anything at all under a
+    `text/html` content type, and an app shell that extracts to nothing is an
+    ordinary thing for the web to be rather than an exception for the agent to
+    reason about. Both arrive here as `None` from `extract_page` and leave as
+    the same sentence.
+    """
+    extracted = extract_page(html, url)
+    if extracted is None:
+        return UNREADABLE
+    text, title, date = extracted
+    return truncate_page(_citation(url, title, date), text, limit)
 
 
 async def stored_page(corpus: CorpusReadPort, url: str, max_chars: int) -> str | None:
@@ -174,11 +198,15 @@ def build_fetch_tool(
     client: httpx.AsyncClient | None = None,
     recall: Recall | None = None,
     corpus: CorpusReadPort | None = None,
+    pages: PageMemo | None = None,
 ) -> BaseTool:
     """A `fetch` tool for reading one web page.
 
     `client` is injectable so tests can stub the transport; nothing in the
-    suite touches the real network.
+    suite touches the real network. `pages` retains the whole extraction
+    (rather than the `max_chars` excerpt the model is shown) so a later
+    `remember_page` can store more of a page than the model ever had to
+    retype.
     """
 
     @tool(FETCH_TOOL)
@@ -226,14 +254,26 @@ def build_fetch_tool(
             body = response.content[:max_bytes]
             truncated = len(response.content) > max_bytes
             html = body.decode(response.encoding or "utf-8", errors="replace")
-            text = format_page(html, url, limit=max_chars)
-            if truncated and text is not UNREADABLE and not text.endswith(_TRUNCATED):
+            extracted = extract_page(html, url)
+            if extracted is None:
+                return UNREADABLE
+            full, title, date = extracted
+            if pages is not None:
+                # The whole extraction, not the excerpt below it. `max_chars`
+                # is what one page may cost the conversation; it was never
+                # meant to be what the corpus can hold, and was only ever that
+                # because a document could not reach the corpus except through
+                # the model's own output.
+                pages.put(url, text=full, uri=url, title=title, published_at=date)
+            shown = full
+            if len(shown) > max_chars:
+                shown = shown[:max_chars].rstrip() + _TRUNCATED
+            text = "\n\n".join(part for part in (_citation(url, title, date), shown) if part)
+            if truncated and not text.endswith(_TRUNCATED):
                 text += _TRUNCATED
-            if recall is not None and text is not UNREADABLE:
+            if recall is not None:
                 # Only a page that was actually read. Remembering a failure
-                # would turn one outage into an hour of them, and remembering
-                # UNREADABLE would pin "this renders in the browser" for an
-                # hour after a deploy fixed it.
+                # would turn one outage into an hour of them.
                 recall.put(url, text, key=url_key(url))
             return text
         except httpx.HTTPStatusError as error:
@@ -278,10 +318,9 @@ FETCH_PROMPT = (
 FETCH_CORPUS_PROMPT = (
     "\n\nA page this project has already stored comes back from the corpus "
     "rather than the network, with the offsets that make it quotable, and says "
-    "so plainly. When a fetched page is worth keeping, pass it to `remember` "
-    "along with the `url:`, `title:` and `date:` lines printed above it. That "
-    "is what lets a later session recognise the page instead of fetching it "
-    "again."
+    "so plainly. When a fetched page is worth keeping, call `remember_page` "
+    "with its URL. That is what lets a later session recognise the page "
+    "instead of fetching it again."
 )
 """The part of the `fetch` prompt that only holds inside a project.
 

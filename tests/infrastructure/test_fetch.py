@@ -19,7 +19,7 @@ from research_team.infrastructure.agent.fetch import (
     build_fetch_tool,
     format_page,
 )
-from research_team.infrastructure.agent.recall import Recall, url_key
+from research_team.infrastructure.agent.recall import PageMemo, Recall, url_key
 from research_team.infrastructure.agent.search import build_search_tool
 
 SEARCH_PAYLOAD = {
@@ -50,6 +50,34 @@ def _client(handler) -> httpx.AsyncClient:
 
 def _html_response(request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, html=ARTICLE)
+
+
+def _failing_client() -> httpx.AsyncClient:
+    """A client whose every request fails at the transport, the way an
+    unreachable host does -- used where a test needs a fetch that cannot
+    possibly reach a page, as opposed to one whose page is merely unreadable.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("nope", request=request)
+
+    return _client(handler)
+
+
+def _client_returning(*bodies: str) -> httpx.AsyncClient:
+    """A client that serves each of `bodies` in order, one per request --
+    for tests that need a second, different response on a second call (e.g.
+    `refresh=True`)."""
+    responses = iter(bodies)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, html=next(responses))
+
+    return _client(handler)
+
+
+def _corpus_holding(source_id: str, *, text: str, uri: str) -> "_StubCorpus":
+    return _StubCorpus([_stored(source_id, uri, text)])
 
 
 # ---- formatting ----
@@ -492,3 +520,149 @@ async def test_a_search_for_a_url_and_a_fetch_of_it_do_not_share_an_entry():
     searched_again = await search.ainvoke({"query": url})
     assert "A paper" in searched_again
     assert "revenue critical path" not in searched_again
+
+
+# ---------------- retention (PageMemo) ----------------
+
+
+def _body_client(body: str) -> httpx.AsyncClient:
+    return _client(lambda request: httpx.Response(200, html=body))
+
+
+async def test_the_whole_page_is_retained_though_only_part_is_shown():
+    """The model's budget stops being the corpus's ceiling.
+
+    MAX_CHARS is documented as what one page may cost the conversation. Because
+    a document could only reach the corpus through the model's own output, it
+    was also the most the corpus could ever hold of a fetched page -- against a
+    corpus that accepts 200_000.
+    """
+    body = "<html><body><p>" + ("word " * 4000) + "</p></body></html>"
+    pages = PageMemo(stamp=lambda: "t")
+    tool = build_fetch_tool(max_chars=100, client=_body_client(body), pages=pages)
+
+    shown = await tool.ainvoke({"url": "https://example.com/long"})
+
+    retained = pages.get("https://example.com/long")
+    assert retained is not None
+    assert len(retained.text) > len(shown)
+    assert "[truncated" not in retained.text
+
+
+async def test_the_retained_text_carries_no_citation_header():
+    """The header is for the model to read. The corpus stores it as fields, and
+    a document whose first line is `url: ...` would quote back as though the
+    page said it."""
+    body = "<html><body><p>Real prose here, at length.</p></body></html>"
+    pages = PageMemo(stamp=lambda: "t")
+    tool = build_fetch_tool(client=_body_client(body), pages=pages)
+
+    await tool.ainvoke({"url": "https://example.com/a"})
+
+    retained = pages.get("https://example.com/a")
+    assert retained is not None
+    assert not retained.text.startswith("url:")
+
+
+async def test_retained_provenance_matches_the_header_the_model_saw():
+    """One extraction feeds both, so the fields and the header cannot disagree."""
+    body = (
+        "<html><head><title>A Paper</title>"
+        '<meta property="article:published_time" content="2026-01-02"/>'
+        "</head><body><p>Real prose here, at length.</p></body></html>"
+    )
+    pages = PageMemo(stamp=lambda: "t")
+    tool = build_fetch_tool(client=_body_client(body), pages=pages)
+
+    shown = await tool.ainvoke({"url": "https://example.com/a"})
+
+    retained = pages.get("https://example.com/a")
+    assert retained is not None
+    assert retained.uri == "https://example.com/a"
+    assert retained.title == "A Paper"
+    assert retained.title is not None and retained.title in shown
+
+
+async def test_an_unreadable_page_is_not_retained():
+    """For UNREADABLE's existing reason: retaining it would pin "this renders in
+    the browser" for an hour after a deploy fixed it."""
+    pages = PageMemo(stamp=lambda: "t")
+    tool = build_fetch_tool(client=_body_client("<html><body></body></html>"), pages=pages)
+
+    await tool.ainvoke({"url": "https://example.com/shell"})
+
+    assert pages.get("https://example.com/shell") is None
+
+
+async def test_a_failed_fetch_is_not_retained():
+    pages = PageMemo(stamp=lambda: "t")
+    tool = build_fetch_tool(client=_failing_client(), pages=pages)
+
+    await tool.ainvoke({"url": "https://example.com/gone"})
+
+    assert pages.get("https://example.com/gone") is None
+
+
+async def test_a_corpus_hit_is_not_retained():
+    """Nothing project-scoped may enter a process-wide store. A corpus hit is
+    one project's stored text; retaining it would serve it to another project's
+    `remember_page`."""
+    pages = PageMemo(stamp=lambda: "t")
+    corpus = _corpus_holding("s1", text="stored body", uri="https://example.com/a")
+    tool = build_fetch_tool(client=_body_client("<html/>"), corpus=corpus, pages=pages)
+
+    await tool.ainvoke({"url": "https://example.com/a"})
+
+    assert pages.get("https://example.com/a") is None
+
+
+async def test_a_recall_hit_does_not_disturb_what_was_retained():
+    """The memo answers the second fetch without a request, so nothing is
+    re-retained and the first retention stands."""
+    body = "<html><body><p>Real prose here, at length.</p></body></html>"
+    pages = PageMemo(stamp=lambda: "t")
+    recall = Recall()
+    tool = build_fetch_tool(client=_body_client(body), recall=recall, pages=pages)
+
+    await tool.ainvoke({"url": "https://example.com/a"})
+    await tool.ainvoke({"url": "https://example.com/a"})
+
+    retained = pages.get("https://example.com/a")
+    assert retained is not None
+    assert "Real prose" in retained.text
+
+
+def test_fetch_corpus_prompt_names_remember_page():
+    """The prompt is the only place the model learns which tool commits a
+    fetched page. If it stopped naming `remember_page`, nothing else fails --
+    the tool would just go undiscovered."""
+    from research_team.infrastructure.agent.fetch import FETCH_CORPUS_PROMPT
+
+    assert "call `remember_page` with its URL" in FETCH_CORPUS_PROMPT
+
+
+def test_fetch_corpus_prompt_no_longer_asks_to_pass_page_text():
+    """This is the transcription instruction the by-reference feature
+    replaced: passing the fetched text and its citation lines to `remember`
+    by hand. A future edit reinstating it would undo the feature while
+    leaving every other test here, which checks what the prompt says rather
+    than what it omits, green."""
+    from research_team.infrastructure.agent.fetch import FETCH_CORPUS_PROMPT
+
+    assert "pass it to `remember`" not in FETCH_CORPUS_PROMPT
+
+
+async def test_refresh_replaces_what_was_retained():
+    tool_pages = PageMemo(stamp=lambda: "t")
+    client = _client_returning(
+        "<html><body><p>First body, long enough.</p></body></html>",
+        "<html><body><p>Second body, long enough.</p></body></html>",
+    )
+    tool = build_fetch_tool(client=client, recall=Recall(), pages=tool_pages)
+
+    await tool.ainvoke({"url": "https://example.com/a"})
+    await tool.ainvoke({"url": "https://example.com/a", "refresh": True})
+
+    retained = tool_pages.get("https://example.com/a")
+    assert retained is not None
+    assert "Second body" in retained.text

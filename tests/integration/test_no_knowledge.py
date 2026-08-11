@@ -32,6 +32,17 @@ async def test_a_project_registers_the_knowledge_tools(build_application):
     assert application.knowledge is not None
 
 
+async def test_a_project_registers_remember_page(build_application):
+    """The by-reference path exists wherever `remember` does. Fails if the
+    PageMemo is built but never handed to the knowledge tools -- which would
+    leave `remember_page` silently absent and every prompt naming it wrong."""
+    application = await build_application(project_id=uuid4())
+
+    names = _tool_names(application)
+    assert "remember_page" in names
+    assert "remember" in names
+
+
 def test_composition_imports_redstring_events() -> None:
     """`composition.py` names `redstring.events` as its own top-level import.
 
