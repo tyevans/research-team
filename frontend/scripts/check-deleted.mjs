@@ -180,6 +180,35 @@ const RULES = [
     forbid: [/window\.confirm\(/],
   },
   {
+    phase: '3',
+    what: 'approvals were rendered per session, from three call sites',
+    why: 'Replaced by one `DecisionBar` in the shell, subscribed to the whole feed. The three call sites -- the conversation footer, the worker drawer, and the course page through that drawer -- each showed only the approvals of the session already on screen, so "is anything waiting on me?" had a different answer on every page and the honest way to find out was to open every session in turn. An import of `Approvals` from either directory is one of those call sites coming back; the bar is the only thing that may render it.',
+    where: 'presentation/session',
+    forbid: [/from '\.\/Approvals\.tsx'/],
+  },
+  {
+    phase: '3',
+    what: 'the worker drawer took decisions as well as showing them',
+    why: "Same replacement, other call site. The drawer's argument -- the person watching is the person positioned to decide -- was right and too narrow: it only held while that drawer was open.",
+    where: 'presentation/course',
+    // `AutonomyAllowAll` is deliberately *not* forbidden here, and the reason
+    // is a limit of this check rather than a decision: `where` is a directory
+    // prefix, and `AutonomyPanel.test.tsx` lives in the same directory and
+    // legitimately renders the control as a unit. A rule that cannot tell the
+    // unit test from the deleted call site would fire on the wrong one, and a
+    // check that has to be argued with is worse than one fewer check. The
+    // `Approvals` import is the half that can be stated precisely, and it is
+    // the half that carried the defect.
+    forbid: [/from '\.\.\/session\/Approvals\.tsx'/],
+  },
+  {
+    phase: '3',
+    what: 'the approval card had a stylesheet',
+    why: 'It is Tailwind utilities in `Approvals.tsx` now. The `.approval*` block in `conversation.css` matched nothing the moment the card was rewritten, and a block that matches nothing is exactly the failure `.extraction-failed > .extraction-summary` recorded -- no test, no error, just a rule that quietly stopped applying.',
+    where: 'styles',
+    forbid: [/^\.approvals\b/m, /^\.approval\b/m, /^\.approval-/m],
+  },
+  {
     phase: 'B',
     what: 'stylesheets each carried their own stacking numbers',
     why: 'Eight literal `z-index` declarations across five values, two of which produced a popover painting over an `aria-modal` dialog. Every one now names a role from `tokens.css`. `scripts/stacking.test.ts` is the real enforcement and is more precise than this -- it also rejects an undeclared token and a fourth role. This entry is here so the *count* is recorded where the other phase deletions are; if it ever fires, read that test first.',

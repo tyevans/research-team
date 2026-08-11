@@ -79,7 +79,6 @@ const container = () =>
       }),
       activity: vi.fn().mockResolvedValue(null),
     },
-    approvals: { pending: vi.fn().mockResolvedValue([]) },
   }) as unknown as Container
 
 const show = (over: Partial<Container> = {}) => {
@@ -87,7 +86,6 @@ const show = (over: Partial<Container> = {}) => {
   const store = createSessionStore({
     sessions: deps.sessions,
     turns: deps.turns,
-    approvals: deps.approvals,
     now: deps.now,
     notify: () => {},
   })

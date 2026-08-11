@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import * as dto from './dto.ts'
 import {
   summariesAsForest,
+  toApproval,
   toCourse,
   toForkNode,
   toLogEntry,
@@ -333,5 +334,98 @@ describe('toNeighborhood', () => {
     expect(neighborhood.relationships).toEqual([
       { source: 'ada', target: 'grace', relationshipType: 'advised' },
     ])
+  })
+})
+
+describe('toApproval', () => {
+  const legacy = { id: 'a1', session_id: 's1', tool_name: 'fetch' }
+
+  it('offers nothing when the server names no decisions', () => {
+    // A payload from before `allowed_decisions` existed. Defaulting to every
+    // decision instead would be the dangerous direction: a tool gate would
+    // sprout a `respond` button the server rejects.
+    expect(toApproval(parse(dto.approvalDto, legacy)).allowedDecisions).toEqual([])
+  })
+
+  it('reads no context into a gate that carries none', () => {
+    // `presenters.py` omits the key rather than nulling it, so absence — not
+    // null — is what this has to survive.
+    expect(toApproval(parse(dto.approvalDto, legacy)).context).toBeNull()
+  })
+
+  it('drops a decision this build cannot post', () => {
+    const approval = toApproval(
+      parse(dto.approvalDto, {
+        ...legacy,
+        allowed_decisions: ['approve', 'defenestrate', 'respond'],
+      }),
+    )
+    expect(approval.allowedDecisions).toEqual(['approve', 'respond'])
+  })
+
+  it('carries every field of a stage gate across', () => {
+    const approval = toApproval(
+      parse(dto.approvalDto, {
+        ...legacy,
+        tool_name: 'advance_stage',
+        description: 'Leave survey',
+        args: { stage: 'survey' },
+        allowed_decisions: ['approve', 'edit', 'reject', 'respond'],
+        context: {
+          stage: 'survey',
+          findings_artifact: 'findings/survey.md',
+          artifact_paths: ['notes/a.md', 'notes/b.md'],
+          blocked: true,
+          artifacts_reviewed: 2,
+          links_reviewed: 7,
+          unimplemented_checks: ['freshness'],
+          unreadable_artifacts: ['notes/c.md'],
+          findings: [
+            {
+              check: 'citations',
+              severity: 'error',
+              message: 'Two claims cite nothing.',
+              cites: ['notes/a.md#L3'],
+              suggested_edit: 'Cite or cut.',
+            },
+            {
+              check: 'coverage',
+              severity: 'warning',
+              message: 'Thin on prior art.',
+              cites: [],
+              suggested_edit: null,
+            },
+          ],
+        },
+      }),
+    )
+
+    expect(approval.allowedDecisions).toEqual(['approve', 'edit', 'reject', 'respond'])
+    expect(approval.context).toEqual({
+      stage: 'survey',
+      findingsArtifact: 'findings/survey.md',
+      artifactPaths: ['notes/a.md', 'notes/b.md'],
+      blocked: true,
+      artifactsReviewed: 2,
+      linksReviewed: 7,
+      unimplementedChecks: ['freshness'],
+      unreadableArtifacts: ['notes/c.md'],
+      findings: [
+        {
+          check: 'citations',
+          severity: 'error',
+          message: 'Two claims cite nothing.',
+          cites: ['notes/a.md#L3'],
+          suggestedEdit: 'Cite or cut.',
+        },
+        {
+          check: 'coverage',
+          severity: 'warning',
+          message: 'Thin on prior art.',
+          cites: [],
+          suggestedEdit: null,
+        },
+      ],
+    })
   })
 })

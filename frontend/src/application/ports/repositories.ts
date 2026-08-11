@@ -1,4 +1,4 @@
-import type { Approval, ApprovalDecision } from '@domain/approval/approval.ts'
+import type { Approval, ApprovalAnswer } from '@domain/approval/approval.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
@@ -112,7 +112,7 @@ export interface RunningTurn {
 
 export interface ApprovalRepository {
   pending(id: SessionId): Promise<readonly Approval[]>
-  decide(id: SessionId, approvalId: ApprovalId, decision: ApprovalDecision): Promise<void>
+  decide(id: SessionId, approvalId: ApprovalId, answer: ApprovalAnswer): Promise<void>
 }
 
 /** What the agent may do without asking.

@@ -608,9 +608,11 @@
  * course page (`.autonomy-panel`, a sibling of `.worker-panel` and
  * `.run-panel`, and deliberately built from the same three declarations so it
  * reads as another band of the same page rather than a modal escape hatch),
- * and the allow-all control inside the drawer (`.autonomy-allow`, which borrows
- * `.extraction`'s indent-behind-a-rule language because it likewise belongs to
- * the thing above it — the approvals).
+ * and the allow-all control in the shell's decision bar (`.autonomy-allow`,
+ * which borrows `.extraction`'s indent-behind-a-rule language because it
+ * likewise belongs to the thing above it — the approvals). It used to sit in
+ * the worker drawer; only its parent changed, so every rule below still
+ * matches and none of them was written against an ancestor.
  *
  * `.autonomy-warn` carries the scope warning and is the one thing here that
  * must not be quiet: it uses the accent border rather than `--line`, because a
@@ -773,7 +775,7 @@
   flex: 1 1 12ch;
 }
 
-/* --- the drawer's allow-all ------------------------------------------- */
+/* --- the decision bar's allow-all ------------------------------------- */
 .autonomy-allow {
   display: flex;
   flex-direction: column;
