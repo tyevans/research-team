@@ -48,6 +48,14 @@ class SourceRef:
     over the one field that matters least. The adapter parses what it can and
     keeps the rest verbatim, so an unparseable date costs precision, not the
     document."""
+    fetched_at: str | None = None
+    """When this text was read, for content that came off the network.
+
+    Set only by the by-reference path, which is the only caller that knows:
+    `remember` is handed text with no way to tell when it was read, and a
+    guessed timestamp is worse than the absence it would replace. Text for the
+    same reason as `published_at` -- the field it lands in is text.
+    """
 
 
 ExtractionStage = Literal[

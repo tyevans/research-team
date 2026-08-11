@@ -865,3 +865,39 @@ async def test_a_blank_source_id_announces_nothing(tmp_path, build_adapter):
         await adapter.ingest(SourceRef(source_id="   ", text="anything"), report=notes.append)
 
     assert notes == []
+
+
+@pytest.mark.asyncio
+async def test_fetched_at_reaches_the_stored_document(tmp_path, build_adapter) -> None:
+    """The field has existed on the command and the event since the corpus
+    layer landed, and has always been None on this path -- `remember` has no
+    argument that could fill it. Fails if the adapter drops it again."""
+    project_id = uuid4()
+    adapter, store, _ = build_adapter(tmp_path, project_id)
+
+    await adapter.ingest(
+        SourceRef(
+            source_id="s1",
+            text="body",
+            uri="https://example.com/a",
+            fetched_at="2026-08-10T12:00:00+00:00",
+        )
+    )
+
+    envelopes = await _corpus_events(store, project_id)
+    stored = envelopes[0].event
+    assert stored.fetched_at == "2026-08-10T12:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_a_source_without_a_fetch_time_leaves_it_unset(tmp_path, build_adapter) -> None:
+    """`remember` cannot know when text it was handed was read, and a guessed
+    timestamp would be worse than the absence it replaced."""
+    project_id = uuid4()
+    adapter, store, _ = build_adapter(tmp_path, project_id)
+
+    await adapter.ingest(SourceRef(source_id="s1", text="body"))
+
+    envelopes = await _corpus_events(store, project_id)
+    stored = envelopes[0].event
+    assert stored.fetched_at is None
