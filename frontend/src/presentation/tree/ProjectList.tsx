@@ -22,7 +22,7 @@ import { Button, Chip, Disclosure, EmptyState, ErrorBox } from '../common/primit
 import { Tooltip } from '../common/Tooltip.tsx'
 import { VirtualList } from '../common/VirtualList.tsx'
 import { fullTime, plural, relativeTime } from '../formatting/format.ts'
-import { courseHref, researchHref, sessionHref } from '../routing/routes.ts'
+import { projectHref, sessionHref } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
 import { ActivityChip, useProjectActivity } from './ProjectActivity.tsx'
 import { SessionForest, SessionRow } from './SessionRow.tsx'
@@ -421,14 +421,17 @@ const ProjectRow = ({
             aria-disabled={!project.workflow}
             onClick={() => {
               if (!project.workflow) return
-              navigate(courseHref(project.id))
+              navigate(projectHref(project.id))
             }}
           >
             Course
           </Button>
         </Tooltip>
         <Tooltip asChild explanation="Topics, documents and the knowledge graph for this project">
-          <Button small onClick={() => navigate(researchHref(project.id))}>
+          <Button
+            small
+            onClick={() => navigate(projectHref(project.id, { facet: 'entity', id: null }))}
+          >
             Research
           </Button>
         </Tooltip>

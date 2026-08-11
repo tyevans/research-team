@@ -7,33 +7,49 @@ import type { SessionProjection } from '@domain/session/session.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import type { Route } from '../routing/routes.ts'
-import { courseHref, researchHref, homeHref } from '../routing/routes.ts'
+import { projectHref, homeHref } from '../routing/routes.ts'
 import { Breadcrumbs } from './Breadcrumbs.tsx'
 
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
 
-it('names the research route and links back to the tree', () => {
-  const route: Route = { entity: null, name: 'research', id: PROJECT }
+it('names the selected facet and links back to the tree', () => {
+  const route: Route = { name: 'project', id: PROJECT, selection: { facet: 'entity', id: null } }
   render(<Breadcrumbs route={route} session={null} course={null} />)
 
-  expect(screen.getByText('research')).toBeInTheDocument()
-  // Falls back to the id's short form because the research route does not
-  // carry the course query CourseView does -- the same fallback the course
-  // crumb uses when the name has not loaded yet.
+  expect(screen.getByText('entity')).toBeInTheDocument()
+  // Falls back to the id's short form because the crumb is drawn before the
+  // course query that carries the project's name has settled.
   expect(screen.getByText(PROJECT.slice(0, 8))).toBeInTheDocument()
   expect(screen.getByRole('link', { name: 'projects' })).toHaveAttribute('href', homeHref())
 })
 
-it('prefers the loaded project name over the id on the research crumb', () => {
-  const route: Route = { entity: null, name: 'research', id: PROJECT }
+it('prefers the loaded project name over the id', () => {
+  const route: Route = { name: 'project', id: PROJECT, selection: { facet: 'entity', id: null } }
   const course = { projectName: 'Spaced repetition' } as Course
   render(<Breadcrumbs route={route} session={null} course={course} />)
 
   expect(screen.getByText('Spaced repetition')).toBeInTheDocument()
 })
 
-it('research href round-trips to the route the breadcrumb was built for', () => {
-  expect(researchHref(PROJECT)).toBe(`#/p/${PROJECT}/research`)
+it('offers the project itself as the way out of a selection', () => {
+  // The step a reader wants after following somebody's link into one topic:
+  // the same project with nothing selected. Dead text before this, because
+  // there was one page per noun and no "the project, plainly".
+  const route: Route = { name: 'project', id: PROJECT, selection: { facet: 'topic', id: 't1' } }
+  render(<Breadcrumbs route={route} session={null} course={null} />)
+
+  expect(screen.getByRole('link', { name: PROJECT.slice(0, 8) })).toHaveAttribute(
+    'href',
+    projectHref(PROJECT),
+  )
+})
+
+it('leaves the project crumb unlinked when it is already what you are on', () => {
+  const route: Route = { name: 'project', id: PROJECT, selection: null }
+  render(<Breadcrumbs route={route} session={null} course={null} />)
+
+  expect(screen.queryByRole('link', { name: PROJECT.slice(0, 8) })).not.toBeInTheDocument()
+  expect(screen.getByText(PROJECT.slice(0, 8))).toBeInTheDocument()
 })
 
 it("links a session to its project's two pages", () => {
@@ -45,10 +61,10 @@ it("links a session to its project's two pages", () => {
 
   render(<Breadcrumbs route={route} session={session} course={null} />)
 
-  expect(screen.getByRole('link', { name: 'course' })).toHaveAttribute('href', courseHref(PROJECT))
+  expect(screen.getByRole('link', { name: 'course' })).toHaveAttribute('href', projectHref(PROJECT))
   expect(screen.getByRole('link', { name: 'research' })).toHaveAttribute(
     'href',
-    researchHref(PROJECT),
+    projectHref(PROJECT, { facet: 'entity', id: null }),
   )
 })
 

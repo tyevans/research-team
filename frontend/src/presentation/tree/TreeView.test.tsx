@@ -170,14 +170,15 @@ it('reaches all four of a project’s destinations from its row', async () => {
   await user.click(await screen.findByRole('button', { name: /Resume/ }))
   expect(window.location.hash).toBe(`#/s/${HOLDER}`)
 
-  // The course, and the research page -- which was previously unreachable from
-  // this page at all: one button switched its *label* on `workflow` and
-  // navigated to `courseHref` either way.
+  // The project page, twice: plainly, and with the graph facet open. Both are
+  // the same route now -- there is no course page and no research page, only
+  // a project with a selection -- which is why the second asserts a facet
+  // segment rather than a second page's name.
   await user.click(screen.getByRole('button', { name: 'Course' }))
-  expect(window.location.hash).toBe(`#/p/${ATLAS}/course`)
+  expect(window.location.hash).toBe(`#/p/${ATLAS}`)
 
   await user.click(screen.getByRole('button', { name: 'Research' }))
-  expect(window.location.hash).toBe(`#/p/${ATLAS}/research`)
+  expect(window.location.hash).toBe(`#/p/${ATLAS}/entity`)
 
   // A new session *in it*, which ends the holder and so asks first. Scoped to
   // the row: the action bar's quiet "New session" is the bare-session one, and

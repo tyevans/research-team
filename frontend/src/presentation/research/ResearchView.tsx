@@ -1,7 +1,7 @@
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Pane } from '../layout/Pane.tsx'
-import { courseHref } from '../routing/routes.ts'
+import { projectHref } from '../routing/routes.ts'
 import { DocumentList } from './DocumentList.tsx'
 import { GraphPane } from './GraphPane.tsx'
 import { SeedPanel } from './SeedPanel.tsx'
@@ -61,7 +61,8 @@ export const ResearchView = ({
           <h1>Research</h1>
         </div>
         <div className="view-head-actions">
-          <a className="btn btn-quiet" href={courseHref(projectId)}>
+          {/* The project page with no selection, which is the course today. */}
+          <a className="btn btn-quiet" href={projectHref(projectId)}>
             Course
           </a>
         </div>

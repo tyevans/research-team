@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 
 import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
@@ -30,18 +30,20 @@ export const COURSE_TRACKS: readonly Track[] = [
   { id: 'artifacts', min: 0, weight: 1.2 },
 ]
 
-/** The course, and the one piece of view state that goes with it.
+/** The course.
  *
- * `openStage` is here rather than in `StageList` because it is the page's
- * state, not the list's: only one stage opens at a time, and a list holding
- * that itself could not be rendered twice on one page without the two
- * disagreeing. It is deliberately *not* in the route, unlike the watched
- * session -- an opened stage is a glance, not a place, and putting it in the
- * address bar would make every glance a history entry.
+ * `openStage` used to live here, with an argument against routing it: "an
+ * opened stage is a glance, not a place, and putting it in the address bar
+ * would make every glance a history entry." The first half was wrong and the
+ * second half had an answer already in the codebase. A reader who has found the
+ * stage whose gate is blocking a project wants to send *that*, which is exactly
+ * what a place is; and `navigate(..., { replace: true })` -- what scrubbing and
+ * the graph's entity selection both use -- puts it in the address bar without
+ * putting it in the back stack. So it is `App.tsx`'s now, off `Route`'s `stage`
+ * facet, and a course page deep-linked to a stage no longer loads collapsed.
  */
 export const useCourse = (projectId: ProjectId, onLoaded?: (course: Course | null) => void) => {
   const { projects } = useContainer()
-  const [openStage, setOpenStage] = useState<string | null>(null)
 
   const course = useQuery({
     queryKey: queryKeys.course(projectId),
@@ -55,13 +57,7 @@ export const useCourse = (projectId: ProjectId, onLoaded?: (course: Course | nul
     return () => onLoaded?.(null)
   }, [course.data, onLoaded])
 
-  return {
-    course,
-    openStage,
-    onToggleStage: (id: string) => {
-      setOpenStage((current) => (current === id ? null : id))
-    },
-  }
+  return { course }
 }
 
 /** The rail moves when the project does, without a reload.

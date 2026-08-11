@@ -4,7 +4,7 @@ import { forkOrigin } from '@domain/session/session.ts'
 import type { Course } from '@domain/project/course.ts'
 
 import type { Route } from '../routing/routes.ts'
-import { courseHref, researchHref, sessionHref, homeHref } from '../routing/routes.ts'
+import { projectHref, sessionHref, homeHref } from '../routing/routes.ts'
 
 /** Where you are, and the one link back.
  *
@@ -20,26 +20,31 @@ export const Breadcrumbs = ({
   session: SessionProjection | null
   course: Course | null
 }) => {
-  if (route.name === 'course') {
+  if (route.name === 'project') {
+    const facet = route.selection?.facet ?? null
     return (
       <nav className="crumbs" id="crumbs">
         <a href={homeHref()}>projects</a>
         <span className="sep">/</span>
-        <span className="sid">{course?.projectName || shortId(route.id)}</span>
-        <span className="sep">/</span>
-        <span className="sep">course</span>
-      </nav>
-    )
-  }
-
-  if (route.name === 'research') {
-    return (
-      <nav className="crumbs" id="crumbs">
-        <a href={homeHref()}>projects</a>
-        <span className="sep">/</span>
-        <span className="sid">{course?.projectName || shortId(route.id)}</span>
-        <span className="sep">/</span>
-        <span className="sep">research</span>
+        {/* The project's own crumb is a link now rather than dead text: with a
+            facet selected there is somewhere for it to go — the same project
+            with nothing selected — and that is the step a reader wants after
+            following a link into one topic. */}
+        {facet ? (
+          <a className="sid" href={projectHref(route.id)}>
+            {course?.projectName || shortId(route.id)}
+          </a>
+        ) : (
+          <span className="sid">{course?.projectName || shortId(route.id)}</span>
+        )}
+        {facet ? (
+          <>
+            <span className="sep">/</span>
+            {/* The facet, not the id. A crumb is for getting back, and the id
+                is already on the page that drew it. */}
+            <span className="sep">{facet}</span>
+          </>
+        ) : null}
       </nav>
     )
   }
@@ -82,9 +87,9 @@ export const Breadcrumbs = ({
       {projectId ? (
         <>
           <span className="sep">/</span>
-          <a href={courseHref(projectId)}>course</a>
+          <a href={projectHref(projectId)}>course</a>
           <span className="sep">·</span>
-          <a href={researchHref(projectId)}>research</a>
+          <a href={projectHref(projectId, { facet: 'entity', id: null })}>research</a>
         </>
       ) : null}
     </nav>

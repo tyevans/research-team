@@ -145,7 +145,16 @@ const renderCourse = (projects: Partial<ProjectRepository>, stream: EventStream)
       </ContainerProvider>
     </QueryClientProvider>
   )
-  return render(<CourseView projectId={PROJECT} watching={null} onWatch={() => {}} />, { wrapper })
+  return render(
+    <CourseView
+      projectId={PROJECT}
+      watching={null}
+      onWatch={() => {}}
+      openStage={null}
+      onToggleStage={() => {}}
+    />,
+    { wrapper },
+  )
 }
 
 it('moves the rail when a stage advances, without a reload', async () => {

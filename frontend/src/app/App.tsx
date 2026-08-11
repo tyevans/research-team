@@ -7,7 +7,13 @@ import { createSessionStore, type SessionStore } from '@application/session/sess
 import type { Course } from '@domain/project/course.ts'
 import { CourseView } from '@presentation/course/CourseView.tsx'
 import { Shell } from '@presentation/layout/Shell.tsx'
-import { courseHref, researchHref, homeHref, type Route } from '@presentation/routing/routes.ts'
+import {
+  homeHref,
+  projectHref,
+  sessionSelection,
+  type Route,
+  type Selection,
+} from '@presentation/routing/routes.ts'
 import { navigate, useRoute } from '@presentation/routing/use-route.ts'
 import { ResearchView } from '@presentation/research/ResearchView.tsx'
 import { SessionView } from '@presentation/session/SessionView.tsx'
@@ -75,7 +81,7 @@ const Console = () => {
           <Breadcrumbs
             route={route}
             session={route.name === 'session' ? head : null}
-            course={route.name === 'course' || route.name === 'research' ? course : null}
+            course={route.name === 'project' ? course : null}
           />
           <div className="chrome-right">
             {/* In the bar rather than floating over the page: as a fixed panel
@@ -124,38 +130,68 @@ const CurrentView = ({
   store: SessionStore
   onCourse: (course: Course | null) => void
 }) => {
-  switch (route.name) {
-    case 'session':
-      return <SessionView store={store} sessionId={route.id} at={route.at} path={route.path} />
-    case 'course':
-      return (
-        <CourseView
-          key={route.id}
-          projectId={route.id}
-          onLoaded={onCourse}
-          watching={route.watching}
-          onWatch={(sessionId) => navigate(courseHref(route.id, sessionId))}
-        />
-      )
-    case 'research':
-      return (
-        <ResearchView
-          key={route.id}
-          projectId={route.id}
-          entity={route.entity}
-          // Replaced rather than pushed, for the reason scrubbing replaces.
-          // Browsing a graph also *grows* it -- every selection pulls in a
-          // neighbourhood -- so a back button that restored the previous
-          // entity could not also un-draw what that click added. It would
-          // return a URL describing a smaller graph than the one on screen,
-          // which is worse than not offering the step back at all.
-          onEntity={(id) => navigate(researchHref(route.id, id), { replace: true })}
-        />
-      )
-    default:
-      return <TreeView />
+  if (route.name === 'session') {
+    return <SessionView store={store} sessionId={route.id} at={route.at} path={route.path} />
   }
+  if (route.name !== 'project') return <TreeView />
+
+  const { id, selection } = route
+
+  if (selection !== null && RESEARCH_FACETS.has(selection.facet)) {
+    return (
+      <ResearchView
+        key={id}
+        projectId={id}
+        entity={
+          selection.facet === 'entity' && typeof selection.id === 'string' ? selection.id : null
+        }
+        // Replaced rather than pushed, for the reason scrubbing replaces.
+        // Browsing a graph also *grows* it -- every selection pulls in a
+        // neighbourhood -- so a back button that restored the previous
+        // entity could not also un-draw what that click added. It would
+        // return a URL describing a smaller graph than the one on screen,
+        // which is worse than not offering the step back at all.
+        onEntity={(entity) =>
+          navigate(projectHref(id, { facet: 'entity', id: entity }), { replace: true })
+        }
+      />
+    )
+  }
+
+  const openStage = selection?.facet === 'stage' ? (selection.id ?? null) : null
+
+  return (
+    <CourseView
+      key={id}
+      projectId={id}
+      onLoaded={onCourse}
+      watching={selection?.facet === 'session' ? selection.id : null}
+      onWatch={(sessionId) => navigate(projectHref(id, sessionSelection(sessionId)))}
+      openStage={openStage}
+      onToggleStage={(stageId) =>
+        // Replaced rather than pushed, for the reason the graph's selection is:
+        // opening a stage is a glance, and forty glances in the back stack make
+        // the back button useless. Replacing keeps it linkable without that
+        // cost -- which is the objection `useCourse` raised against routing
+        // this at all, and it is answered rather than ignored.
+        navigate(projectHref(id, openStage === stageId ? null : { facet: 'stage', id: stageId }), {
+          replace: true,
+        })
+      }
+    />
+  )
 }
+
+/** Which facets the research view answers, until the two views merge.
+ *
+ * A dispatch table rather than a `switch` with two arms because it is a
+ * *temporary* fact -- §3.2 of the proposal deletes both views into one page,
+ * and at that point this set and the branch it feeds both go. Facets outside it
+ * land on the course view, including the three (`file`, `artifact`, `finding`)
+ * that no view reads yet: they parse and they are linkable, and the region that
+ * renders them is a later slice.
+ */
+const RESEARCH_FACETS: ReadonlySet<Selection['facet']> = new Set(['entity', 'topic', 'doc'])
 
 /** The tree is a projection of every session, so any log frame can change it.
  *
