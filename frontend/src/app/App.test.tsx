@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { beforeEach, expect, it, vi } from 'vitest'
@@ -34,6 +34,47 @@ const ATLAS = ProjectId('11111111-1111-1111-1111-111111111111')
 const HOLDER = SessionId('3f2a0000-0000-0000-0000-000000000000')
 
 const NOW = Date.parse('2026-08-09T12:00:00Z')
+
+/** Two stages, because a deep link to one is only interesting if the other
+ *  stays shut. */
+const COURSE = {
+  projectId: ATLAS,
+  projectName: 'atlas',
+  holdingSessionId: null,
+  preset: { id: 'hybrid.default', name: 'Hybrid', version: '1' },
+  position: 1,
+  stageCount: 2,
+  stages: [
+    {
+      index: 1,
+      id: 'step0.intake',
+      name: 'Intake',
+      kind: 'author',
+      spine: 0,
+      scopeLevel: 'course',
+      status: 'done',
+      outputs: [],
+      gateDecisions: [],
+      reviewerRole: null,
+      findingsReport: null,
+    },
+    {
+      index: 2,
+      id: 'step1.framing',
+      name: 'Framing',
+      kind: 'author',
+      spine: 0,
+      scopeLevel: 'course',
+      status: 'current',
+      outputs: [],
+      gateDecisions: [],
+      reviewerRole: null,
+      findingsReport: null,
+    },
+  ],
+  findings: [],
+  unimplementedChecks: [],
+}
 
 const containerWith = (over: Record<string, unknown> = {}) =>
   ({
@@ -73,11 +114,31 @@ const containerWith = (over: Record<string, unknown> = {}) =>
       presets: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
       chooseWorkflow: vi.fn(),
+      course: vi.fn().mockResolvedValue(COURSE),
       join: vi.fn(),
       delete: vi.fn().mockResolvedValue(undefined),
     },
     research: { current: vi.fn().mockResolvedValue(null) },
-    workers: { on: vi.fn().mockResolvedValue({ workers: [], idleSessionIds: [] }) },
+    workers: {
+      on: vi.fn().mockResolvedValue({
+        projectId: ATLAS,
+        workers: [
+          { ref: 'w1', kind: 'turn', detail: 'answering', sessionId: HOLDER, parentRef: null },
+        ],
+        idleSessionIds: [],
+      }),
+      everywhere: vi.fn().mockResolvedValue([]),
+    },
+    extractions: { on: vi.fn().mockResolvedValue({ current: [], last: [] }) },
+    // The research view's own reads. Quiet, because which view the facet
+    // reached is the question and none of these answers it.
+    topics: { queue: vi.fn().mockResolvedValue([]), open: vi.fn() },
+    documents: { list: vi.fn().mockResolvedValue([]) },
+    graphs: {
+      whole: vi.fn().mockResolvedValue({ entities: [], relations: [], truncated: false }),
+      neighborhood: vi.fn().mockResolvedValue({ entities: [], relations: [] }),
+      search: vi.fn().mockResolvedValue({ entities: [], types: [] }),
+    },
     health: {
       summaries: vi.fn().mockResolvedValue({ healthy: true, following: true, failedEvents: 0 }),
       rebuildSummaries: vi.fn(),
@@ -129,4 +190,100 @@ it('opens a dialog, which needs the overlay host the shell mounts', async () => 
   const dialog = await screen.findByRole('dialog')
   expect(dialog).toHaveAttribute('aria-modal', 'true')
   expect(within(dialog).getByText(/cannot rejoin/)).toBeInTheDocument()
+})
+
+it('opens the stage a link named, rather than loading collapsed', async () => {
+  // The point of the `stage` facet, and the fix for a course page that always
+  // loaded fully collapsed: `openStage` was `useCourse`'s `useState`, so the
+  // only way to see a stage's body was to click it, and "the stage whose gate
+  // is blocking this project" could not be sent to anybody.
+  //
+  // Asserted through `aria-expanded` on the two rail rows rather than through
+  // the prop, because a route that reached `CourseView` and did not reach
+  // `StageList` is the failure worth catching, and the prop cannot see it.
+  window.location.hash = `#/p/${ATLAS}/stage/step1.framing`
+  renderApp()
+
+  const framing = await screen.findByRole('button', { name: /Framing/ })
+  expect(framing).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByRole('button', { name: /Intake/ })).toHaveAttribute('aria-expanded', 'false')
+})
+
+it('puts a clicked stage in the address bar without a history entry', async () => {
+  // Replaced rather than pushed, which is the answer to the objection
+  // `useCourse` used to raise against routing this at all: linkable, and forty
+  // glances still leave the back button pointing where the reader came from.
+  const user = userEvent.setup()
+  window.location.hash = `#/p/${ATLAS}`
+  renderApp()
+
+  const before = window.history.length
+  await user.click(await screen.findByRole('button', { name: /Framing/ }))
+
+  expect(window.location.hash).toBe(`#/p/${ATLAS}/stage/step1.framing`)
+  expect(window.history.length).toBe(before)
+})
+
+it('sends the graph facets to the research view and the rest to the course', async () => {
+  // The dispatch is `App.tsx`'s alone and temporary -- it exists only until the
+  // two views merge -- so nothing else in the repository would notice it being
+  // wrong. Two assertions rather than one: a branch that sent *everything* to
+  // one view would satisfy either on its own.
+  window.location.hash = `#/p/${ATLAS}/entity/e1`
+  const { unmount } = renderApp()
+  expect(await screen.findByRole('heading', { name: 'Research' })).toBeInTheDocument()
+  unmount()
+
+  window.location.hash = `#/p/${ATLAS}/stage/step1.framing`
+  renderApp()
+  expect(await screen.findByRole('heading', { name: 'Hybrid' })).toBeInTheDocument()
+})
+
+it('hands the selected entity to the graph, not just the view', async () => {
+  // The id has to survive the facet, not only the route: a dispatch that
+  // reached `ResearchView` with `entity` hard-null would satisfy the test
+  // above and draw the wrong graph.
+  const neighborhood = vi.fn().mockResolvedValue({ entities: [], relations: [] })
+  window.location.hash = `#/p/${ATLAS}/entity/e1`
+  renderApp(
+    containerWith({
+      graphs: {
+        whole: vi.fn().mockResolvedValue({ entities: [], relations: [], truncated: false }),
+        neighborhood,
+        search: vi.fn().mockResolvedValue({ entities: [], types: [] }),
+      },
+    }),
+  )
+
+  await waitFor(() => expect(neighborhood).toHaveBeenCalledWith(ATLAS, 'e1'))
+})
+
+it('puts a watched worker in the address bar under the session facet', async () => {
+  // The drawer's session used to be `#/p/<id>/course/watching/<sid>`, a segment
+  // pair that existed for this one case. It is the `session` facet now, which
+  // is the same grammar `#/s/<sid>` and every other selection use -- and this
+  // is the only test in the repository that sees which one is written, because
+  // `Workers` takes `onWatch` as a prop and never builds an href.
+  const user = userEvent.setup()
+  window.location.hash = `#/p/${ATLAS}`
+  renderApp()
+
+  const worker = await screen.findByRole('button', { name: 'answering' })
+  expect(worker).toHaveAttribute('aria-pressed', 'false')
+
+  await user.click(worker)
+
+  expect(window.location.hash).toBe(`#/p/${ATLAS}/session/${HOLDER}`)
+  // Read back *off the route*, not held beside it. A view that kept its own
+  // copy would light this row up on a hash it never wrote, and a reload would
+  // then close a drawer the URL still names.
+  // `hidden: true` because watching also opens the transcript drawer, which is
+  // modal — the roster behind it is correctly hidden from the accessibility
+  // tree, and it is still the thing under assertion.
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'answering', hidden: true })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    ),
+  )
 })

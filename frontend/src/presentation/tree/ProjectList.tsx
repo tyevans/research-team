@@ -20,7 +20,7 @@ import { Confirm } from '../common/Confirm.tsx'
 import { Button, Chip, Disclosure, EmptyState, ErrorBox } from '../common/primitives.tsx'
 import { VirtualList } from '../common/VirtualList.tsx'
 import { fullTime, plural, relativeTime } from '../formatting/format.ts'
-import { courseHref, researchHref, sessionHref } from '../routing/routes.ts'
+import { projectHref, sessionHref } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
 import { ActivityChip, useProjectActivity } from './ProjectActivity.tsx'
 import { SessionForest, SessionRow } from './SessionRow.tsx'
@@ -404,14 +404,14 @@ const ProjectRow = ({
               ? 'Every stage of this workflow, and every artifact it owes'
               : 'this project runs no workflow'
           }
-          onClick={() => navigate(courseHref(project.id))}
+          onClick={() => navigate(projectHref(project.id))}
         >
           Course
         </Button>
         <Button
           small
           title="Topics, documents and the knowledge graph for this project"
-          onClick={() => navigate(researchHref(project.id))}
+          onClick={() => navigate(projectHref(project.id, { facet: 'entity', id: null }))}
         >
           Research
         </Button>

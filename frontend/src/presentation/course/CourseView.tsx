@@ -6,7 +6,7 @@ import { useSplitPanes } from '@presentation/layout/use-split-panes.ts'
 import { EmptyState, Loading } from '../common/primitives.tsx'
 import { Pane } from '../layout/Pane.tsx'
 import { Split } from '../layout/Split.tsx'
-import { researchHref, sessionHref } from '../routing/routes.ts'
+import { projectHref, sessionHref } from '../routing/routes.ts'
 import { ArtifactList } from './ArtifactList.tsx'
 import { AutonomyPanel } from './AutonomyPanel.tsx'
 import { ExtractionPane } from './ExtractionPane.tsx'
@@ -29,6 +29,8 @@ export const CourseView = ({
   onLoaded,
   watching,
   onWatch,
+  openStage,
+  onToggleStage,
 }: {
   projectId: ProjectId
   /** Reported upward because the breadcrumb wants the project's name and this
@@ -38,8 +40,12 @@ export const CourseView = ({
    *  route, not by this view — see `Route`'s `course` variant. */
   watching: SessionId | null
   onWatch: (sessionId: SessionId | null) => void
+  /** The open stage, owned by the route for the same reason the watched
+   *  session is — see `Route`'s `stage` facet. */
+  openStage: string | null
+  onToggleStage: (stageId: string) => void
 }) => {
-  const { course, openStage, onToggleStage } = useCourse(projectId, onLoaded)
+  const { course } = useCourse(projectId, onLoaded)
   const panes = useSplitPanes(COURSE_GROUP)
 
   return (
@@ -50,7 +56,10 @@ export const CourseView = ({
           <p className="sub">{course.data ? subtitle(course.data) : ''}</p>
         </div>
         <div className="view-head-actions">
-          <a className="btn btn-quiet" href={researchHref(projectId)}>
+          {/* The graph facet with nothing selected: same page, empty canvas.
+              There is no longer a "research page" to link to — there is a
+              project, and this asks it for a different facet of itself. */}
+          <a className="btn btn-quiet" href={projectHref(projectId, { facet: 'entity', id: null })}>
             Research
           </a>
           {course.data?.holdingSessionId ? (
