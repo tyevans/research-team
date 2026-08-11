@@ -7,6 +7,7 @@ a tool that raises costs the whole turn, and the model can do nothing useful
 with a traceback.
 """
 
+import asyncio
 from uuid import uuid4
 
 import httpx
@@ -15,9 +16,10 @@ import pytest
 from research_team.application import AutonomyPolicy
 from research_team.application.autonomy import FETCH_TOOL, GATED_TOOLS
 from research_team.application.corpus_read import CorpusReadError, StoredDocument
-from research_team.application.grants import FetchGrant
+from research_team.application.grants import FetchGrant, GrantRegistry
 from research_team.domain import DocumentRecord
 from research_team.infrastructure.agent import fetch as fetch_module
+from research_team.infrastructure.agent.approval import interrupt_config
 from research_team.infrastructure.agent.fetch import (
     UNREADABLE,
     build_fetch_tool,
@@ -882,3 +884,56 @@ async def test_refresh_replaces_what_was_retained():
     retained = tool_pages.get("https://example.com/a")
     assert retained is not None
     assert "Second body" in retained.text
+
+
+# ---- the gate + tool together: the batch over-spend, end to end ----
+
+
+@pytest.mark.asyncio
+async def test_ten_gathered_covered_fetches_on_a_budget_of_one_hit_the_transport_once():
+    """The reproduction from `task-5-review.md`, run against the real gate
+    and the real tool rather than described: ten `fetch` calls covered by the
+    same grant, a budget of one, gathered the way `langgraph`'s `ToolNode`
+    actually runs a message's tool calls (`asyncio.gather`).
+
+    Two phases, matching production: `HumanInTheLoopMiddleware.after_model`
+    evaluates `when` for every call *before* any tool runs (synchronous, no
+    `await` between them), and only the calls that were not interrupted ever
+    reach `ToolNode`, which then runs them concurrently. This test does both
+    steps for real -- the `when` loop is the exact shape `after_model` walks
+    a message's tool calls in -- rather than asserting on the grant alone,
+    so the fix is pinned at the same seam the review found it broken at.
+    """
+    calls = 0
+
+    def _counting_html(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, html=ARTICLE)
+
+    session_id = uuid4()
+    grant = FetchGrant(run_id=session_id, hosts=frozenset({"ex.example"}), budget=1)
+    grants = GrantRegistry()
+    grants.register(session_id, grant)
+    policy = AutonomyPolicy(default="auto")
+    policy.set(FETCH_TOOL, "ask")
+    when = interrupt_config(policy, session_id=session_id, grants=grants)[FETCH_TOOL]["when"]
+
+    class _Call:
+        def __init__(self, url: str) -> None:
+            self.tool_call = {"name": FETCH_TOOL, "args": {"url": url}, "id": "t"}
+
+    url = "https://ex.example/page"
+    # Phase 1: exactly how `after_model` walks one message's tool calls --
+    # synchronously, before any of them runs.
+    admitted = [not when(_Call(url)) for _ in range(10)]
+    assert admitted.count(True) == 1  # the fix, at the gate: only one claim fit
+
+    fetch = build_fetch_tool(client=_client(_counting_html), grant=grant)
+    # Phase 2: only the admitted calls ever reach a tool at all -- an
+    # interrupted call is parked for a human, not run -- and the ones that do
+    # run concurrently, exactly as `ToolNode` runs them.
+    await asyncio.gather(*(fetch.ainvoke({"url": url}) for ok in admitted if ok))
+
+    assert calls == 1
+    assert grant.remaining == 0

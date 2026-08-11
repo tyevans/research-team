@@ -52,12 +52,41 @@ class FetchGrant:
     obvious name, rather than achieved by dropping `frozen=True` and trusting
     every future caller not to reassign `budget` or `hosts`. `spend()` is the
     only thing that touches it; `covers()` only reads it.
+
+    `_reserved` is a second mutable cell, added to close a real over-spend a
+    security review reproduced (task-5-review.md): `fetch`'s gate evaluates
+    `covers()` for *every* call in one assistant message before any of them
+    runs (`HumanInTheLoopMiddleware.after_model` iterates the whole message
+    synchronously), and `langgraph`'s `ToolNode` then runs all the calls it let
+    through with `asyncio.gather`. So N calls in one message, all covered
+    under the same unspent budget, all pass the gate, and all N leave the
+    process before any of their `spend()`s lands -- ten requests on a budget
+    of one, confirmed by running it. `reserve()` is what closes the gap: the
+    gate claims a unit *before* deciding not to interrupt, so the second call
+    in a batch sees the first call's claim and is refused (interrupted) rather
+    than also waved through. `covers()` is deliberately left reading only
+    `_remaining`, not `_remaining - _reserved`, so `fetch.py`'s existing
+    `covers()`-then-`spend()` pair (unit-tested directly, with no gate in the
+    loop) keeps meaning exactly what it always meant: `spend()` still floors
+    against the real budget and still refuses to spend past zero, unaffected
+    by whether a reservation happens to be outstanding. `spend()` releases the
+    reservation it corresponds to (floored at zero, for a `spend()` called
+    with none outstanding -- direct tests never reserve). A reservation whose
+    call never reaches `spend()` -- refused by a human, or a covered call that
+    errors before its own `spend()` runs, per `fetch.py`'s "errors don't
+    spend" rule -- is never released, and that is accepted rather than fixed:
+    an un-released reservation only ever *lowers* the room `reserve()` sees
+    for future claims, never raises it past the real budget, so the failure
+    mode of a stuck reservation is a run granted N that can spend fewer than
+    N, not one that can spend more. Leaking toward fewer fetches is the safe
+    direction; leaking the other way is the bug this exists to prevent.
     """
 
     run_id: UUID
     hosts: frozenset[str]
     budget: int
     _remaining: list[int] = field(default_factory=list, compare=False, repr=False)
+    _reserved: list[int] = field(default_factory=list, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         # dataclass(frozen=True) blocks `self.hosts = ...` and
@@ -65,6 +94,7 @@ class FetchGrant:
         # escape hatch for exactly this kind of derived init.
         object.__setattr__(self, "hosts", frozenset(host.lower() for host in self.hosts))
         object.__setattr__(self, "_remaining", [self.budget])
+        object.__setattr__(self, "_reserved", [0])
 
     @property
     def remaining(self) -> int:
@@ -85,13 +115,21 @@ class FetchGrant:
         calls `spend()`.
 
         Scheme-checked, not just host-checked: this is the authorization check
-        both `fetch`'s gate and the tool itself consult, and it is written to
-        answer correctly on its own rather than lean on `fetch.py`'s own
-        scheme guard, which lives in a different file and can change under a
-        different task. Without this, `file://a.example/etc/passwd` and the
-        scheme-relative `//a.example/p` both yield hostname `a.example` and
-        would read as covered even though neither is the network request a
-        host grant is supposed to authorize.
+        the tool itself consults when it decides whether a completed call gets
+        to spend (`fetch.py`'s `covers()`-then-`spend()` pair), and it is
+        written to answer correctly on its own rather than lean on
+        `fetch.py`'s own scheme guard, which lives in a different file and can
+        change under a different task. Without this, `file://a.example/etc/passwd`
+        and the scheme-relative `//a.example/p` both yield hostname
+        `a.example` and would read as covered even though neither is the
+        network request a host grant is supposed to authorize.
+
+        Reads only `_remaining`, deliberately blind to `_reserved` -- see
+        `reserve()`. The gate's authorization question ("may a *new* claim be
+        made against what's left") and this question ("has this URL's grant
+        actually run out") are different questions, and folding the second
+        into the first would make `fetch.py`'s own spend check swing on
+        reservations it knows nothing about and never asked to be blocked by.
         """
         if self.spent:
             return False
@@ -106,9 +144,51 @@ class FetchGrant:
             return False
         return hostname.lower() in self.hosts
 
+    def reserve(self, url: str) -> bool:
+        """Claim one unit of budget for `url`, or refuse -- the gate's check.
+
+        `_gate_for` (`infrastructure/agent/approval.py`) calls this, not
+        `covers()`, so that letting one covered call through *counts against
+        the next one evaluated in the same batch*. `covers()` alone cannot do
+        that: it only reads `_remaining`, and `_remaining` does not move until
+        `fetch.py`'s `spend()` runs, which is after an `await` the gate never
+        waits on. Ten covered calls in one assistant message would all read
+        `covers() -> True` off the same unspent budget and all leave the
+        process before any of their `spend()`s land -- see the class
+        docstring and `task-5-review.md` for the reproduction.
+
+        `covers(url)` first, so a host mismatch or an actually-spent grant
+        refuses exactly as `covers()` always has; `_reserved` only bounds
+        further claims once the URL and scheme have already passed. No
+        `await` between the check and the write, so two calls evaluated in
+        the same synchronous pass (which is how `HumanInTheLoopMiddleware`
+        walks one message's tool calls) cannot both observe room for the same
+        unit -- the second sees the first's claim and is refused.
+
+        Every successful claim must eventually reach `spend()` or leak; see
+        the class docstring for why an occasional leak is the accepted
+        trade rather than a bug to chase.
+        """
+        if not self.covers(url):
+            return False
+        if self._remaining[0] - self._reserved[0] <= 0:
+            return False
+        self._reserved[0] += 1
+        return True
+
     def spend(self) -> None:
-        """Consume one fetch. The only mutation this frozen value permits."""
+        """Consume one fetch. The only mutation `covers()` itself reacts to.
+
+        Also releases one reservation, floored at zero: a `spend()` that
+        followed a gate-side `reserve()` is that reservation being redeemed,
+        and a `spend()` called with none outstanding (every direct-tool test
+        in `test_fetch.py`, which builds a grant and never goes through the
+        gate) has nothing to release and the floor keeps `_reserved` from
+        going negative.
+        """
         self._remaining[0] -= 1
+        if self._reserved[0] > 0:
+            self._reserved[0] -= 1
 
 
 class GrantRegistry:

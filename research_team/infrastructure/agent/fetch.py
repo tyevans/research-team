@@ -258,27 +258,34 @@ def build_fetch_tool(
     grant's account. Whether the fetch happens at all is decided once, at
     the gate.
 
-    This tool's `covers(url)` and the gate's `covers(url)` (a different
-    call, in `approval.py`, made before this tool ever runs) are NOT
-    guaranteed to observe the same `remaining` count. Both calls read the
-    same `FetchGrant`, but the gate evaluates every `fetch` call in one
-    model message before any of them runs, and this tool's own check
-    happens after an `await http.get(...)` that the gate's check never
-    waited on -- so N covered calls dispatched in a single message can all
-    see the gate's "not yet spent" answer, all leave the process, and all
-    reach this `covers()` check before any of their `spend()`s has landed.
-    The result is at most N requests beyond the budget in one batch, N being
-    a number the model chooses by how many `fetch` calls it puts in one
-    message -- not unbounded across a run, because `spend()` still floors
-    `remaining` at zero and every subsequent call is refused at the gate
-    once it is. The *scope* holds regardless: every one of those N calls
-    still had to pass `covers()`'s host check, so this is an accounting gap
-    in the count, not a hole in which hosts are reachable. Closing it needs
-    a reservation taken at the gate before it decides not to interrupt, with
-    this tool consuming the reservation instead of a fresh check -- a change
-    to the gate/`FetchGrant` seam this task does not own. Tracked as a
-    follow-up against the gate (Task 3's `approval.py`) and its wiring
-    (Task 7), not fixed here.
+    **This section used to describe an open batch over-spend; it is closed
+    now, and closed entirely on the other side of the seam.** The gate
+    (`approval.py`'s `_covered`) used to only *read* `covers(url)` before
+    deciding not to interrupt, and the gate evaluates every `fetch` call in
+    one model message before any of them runs -- so N covered calls
+    dispatched in a single message could all see the same "not yet spent"
+    answer and all leave the process, N being a number the model chooses by
+    how many `fetch` calls it puts in one message. `task-5-review.md`
+    reproduced it against the real tool: ten requests on a budget of one.
+
+    The fix is `FetchGrant.reserve(url)`, called by the gate instead of
+    `covers(url)`: it claims a unit of budget *as it answers*, with no
+    `await` between the claim and the write, so the second call evaluated in
+    the same synchronous batch sees the first one's claim and is refused --
+    interrupted, sent to a human -- rather than also waved through. This
+    tool's own `covers()`-then-`spend()` pair below is **unchanged by that
+    fix** and does not need to be: `reserve()` and `spend()` touch different
+    cells (`_reserved` and `_remaining`), so a gate-side reservation and this
+    tool's after-the-fact spend do not double-count each other, and this
+    tool still answers its own question correctly -- "was the grant, not a
+    human, what authorized the call that already happened" -- without
+    knowing anything about reservations at all. See `FetchGrant`'s docstring
+    for the full argument, including the one deliberate loose end: a
+    reservation whose call never reaches this tool's `spend()` (refused by a
+    human downstream, or an error path here that intentionally does not
+    spend) is never released, and is left that way -- it only ever makes a
+    later `reserve()` more conservative, never less, so a stuck reservation
+    costs the grant fewer fetches than it was given, not more.
     """
 
     @tool(FETCH_TOOL)

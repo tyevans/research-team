@@ -192,3 +192,32 @@ def test_a_covered_fetch_with_no_session_still_interrupts():
     when = _when(policy, "fetch", session_id=None, grants=grants)
 
     assert when(_call("fetch", {"url": "https://a.example/page"})) is True
+
+
+def test_ten_covered_calls_in_one_batch_admit_only_one_on_a_budget_of_one():
+    """The over-spend `task-5-review.md` reproduced against the real tool:
+    ten covered `fetch` calls in one assistant message, a budget of one, ten
+    requests out. `HumanInTheLoopMiddleware.after_model` evaluates `when` for
+    every call in the message synchronously before any tool runs, which is
+    exactly what this loop reproduces -- calling `when` ten times in a row,
+    the way the middleware does, rather than through any tool or transport.
+
+    Fixed by `_covered` reserving against the budget instead of merely
+    reading it (`grant.reserve(url)`, not `grant.covers(url)`): the second
+    call in the batch sees the first one's claim. Only one of the ten should
+    come back `False` (not interrupted); the other nine must be told to ask
+    a human, because there is no budget left to admit them.
+    """
+    session_id = uuid4()
+    grants = GrantRegistry()
+    grants.register(
+        session_id, FetchGrant(run_id=session_id, hosts=frozenset({"a.example"}), budget=1)
+    )
+    policy = _ask_policy("fetch")
+    when = _when(policy, "fetch", session_id=session_id, grants=grants)
+
+    decisions = [when(_call("fetch", {"url": "https://a.example/page"})) for _ in range(10)]
+
+    admitted = decisions.count(False)  # False means "does not interrupt"
+    assert admitted == 1
+    assert decisions.count(True) == 9

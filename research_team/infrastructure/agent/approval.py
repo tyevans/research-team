@@ -111,6 +111,20 @@ def _covered(
     langchain's `ToolNode` -- a test, a future caller -- has no guaranteed
     shape, and this function's only correct answer to a shape it cannot read
     is `False`.
+
+    Calls `grant.reserve(url)`, not `grant.covers(url)` -- this used to be a
+    plain read, and a security review reproduced why that was wrong:
+    `HumanInTheLoopMiddleware.after_model` evaluates `when` for *every* call
+    in one assistant message, synchronously, before any of them runs, so a
+    read-only check lets N covered calls in one message all pass against the
+    same unspent budget -- ten requests on a budget of one, reproduced
+    against the real tool (`task-5-review.md`). `reserve()` claims the unit
+    as it answers, so the second call evaluated in the same batch sees the
+    first one's claim and is refused here rather than also waved through.
+    This is the only place a claim is made; `fetch.py`'s own `covers()` /
+    `spend()` pair is unchanged and still decides, after the call actually
+    returns, whether the grant is what paid for it. See `FetchGrant.reserve`
+    for the full argument and what happens to a claim nothing ever spends.
     """
     if tool != FETCH_TOOL or grants is None or session_id is None:
         return False
@@ -122,4 +136,4 @@ def _covered(
     url = args.get("url") if isinstance(args, dict) else None
     if not isinstance(url, str):
         return False
-    return grant.covers(url)
+    return grant.reserve(url)
