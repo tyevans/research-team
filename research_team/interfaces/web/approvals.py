@@ -14,16 +14,31 @@ unwinds it into a recorded `TurnFailed`. The registry is cleaned up in a
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
 
 from research_team.application import ApprovalDecision, ApprovalRequest
+from research_team.application.grants import GrantRegistry
 
 REQUESTED = "ApprovalRequested"
 SETTLED = "ApprovalSettled"
 """Frame types on the live feed. PascalCase like the event names beside them,
 because the browser switches on one `type` field for everything it receives."""
+
+UNATTENDED_TIMEOUT_S = 120.0
+"""How long an unattended session's approval waits before it is refused.
+
+A guess, not a measurement -- nothing in this codebase yet records how long a
+gated `fetch` actually sits parked, so there is no distribution to pick a
+percentile from. Two minutes is chosen only to be obviously long enough that
+a browser answering promptly (the common case exercised by every other test
+in this module) never trips it, and obviously short enough that a run stuck
+on a stray tool call does not hang the process for the rest of the day. It is
+a module constant for exactly the reason a guess deserves one: changing it
+later is a one-line edit, not a hunt through call sites.
+"""
 
 
 @dataclass
@@ -67,9 +82,30 @@ class UnknownApproval(LookupError):
 class WebApprovals:
     """Pending approvals, keyed by session, plus the feed that announces them."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        grants: GrantRegistry | None = None,
+        timeout: float = UNATTENDED_TIMEOUT_S,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        """`grants` is how `decide` tells a person from a run.
+
+        `grants` and `timeout` are keyword-only with defaults so every
+        existing caller -- and every existing test that writes
+        `WebApprovals()` -- is unaffected: with no registry supplied, no
+        session is ever "unattended" (`GrantRegistry.is_unattended` is never
+        even consulted) and every approval waits forever exactly as it always
+        has. `sleep` is the seam a test uses to make the timeout arm without
+        an actual `timeout` seconds passing -- it is asked to sleep for the
+        real duration and only a test ever substitutes something that
+        resolves early, so production always waits the number it claims to.
+        """
         self._pending: dict[UUID, dict[str, PendingApproval]] = {}
         self._listeners: set[asyncio.Queue] = set()
+        self._grants = grants
+        self._timeout = timeout
+        self._sleep = sleep
 
     # ---------------- the port ----------------
 
@@ -82,6 +118,8 @@ class WebApprovals:
         self._pending.setdefault(request.session_id, {})[approval.id] = approval
         self._announce({"type": REQUESTED, **approval.view()})
         try:
+            if self._grants is not None and self._grants.is_unattended(request.session_id):
+                return await self._bounded(approval)
             return await approval.future
         finally:
             # Reached on cancellation as well as on an answer, which is the
@@ -95,6 +133,44 @@ class WebApprovals:
                     "session_id": str(request.session_id),
                 }
             )
+
+    async def _bounded(self, approval: PendingApproval) -> ApprovalDecision:
+        """Race a pending approval against a timer, for a session nobody
+        watches.
+
+        `asyncio.wait` rather than `asyncio.wait_for`, because `wait_for`
+        cancels the *inner* awaitable on expiry -- here that would cancel
+        `approval.future`, which `resolve()` and `cancel()` also touch, and a
+        future two different code paths might cancel out from under each
+        other is a race this function has no business creating. `wait`
+        leaves both tasks alone; the loser is cancelled explicitly, by name,
+        below.
+        """
+        timer = asyncio.ensure_future(self._sleep(self._timeout))
+        try:
+            done, _ = await asyncio.wait(
+                {approval.future, timer}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if approval.future in done:
+                return approval.future.result()
+            # The timer won: nobody answered in time. Refused rather than
+            # errored, the same shape `_decide` produces when there is no
+            # approval port to ask at all (`deep_agent.py:489-498`) -- a
+            # `reject` the turn's model reads and carries on from, not an
+            # exception that ends the pass. `decide`'s own `finally` still
+            # forgets this approval from `_pending` right after we return, so
+            # a late `POST` already 404s; cancelling the future too just
+            # keeps nothing waiting on it that nobody will ever check.
+            if not approval.future.done():
+                approval.future.cancel()
+            return ApprovalDecision(
+                type="reject",
+                message=(
+                    f"No one answered this request within {self._timeout:g}s; it was refused."
+                ),
+            )
+        finally:
+            timer.cancel()
 
     # ---------------- what the HTTP layer drives ----------------
 
