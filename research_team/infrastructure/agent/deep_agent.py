@@ -361,7 +361,7 @@ class DeepAgentTurnExecutor:
             tools=turn_tools or None,
             backend=EventSourcedBackend(session),
             system_prompt=system_prompt,
-            interrupt_on=interrupt_config(self._policy),
+            interrupt_on=interrupt_config(self._policy, session_id=session.aggregate_id),
             # Resuming is impossible without one: `Command(resume=...)` needs
             # somewhere to have parked the halted graph. Per turn and in
             # memory, because nothing here outlives the turn -- the durable
