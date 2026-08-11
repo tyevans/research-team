@@ -106,7 +106,7 @@ export const CourseView = ({
         // interesting failures, and the server's message already names which
         // and what to do about it. Relaying it beats a generic error.
         <div className="course-findings">
-          <EmptyState title="No course to show." detail={errorMessage(course.error)} />
+          <EmptyState heading="No course to show." detail={errorMessage(course.error)} />
         </div>
       ) : course.isPending ? (
         <Loading what="course" />

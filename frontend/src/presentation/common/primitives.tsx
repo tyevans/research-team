@@ -22,23 +22,30 @@ export const Button = ({ tone = 'default', small, className, ...rest }: ButtonPr
   />
 )
 
-export const Chip = ({
-  tone,
-  title,
-  children,
-}: {
-  tone?: string
-  title?: string
-  children: ReactNode
-}) => (
-  <span className={clsx('chip', tone && `chip-${tone}`)} title={title}>
-    {children}
-  </span>
+/** A chip carries no explanation of its own.
+ *
+ * It had a `title` prop, and eleven call sites used it — which made this one
+ * component the single largest source of the S-D3 defect in the console: a
+ * `<span>` is focusable by nothing, so every one of those sentences was
+ * available to a hovering mouse and to no other reader. The prop is gone
+ * rather than deprecated so that the eleven were a compile error rather than a
+ * grep, and an explained chip is now `<Tooltip><Chip>…</Chip></Tooltip>`,
+ * which supplies the tab stop the chip cannot. */
+export const Chip = ({ tone, children }: { tone?: string; children: ReactNode }) => (
+  <span className={clsx('chip', tone && `chip-${tone}`)}>{children}</span>
 )
 
-export const EmptyState = ({ title, detail }: { title: string; detail?: ReactNode }) => (
+/** `heading` rather than `title` throughout this file, and in `Drawer`,
+ *  `Confirm` and `ErrorBox` for the same reason. A prop named `title` on a
+ *  React component is one keystroke and one careless refactor away from the
+ *  HTML attribute of that name, and the two have nothing in common: this one
+ *  renders as a heading, the attribute renders as a hover nobody can reach.
+ *  With the name gone from every component in `presentation`, a bare `title=`
+ *  there is unambiguous, which is what lets `check-deleted.mjs` forbid it
+ *  outright instead of trying to tell the two apart with a regex. */
+export const EmptyState = ({ heading, detail }: { heading: string; detail?: ReactNode }) => (
   <div className="empty">
-    <strong>{title}</strong>
+    <strong>{heading}</strong>
     {detail}
   </div>
 )
@@ -46,16 +53,16 @@ export const EmptyState = ({ title, detail }: { title: string; detail?: ReactNod
 export const Loading = ({ what }: { what: string }) => <div className="empty">loading {what}…</div>
 
 export const ErrorBox = ({
-  title,
+  heading,
   message,
   onRetry,
 }: {
-  title: string
+  heading: string
   message: string
   onRetry?: () => void
 }) => (
   <div className="error-box">
-    <strong>{title}</strong>
+    <strong>{heading}</strong>
     {message}
     {onRetry ? (
       <div>

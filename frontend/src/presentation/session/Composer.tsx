@@ -5,6 +5,7 @@ import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { TurnState, type TurnNote, type TurnRange } from '@domain/session/turn.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
 
+import { Tooltip } from '../common/Tooltip.tsx'
 import { elapsed, elapsedSince } from '../formatting/format.ts'
 
 interface ComposerProps {
@@ -170,15 +171,12 @@ const RangeChip = ({
   range: TurnRange
   onJumpTo: (at: EventIndex) => void
 }) => (
-  <button
-    type="button"
-    className="turn-range"
-    title={`jump to event ${range.from}`}
-    onClick={() => onJumpTo(range.from)}
-  >
-    {typeof range.turnIndex === 'number' ? `turn ${range.turnIndex} · ` : ''}
-    {range.from === range.to ? `event ${range.from}` : `events ${range.from}–${range.to}`}
-  </button>
+  <Tooltip asChild explanation={`Jump to event ${range.from}`}>
+    <button type="button" className="turn-range" onClick={() => onJumpTo(range.from)}>
+      {typeof range.turnIndex === 'number' ? `turn ${range.turnIndex} · ` : ''}
+      {range.from === range.to ? `event ${range.from}` : `events ${range.from}–${range.to}`}
+    </button>
+  </Tooltip>
 )
 
 /** A one-second repaint while a turn runs, so the elapsed label stays honest.

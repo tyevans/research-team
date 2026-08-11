@@ -9,7 +9,7 @@ import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { truncate } from '@domain/conversation/message.ts'
 
 import { Disclosure, EmptyState } from '../common/primitives.tsx'
-import { clockTime, fullTime } from '../formatting/format.ts'
+import { clockTime } from '../formatting/format.ts'
 
 /** Which column of a row holds the tab stop: the event itself, or its fork
  *  action. A roving pair, so arrowing down a hundred rows never silently
@@ -102,7 +102,7 @@ export const Timeline = ({ log, scrub, fresh, discarded, onSelect, onFork }: Tim
   if (log.length === 0) {
     return (
       <EmptyState
-        title="The log is empty."
+        heading="The log is empty."
         detail="Send a turn below — every message, tool call and file write lands here in order."
       />
     )
@@ -240,9 +240,6 @@ const TimelineRow = ({
         // losing the roving tabindex. Absent on unselected rows because a
         // cursor that is not on this row is not this row's business.
         aria-activedescendant={cursor === null ? undefined : cellId(cursor)}
-        title={`${humaniseEventType(entry.type)}\n${fullTime(entry.occurredAt)}${
-          summary ? `\n${summary}` : ''
-        }`}
         onClick={onSelect}
       >
         <div
@@ -282,7 +279,6 @@ const TimelineRow = ({
             className="btn btn-ghost ev-fork"
             tabIndex={-1}
             aria-label={`Fork a new session at event ${entry.index}`}
-            title={`fork a new session at event ${entry.index}`}
             onClick={(event) => {
               event.stopPropagation()
               onFork()

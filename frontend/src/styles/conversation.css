@@ -1,4 +1,4 @@
-/* Messages, compaction, folded tool runs, approvals and provisional activity. */
+/* Messages, compaction, folded tool runs and provisional activity. */
 
 /* The conversation's own scroll container.
  *
@@ -273,65 +273,19 @@
   word-break: break-word;
 }
 
-/* --- approvals ----------------------------------------------------------
- * A gated turn parks here rather than in the conversation pane's own flow:
- * the call it wants to make isn't a message yet, and until someone decides
- * it may never become one. */
-.approvals {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px 0;
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: 50%;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.approval {
-  border: 1px solid var(--k-tool);
-  border-radius: var(--radius);
-  background: var(--bg-raise);
-  padding: 7px 9px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.approval-head {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-family: var(--mono);
-  font-size: var(--t-sm);
-}
-.approval-head b {
-  color: var(--k-tool);
-  font-weight: 600;
-}
-.approval-desc {
-  font-size: var(--t-xs);
-  color: var(--fg-dim);
-}
-.approval-args {
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  color: var(--fg-faint);
-  white-space: pre-wrap;
-  overflow-x: auto;
-  max-height: 120px;
-}
-.approval-actions {
-  display: flex;
-  gap: 6px;
-}
-.approval-actions .btn {
-  padding: 3px 10px;
-}
+/* The `.approval*` rules were deleted here. `Approvals` moved to the shell's
+ * `DecisionBar` and was rewritten in Tailwind utilities in the same change, so
+ * nothing matched them any more -- and a stylesheet block that matches nothing
+ * is the thing that quietly stops being red. Nothing in this file used them in
+ * a descendant or sibling selector, which is why the deletion is a deletion
+ * rather than a set of claims to re-verify. */
 
 /* --- provisional turn activity -------------------------------------------
  * Streamed content for a turn that has not committed yet -- reduced opacity
- * and a left border (the approval card's own language for "not settled")
- * mark it as not-yet-real, so it can never be mistaken for a log entry. */
+ * and a left border mark it as not-yet-real, so it can never be mistaken for
+ * a log entry. (The left border used to be described here as "the approval
+ * card's own language for not-settled"; the approval card is Tailwind-styled
+ * in the shell now, so this is the only place that language survives.) */
 /* Capped and scrollable: a long-running turn can stream more provisional
  * content than fits, and an uncapped block would both swallow the committed
  * log above it and trap its own overflow off the bottom of the pane. */

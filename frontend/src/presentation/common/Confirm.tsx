@@ -15,14 +15,14 @@ import { Drawer } from './Drawer.tsx'
  * closes, and Tab cannot walk out into the page behind.
  */
 export const Confirm = ({
-  title,
+  heading,
   lines,
   confirmLabel,
   tone = 'accent',
   onConfirm,
   onCancel,
 }: {
-  title: string
+  heading: string
   /** The body, one paragraph per entry. A list rather than one string because
    *  these sentences are deliberately separate thoughts, and joining them with
    *  newlines was only ever a limitation of the native dialog. */
@@ -32,7 +32,7 @@ export const Confirm = ({
   onConfirm: () => void
   onCancel: () => void
 }) => (
-  <Drawer title={title} label={title} onClose={onCancel}>
+  <Drawer heading={heading} label={heading} onClose={onCancel}>
     <div className="confirm">
       {lines.map((line) => (
         <p key={line}>{line}</p>

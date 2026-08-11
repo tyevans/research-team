@@ -51,9 +51,13 @@ def controllable():
     gate = asyncio.Event()
     seen = {}
 
-    async def start(run_id, project_id, session_id, budget, cancelled):
+    async def start(
+        run_id, project_id, session_id, budget, fetch_hosts, fetch_budget, cancelled
+    ):
         seen["run_id"] = run_id
         seen["budget"] = budget
+        seen["fetch_hosts"] = fetch_hosts
+        seen["fetch_budget"] = fetch_budget
         await gate.wait()
         seen["cancelled"] = cancelled()
         return report(reason="cancelled" if cancelled() else "queue_empty", run_id=run_id)
@@ -166,6 +170,37 @@ async def test_the_budget_reaches_the_run():
     assert seen["budget"].max_rounds == 3
 
 
+async def test_the_fetch_grant_reaches_the_run():
+    """The other half of what `start` widened to carry -- see `StartRun`."""
+    start, gate, seen = controllable()
+    supervisor = ResearchSupervisor(start, FakeRuns())
+    project_id = uuid4()
+
+    supervisor.start(
+        project_id, uuid4(), fetch_hosts=["a.example", "b.example"], fetch_budget=5
+    )
+    gate.set()
+    await supervisor.wait(project_id)
+
+    assert seen["fetch_hosts"] == ["a.example", "b.example"]
+    assert seen["fetch_budget"] == 5
+
+
+async def test_an_ungranted_run_carries_no_hosts_and_no_budget():
+    """The REPL's call site, and every other caller that predates grants:
+    nothing asked for, nothing carried."""
+    start, gate, seen = controllable()
+    supervisor = ResearchSupervisor(start, FakeRuns())
+    project_id = uuid4()
+
+    supervisor.start(project_id, uuid4())
+    gate.set()
+    await supervisor.wait(project_id)
+
+    assert seen["fetch_hosts"] == []
+    assert seen["fetch_budget"] == 0
+
+
 async def test_shutdown_asks_every_run_to_stop_and_waits_for_it():
     """Otherwise the store closes underneath a round still trying to append."""
     start, gate, seen = controllable()
@@ -187,7 +222,9 @@ async def test_shutdown_asks_every_run_to_stop_and_waits_for_it():
 async def test_a_run_that_raises_does_not_take_the_process_with_it():
     """Nobody awaits the task, so a failure has to be logged rather than lost."""
 
-    async def explode(run_id, project_id, session_id, budget, cancelled):
+    async def explode(
+        run_id, project_id, session_id, budget, fetch_hosts, fetch_budget, cancelled
+    ):
         raise RuntimeError("the queue projection is down")
 
     supervisor = ResearchSupervisor(explode, FakeRuns())

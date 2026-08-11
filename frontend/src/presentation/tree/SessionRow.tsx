@@ -3,7 +3,7 @@ import { shortId } from '@domain/shared/identifier.ts'
 import { truncate } from '@domain/conversation/message.ts'
 
 import { Chip } from '../common/primitives.tsx'
-import { fullTime, plural, relativeTime } from '../formatting/format.ts'
+import { plural, relativeTime } from '../formatting/format.ts'
 import { sessionHref } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
 
@@ -26,14 +26,8 @@ export const SessionRow = ({ session, held }: { session: SessionSummary; held?: 
       {session.failedTurns ? (
         <Chip tone="fail">{plural(session.failedTurns, 'failed turn')}</Chip>
       ) : null}
-      {held ? (
-        <Chip tone="held" title="This session is holding its project">
-          held
-        </Chip>
-      ) : null}
-      <span className="row-id" title={session.id}>
-        {shortId(session.id)}
-      </span>
+      {held ? <Chip tone="held">held</Chip> : null}
+      <span className="row-id">{shortId(session.id)}</span>
     </div>
     <div className="row-stats">
       <span>
@@ -42,7 +36,7 @@ export const SessionRow = ({ session, held }: { session: SessionSummary; held?: 
       <span>
         <b>{session.files ?? 0}</b> files
       </span>
-      <span title={fullTime(session.startedAt)}>{relativeTime(session.startedAt)}</span>
+      <span>{relativeTime(session.startedAt)}</span>
     </div>
   </button>
 )

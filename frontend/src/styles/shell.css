@@ -192,11 +192,19 @@
     border-color 0.12s,
     color 0.12s;
 }
-.btn:hover:not(:disabled) {
+/* `aria-disabled` is treated exactly as `disabled` throughout, because two
+   buttons in this console are off *and* owe the reader a sentence about why --
+   and a `disabled` element takes neither focus nor pointer events, so the
+   tooltip carrying that sentence could never open on one. Those buttons stay
+   focusable and guard their own handler; this is what stops them from also
+   looking pressable. Anything that reads only `:disabled` is a second answer
+   to "is this off", which is why every rule below carries both. */
+.btn:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--bg-hover);
   border-color: #303945;
 }
-.btn:disabled {
+.btn:disabled,
+.btn[aria-disabled='true'] {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -206,7 +214,7 @@
   color: var(--accent-fg);
   font-weight: 600;
 }
-.btn-accent:hover:not(:disabled) {
+.btn-accent:hover:not(:disabled, [aria-disabled='true']) {
   background: #eeb168;
   border-color: #eeb168;
 }
@@ -215,7 +223,7 @@
 .btn-danger {
   color: var(--k-failure);
 }
-.btn-danger:hover:not(:disabled) {
+.btn-danger:hover:not(:disabled, [aria-disabled='true']) {
   background: #241417;
   border-color: #45272a;
 }
@@ -227,7 +235,7 @@
   font-family: var(--mono);
   font-size: var(--t-xs);
 }
-.btn-ghost:hover:not(:disabled) {
+.btn-ghost:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--bg-raise);
   color: var(--accent);
   border-color: transparent;

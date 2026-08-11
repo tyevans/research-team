@@ -44,7 +44,6 @@ export const Cloze = ({ block, attempts }: { block: ComponentBlock; attempts: At
                 // away from is a hint they read after guessing.
                 placeholder={segment.hint ?? ''}
                 aria-label={`Blank ${segment.blank + 1}${segment.hint ? `: ${segment.hint}` : ''}`}
-                title={segment.hint ?? ''}
                 disabled={state.verdict !== null || (cloze.oneAtATime && segment.blank > active)}
                 onChange={(event) =>
                   attempts.update(block, {

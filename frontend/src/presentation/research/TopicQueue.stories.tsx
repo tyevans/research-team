@@ -4,6 +4,7 @@ import type { Dispatch } from '@domain/research/dispatch.ts'
 import { focusCounts, type TopicView } from '@domain/research/topic.ts'
 import { TopicId } from '@domain/shared/identifier.ts'
 
+import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { TopicQueue } from './TopicQueue.tsx'
 
 /** The topic queue in the states it actually reaches.
@@ -35,7 +36,14 @@ const meta = {
           padding: '10px 12px 12px',
         }}
       >
-        <Story />
+        {/* The rail's explanations are `Tooltip`s, and a `Tooltip` with no
+            host in scope renders its trigger and no content at all — so
+            without this the workbench would show the row and silently drop
+            every sentence on it. Same reason `TopicQueue.test.tsx` gets one
+            through `composeStories`. */}
+        <OverlayHost>
+          <Story />
+        </OverlayHost>
       </div>
     ),
   ],

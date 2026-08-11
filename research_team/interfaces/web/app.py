@@ -253,6 +253,17 @@ class NewRun(BaseModel):
     max_rounds: int | None = None
     quiet_rounds: int | None = None
 
+    fetch_hosts: list[str] = Field(default_factory=list)
+    """Named hosts this run may fetch from, unattended. See `fetch_grant`.
+
+    No wildcards, matched exactly (after lowercasing) against a URL's
+    hostname -- `FetchGrant.covers` in `application/grants.py` is what
+    actually enforces this; this layer only carries what a person typed.
+    """
+
+    fetch_budget: int = 0
+    """How many of those fetches this run may spend, total. See `fetch_grant`."""
+
     def budget(self) -> Budget | None:
         """None when nothing was asked for, so the driver applies its own."""
         asked = {
@@ -271,6 +282,34 @@ class NewRun(BaseModel):
         if "max_rounds" in asked:
             asked.setdefault("max_turns", asked["max_rounds"] * 2)
         return Budget(**asked)
+
+    def fetch_grant(self) -> tuple[list[str], int]:
+        """The `(hosts, budget)` pair to start this run with, or a refusal.
+
+        Both fields default to "nothing granted" (`[]`, `0`), which is the
+        common case and needs no validation. Half a grant -- hosts named with
+        no budget, or a budget with no hosts named -- is refused rather than
+        silently coerced into "nothing granted" or "unlimited": whichever
+        half a person supplied is the half that suggests they believed the
+        other one was implied, and coercing either way would grant something
+        nobody asked for or silently grant nothing at all. Raises `ValueError`
+        so the route can turn it into a 422 naming the missing half, the same
+        shape `service.start_in_project`'s `CommandRejectedError` already
+        turns into a 409.
+        """
+        has_hosts = bool(self.fetch_hosts)
+        has_budget = self.fetch_budget > 0
+        if has_hosts and not has_budget:
+            raise ValueError(
+                "fetch_hosts was given without fetch_budget; a grant needs both "
+                "or neither -- how many fetches should these hosts get?"
+            )
+        if has_budget and not has_hosts:
+            raise ValueError(
+                "fetch_budget was given without fetch_hosts; a grant needs both "
+                "or neither -- which hosts should this budget cover?"
+            )
+        return list(self.fetch_hosts), self.fetch_budget
 
 
 class NewSeed(BaseModel):
@@ -1191,6 +1230,13 @@ def create_app(
         await _require_project(project_id)
         options = body or NewRun()
         try:
+            # Checked before anything is created: a half-grant is a mistake
+            # in the request, not a state this instance should ever hold --
+            # no session started, no project held, nothing to unwind.
+            fetch_hosts, fetch_budget = options.fetch_grant()
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        try:
             session_id = await service.start_in_project(project_id)
         except CommandRejectedError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
@@ -1206,6 +1252,8 @@ def create_app(
                 project_id,
                 session_id,
                 budget=options.budget(),
+                fetch_hosts=fetch_hosts,
+                fetch_budget=fetch_budget,
                 # This route made the session, so this route puts it away.
                 # Two things go wrong without it, and the second is the worse
                 # one: the project stays held, so the *next* run is refused by

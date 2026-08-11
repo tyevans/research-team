@@ -1,5 +1,6 @@
 import { severityLabel, type Course } from '@domain/project/course.ts'
 
+import { unimplementedChecksWarning } from '../common/findings-copy.ts'
 import { Chip } from '../common/primitives.tsx'
 
 /** What the *current* stage's own checks say, right now.
@@ -31,9 +32,7 @@ export const Findings = ({ course }: { course: Course }) => {
           <li className="finding finding-unimplemented">
             <Chip>not run</Chip>
             <span className="finding-msg">
-              This stage declares {course.unimplementedChecks.length} check
-              {course.unimplementedChecks.length === 1 ? '' : 's'} that nothing implements:{' '}
-              {course.unimplementedChecks.join(', ')}. Nothing they would have found is known.
+              {unimplementedChecksWarning(course.unimplementedChecks)}
             </span>
           </li>
         ) : null}

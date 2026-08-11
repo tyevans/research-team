@@ -11,7 +11,7 @@ import type { SessionId } from '@domain/shared/identifier.ts'
 
 import { DiffView } from '../common/content.tsx'
 import { Chip, EmptyState, ErrorBox, Loading } from '../common/primitives.tsx'
-import { clockTime, fullTime } from '../formatting/format.ts'
+import { clockTime } from '../formatting/format.ts'
 
 /** Every recorded change to one path, oldest first.
  *
@@ -31,7 +31,7 @@ export const FileHistory = ({ sessionId, path }: { sessionId: SessionId; path: F
   if (history.isError) {
     return (
       <ErrorBox
-        title="Could not read this file"
+        heading="Could not read this file"
         message={errorMessage(history.error)}
         onRetry={() => void history.refetch()}
       />
@@ -39,7 +39,7 @@ export const FileHistory = ({ sessionId, path }: { sessionId: SessionId; path: F
   }
   if (history.data.length === 0) {
     return (
-      <EmptyState title="No recorded revisions." detail="Nothing in the log touched this path." />
+      <EmptyState heading="No recorded revisions." detail="Nothing in the log touched this path." />
     )
   }
 
@@ -116,9 +116,12 @@ const Revision = ({
         <span className="rev-idx">#{revision.index}</span>
         <span className="rev-type">{humaniseEventType(revision.type)}</span>
         {revision.replaceAll ? <Chip>replace_all</Chip> : null}
-        <span className="rev-time" title={fullTime(revision.occurredAt)}>
-          {clockTime(revision.occurredAt)}
-        </span>
+        {/* The full timestamp used to hang off this as a `title`. It is gone
+            rather than converted: `.rev-head` is itself `role="button"`, so a
+            `Tooltip` here would put one interactive element inside another,
+            and the date the clock time omits is on every one of these rows in
+            the timeline beside it. */}
+        <span className="rev-time">{clockTime(revision.occurredAt)}</span>
       </div>
       {open ? (
         <div className="rev-body">

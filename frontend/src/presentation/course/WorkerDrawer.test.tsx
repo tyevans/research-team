@@ -11,8 +11,7 @@ import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { AutonomyRepository } from '@application/ports/repositories.ts'
 import { emptyActivity } from '@domain/activity/activity.ts'
-import type { Approval } from '@domain/approval/approval.ts'
-import { ApprovalId, SessionId } from '@domain/shared/identifier.ts'
+import { SessionId } from '@domain/shared/identifier.ts'
 import { TurnState } from '@domain/session/turn.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
@@ -20,14 +19,6 @@ import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { WorkerDrawer } from './WorkerDrawer.tsx'
 
 const SESSION = SessionId('22222222-2222-2222-2222-222222222222')
-
-const anApproval = (id: string): Approval => ({
-  id: ApprovalId(id),
-  sessionId: SESSION,
-  toolName: 'fetch',
-  description: null,
-  args: { url: 'https://example.com' },
-})
 
 /** A policy with something still asking, so the drawer's `AutonomyAllowAll`
  *  renders enabled controls. A policy where everything was already auto would
@@ -66,8 +57,6 @@ const fakeStream = (): EventStream => ({
 const fakeStore = (overrides: {
   open?: SessionStore['getState'] extends never ? never : (...args: never[]) => Promise<void>
   close?: () => void
-  approvals?: readonly Approval[]
-  decide?: SessionStore['getState'] extends never ? never : (...args: never[]) => Promise<void>
 }): SessionStore => {
   const state = {
     sessionId: SESSION,
@@ -82,8 +71,6 @@ const fakeStore = (overrides: {
     note: null,
     activity: emptyActivity(),
     discarded: new Map(),
-    approvals: new Map((overrides.approvals ?? []).map((approval) => [approval.id, approval])),
-    deciding: null,
     fresh: new Map(),
     open: overrides.open ?? vi.fn().mockResolvedValue(undefined),
     close: overrides.close ?? vi.fn(),
@@ -92,7 +79,6 @@ const fakeStore = (overrides: {
     send: vi.fn().mockResolvedValue(undefined),
     cancel: vi.fn().mockResolvedValue(undefined),
     fork: vi.fn().mockResolvedValue(null),
-    decide: overrides.decide ?? vi.fn().mockResolvedValue(undefined),
     dismissNote: vi.fn(),
     handleFrame: vi.fn(),
     handleReconnect: vi.fn().mockResolvedValue(undefined),
@@ -121,8 +107,6 @@ const renderDrawer = (
   parts: {
     open?: (...args: never[]) => Promise<void>
     close?: () => void
-    approvals?: readonly Approval[]
-    decide?: (...args: never[]) => Promise<void>
   } = {},
 ) => {
   const store = fakeStore(parts)
@@ -180,49 +164,45 @@ it('does not tell an empty session to send a turn it has no composer for', () =>
 })
 
 it('still offers a link to open the full session', () => {
-  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
-    approvals: [anApproval('a-1')],
-  })
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />)
 
   const link = screen.getByRole('link', { name: /open the session/i })
   expect(link).toHaveAttribute('href', expect.stringContaining(SESSION))
 })
 
-it('renders a pending approval with approve and reject controls', () => {
-  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
-    approvals: [anApproval('a-1')],
-  })
+/** **Four approval tests and the allow-all test were deleted here**, and the
+ *  deletion is the change rather than a casualty.
+ *
+ *  They asserted that the drawer rendered approve/reject controls, that each
+ *  answered through the drawer's own store rather than by navigating, and that
+ *  `AutonomyAllowAll` sat beside them. All five were true and all five were
+ *  about a placement that is gone: approvals are the shell's `DecisionBar`
+ *  now, subscribed to the whole feed rather than to this drawer's session.
+ *  Keeping them here would have meant keeping the call site they describe.
+ *
+ *  What they were really testing is asserted in `DecisionBar.test.tsx`,
+ *  including the case none of them could reach — an approval for a session
+ *  whose drawer is *not* open still reaching a person.
+ *
+ *  Deliberately kept below: that the drawer offers no composer, which is still
+ *  this component's own claim about itself.
+ */
+it('no longer offers a decision, because the shell does on every page', () => {
+  // The complement of the deletion above, and it fails if `Approvals` is put
+  // back here: two decision surfaces over one gate is exactly the arrangement
+  // the bar replaced, and the drawer's would again be the one that only works
+  // while it happens to be open.
+  //
+  // No approval is seeded into the fake store any more, because the store has
+  // no approvals to seed: the parallel copy it kept was deleted once nothing
+  // rendered it. Putting `Approvals` back here would therefore also mean
+  // rebuilding that state, which is a louder change than the one-line import
+  // this test was originally guarding against — but it is still the change
+  // this test refuses.
+  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />)
 
-  expect(screen.getByRole('button', { name: /approve/i })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /reject/i })).toBeInTheDocument()
-})
-
-it('approves through the drawer store, not by navigating away', async () => {
-  const decide = vi.fn().mockResolvedValue(undefined)
-  const approval = anApproval('a-1')
-  const user = userEvent.setup()
-
-  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
-    approvals: [approval],
-    decide,
-  })
-  await user.click(screen.getByRole('button', { name: /approve/i }))
-
-  expect(decide).toHaveBeenCalledWith(approval, 'approve')
-})
-
-it('rejects through the drawer store, not by navigating away', async () => {
-  const decide = vi.fn().mockResolvedValue(undefined)
-  const approval = anApproval('a-1')
-  const user = userEvent.setup()
-
-  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
-    approvals: [approval],
-    decide,
-  })
-  await user.click(screen.getByRole('button', { name: /reject/i }))
-
-  expect(decide).toHaveBeenCalledWith(approval, 'reject')
+  expect(screen.queryByRole('button', { name: /^approve$/i })).toBeNull()
+  expect(screen.queryByRole('button', { name: /^reject$/i })).toBeNull()
 })
 
 it('closes the store it opened when it unmounts', () => {
@@ -289,34 +269,17 @@ it('moves focus into the drawer on open', () => {
  *  The one claim in those tests that was about *this* component rather than
  *  the trap — an approval that arrives after mount is inside the dialog and
  *  reachable — is kept, below, without the ring. */
-it('sweeps in an approval that arrives after it opened', () => {
-  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
-    approvals: [anApproval('a-1')],
-  })
-
-  const reject = screen.getByRole('button', { name: /reject/i })
-  // Inside the dialog, so it is inside what `inert` leaves reachable when the
-  // rest of the page is not. Under the old trap this needed a per-keypress
-  // re-query to be true; under `inert` it is true because the button is a
-  // descendant, which is a fact that cannot go stale.
-  expect(screen.getByRole('dialog').contains(reject)).toBe(true)
-})
-
-it('offers the way to stop being asked, beside the approvals', async () => {
-  // The whole reason this control is in the drawer: somebody answering the
-  // same approval for the fifth time should not have to navigate to a
-  // settings surface to make it stop.
-  renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
-    approvals: [anApproval('a-1')],
-  })
-
-  expect(
-    await screen.findByRole('button', { name: /allow everything except the review gate/i }),
-  ).toBeInTheDocument()
-  // And it says what it actually changes, on the control rather than in a
-  // tooltip — the policy is instance-wide even though this drawer is not.
-  expect(screen.getByText(/every session on this instance/i)).toBeInTheDocument()
-})
+/** `sweeps in an approval that arrives after it opened` was deleted with the
+ *  four above: it asserted that a late-arriving approval button was a
+ *  descendant of the dialog, and there is no approval button in the dialog any
+ *  more. What it was standing in for -- that `inert` confines by containment
+ *  rather than by a hand-rolled ring -- is asserted over the whole document at
+ *  the bottom of this file, which is where it belongs.
+ *
+ *  `offers the way to stop being asked, beside the approvals` was deleted for
+ *  the same reason as the decision tests: `AutonomyAllowAll` is beside the
+ *  approvals still, and the approvals are in the bar. `DecisionBar.test.tsx`
+ *  asserts it there. */
 
 it('makes the page behind it unreachable rather than merely covered', () => {
   // The claim the three deleted trap tests were reaching for, asserted the way

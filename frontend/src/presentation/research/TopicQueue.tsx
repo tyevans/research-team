@@ -3,6 +3,7 @@ import type { TopicFocus, TopicView } from '@domain/research/topic.ts'
 import type { TopicId } from '@domain/shared/identifier.ts'
 
 import { Button, EmptyState } from '../common/primitives.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 import { TopicRow } from '../entity/topic/TopicRow.tsx'
 
 /** The slices, in the order they are offered: everything, then the one that
@@ -63,11 +64,17 @@ export const DispatchChip = ({ dispatch }: { dispatch: Dispatch }) => {
   }
   if (dispatch.status === 'failed') {
     return (
-      // `title` carries the untruncated text: the chip is clamped to one line
-      // in a 320px rail, and a model's error can be a paragraph.
-      <span className="topic-dispatch topic-dispatch-failed" title={dispatch.detail ?? undefined}>
-        ✕ {dispatch.action} · failed · {dispatch.detail ?? 'no reason given'}
-      </span>
+      // The tooltip carries the untruncated text: the chip is clamped to one
+      // line in a 320px rail, and a model's error can be a paragraph. It was a
+      // `title`, which is to say the untruncated text was available to a
+      // hovering mouse and to nothing else — the test that covers this is
+      // named for reachability and was passing against an attribute no
+      // keyboard can reach.
+      <Tooltip explanation={dispatch.detail ?? 'no reason given'}>
+        <span className="topic-dispatch topic-dispatch-failed">
+          ✕ {dispatch.action} · failed · {dispatch.detail ?? 'no reason given'}
+        </span>
+      </Tooltip>
     )
   }
   if (dispatch.status === 'cancelled') {
@@ -176,25 +183,22 @@ export const TopicQueue = ({
           {running ? '1 running' : 'none running'}
           {queuedCount > 0 ? `, ${String(queuedCount)} queued` : ''}
         </span>
-        <Button
-          small
-          disabled={stopping}
-          onClick={onStop}
-          title="Stop the running dispatch and drop everything queued"
-        >
-          Stop
-        </Button>
+        <Tooltip asChild explanation="Stop the running dispatch and drop everything queued">
+          <Button small disabled={stopping} onClick={onStop}>
+            Stop
+          </Button>
+        </Tooltip>
       </div>
     ) : null}
 
     {counts.all === 0 ? (
-      <EmptyState title="No topics" detail="Nothing has been seeded into this queue yet." />
+      <EmptyState heading="No topics" detail="Nothing has been seeded into this queue yet." />
     ) : topics.length === 0 ? (
       // Distinct from "No topics" above, and the distinction is the whole
       // point: that one means the queue is empty, this one means the queue has
       // work in it that the current filter is hiding.
       <EmptyState
-        title="No topics match"
+        heading="No topics match"
         detail="Nothing in this project matches that filter. Widen it to see the rest of the queue."
       />
     ) : (
@@ -219,19 +223,35 @@ export const TopicQueue = ({
                         and a menu holding a single item is a click in front of
                         a button. It becomes a split button when `research` and
                         `lesson` land. */}
-                    <Button
-                      small
-                      className="topic-dispatch-button"
-                      disabled={empty || dispatching || dispatch?.status === 'queued'}
-                      title={
+                    {/* `aria-disabled` rather than `disabled`, and the reason
+                        is the explanation beside it: this button's sentence
+                        exists *because* it is off, and a `disabled` element
+                        takes neither focus nor pointer events, so the tooltip
+                        it hangs on could never open. Keeping it focusable is
+                        what makes "why is this off" answerable at all — the
+                        old `title` was not an answer, it was an answer a mouse
+                        could find. The press is guarded here instead, which is
+                        the cost: nothing but this handler stops the click. */}
+                    <Tooltip
+                      asChild
+                      explanation={
                         empty
                           ? 'Nothing gathered for this topic yet'
                           : 'Write down what this project understands about this topic'
                       }
-                      onClick={() => onDispatch(topic.topicId)}
                     >
-                      Write understanding
-                    </Button>
+                      <Button
+                        small
+                        className="topic-dispatch-button"
+                        aria-disabled={empty || dispatching || dispatch?.status === 'queued'}
+                        onClick={() => {
+                          if (empty || dispatching || dispatch?.status === 'queued') return
+                          onDispatch(topic.topicId)
+                        }}
+                      >
+                        Write understanding
+                      </Button>
+                    </Tooltip>
                   </>
                 ),
                 overflow: [

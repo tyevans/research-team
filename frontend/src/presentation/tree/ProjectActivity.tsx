@@ -6,6 +6,7 @@ import { isLive } from '@domain/research/run.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Chip } from '../common/primitives.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 import { elapsed } from '../formatting/format.ts'
 
 /** What is happening in a project right now, if anything.
@@ -67,7 +68,7 @@ export const useProjectActivity = (
  *  event log uses for it rather than as a colour invented here. */
 export const ActivityChip = ({ label }: { label: string | null }) =>
   label ? (
-    <Chip tone="held" title="Something is running in this project right now">
-      ⟳ {label}
-    </Chip>
+    <Tooltip explanation="Something is running in this project right now">
+      <Chip tone="held">⟳ {label}</Chip>
+    </Tooltip>
   ) : null

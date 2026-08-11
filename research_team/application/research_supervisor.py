@@ -22,7 +22,7 @@ be this module claiming to know why a run it never saw ended.
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -56,11 +56,19 @@ class ActiveRun:
     session_id: UUID
 
 
-#: Starts one run. Given the ids and how to know it has been cancelled, it
-#: works the queue and reports. Injected so this module names no driver, no
-#: repository and no executor -- the composition root supplies all three.
+#: Starts one run. Given the ids, the budget, the fetch pre-authorization (as
+#: the domain carries it -- a host list and a count, not a `FetchGrant`; the
+#: driver is what turns those into one and registers it) and how to know it
+#: has been cancelled, it works the queue and reports. Injected so this
+#: module names no driver, no repository and no executor -- the composition
+#: root supplies all three.
+#:
+#: Widened to carry `fetch_hosts`/`fetch_budget` for the pre-authorization
+#: feature: a run's grant has to reach the driver the same way its budget
+#: does, and this is the one seam every caller already goes through.
 StartRun = Callable[
-    [UUID, UUID, UUID, Budget | None, Callable[[], bool]], Awaitable[RunReport]
+    [UUID, UUID, UUID, Budget | None, list[str], int, Callable[[], bool]],
+    Awaitable[RunReport],
 ]
 
 
@@ -97,6 +105,8 @@ class ResearchSupervisor:
         session_id: UUID,
         *,
         budget: Budget | None = None,
+        fetch_hosts: Sequence[str] = (),
+        fetch_budget: int = 0,
         after: Callable[[], Awaitable[None]] | None = None,
     ) -> ActiveRun:
         """Begin a run in the background and name it.
@@ -113,6 +123,12 @@ class ResearchSupervisor:
         session for the run and nothing else will ever release it, while the
         REPL runs in the session the person is already sitting in and must not
         have it released underneath them.
+
+        `fetch_hosts`/`fetch_budget` default to nothing granted, so the REPL
+        caller (which never passes them) starts exactly the run it always
+        did. They are handed straight through to `_start` -- this class does
+        not decide what a grant means, only carries the two numbers a caller
+        gave it to whoever does.
         """
         existing = self.active(project_id)
         if existing is not None:
@@ -124,6 +140,8 @@ class ResearchSupervisor:
             self._run(
                 handle,
                 budget,
+                list(fetch_hosts),
+                fetch_budget,
                 after,
             )
         )
@@ -140,6 +158,8 @@ class ResearchSupervisor:
         self,
         handle: ActiveRun,
         budget: Budget | None,
+        fetch_hosts: list[str],
+        fetch_budget: int,
         after: Callable[[], Awaitable[None]] | None,
     ) -> RunReport:
         """The run, and whatever the caller has to do once it is over.
@@ -158,6 +178,8 @@ class ResearchSupervisor:
                 handle.project_id,
                 handle.session_id,
                 budget,
+                fetch_hosts,
+                fetch_budget,
                 lambda: handle.run_id in self._cancelled,
             )
         finally:

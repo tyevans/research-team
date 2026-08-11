@@ -6,7 +6,14 @@
    custom properties at the top rather than sprinkled through the rules. */
 
 .agents {
-  --agents-width: 33rem;
+  /* `--agents-width` used to be declared here and read by `.agents-panel`, and
+     it had been dead since the panel was portalled: a custom property is
+     inherited down the *DOM*, and the panel lives in `.lay-overlay-host`,
+     which is not a descendant of this element. `var(--agents-width)` therefore
+     resolved to nothing, `width: min(<invalid>, …)` was dropped whole, and the
+     panel had been sizing itself to its content rather than to 33rem with
+     nobody noticing. The number is stated on the panel's own rule now, which
+     is the only place that can see it. */
 
   /* An item in the topbar's right-hand group, sitting in flow beside the
      badges. It occludes nothing: the topbar is a row of its own, and the
@@ -73,25 +80,29 @@
 /* ---------------- the popover ---------------- */
 
 .agents-panel {
-  /* Hangs from the bottom edge of the bar, pinned to the viewport rather than
-     to the toggle: `--topbar-h` is exactly where the bar ends, and the toggle
-     is already at the right-hand end of it, so anchoring to the viewport gives
-     the same result without the panel having to measure anything. `--space-4`
-     is the topbar's own horizontal padding, so its right edge lines up with
-     the connection badge above it. */
-  position: fixed;
-  top: var(--topbar-h);
-  right: var(--space-4);
-  /* No `z-index`. This is the declaration the whole overlay migration exists
-     to delete: it was 40, against the modal drawer backdrop's 20, so this
-     panel painted on top of an `aria-modal` dialog while its own component
-     comment claimed the dialog was in front. The panel is an `Overlay` now,
-     inside the one host at `--z-overlay`, and its order against a drawer is
-     the order the two mounted. There is no number here to get wrong.
+  /* **No positioning at all any more, and that is the deletion.** This rule
+     used to read `position: fixed; top: var(--topbar-h); right: var(--space-4)`
+     -- the panel pinned to the viewport because `Overlay` offers no anchoring,
+     and the topbar's height happening to be where the toggle's bottom edge is.
+     It was right only for as long as the widget stayed at the right-hand end
+     of a full-width bar, it could not flip against a viewport edge, and it
+     needed a media query at 420px to become full-width because a right-hugging
+     column had nowhere left to go.
 
-     `position: fixed` stays, and is now anchoring against the same viewport
-     the host already covers rather than escaping a stacking context. */
-  width: min(var(--agents-width), calc(100vw - 2 * var(--space-4)));
+     `Popover` measures the trigger, so all of that is Radix's now. Anything
+     positional written here would fight the inline transform the positioner
+     sets; `scripts/check-deleted.mjs` fails the build on it coming back.
+
+     There is still no `z-index`, and that is the older deletion: it was 40
+     against the modal drawer backdrop's 20, so this panel painted over an
+     `aria-modal` dialog while its own component comment claimed the dialog was
+     in front. Every layer is at `--z-overlay` and order is the order they
+     mounted.
+
+     33rem stated here rather than as a custom property on `.agents`: the panel
+     is portalled out of that element, so a property declared there does not
+     inherit to it -- see the note beside `.agents`. */
+  width: min(33rem, calc(100vw - 2 * var(--space-4)));
   border: 1px solid var(--line);
   /* Square at the top: it is hanging off the bar, not floating free. */
   border-top: 0;
@@ -101,8 +112,9 @@
   overflow: hidden;
 }
 
-/* Programmatically focused on open, so it must not draw the ring a keyboard
-   user is owed on a real tab stop -- it is `tabIndex={-1}` and never one. */
+/* Radix focuses the panel on open (it is `tabIndex={-1}`, never a real tab
+   stop), so it must not draw the ring a keyboard user is owed on something
+   they actually tabbed to. */
 .agents-panel:focus {
   outline: none;
 }
@@ -111,9 +123,16 @@
   /* Eight rows before it scrolls, and never more than the viewport below the
      bar. Past eight it would be taller than the content it covers, which is
      the point at which it stops being a popover and starts being the page. */
+  /* The second term used to be `calc(100vh - var(--topbar-h) - var(--space-5))`
+     -- the viewport minus the bar, which is only the room below the panel while
+     the panel is pinned under the bar. Radix measures the actual gap between
+     the anchor and the collision edge and publishes it, so the panel now
+     shrinks to fit wherever it ends up, including flipped above the trigger.
+     The fallback is for a `.agents-panel` rendered outside a positioner at
+     all, which is what a story or a test does. */
   max-height: min(
     calc(8 * (var(--t-md) + 2 * var(--space-2) + 2px)),
-    calc(100vh - var(--topbar-h) - var(--space-5))
+    var(--radix-popover-content-available-height, 60vh)
   );
   overflow-y: auto;
 }
@@ -273,11 +292,9 @@
     display: none;
   }
 
-  /* Full width under the bar rather than a narrow column hugging the right
-     edge: at this width the alternative is a popover with less room for the
-     statement than the row needs. */
-  .agents-panel {
-    left: var(--space-4);
-    width: auto;
-  }
+  /* The `.agents-panel { left: …; width: auto }` override that used to sit
+     here is deleted with the `position: fixed` it existed to correct. The
+     panel's own `min(33rem, 100vw - 2 * var(--space-4))` already gives it the
+     full width at this size, and Radix keeps it on screen without being told
+     which edge it is near. */
 }

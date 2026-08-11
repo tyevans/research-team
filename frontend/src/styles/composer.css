@@ -98,7 +98,7 @@ select.input {
   border-color: #3a2b2c;
   color: var(--del-fg);
 }
-.btn-quiet:hover:not(:disabled) {
+.btn-quiet:hover:not(:disabled, [aria-disabled='true']) {
   background: #24151700;
   background: #241517;
   border-color: #543336;

@@ -14,6 +14,7 @@ import type { SessionId } from '@domain/shared/identifier.ts'
 
 import { CodeBlock, Markdown } from '../common/content.tsx'
 import { EmptyState, ErrorBox, Loading } from '../common/primitives.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 import { LessonDocument } from '../lesson/LessonDocument.tsx'
 import { FileHistory } from './FileHistory.tsx'
 
@@ -56,7 +57,7 @@ export const FileView = ({
   if (!path) {
     return (
       <EmptyState
-        title="No file selected."
+        heading="No file selected."
         detail="Pick a file above to read it as of the selected event, or open its full revision history."
       />
     )
@@ -65,9 +66,7 @@ export const FileView = ({
   return (
     <>
       <div className="file-view-head">
-        <span className="fv-path" title={path.value}>
-          {path.value}
-        </span>
+        <span className="fv-path">{path.value}</span>
 
         {path.isMarkdown && tab === 'content' ? (
           <TabGroup
@@ -89,12 +88,13 @@ export const FileView = ({
               {
                 id: 'author',
                 label: 'author',
-                title: 'Everything the file contains, including answers and authoring warnings.',
+                explanation:
+                  'Everything the file contains, including answers and authoring warnings.',
               },
               {
                 id: 'learner',
                 label: 'learner',
-                title:
+                explanation:
                   'Preview what a learner is sent: answers and rationales withheld, and graded on the server.',
               },
             ]}
@@ -165,7 +165,7 @@ const Contents = ({
     if (error instanceof ApiError && error.isNotFound) {
       return (
         <EmptyState
-          title={ScrubPoint.isHistorical(scrub) ? 'Not in the workspace here.' : 'No such file.'}
+          heading={ScrubPoint.isHistorical(scrub) ? 'Not in the workspace here.' : 'No such file.'}
           detail={
             ScrubPoint.isHistorical(scrub)
               ? `${path.value} did not exist at event ${scrub.at}.`
@@ -176,7 +176,7 @@ const Contents = ({
     }
     return (
       <ErrorBox
-        title="Could not read this file"
+        heading="Could not read this file"
         message={errorMessage(error)}
         onRetry={() => void contents.refetch()}
       />
@@ -214,23 +214,48 @@ const TabGroup = <T extends string>({
   active,
   onChange,
 }: {
-  options: readonly { id: T; label: string; title?: string }[]
+  options: readonly { id: T; label: string; explanation?: string }[]
   active: T
   onChange: (id: T) => void
 }) => (
   <div className="tabs">
     {options.map((option) => (
-      <button
-        key={option.id}
-        type="button"
-        className={clsx('tab', option.id === active && 'active')}
-        title={option.title}
-        onClick={() => {
-          if (option.id !== active) onChange(option.id)
-        }}
-      >
-        {option.label}
-      </button>
+      <TabButton key={option.id} option={option} active={active} onChange={onChange} />
     ))}
   </div>
 )
+
+/** One tab, wrapped in its explanation only when it has one.
+ *
+ * Two of the eight tabs in this header carry a sentence — author and learner,
+ * where the difference between the two views is the whole reason the switch
+ * exists and is not deducible from the two words on the buttons. The other six
+ * are self-describing, and wrapping them anyway would put a `Tooltip` around
+ * "contents" for the sake of uniformity. */
+const TabButton = <T extends string>({
+  option,
+  active,
+  onChange,
+}: {
+  option: { id: T; label: string; explanation?: string }
+  active: T
+  onChange: (id: T) => void
+}) => {
+  const button = (
+    <button
+      type="button"
+      className={clsx('tab', option.id === active && 'active')}
+      onClick={() => {
+        if (option.id !== active) onChange(option.id)
+      }}
+    >
+      {option.label}
+    </button>
+  )
+  if (!option.explanation) return button
+  return (
+    <Tooltip asChild explanation={option.explanation}>
+      {button}
+    </Tooltip>
+  )
+}

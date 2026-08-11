@@ -28,7 +28,7 @@ export const DocumentReader = ({
   if (query.isError) {
     return (
       <ErrorBox
-        title="Could not read this document"
+        heading="Could not read this document"
         message={query.error instanceof Error ? query.error.message : String(query.error)}
         onRetry={() => void query.refetch()}
       />

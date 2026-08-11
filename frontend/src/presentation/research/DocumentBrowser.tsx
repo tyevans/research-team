@@ -45,7 +45,9 @@ export const DocumentBrowser = ({
   const scrollRef = useRef<HTMLDivElement>(null)
 
   if (total === 0) {
-    return <EmptyState title="No documents" detail="Nothing has been stored in this corpus yet." />
+    return (
+      <EmptyState heading="No documents" detail="Nothing has been stored in this corpus yet." />
+    )
   }
 
   return (
@@ -60,7 +62,7 @@ export const DocumentBrowser = ({
       />
       {documents.length === 0 ? (
         <EmptyState
-          title="No documents match"
+          heading="No documents match"
           detail="Nothing in this corpus matches that filter."
         />
       ) : (

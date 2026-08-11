@@ -250,7 +250,7 @@ export const GraphBrowser = ({
           // Unless the ask failed, in which case the error below the canvas
           // is the answer and this must not claim the graph is empty.
           <EmptyState
-            title={error ? 'The graph could not be read' : 'This graph is empty'}
+            heading={error ? 'The graph could not be read' : 'This graph is empty'}
             detail={
               error
                 ? 'The project may still have entities; this page could not fetch them.'

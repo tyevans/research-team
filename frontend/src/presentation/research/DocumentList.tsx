@@ -20,7 +20,7 @@ export const DocumentList = ({ projectId }: { projectId: ProjectId }) => {
   if (query.isError) {
     return (
       <ErrorBox
-        title="Could not read this project's documents"
+        heading="Could not read this project's documents"
         message={query.error instanceof Error ? query.error.message : String(query.error)}
         onRetry={() => void query.refetch()}
       />
@@ -39,7 +39,7 @@ export const DocumentList = ({ projectId }: { projectId: ProjectId }) => {
           at. */}
       {reading ? (
         <Drawer
-          title={readingLabel(reading)}
+          heading={readingLabel(reading)}
           label={`Reading ${readingLabel(reading)}`}
           onClose={onClose}
         >
