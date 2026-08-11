@@ -226,6 +226,52 @@ class TestReserveIsIdempotentPerCall:
         assert grant.remaining == 1
 
 
+class TestReserveScopeCannotBeBypassedByReusingACallId:
+    """A second Critical, caught by a whole-branch re-review of the first
+    fix: the idempotency short-circuit (`call_id in self._reserved: return
+    True`) originally ran *before* the scope check, so it re-answered `True`
+    for any URL passed under an id already holding a claim -- not just the
+    URL that id was actually claimed for. One assistant message with two
+    `fetch` calls sharing an id (nothing dedupes ids within a message, and
+    the ids are model-emitted) claims once against a covered host and then
+    admits every later call under that id regardless of host or scheme,
+    unmetered, because the out-of-scope URL never gets charged either. That
+    is a scope escape on a research agent reading attacker-controllable
+    pages -- strictly worse than the over-spend the id-keying fix replaced,
+    which never left scope. Fixed by testing `_in_scope(url)` before the
+    short-circuit, unconditionally.
+    """
+
+    def test_reusing_a_call_id_for_a_different_host_is_refused(self) -> None:
+        grant = _grant(hosts=frozenset({"a.example"}), budget=5)
+        assert grant.reserve("t1", "https://a.example/page") is True
+        # Same id, a host this grant never named.
+        assert grant.reserve("t1", "https://evil.example/page") is False
+
+    def test_reusing_a_call_id_for_a_file_scheme_is_refused(self) -> None:
+        grant = _grant(hosts=frozenset({"a.example"}), budget=5)
+        assert grant.reserve("t1", "https://a.example/page") is True
+        # Same id, same hostname, a scheme `covers()` has always refused.
+        assert grant.reserve("t1", "file://a.example/etc/passwd") is False
+
+    def test_reusing_a_call_id_on_a_fully_spent_grant_is_refused(self) -> None:
+        """The short-circuit must not resurrect a claim once the grant is
+        spent, even under an id that legitimately held one before."""
+        grant = _grant(hosts=frozenset({"a.example"}), budget=1)
+        assert grant.reserve("t1", "https://a.example/page") is True
+        grant.spend("t1")
+        assert grant.spent
+        assert grant.reserve("t1", "https://a.example/page") is False
+
+    def test_the_same_call_id_for_the_same_url_still_reads_as_admitted(self) -> None:
+        """The property the short-circuit exists for is not lost: a call
+        legitimately re-evaluated (langgraph's resume) with its own URL
+        stays admitted."""
+        grant = _grant(hosts=frozenset({"a.example"}), budget=1)
+        assert grant.reserve("t1", "https://a.example/page") is True
+        assert grant.reserve("t1", "https://a.example/page") is True
+
+
 class TestRelease:
     """`release()`: giving back a claim `fetch.py` never redeemed.
 

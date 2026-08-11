@@ -269,3 +269,28 @@ def test_a_missing_call_id_interrupts():
     request = FakeRequest({"name": "fetch", "args": {"url": "https://a.example/page"}})
 
     assert when(request) is True
+
+
+def test_reusing_a_call_id_for_a_host_the_grant_does_not_cover_still_interrupts():
+    """The scope-escape Critical a whole-branch re-review reproduced through
+    this exact gate: `reserve()`'s idempotency short-circuit used to run
+    before the scope check, so a second call sharing an id with a covered
+    call was waved through no matter what host it named. Two calls in one
+    `when` pass -- the shape `HumanInTheLoopMiddleware.after_model` walks a
+    message's tool calls in -- sharing an id, the second naming a host the
+    grant never listed, must interrupt.
+    """
+    session_id = uuid4()
+    grants = GrantRegistry()
+    grants.register(
+        session_id, FetchGrant(run_id=session_id, hosts=frozenset({"a.example"}), budget=5)
+    )
+    policy = _ask_policy("fetch")
+    when = _when(policy, "fetch", session_id=session_id, grants=grants)
+
+    covered = when(_call("fetch", {"url": "https://a.example/page"}, call_id="toolu_1"))
+    # Same call id, a host this grant does not name.
+    uncovered = when(_call("fetch", {"url": "https://evil.example/page"}, call_id="toolu_1"))
+
+    assert covered is False  # admitted, as expected
+    assert uncovered is True  # must interrupt -- the scope escape, closed

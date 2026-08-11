@@ -103,6 +103,39 @@ class FetchGrant:
     actually holds: a claim can delay a future `reserve()` for a moment, but
     it can never let more be spent than the real budget -- `spend()` is the
     only thing that touches `_remaining`, and nothing here can raise it.
+
+    **Releasing on error unmasked a pre-existing policy, worth stating
+    plainly now that it is visible.** The budget bounds successful reads,
+    not requests: `fetch.py` never spends on an `httpx` error or an HTTP
+    error status ("errors don't spend" -- nothing was learned that a retry
+    couldn't also fail to learn), and that was always the design. Before
+    this claim/release mechanism existed, an erroring call still cost
+    nothing either. What changed is that a *reservation* for that call used
+    to stay stuck (an accident of the leak this section already covers), and
+    a stuck reservation happened to throttle a host that errored on every
+    request -- accidentally, not by design. Releasing the claim removes that
+    accidental brake: a granted host that consistently errors can now be
+    requested without limit. This is not a new decision, and closing it
+    would be a real one (bounding *attempts*, not just successes, is a
+    different grant than the one this class implements) -- it is named here
+    so the next reader does not mistake "the throttle went away" for a
+    regression rather than the pre-existing policy finally matching what
+    the docstring always claimed.
+
+    **Scope is checked before the reservation short-circuit, and this is
+    not incidental ordering.** `reserve()`'s idempotency check
+    (`call_id in self._reserved: return True`) has to run *after*
+    `_in_scope(url)`, never before -- a second whole-branch review caught
+    the version that got this backwards. The short-circuit only remembers
+    that an id claimed *something*, not what URL it claimed it for; tested
+    first, it would re-answer `True` for any URL passed under a
+    previously-claimed id, including a host this grant never named or a
+    `file://` scheme -- a scope escape, not a budget accounting error, and
+    on a research agent whose whole job is reading attacker-controllable
+    pages, model-emitted ids make that reachable with two `fetch` calls
+    sharing one id in a single assistant message. See `reserve()`'s own
+    docstring for the mechanism and `_in_scope()` for the split that fixes
+    it without disturbing what `covers()` means to `fetch.py`.
     """
 
     run_id: UUID
@@ -127,35 +160,24 @@ class FetchGrant:
     def spent(self) -> bool:
         return self._remaining[0] <= 0
 
-    def covers(self, url: str) -> bool:
-        """Whether `url` may be fetched under this grant right now.
+    def _in_scope(self, url: str) -> bool:
+        """Whether `url` is a host and scheme this grant could ever cover --
+        deliberately blind to budget, spent or reserved.
 
-        Total: a URL too malformed for `urlsplit` to make sense of --
-        `urlsplit("https://[::1/x")` raises `ValueError: Invalid IPv6 URL`,
-        the same case `normalize_url` guards -- is "not covered" rather than a
-        raised exception reaching the tool call. Does not mutate; a spent
-        grant answers `False` for every host, forever, until something else
-        calls `spend()`.
+        Split out of `covers()` so `reserve()` can test scope *before* its
+        idempotency short-circuit without also re-deriving the spent check
+        (see `reserve()`'s docstring for why the ordering matters: a
+        whole-branch review found that testing the short-circuit first let a
+        claimed id re-admit *any* URL, not just the one it was claimed for).
 
-        Scheme-checked, not just host-checked: this is the authorization check
-        the tool itself consults when it decides whether a completed call gets
-        to spend (`fetch.py`'s `covers()`-then-`spend()` pair), and it is
-        written to answer correctly on its own rather than lean on
-        `fetch.py`'s own scheme guard, which lives in a different file and can
-        change under a different task. Without this, `file://a.example/etc/passwd`
-        and the scheme-relative `//a.example/p` both yield hostname
-        `a.example` and would read as covered even though neither is the
-        network request a host grant is supposed to authorize.
-
-        Reads only `_remaining`, deliberately blind to `_reserved` -- see
-        `reserve()`. The gate's authorization question ("may a *new* claim be
-        made against what's left") and this question ("has this URL's grant
-        actually run out") are different questions, and folding the second
-        into the first would make `fetch.py`'s own spend check swing on
-        reservations it knows nothing about and never asked to be blocked by.
+        Total, for the same reason `covers()` is: a URL too malformed for
+        `urlsplit` to parse, a non-`http(s)` scheme, or a missing hostname
+        are all "not in scope" rather than a raised exception. Without the
+        scheme check, `file://a.example/etc/passwd` and the scheme-relative
+        `//a.example/p` both yield hostname `a.example` and would read as
+        in-scope even though neither is the network request a host grant is
+        supposed to authorize.
         """
-        if self.spent:
-            return False
         try:
             parts = urlsplit(url)
         except ValueError:
@@ -166,6 +188,24 @@ class FetchGrant:
         if hostname is None:
             return False
         return hostname.lower() in self.hosts
+
+    def covers(self, url: str) -> bool:
+        """Whether `url` may be fetched under this grant right now.
+
+        `not self.spent and self._in_scope(url)` -- unchanged in meaning
+        from before `_in_scope` existed. This is the authorization check
+        the tool itself consults when it decides whether a completed call
+        gets to spend (`fetch.py`'s `covers()`-then-`spend()` pair), and it
+        does not know or care about `_reserved`: the gate's authorization
+        question ("may a *new* claim be made against what's left") and this
+        question ("has this grant actually run out, for this URL") are
+        different questions, and folding the second into the first would
+        make `fetch.py`'s own spend check swing on reservations it knows
+        nothing about and never asked to be blocked by. Does not mutate; a
+        spent grant answers `False` for every host, forever, until something
+        else calls `spend()`.
+        """
+        return not self.spent and self._in_scope(url)
 
     def reserve(self, call_id: str, url: str) -> bool:
         """Claim one unit of budget for `call_id`, or refuse -- the gate's check.
@@ -180,25 +220,42 @@ class FetchGrant:
         process before any of their `spend()`s land -- see the class
         docstring and `task-5-review.md` for the reproduction.
 
-        `call_id` first, before spending any budget check on it: if this
-        call already holds a claim, re-answer `True` from the existing claim
+        **Scope first, always -- before the idempotency short-circuit, not
+        after.** The first version of this method checked `call_id in
+        self._reserved` before `covers(url)`, on the reasoning that a call
+        already holding a claim should re-answer `True` without re-spending
+        budget. A whole-branch review found what that reasoning missed: the
+        short-circuit doesn't know the URL it was originally claimed for, so
+        it re-answers `True` for *any* URL passed under that id -- one
+        assistant message with two `fetch` calls sharing an id (nothing
+        dedupes ids within a message; the ids are model-emitted, read off
+        the `tool_use` blocks the model itself sampled) claims once for a
+        covered host and then admits every later call under that same id
+        regardless of host or scheme, unmetered, because `covers()` for the
+        out-of-scope URL is `False` and nothing charges it. That is a scope
+        escape on a research agent that reads attacker-controllable pages --
+        strictly worse than the over-spend it replaced, which stayed inside
+        scope. `_in_scope(url)` now runs first, unconditionally, so the
+        short-circuit can only ever re-admit a call under the same id *for a
+        host and scheme this grant could authorize in the first place*.
+
+        `call_id in self._reserved` next: if this exact call already holds a
+        claim for an in-scope URL, re-answer `True` from the existing claim
         rather than trying (and refusing) to take a second one. This is what
         makes `reserve()` safe to call twice for the same call, which
         langgraph actually does -- `interrupt()` raises `GraphInterrupt`, and
         `Command(resume=...)` re-executes `after_model` from the top, so
         every covered call in a message that also contains an interrupting
-        one gets evaluated again on the resume pass. A plain count (this
-        method's first version) could not tell that second evaluation apart
-        from a genuinely new claim, double-spent the same call, and at low
-        remaining budget flipped an already-admitted call to refused on
-        resume -- one decision back for two now-hanging calls, and langchain
-        raised `ValueError`. Reproduced and fixed by keying on the id
-        `_covered` already reads off `request.tool_call["id"]`.
+        one gets evaluated again on the resume pass. A plain count (the
+        method's first version, before call ids existed at all) could not
+        tell that second evaluation apart from a genuinely new claim,
+        double-spent the same call, and at low remaining budget flipped an
+        already-admitted call to refused on resume -- one decision back for
+        two now-hanging calls, and langchain raised `ValueError`.
 
-        `covers(url)` next, so a host mismatch or an actually-spent grant
-        refuses exactly as `covers()` always has; `_reserved` only bounds
-        further claims once the URL and scheme have already passed. No
-        `await` between the check and the write, so two calls evaluated in
+        `self.spent` and the remaining-vs-reserved check last, so a claim
+        can only be taken while there is real room and the grant has not run
+        dry. No `await` anywhere in this method, so two calls evaluated in
         the same synchronous pass (which is how `HumanInTheLoopMiddleware`
         walks one message's tool calls) cannot both observe room for the same
         unit -- the second sees the first's claim and is refused.
@@ -209,11 +266,11 @@ class FetchGrant:
         the class docstring for why that finally had to be added rather than
         accepted as an occasional leak.
         """
+        if not self._in_scope(url):
+            return False
         if call_id in self._reserved:
             return True
-        if not self.covers(url):
-            return False
-        if self._remaining[0] - len(self._reserved) <= 0:
+        if self.spent or self._remaining[0] - len(self._reserved) <= 0:
             return False
         self._reserved.add(call_id)
         return True
