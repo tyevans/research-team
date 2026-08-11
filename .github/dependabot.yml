@@ -19,6 +19,21 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
+    ignore:
+      # `@typescript-eslint/*` 8.x declares `typescript@">=4.8.4 <6.1.0"`, so a
+      # major bump of typescript does not resolve at all — `npm ci` fails with
+      # ERESOLVE before a single check runs. That would be tolerable on its own;
+      # what makes it worth an ignore is the grouping. typescript rides in the
+      # `toolchain` group, so one unresolvable major holds every other bump in
+      # the group hostage — an eslint patch sat unmergeable behind typescript 7
+      # in #104, which is what prompted this.
+      #
+      # Remove this the moment typescript-eslint ships a release whose peer
+      # range admits the current typescript major. It is a statement about one
+      # upstream peer range today, not a decision to stay on typescript 5.
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
     groups:
       # The toolchain moves together and breaks together — a typescript-eslint
       # bump that needs a matching eslint bump is not reviewable in isolation.
