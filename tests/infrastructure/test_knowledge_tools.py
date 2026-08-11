@@ -366,3 +366,36 @@ def test_remember_page_is_gated():
     from research_team.application.autonomy import GATED_TOOLS, REMEMBER_PAGE_TOOL
 
     assert REMEMBER_PAGE_TOOL in GATED_TOOLS
+
+
+def test_knowledge_prompt_keeps_committing_is_not_free():
+    """This sentence is what makes committing a decision rather than a
+    reflex, and it applies to both the by-value `remember` path and the
+    by-reference `remember_page` path -- nothing about adding the second path
+    should ever cost the model this warning on the first."""
+    from research_team.infrastructure.agent.knowledge_tools import KNOWLEDGE_PROMPT
+
+    assert "Committing is not free and not private" in KNOWLEDGE_PROMPT
+
+
+def test_knowledge_prompt_distinguishes_remember_page_from_remember():
+    """The two tools do different things and the model has to be able to
+    tell them apart from the prompt alone: `remember_page` for a page already
+    fetched, `remember` for everything else. Losing either name from the
+    prompt leaves a tool the model cannot discover a reason to call."""
+    from research_team.infrastructure.agent.knowledge_tools import KNOWLEDGE_PROMPT
+
+    assert "`remember_page` commits a page you have fetched" in KNOWLEDGE_PROMPT
+    assert "`remember` is for everything else" in KNOWLEDGE_PROMPT
+
+
+def test_knowledge_prompt_no_longer_asks_for_transcription():
+    """This is the instruction the whole by-reference feature exists to
+    remove: asking the model to retype a page's text or copy its `url:`,
+    `title:` or `date:` lines across by hand. A future edit that reinstated
+    it would silently undo the feature while every other test here -- which
+    checks what the prompt does say, not what it omits -- stayed green."""
+    from research_team.infrastructure.agent.knowledge_tools import KNOWLEDGE_PROMPT
+
+    assert "pass the `url:`, `title:` and `date:` lines" not in KNOWLEDGE_PROMPT
+    assert "pass substantial content you have actually read" not in KNOWLEDGE_PROMPT

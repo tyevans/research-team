@@ -632,6 +632,26 @@ async def test_a_recall_hit_does_not_disturb_what_was_retained():
     assert "Real prose" in retained.text
 
 
+def test_fetch_corpus_prompt_names_remember_page():
+    """The prompt is the only place the model learns which tool commits a
+    fetched page. If it stopped naming `remember_page`, nothing else fails --
+    the tool would just go undiscovered."""
+    from research_team.infrastructure.agent.fetch import FETCH_CORPUS_PROMPT
+
+    assert "call `remember_page` with its URL" in FETCH_CORPUS_PROMPT
+
+
+def test_fetch_corpus_prompt_no_longer_asks_to_pass_page_text():
+    """This is the transcription instruction the by-reference feature
+    replaced: passing the fetched text and its citation lines to `remember`
+    by hand. A future edit reinstating it would undo the feature while
+    leaving every other test here, which checks what the prompt says rather
+    than what it omits, green."""
+    from research_team.infrastructure.agent.fetch import FETCH_CORPUS_PROMPT
+
+    assert "pass it to `remember`" not in FETCH_CORPUS_PROMPT
+
+
 async def test_refresh_replaces_what_was_retained():
     tool_pages = PageMemo(stamp=lambda: "t")
     client = _client_returning(
