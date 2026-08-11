@@ -199,12 +199,23 @@ payload that predates the field.
 
 **`_rework_thrash`'s firing condition does not change.** It continues to
 compare `state.investigations` against `findings_at_last_investigation`
-(`topic_attention.py:347-369`), which works on payloads old and new alike.
-`outcome` is used for two narrower things: to keep the trigger from
-*describing* a crashed round as one that found nothing, and to let §3's
-message name what was tried. A trigger whose condition depended on a field
-half its history lacks would report differently about the same topic
-depending on when its rounds happened.
+(`topic_attention.py:347-369`), which works on payloads old and new alike. A
+trigger whose condition depended on a field half its history lacks would
+report differently about the same topic depending on when its rounds happened.
+
+**`outcome` is recorded now and consumed later.** Reading it from
+`_rework_thrash` — to keep the trigger from describing a crashed round as one
+that found nothing — would need `TopicState` to carry the last look's
+outcome, which is the same trade this project already refused for gap text:
+see `TopicState.gaps`' docstring, "deliberately absent: any finding text, any
+attention flag, any score." Widening the state for one more field it exists
+only to report is not a decision to make twice in one change. The field is
+written anyway, because the distinction it captures — a fruitless round
+versus a crashed one — is only recordable at the moment the round ends. An
+event log that did not capture it then can never be back-filled; not writing
+it now makes the distinction permanently unrecoverable for every round
+between today and whenever a consumer is built. `outcome` costs one nullable
+field and keeps that consumer possible. Nothing reads it yet.
 
 This is a schema change to an event already written, so
 `tests/infrastructure/test_schema_evolution.py` gains the old-shaped payload
@@ -257,8 +268,6 @@ not change when a run gives up.
 - `topic.rework_thrash` fires on exactly the same condition as before this
   change — a test that would fail if the condition were made to depend on
   `outcome`, since a topic's history predates the field.
-- `topic.rework_thrash` does not describe a crashed round as one that found
-  nothing.
 - A `TopicInvestigated` payload written before `outcome` existed still loads,
   with `outcome` absent rather than defaulted to a real value
   (schema-evolution test).
