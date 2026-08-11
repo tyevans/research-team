@@ -318,10 +318,9 @@ FETCH_PROMPT = (
 FETCH_CORPUS_PROMPT = (
     "\n\nA page this project has already stored comes back from the corpus "
     "rather than the network, with the offsets that make it quotable, and says "
-    "so plainly. When a fetched page is worth keeping, pass it to `remember` "
-    "along with the `url:`, `title:` and `date:` lines printed above it. That "
-    "is what lets a later session recognise the page instead of fetching it "
-    "again."
+    "so plainly. When a fetched page is worth keeping, call `remember_page` "
+    "with its URL. That is what lets a later session recognise the page "
+    "instead of fetching it again."
 )
 """The part of the `fetch` prompt that only holds inside a project.
 

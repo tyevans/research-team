@@ -97,7 +97,7 @@ from research_team.infrastructure.agent.knowledge_tools import (
     KNOWLEDGE_PROMPT,
     build_knowledge_tools,
 )
-from research_team.infrastructure.agent.recall import Recall
+from research_team.infrastructure.agent.recall import PageMemo, Recall
 from research_team.infrastructure.agent.search import SEARCH_PROMPT, build_search_tool
 from research_team.infrastructure.agent.stage_middleware import (
     StageMiddleware,
@@ -494,7 +494,11 @@ def build_application(
     # is safe: it holds only responses from public URLs, which are the same
     # bytes whoever asked. Nothing project-scoped may ever go in it.
     recall = Recall()
-    tools: tuple[BaseTool, ...] = (build_fetch_tool(recall=recall),)
+    # One store, shared by both `fetch` builds exactly as `recall` is: it holds
+    # only bytes from public URLs, which are the same whoever asked. Nothing
+    # project-scoped may ever go in it.
+    pages = PageMemo()
+    tools: tuple[BaseTool, ...] = (build_fetch_tool(recall=recall, pages=pages),)
     prompt_suffix += FETCH_PROMPT
 
     searxng = config.searxng_url()
@@ -920,7 +924,7 @@ def build_application(
         # see `_compose` in `knowledge_attachment.py`. It is the same tool
         # with one more place to look: this project's own sources, which is
         # the only lookup that can return something citable.
-        project_fetch = build_fetch_tool(recall=recall, corpus=reader)
+        project_fetch = build_fetch_tool(recall=recall, corpus=reader, pages=pages)
         return knowledge, (
             project_fetch,
             # The reporter is per-project and so is this closure, which is why
@@ -932,6 +936,7 @@ def build_application(
                 report=extractions.reporter(target_project_id)
                 if extractions is not None
                 else None,
+                pages=pages,
             ),
             *build_corpus_tools(reader),
             *build_topic_tools(topic_port, target_project_id),
