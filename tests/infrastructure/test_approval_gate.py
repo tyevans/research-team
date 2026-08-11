@@ -31,8 +31,8 @@ class FakeRequest:
         self.tool_call = tool_call
 
 
-def _call(name: str, args: dict) -> FakeRequest:
-    return FakeRequest({"name": name, "args": args, "id": "t1"})
+def _call(name: str, args: dict, *, call_id: str = "t1") -> FakeRequest:
+    return FakeRequest({"name": name, "args": args, "id": call_id})
 
 
 def _ask_policy(tool: str) -> AutonomyPolicy:
@@ -201,12 +201,14 @@ def test_ten_covered_calls_in_one_batch_admit_only_one_on_a_budget_of_one():
     every call in the message synchronously before any tool runs, which is
     exactly what this loop reproduces -- calling `when` ten times in a row,
     the way the middleware does, rather than through any tool or transport.
+    Ten distinct call ids, as a real message would carry -- each tool call in
+    an `AIMessage` has its own id, which is what `reserve()` now keys on.
 
     Fixed by `_covered` reserving against the budget instead of merely
-    reading it (`grant.reserve(url)`, not `grant.covers(url)`): the second
-    call in the batch sees the first one's claim. Only one of the ten should
-    come back `False` (not interrupted); the other nine must be told to ask
-    a human, because there is no budget left to admit them.
+    reading it (`grant.reserve(call_id, url)`, not `grant.covers(url)`): the
+    second call in the batch sees the first one's claim. Only one of the ten
+    should come back `False` (not interrupted); the other nine must be told
+    to ask a human, because there is no budget left to admit them.
     """
     session_id = uuid4()
     grants = GrantRegistry()
@@ -216,8 +218,54 @@ def test_ten_covered_calls_in_one_batch_admit_only_one_on_a_budget_of_one():
     policy = _ask_policy("fetch")
     when = _when(policy, "fetch", session_id=session_id, grants=grants)
 
-    decisions = [when(_call("fetch", {"url": "https://a.example/page"})) for _ in range(10)]
+    decisions = [
+        when(_call("fetch", {"url": "https://a.example/page"}, call_id=f"t{i}"))
+        for i in range(10)
+    ]
 
     admitted = decisions.count(False)  # False means "does not interrupt"
     assert admitted == 1
     assert decisions.count(True) == 9
+
+
+def test_reevaluating_the_same_call_id_stays_admitted_on_resume():
+    """The Critical a whole-branch review reproduced: langgraph re-executes
+    `after_model` from the top on `Command(resume=...)` (`interrupt()` raises
+    `GraphInterrupt`), so `when` -- and `_covered` -- is called *again* for
+    every covered call in a message that also contains an interrupting one.
+    Before `reserve()` was keyed by call id, the second evaluation of the
+    *same* covered call was indistinguishable from a brand-new claim and, at
+    low remaining budget, could be refused where the first evaluation was
+    not -- flipping an already-admitted call to interrupted mid-turn.
+    """
+    session_id = uuid4()
+    grants = GrantRegistry()
+    grants.register(
+        session_id, FetchGrant(run_id=session_id, hosts=frozenset({"a.example"}), budget=1)
+    )
+    policy = _ask_policy("fetch")
+    when = _when(policy, "fetch", session_id=session_id, grants=grants)
+    call = _call("fetch", {"url": "https://a.example/page"}, call_id="t1")
+
+    first_pass = when(call)
+    # The resume pass: after_model walks the same message's tool calls again.
+    second_pass = when(call)
+
+    assert first_pass is False  # not interrupted
+    assert second_pass is False  # still not interrupted, not flipped
+
+
+def test_a_missing_call_id_interrupts():
+    """The same fail-closed rule extended to the id `reserve()` claims
+    under: a request this gate cannot read a call id from must never read as
+    covered, the same as a missing `url`."""
+    session_id = uuid4()
+    grants = GrantRegistry()
+    grants.register(
+        session_id, FetchGrant(run_id=session_id, hosts=frozenset({"a.example"}), budget=1)
+    )
+    policy = _ask_policy("fetch")
+    when = _when(policy, "fetch", session_id=session_id, grants=grants)
+    request = FakeRequest({"name": "fetch", "args": {"url": "https://a.example/page"}})
+
+    assert when(request) is True

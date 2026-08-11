@@ -112,8 +112,8 @@ def _covered(
     shape, and this function's only correct answer to a shape it cannot read
     is `False`.
 
-    Calls `grant.reserve(url)`, not `grant.covers(url)` -- this used to be a
-    plain read, and a security review reproduced why that was wrong:
+    Calls `grant.reserve(call_id, url)`, not `grant.covers(url)` -- this used
+    to be a plain read, and a security review reproduced why that was wrong:
     `HumanInTheLoopMiddleware.after_model` evaluates `when` for *every* call
     in one assistant message, synchronously, before any of them runs, so a
     read-only check lets N covered calls in one message all pass against the
@@ -123,8 +123,23 @@ def _covered(
     first one's claim and is refused here rather than also waved through.
     This is the only place a claim is made; `fetch.py`'s own `covers()` /
     `spend()` pair is unchanged and still decides, after the call actually
-    returns, whether the grant is what paid for it. See `FetchGrant.reserve`
-    for the full argument and what happens to a claim nothing ever spends.
+    returns, whether the grant is what paid for it.
+
+    `call_id` is `tool_call["id"]`, read with the same defensive
+    `getattr`/`isinstance` chain as `url` -- a request this function cannot
+    read confidently is "not covered" either way. Passing it is not
+    optional: `interrupt()` raises `GraphInterrupt`, and langgraph
+    re-executes `after_model` from the top on `Command(resume=...)`, so this
+    function is called *again*, with the same call, for every covered call
+    in a message that also contains an interrupting one. A claim keyed by
+    anything less specific than the call itself -- the first version of this
+    keyed by nothing, a plain count -- cannot tell that replay apart from a
+    new call wanting a new unit, and a whole-branch review reproduced the
+    consequence: at low remaining budget, the covered call's second
+    evaluation was refused for lack of room, one decision came back for two
+    now-hanging calls, and langchain raised `ValueError`. See
+    `FetchGrant.reserve` for the fix and `FetchGrant.release` for the other
+    half -- a claim this call never redeems must not sit there forever.
     """
     if tool != FETCH_TOOL or grants is None or session_id is None:
         return False
@@ -136,4 +151,7 @@ def _covered(
     url = args.get("url") if isinstance(args, dict) else None
     if not isinstance(url, str):
         return False
-    return grant.reserve(url)
+    call_id = call.get("id") if isinstance(call, dict) else None
+    if not isinstance(call_id, str):
+        return False
+    return grant.reserve(call_id, url)

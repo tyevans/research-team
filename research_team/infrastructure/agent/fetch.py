@@ -15,11 +15,12 @@ the session log either way -- so the extraction happens here, before the text
 is anything the rest of the system has to carry.
 """
 
+from typing import Annotated
 from urllib.parse import urlsplit
 
 import httpx
 import trafilatura
-from langchain_core.tools import BaseTool, tool
+from langchain_core.tools import BaseTool, InjectedToolCallId, tool
 from trafilatura.metadata import extract_metadata
 
 from research_team.application.autonomy import FETCH_TOOL
@@ -259,149 +260,200 @@ def build_fetch_tool(
     the gate.
 
     **This section used to describe an open batch over-spend; it is closed
-    now, and closed entirely on the other side of the seam.** The gate
-    (`approval.py`'s `_covered`) used to only *read* `covers(url)` before
-    deciding not to interrupt, and the gate evaluates every `fetch` call in
-    one model message before any of them runs -- so N covered calls
-    dispatched in a single message could all see the same "not yet spent"
-    answer and all leave the process, N being a number the model chooses by
-    how many `fetch` calls it puts in one message. `task-5-review.md`
-    reproduced it against the real tool: ten requests on a budget of one.
+    now, mostly on the other side of the seam, with one piece that had to
+    land here.** The gate (`approval.py`'s `_covered`) used to only *read*
+    `covers(url)` before deciding not to interrupt, and the gate evaluates
+    every `fetch` call in one model message before any of them runs -- so N
+    covered calls dispatched in a single message could all see the same
+    "not yet spent" answer and all leave the process, N being a number the
+    model chooses by how many `fetch` calls it puts in one message.
+    `task-5-review.md` reproduced it against the real tool: ten requests on
+    a budget of one.
 
-    The fix is `FetchGrant.reserve(url)`, called by the gate instead of
-    `covers(url)`: it claims a unit of budget *as it answers*, with no
+    The first fix was `FetchGrant.reserve(url)`, called by the gate instead
+    of `covers(url)`: it claims a unit of budget *as it answers*, with no
     `await` between the claim and the write, so the second call evaluated in
-    the same synchronous batch sees the first one's claim and is refused --
-    interrupted, sent to a human -- rather than also waved through. This
-    tool's own `covers()`-then-`spend()` pair below is **unchanged by that
-    fix** and does not need to be: `reserve()` and `spend()` touch different
-    cells (`_reserved` and `_remaining`), so a gate-side reservation and this
-    tool's after-the-fact spend do not double-count each other, and this
-    tool still answers its own question correctly -- "was the grant, not a
-    human, what authorized the call that already happened" -- without
-    knowing anything about reservations at all. See `FetchGrant`'s docstring
-    for the full argument, including the one deliberate loose end: a
-    reservation whose call never reaches this tool's `spend()` (refused by a
-    human downstream, or an error path here that intentionally does not
-    spend) is never released, and is left that way -- it only ever makes a
-    later `reserve()` more conservative, never less, so a stuck reservation
-    costs the grant fewer fetches than it was given, not more.
+    the same synchronous batch sees the first one's claim and is refused.
+    That closed the batch, and a whole-branch review found what it opened:
+    `interrupt()` raises `GraphInterrupt`, and langgraph re-executes the
+    whole gate pass on `Command(resume=...)`, so a plain-count reservation
+    got claimed *again* for a call already holding one -- at low remaining
+    budget this flipped an admitted call to refused on the resume pass and
+    crashed the turn. The fix was keying `_reserved` by tool-call id, which
+    makes re-evaluating the same call idempotent -- see `FetchGrant.reserve`.
+
+    Making that fix land needed this tool to know its own call's id, because
+    the review's second finding was that a claim taken at the gate is left
+    stuck by *every* return path here that answers without a network read --
+    a corpus hit, a memo hit, an httpx error, an HTTP error status -- since
+    none of them called `spend()`, and in a research run over a growing
+    corpus those are the common case, not the exception. `tool_call_id`
+    above (`InjectedToolCallId`, uninfluenceable by the model) is what lets
+    the outer `try`/`finally` release a claim this call never redeemed,
+    regardless of which of the returns above fired. `spend()` still releases
+    the id it redeems on its own, so `covers()`-then-`spend()` reads exactly
+    as it always did; `release()` after it is a documented no-op. See
+    `FetchGrant`'s docstring for the fuller argument and what is still true
+    without a rollback mechanism: a stuck claim can only ever make a later
+    `reserve()` more conservative, never let more be spent than the real
+    budget.
     """
 
     @tool(FETCH_TOOL)
-    async def fetch(url: str, refresh: bool = False) -> str:
-        """Read one web page and return its main content as markdown text."""
-        scheme = urlsplit(url).scheme.lower()
-        if scheme not in ("http", "https"):
-            # Refused before the transport rather than left to httpx. A scheme
-            # it does not support today it might support tomorrow, and a fetch
-            # tool that grew the ability to read local files would be a way
-            # around the file tools -- and around the event log they write to.
-            return (
-                f"Only http and https URLs can be fetched; {scheme or 'that'} is not "
-                "one. Use the file tools to read the workspace."
-            )
-        if not refresh:
-            # Corpus before memo: both avoid the request, and only one comes
-            # back with offsets a claim can cite.
-            if corpus is not None:
-                found = await stored_page(corpus, url, max_chars)
-                if found is not None:
-                    return found
-            if recall is not None:
-                remembered = recall.get(url, key=url_key(url))
-                if remembered is not None:
-                    return (
-                        f"[recalled -- read {describe_age(remembered.age_seconds)} in "
-                        f"this process, not a fresh read. Pass refresh=True if the "
-                        f"page is expected to have changed since.]\n\n{remembered.text}"
-                    )
-        owned = client is None
-        http = client or httpx.AsyncClient(
-            timeout=TIMEOUT,
-            follow_redirects=grant is None,
-            headers=_HEADERS,
-        )
+    async def fetch(
+        url: str,
+        refresh: bool = False,
+        *,
+        tool_call_id: Annotated[str, InjectedToolCallId],
+    ) -> str:
+        """Read one web page and return its main content as markdown text.
+
+        `tool_call_id` is injected by the framework from the real `ToolCall`
+        that invoked this run -- never settable by the model, because it is
+        stripped from the schema the model sees (`InjectedToolCallId`'s whole
+        point). That matters here specifically: it is the same id the gate
+        (`approval.py`'s `_covered`) claimed a budget unit under via
+        `grant.reserve(call_id, url)`, and the outer `try`/`finally` below
+        releases that exact claim on every return path, whether or not this
+        call actually spent it. A model-settable id would let a call release
+        -- and so re-admit -- a *different* call's still-outstanding claim,
+        which is exactly the over-admission this reservation system exists to
+        rule out; that is why this is `Annotated[..., InjectedToolCallId]`
+        and not a plain keyword argument with a default.
+        """
         try:
-            response = await http.get(url, headers=_HEADERS)
-            if response.is_redirect:
-                # Checked before `raise_for_status()`: with redirects off, a
-                # 3xx with a Location is exactly what `raise_for_status`
-                # treats as an error (`HTTPStatusError` naming the location
-                # itself), which would fall into the "error, don't spend"
-                # branch below -- wrong, because the GET still left the
-                # process and got an answer. Spent and reported here instead,
-                # before that branch ever sees it -- and only if the grant is
-                # what authorized *this* call (Fix 1: see the docstring).
-                if grant is not None and grant.covers(url):
-                    grant.spend()
-                location = response.headers.get("location", "(no Location header)")
-                # Worded to be true whether or not `grant` is set: in
-                # production this branch is unreachable without one (the
-                # ungranted owned client has follow_redirects=True, so httpx
-                # resolves 3xx before this tool ever sees a response), but an
-                # injected client -- every test in this file uses one -- can
-                # still hand back a 3xx regardless of `grant`, and a message
-                # that named "a granted fetch" would be false in that case.
+            scheme = urlsplit(url).scheme.lower()
+            if scheme not in ("http", "https"):
+                # Refused before the transport rather than left to httpx. A
+                # scheme it does not support today it might support tomorrow,
+                # and a fetch tool that grew the ability to read local files
+                # would be a way around the file tools -- and around the
+                # event log they write to.
                 return (
-                    f"That URL redirected to {location}, which was not followed. "
-                    "Fetch that URL directly if you still want it."
+                    f"Only http and https URLs can be fetched; {scheme or 'that'} is not "
+                    "one. Use the file tools to read the workspace."
                 )
-            response.raise_for_status()
-            if grant is not None and grant.covers(url):
-                # Spent here, not at `http.get()`: an HTTPStatusError is
-                # raised by `raise_for_status()`, one line above, and an
-                # error is not a use of the budget (see the docstring). A
-                # request that gets this far actually left the process and
-                # came back with a usable response -- and `covers(url)` is
-                # what confirms the grant, not a human approval, is who
-                # authorized it.
-                grant.spend()
-            content_type = response.headers.get("content-type", "")
-            media_type = content_type.split(";")[0].strip().lower()
-            if media_type and "html" not in media_type and "xml" not in media_type:
-                return (
-                    f"That URL returned {media_type}, which this tool cannot read -- "
-                    "it reads HTML pages. No text this time."
-                )
-            body = response.content[:max_bytes]
-            truncated = len(response.content) > max_bytes
-            html = body.decode(response.encoding or "utf-8", errors="replace")
-            extracted = extract_page(html, url)
-            if extracted is None:
-                return UNREADABLE
-            full, title, date = extracted
-            if pages is not None:
-                # The whole extraction, not the excerpt below it. `max_chars`
-                # is what one page may cost the conversation; it was never
-                # meant to be what the corpus can hold, and was only ever that
-                # because a document could not reach the corpus except through
-                # the model's own output.
-                pages.put(url, text=full, uri=url, title=title, published_at=date)
-            shown = full
-            if len(shown) > max_chars:
-                shown = shown[:max_chars].rstrip() + _TRUNCATED
-            text = "\n\n".join(part for part in (_citation(url, title, date), shown) if part)
-            if truncated and not text.endswith(_TRUNCATED):
-                text += _TRUNCATED
-            if recall is not None:
-                # Only a page that was actually read. Remembering a failure
-                # would turn one outage into an hour of them.
-                recall.put(url, text, key=url_key(url))
-            return text
-        except httpx.HTTPStatusError as error:
-            # The status is the actionable part: 404 means the URL is wrong,
-            # 403 means this page will not be readable this way at all.
-            return (
-                f"Could not read that page: the server returned {error.response.status_code}."
+            if not refresh:
+                # Corpus before memo: both avoid the request, and only one
+                # comes back with offsets a claim can cite. Both return before
+                # any budget is spent -- the outer `finally` is what stops a
+                # reservation taken for this call from sitting there forever.
+                if corpus is not None:
+                    found = await stored_page(corpus, url, max_chars)
+                    if found is not None:
+                        return found
+                if recall is not None:
+                    remembered = recall.get(url, key=url_key(url))
+                    if remembered is not None:
+                        return (
+                            f"[recalled -- read {describe_age(remembered.age_seconds)} in "
+                            f"this process, not a fresh read. Pass refresh=True if the "
+                            f"page is expected to have changed since.]\n\n{remembered.text}"
+                        )
+            owned = client is None
+            http = client or httpx.AsyncClient(
+                timeout=TIMEOUT,
+                follow_redirects=grant is None,
+                headers=_HEADERS,
             )
-        except httpx.HTTPError as error:
-            return f"Could not reach that page: {error}"
-        except UnicodeError as error:
-            return f"Could not decode that page: {error}"
+            try:
+                response = await http.get(url, headers=_HEADERS)
+                if response.is_redirect:
+                    # Checked before `raise_for_status()`: with redirects off,
+                    # a 3xx with a Location is exactly what `raise_for_status`
+                    # treats as an error (`HTTPStatusError` naming the
+                    # location itself), which would fall into the "error,
+                    # don't spend" branch below -- wrong, because the GET
+                    # still left the process and got an answer. Spent and
+                    # reported here instead, before that branch ever sees it
+                    # -- and only if the grant is what authorized *this* call
+                    # (Fix 1: see the docstring).
+                    if grant is not None and grant.covers(url):
+                        grant.spend(tool_call_id)
+                    location = response.headers.get("location", "(no Location header)")
+                    # Worded to be true whether or not `grant` is set: in
+                    # production this branch is unreachable without one (the
+                    # ungranted owned client has follow_redirects=True, so
+                    # httpx resolves 3xx before this tool ever sees a
+                    # response), but an injected client -- every test in this
+                    # file uses one -- can still hand back a 3xx regardless of
+                    # `grant`, and a message that named "a granted fetch"
+                    # would be false in that case.
+                    return (
+                        f"That URL redirected to {location}, which was not followed. "
+                        "Fetch that URL directly if you still want it."
+                    )
+                response.raise_for_status()
+                if grant is not None and grant.covers(url):
+                    # Spent here, not at `http.get()`: an HTTPStatusError is
+                    # raised by `raise_for_status()`, one line above, and an
+                    # error is not a use of the budget (see the docstring). A
+                    # request that gets this far actually left the process
+                    # and came back with a usable response -- and
+                    # `covers(url)` is what confirms the grant, not a human
+                    # approval, is who authorized it.
+                    grant.spend(tool_call_id)
+                content_type = response.headers.get("content-type", "")
+                media_type = content_type.split(";")[0].strip().lower()
+                if media_type and "html" not in media_type and "xml" not in media_type:
+                    return (
+                        f"That URL returned {media_type}, which this tool cannot read -- "
+                        "it reads HTML pages. No text this time."
+                    )
+                body = response.content[:max_bytes]
+                truncated = len(response.content) > max_bytes
+                html = body.decode(response.encoding or "utf-8", errors="replace")
+                extracted = extract_page(html, url)
+                if extracted is None:
+                    return UNREADABLE
+                full, title, date = extracted
+                if pages is not None:
+                    # The whole extraction, not the excerpt below it.
+                    # `max_chars` is what one page may cost the conversation;
+                    # it was never meant to be what the corpus can hold, and
+                    # was only ever that because a document could not reach
+                    # the corpus except through the model's own output.
+                    pages.put(url, text=full, uri=url, title=title, published_at=date)
+                shown = full
+                if len(shown) > max_chars:
+                    shown = shown[:max_chars].rstrip() + _TRUNCATED
+                text = "\n\n".join(
+                    part for part in (_citation(url, title, date), shown) if part
+                )
+                if truncated and not text.endswith(_TRUNCATED):
+                    text += _TRUNCATED
+                if recall is not None:
+                    # Only a page that was actually read. Remembering a
+                    # failure would turn one outage into an hour of them.
+                    recall.put(url, text, key=url_key(url))
+                return text
+            except httpx.HTTPStatusError as error:
+                # The status is the actionable part: 404 means the URL is
+                # wrong, 403 means this page will not be readable this way at
+                # all. Not spent -- and per the outer `finally`, not left
+                # reserved either.
+                return (
+                    f"Could not read that page: the server returned "
+                    f"{error.response.status_code}."
+                )
+            except httpx.HTTPError as error:
+                return f"Could not reach that page: {error}"
+            except UnicodeError as error:
+                return f"Could not decode that page: {error}"
+            finally:
+                if owned:
+                    await http.aclose()
         finally:
-            if owned:
-                await http.aclose()
+            # Every return path above lands here, spent or not. `release()`
+            # is a plain `set.discard`, so this is a harmless no-op when
+            # `grant` is `None`, when this call never held a reservation (a
+            # human-approved, out-of-scope fetch), or when `spend()` already
+            # released this exact id two lines up -- and it is exactly what
+            # stops a corpus hit, a memo hit, or an httpx/HTTP error from
+            # leaving a claim stuck forever. See `FetchGrant`'s docstring for
+            # why an unreleased claim was a real problem, not an accepted one.
+            if grant is not None:
+                grant.release(tool_call_id)
 
     return fetch
 

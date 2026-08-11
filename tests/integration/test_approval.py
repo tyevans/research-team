@@ -242,6 +242,76 @@ async def test_a_run_with_no_grant_still_asks_a_human_for_fetch(build_applicatio
     assert fetches.urls == ["https://a.example/page"]
 
 
+def _mixed_batch_model(covered_url: str, uncovered_url: str) -> ToolAwareFakeChatModel:
+    """One assistant message with two `fetch` calls: one the grant covers,
+    one it does not -- the exact shape that crashed the turn before the
+    id-keyed reservation fix (see `test_a_mixed_batch...` below)."""
+    return ToolAwareFakeChatModel(
+        responses=[
+            AIMessage(
+                content="",
+                id="a1",
+                tool_calls=[
+                    {"name": FETCH_TOOL, "args": {"url": covered_url}, "id": "t1"},
+                    {"name": FETCH_TOOL, "args": {"url": uncovered_url}, "id": "t2"},
+                ],
+            ),
+            AIMessage(content="done", id="a2"),
+        ]
+    )
+
+
+async def test_a_covered_and_an_uncovered_fetch_in_one_message_do_not_crash_the_turn(
+    build_application, fetches
+):
+    """The Critical a whole-branch review reproduced and traced to langgraph
+    re-executing `after_model` on resume: `interrupt()` raises
+    `GraphInterrupt`, and `Command(resume=...)` re-walks the *whole* message's
+    tool calls, calling `when` (and, before the fix, `reserve()`) again for
+    the covered call even though it already holds a claim. On a budget of
+    one, the covered call's second evaluation used to see no room left,
+    flip to refused, and leave one human decision answering two now-hanging
+    calls -- `ValueError: Number of human decisions (1) does not match
+    number of hanging tool calls (2)` raised inside langchain, failing the
+    turn (and, in an auto run, burning `error_rate`, a granted run failing
+    *because* it was granted).
+
+    This drives the real `HumanInTheLoopMiddleware`, the real resume loop in
+    `DeepAgentTurnExecutor._invoke`, and the real `FetchGrant` over a budget
+    of exactly one -- the tightest case, and the one that crashed.
+    """
+    port = FixedPort(ApprovalDecision("approve"))
+    grants = GrantRegistry()
+    application = await build_application(
+        model=_mixed_batch_model("https://a.example/page", "https://evil.example/page"),
+        policy=_fetch_asking_policy(),
+        approvals=port,
+        grants=grants,
+    )
+    session_id = await start_session(application.service)
+    grants.register(
+        session_id,
+        FetchGrant(run_id=session_id, hosts=frozenset({"a.example"}), budget=1),
+    )
+
+    # No exception: this is the assertion. Before the fix this raised
+    # ValueError from inside langchain's HumanInTheLoopMiddleware.
+    await application.service.run_turn(session_id, "read both pages")
+
+    events = await application.service.history(session_id)
+    # Exactly one call went to the human -- the uncovered one. The covered
+    # call was never interrupted, on either evaluation.
+    decisions = [e for e in events if isinstance(e, ToolCallDecided)]
+    assert len(decisions) == 1
+    assert decisions[0].args["url"] == "https://evil.example/page"
+    # Both pages were actually fetched: the covered one via the grant, the
+    # uncovered one via the human's approval.
+    assert sorted(fetches.urls) == [
+        "https://a.example/page",
+        "https://evil.example/page",
+    ]
+
+
 @pytest.fixture
 def searching_model() -> ToolAwareFakeChatModel:
     """Asks for one search, then replies."""

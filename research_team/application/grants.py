@@ -64,29 +64,52 @@ class FetchGrant:
     of one, confirmed by running it. `reserve()` is what closes the gap: the
     gate claims a unit *before* deciding not to interrupt, so the second call
     in a batch sees the first call's claim and is refused (interrupted) rather
-    than also waved through. `covers()` is deliberately left reading only
-    `_remaining`, not `_remaining - _reserved`, so `fetch.py`'s existing
-    `covers()`-then-`spend()` pair (unit-tested directly, with no gate in the
-    loop) keeps meaning exactly what it always meant: `spend()` still floors
-    against the real budget and still refuses to spend past zero, unaffected
-    by whether a reservation happens to be outstanding. `spend()` releases the
-    reservation it corresponds to (floored at zero, for a `spend()` called
-    with none outstanding -- direct tests never reserve). A reservation whose
-    call never reaches `spend()` -- refused by a human, or a covered call that
-    errors before its own `spend()` runs, per `fetch.py`'s "errors don't
-    spend" rule -- is never released, and that is accepted rather than fixed:
-    an un-released reservation only ever *lowers* the room `reserve()` sees
-    for future claims, never raises it past the real budget, so the failure
-    mode of a stuck reservation is a run granted N that can spend fewer than
-    N, not one that can spend more. Leaking toward fewer fetches is the safe
-    direction; leaking the other way is the bug this exists to prevent.
+    than also waved through.
+
+    **`_reserved` is a `set[str]` of tool-call ids, not a count.** A count was
+    the first version of this and a whole-branch review caught what it
+    missed, by executing it: `interrupt()` raises `GraphInterrupt`, and on
+    `Command(resume=...)` langgraph re-executes `after_model` from the top --
+    so the gate calls `reserve()` a *second* time for every covered call in a
+    message that also contains an interrupting one. A plain counter has no
+    way to tell "this call already claimed" from "a new call wants to claim",
+    so it double-claimed, which at low remaining budget flipped an already-
+    admitted call to refused on the resume pass -- one decision came back for
+    two now-hanging calls, and langchain raised `ValueError`. Keying by
+    `tool_call["id"]` (already read by `_covered` in `approval.py`) makes
+    `reserve()` idempotent per call: re-evaluating an id already in the set
+    re-answers `True` without claiming a second unit. `covers()` is
+    deliberately left reading only `_remaining`, not `_remaining - reserved`,
+    so `fetch.py`'s existing `covers()`-then-`spend()` pair (unit-tested
+    directly, with no gate in the loop) keeps meaning exactly what it always
+    meant: `spend()` still floors against the real budget and still refuses
+    to spend past zero, unaffected by whether a reservation happens to be
+    outstanding.
+
+    **Every claim must be released, not just spent.** The same review found
+    that "an occasional leak is fine because it only ever lowers the ceiling"
+    understated how often the leak fires: a claim taken at the gate is left
+    stuck by *every* ordinary path that answers without a network read --
+    a corpus hit, a memo hit, an `httpx` error, an HTTP error status -- not
+    only the resume-reservation case above, because none of those call
+    `spend()`. In a research run over a growing corpus, cache hits are the
+    common case, not the exception, so a grant of N could reach zero
+    admissible claims after a handful of real requests -- and the floor of
+    that erosion was the crash above, not graceful degradation. So `fetch.py`
+    now calls `release(call_id)` in a `finally` that covers every return path,
+    whether or not `spend()` ran; `spend()` also releases the id it redeemed,
+    and `release()` is a plain `set.discard`, so calling it after `spend()`
+    already removed the id is a harmless no-op. What is still true, and now
+    actually holds: a claim can delay a future `reserve()` for a moment, but
+    it can never let more be spent than the real budget -- `spend()` is the
+    only thing that touches `_remaining`, and nothing here can raise it.
     """
 
     run_id: UUID
     hosts: frozenset[str]
     budget: int
     _remaining: list[int] = field(default_factory=list, compare=False, repr=False)
-    _reserved: list[int] = field(default_factory=list, compare=False, repr=False)
+    _reserved: set[str] = field(default_factory=set, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         # dataclass(frozen=True) blocks `self.hosts = ...` and
@@ -94,7 +117,7 @@ class FetchGrant:
         # escape hatch for exactly this kind of derived init.
         object.__setattr__(self, "hosts", frozenset(host.lower() for host in self.hosts))
         object.__setattr__(self, "_remaining", [self.budget])
-        object.__setattr__(self, "_reserved", [0])
+        object.__setattr__(self, "_reserved", set())
 
     @property
     def remaining(self) -> int:
@@ -144,8 +167,8 @@ class FetchGrant:
             return False
         return hostname.lower() in self.hosts
 
-    def reserve(self, url: str) -> bool:
-        """Claim one unit of budget for `url`, or refuse -- the gate's check.
+    def reserve(self, call_id: str, url: str) -> bool:
+        """Claim one unit of budget for `call_id`, or refuse -- the gate's check.
 
         `_gate_for` (`infrastructure/agent/approval.py`) calls this, not
         `covers()`, so that letting one covered call through *counts against
@@ -157,7 +180,22 @@ class FetchGrant:
         process before any of their `spend()`s land -- see the class
         docstring and `task-5-review.md` for the reproduction.
 
-        `covers(url)` first, so a host mismatch or an actually-spent grant
+        `call_id` first, before spending any budget check on it: if this
+        call already holds a claim, re-answer `True` from the existing claim
+        rather than trying (and refusing) to take a second one. This is what
+        makes `reserve()` safe to call twice for the same call, which
+        langgraph actually does -- `interrupt()` raises `GraphInterrupt`, and
+        `Command(resume=...)` re-executes `after_model` from the top, so
+        every covered call in a message that also contains an interrupting
+        one gets evaluated again on the resume pass. A plain count (this
+        method's first version) could not tell that second evaluation apart
+        from a genuinely new claim, double-spent the same call, and at low
+        remaining budget flipped an already-admitted call to refused on
+        resume -- one decision back for two now-hanging calls, and langchain
+        raised `ValueError`. Reproduced and fixed by keying on the id
+        `_covered` already reads off `request.tool_call["id"]`.
+
+        `covers(url)` next, so a host mismatch or an actually-spent grant
         refuses exactly as `covers()` always has; `_reserved` only bounds
         further claims once the URL and scheme have already passed. No
         `await` between the check and the write, so two calls evaluated in
@@ -165,30 +203,48 @@ class FetchGrant:
         walks one message's tool calls) cannot both observe room for the same
         unit -- the second sees the first's claim and is refused.
 
-        Every successful claim must eventually reach `spend()` or leak; see
-        the class docstring for why an occasional leak is the accepted
-        trade rather than a bug to chase.
+        Every successful claim must eventually be released -- by `spend()`
+        when it is redeemed, or by `release()` when it is not -- and
+        `fetch.py` is written so every return path does one or the other; see
+        the class docstring for why that finally had to be added rather than
+        accepted as an occasional leak.
         """
+        if call_id in self._reserved:
+            return True
         if not self.covers(url):
             return False
-        if self._remaining[0] - self._reserved[0] <= 0:
+        if self._remaining[0] - len(self._reserved) <= 0:
             return False
-        self._reserved[0] += 1
+        self._reserved.add(call_id)
         return True
 
-    def spend(self) -> None:
+    def release(self, call_id: str) -> None:
+        """Give back a claim that will never be spent.
+
+        A plain `set.discard` -- harmless to call on an id that was never
+        reserved (a human-approved, out-of-scope call never held one) and
+        harmless to call after `spend()` already removed it (every return
+        path in `fetch.py` calls this in a `finally`, whether or not
+        `spend()` ran on the way there). Does not touch `_remaining`: giving
+        back a claim restores room for a *future* `reserve()`, it does not
+        un-spend a unit that was actually charged.
+        """
+        self._reserved.discard(call_id)
+
+    def spend(self, call_id: str | None = None) -> None:
         """Consume one fetch. The only mutation `covers()` itself reacts to.
 
-        Also releases one reservation, floored at zero: a `spend()` that
-        followed a gate-side `reserve()` is that reservation being redeemed,
-        and a `spend()` called with none outstanding (every direct-tool test
-        in `test_fetch.py`, which builds a grant and never goes through the
-        gate) has nothing to release and the floor keeps `_reserved` from
-        going negative.
+        `call_id` releases the reservation it redeems -- `None` is the
+        default so every direct-tool test in `test_fetch.py` (which builds a
+        grant and calls `spend()` with no gate, and therefore no id, in the
+        loop) keeps working unchanged. Discarding an id already absent (an
+        id never reserved, or one this same call already released) is a
+        no-op, so `fetch.py` calling this and then `release()` in its
+        `finally` is not a double-release bug.
         """
         self._remaining[0] -= 1
-        if self._reserved[0] > 0:
-            self._reserved[0] -= 1
+        if call_id is not None:
+            self._reserved.discard(call_id)
 
 
 class GrantRegistry:
