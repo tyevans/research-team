@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { useRef, useState } from 'react'
 import { expect, it, vi } from 'vitest'
 
-import { Overlay, OverlayHost } from './OverlayHost.tsx'
+import { Overlay, OverlayHost, useEscape } from './OverlayHost.tsx'
 
 /** The stacking contract, and the specific inversion it exists to make
  *  unrepresentable.
@@ -433,4 +433,77 @@ it('renders nothing when there is no host, instead of escaping to the body', () 
   )
 
   expect(screen.queryByRole('dialog')).toBeNull()
+})
+
+/** A panel that closes on Escape without being an overlay: laid out in the
+ *  page, not portalled, not floating, not confined. `GraphDetail` is the real
+ *  one -- it sits beside the graph canvas so it can be read *while* the canvas
+ *  is worked, which is the whole point of it. */
+const Panel = ({ onClose }: { onClose: () => void }) => {
+  useEscape(onClose)
+  return <p>a panel beside the canvas</p>
+}
+
+it('gives Escape to the topmost layer even when something below is not an overlay', async () => {
+  const user = userEvent.setup()
+  const closePanel = vi.fn()
+  const closePopover = vi.fn()
+
+  /** The popover actually unmounts when dismissed. A spy alone leaves it
+   *  registered and therefore still topmost, so the second Escape below would
+   *  go to it again -- which says nothing about the stack and everything about
+   *  the harness. */
+  const Console = () => {
+    const [dockOpen, setDockOpen] = useState(true)
+    return (
+      <OverlayHost>
+        <Panel onClose={closePanel} />
+        {dockOpen ? (
+          <Overlay
+            label="Agent dock"
+            onDismiss={() => {
+              closePopover()
+              setDockOpen(false)
+            }}
+          >
+            dock
+          </Overlay>
+        ) : null}
+      </OverlayHost>
+    )
+  }
+
+  render(<Console />)
+
+  await user.keyboard('{Escape}')
+
+  // **The defect this closes.** `GraphDetail` listened on `window`, which is
+  // outside the host's arrangement entirely, so one Escape closed the popover
+  // *and* the panel behind it -- and `inert` does not help, because it blocks
+  // focus and pointers and says nothing about keydown listeners bound to
+  // `window`. Fails if `useEscape` goes back to a `window` listener: both
+  // spies are called.
+  expect(closePopover).toHaveBeenCalledTimes(1)
+  expect(closePanel).not.toHaveBeenCalled()
+
+  // And the panel is still reachable once the thing in front of it has gone,
+  // which is what makes it a stack rather than a mute.
+  await user.keyboard('{Escape}')
+  expect(closePanel).toHaveBeenCalledTimes(1)
+})
+
+it('does nothing on Escape when a bare participant has no host', async () => {
+  const user = userEvent.setup()
+  const onClose = vi.fn()
+
+  render(<Panel onClose={onClose} />)
+  await user.keyboard('{Escape}')
+
+  // The same contract `Overlay` has -- "renders nothing when there is no host,
+  // instead of escaping to the body" -- expressed for something that renders
+  // no layer at all. A hostless participant declining to act is what makes a
+  // missing host a visible failure in one place rather than a silent
+  // free-for-all on `window`.
+  expect(onClose).not.toHaveBeenCalled()
+  expect(screen.getByText('a panel beside the canvas')).toBeInTheDocument()
 })

@@ -294,59 +294,25 @@ export const OverlayHost = ({ children }: { children?: ReactNode }) => {
   )
 }
 
-/** One dismissable layer, rendered into the host through a portal.
+/** A place in the layer stack, without any opinion about rendering.
  *
- * Nothing in this codebase calls `createPortal` today — every overlay renders
- * inline in the React tree and escapes only through `position: fixed`. That is
- * why this is new capability rather than a refactor, and it is the reason the
- * ordering above is achievable at all: layers cannot be ordered by DOM
- * position while they are scattered across the tree at the mercy of whichever
- * ancestor happens to create a stacking context.
+ * Extracted from `Overlay` so that something which is *not* an overlay can
+ * still take its turn at Escape. `GraphDetail` is the case: it is a panel laid
+ * out beside the canvas rather than floating over it, so it must not be
+ * portalled, must not be `inert`-ed and must not trap focus -- and yet it
+ * closes on Escape, which means it is competing for the same key as every
+ * drawer and popover in the console. Listening on `window` itself, which is
+ * what it did, is exactly the arrangement the host exists to remove: one
+ * keypress closed the panel *and* whatever was in front of it.
  */
-export const Overlay = ({
-  label,
-  modal = false,
+const useLayer = ({
+  modal,
   onDismiss,
-  anchor,
   returnFocus,
-  children,
 }: {
-  /** The accessible name. Required rather than optional: an unnamed dialog is
-   *  announced as "dialog" and nothing else, which is the state
-   *  `Drawer`'s `label` prop exists to prevent. */
-  label: string
-  /** Whether this layer takes the page. A modal renders a backdrop, and every
-   *  layer beneath it in the host becomes inert. */
-  modal?: boolean
-  /** Escape, and a click on the backdrop of a modal. Omit for a layer that
-   *  must not be dismissable, and understand that it then blocks Escape for
-   *  everything beneath it. */
-  onDismiss?: () => void
-  /** The control this layer hangs off, for a **non-modal** layer only.
-   *
-   * A popover is dismissed by pointing anywhere else, and "anywhere else" has
-   * to exclude the toggle that opened it or the press closes the layer and the
-   * click that follows immediately reopens it. That is the whole reason this
-   * prop exists, and it is the one fact about a popover the host cannot work
-   * out for itself: the toggle is in the page, the layer is in the portal, and
-   * nothing in the DOM connects them.
-   *
-   * Omit it and outside-pointer dismissal still runs -- a layer with no anchor
-   * simply has nothing to exclude, which is correct for a menu opened from
-   * something that is not a persistent toggle. */
-  anchor?: RefObject<HTMLElement | null>
-  /** Where focus goes when this layer closes, for a **modal** that moved focus
-   *  into itself.
-   *
-   * The layer captures the element as it opens and the host performs the
-   * restore, because only the host knows when the page stops being `inert` --
-   * argued at length beside `owedFocus`. A ref rather than an element so the
-   * caller can fill it in at the right moment rather than at render time.
-   *
-   * Ignored for a non-modal layer, which never took focus away from anything
-   * and has nothing to give back. */
-  returnFocus?: RefObject<Element | null>
-  children: ReactNode
+  modal: boolean
+  onDismiss: (() => void) | undefined
+  returnFocus: RefObject<Element | null> | undefined
 }) => {
   const host = useContext(HostContext)
   // A stable identity per mount. `useState` with a lazy initialiser rather
@@ -407,7 +373,86 @@ export const Overlay = ({
     return register({ key, modal, handlers })
   }, [register, key, modal, handlers])
 
-  const mine = layers?.findIndex((layer) => layer.key === key) ?? -1
+  return {
+    host,
+    container,
+    layers,
+    /** This layer's position in the stack, or -1 before it has registered. */
+    mine: layers?.findIndex((layer) => layer.key === key) ?? -1,
+  }
+}
+
+/** Take a turn at Escape without rendering an overlay.
+ *
+ * For something that closes on Escape but is laid out in the page rather than
+ * floating over it. The host gives Escape to the topmost registered layer and
+ * to nothing else, so a panel that registers here stops closing at the same
+ * time as the drawer in front of it -- which is what a `window` listener does,
+ * because `inert` blocks focus and pointers and has no opinion at all about
+ * keydown listeners bound to `window`.
+ *
+ * Non-modal by construction. A thing that wanted to be modal would want a
+ * backdrop and confinement too, and that is `Overlay`.
+ */
+export const useEscape = (onDismiss: () => void): void => {
+  useLayer({ modal: false, onDismiss, returnFocus: undefined })
+}
+
+/** One dismissable layer, rendered into the host through a portal.
+ *
+ * Nothing in this codebase calls `createPortal` today — every overlay renders
+ * inline in the React tree and escapes only through `position: fixed`. That is
+ * why this is new capability rather than a refactor, and it is the reason the
+ * ordering above is achievable at all: layers cannot be ordered by DOM
+ * position while they are scattered across the tree at the mercy of whichever
+ * ancestor happens to create a stacking context.
+ */
+export const Overlay = ({
+  label,
+  modal = false,
+  onDismiss,
+  anchor,
+  returnFocus,
+  children,
+}: {
+  /** The accessible name. Required rather than optional: an unnamed dialog is
+   *  announced as "dialog" and nothing else, which is the state
+   *  `Drawer`'s `label` prop exists to prevent. */
+  label: string
+  /** Whether this layer takes the page. A modal renders a backdrop, and every
+   *  layer beneath it in the host becomes inert. */
+  modal?: boolean
+  /** Escape, and a click on the backdrop of a modal. Omit for a layer that
+   *  must not be dismissable, and understand that it then blocks Escape for
+   *  everything beneath it. */
+  onDismiss?: () => void
+  /** The control this layer hangs off, for a **non-modal** layer only.
+   *
+   * A popover is dismissed by pointing anywhere else, and "anywhere else" has
+   * to exclude the toggle that opened it or the press closes the layer and the
+   * click that follows immediately reopens it. That is the whole reason this
+   * prop exists, and it is the one fact about a popover the host cannot work
+   * out for itself: the toggle is in the page, the layer is in the portal, and
+   * nothing in the DOM connects them.
+   *
+   * Omit it and outside-pointer dismissal still runs -- a layer with no anchor
+   * simply has nothing to exclude, which is correct for a menu opened from
+   * something that is not a persistent toggle. */
+  anchor?: RefObject<HTMLElement | null>
+  /** Where focus goes when this layer closes, for a **modal** that moved focus
+   *  into itself.
+   *
+   * The layer captures the element as it opens and the host performs the
+   * restore, because only the host knows when the page stops being `inert` --
+   * argued at length beside `owedFocus`. A ref rather than an element so the
+   * caller can fill it in at the right moment rather than at render time.
+   *
+   * Ignored for a non-modal layer, which never took focus away from anything
+   * and has nothing to give back. */
+  returnFocus?: RefObject<Element | null>
+  children: ReactNode
+}) => {
+  const { host, container, layers, mine } = useLayer({ modal, onDismiss, returnFocus })
   // Inert if any *later* layer is modal. Later, not "any", because a modal
   // does not make itself inert and does not disable the layers stacked on top
   // of it -- a confirm opened from a drawer has to stay usable.

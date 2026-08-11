@@ -1,6 +1,6 @@
-import { useEffect } from 'react'
-
 import { edgesOf, isExpanded, type GraphView } from '@domain/knowledge/graph.ts'
+
+import { useEscape } from '../layout/OverlayHost.tsx'
 
 /** What the selected node is, and what it is connected to.
  *
@@ -32,15 +32,19 @@ export const GraphDetail = ({
   // Escape closes it, the way it closes the drawers this console already has.
   // Not a focus trap, though, and deliberately not: the drawer is modal and
   // this is not -- the point of the panel is to read it *while* working the
-  // canvas beside it, so trapping focus inside would break the one thing it
-  // is for.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  // canvas beside it, so trapping focus inside would break the one thing it is
+  // for. `useEscape` rather than `Overlay` is exactly that distinction: a turn
+  // at the key without being portalled, floated or confined.
+  //
+  // **This was a `window` listener, and that was the defect.** The host hands
+  // Escape to the topmost layer and to nothing else, precisely so two open
+  // things do not both close on one keypress -- and a listener bound to
+  // `window` sits outside that arrangement entirely. `inert` does not cover
+  // it either: it blocks focus and pointers and has no opinion about keydown
+  // listeners on `window`. So with the agent dock expanded over the research
+  // view, one Escape closed the dock *and* this panel behind it, which the
+  // reader could not see was in play.
+  useEscape(onClose)
 
   const node = view.nodes.find((candidate) => candidate.id === selected)
   // The selection can outlive its node only if something removed it from the
