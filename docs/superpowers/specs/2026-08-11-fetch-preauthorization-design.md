@@ -180,9 +180,27 @@ both consult the registry with `session.aggregate_id`:
 
 - `interrupt_config` gains the session, so `when` can ask whether this call is
   covered.
-- `tools_provider` returns a grant-bound `fetch` that shadows the base one by
-  name, which is the mechanism `KnowledgeAttachment._compose` already uses for
-  the corpus-aware `fetch` (`application/knowledge_attachment.py:19-39`).
+- `tools_provider` returns a grant-bound `fetch`.
+
+**A per-turn tool must shadow, and today it appends.** `_invoke` builds
+`turn_tools = [*self._tools, *await self._resolved_tools(session)]`
+(`deep_agent.py:358`), so a second tool named `fetch` would be a duplicate
+rather than a replacement. `KnowledgeAttachment._compose`
+(`application/knowledge_attachment.py:19-39`) already implements name-shadowing,
+but it runs through `set_tools`, which is a persistent swap — the wrong lifetime
+for something that must be true for one turn and not the next.
+
+So `_invoke` composes `turn_tools` with the same rule `_compose` uses: a
+per-turn tool shadows a registered one of the same name. That is a small change
+with a wider blast radius than the rest of this spec, and it is the right shape
+independently — two tools sharing a name is never a thing a caller wants, and
+today it is silently possible. The alternative, giving the grant-bound tool a
+different name, would mean the model choosing between `fetch` and
+`fetch_granted`, which puts the authorization in the model's hands.
+
+**Rejected — making the one base `fetch` grant-aware.** It has no session in its
+closure and no way to get one; that is the constraint this whole section works
+around.
 
 A session with no grant gets today's tool and today's predicate, by the same
 lookup returning `None`. **The ungranted path must be byte-for-byte the
