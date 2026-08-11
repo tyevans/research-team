@@ -10,7 +10,13 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from research_team.infrastructure.agent.recall import Recall
-from research_team.infrastructure.agent.search import build_search_tool, format_results
+from research_team.infrastructure.agent.search import (
+    MAX_EMPTY_SEARCHES,
+    SearchAttempts,
+    build_search_tool,
+    format_results,
+)
+from research_team.infrastructure.agent.search_middleware import SearchAttemptsMiddleware
 
 PAYLOAD = {
     "results": [
@@ -292,3 +298,98 @@ async def test_without_a_recall_every_search_reaches_the_instance():
     await tool.ainvoke({"query": "q"})
     await tool.ainvoke({"query": "q"})
     assert len(calls) == 2
+
+
+# ---------------- bounding empty searches ----------------
+
+
+def _empty_handler(calls: list[int]):
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(200, json={"results": []})
+
+    return handler
+
+
+async def test_search_stops_after_repeated_empty_results() -> None:
+    """Not a permission change: the agent is allowed to search. It is being
+    told that searching again will not help, in the shape `fetch` already uses
+    for a page that will never render."""
+    calls: list[int] = []
+    attempts = SearchAttempts()
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_empty_handler(calls)), attempts=attempts
+    )
+    for _ in range(MAX_EMPTY_SEARCHES):
+        result = await tool.ainvoke({"query": "q"})
+        assert result == "No results."
+
+    # One more, past the bound: no request is made, and the notice names both
+    # the count and the tool to reach for instead.
+    result = await tool.ainvoke({"query": "q"})
+    assert len(calls) == MAX_EMPTY_SEARCHES
+    assert str(MAX_EMPTY_SEARCHES) in result
+    assert "record_gap" in result
+
+
+async def test_the_counter_resets_on_any_result() -> None:
+    """An intermittently productive search is never bounded."""
+    responses = iter(
+        [
+            httpx.Response(200, json={"results": []}),
+            httpx.Response(200, json={"results": []}),
+            httpx.Response(200, json=PAYLOAD),
+            httpx.Response(200, json={"results": []}),
+            httpx.Response(200, json={"results": []}),
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return next(responses)
+
+    attempts = SearchAttempts()
+    tool = build_search_tool("http://searx.local", client=_client(handler), attempts=attempts)
+    for _ in range(5):
+        result = await tool.ainvoke({"query": "q"})
+
+    # Never crossed MAX_EMPTY_SEARCHES consecutive misses, so the last call
+    # still reached the instance rather than returning the bound notice.
+    assert result == "No results."
+
+
+def test_the_counter_resets_at_the_turn_boundary() -> None:
+    """A turn does not inherit the previous turn's misses."""
+    attempts = SearchAttempts()
+    for _ in range(MAX_EMPTY_SEARCHES):
+        attempts.record_empty()
+    assert attempts.exhausted()
+
+    middleware = SearchAttemptsMiddleware(attempts)
+    assert middleware.name == "search_attempts"
+    middleware.before_agent({})
+
+    assert not attempts.exhausted()
+
+
+def test_the_bound_does_not_touch_the_autonomy_policy() -> None:
+    """B24 rejects counting as a permission mechanism by name. This test fails
+    if the bound is ever implemented as a gate."""
+    from research_team.application.autonomy import TOOL_FLOORS
+
+    assert TOOL_FLOORS == {"fetch": "ask", "advance_stage": "ask"}
+
+
+async def test_errors_are_not_counted() -> None:
+    """An unreachable instance or a malformed payload is not an absent
+    answer -- counting it would tell the model to record a gap it has no
+    evidence for."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    attempts = SearchAttempts()
+    tool = build_search_tool("http://searx.local", client=_client(handler), attempts=attempts)
+    for _ in range(MAX_EMPTY_SEARCHES + 2):
+        await tool.ainvoke({"query": "q"})
+
+    assert not attempts.exhausted()
