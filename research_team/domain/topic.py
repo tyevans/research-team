@@ -147,6 +147,18 @@ class TopicInvestigated(DomainEvent):
 
     summary: str = ""
     by_run_id: UUID | None = None
+    outcome: str | None = None
+    """How the round ended: "produced", "nothing", or "failed".
+
+    `None` means the round predates this field, and is deliberately not one of
+    the three. Defaulting to "produced" would quietly stop `_rework_thrash`
+    counting historic fruitless rounds; defaulting to "nothing" would claim
+    every past round found nothing. Neither is a thing anybody observed.
+
+    `summary` stays free text for a person to read. This is the part something
+    can branch on -- and what nothing branches on today is exactly why a
+    crashed round and a fruitless one were indistinguishable.
+    """
 
 
 @register_event
@@ -282,6 +294,7 @@ class RecordInvestigation:
     at_position: str
     summary: str = ""
     by_run_id: UUID | None = None
+    outcome: str | None = None
 
 
 @dataclass(frozen=True)
@@ -509,12 +522,21 @@ def decide(command: TopicCommand, state: TopicState) -> list[DomainEvent]:
                 return []
             return [TopicEntityLinked(aggregate_id=topic_id, entity_id=entity_id, name=name)]
 
-        case RecordInvestigation(at_position=at, summary=summary, by_run_id=run_id), _:
+        case (
+            RecordInvestigation(
+                at_position=at, summary=summary, by_run_id=run_id, outcome=outcome
+            ),
+            _,
+        ):
             if not at.strip():
                 raise CommandRejectedError("an investigation must say where the log stood")
             return [
                 TopicInvestigated(
-                    aggregate_id=topic_id, at_position=at, summary=summary, by_run_id=run_id
+                    aggregate_id=topic_id,
+                    at_position=at,
+                    summary=summary,
+                    by_run_id=run_id,
+                    outcome=outcome,
                 )
             ]
 

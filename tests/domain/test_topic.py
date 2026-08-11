@@ -231,6 +231,24 @@ def test_an_investigation_must_say_where_the_log_stood():
         decide(RecordInvestigation(at_position=""), opened())
 
 
+def test_an_investigation_can_say_how_it_ended():
+    """ "nothing recorded" and "failed" were the same field with different
+    English, so nothing downstream could tell a fruitless round from a broken
+    one."""
+    events = decide(RecordInvestigation(at_position="p1", outcome="failed"), opened())
+
+    assert events[0].outcome == "failed"
+
+
+def test_an_investigation_that_does_not_say_leaves_it_unset():
+    """None means "written before this was recorded", and is not one of the
+    three outcomes. Defaulting to a real value would assert something about
+    rounds nobody observed."""
+    events = decide(RecordInvestigation(at_position="p1"), opened())
+
+    assert events[0].outcome is None
+
+
 def test_a_finding_needs_a_summary():
     with pytest.raises(CommandRejectedError, match="summary"):
         decide(RecordFinding(summary="   "), opened())

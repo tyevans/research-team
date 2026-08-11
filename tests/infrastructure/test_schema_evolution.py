@@ -33,7 +33,11 @@ from research_team.domain import (
     TurnFailed,
     current_stage_of,
 )
-from research_team.infrastructure.persistence.event_store import build_project_repository
+from research_team.domain.topic import OpenTopic, TopicInvestigated
+from research_team.infrastructure.persistence.event_store import (
+    build_project_repository,
+    build_topic_repository,
+)
 from research_team.workflows import hybrid_default
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
@@ -185,6 +189,49 @@ async def test_a_tool_call_decision_written_before_edited_args_existed_still_loa
     decision = events[-1]
     assert isinstance(decision, ToolCallDecided)
     assert decision.edited_args is None
+
+
+async def test_an_investigation_written_before_outcome_existed_still_loads(store, db_path):
+    """Reads back with `outcome` absent, not defaulted to a real value. A
+    default of "produced" would claim every historic round found something.
+
+    Builds its own topic repository because the shared `repository` fixture
+    is a `CodingSession` repository, and `Topic` is a different aggregate
+    type over the same log.
+    """
+    topic_id = uuid4()
+    topics = build_topic_repository(store)
+    topic = topics.create_new(topic_id)
+    topic.execute(
+        OpenTopic(
+            topic_id=topic_id,
+            project_id=uuid4(),
+            question="does the thing work?",
+            rationale="it is on the critical path",
+        )
+    )
+    await topics.save(topic)
+    await _write_old_event(
+        db_path,
+        topic_id,
+        version=2,
+        event_type="TopicInvestigated",
+        payload={
+            "aggregate_id": str(topic_id),
+            "aggregate_type": "Topic",
+            "aggregate_version": 2,
+            "at_position": "000000000042",
+            "summary": "nothing recorded",
+        },
+        aggregate_type="Topic",
+    )
+
+    stream = StreamId(topic_id, "Topic")
+    events = [envelope.event for envelope in await collect(store.read_stream(stream))]
+
+    investigation = events[-1]
+    assert isinstance(investigation, TopicInvestigated)
+    assert investigation.outcome is None
 
 
 async def test_a_schema_version_bump_falls_back_to_replay(repository, session_id, monkeypatch):
