@@ -297,7 +297,11 @@ def test_thrash_fires_on_exactly_the_same_condition_as_before():
     """The firing condition is deliberately untouched. A condition depending on
     `outcome` or on gaps would report differently about one topic depending on
     when its rounds happened, because history predates both fields. This test
-    fails if the condition is ever made to depend on them."""
+    fails if the condition is ever made to depend on them.
+
+    This test passes with the current change reverted -- it was never red
+    against this task's implementation. It guards a future edit rather than
+    pinning this one."""
     state = run(
         opened(),
         RecordInvestigation(at_position="p1"),
