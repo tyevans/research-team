@@ -30,6 +30,18 @@ class LiveFeed:
         """A returned cursor, or None if this store cannot place it."""
         return self._feed.decode_position(raw)
 
+    async def position_now(self) -> object:
+        """Where the log ends at this moment.
+
+        `follow()` takes this itself when given neither a position nor
+        `from_start`, so this exists for the one caller that needs to take it
+        *earlier*: a subscriber cannot say "I am listening from here" until
+        here has been decided, and inside `follow` that happens on the first
+        turn of a task nobody can wait for. `_sse` takes the position, then
+        announces itself.
+        """
+        return await self._feed.latest_position()
+
     async def follow(
         self, *, from_start: bool = False, from_position: object | None = None
     ) -> AsyncIterator[FeedEntry]:

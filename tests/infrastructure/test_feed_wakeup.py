@@ -60,11 +60,18 @@ async def test_a_save_before_the_wait_does_not_leave_a_signal_standing(repositor
     )
     await repository.save(session)
 
-    with_stale_signal = asyncio.create_task(repository.wait_for_append(timeout=0.3))
+    # A long timeout and a short look, rather than the reverse. What is being
+    # asserted is that the wait does *not* return early, and there is no event
+    # to wait on for a thing that must not happen -- so this one keeps a
+    # duration. What it does not keep is a narrow margin: it used to wait 0.3s
+    # and look after 0.1s, so a machine three times slower than expected would
+    # see the wait time out on its own and report a standing latch that was
+    # never there. A hundredfold is not a race.
+    with_stale_signal = asyncio.create_task(repository.wait_for_append(timeout=10.0))
     await asyncio.sleep(0.1)
 
     assert not with_stale_signal.done()
-    await with_stale_signal
+    with_stale_signal.cancel()
 
 
 async def test_a_position_survives_a_round_trip_through_text(repository, session_id):

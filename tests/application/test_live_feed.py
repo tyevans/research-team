@@ -14,6 +14,11 @@ class FakeFeed:
         self.entries: list[FeedEntry] = []
         self.reads = 0
         self._appended = asyncio.Event()
+        # Set when a follower asks where the log ends, which is the moment it
+        # becomes a subscriber. A test that wants to push *after* somebody is
+        # listening waits on this rather than sleeping for longer than it
+        # thinks subscribing takes -- the `BACKLOG.md` B4 distinction.
+        self.placed = asyncio.Event()
 
     def push(self, name: str) -> None:
         position = len(self.entries) + 1
@@ -36,6 +41,7 @@ class FakeFeed:
             self._appended.clear()
 
     async def latest_position(self) -> object | None:
+        self.placed.set()
         return self.entries[-1].position if self.entries else None
 
     async def read_since(self, position: object | None) -> list[FeedEntry]:
@@ -63,7 +69,7 @@ async def test_follow_starts_at_the_end_by_default():
     feed = LiveFeed(fake, poll_interval=0.01)
 
     async def push_soon() -> None:
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(fake.placed.wait(), timeout=5)
         fake.push("new")
 
     pusher = asyncio.create_task(push_soon())
@@ -107,7 +113,7 @@ async def test_an_append_wakes_the_feed_without_waiting_out_the_interval():
     feed = LiveFeed(fake, poll_interval=30.0)
 
     async def push_soon() -> None:
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(fake.placed.wait(), timeout=5)
         fake.push("pushed")
 
     pusher = asyncio.create_task(push_soon())

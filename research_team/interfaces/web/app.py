@@ -1846,9 +1846,27 @@ async def _sse(
     """
     queue: asyncio.Queue = asyncio.Queue()
     start_at = feed.decode_position(resume_from) if resume_from else None
+    # Taken here rather than left to `follow`, so that by the time this
+    # generator yields anything the cursor is already fixed. `follow` would
+    # take the same position on the first turn of the pump task below, which is
+    # scheduled and not awaited -- so "the response has started" would not mean
+    # "the subscriber is placed", and an event appended in between would be
+    # missed by a client that had every reason to think it was listening.
+    #
+    # `from_beginning` is not a nicety. An empty log has no position, so
+    # `position_now()` answers `None` -- which is the same value as "I am not
+    # telling you where to start", and `follow` responds to that by taking the
+    # position itself, later, on the pump's first turn. The window this exists
+    # to close would have reopened for exactly the case where it is widest.
+    # Replaying from the start is not a different behaviour here: the log was
+    # empty when we looked, so everything from the start *is* everything since.
+    from_beginning = False
+    if start_at is None:
+        start_at = await feed.position_now()
+        from_beginning = start_at is None
 
     async def pump() -> None:
-        async for entry in feed.follow(from_position=start_at):
+        async for entry in feed.follow(from_position=start_at, from_start=from_beginning):
             await queue.put(("event", entry))
 
     # The feed is drained by its own task rather than awaited inline, so waiting
@@ -1908,6 +1926,28 @@ async def _sse(
 
     idle = 0.0
     try:
+        # "You are subscribed, from a position already taken."
+        #
+        # A comment rather than an event: `EventSource` ignores `:` lines
+        # entirely, so no browser needs to know this exists and no client code
+        # changes. What it buys is a point in time that means something --
+        # headers arrive when the route returns, which is before any of the
+        # above has run, so `onopen` alone never told a client its cursor was
+        # placed.
+        #
+        # Inside the `try`, not above it, and that placement is the whole
+        # reason this is not a one-line addition: a yield is a suspension
+        # point, and a client that hangs up exactly here would otherwise throw
+        # `GeneratorExit` past the `finally` that stops the pump tasks and
+        # releases the listeners.
+        #
+        # It also makes the tests in `test_web.py` and `test_turn_visibility.py`
+        # honest. They established "the subscriber is listening" with sleeps of
+        # 0.05 to 0.4 seconds -- the `BACKLOG.md` B4 shape, and the reason a
+        # write racing a subscription looked like a broken feed on a loaded
+        # machine.
+        yield ": ready\n\n"
+
         while not await request.is_disconnected():
             try:
                 kind, item = await asyncio.wait_for(queue.get(), timeout=DISCONNECT_CHECK)
