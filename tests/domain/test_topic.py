@@ -22,11 +22,13 @@ from research_team.domain.topic import (
     OpenTopic,
     RecordContest,
     RecordFinding,
+    RecordGap,
     RecordInvestigation,
     ResolveContest,
     ResolveSubQuestion,
     SetTopicStatus,
     Topic,
+    TopicGapRecorded,
     TopicOpened,
     UnlinkSource,
     decide,
@@ -232,6 +234,59 @@ def test_an_investigation_must_say_where_the_log_stood():
 def test_a_finding_needs_a_summary():
     with pytest.raises(CommandRejectedError, match="summary"):
         decide(RecordFinding(summary="   "), opened())
+
+
+def test_a_gap_records_what_was_looked_for_and_what_was_tried() -> None:
+    """The twin of a finding. A run that searched five ways and found nothing
+    otherwise leaves only the free text "nothing recorded", which every later
+    run has to re-derive the absence from."""
+    state = opened()
+
+    events = decide(
+        RecordGap(
+            looking_for="a critique of backward design",
+            tried=["backward design critique", "wiggins mctighe criticism"],
+        ),
+        state,
+    )
+
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, TopicGapRecorded)
+    assert event.looking_for == "a critique of backward design"
+    assert event.tried == ["backward design critique", "wiggins mctighe criticism"]
+
+
+def test_a_gap_with_nothing_tried_is_refused() -> None:
+    """A gap with an empty `tried` is indistinguishable from never having
+    looked, which is the exact confusion this event exists to remove."""
+    state = opened()
+
+    with pytest.raises(CommandRejectedError, match="tried"):
+        decide(RecordGap(looking_for="a critique", tried=[]), state)
+
+
+def test_a_gap_with_nothing_looked_for_is_refused() -> None:
+    state = opened()
+
+    with pytest.raises(CommandRejectedError):
+        decide(RecordGap(looking_for="  ", tried=["something"]), state)
+
+
+def test_a_recorded_gap_counts_but_changes_nothing_else() -> None:
+    """Specifically: it does not change status. A run that could mark its own
+    questions unanswerable could empty its queue without answering anything,
+    which is what `TopicPort` having no `close_topic` exists to prevent."""
+    state = opened()
+
+    after = evolve(
+        state, TopicGapRecorded(aggregate_id=state.topic_id, looking_for="x", tried=["y"])
+    )
+
+    assert after.gaps == state.gaps + 1
+    assert after.status == state.status
+    assert after.findings == state.findings
+    assert after.sub_questions == state.sub_questions
 
 
 # ---------------- contests ----------------

@@ -164,6 +164,29 @@ class TopicFindingRecorded(DomainEvent):
 
 
 @register_event
+class TopicGapRecorded(DomainEvent):
+    """Something was looked for and not found. The unit of ruled-out effort.
+
+    The twin of `TopicFindingRecorded`, and recorded for the same reason: a
+    round that produced nothing otherwise leaves only free text, so every later
+    run re-derives the same absence from nothing.
+
+    `tried` is what the agent says it attempted, not what the search instance
+    was asked -- `format_results` flattens the payload to text at receipt and
+    nothing downstream can map a snippet back to its query. It is a claim,
+    useful because it tells the next reader what not to repeat, and it should
+    not be read as a record of requests actually made.
+
+    Recording a gap does not change status and does not silence anything. It is
+    evidence a person decides from.
+    """
+
+    aggregate_type: str = "Topic"
+    looking_for: str
+    tried: list[str] = Field(default_factory=list)
+
+
+@register_event
 class TopicContested(DomainEvent):
     """Two sources disagree, and nobody has adjudicated yet.
 
@@ -268,6 +291,12 @@ class RecordFinding:
 
 
 @dataclass(frozen=True)
+class RecordGap:
+    looking_for: str
+    tried: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class RecordContest:
     key: str
     nature: str
@@ -303,6 +332,7 @@ TopicCommand = (
     | LinkEntity
     | RecordInvestigation
     | RecordFinding
+    | RecordGap
     | RecordContest
     | ResolveContest
     | SetTopicStatus
@@ -364,6 +394,13 @@ class TopicState(BaseModel):
     acknowledgements: dict[str, Acknowledgement] = Field(default_factory=dict)
     investigations: int = 0
     findings: int = 0
+    gaps: int = 0
+    """Looks that were written down as having found nothing.
+
+    A count, like `findings`, and not a reason to stop: a topic with twenty
+    gaps stays live and stays in the queue. Every response to that is a
+    person's."""
+
     last_investigated_at: str | None = None
     """The `at_position` of the most recent look. None means never looked."""
 
@@ -487,6 +524,20 @@ def decide(command: TopicCommand, state: TopicState) -> list[DomainEvent]:
             return [
                 TopicFindingRecorded(
                     aggregate_id=topic_id, summary=summary, source_ids=list(source_ids)
+                )
+            ]
+
+        case RecordGap(looking_for=looking_for, tried=tried), _:
+            if not looking_for.strip():
+                raise CommandRejectedError("a gap needs to say what was looked for")
+            if not [item for item in tried if item.strip()]:
+                # Both required, for `TopicOpened`'s reason. A gap with nothing
+                # tried says only "we do not know", which the topic already
+                # said by being open.
+                raise CommandRejectedError("a gap needs to say what was tried")
+            return [
+                TopicGapRecorded(
+                    aggregate_id=topic_id, looking_for=looking_for, tried=list(tried)
                 )
             ]
 
@@ -630,6 +681,11 @@ def evolve(state: TopicState, event: DomainEvent) -> TopicState:
 
         case TopicFindingRecorded():
             return state.model_copy(update={"findings": state.findings + 1})
+
+        case TopicGapRecorded():
+            # Counts, and nothing else. Deliberately does not touch status:
+            # see the event's docstring.
+            return state.model_copy(update={"gaps": state.gaps + 1})
 
         case TopicContested(key=key, nature=nature, source_ids=source_ids):
             return state.model_copy(
