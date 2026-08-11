@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  ARG_DETAIL_LIMIT,
+  argDetail,
   contentText,
   isToolActivity,
   safeJson,
@@ -85,6 +87,29 @@ describe('summariseArgs', () => {
 
   it('truncates a long value so the row stays one line', () => {
     expect(summariseArgs({ query: 'x'.repeat(200) })).toContain('…')
+  })
+})
+
+describe('argDetail', () => {
+  it('renders the whole of an ordinary call', () => {
+    expect(argDetail({ path: '/a.md', recursive: true })).toBe(
+      '{\n  "path": "/a.md",\n  "recursive": true\n}',
+    )
+  })
+
+  it('stops at the same boundary a tool result does', () => {
+    // `remember` accepts 20,000 characters. The transcript already truncates a
+    // tool *result* at this width; expanded arguments are the same kind of
+    // thing to read and are held to the same bound rather than a second one.
+    const detail = argDetail({ text: 'x'.repeat(50_000) })
+    expect(detail.length).toBe(ARG_DETAIL_LIMIT)
+    expect(detail.endsWith('…')).toBe(true)
+  })
+
+  it('says why it could not render rather than throwing', () => {
+    const cyclic: Record<string, unknown> = {}
+    cyclic['self'] = cyclic
+    expect(() => argDetail(cyclic)).not.toThrow()
   })
 })
 

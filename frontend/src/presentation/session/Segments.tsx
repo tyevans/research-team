@@ -1,8 +1,8 @@
 import clsx from 'clsx'
 
 import {
+  argDetail,
   contentText,
-  safeJson,
   summariseArgs,
   truncate,
   type Message,
@@ -116,14 +116,36 @@ const MessageBubble = ({
 
   const callList = (
     <div className="calls">
-      {calls.map((call, position) => (
-        <div key={position} className="call" title={safeJson(call.args)}>
-          <b>{call.name || 'tool'}</b>
-          {summariseArgs(call.args) ? (
-            <span className="arg">{`  ${summariseArgs(call.args)}`}</span>
-          ) : null}
-        </div>
-      ))}
+      {calls.map((call, position) => {
+        const preview = summariseArgs(call.args)
+        const argsKey = `args:${index}:${position}`
+        const head = (
+          <span className="call">
+            <b>{call.name || 'tool'}</b>
+            {preview ? <span className="arg">{`  ${preview}`}</span> : null}
+          </span>
+        )
+        // A call that took nothing has nothing to open, and a disclosure over
+        // an empty body is a control that punishes the reader for trying it.
+        return preview ? (
+          <Disclosure
+            key={position}
+            className="call-args"
+            open={open.has(argsKey)}
+            onToggle={() => onToggle(argsKey)}
+            label={head}
+          >
+            {/* Bounded, and the bound is the point: `remember` takes 20,000
+                characters of `text`, which is more than the conversation
+                around it. */}
+            <pre className="call-detail">{argDetail(call.args)}</pre>
+          </Disclosure>
+        ) : (
+          <div key={position} className="call">
+            <b>{call.name || 'tool'}</b>
+          </div>
+        )
+      })}
     </div>
   )
 

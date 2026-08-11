@@ -252,6 +252,27 @@
   color: var(--fg-faint);
 }
 
+/* A call's whole arguments, open only on request. The preview above is one
+ * line by construction; this is the surface that answers "one line of what?",
+ * and it scrolls rather than growing, because a call's arguments must not be
+ * able to push the prose around them off the screen. */
+.call-args .call {
+  display: block;
+  min-width: 0;
+}
+.call-detail {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+  background: var(--bg-raise);
+  margin: 0;
+  padding: 6px 10px;
+  max-height: 22em;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* --- approvals ----------------------------------------------------------
  * A gated turn parks here rather than in the conversation pane's own flow:
  * the call it wants to make isn't a message yet, and until someone decides

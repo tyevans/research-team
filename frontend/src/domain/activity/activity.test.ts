@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { MessageId, SessionId } from '../shared/identifier.ts'
 import {
+  ACTIVITY_SUMMARY_LIMIT,
   activityBody,
   activityEntries,
   emptyActivity,
@@ -74,6 +75,39 @@ describe('activityBody', () => {
         }),
       ),
     ).toBe('→ Read, Grep')
+  })
+
+  it('says what each call acted on, not only which tool ran', () => {
+    // The bubble previews the row the message is about to become, and that row
+    // carries the argument too — a preview that dropped it would redraw the
+    // moment the turn committed.
+    expect(
+      activityBody(
+        entry('a', {
+          payload: {
+            data: {
+              tool_calls: [
+                { name: 'Read', args: { path: '/a.md', limit: 20 } },
+                { name: 'Grep', args: { pattern: 'kettle' } },
+              ],
+            },
+          },
+        }),
+      ),
+    ).toBe('→ Read(path=/a.md  +1), Grep(pattern=kettle)')
+  })
+
+  it('cannot be widened without bound by an enormous argument', () => {
+    // `remember` takes 20,000 characters of `text`. The bubble is prose-height,
+    // not a scroll region; the full arguments live behind the transcript's
+    // per-call disclosure.
+    const calls = Array.from({ length: 12 }, () => ({
+      name: 'remember',
+      args: { text: 'x'.repeat(20_000) },
+    }))
+    const body = activityBody(entry('a', { payload: { data: { tool_calls: calls } } }))
+    expect(body.length).toBeLessThanOrEqual(ACTIVITY_SUMMARY_LIMIT)
+    expect(body.endsWith('…')).toBe(true)
   })
 
   it('names an unnamed call rather than rendering undefined', () => {
