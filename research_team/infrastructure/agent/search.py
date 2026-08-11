@@ -55,6 +55,23 @@ class SearchAttempts:
     (a claim that the search was tried and nothing was there) it has no
     evidence for. `build_search_tool` enforces this by comparing the result
     string, not by catching exceptions here.
+
+    **This instance is process-wide, not per-turn, though the name and every
+    docstring in this class say "this turn."** `build_application` constructs
+    one `SearchAttempts` for the one `web_search` tool the whole process
+    shares (`composition.py`), so two turns running concurrently -- different
+    sessions, or an auto-research run alongside a web turn -- share one
+    counter. One turn's empty searches can bound another's first search, and
+    either turn's boundary reset can clear the other's streak mid-turn. The
+    contract this class states is not true under concurrency.
+
+    Accepted for now because the blast radius is small and nothing durable
+    depends on the count: the failure modes are a spurious in-band notice
+    telling a model to stop searching when it hasn't really exhausted three
+    tries, or a bound that fails to apply when it should. Nothing is corrupted
+    and nothing silently persists the wrong thing -- worth fixing, not worth
+    the larger change of making the tool (and its dependency on a single
+    SearXNG client) rebuildable per turn. See BACKLOG.md.
     """
 
     def __init__(self) -> None:
