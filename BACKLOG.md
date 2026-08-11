@@ -595,6 +595,26 @@ the status that exists for "another topic now covers this ground". That loses
 the findings attached to the originals, which is why it is an interim and not
 the answer.
 
+### B42. A malformed URL a human approves crashes the turn
+
+`fetch.py`'s `urlsplit(url)` is unguarded. `urlsplit("https://[::1/x")` raises
+`ValueError: Invalid IPv6 URL`, and the tool's outer `try` has only a `finally`
+and handlers for `httpx` and `UnicodeError` — so the `ValueError` escapes,
+which is the thing tools here are written not to do ("a tool that raises turns
+an outage into a broken turn").
+
+`grants.py` guards the identical call for exactly this reason and returns "not
+covered"; `fetch.py` never gained the same guard. So the gate refuses a
+malformed URL — `_in_scope` fails closed and interrupts — and reaching the
+crash needs a person to approve one. That is why it has not been seen: the
+approval path is the only way in.
+
+Found by the scope-fix re-review of the fetch pre-authorization branch and
+deliberately not fixed there. That branch produced three Criticals in three
+attempts at one mechanism, and adding an unrelated pre-existing fix to it was
+the obvious way to produce a fourth. It is three lines: parse once, guard the
+`ValueError`, return the same refusal string the scheme check already returns.
+
 ### B41. One `SearchAttempts` is shared by every concurrent turn
 
 `build_application` constructs a single `SearchAttempts` for the one

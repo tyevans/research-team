@@ -2701,6 +2701,54 @@ async def test_a_run_on_an_unknown_project_is_a_404(research_client):
     assert response.status_code == 404
 
 
+async def test_hosts_without_a_budget_are_refused_naming_the_missing_half(research_client):
+    """Half a grant is a misunderstanding -- the half that is present suggests
+    a person believed the other one was implied."""
+    application, http = research_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await http.post(
+        f"/api/projects/{project_id}/auto-research",
+        json={"fetch_hosts": ["a.example"]},
+    )
+
+    assert response.status_code == 422
+    assert "fetch_budget" in response.json()["detail"]
+    # Refused before anything was created: no session left holding the project.
+    held = (await application.service.project_state(UUID(project_id))).active_session_id
+    assert held is None
+
+
+async def test_a_budget_without_hosts_is_refused_naming_the_missing_half(research_client):
+    _, http = research_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await http.post(
+        f"/api/projects/{project_id}/auto-research",
+        json={"fetch_budget": 3},
+    )
+
+    assert response.status_code == 422
+    assert "fetch_hosts" in response.json()["detail"]
+
+
+async def test_a_full_grant_is_accepted_and_reaches_the_run(research_client):
+    application, http = research_client
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await http.post(
+        f"/api/projects/{project_id}/auto-research",
+        json={"fetch_hosts": ["a.example"], "fetch_budget": 3},
+    )
+
+    assert response.status_code == 202
+    run_id = UUID(response.json()["run_id"])
+    await application.research.wait(UUID(project_id))
+    state = await application.research.state(run_id)
+    assert state.fetch_hosts == ["a.example"]
+    assert state.fetch_budget == 3
+
+
 # ---------------- learner progress (B28) ----------------
 #
 # An attempt used to be graded and then forgotten: a reload lost every answer,

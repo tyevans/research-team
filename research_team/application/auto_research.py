@@ -28,11 +28,12 @@ advisory, and the structural guarantee is worth more than the convenience.
 """
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from research_team.application.grants import FetchGrant, GrantRegistry
 from research_team.application.topic_attention import TopicAttention
 from research_team.domain.auto_research import (
     BeginRound,
@@ -129,12 +130,21 @@ class AutoResearchDriver:
         *,
         run_round: RunRound,
         settle: Callable[[], Awaitable[None]] | None = None,
+        grants: GrantRegistry | None = None,
     ) -> None:
         self._runs = runs
         self._topics = topics
         self._queue = queue
         self._run_round = run_round
         self._settle = settle
+        # `None` is a valid build, not a missing one: a caller with no
+        # approval gate to speak of (a test driving the queue directly) has
+        # no registry to register into, and `run`/`_stop` below both check
+        # before touching it. Wired for real from `composition.py`'s one
+        # `GrantRegistry`, the same instance the gate and the grant-bound
+        # `fetch` tool consult -- see that module for why there is exactly
+        # one instance and what two would cost.
+        self._grants = grants
 
     async def run(
         self,
@@ -142,6 +152,8 @@ class AutoResearchDriver:
         session_id: UUID,
         *,
         budget: Budget | None = None,
+        fetch_hosts: Sequence[str] = (),
+        fetch_budget: int = 0,
         autonomy_snapshot: dict[str, Any] | None = None,
         read_only: bool = True,
         run_id: UUID | None = None,
@@ -167,6 +179,12 @@ class AutoResearchDriver:
         between rounds rather than during one because a turn is atomic: there
         is nothing to interrupt inside a round that would not throw the
         round's work away.
+
+        `fetch_hosts`/`fetch_budget` default to nothing granted, matching the
+        REPL's `/research` (spec §6: "The REPL's `/research` gains nothing").
+        They are recorded on `StartRun` and folded onto `AutoRunState` by the
+        domain either way; what changes here is what this method does *with*
+        the fold once it has one -- see the registration below.
         """
         run = self._runs.create_new(run_id or uuid4())
         run.execute(
@@ -177,42 +195,83 @@ class AutoResearchDriver:
                 budget=budget or Budget(),
                 autonomy_snapshot=autonomy_snapshot or {},
                 read_only=read_only,
+                fetch_hosts=list(fetch_hosts),
+                fetch_budget=fetch_budget,
             )
         )
         await self._runs.save(run)
 
-        while True:
-            # Asked before each round rather than after, so a run that starts
-            # already exhausted stops without doing work it has no budget for.
-            exhausted = run.state.exhausted()
-            if exhausted is not None:
-                return await self._stop(run, exhausted, project_id)
-
-            if cancelled is not None and cancelled():
-                return await self._stop(run, "cancelled", project_id)
-
-            queue = await self._queue.evaluate(project_id)
-            if not queue:
-                return await self._stop(run, "queue_empty", project_id)
-
-            attention = queue[0]
-            run.execute(
-                BeginRound(
-                    topic_id=attention.topic_id,
-                    triggers=list(attention.triggers),
-                    evidence=list(attention.evidence),
-                    queue_depth=len(queue),
-                )
+        if self._grants is not None:
+            # From `run.state`, the fold, not from `fetch_hosts`/`fetch_budget`
+            # directly -- one source, so the registry and the log can never
+            # disagree about what this run was granted. Registered even when
+            # nothing was: an empty `FetchGrant` covers no host and answers
+            # `spent` immediately, but the session still needs to be *in* the
+            # registry for `GrantRegistry.is_unattended` to find it, which is
+            # what lets an unanswerable approval on an ungranted run time out
+            # instead of hanging forever (Task 6).
+            self._grants.register(
+                session_id,
+                FetchGrant(
+                    run_id=run.aggregate_id,
+                    hosts=frozenset(run.state.fetch_hosts),
+                    budget=run.state.fetch_budget,
+                ),
             )
-            await self._runs.save(run)
 
-            outcome = await self._round(run, attention, project_id)
-            await self._runs.save(run)
-            if outcome is None:
-                # The round failed and was recorded; the loop continues so one
-                # bad topic cannot end a run. `error_rate` stops it if they
-                # keep failing.
-                continue
+        try:
+            while True:
+                # Asked before each round rather than after, so a run that
+                # starts already exhausted stops without doing work it has no
+                # budget for.
+                exhausted = run.state.exhausted()
+                if exhausted is not None:
+                    return await self._stop(run, exhausted, project_id)
+
+                if cancelled is not None and cancelled():
+                    return await self._stop(run, "cancelled", project_id)
+
+                queue = await self._queue.evaluate(project_id)
+                if not queue:
+                    return await self._stop(run, "queue_empty", project_id)
+
+                attention = queue[0]
+                run.execute(
+                    BeginRound(
+                        topic_id=attention.topic_id,
+                        triggers=list(attention.triggers),
+                        evidence=list(attention.evidence),
+                        queue_depth=len(queue),
+                    )
+                )
+                await self._runs.save(run)
+
+                outcome = await self._round(run, attention, project_id)
+                await self._runs.save(run)
+                if outcome is None:
+                    # The round failed and was recorded; the loop continues so
+                    # one bad topic cannot end a run. `error_rate` stops it if
+                    # they keep failing.
+                    continue
+        finally:
+            # Every normal ending already goes through `_stop`, which
+            # releases this same grant -- so on the common path this is a
+            # second, harmless `GrantRegistry.release` (a `dict.pop(...,
+            # None)`, idempotent). What this `finally` is actually for is the
+            # path `_stop` never runs on: an exception from `self._runs.save`
+            # or `self._queue.evaluate`, or a `CancelledError` from the task
+            # this coroutine runs as (`ResearchSupervisor._run` cancels
+            # nothing directly, but the process can). Without this, a crash
+            # mid-run left the grant -- and the `is_unattended` flag Task 6's
+            # bounded wait depends on -- alive in the registry for the rest
+            # of the process's life, on a session id nothing would ever
+            # release again. Spec §5 says the registry entry is "removed in
+            # `_stop`"; that undersold it, and a whole-branch review caught
+            # the gap between "the normal path releases" and "the registry
+            # entry cannot outlive the run" that spec sentence actually
+            # promises.
+            if self._grants is not None:
+                self._grants.release(session_id)
 
     async def _round(
         self, run, attention: TopicAttention, project_id: UUID
@@ -301,12 +360,22 @@ class AutoResearchDriver:
         The outstanding count is read from the queue at the moment of stopping
         rather than inferred, so a run that stops with work still waiting says
         so on its face instead of reporting success.
+
+        Releases this run's grant from the registry, if `run` registered one.
+        Every path that ends a run passes through here (`exhausted()`,
+        `cancelled`, `queue_empty`), so this is the one place a release has
+        to happen -- a grant is scoped to the run, and the run is over.
+        Without this, a spent-out or completed run's session would stay
+        `is_unattended` forever, and its host list would keep answering
+        `covers()` for a run that no longer exists.
         """
         outstanding = (
             0 if reason == "queue_empty" else len(await self._queue.evaluate(project_id))
         )
         run.execute(StopRun(reason=reason, unexamined_topics=outstanding))
         await self._runs.save(run)
+        if self._grants is not None and run.state.session_id is not None:
+            self._grants.release(run.state.session_id)
         return RunReport(
             run_id=run.aggregate_id,
             reason=reason,

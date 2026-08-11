@@ -178,3 +178,54 @@ async def test_a_run_stops_when_it_is_asked_to(build_application, db_path):
 
     assert report.reason == "cancelled"
     assert (await application.research.state(run.run_id)).stop_reason == "cancelled"
+
+
+async def test_a_granted_runs_grant_reaches_the_fold_and_is_released_on_stop(
+    build_application, db_path
+):
+    """Both required properties in one run: the grant `research.start` was
+    given is readable back off the folded state (the same fold `AutoRunStarted`
+    feeds -- see `test_a_run_records_and_folds_the_fetch_grant` for the event
+    itself), and once the run has stopped, this run's session is gone from
+    `application.grants` -- the one registry the gate, the grant-bound
+    `fetch` tool and the driver all share (see `Application.grants`).
+    """
+    project_id, _ = await seed(build_application, db_path)
+    application = await working(build_application, db_path, ScriptedModel(responses=quiet()))
+    session_id = await application.service.start_in_project(project_id)
+    await application.attach_project(project_id)
+
+    run = application.research.start(
+        project_id,
+        session_id,
+        budget=Budget(max_rounds=1, quiet_rounds=1),
+        fetch_hosts=["a.example"],
+        fetch_budget=3,
+    )
+    await application.research.wait(project_id)
+
+    state = await application.research.state(run.run_id)
+    assert state.fetch_hosts == ["a.example"]
+    assert state.fetch_budget == 3
+    assert application.grants.get(session_id) is None
+    assert application.grants.is_unattended(session_id) is False
+
+
+async def test_a_run_with_no_grant_is_still_registered_and_then_released(
+    build_application, db_path
+):
+    """Task 6's bounded wait keys off the session being registered at all --
+    an ungranted run must show up in the registry while it runs and be gone
+    once it stops, exactly like a granted one."""
+    project_id, _ = await seed(build_application, db_path)
+    application = await working(build_application, db_path, ScriptedModel(responses=quiet()))
+    session_id = await application.service.start_in_project(project_id)
+    await application.attach_project(project_id)
+
+    application.research.start(
+        project_id, session_id, budget=Budget(max_rounds=1, quiet_rounds=1)
+    )
+    await application.research.wait(project_id)
+
+    assert application.grants.get(session_id) is None
+    assert application.grants.is_unattended(session_id) is False

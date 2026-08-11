@@ -33,8 +33,10 @@ from research_team.domain import (
     TurnFailed,
     current_stage_of,
 )
+from research_team.domain.auto_research import AutoRunStarted
 from research_team.domain.topic import OpenTopic, TopicInvestigated
 from research_team.infrastructure.persistence.event_store import (
+    build_auto_research_repository,
     build_project_repository,
     build_topic_repository,
 )
@@ -232,6 +234,51 @@ async def test_an_investigation_written_before_outcome_existed_still_loads(store
     investigation = events[-1]
     assert isinstance(investigation, TopicInvestigated)
     assert investigation.outcome is None
+
+
+async def test_an_auto_run_started_before_the_fetch_grant_existed_still_loads(store, db_path):
+    """`fetch_hosts`/`fetch_budget` are a case-1 addition to a run's creation
+    event; absence must mean "granted nothing", which is what every run
+    before this feature actually was.
+
+    Builds its own repository because the shared `repository` fixture is a
+    `CodingSession` repository, and `AutoResearchRun` is a different
+    aggregate over the same log -- the same reason the topic test above does.
+    Writes the payload with neither key present, which is the only shape that
+    proves the defaults fill in; constructing the event through today's model
+    would supply them.
+    """
+    run_id = uuid4()
+    # Applies the schema, which the library does lazily on first use of the
+    # connection -- writing the raw payload below is the store's first
+    # touch otherwise, and `events` would not exist yet to insert into.
+    await collect(store.read_stream(StreamId(run_id, "AutoResearchRun")))
+    await _write_old_event(
+        db_path,
+        run_id,
+        version=1,
+        event_type="AutoRunStarted",
+        payload={
+            "aggregate_id": str(run_id),
+            "aggregate_type": "AutoResearchRun",
+            "aggregate_version": 1,
+            "project_id": str(uuid4()),
+            "session_id": str(uuid4()),
+        },
+        aggregate_type="AutoResearchRun",
+    )
+
+    stream = StreamId(run_id, "AutoResearchRun")
+    events = [envelope.event for envelope in await collect(store.read_stream(stream))]
+    started = events[0]
+    assert isinstance(started, AutoRunStarted)
+    assert started.fetch_hosts == []
+    assert started.fetch_budget == 0
+
+    runs = build_auto_research_repository(store)
+    run = await runs.load(run_id)
+    assert run.state.fetch_hosts == []
+    assert run.state.fetch_budget == 0
 
 
 async def test_a_schema_version_bump_falls_back_to_replay(repository, session_id, monkeypatch):

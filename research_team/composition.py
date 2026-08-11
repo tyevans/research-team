@@ -47,6 +47,7 @@ from research_team.application import (
 from research_team.application.artifacts import stage_artifact_instructions
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
 from research_team.application.components import component_guidance
+from research_team.application.grants import GrantRegistry
 from research_team.application.ports import GateReview
 from research_team.application.prompts import (
     DEFAULT_PROMPT_ROOT,
@@ -267,6 +268,16 @@ class Application:
     lets someone change autonomy mid-session needs a handle to mutate -- this
     is that handle, whichever adapter (CLI, web) drives it."""
 
+    grants: GrantRegistry
+    """This instance's fetch pre-authorizations, keyed by session.
+
+    Exposed for the same reason `policy` is: `web.py` builds its own
+    `WebApprovals` around one and has to hand this build the *same* one
+    (`build_application(grants=...)`), and a test that wants to see what a
+    run registered -- or that a stopped run's entry is gone -- needs the
+    identical registry the executor's gate and the grant-bound `fetch` tool
+    consult, not a second one that would just happen to agree by accident."""
+
     _initial_project_id: UUID | None = None
     """`project_id`, if `build_application` was given one. Attached in
     `start()` rather than at construction, because attaching talks to a
@@ -447,6 +458,7 @@ def build_application(
     dispatches: DispatchesInFlight | None = None,
     policy: AutonomyPolicy | None = None,
     project_id: UUID | None = None,
+    grants: GrantRegistry | None = None,
 ) -> Application:
     """Wire everything over one event store.
 
@@ -456,6 +468,14 @@ def build_application(
     The repository backs both ports -- it is one connection to one log, read
     two ways -- so the service and the feed are always looking at the same
     events, with no chance of a live view lagging a different database.
+
+    `grants` accepts an existing `GrantRegistry` for the same reason
+    `approvals` does: `web.py` builds a `WebApprovals(grants=...)` *before*
+    calling this function, and the two must share one registry or the gate
+    and the tool would disagree about the same call -- the silent-failure
+    mode this feature is most exposed to. `None` builds a fresh one, which is
+    correct for the REPL (no `WebApprovals` to share with) and for every test
+    that does not care.
     """
     resolved_path = db_path if db_path is not None else config.default_db_path()
     resolved_model = model if model is not None else build_model()
@@ -465,6 +485,7 @@ def build_application(
     mode = context_mode if context_mode is not None else config.context_mode()
     strategy, subagents, prompt_suffix = _context_parts(mode, resolved_model, system_prompt)
     resolved_policy = policy if policy is not None else AutonomyPolicy()
+    resolved_grants = grants if grants is not None else GrantRegistry()
 
     # Loaded once here, and allowed to raise: a prompt file that will not parse
     # is a broken installation, and the useful moment to learn that is startup,
@@ -632,6 +653,57 @@ def build_application(
         return build_workflow_tools(
             ProjectWorkflow(repository.projects, project_id), preset=preset
         )
+
+    async def granted_tools(session: CodingSession) -> tuple[BaseTool, ...]:
+        """A grant-bound `fetch`, for a session `resolved_grants` holds one for.
+
+        Resolved per turn, from the one `GrantRegistry` this build shares
+        with the approval gate (`interrupt_config`, below) and the driver
+        that registers a run's grant when it starts (`start_run`) -- three
+        consumers of one instance, which is the whole of what keeps the gate
+        and this tool from disagreeing about the same call. Two registries
+        would let a run's grant exist for the gate and not for the tool, or
+        the reverse, and every unit test would still pass; see
+        `application/grants.py` and the note beside `resolved_grants` above.
+
+        `None` from `resolved_grants.get` means this session is not a
+        registered run's session at all -- a person's own turn, or a run
+        that has already stopped -- and the answer is nothing, leaving
+        `fetch` (or, once a project is attached, `project_fetch`) exactly as
+        it was. Shadowing here with an ungranted, grant-bound tool would turn
+        off redirect-following and add a spend check to a session that was
+        never a party to any of this.
+
+        A *registered* session with an empty grant still gets one: an empty
+        `FetchGrant` covers no host, so nothing new becomes reachable, but
+        the tool built here also disables redirect-following for every call
+        it makes (`fetch.py`'s `grant is not None` branch) -- a property an
+        unattended run should have whether or not a person actually granted
+        it hosts, not only once they do.
+
+        Built with this project's corpus reader when one is running, mirroring
+        `project_fetch` below -- otherwise a covered fetch under a grant would
+        stop finding pages this project already has, for the whole time a
+        grant is attached, which is a regression `_compose`'s shadowing would
+        otherwise hide until someone noticed stale corpus reads.
+        """
+        grant = resolved_grants.get(session.aggregate_id)
+        if grant is None:
+            return ()
+        running = await running_workflow(session)
+        reader = ProjectCorpusReader(corpus, running[0]) if running is not None else None
+        return (build_fetch_tool(recall=recall, corpus=reader, pages=pages, grant=grant),)
+
+    async def turn_tools(session: CodingSession) -> tuple[BaseTool, ...]:
+        """Everything this turn adds on top of the registered set.
+
+        `granted_tools` last, so a grant-bound `fetch` shadows whatever
+        `workflow_tools` returned too, per `_compose`'s by-name rule --
+        though today the two never collide (`advance_stage` vs. `fetch`),
+        naming an explicit order here is cheaper than trusting that stays
+        true.
+        """
+        return (*await workflow_tools(session), *await granted_tools(session))
 
     async def turn_middleware(session: CodingSession) -> tuple[AgentMiddleware, ...]:
         """This turn's middleware: component feedback always, the stage gate if any.
@@ -836,8 +908,12 @@ def build_application(
         policy=resolved_policy,
         approvals=approvals,
         middleware_provider=turn_middleware,
-        tools_provider=workflow_tools,
+        tools_provider=turn_tools,
         gate_reviewer=gate_review,
+        # The same registry `turn_tools` (via `granted_tools`) and `start_run`
+        # (below) consult -- see `resolved_grants`'s own note for why there
+        # is exactly one instance and what two would cost.
+        grants=resolved_grants,
     )
 
     # The single owner of an open graph store per project: `open_graph` below
@@ -1069,6 +1145,8 @@ def build_application(
         run_project_id: UUID,
         session_id: UUID,
         budget: Budget | None,
+        fetch_hosts: list[str],
+        fetch_budget: int,
         cancelled,
     ):
         """One autonomous run: a driver, bound to one session's turns.
@@ -1090,6 +1168,12 @@ def build_application(
         that would put a false claim in the audit trail of the one kind of run
         that most needs a true one. The policy is read here and never written,
         which is what keeps `TOOL_FLOORS` a floor rather than a suggestion.
+
+        `fetch_hosts`/`fetch_budget` travel from the HTTP request all the way
+        here (`app.py`'s `NewRun` -> `ResearchSupervisor.start` -> this
+        `StartRun` callable) and go straight to the driver, which is the one
+        thing that turns them into a `FetchGrant` and registers it --
+        `resolved_grants` is threaded to the driver below for exactly that.
         """
         return await AutoResearchDriver(
             runs,
@@ -1104,10 +1188,15 @@ def build_application(
             # Without this the run is handed back the topic it has just
             # finished, which looks exactly like a loop that cannot learn.
             settle=topics.caught_up,
+            # The same registry `turn_tools` and the gate consult -- see
+            # `resolved_grants`'s own note.
+            grants=resolved_grants,
         ).run(
             run_project_id,
             session_id,
             budget=budget,
+            fetch_hosts=fetch_hosts,
+            fetch_budget=fetch_budget,
             run_id=run_id,
             cancelled=cancelled,
             autonomy_snapshot=resolved_policy.levels(),
@@ -1178,6 +1267,7 @@ def build_application(
         stage_runner=stage_runner,
         workers=worker_roster,
         policy=resolved_policy,
+        grants=resolved_grants,
         _initial_project_id=project_id,
     )
 
