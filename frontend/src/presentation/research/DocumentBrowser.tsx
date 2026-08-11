@@ -1,4 +1,3 @@
-import { useVirtualizer } from '@tanstack/react-virtual'
 import { useRef } from 'react'
 import clsx from 'clsx'
 
@@ -6,6 +5,7 @@ import { documentLabel, isDropped, type DocumentSummary } from '@domain/research
 import type { SourceId } from '@domain/shared/identifier.ts'
 
 import { EmptyState } from '../common/primitives.tsx'
+import { VirtualList } from '../common/VirtualList.tsx'
 
 const ROW_HEIGHT = 52
 
@@ -44,29 +44,6 @@ export const DocumentBrowser = ({
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // React Compiler cannot memoize `useVirtualizer`'s returned functions --
-  // that is the library's own documented shape, not a bug in this component --
-  // so it skips optimizing this component rather than risk a stale
-  // virtualizer. That trade is exactly right here: this component does no
-  // other expensive work worth memoizing.
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const virtualizer = useVirtualizer({
-    count: documents.length,
-    getScrollElement: () => scrollRef.current,
-    // An estimate now, not the truth. `ROW_HEIGHT` was treated as exact, and a
-    // title that wrapped to two lines -- most of them, in a 340px rail -- drew
-    // over the row beneath it. Each row reports its real height through
-    // `measureElement` below, and this is only what the virtualizer assumes
-    // for rows it has not drawn yet.
-    estimateSize: () => ROW_HEIGHT,
-    // Measured, except when the environment has no layout to measure. jsdom
-    // reports every height as 0, and a measured 0 would collapse the list to
-    // nothing and take the rows with it -- so a zero measurement falls back to
-    // the estimate, which is what keeps this component testable at all.
-    measureElement: (element) => element.getBoundingClientRect().height || ROW_HEIGHT,
-    overscan: 8,
-  })
-
   if (total === 0) {
     return <EmptyState title="No documents" detail="Nothing has been stored in this corpus yet." />
   }
@@ -88,25 +65,24 @@ export const DocumentBrowser = ({
         />
       ) : (
         <div ref={scrollRef} className="document-list-scroll">
-          <ul
+          <VirtualList
+            items={documents}
+            scrollRef={scrollRef}
             className="document-list"
-            style={{ height: virtualizer.getTotalSize(), position: 'relative' }}
+            getKey={(row) => row.sourceId}
+            estimate={() => ROW_HEIGHT}
+            overscan={8}
           >
-            {virtualizer.getVirtualItems().map((item) => {
-              const row = documents[item.index]
-              if (!row) return null
-              return (
-                <DocumentRow
-                  key={row.sourceId}
-                  document={row}
-                  index={item.index}
-                  top={item.start}
-                  measure={virtualizer.measureElement}
-                  onOpen={() => onOpen(row.sourceId)}
-                />
-              )
-            })}
-          </ul>
+            {(row, position) => (
+              <DocumentRow
+                document={row}
+                index={position.index}
+                top={position.top}
+                measure={position.measure}
+                onOpen={() => onOpen(row.sourceId)}
+              />
+            )}
+          </VirtualList>
         </div>
       )}
     </div>
