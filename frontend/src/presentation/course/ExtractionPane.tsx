@@ -57,21 +57,40 @@ export const ExtractionPane = ({ projectId }: { projectId: ProjectId }) => {
 
   const { current, last } = store()
 
-  return (
-    <section className="extraction" aria-label="Knowledge extraction">
-      <h3 className="extraction-title">Reading into the graph</h3>
-
-      {!current && !last ? (
-        <p className="sub extraction-sub">No extraction has run on this project yet.</p>
-      ) : null}
-
-      {current ? <Running extraction={current} /> : null}
-      {last ? <Last extraction={last} /> : null}
-    </section>
-  )
+  return <ExtractionView current={current} last={last} />
 }
 
 const noop = () => {}
+
+/** What an extraction looks like, given one somebody else is following.
+ *
+ * Separated from the subscription above so the three states are reachable
+ * without a live feed: nothing has ever run, one is running, one has
+ * finished -- and the fourth, a finished run *and* a new one already going,
+ * which is the layout most likely to be wrong and was the hardest to reach.
+ * `current` and `last` are independent for that reason rather than a single
+ * `Extraction | null` with a status on it.
+ */
+export const ExtractionView = ({
+  current,
+  last,
+}: {
+  /** The run in flight, if there is one. */
+  current: Extraction | null
+  /** The most recent finished run, if there has been one. */
+  last: Extraction | null
+}) => (
+  <section className="extraction" aria-label="Knowledge extraction">
+    <h3 className="extraction-title">Reading into the graph</h3>
+
+    {!current && !last ? (
+      <p className="sub extraction-sub">No extraction has run on this project yet.</p>
+    ) : null}
+
+    {current ? <Running extraction={current} /> : null}
+    {last ? <Last extraction={last} /> : null}
+  </section>
+)
 
 /** The stages so far, with the one in flight marked.
  *

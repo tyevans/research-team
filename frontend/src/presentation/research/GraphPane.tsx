@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 
 import { createGraphStore } from '@application/research/graph-store.ts'
 import { useContainer } from '@app/container-context.tsx'
+import type { GraphNode, GraphView } from '@domain/knowledge/graph.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { EmptyState, Loading } from '../common/primitives.tsx'
@@ -148,6 +149,93 @@ export const GraphPane = ({
   }
 
   return (
+    <GraphBrowser
+      view={view}
+      results={results}
+      knownTypes={knownTypes}
+      truncated={truncated}
+      searching={searching}
+      error={error}
+      partial={partial}
+      loading={loading}
+      entity={entity}
+      term={term}
+      entityType={entityType}
+      onTerm={setTerm}
+      onEntityType={setEntityType}
+      onEntity={onEntity}
+      onPick={pick}
+      onReset={() => {
+        void store.getState().reset()
+        // The selection is dropped with it: whatever was being described was
+        // chosen out of the drawing that is now gone, and a reload should open
+        // on the whole graph rather than on one node of a view the reader had
+        // just abandoned.
+        onEntity(null)
+      }}
+      onRemove={(id) => {
+        store.getState().removeNode(id)
+        onEntity(null)
+      }}
+    />
+  )
+}
+
+/** The graph, drawn from a view somebody else is keeping current.
+ *
+ * Everything above this line is subscription: a store per project, a load on
+ * mount, a reload on every graph frame, a debounced search. Everything below
+ * is what those produce on screen. The split is worth the prop list because
+ * the states this pane can be in are numerous and each one used to need a fake
+ * repository to reach -- empty because nothing is extracted, empty because the
+ * fetch failed (which must *not* say the graph is empty), capped, searching,
+ * searched-and-matched-nothing, and a result list over a drawing.
+ *
+ * Named `GraphBrowser` after `.graph-browser`, the element it owns.
+ */
+export const GraphBrowser = ({
+  view,
+  results,
+  knownTypes,
+  truncated,
+  searching,
+  error,
+  partial,
+  loading,
+  entity,
+  term,
+  entityType,
+  onTerm,
+  onEntityType,
+  onEntity,
+  onPick,
+  onReset,
+  onRemove,
+}: {
+  view: GraphView
+  results: readonly GraphNode[]
+  knownTypes: readonly string[]
+  /** The result list was cut short by the server. */
+  truncated: boolean
+  searching: boolean
+  /** Why the last fetch failed, if it did. Distinct from an empty graph, and
+   *  the reason the empty state below reads its own message off it. */
+  error: string | null
+  /** The drawing is part of a larger graph. */
+  partial: boolean
+  loading: boolean
+  entity: string | null
+  term: string
+  entityType: string
+  onTerm: (value: string) => void
+  onEntityType: (value: string) => void
+  onEntity: (id: string | null) => void
+  /** A result was chosen: select it *and* close the list over the canvas. */
+  onPick: (id: string) => void
+  onReset: () => void
+  onRemove: (id: string) => void
+}) => {
+  return (
     <div className="graph-browser">
       {/* The canvas is the layer, and the controls sit on top of it rather
           than in a column above it. Stacked, every search pushed the drawing
@@ -186,13 +274,13 @@ export const GraphPane = ({
             placeholder="Search the graph"
             aria-label="Search the graph"
             value={term}
-            onChange={(event) => setTerm(event.target.value)}
+            onChange={(event) => onTerm(event.target.value)}
           />
           <select
             className="input graph-entity-type"
             aria-label="Filter by entity type"
             value={entityType}
-            onChange={(event) => setEntityType(event.target.value)}
+            onChange={(event) => onEntityType(event.target.value)}
           >
             <option value="">All types</option>
             {knownTypes.map((type) => (
@@ -207,18 +295,7 @@ export const GraphPane = ({
               they actually want back after pruning and expanding is
               everything, which is what this restores. */}
           {view.nodes.length > 0 ? (
-            <button
-              type="button"
-              className="btn btn-sm graph-clear"
-              onClick={() => {
-                void store.getState().reset()
-                // The selection is dropped with it: whatever was being
-                // described was chosen out of the drawing that is now gone,
-                // and a reload should open on the whole graph rather than on
-                // one node of a view the reader had just abandoned.
-                onEntity(null)
-              }}
-            >
+            <button type="button" className="btn btn-sm graph-clear" onClick={onReset}>
               Reset view
             </button>
           ) : null}
@@ -264,7 +341,7 @@ export const GraphPane = ({
             <ul className="graph-results" aria-label="Search results">
               {results.map((result) => (
                 <li key={result.id}>
-                  <button type="button" className="graph-result" onClick={() => pick(result.id)}>
+                  <button type="button" className="graph-result" onClick={() => onPick(result.id)}>
                     <span className="graph-result-name">{result.name}</span>
                     <span className="graph-result-type">{result.entityType}</span>
                   </button>
@@ -280,10 +357,7 @@ export const GraphPane = ({
           view={view}
           selected={entity}
           onSelect={onEntity}
-          onRemove={(id) => {
-            store.getState().removeNode(id)
-            onEntity(null)
-          }}
+          onRemove={onRemove}
           onClose={() => onEntity(null)}
         />
       ) : null}
