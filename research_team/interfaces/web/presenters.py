@@ -5,6 +5,7 @@ only place that knows the wire shape. Keeping them here means the API can be
 reshaped for the UI without anything below noticing.
 """
 
+import json
 from typing import Any
 from uuid import UUID
 
@@ -106,9 +107,58 @@ def event_summary(event: DomainEvent) -> str:
         data = event.message.get("data", {})
         calls = data.get("tool_calls") or []
         if calls:
-            return "→ " + ", ".join(call.get("name", "?") for call in calls)
+            summaries = ", ".join(_call_summary(call) for call in calls)
+            return _truncate(f"→ {summaries}", SUMMARY_LIMIT)
         return " ".join(str(data.get("content", "")).split())[:120]
     return ""
+
+
+SUMMARY_LIMIT = 160
+"""How wide a tool-call summary may get, in characters.
+
+Matches the truncation the timeline row applies to every summary it renders, so
+the cap lands here -- where the argument that overflowed it is still
+identifiable -- rather than mid-word in the browser. The row is the only reader
+that has a width at all; the SSE frame carries the same string, and a client
+wanting the full arguments reads the message rather than the row.
+"""
+
+_ARG_VALUE_LIMIT = 60
+
+_PREFERRED_ARGS = ("path", "file_path", "filename", "pattern", "command", "query")
+"""Argument names that say *what* a call acted on, best first.
+
+Kept in step with `summariseArgs` in `frontend/src/domain/conversation/message.ts`,
+which makes the same choice for the provisional bubble that previews the row
+this builds. The two are separate because one runs before the turn commits and
+the other after; they are worth reading together when either changes.
+"""
+
+
+def _call_summary(call: dict[str, Any]) -> str:
+    """One call as `name(arg=value  +n)`, or bare `name` when it took nothing.
+
+    Both caps matter and neither subsumes the other. The per-value one keeps a
+    single argument from crowding out the calls after it -- `remember` accepts
+    20,000 characters of `text` -- and `SUMMARY_LIMIT` above keeps a dozen
+    well-behaved calls from doing the same thing collectively.
+    """
+    name = call.get("name") or "?"
+    args = call.get("args") or {}
+    if not isinstance(args, dict) or not args:
+        return str(name)
+    keys = list(args)
+    key = next((candidate for candidate in _PREFERRED_ARGS if candidate in args), keys[0])
+    value = args[key]
+    shown = value if isinstance(value, str) else json.dumps(value, default=str)
+    # The count of what is not shown, so a reader can tell a one-argument call
+    # from a preview of a call that took eight.
+    extra = f"  +{len(keys) - 1}" if len(keys) > 1 else ""
+    return f"{name}({key}={_truncate(shown, _ARG_VALUE_LIMIT)}{extra})"
+
+
+def _truncate(text: str, limit: int) -> str:
+    return text[: limit - 1] + "…" if len(text) > limit else text
 
 
 def _snippet(text: str, limit: int = 30) -> str:

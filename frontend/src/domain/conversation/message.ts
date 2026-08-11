@@ -76,6 +76,35 @@ export const summariseArgs = (args: unknown): string => {
 
 const PREFERRED_ARGS = ['path', 'file_path', 'filename', 'pattern', 'command', 'query'] as const
 
+/** A call name with its argument preview: `name(key=value  +n)`, or bare.
+ *
+ * One function rather than each caller joining the two, because the transcript
+ * row, the provisional bubble and the server's `_call_summary` in
+ * `presenters.py` all have to agree — a bubble that previewed a call one way
+ * and redrew it another the instant the turn committed is the flicker this
+ * shape exists to avoid. */
+export const callSummary = (call: { name?: string; args?: unknown }): string => {
+  const name = call.name || '?'
+  const summary = summariseArgs(call.args)
+  return summary ? `${name}(${summary})` : name
+}
+
+export const ARG_DETAIL_LIMIT = 4000
+/** How much of a call's arguments an expanded disclosure shows.
+ *
+ * The same bound the transcript already puts on a tool *result*, deliberately:
+ * both are raw data being read for what it literally says, and a reader who
+ * needs more than 4,000 characters of either is reading the wrong surface.
+ * `remember` accepts 20,000 characters of `text`, so this is load-bearing
+ * rather than theoretical — without it one call can outweigh the conversation
+ * it sits in. */
+
+/** A call's whole arguments, bounded, for a disclosure the reader opened.
+ *
+ * Distinct from `summariseArgs`, which picks one argument for a single line;
+ * this shows all of them, and is only ever rendered on demand. */
+export const argDetail = (args: unknown): string => truncate(safeJson(args), ARG_DETAIL_LIMIT)
+
 /** JSON, or a description of why it is not.
  *
  * Never throws and never produces `[object Object]`: this renders tool

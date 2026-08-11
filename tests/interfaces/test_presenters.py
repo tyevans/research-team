@@ -22,6 +22,7 @@ from research_team.domain import (
     WorkflowSelected,
 )
 from research_team.interfaces.web.presenters import (
+    SUMMARY_LIMIT,
     event_row,
     event_rows,
     event_summary,
@@ -138,6 +139,61 @@ def test_a_tool_calling_message_is_summarised_by_the_calls():
         },
     )
     assert event_summary(event) == "→ write_file, edit_file"
+
+
+def test_a_tool_call_summary_says_what_the_call_acted_on():
+    """A row naming only the tool says a file was written, not which file.
+
+    Passes with the argument preview reverted only if the assertion is cut back
+    to the names, which is the whole point of the row.
+    """
+    event = make(
+        AssistantMessageAdded,
+        message={
+            "type": "ai",
+            "data": {
+                "content": "",
+                "tool_calls": [
+                    {"name": "write_file", "args": {"file_path": "/a.py", "content": "x"}},
+                    {"name": "search", "args": {"query": "kettles"}},
+                ],
+            },
+        },
+    )
+    assert event_summary(event) == "→ write_file(file_path=/a.py  +1), search(query=kettles)"
+
+
+def test_an_enormous_argument_cannot_widen_a_timeline_row():
+    """`remember` takes 20,000 characters of `text`; a row is one line.
+
+    The cap is on the whole summary rather than on each value, because a
+    message can carry many calls and ten short ones overflow a row as surely as
+    one long one. Fails on a preview that truncates per value only.
+    """
+    event = make(
+        AssistantMessageAdded,
+        message={
+            "type": "ai",
+            "data": {
+                "content": "",
+                "tool_calls": [{"name": "remember", "args": {"text": "x" * 20_000}}] * 12,
+            },
+        },
+    )
+    summary = event_summary(event)
+    assert len(summary) <= SUMMARY_LIMIT
+    assert summary.endswith("…")
+
+
+def test_a_call_with_no_arguments_is_still_named():
+    event = make(
+        AssistantMessageAdded,
+        message={
+            "type": "ai",
+            "data": {"content": "", "tool_calls": [{"name": "ls", "args": {}}]},
+        },
+    )
+    assert event_summary(event) == "→ ls"
 
 
 # ---------------- rows ----------------

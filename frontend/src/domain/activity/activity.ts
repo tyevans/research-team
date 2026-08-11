@@ -1,5 +1,13 @@
 import type { MessageId, SessionId } from '../shared/identifier.ts'
-import { contentText } from '../conversation/message.ts'
+import { callSummary, contentText, truncate } from '../conversation/message.ts'
+
+export const ACTIVITY_SUMMARY_LIMIT = 160
+/** How wide a provisional bubble's call summary may get, in characters.
+ *
+ * Matches `SUMMARY_LIMIT` in `interfaces/web/presenters.py`, which bounds the
+ * committed row this previews. Two constants rather than one sent over the
+ * wire: the number is a property of how wide a row reads, and a client that
+ * had to be told it could not render the bubble until the server answered. */
 
 /** Provisional content from a turn that is still running.
  *
@@ -53,13 +61,17 @@ export const activityBody = (entry: ActivityEntry): string => {
       : undefined
   const calls = Array.isArray(data?.['tool_calls']) ? (data['tool_calls'] as unknown[]) : []
   if (calls.length > 0) {
-    // The same "→ name, name" shape the timeline uses for a tool-calling
-    // message, so a provisional bubble reads like the row it is about to become.
-    const names = calls.map((call) => {
+    // The same "→ name(arg), name(arg)" shape the timeline uses for a
+    // tool-calling message, so a provisional bubble reads like the row it is
+    // about to become and does not visibly change when it does.
+    const summaries = calls.map((call) => {
       const record = call && typeof call === 'object' ? (call as Record<string, unknown>) : {}
-      return typeof record['name'] === 'string' ? record['name'] : '?'
+      return callSummary({
+        ...(typeof record['name'] === 'string' ? { name: record['name'] } : {}),
+        args: record['args'],
+      })
     })
-    return `→ ${names.join(', ')}`
+    return truncate(`→ ${summaries.join(', ')}`, ACTIVITY_SUMMARY_LIMIT)
   }
   return contentText(data?.['content'])
 }
