@@ -94,6 +94,49 @@ def test_a_run_records_the_autonomy_policy_it_started_under():
     assert event.read_only is True
 
 
+def test_a_run_records_and_folds_the_fetch_grant():
+    """Unlike `autonomy_snapshot`, the grant is folded onto state, not just
+    written to the event -- so "what was this run allowed to do?" is
+    answerable from a fold, the same way `exhausted()` answers "should this
+    run stop?" without anyone re-reading the log by hand.
+    """
+    [event] = decide(
+        StartRun(
+            run_id=uuid4(),
+            project_id=uuid4(),
+            session_id=uuid4(),
+            fetch_hosts=["example.com", "docs.rs"],
+            fetch_budget=5,
+        ),
+        initial_state(),
+    )
+
+    assert isinstance(event, AutoRunStarted)
+    assert event.fetch_hosts == ["example.com", "docs.rs"]
+    assert event.fetch_budget == 5
+
+    state = evolve(initial_state(), event)
+    assert state.fetch_hosts == ["example.com", "docs.rs"]
+    assert state.fetch_budget == 5
+
+
+def test_a_run_granted_nothing_gets_todays_shape():
+    """The defaults are `[]` and `0` -- an ungranted run must be
+    indistinguishable, in payload and in state, from one predating the grant.
+    """
+    [event] = decide(
+        StartRun(run_id=uuid4(), project_id=uuid4(), session_id=uuid4()),
+        initial_state(),
+    )
+
+    assert event.fetch_hosts == []
+    assert event.fetch_budget == 0
+
+    state = evolve(initial_state(), event)
+    assert state.fetch_hosts == []
+    assert state.fetch_budget == 0
+
+
 def test_a_round_must_name_the_triggers_that_raised_it():
     """The "no round without a reason" invariant, enforced in the domain.
 

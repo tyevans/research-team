@@ -102,6 +102,17 @@ class AutoRunStarted(DomainEvent):
     the corpus and graph already held, because `fetch` floors at `ask` and an
     unattended loop that hits an approval either deadlocks or is auto-rejected.
     That is the security posture working, not a limitation to route around.
+
+    `fetch_hosts`/`fetch_budget` are the pre-authorization: which hosts a
+    granted run may fetch from, and how many calls it gets. Unlike
+    `autonomy_snapshot`, which is written here and nowhere folded onto
+    `AutoRunState` (so "what tool policy did this run start under" is
+    answerable only by reading this one event by hand), `evolve` below
+    carries these two onto state -- because enforcement needs to answer "what
+    was this run allowed to do?" from a fold, the same way `exhausted()`
+    answers "should this run stop?" without re-deriving anything. Defaults of
+    `[]` and `0` are a run granted nothing, which is every run before this
+    field existed and every run today that nobody authorizes.
     """
 
     aggregate_type: str = "AutoResearchRun"
@@ -110,6 +121,8 @@ class AutoRunStarted(DomainEvent):
     budget: dict = Field(default_factory=dict)
     autonomy_snapshot: dict = Field(default_factory=dict)
     read_only: bool = True
+    fetch_hosts: list[str] = Field(default_factory=list)
+    fetch_budget: int = 0
 
 
 @register_event
@@ -198,6 +211,8 @@ class StartRun:
     budget: Budget = dc_field(default_factory=Budget)
     autonomy_snapshot: dict | None = None
     read_only: bool = True
+    fetch_hosts: list[str] = dc_field(default_factory=list)
+    fetch_budget: int = 0
 
 
 @dataclass(frozen=True)
@@ -250,6 +265,14 @@ class AutoRunState(BaseModel):
     status: Literal["new", "running", "stopped"] = "new"
     budget: Budget = Budget()
     read_only: bool = True
+    fetch_hosts: list[str] = Field(default_factory=list)
+    fetch_budget: int = 0
+    """What this run was pre-authorized to fetch, folded from the start event.
+
+    Bounds the tool, not the run -- `exhausted()` below does not read these,
+    and must not: a run whose fetch budget is spent keeps working over the
+    corpus it already has.
+    """
 
     rounds: int = 0
     turns: int = 0
@@ -311,6 +334,8 @@ def decide(command: AutoRunCommand, state: AutoRunState) -> list[DomainEvent]:
                     budget=command.budget.model_dump(),
                     autonomy_snapshot=command.autonomy_snapshot or {},
                     read_only=command.read_only,
+                    fetch_hosts=list(command.fetch_hosts),
+                    fetch_budget=command.fetch_budget,
                 )
             ]
         case StartRun(), _:
@@ -401,6 +426,8 @@ def evolve(state: AutoRunState, event: DomainEvent) -> AutoRunState:
                 status="running",
                 budget=Budget(**event.budget) if event.budget else Budget(),
                 read_only=event.read_only,
+                fetch_hosts=list(event.fetch_hosts),
+                fetch_budget=event.fetch_budget,
             )
 
         case AutoRoundStarted(topic_id=topic_id):
