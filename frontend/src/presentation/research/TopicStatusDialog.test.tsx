@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { ReactElement, ReactNode } from 'react'
+import { useState, type ReactElement, type ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
@@ -12,6 +12,7 @@ import type { TopicDetail } from '@domain/research/topic.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
+import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { TopicStatusDialog } from './TopicStatusDialog.tsx'
 
@@ -97,10 +98,18 @@ const renderDialog = (ui: ReactElement, parts: Partial<AppContainer> = {}) => {
     ...parts,
   } as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  // `OverlayHost` is a precondition rather than scenery: the dialog is a
+  // `Drawer` now, `Drawer` is an `Overlay`, and `Overlay` renders `null`
+  // without a host in scope -- so every assertion below would fail on an empty
+  // document without it. That the *application* mounts one is a separate claim
+  // and is asserted where it belongs, in `App.test.tsx`, which deliberately
+  // supplies no host of its own.
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
       <ContainerProvider container={container}>
-        <StreamProvider>{children}</StreamProvider>
+        <StreamProvider>
+          <OverlayHost>{children}</OverlayHost>
+        </StreamProvider>
       </ContainerProvider>
     </QueryClientProvider>
   )
@@ -124,29 +133,70 @@ it('will not submit a whitespace-only justification', async () => {
   expect(screen.getByRole('button', { name: /save/i })).toBeDisabled()
 })
 
-it('traps focus while it is open', async () => {
-  // The drawer shipped without this and it had to be fixed after the fact
-  // (commit d5f9b64) -- this dialog must not reintroduce the same gap.
-  renderDialog(<TopicStatusDialog projectId={PROJECT} topic={aTopic()} onClose={vi.fn()} />)
+/** **`traps focus while it is open` was deleted rather than repaired**, and the
+ *  deletion is the substance of this change. It tabbed once and asserted
+ *  `activeElement !== document.body` -- which passed, and which is a claim
+ *  about where focus went rather than about what is out of reach. The console
+ *  shipped with the agent dock painting on top of this dialog and clickable
+ *  throughout, and that assertion could not see it, because nothing about "the
+ *  first Tab landed somewhere" is falsified by a reachable page behind.
+ *
+ *  Confinement is `inert` on `.lay-app-root` now, and the assertion that
+ *  replaces it is `OverlayHost.test.tsx`'s enumeration of everything reachable
+ *  in the whole document -- a negative over the page rather than a positive
+ *  about one keypress, which is the shape that could have caught the defect.
+ *  jsdom does not implement `inert`, so the browser half is checked in
+ *  Storybook and recorded in the pull request.
+ *
+ *  What is kept here is only what is this dialog's own: that it takes focus,
+ *  gives it back, and closes on Escape -- promises a reader is owed regardless
+ *  of which file holds the listener. */
+it('moves focus into itself when it opens, and back out when it closes', async () => {
+  const user = userEvent.setup()
 
-  await userEvent.tab()
-  expect(document.activeElement).not.toBe(document.body)
-})
+  /** The opener sits inside the tree rather than being appended to
+   *  `document.body`, and close runs through the Close button rather than
+   *  `unmount()`. Both changes are forced by the host owning the restore: it
+   *  performs it in an effect after re-rendering without `inert`, so a test
+   *  that unmounts the host has removed the thing that was going to do the
+   *  restoring, and an assertion straight after `unmount()` would pass or fail
+   *  for reasons unrelated to this dialog. */
+  const Opener = () => {
+    // Starts closed and is opened by the click below, which is not incidental:
+    // `Drawer` captures where focus was at the moment its close button
+    // attaches, so a dialog that is already open on the first paint captures
+    // `<body>` and has nothing to give back. That is a true fact about the
+    // component and a bad test setup -- this assertion is about the round
+    // trip, so the round trip has to start somewhere real.
+    const [open, setOpen] = useState(false)
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>
+          manage
+        </button>
+        {open ? (
+          <TopicStatusDialog projectId={PROJECT} topic={aTopic()} onClose={() => setOpen(false)} />
+        ) : null}
+      </>
+    )
+  }
 
-it('restores focus to what was focused before it opened, on close', async () => {
-  const opener = document.createElement('button')
-  opener.textContent = 'open'
-  document.body.appendChild(opener)
-  opener.focus()
+  renderDialog(<Opener />)
+  await user.click(screen.getByRole('button', { name: 'manage' }))
 
-  const { unmount } = renderDialog(
-    <TopicStatusDialog projectId={PROJECT} topic={aTopic()} onClose={vi.fn()} />,
-  )
-  expect(document.activeElement).not.toBe(opener)
+  // Fails if `Drawer` stops moving focus in: a reader would be confined to a
+  // dialog with their focus still on the row behind it, which `inert` has just
+  // made unreachable -- strictly worse than the trap it replaced.
+  const close = screen.getByRole('button', { name: 'Close' })
+  expect(close).toHaveFocus()
 
-  unmount()
-  expect(document.activeElement).toBe(opener)
-  opener.remove()
+  await user.click(close)
+
+  // `waitFor` because the restore lands a render later than the close, for the
+  // reason `Drawer.test.tsx` sets out. Fails if `Drawer` drops `returnFocus`:
+  // focus is left on `<body>`, so a screen-reader user is returned to the top
+  // of the document rather than to the control they came from.
+  await waitFor(() => expect(screen.getByRole('button', { name: 'manage' })).toHaveFocus())
 })
 
 it('closes on escape', async () => {

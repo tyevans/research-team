@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
 import { notify } from '@application/notifications/toast-store.ts'
@@ -16,6 +16,7 @@ import type { FilePath } from '@domain/shared/file-path.ts'
 import { Pane } from '../layout/Pane.tsx'
 import { Split } from '../layout/Split.tsx'
 
+import { Confirm } from '../common/Confirm.tsx'
 import { ErrorBox } from '../common/primitives.tsx'
 import { plural } from '../formatting/format.ts'
 import { sessionHref, homeHref } from '../routing/routes.ts'
@@ -113,6 +114,15 @@ export const SessionView = ({
     return () => document.removeEventListener('keydown', onKey)
   }, [selectEvent, store])
 
+  /** Whether the end-session confirmation is up. Boolean rather than
+   *  `ProjectList`'s discriminated union because there is one question here,
+   *  not two.
+   *
+   *  Declared up here with the other hooks rather than beside the JSX that
+   *  reads it: there is an early return for `state.error` below, and a
+   *  `useState` after it is a conditional hook. */
+  const [endPending, setEndPending] = useState(false)
+
   const forkAt = (index: EventIndex) => {
     void store
       .getState()
@@ -126,15 +136,6 @@ export const SessionView = ({
   }
 
   const endSession = () => {
-    if (
-      !window.confirm(
-        'End this session and hand its files back to the project?\n\n' +
-          'The log stays readable and forkable. The project becomes free, and the ' +
-          "next session in it starts from this one's files.",
-      )
-    ) {
-      return
-    }
     void container.sessions
       .release(sessionId)
       .then((released) => {
@@ -178,8 +179,32 @@ export const SessionView = ({
         onFork={() => {
           if (state.scrub.kind === 'historical') forkAt(state.scrub.at)
         }}
-        onEndSession={endSession}
+        onEndSession={() => setEndPending(true)}
       />
+
+      {/* The last `window.confirm` in the console, S-D1, and the one place a
+          reader was still handed the browser's own chrome: a box that blocks
+          the whole tab, cannot be styled, and renders these two sentences as
+          one paragraph joined by newlines because that is all it can do. The
+          wording is carried over verbatim -- it was already right, and it is
+          the part that matters, because "end this session" sounds
+          destructive and these sentences are what say it is not. Only the box
+          changed. */}
+      {endPending ? (
+        <Confirm
+          title="End this session and hand its files back to the project?"
+          lines={[
+            'The log stays readable and forkable.',
+            "The project becomes free, and the next session in it starts from this one's files.",
+          ]}
+          confirmLabel="End the session"
+          onCancel={() => setEndPending(false)}
+          onConfirm={() => {
+            setEndPending(false)
+            endSession()
+          }}
+        />
+      ) : null}
 
       <Split
         id="session"

@@ -14,6 +14,7 @@ import { EventIndex } from '@domain/session/event-index.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { ProjectId, SessionId, TopicId } from '@domain/shared/identifier.ts'
 
+import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { FRAME_DEBOUNCE_MS } from '../shell/use-frame-refresh.ts'
 import { TopicList } from './TopicList.tsx'
@@ -147,14 +148,25 @@ const fakeStream = () => {
 /** Mirrors `Workers.test.tsx`'s harness: a fake container behind the same
  *  providers the real app wraps every view in. The `StreamProvider` is not
  *  decoration -- `TopicList` subscribes to the feed, and a harness without
- *  one would be testing a component the application never renders. */
+ *  one would be testing a component the application never renders.
+ *
+ *  `OverlayHost` joined it when `TopicStatusDialog` became a `Drawer`. Nothing
+ *  about this file's subject changed; the dialog it opens is an `Overlay` now,
+ *  and an `Overlay` with no host renders `null` on purpose, so
+ *  `findByRole('dialog')` went from passing to timing out. That is the
+ *  contract doing its job rather than a wrinkle in it: the alternative design,
+ *  where a hostless layer falls back to `document.body`, would have kept this
+ *  green while putting the dialog outside every stacking and `inert`
+ *  guarantee the host exists to provide. */
 const renderWithContainer = (ui: ReactElement, parts: Partial<AppContainer>) => {
   const container = { stream: fakeStream().stream, ...parts } as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
       <ContainerProvider container={container}>
-        <StreamProvider>{children}</StreamProvider>
+        <StreamProvider>
+          <OverlayHost>{children}</OverlayHost>
+        </StreamProvider>
       </ContainerProvider>
     </QueryClientProvider>
   )

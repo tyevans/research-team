@@ -154,6 +154,25 @@ const RULES = [
     forbid: [/\.topbar\s*\{/, /^#app\s*\{/m],
   },
   {
+    phase: '1',
+    what: 'the topic dialog kept its own copy of the trap Drawer had already deleted',
+    why: 'It carried a second `FOCUSABLE_SELECTOR`, a second focus-in/restore pair, a second `.drawer-backdrop` and a second `role="dialog"` aside -- the duplication `Drawer`\'s own comment predicted, written down, and then made anyway. Phase D deleted the copy in `presentation/common` and this rule covers where the other one lived. The trap is the part that matters: it cycled Tab among its own children while the agent dock painted on top of the dialog and stayed clickable, which is what a simulation of confinement cannot see and `inert` does not permit.',
+    where: 'presentation/research',
+    forbid: [/FOCUSABLE_SELECTOR/, /className="drawer-backdrop"/],
+  },
+  {
+    phase: '1',
+    what: 'ending a session asked with the browser’s own confirm box',
+    why: 'S-D1, and the last `window.confirm` in the console. It blocks the tab, cannot be styled, cannot be reached by the keyboard contract every other dialog here honours, and renders its two sentences as one paragraph joined by `\\n\\n` because that is the only thing it can render. Those sentences are the load-bearing part -- "end this session" reads as destructive and they are what say the log survives -- so they moved verbatim into `Confirm`. A `window.confirm` anywhere under `src` is that box coming back.',
+    // The empty string is every file: `where` is matched with `startsWith`
+    // against a path already relative to `src`, so `'src'` would scope this to
+    // nothing at all and pass forever. This is the first repo-wide rule and
+    // that is deliberate -- the point is not that `SessionView` stops asking
+    // this way, it is that nothing starts.
+    where: '',
+    forbid: [/window\.confirm\(/],
+  },
+  {
     phase: 'B',
     what: 'stylesheets each carried their own stacking numbers',
     why: 'Eight literal `z-index` declarations across five values, two of which produced a popover painting over an `aria-modal` dialog. Every one now names a role from `tokens.css`. `scripts/stacking.test.ts` is the real enforcement and is more precise than this -- it also rejects an undeclared token and a fourth role. This entry is here so the *count* is recorded where the other phase deletions are; if it ever fires, read that test first.',
