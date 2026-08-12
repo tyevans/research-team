@@ -36,5 +36,13 @@
   // or `fs`, neither of which exists in the browser this ships to.
   // `npm run typecheck` runs both configs; they are not project references
   // because neither emits, which is the one thing references require.
-  "include": ["src", "vitest.setup.ts"]
+  //
+  // `.storybook` is here rather than in `tsconfig.node.json`, where it used to
+  // be, and the move is a reclassification rather than a convenience. The
+  // workbench's configuration is *browser* code: `preview.tsx` mounts an
+  // `OverlayHost` around every story, so it needs `DOM` and `jsx` and must not
+  // see `process` — the same rule as the rest of `src/`. It was under the Node
+  // config only because `main.ts` sits beside it, and `main.ts` turns out to
+  // touch no Node API at all.
+  "include": ["src", "vitest.setup.ts", ".storybook"]
 }

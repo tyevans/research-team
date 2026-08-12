@@ -13,6 +13,10 @@ import type { StorybookConfig } from '@storybook/react-vite'
  * browser mode and a Chromium download, which is phase 6's cost to pay rather
  * than this one's. Stories reach `vitest` through `composeStories` instead, so
  * they run inside the `app` project that already exists and CI gains no job.
+ * `vitest.setup.ts` hands `preview.tsx` to `setProjectAnnotations`, which is
+ * what makes that arrangement honest: without it the preview's decorators
+ * apply in the browser and not in the suite, and the two quietly disagree
+ * about what a component renders while both look fine.
  *
  * `storybook build` is deliberately *not* in `npm run verify`. It roughly
  * doubles frontend CI time to catch a story that fails to compile, and

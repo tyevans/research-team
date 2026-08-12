@@ -4,7 +4,6 @@ import { expect, it } from 'vitest'
 
 import { SessionId } from '@domain/shared/identifier.ts'
 
-import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { GateReview } from './GateReview.tsx'
 import * as stories from './GateReview.stories.tsx'
 
@@ -118,17 +117,15 @@ it('renders a gate whose every count is zero and every list is empty', () => {
  * a `title` *is* present in the DOM. Focusing the trigger and finding a
  * `tooltip` role is what separates a reachable explanation from an attribute.
  *
- * `OverlayHost` is mounted here rather than in the stories because a `Tooltip`
- * with no host renders no content at all, deliberately (`Tooltip.tsx`). A test
- * that skipped it would find no tooltip and read as a failure of this
- * component rather than of its own setup.
+ * There is no `OverlayHost` in this file, and its absence is the second thing
+ * being checked. A `Tooltip` with no host renders no content at all
+ * (`Tooltip.tsx`), so this test only passes because `.storybook/preview.tsx`
+ * wraps every story in one and `setProjectAnnotations` carries that into the
+ * suite. Delete either and both assertions below fail — which is the point of
+ * putting the host there rather than in each file that needs it.
  */
 it('makes both explanations reachable by focus rather than by hover alone', async () => {
-  render(
-    <OverlayHost>
-      <BlockedWithFindings />
-    </OverlayHost>,
-  )
+  render(<BlockedWithFindings />)
 
   // The chip is a `<span>`, so the tooltip wrapper is what puts it in the tab
   // order — it is a button whose accessible name is the chip's text.
@@ -143,11 +140,7 @@ it('makes both explanations reachable by focus rather than by hover alone', asyn
   // first — which passed while asserting the wrong element.
   cleanup()
 
-  render(
-    <OverlayHost>
-      <BlockedWithFindings />
-    </OverlayHost>,
-  )
+  render(<BlockedWithFindings />)
 
   // The findings link is already focusable, so it is its own trigger under
   // `asChild`: the same element carries the href and opens the explanation.
