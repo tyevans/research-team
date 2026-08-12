@@ -462,6 +462,18 @@ ul.tree ul > li:last-child::after {
 
 /* --- confirmation ------------------------------------------------------- */
 
+/* `.drawer-body` deliberately has no padding -- each caller pads its own
+   content, because the document reader wants a measure and the worker panel
+   wants none -- and this one never did. Seen for the first time in a browser
+   (`common/Confirm` in Storybook): the paragraphs sat hard against the
+   drawer's left border and the confirm button's right border landed on the
+   last pixel column of the viewport, looking clipped. jsdom lays nothing out,
+   so `Confirm.test.tsx` is green either way. The same 14px the paragraphs
+   already use between themselves, so the box reads as one block. */
+.confirm {
+  padding: var(--space-4);
+}
+
 .confirm p {
   margin: 0 0 var(--space-4);
   color: var(--fg-dim);

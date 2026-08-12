@@ -129,6 +129,13 @@
   font-size: var(--t-xs);
   color: var(--fg-dim);
 }
+/* A stage that declares no artifact of its own. Dimmer than a count, because
+ * there is nothing to count -- and deliberately not the global `.empty`, whose
+ * padding belongs to a whole-pane empty state and not to a grid cell. */
+.rail-count-none {
+  color: var(--fg-faint);
+}
+
 /* Written < declared. Not an error -- a stage in progress is expected to be
  * short -- so it is marked, not alarmed. */
 .rail-short {
