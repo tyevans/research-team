@@ -107,7 +107,6 @@
   align-items: baseline;
   gap: 0.35ch;
   min-width: 0;
-  color: inherit;
 }
 a.ent-ref:hover .ent-ref-name {
   color: var(--accent);
@@ -171,16 +170,6 @@ a.ent-ref:hover .ent-ref-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* The question is a link, and nothing in this repository resets `a`. Without
-   this rule the browser's own `#0000EE` lands on `--bg` (#0b0d10) at roughly
-   1.4:1 -- measured in Chromium, and the reason the queue's questions render
-   unreadable blue while the detail's render white. `.ent-ref` already says
-   `color: inherit` for the same reason; this is that fact applied where the
-   markup is a bare `<a>` rather than an `EntityRef`. */
-.ent-topic-question a {
-  color: inherit;
 }
 
 /* Clips rather than wraps, and that is the height contract rather than a

@@ -212,11 +212,41 @@ select {
    and could not be read while being typed into.
    `composer.css`'s `.input` had already met this for `<select>` and said so in
    a comment; this is the same fact applied where a field does not have to opt
-   in. Anything setting its own background still wins on specificity. */
+   in. Anything setting its own background still wins on specificity.
+
+   `button` belongs to the same fact and was left out of it. A bare `<button>`
+   renders the theme's `rgb(215,222,231)` on the UA's `rgb(239,239,239)`
+   buttonface -- about 1.15:1, measured in Chromium at
+   `session/GateReview` BlockedWithFindings -- which is the field bug exactly,
+   one element later. No screen ships an unclassed button today, so this buys
+   the workbench and whatever is written next rather than fixing a live
+   defect; it is here because the rule above already had to be widened once.
+
+   Background only, not border: the UA's black `outset` border disappears
+   against `--bg`, so a bare button reads as unbordered text. That matches
+   what the fields already do -- they keep their UA border too -- and giving
+   controls an outline is a decision about how the console looks, not about
+   whether its text can be read. */
+button,
 input,
 textarea,
 select {
   background: var(--bg);
+}
+
+/* Links take the colour around them. The browser's `#0000EE` on `--bg`
+   (#0b0d10) is about 1.3:1, and three of them were live: `GateReview`'s file
+   links and `Artifacts`' basename both render a bare `<a>` with no class in
+   scope. `.crumbs a`, `.ent-ref` and `.ent-topic-question a` had each written
+   this rule locally; the third copy is what says it belongs here, and the two
+   that existed only to say `color: inherit` are gone with it.
+
+   `text-decoration` is deliberately left alone. Removing the underline as
+   well would repaint every link in the console in the same commit as a
+   contrast fix, and L-§9.3's "nothing on the page is a link" is an argument
+   about navigation, not a licence to make the remaining ones invisible. */
+a {
+  color: inherit;
 }
 
 /* Dimmer than a real value, and deliberately not `--fg-faint`: a placeholder
