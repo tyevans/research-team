@@ -1,4 +1,31 @@
+import { setProjectAnnotations } from '@storybook/react-vite'
+
 import '@testing-library/jest-dom/vitest'
+
+import preview from './.storybook/preview.tsx'
+
+/** The workbench's own configuration, applied to every test that composes a
+ *  story.
+ *
+ * `composeStories` does not read `.storybook/preview` by itself. Without this
+ * line the preview's decorators and parameters exist in the browser and
+ * nowhere else, so a story and the test that imports it render *different
+ * trees* — and the difference is invisible, because both render something.
+ *
+ * That is not hypothetical here. The preview mounts an `OverlayHost`, and a
+ * `Tooltip` with no host renders no content at all: without this, every
+ * explanation would appear in the workbench and vanish in the tests that
+ * assert on it, which is the shape of the defect #128 repaired. It is
+ * deliberately in the setup file rather than in each test — the alternative is
+ * a rule every future test file has to know, and the one that forgets is the
+ * one that fails silently.
+ *
+ * The cost is that the preview is now load-bearing for the suite: a decorator
+ * added there wraps several hundred existing tests. That is the point, and it
+ * is also the reason the preview's decorator list should stay short and be
+ * argued for where it is written.
+ */
+setProjectAnnotations(preview)
 
 /** jsdom implements neither of these, and both are load-bearing in the console:
  *  the pane layout asks whether the three-column breakpoint is active, and the

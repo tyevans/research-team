@@ -176,6 +176,18 @@ jobs:
         run: npm run test:coverage
         working-directory: frontend
 
+      # `npm run verify` has run this since it was written; CI never has, so
+      # the one gate that catches a superseded pattern coming back was enforced
+      # only on machines where somebody remembered to run the whole chain. A
+      # branch that ran `lint` and `test` and pushed reached `main` with a
+      # restored `title=` and nothing to say so.
+      #
+      # Cheap and independent of the build, so it sits with the other static
+      # checks rather than after it.
+      - name: superseded patterns stay deleted
+        run: npm run deleted
+        working-directory: frontend
+
       # The built console is committed, because that is what `uv run web.py`
       # serves and requiring a Node toolchain to run the web UI would be a
       # regression. Committed output can go stale, so this is the gate: rebuild,

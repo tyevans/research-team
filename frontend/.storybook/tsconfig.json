@@ -1,9 +1,16 @@
 {
-  // Storybook's config is the workbench's, not the application's — it may see
-  // `process` and `fs`, which application code deliberately cannot. Same
-  // reason `vite.config.ts` lives under `tsconfig.node.json`, and same
-  // mechanism as `scripts/tsconfig.json`: a config here keeps these files off
-  // eslint's eight-file default project. See the note there.
+  // This file exists for eslint, not for the compiler: `projectService` picks
+  // the nearest `tsconfig.json` per file, and without one here these two files
+  // fall onto the default project — which tseslint caps at eight files, after
+  // which it silently resolves no types at all. Same mechanism as
+  // `scripts/tsconfig.json`; see the note there.
+  //
+  // It extends the *application* config rather than `tsconfig.node.json`,
+  // which is a change. `preview.tsx` mounts an `OverlayHost` around every
+  // story, so the workbench's configuration is browser code and needs `DOM`
+  // and `jsx` — and `main.ts` beside it touches no Node API, so nothing here
+  // wanted `process` in the first place. The reasoning is in `tsconfig.json`'s
+  // own `include`.
   //
   // Story files themselves are *not* covered by this. They are ordinary source
   // under `src/`, type-checked by `tsconfig.json` with the rest of the
@@ -13,8 +20,8 @@
   // `./*.ts` rather than `.`: TypeScript's glob expansion skips directories
   // whose name begins with a dot, so a bare `.` matches nothing here and the
   // files fall back to eslint's default project with a parse error that blames
-  // `allowDefaultProject`. The same reason `tsconfig.node.json` names
-  // `.storybook/**/*.ts` explicitly.
-  "extends": "../tsconfig.node.json",
-  "include": ["./*.ts"]
+  // `allowDefaultProject`. `./*.tsx` is the same rule, spelled again because
+  // `preview.tsx` is JSX now.
+  "extends": "../tsconfig.json",
+  "include": ["./*.ts", "./*.tsx"]
 }

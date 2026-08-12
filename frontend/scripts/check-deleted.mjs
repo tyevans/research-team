@@ -266,6 +266,18 @@ const RULES = [
     where: 'styles',
     forbid: [/z-index\s*:\s*\d/],
   },
+  {
+    phase: 'B',
+    what: 'a story mounted its own OverlayHost, and six that needed one did not',
+    why: "The host is in `.storybook/preview.tsx` now, around every story. Per-story was the rule before and it held in exactly one file out of seven -- `TopicQueue.stories.tsx` -- while the stories for `GateReview`, `WorkerList`, `RunPanel`, `Artifacts`, `AutonomyPanel` and `StageRail` silently rendered every trigger with no explanation, because a `Tooltip` with no host renders no content and no error. A rule kept only by remembering it is not a rule. `Shell` and the host's own tests are excluded by `only`, since mounting one is their subject.",
+    where: 'presentation',
+    // Not `layout/`: `OverlayHost.stories.tsx` is the host's own workbench and
+    // `Shell.stories.tsx` mounts the real one. Both are showing the mechanism
+    // rather than working around its absence, which is the distinction this
+    // rule is drawing.
+    only: /^(?!presentation\/layout\/).*\.stories\.tsx$/,
+    forbid: [/\bOverlayHost\b/],
+  },
 ]
 
 /** Comments removed before matching, which `theme.test.ts` also does and for
@@ -292,7 +304,16 @@ const files = (function walk(dir) {
 
 const failures = []
 for (const rule of RULES) {
-  const scope = files.filter((path) => relative(SRC, path).startsWith(rule.where))
+  // `where` is a directory prefix, which is the right unit for every rule that
+  // deleted something from a *view*. `only` narrows further by filename, and
+  // exists because one deletion is about a kind of file rather than a place:
+  // stories mounting their own `OverlayHost`. Forbidding that anywhere under
+  // `presentation` would fail on `Shell.tsx` and `OverlayHost.test.tsx`, which
+  // are the two files that must keep doing it.
+  const scope = files.filter((path) => {
+    const name = relative(SRC, path)
+    return name.startsWith(rule.where) && (!rule.only || rule.only.test(name))
+  })
   for (const path of scope) {
     const source = withoutComments(readFileSync(path, 'utf8'))
     for (const pattern of rule.forbid) {

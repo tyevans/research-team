@@ -7,9 +7,13 @@
   // The build tooling, and the tests that check the build tooling. They read
   // config files off disk, so they need `node` types that application code
   // deliberately cannot see.
-  // `.storybook` joins them: its config is Node's too, and including it here
-  // is what makes `npm run typecheck` catch a broken workbench config. That is
-  // the reason `storybook build` is deliberately absent from `npm run verify`
-  // — it would spend a minute of CI to find what this finds in a second.
-  "include": ["vite.config.ts", "scripts/**/*.ts", ".storybook/**/*.ts"]
+  //
+  // `.storybook` used to be here on the theory that a config file is Node's.
+  // It moved to `tsconfig.json` when `preview.tsx` gained a decorator: a
+  // decorator is a component, `OverlayHost` is DOM code, and this config has
+  // no `DOM` lib — so the workbench's own configuration stopped compiling
+  // here and belonged with the browser code it actually is. `npm run
+  // typecheck` still covers it, which is still the reason `storybook build`
+  // is absent from `npm run verify`; only the config it is covered by changed.
+  "include": ["vite.config.ts", "scripts/**/*.ts"]
 }
