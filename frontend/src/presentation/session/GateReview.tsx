@@ -5,6 +5,7 @@ import type { SessionId } from '@domain/shared/identifier.ts'
 
 import { unimplementedChecksWarning } from '../common/findings-copy.ts'
 import { Chip } from '../common/primitives.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 import { sessionHref } from '../routing/routes.ts'
 
 /** What a stage gate is asking a person to decide about.
@@ -35,9 +36,9 @@ export const GateReview = ({
       {context.blocked ? (
         // Loud because it is the one fact that changes what the reader should
         // do: a blocked gate is asking to be unblocked, not rubber-stamped.
-        <Chip tone="fail" title="A blocking finding stands against this stage.">
-          blocked
-        </Chip>
+        <Tooltip explanation="A blocking finding stands against this stage.">
+          <Chip tone="fail">blocked</Chip>
+        </Tooltip>
       ) : null}
     </header>
 
@@ -158,6 +159,13 @@ const Findings = ({ findings }: { findings: readonly GateFinding[] }) => {
  * Guarded on the path being non-empty rather than trusting the server: a link
  * to `#/s/<id>/file/` opens the file pane on nothing, which looks like the
  * viewer is broken rather than like the field was blank.
+ *
+ * The path is a `Tooltip` only when the label is not already the path, which
+ * is #126's triage applied to the two call sites this has: "full findings
+ * report" genuinely does not say where it goes, and a path labelled with
+ * itself would be an explanation that repeats the text beside it. CSS
+ * truncation is not an accessibility problem, so the second case gets nothing
+ * rather than a tooltip nobody needs.
  */
 const FileLink = ({
   sessionId,
@@ -167,9 +175,19 @@ const FileLink = ({
   sessionId: SessionId
   path: string
   label: string
-}) =>
-  path.length === 0 ? null : (
-    <a href={sessionHref(sessionId, undefined, FilePath.of(path))} title={path}>
-      {label}
-    </a>
+}) => {
+  if (path.length === 0) return null
+
+  const link = <a href={sessionHref(sessionId, undefined, FilePath.of(path))}>{label}</a>
+
+  // `asChild`: the trigger is a real `<a href>`, already focusable and already
+  // saying what it does with its own cursor. The default wrapper would put a
+  // `<button>` around an anchor, which is both invalid and a second tab stop.
+  return label === path ? (
+    link
+  ) : (
+    <Tooltip asChild explanation={path}>
+      {link}
+    </Tooltip>
   )
+}

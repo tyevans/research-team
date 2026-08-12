@@ -4,6 +4,7 @@ import { expect, it } from 'vitest'
 
 import { SessionId } from '@domain/shared/identifier.ts'
 
+import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { GateReview } from './GateReview.tsx'
 import * as stories from './GateReview.stories.tsx'
 
@@ -106,4 +107,50 @@ it('renders a gate whose every count is zero and every list is empty', () => {
   expect(screen.getByText('reviewed 0 artifacts and 0 links')).toBeInTheDocument()
   expect(screen.queryByRole('link')).not.toBeInTheDocument()
   expect(document.body.textContent).not.toContain('undefined')
+})
+
+/** Both explanations on this component, reached by keyboard.
+ *
+ * This test fails against the version that shipped: both sentences were
+ * `title` attributes, which a keyboard reaches never, and #126 removed the
+ * `title` prop from `Chip` underneath one of them — so `main` did not compile.
+ * Asserting the text is present would not have caught either problem, because
+ * a `title` *is* present in the DOM. Focusing the trigger and finding a
+ * `tooltip` role is what separates a reachable explanation from an attribute.
+ *
+ * `OverlayHost` is mounted here rather than in the stories because a `Tooltip`
+ * with no host renders no content at all, deliberately (`Tooltip.tsx`). A test
+ * that skipped it would find no tooltip and read as a failure of this
+ * component rather than of its own setup.
+ */
+it('makes both explanations reachable by focus rather than by hover alone', async () => {
+  render(
+    <OverlayHost>
+      <BlockedWithFindings />
+    </OverlayHost>,
+  )
+
+  // The chip is a `<span>`, so the tooltip wrapper is what puts it in the tab
+  // order — it is a button whose accessible name is the chip's text.
+  screen.getByRole('button', { name: 'blocked' }).focus()
+  expect(await screen.findByRole('tooltip')).toHaveTextContent(
+    'A blocking finding stands against this stage.',
+  )
+
+  // A fresh document for the second trigger. Moving focus from the chip to the
+  // link inside one render leaves the chip's tooltip on screen for as long as
+  // Radix's close takes, and `findByRole` then answers with whichever it finds
+  // first — which passed while asserting the wrong element.
+  cleanup()
+
+  render(
+    <OverlayHost>
+      <BlockedWithFindings />
+    </OverlayHost>,
+  )
+
+  // The findings link is already focusable, so it is its own trigger under
+  // `asChild`: the same element carries the href and opens the explanation.
+  screen.getByRole('link', { name: 'full findings report' }).focus()
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('reviews/synthesis-findings.md')
 })
