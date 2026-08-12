@@ -32,7 +32,7 @@ const stage = (id: string, outputs: ArtifactSlot[]): StageProgress => ({
   kind: 'course',
   spine: 1,
   scopeLevel: 'course',
-  status: 'todo',
+  status: 'upcoming',
   outputs,
   gateDecisions: [],
   reviewerRole: null,

@@ -330,7 +330,14 @@ export const stageProgressDto = z.object({
   kind: z.string().default(''),
   spine: z.number().default(0),
   scope_level: z.string().default(''),
-  status: z.string().default('todo'),
+  /* `z.string()` rather than an enum, for the reason `seedingFrameDto.status`
+     gives: a status this build has not heard of should reach the mapper's
+     fallback rather than fail validation. The *default* is the part that was
+     wrong -- `'todo'` is a name the server has never sent and no stylesheet
+     matches, so a payload omitting `status` drew an unstyled chip reading
+     "todo". A payload that does not say where a stage sits is a stage this
+     console cannot place, which is what `unknown` means. */
+  status: z.string().default('unknown'),
   outputs: z.array(artifactSlotDto).default([]),
   gate_decisions: z.array(z.string()).default([]),
   reviewer_role: maybe(z.string()),

@@ -11,6 +11,7 @@ import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
   Course,
   StageProgress,
+  StageStatus,
   ArtifactSlot,
   Provenance,
   Finding,
@@ -302,6 +303,24 @@ const toFinding = (raw: Dto<typeof dto.findingDto>): Finding => ({
   suggestedEdit: raw.suggested_edit,
 })
 
+const STAGE_STATUSES: readonly StageStatus[] = ['done', 'current', 'upcoming', 'unknown']
+
+/** A status this build has not heard of is a stage it cannot place, which is
+ *  what `unknown` already means -- `course.py`'s `_status` returns it for
+ *  exactly that, a stage whose position cannot be resolved. So the fold reuses
+ *  a meaning rather than inventing one, and `.rail-unknown` and `.chip-unknown`
+ *  already draw it.
+ *
+ *  It draws it in `--k-failure` red, and that is the intended register rather
+ *  than an accident of reuse: an unrecognised status means this console and the
+ *  server disagree about the vocabulary, which is a deployment mismatch and
+ *  should look like one. What it costs is the literal string -- a future
+ *  `skipped` renders as "unknown" rather than as itself. That is the trade for
+ *  a closed union, and the union is what stopped `todo` from being believed for
+ *  as long as it was. */
+const toStageStatus = (raw: string): StageStatus =>
+  STAGE_STATUSES.includes(raw as StageStatus) ? (raw as StageStatus) : 'unknown'
+
 const toStageProgress = (raw: Dto<typeof dto.stageProgressDto>): StageProgress => ({
   index: raw.index,
   id: raw.id,
@@ -309,7 +328,7 @@ const toStageProgress = (raw: Dto<typeof dto.stageProgressDto>): StageProgress =
   kind: raw.kind,
   spine: raw.spine,
   scopeLevel: raw.scope_level,
-  status: raw.status,
+  status: toStageStatus(raw.status),
   outputs: raw.outputs.map(toArtifactSlot),
   gateDecisions: raw.gate_decisions,
   reviewerRole: raw.reviewer_role,
