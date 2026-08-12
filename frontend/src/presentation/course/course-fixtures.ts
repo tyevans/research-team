@@ -71,12 +71,12 @@ export const course = (over: Partial<Course> = {}): Course => {
       index: 3,
       id: 'step2.draft',
       name: 'Draft',
-      status: 'pending',
+      status: 'upcoming',
       outputs: [
         artifact({ path: 'course/draft/lesson.md', artifactType: 'lesson', present: false }),
       ],
     }),
-    stage({ index: 4, id: 'step3.review', name: 'Review', status: 'pending', outputs: [] }),
+    stage({ index: 4, id: 'step3.review', name: 'Review', status: 'upcoming', outputs: [] }),
   ]
 
   return {

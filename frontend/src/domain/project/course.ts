@@ -38,7 +38,21 @@ export interface Course {
   readonly unimplementedChecks: readonly string[]
 }
 
-export type StageStatus = 'done' | 'current' | 'todo' | (string & {})
+/** Where a stage sits relative to the run's position, and these four names are
+ *  the whole vocabulary: `course.py`'s `_status` returns exactly them and
+ *  `presenters.py` passes the string through untouched.
+ *
+ *  It used to read `'done' | 'current' | 'todo' | (string & {})`, and every
+ *  part of that was wrong in a way the escape hatch hid. `todo` is a name
+ *  nothing in the system has ever sent. `upcoming` and `unknown`, which the
+ *  server does send, were absent -- and both are consumed as class names
+ *  (`rail-${status}`, `chip-${status}`), so `course.css` had been written
+ *  against the real vocabulary all along while the type described a different
+ *  one. `(string & {})` is why nobody found out: it makes every spelling
+ *  assignable, so a stylesheet and a type could disagree for as long as they
+ *  liked with the compiler agreeing with both. Dropping it is the point of
+ *  this change; narrowing the four names is what dropping it costs. */
+export type StageStatus = 'done' | 'current' | 'upcoming' | 'unknown'
 
 export interface StageProgress {
   readonly index: number

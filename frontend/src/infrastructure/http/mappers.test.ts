@@ -239,6 +239,46 @@ describe('toCourse', () => {
     )
     expect(course.position).toBeNull()
   })
+
+  /* Passes with this change reverted, and is here anyway: the old
+     `(string & {})` accepted every one of these too. It is the lock on the
+     fold below -- without it, folding an unheard status onto `unknown` could
+     be made to pass by folding *everything* onto `unknown`. */
+  it('keeps the four statuses the server actually sends', () => {
+    const course = toCourse(
+      parse(dto.courseDto, {
+        preset: { id: 'h', name: 'H' },
+        stages: ['done', 'current', 'upcoming', 'unknown'].map((status, i) => ({
+          index: i,
+          id: `s${i}`,
+          name: `S${i}`,
+          status,
+        })),
+      }),
+      ProjectId('p1'),
+    )
+    expect(course.stages.map((s) => s.status)).toEqual(['done', 'current', 'upcoming', 'unknown'])
+  })
+
+  /* Red before this change for two separate reasons, which is why it is one
+     test rather than two: `upcoming` was not in `StageStatus` at all, and a
+     stage omitting `status` defaulted to `todo` -- a name no stylesheet
+     matches, so it drew an unstyled chip claiming a state that does not
+     exist. Both now land on `unknown`, which is the state the console is
+     actually in when it cannot place a stage. */
+  it('folds a status it has not heard of onto unknown', () => {
+    const course = toCourse(
+      parse(dto.courseDto, {
+        preset: { id: 'h', name: 'H' },
+        stages: [
+          { index: 0, id: 's0', name: 'S0', status: 'skipped' },
+          { index: 1, id: 's1', name: 'S1' },
+        ],
+      }),
+      ProjectId('p1'),
+    )
+    expect(course.stages.map((s) => s.status)).toEqual(['unknown', 'unknown'])
+  })
 })
 
 describe('toRoster', () => {
