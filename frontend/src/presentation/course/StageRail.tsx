@@ -56,7 +56,10 @@ export const Stage = ({
             {written}/{stage.outputs.length}
           </span>
         ) : (
-          <span className="rail-count empty">—</span>
+          // Not `empty`: that class is the page-level empty state in
+          // `states.css` and carries `padding: 22px 18px`, which inflated this
+          // row from 35px to 76px wherever a stage declared no artifacts.
+          <span className="rail-count rail-count-none">—</span>
         )}
         <Chip tone={stage.status}>{stage.status}</Chip>
       </button>

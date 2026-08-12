@@ -173,6 +173,16 @@ a.ent-ref:hover .ent-ref-name {
   white-space: nowrap;
 }
 
+/* The question is a link, and nothing in this repository resets `a`. Without
+   this rule the browser's own `#0000EE` lands on `--bg` (#0b0d10) at roughly
+   1.4:1 -- measured in Chromium, and the reason the queue's questions render
+   unreadable blue while the detail's render white. `.ent-ref` already says
+   `color: inherit` for the same reason; this is that fact applied where the
+   markup is a bare `<a>` rather than an `EntityRef`. */
+.ent-topic-question a {
+  color: inherit;
+}
+
 /* Clips rather than wraps, and that is the height contract rather than a
    preference. A meta line that wrapped would make this row taller than its
    neighbours, which is precisely the guarantee a virtualizer estimates
@@ -188,10 +198,19 @@ a.ent-ref:hover .ent-ref-name {
   overflow: hidden;
 }
 
+/* `nowrap` on each count, not only on the flex line above. `flex-wrap: nowrap`
+   stops the *items* moving to a second line; it does nothing about the text
+   inside one, so `4 sources` broke after `4` as soon as a row also carried a
+   verb -- and the row grew from 55px to 67px, which is exactly the height
+   contract the comment above calls load-bearing (L-F8's 122px hole). The
+   `overflow: hidden` on `.ent-topic-meta` clips instead, which is the stated
+   policy: something has to give and it must not be the height. Measured in
+   Chromium at a 360px rail; jsdom cannot see it. */
 .ent-topic-count {
   color: var(--fg-faint);
   font-family: var(--mono);
   font-size: var(--t-xs);
+  white-space: nowrap;
 }
 
 .ent-topic-overflow {

@@ -1,0 +1,22 @@
+<!-- The workbench's equivalent of `#root { display: contents }`.
+
+     `structure.css` takes the application's mount point out of layout so
+     `.lay-shell`'s `height: 100%` resolves against `<body>`. Storybook mounts
+     into `#storybook-root` instead, which that selector never matches, so the
+     shell resolved `100%` against an auto-height block and collapsed to the
+     height of its chrome -- 44px. Every story that positions something against
+     the bottom of the surface (`common/Menu` AgainstTheEdge,
+     `common/Popover` and `common/Tooltip` AgainstTheEdges) therefore drew its
+     trigger *behind the topbar* at y ≈ 0 rather than at the foot of the
+     viewport, and the menu story rendered visibly blank. Those three stories
+     exist to check upward flip, which is the one thing they could not show.
+
+     A `<style>` here rather than a decorator: the height of the mount point is
+     not something a React wrapper can set without adding a box the application
+     does not have, and it is not something `structure.css` should carry, since
+     `#storybook-root` does not exist in the application. -->
+<style>
+  #storybook-root {
+    display: contents;
+  }
+</style>
