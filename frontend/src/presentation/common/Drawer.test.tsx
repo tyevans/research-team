@@ -217,6 +217,32 @@ it('closes when the backdrop is clicked and stays open when its own body is', as
   expect(onClose).toHaveBeenCalledTimes(1)
 })
 
+it('pads its body unless the caller says it brings its own', () => {
+  // A class assertion rather than a padding one, because jsdom applies no
+  // stylesheet: `.drawer-body`'s inset and `.is-flush`'s zero are both real
+  // only in a browser, and the measurement is in `course.css` beside the rule.
+  //
+  // What this holds is the *default*, which is the decision. Padding used to be
+  // every caller's job; three of four did it and `TopicStatusDialog` did not,
+  // so its text ran to the drawer's border. This fails if the default flips
+  // back, which is the only way that defect returns.
+  const { container, rerender } = render(
+    <Drawer heading="Worker" label="Worker detail" onClose={() => {}}>
+      body
+    </Drawer>,
+  )
+  expect(container.querySelector('.drawer-body')).not.toHaveClass('is-flush')
+
+  rerender(
+    <OverlayHost>
+      <Drawer heading="Worker" label="Worker detail" onClose={() => {}} flush>
+        body
+      </Drawer>
+    </OverlayHost>,
+  )
+  expect(container.querySelector('.drawer-body')).toHaveClass('is-flush')
+})
+
 it('names itself for a screen reader without borrowing the heading markup', () => {
   render(
     <Drawer heading={<em>report.md</em>} label="Document: report.md" onClose={() => {}}>

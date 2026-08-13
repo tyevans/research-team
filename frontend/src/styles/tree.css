@@ -462,17 +462,23 @@ ul.tree ul > li:last-child::after {
 
 /* --- confirmation ------------------------------------------------------- */
 
-/* `.drawer-body` deliberately has no padding -- each caller pads its own
-   content, because the document reader wants a measure and the worker panel
-   wants none -- and this one never did. Seen for the first time in a browser
-   (`common/Confirm` in Storybook): the paragraphs sat hard against the
-   drawer's left border and the confirm button's right border landed on the
-   last pixel column of the viewport, looking clipped. jsdom lays nothing out,
-   so `Confirm.test.tsx` is green either way. The same 14px the paragraphs
-   already use between themselves, so the box reads as one block. */
-.confirm {
-  padding: var(--space-4);
-}
+/* This rule was `padding: var(--space-4)`, and it is gone because
+   `.drawer-body` now pads by default. It was added after the defect was seen
+   in a browser (`common/Confirm` in Storybook): the paragraphs sat hard
+   against the drawer's left border and the confirm button's right border
+   landed on the last pixel column of the viewport, looking clipped. jsdom lays
+   nothing out, so `Confirm.test.tsx` was green either way.
+
+   The comment that stood here said `.drawer-body` deliberately has no padding
+   because each caller pads its own. That was true and was the problem: three
+   of four callers did it, in three different insets, and the fourth was
+   `TopicStatusDialog`, which had the identical defect this rule was written to
+   fix. One local fix is a fix; the second one is the signal that the default
+   was wrong.
+
+   `Confirm` takes the drawer's inset now, which is 12px rather than 14px
+   horizontally -- deliberately, because it lines up with `.drawer-head`'s
+   title and the two-pixel difference was never a decision anybody made. */
 
 .confirm p {
   margin: 0 0 var(--space-4);
