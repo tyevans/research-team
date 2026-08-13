@@ -35,3 +35,8 @@ node_modules/
 frontend/.vite/
 *.tsbuildinfo
 frontend/coverage/
+
+# Vitest browser mode writes a PNG beside a failing test, which is genuinely
+# useful while you are looking at one and is debris the moment it passes. The
+# suite is local-only, so these would only ever be committed by accident.
+frontend/src/**/__screenshots__/
