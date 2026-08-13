@@ -254,6 +254,43 @@
   background: #241417;
   border-color: #45272a;
 }
+/* Cancel: available, but never louder than the primary action.
+ *
+ * **Here rather than as utilities on `Button`, which is what every other rescue
+ * in this commit did.** `Button` renders `.btn`, and `.btn` sets `background`,
+ * `border-color` and `color` from this file, unlayered. Tailwind's utilities
+ * are imported into `@layer utilities` by `theme.css`, and an unlayered rule
+ * beats a layered one regardless of specificity -- so `bg-[transparent]` on a
+ * `.btn` loses outright, and the only way to make it win is `!important` on
+ * four declarations plus two hover states, which is a fight with `.btn` written
+ * into every quiet button forever.
+ *
+ * So this moved instead, and the move is not the relocation the standing policy
+ * forbids: it was in `composer.css`, which dies with the session composer,
+ * while `.btn`, `.btn-accent`, `.btn-danger`, `.btn-ghost` and `.btn-sm` have
+ * always been here. A tone of a primitive living apart from the primitive was
+ * the filing accident; this is the split being closed, not a rule dodging a
+ * deletion. `shell.css` dies with the shell, and so does `.btn`.
+ *
+ * It has to sit after `.btn`, which is the reason it is at this line and not at
+ * the top of the file: both selectors are 0-1-0 and the later one wins.
+ *
+ * The doubled `background` is `composer.css`'s own and is kept verbatim -- the
+ * first declaration is `#241517` at zero alpha, which every browser that
+ * understands 8-digit hex overrides with the second. It is a leftover, not a
+ * fallback; it is preserved here because this commit is a filing fix and
+ * deleting it would be a pixel change nobody asked for in the same diff. */
+.btn-quiet {
+  background: transparent;
+  border-color: #3a2b2c;
+  color: var(--del-fg);
+}
+.btn-quiet:hover:not(:disabled, [aria-disabled='true']) {
+  background: #24151700;
+  background: #241517;
+  border-color: #543336;
+}
+
 .btn-ghost {
   background: transparent;
   border-color: transparent;

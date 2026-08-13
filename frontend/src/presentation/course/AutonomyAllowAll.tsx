@@ -35,11 +35,32 @@ import { INSTANCE_WIDE, NO_POLICY, STAGE_GATE_HELD } from './autonomy-copy.ts'
  * rather than deferred. This is not a licence to port the other stylesheets:
  * the standing policy is that they are deleted, never ported.
  *
- * **Still shared, and still a smaller version of the same trap:**
- * `.autonomy-warn` and `.autonomy-error` below are `course.css` rules that
- * `AutonomyPanel` — a genuine course-page surface — also uses. They are left
- * alone deliberately, because converting them would be the forbidden port.
- * `course.css` says the same thing at the rules themselves.
+ * **`.autonomy-warn` and `.autonomy-error` are gone from this file too**, and
+ * the argument that kept them is the one that turned out to be wrong. It ran:
+ * they are shared with `AutonomyPanel`, a real course-page surface, so
+ * converting them would be the forbidden port. Sharing is not what makes a port
+ * forbidden — dying with the wrong screen is. This control outlives
+ * `course.css` and `AutonomyPanel` does not, so the rules stay there for the
+ * panel and the two elements here carry the same declarations as utilities.
+ * The cost is one duplicated look for as long as both exist, which ends the day
+ * `course.css` is deleted; the alternative was the decision bar's scope warning
+ * losing its 2px accent rule silently, and that warning is the one thing this
+ * panel is shaped to make unskippable.
+ *
+ * **`.sub` is gone as well, for the opposite reason: it was already dead.** Its
+ * only definition anywhere under `src/styles/` is `tree.css`'s `.view-head
+ * .sub`, which needs an ancestor the decision bar has never provided — so the
+ * dimmed secondary text this file has been asking for since it moved has been
+ * rendering at full `--fg` all along. The dressing was plainly meant to apply
+ * (every `.sub` here is a subordinate line beside a `<strong>` or under a
+ * heading), so it is `text-fg-dim` now rather than deleted, on the three
+ * elements where the intent is unambiguous. `.view-head .sub`'s `font-size` and
+ * `margin-top` are deliberately *not* carried: those are the landing view's
+ * heading rhythm, and this control is not a view head.
+ *
+ * The one exception is the scope warning, which drops `.sub` outright: it also
+ * carries `.autonomy-warn`, whose whole point is `color: var(--fg)` — the
+ * warning is the loudest line in the panel, not a subordinate one.
  *
  * **This used to say `m-[0px]`, and the reason is worth keeping.** Tailwind
  * builds a bare step it has no explicit key for as `calc(var(--spacing) * N)`
@@ -73,9 +94,11 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
     // with no explanation reads as a console that lost a feature.
     // Same indent-behind-a-rule as the section below, because it stands in the
     // same place: the reason the control is absent belongs where the control
-    // was. `sub` stays — it is not one of the classes this file took over.
+    // was. `sub` used to stay here on the grounds that it was not one of the
+    // classes this file took over; it turned out to name no rule at all from
+    // this position, so it is `text-fg-dim` — the dimming it was asking for.
     return (
-      <p className="sub m-0 border-l border-line-soft pl-3">
+      <p className="m-0 border-l border-line-soft pl-3 text-fg-dim">
         {readNotFound || !readError ? NO_POLICY : readError}
       </p>
     )
@@ -101,14 +124,16 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
           tidiness, which is a visual change smuggled into a filing fix. */}
       <div className="flex flex-wrap items-baseline gap-[8px] text-sm">
         <strong>Stop being asked</strong>
-        <span className="sub">
+        <span className="text-fg-dim">
           {gatedNotAuto.length > 0
             ? `${gatedNotAuto.length} tool(s) still wait for a person.`
             : 'Every tool outside the review gate already runs without asking.'}
         </span>
       </div>
 
-      <p className="sub autonomy-warn">{INSTANCE_WIDE}</p>
+      <p className="m-0 rounded-r-md border-l-2 border-accent bg-bg-panel-2 px-[8px] py-2 text-fg">
+        {INSTANCE_WIDE}
+      </p>
 
       <div className="flex flex-wrap gap-2">
         <Button
@@ -137,7 +162,7 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
       </div>
 
       {lastAllowAll ? (
-        <p className="sub m-0" role="status">
+        <p className="m-0 text-fg-dim" role="status">
           {lastAllowAll.changed.size === 0
             ? 'Nothing moved — those tools were already set that way.'
             : `Changed ${lastAllowAll.changed.size} tool(s): ${[...lastAllowAll.changed.keys()].join(', ')}.`}
@@ -151,7 +176,10 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
       ) : null}
 
       {writeError ? (
-        <p className="autonomy-error" role="alert">
+        <p
+          className="m-0 rounded-r-md border-l-2 border-k-failure bg-del-bg px-[8px] py-2 font-mono text-xs text-del-fg"
+          role="alert"
+        >
           {writeError}
         </p>
       ) : null}
