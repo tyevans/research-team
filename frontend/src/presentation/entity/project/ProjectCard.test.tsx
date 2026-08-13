@@ -5,15 +5,24 @@ import type { ProjectRollup } from '@domain/project/landing.ts'
 import type { Project } from '@domain/project/project.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
-import { ProjectCard } from './ProjectCard.tsx'
+import { ProjectCard, projectSessionsId } from './ProjectCard.tsx'
 
 /** The `Card` density, and the props-only rule at its hardest case.
  *
- * `ProjectList.tsx` is 542 lines and its `ProjectRow` calls
- * `useProjectActivity` inside the card, so the card fetches once per drawn
- * row — which is why the listing costs two requests per row and why "a live
- * project sorts first" was recorded as not built. The assertions here are
+ * `ProjectList.tsx` used to draw its own card and called `useProjectActivity`
+ * inside it, so the card fetched once per drawn row — which is why the listing
+ * costs two requests per row and why "a live project sorts first" was recorded
+ * as not built. It renders this component now, and the assertions here are
  * mostly about what this component *cannot* do.
+ *
+ * Every test here but the last predates the wiring and none of them was
+ * touched by it: they would all pass with `ProjectList` reverted, which is the
+ * point — the card's contract is what the view had to fit itself to, not the
+ * reverse. The last one is new and would *not* pass reverted; it is here
+ * rather than in `TreeView.test.tsx` because the id is the card's half of a
+ * contract with a slot, and a card handed no toggle at all still owes it.
+ * The behaviour the landing page adds on top is asserted in
+ * `TreeView.test.tsx`, where a container and a query client exist.
  */
 
 const aProject = (over: Partial<Project> = {}): Project => ({
@@ -110,4 +119,25 @@ it('keeps its disclosure closed until told otherwise, and owned externally', () 
   // and this list has to survive the refetch that arrives while it is open.
   rerender(<ProjectCard rollup={aRollup()} open slots={{ sessions }} />)
   expect(screen.getByText('the fork forest')).toBeVisible()
+})
+
+it('names the region it hides, so a supplied toggle has something to point at', () => {
+  // `hidden` rather than absent, which is the only reason the toggle's
+  // `aria-controls` says anything: the toggle is a slot, so the view writes
+  // that attribute, and an IDREF resolving to nothing announces exactly as
+  // much as no IDREF at all -- silently, while every other test passes. The
+  // moment a reader needs to hear "this button opens a list of sessions" is
+  // before they have opened it, which is precisely when the region would not
+  // have existed.
+  const { container } = render(
+    <ProjectCard rollup={aRollup()} slots={{ sessions: <p>the fork forest</p> }} />,
+  )
+
+  const region = container.querySelector('.ent-project-sessions')!
+  expect(region).toHaveAttribute('id', projectSessionsId(aProject().id))
+  expect(region).not.toBeVisible()
+  // Shut, so its contents are not mounted at all. This card is drawn once per
+  // row in a virtualized list, and a whole session forest per collapsed
+  // project is the cost that made expanding by default untenable.
+  expect(region).toBeEmptyDOMElement()
 })
