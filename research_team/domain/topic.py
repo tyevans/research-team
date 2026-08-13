@@ -37,8 +37,6 @@ from uuid import UUID
 from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
 from pydantic import BaseModel, Field
 
-from research_team.domain.targeting import ChecksCommandTarget
-
 TopicStatus = Literal["open", "investigating", "answered", "not_pursuing", "superseded"]
 """Where a topic stands.
 
@@ -756,7 +754,7 @@ def evolve(state: TopicState, event: DomainEvent) -> TopicState:
     return state
 
 
-class Topic(ChecksCommandTarget, DeciderAggregate[TopicState, TopicCommand]):
+class Topic(DeciderAggregate[TopicState, TopicCommand]):
     """The imperative shell. Holds no rules -- it delegates all three.
 
     Mirrors `Project` and `Corpus` exactly: the class attributes bind directly
@@ -765,7 +763,6 @@ class Topic(ChecksCommandTarget, DeciderAggregate[TopicState, TopicCommand]):
     """
 
     aggregate_type = "Topic"
-    target_field = "topic_id"
 
     initial_state = staticmethod(initial_state)
     decide = staticmethod(decide)
