@@ -8,7 +8,7 @@ swapping any of them is an edit here and nowhere else.
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from uuid import UUID
+from uuid import UUID, uuid4
 
 # Imported for its side effect as much as its names: redstring registers its
 # event types at import time, and the session store may hold them -- the
@@ -69,7 +69,7 @@ from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import CodingSession, ProjectState, current_stage_of
 from research_team.domain.auto_research import Budget
-from research_team.domain.commands import WriteFile
+from research_team.domain.commands import RecordStageReview, WriteFile
 from research_team.domain.topic import Topic
 from research_team.domain.workflow import Preset
 from research_team.infrastructure import config
@@ -890,7 +890,7 @@ def build_application(
         running = await running_workflow(session)
         if running is None:
             return None
-        _, state, preset = running
+        project_id, state, preset = running
         stage = current_stage_of(state, preset)
         if stage is None:
             return None
@@ -899,7 +899,43 @@ def build_application(
         session.execute(
             WriteFile(path=path, file_data={"content": render_review(review, preset)})
         )
-        return GateReview(context=gate_context(review, path), refusal=refusal(review))
+        # Recorded here rather than in `review_stage`, for the reason
+        # `_gate_and_advance` states: `course_progress` reviews a stage on
+        # every course view, and counting those would make a fire rate a
+        # measure of how often somebody opened a page.
+        #
+        # Both this and the `RecordToolDecision` that answers it land at
+        # `_save_turn` on this path, milliseconds apart, which is why the event
+        # carries `posed_by="tool"`: a consumer must report no duration rather
+        # than an instant one. See BACKLOG.md B36.
+        review_id = uuid4()
+        session.execute(
+            RecordStageReview(
+                review_id=review_id,
+                project_id=project_id,
+                stage=stage.id,
+                preset=preset.id,
+                preset_version=str(preset.version),
+                evaluated=[
+                    {
+                        "check": entry.check,
+                        "severity": entry.severity,
+                        "findings": entry.findings,
+                    }
+                    for entry in review.evaluated
+                ],
+                unimplemented=[
+                    {"check": entry.check, "severity": entry.severity}
+                    for entry in review.unimplemented_bindings
+                ],
+                posed_by="tool",
+            )
+        )
+        return GateReview(
+            context=gate_context(review, path),
+            refusal=refusal(review),
+            review_id=review_id,
+        )
 
     executor = DeepAgentTurnExecutor(
         resolved_model,

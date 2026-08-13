@@ -321,6 +321,14 @@ class GateReview:
 
     context: dict
     refusal: str | None = None
+    review_id: UUID | None = None
+    """The review recorded on the session stream, for the decision to name.
+
+    None when there was no review to record, which is every tool that is not
+    an advance. It is on this DTO because the reviewer and the decider are
+    different functions in different layers, and the id has to cross between
+    them; nothing else about the review does.
+    """
 
 
 GateReviewer = Callable[[CodingSession, str, dict], Awaitable[GateReview | None]]

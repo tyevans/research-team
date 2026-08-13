@@ -65,7 +65,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from research_team.application.artifacts import artifact_path, parse_frontmatter
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, AutonomyPolicy
@@ -503,7 +503,7 @@ class StageRunner:
                 )
             if condition.satisfied:
                 return await self._gate_and_advance(
-                    session_id, workflow, preset, stage, condition, progress
+                    project_id, session_id, workflow, preset, stage, condition, progress
                 )
             if not condition.declared:
                 return self._stopped(
@@ -613,6 +613,7 @@ class StageRunner:
 
     async def _gate_and_advance(
         self,
+        project_id: UUID,
         session_id: UUID,
         workflow: StageWorkflow,
         preset: Preset,
@@ -665,6 +666,26 @@ class StageRunner:
         path = findings_path(preset, stage)
         await self._session.write_file(session_id, path, render_review(review, preset))
 
+        # Here rather than inside `review_stage`, which is the obvious-looking
+        # place: `course_progress` calls `review_stage` on every course view to
+        # show live findings, so instrumenting the computation would count a
+        # page refresh as a check run and every rate would be measured against
+        # how often somebody looked. Emission belongs at the gate, which is the
+        # event being counted. Before the `deny` branch below, because a check
+        # that fired at a gate nobody was allowed to open still ran.
+        review_id = uuid4()
+        await self._session.record_stage_review(
+            session_id,
+            review_id=review_id,
+            project_id=project_id,
+            stage=stage.id,
+            preset=preset.id,
+            preset_version=str(preset.version),
+            evaluated=review.evaluated,
+            unimplemented=review.unimplemented_bindings,
+            posed_by="runner",
+        )
+
         args = {"rationale": condition.evidence}
         level = self._policy.level_for(ADVANCE_STAGE_TOOL)
         # No port and a gate that asks means there is nobody to ask, which is
@@ -676,7 +697,7 @@ class StageRunner:
             level = "deny"
         if level == "deny":
             await self._session.record_tool_decision(
-                session_id, ADVANCE_STAGE_TOOL, args, "reject", "policy"
+                session_id, ADVANCE_STAGE_TOOL, args, "reject", "policy", review_id=review_id
             )
             return self._stopped(
                 stage,
@@ -706,7 +727,12 @@ class StageRunner:
                 args = dict(answer.edited_args)
 
         await self._session.record_tool_decision(
-            session_id, ADVANCE_STAGE_TOOL, args, decision_type, decided_by
+            session_id,
+            ADVANCE_STAGE_TOOL,
+            args,
+            decision_type,
+            decided_by,
+            review_id=review_id,
         )
         if decision_type not in ("approve", "edit"):
             # A rejected gate stops the run. The alternative -- feed the
