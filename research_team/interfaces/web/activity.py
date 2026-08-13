@@ -23,6 +23,7 @@ from uuid import UUID
 from research_team.application.ports import (
     ActivityMessage,
     ActivityNote,
+    ActivityRemark,
     ActivityReporter,
 )
 
@@ -35,6 +36,26 @@ never become one -- the log has no such entry, and that is the point.
 """
 
 
+REMARK = "remark"
+"""The `kind` a remark carries on the wire.
+
+Outside `MessageKind`, which names what a message is, because a remark is not
+one. The browser types `kind` as a plain string and uses it only for a CSS
+class, so an unstyled bubble is what an unrecognised kind renders as -- which
+is the right failure for commentary and the reason this needed no frontend
+change to stop being a 500.
+"""
+
+REMARK_ID_PREFIX = "remark:"
+"""Namespaces a synthesised id away from every id a model produces.
+
+The buffer keys on `message_id`, so a remark needs one to be stored, caught up
+on, or rendered at all -- the browser's DTO requires the field and drops a
+frame without it. A collision would splice a remark and a real message into one
+bubble, so the prefix is load-bearing rather than decorative.
+"""
+
+
 class TurnActivity:
     """Provisional turn content, keyed by session, plus the feed that carries it."""
 
@@ -42,6 +63,7 @@ class TurnActivity:
         self._running: dict[UUID, dict[str, dict[str, Any]]] = {}
         self._discarded: dict[UUID, dict[str, dict[str, Any]]] = {}
         self._listeners: set[asyncio.Queue] = set()
+        self._remarks: dict[UUID, int] = {}
 
     # ---------------- what the turn drives ----------------
 
@@ -49,6 +71,7 @@ class TurnActivity:
         """Start a turn's buffer, dropping whatever the last one left behind."""
         self._running[session_id] = {}
         self._discarded.pop(session_id, None)
+        self._remarks[session_id] = 0
 
     def reporter(self, session_id: UUID) -> ActivityReporter:
         """An `ActivityReporter` that buffers and broadcasts for one session."""
@@ -68,6 +91,7 @@ class TurnActivity:
         UI offers it as explicitly discarded.
         """
         buffered = self._running.pop(session_id, None)
+        self._remarks.pop(session_id, None)
         if committed or not buffered:
             self._discarded.pop(session_id, None)
             return
@@ -106,7 +130,23 @@ class TurnActivity:
 
     def _record(self, session_id: UUID, note: ActivityNote) -> None:
         entries = self._running.setdefault(session_id, {})
-        if isinstance(note, ActivityMessage):
+        if isinstance(note, ActivityRemark):
+            # Buffered like everything else rather than only broadcast. A
+            # remark is provisional, not ephemeral, and this module exists
+            # because an SSE connection drops routinely -- a tab that
+            # reconnects mid-turn would otherwise be told less about the turn
+            # than one that never dropped.
+            count = self._remarks.get(session_id, 0) + 1
+            self._remarks[session_id] = count
+            entry = {
+                "message_id": f"{REMARK_ID_PREFIX}{count}",
+                "kind": REMARK,
+                "payload": {},
+                "is_error": False,
+                "text": note.text,
+            }
+            entries[entry["message_id"]] = entry
+        elif isinstance(note, ActivityMessage):
             entry = {
                 "message_id": note.message_id,
                 "kind": note.kind,

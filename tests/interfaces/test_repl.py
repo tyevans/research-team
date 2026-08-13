@@ -4,7 +4,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage, message_to_dict
 
 from research_team.application.check_telemetry_read import CheckStat, CheckTelemetryReadError
-from research_team.application.ports import ActivityDelta, ActivityMessage
+from research_team.application.ports import ActivityDelta, ActivityMessage, ActivityRemark
 from research_team.domain import FileEdited, FileWritten, SessionStarted, TurnCompleted
 from research_team.interfaces.cli import repl
 from research_team.interfaces.cli.formatters import (
@@ -319,6 +319,18 @@ def test_format_log_includes_timestamps():
     events = [TurnCompleted(turn_index=1, aggregate_id=uuid4(), aggregate_version=1)]
     output = format_log(events, limit=10)
     assert f"{events[0].occurred_at:%H:%M:%S}" in output
+
+
+def test_format_activity_shows_a_remark():
+    """The one note the terminal renders as its own line.
+
+    A message or a delta is silent here because the transcript prints it when
+    the turn ends. A remark is never printed by anything else -- it is not on
+    the log -- so silence would lose it.
+    """
+    assert format_activity(ActivityRemark(text="cleared 4 older tool result(s)")) == (
+        "· cleared 4 older tool result(s)"
+    )
 
 
 async def test_turn_reports_tool_activity(build_service, fake_model):

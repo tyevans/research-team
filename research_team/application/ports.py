@@ -225,7 +225,24 @@ class ActivityDelta:
     text: str
 
 
-ActivityNote = ActivityMessage | ActivityDelta
+@dataclass(frozen=True)
+class ActivityRemark:
+    """A line about the turn itself, not about anything the log will hold.
+
+    Deliberately without a `message_id`, unlike the other two: there is no
+    message for it to belong to, and inventing an id here would put a key the
+    application layer made up into a buffer that reconciles on exactly that
+    key. Whoever renders it names it, if their medium needs a name.
+
+    The one producer today is context preparation, which says what it left out
+    of the model's view. That is commentary, and it is why the contract below
+    had to be widened rather than the note being squeezed into a message.
+    """
+
+    text: str
+
+
+ActivityNote = ActivityMessage | ActivityDelta | ActivityRemark
 
 ActivityReporter = Callable[[ActivityNote], None]
 """Called with progress as a turn runs, before anything is appended to the log.
@@ -234,8 +251,13 @@ Widened from a one-line string: the web UI renders the content itself, so a
 formatted line is not enough. The terminal formats these back down to a line
 (`research_team.interfaces.cli.repl`).
 
-Never called for anything the log will not eventually contain on a successful
-turn -- this is a preview of the turn, not a side channel for commentary.
+A message or a delta previews the turn: it is content the log will contain if
+the turn commits. A remark is the exception and is marked as one -- the log
+never holds it, and nothing downstream may assume otherwise. The rule this
+replaces ("never called for anything the log will not contain") was narrower
+than the callers, and a caller that disagreed with it answered 500 instead:
+`session_service` passed a preparation note as a bare string, because there was
+no note type it could honestly be.
 """
 
 
