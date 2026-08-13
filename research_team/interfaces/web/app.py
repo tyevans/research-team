@@ -1411,6 +1411,13 @@ def create_app(
     async def ask_project(project_id: UUID, body: AskRequest):
         if ask is None:
             raise HTTPException(status_code=503, detail="asking is not configured")
+        # Guarded because `create_app` takes every dependency separately and the
+        # ask route tests pass `service=None`; without the guard they would fail
+        # on the check rather than on what they are about. The cost of skipping
+        # it there is that "unknown project" is only enforced in a build that
+        # has a session service -- which is every real one.
+        if service is not None:
+            await _require_project(project_id)
 
         notes = ask.ask(project_id=project_id, chat_id=body.chat_id, question=body.question)
         # `first` and `failed` are the two ways this can come back, and only
@@ -1445,13 +1452,25 @@ def create_app(
                 # failure is reported in-band before the connection closes.
                 yield f"data: {json.dumps({'type': 'error', 'detail': str(failure)})}\n\n"
             finally:
-                # The path that cancels the executor task when a reader walks
-                # away: `AskService.ask`'s own `finally` runs on close, and
-                # nothing else would ever cancel a model call the reader has
-                # stopped waiting for. `StreamingResponse` closes this
-                # generator but not the one it is iterating, so the cost of
+                # The only path that cancels the executor task when a reader
+                # walks away: `AskService.ask`'s own `finally` runs when this
+                # `aclose()` reaches it, and nothing else would ever cancel a
+                # model call the reader has stopped waiting for. The cost of
                 # forgetting this line is a live model call per abandoned
-                # request rather than anything visible in a test.
+                # request.
+                #
+                # When it runs is the part worth knowing, because it is not
+                # "on disconnect". Starlette never calls `aclose()` on
+                # `body_iterator`: a disconnect either propagates an `OSError`
+                # out of `stream_response` or fires the task group's cancel
+                # scope, and in both cases *this* generator is left suspended
+                # at a `yield` and never resumed. The `finally` therefore runs
+                # when CPython finalises the generator -- the async-generator
+                # finalization hook schedules `aclose()` once the last
+                # reference drops, or `loop.shutdown_asyncgens` does it at
+                # shutdown. It does run; it is not guaranteed to run promptly,
+                # so an abandoned model call can outlive the request by as long
+                # as the last reference does.
                 await notes.aclose()
 
         return StreamingResponse(
@@ -1464,6 +1483,10 @@ def create_app(
     async def forget_ask(project_id: UUID, chat_id: str):
         if ask is None:
             raise HTTPException(status_code=503, detail="asking is not configured")
+        # No `_require_project` here, unlike the POST. Forgetting is local to an
+        # in-memory registry, costs nothing to run against an id that names no
+        # project, and a page tidying up after a project was deleted underneath
+        # it should not be answered 404 for doing so.
         ask.forget(chat_id)
         return {"ok": True}
 

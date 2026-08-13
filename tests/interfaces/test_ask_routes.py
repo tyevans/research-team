@@ -4,6 +4,7 @@ The position assertion is the load-bearing one: it is what makes 'ephemeral'
 a property of the system rather than a promise in a document.
 """
 
+import asyncio
 import json
 from uuid import uuid4
 
@@ -17,7 +18,7 @@ from research_team.application.ask import (
     ConversationRegistry,
 )
 from research_team.application.ports import ActivityDelta, ActivityMessage
-from research_team.interfaces.web.app import create_app
+from research_team.interfaces.web.app import AskRequest, create_app
 
 SOME_ANSWER = AskAnswer(text="an answer")
 """A module-level default because `ruff`'s B008 forbids the call in the
@@ -141,6 +142,76 @@ def test_deleting_a_chat_forgets_its_history():
 
     assert response.status_code == 200
     assert ask._conversations.get("c", project).messages == ()
+
+
+async def test_closing_the_stream_cancels_the_model_call():
+    """A reader who walks away must not leave a model call burning tokens.
+
+    Driven without `TestClient` on purpose: the route's `finally` never runs
+    on a disconnect as such -- Starlette leaves the generator suspended at a
+    yield -- it runs when the generator is finalised, and `aclose()` is that
+    moment made explicit. Calling the endpoint directly is the only way to
+    reach it deterministically, and it covers the route's `finally` and
+    `AskService.ask`'s cancellation together. Revert either and the executor
+    never learns the reader has gone.
+    """
+    parked = asyncio.Event()
+
+    class Parking:
+        cancelled = False
+
+        async def run(self, *, project_id, history, question, on_activity):
+            on_activity(ActivityDelta(message_id="m1", text="thinking"))
+            try:
+                await parked.wait()
+            except asyncio.CancelledError:
+                Parking.cancelled = True
+                raise
+            return SOME_ANSWER
+
+    app = create_app(service=None, feed=None, turns=None, ask=ask_service(Parking()))
+    endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if getattr(route, "path", "") == "/api/projects/{project_id}/ask"
+        and "POST" in getattr(route, "methods", ())
+    )
+
+    response = await endpoint(uuid4(), AskRequest(chat_id="c", question="why?"))
+    assert await response.body_iterator.__anext__()  # the first note; now parked
+    await response.body_iterator.aclose()
+
+    assert Parking.cancelled
+
+
+def test_an_unknown_project_is_a_404_rather_than_a_stream_that_errors():
+    """Told before a graph is opened or a model is called.
+
+    Without this the page has to read "no such project" out of an error frame
+    on a 200, and a mistyped id gets as far as the agent. `service` is the
+    thing that knows, so the route asks it -- and only when there is one,
+    which is what keeps every `service=None` test above about its own subject.
+    """
+
+    class Unknown:
+        attached_project_id = None
+
+        async def project_state(self, project_id):
+            raise LookupError(project_id)
+
+    class Reached:
+        async def run(self, **_):
+            raise AssertionError("the ask ran despite an unknown project")
+
+    http = TestClient(
+        create_app(service=Unknown(), feed=None, turns=None, ask=ask_service(Reached()))
+    )
+
+    response = http.post(
+        f"/api/projects/{uuid4()}/ask", json={"chat_id": "c", "question": "why?"}
+    )
+
+    assert response.status_code == 404
 
 
 def test_an_unconfigured_build_says_so_rather_than_failing_obscurely():
