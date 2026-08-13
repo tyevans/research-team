@@ -11,11 +11,12 @@ means, so they live here, beside the use cases and above the transport.
 """
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from research_team.application.ports import ActivityReporter
+from research_team.application.ports import ActivityReporter, TurnActivityBuffer
 from research_team.application.session_service import SessionService, TurnOutcome
 
 
@@ -78,9 +79,11 @@ class TurnSupervisor:
         self,
         service: SessionService,
         *,
+        activity: TurnActivityBuffer | None = None,
         settle_timeout: float = CANCEL_SETTLE_TIMEOUT,
     ) -> None:
         self._service = service
+        self._activity = activity
         self._settle_timeout = settle_timeout
         self._running: dict[UUID, asyncio.Task[TurnOutcome]] = {}
         self._started: dict[UUID, RunningTurn] = {}
@@ -108,26 +111,32 @@ class TurnSupervisor:
             if self.is_running(session_id)
         }
 
-    async def run(
-        self,
-        session_id: UUID,
-        user_input: str,
-        on_activity: ActivityReporter | None = None,
-    ) -> TurnOutcome:
+    async def run(self, session_id: UUID, user_input: str) -> TurnOutcome:
         """Run one turn, refusing to start a second on the same session.
 
         The turn runs as its own task so that cancelling it cancels the turn
         rather than whoever happens to be awaiting it -- an HTTP client that
         disconnects mid-turn must not silently abandon work the log will still
         record.
+
+        The activity buffer opens here rather than in the caller, and it opens
+        *after* the guard above: a caller that loses the race never touches a
+        buffer belonging to the turn that won. It closes from a done-callback
+        on the task for the same reason the turn is shielded -- the awaiter's
+        fate is not the turn's, and settling on the awaiter's unwind files a
+        live turn's content as a failed one's.
         """
         if self.is_running(session_id):
             raise TurnAlreadyRunning(session_id)
 
         session = await self._service.load(session_id)
-        task = asyncio.ensure_future(
-            self._service.run_turn(session_id, user_input, on_activity)
-        )
+        reporter: ActivityReporter | None = None
+        if self._activity is not None:
+            self._activity.begin(session_id)
+            reporter = self._activity.reporter(session_id)
+        task = asyncio.ensure_future(self._service.run_turn(session_id, user_input, reporter))
+        if self._activity is not None:
+            task.add_done_callback(self._settle(session_id))
         self._running[session_id] = task
         self._started[session_id] = RunningTurn(
             session_id=session_id,
@@ -148,6 +157,21 @@ class TurnSupervisor:
             if self._running.get(session_id) is task and task.done():
                 del self._running[session_id]
                 self._started.pop(session_id, None)
+
+    def _settle(self, session_id: UUID) -> Callable[[asyncio.Task[TurnOutcome]], None]:
+        """A done-callback that closes the buffer from the turn's own fate.
+
+        `cancelled()` is checked before `exception()` because asking a
+        cancelled task for its exception raises rather than answers.
+        """
+
+        def settled(task: asyncio.Task[TurnOutcome]) -> None:
+            if self._activity is None:  # pragma: no cover -- only registered when set
+                return
+            committed = not task.cancelled() and task.exception() is None
+            self._activity.settle(session_id, committed=committed)
+
+        return settled
 
     async def cancel(self, session_id: UUID) -> Cancellation:
         """Stop the in-flight turn.

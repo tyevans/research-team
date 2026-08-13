@@ -47,7 +47,13 @@ def main() -> None:
     # in either signature would catch it.
     dispatch = DispatchQueue()
     application = build_application(
-        approvals=approvals, extractions=extraction, dispatches=dispatch, grants=grants
+        approvals=approvals,
+        extractions=extraction,
+        dispatches=dispatch,
+        grants=grants,
+        # Both sides of one channel, like `approvals` above: the supervisor
+        # opens and fills this buffer, the catch-up route below reads it.
+        activity=activity,
     )
 
     @asynccontextmanager

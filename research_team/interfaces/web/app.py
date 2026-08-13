@@ -1579,14 +1579,6 @@ def create_app(
     @app.post("/api/sessions/{session_id}/turns")
     async def run_turn(session_id: UUID, body: NewTurn):
         await _load(session_id)
-        if turns.is_running(session_id):
-            # Checked here as well as in the supervisor so that a refused
-            # second turn cannot reach `begin` and wipe the buffer of the turn
-            # that is legitimately running.
-            raise HTTPException(
-                status_code=409,
-                detail="a turn is already running on this session",
-            )
         # Re-attach per turn rather than only at join. One process serves
         # every browser session, so by the time this session takes a turn the
         # attached graph may belong to a project joined in another tab -- or,
@@ -1603,31 +1595,19 @@ def create_app(
             logger.warning(
                 "could not attach knowledge graph for %s", session_id, exc_info=True
             )
-        reporter = None
-        if activity is not None:
-            activity.begin(session_id)
-            reporter = activity.reporter(session_id)
         try:
-            outcome = await turns.run(session_id, body.input, reporter)
+            outcome = await turns.run(session_id, body.input)
         except TurnAlreadyRunning as error:
-            # No activity.settle() here on purpose: this request's own
-            # activity.begin() above raced the supervisor's check and lost --
-            # the buffer it opened belongs to the turn that is actually
-            # running, and that turn's own call to run() owns settling it.
             raise HTTPException(
                 status_code=409,
                 detail="a turn is already running on this session",
             ) from error
         except TurnCancelled as error:
-            if activity is not None:
-                activity.settle(session_id, committed=False)
             # Not a failure: someone asked for this. 499 is nginx's
             # "client closed request" -- the closest thing to a standard code
             # for work abandoned on purpose.
             raise HTTPException(status_code=499, detail=str(error)) from error
         except OptimisticLockError as error:
-            if activity is not None:
-                activity.settle(session_id, committed=False)
             # Another writer -- the REPL, or a second process -- got there
             # first. The log is append-only and the loser's events were
             # discarded whole, so nothing happened; this is a retry.
@@ -1635,13 +1615,6 @@ def create_app(
                 status_code=409,
                 detail="another turn was recorded on this session first; reload and retry",
             ) from error
-        except BaseException:
-            if activity is not None:
-                activity.settle(session_id, committed=False)
-            raise
-        else:
-            if activity is not None:
-                activity.settle(session_id, committed=True)
         return {
             "reply": outcome.reply,
             "turn_index": outcome.turn_index,
