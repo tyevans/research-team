@@ -41,6 +41,7 @@ from research_team.application import (
     SessionService,
     SummaryProjects,
     TopicRoundRunner,
+    TurnActivityBuffer,
     TurnSupervisor,
     WorkerRoster,
 )
@@ -494,6 +495,7 @@ def build_application(
     policy: AutonomyPolicy | None = None,
     project_id: UUID | None = None,
     grants: GrantRegistry | None = None,
+    activity: TurnActivityBuffer | None = None,
 ) -> Application:
     """Wire everything over one event store.
 
@@ -511,6 +513,13 @@ def build_application(
     mode this feature is most exposed to. `None` builds a fresh one, which is
     correct for the REPL (no `WebApprovals` to share with) and for every test
     that does not care.
+
+    `activity` is the buffer every turn's provisional content flows through,
+    and it arrives here for the same reason `approvals` does: `web.py` builds
+    one `TurnActivity` and both halves of the channel must be that instance.
+    The supervisor writes into it; the catch-up route reads out of it. `None`
+    is the REPL's case and most tests' -- turns then run unbuffered, which is
+    what happened on every path but the web one before this was wired.
     """
     resolved_path = db_path if db_path is not None else config.default_db_path()
     resolved_model = model if model is not None else build_model()
@@ -1197,7 +1206,7 @@ def build_application(
         # instance that would cache independently of the one attachment uses.
         graphs=graphs,
     )
-    turns = TurnSupervisor(service)
+    turns = TurnSupervisor(service, activity=activity)
     runs = build_research_run_repository(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store
     )

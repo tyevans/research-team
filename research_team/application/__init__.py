@@ -52,6 +52,7 @@ from research_team.application.ports import (
     SessionSummaries,
     SummaryHealth,
     TurnAccountingError,
+    TurnActivityBuffer,
     TurnExecutor,
     TurnResult,
 )
@@ -162,6 +163,7 @@ __all__ = [
     "SummaryProjects",
     "TopicRoundRunner",
     "TurnAccountingError",
+    "TurnActivityBuffer",
     "TurnAlreadyRunning",
     "TurnCancelled",
     "TurnExecutor",

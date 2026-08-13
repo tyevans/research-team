@@ -261,6 +261,32 @@ no note type it could honestly be.
 """
 
 
+class TurnActivityBuffer(Protocol):
+    """Holds a turn's provisional content for as long as the turn lasts.
+
+    Three methods rather than the whole of `TurnActivity`, and the omission is
+    the point: the application drives a buffer and never reads one back.
+    `current` and `discarded` are answered to an HTTP caller catching up, so
+    declaring them here would describe a coupling that does not exist.
+
+    Implemented by `interfaces/web/activity.py`. The supervisor owns the
+    lifecycle because a turn's buffer lives exactly as long as the turn, and
+    the supervisor is the only thing that knows that span -- an HTTP request
+    awaiting a turn can go away while the turn runs on.
+    """
+
+    def begin(self, session_id: UUID) -> None:
+        """Open a buffer for a turn about to start, dropping the last one's."""
+
+    def reporter(self, session_id: UUID) -> ActivityReporter:
+        """The reporter this turn's notes should be sent to."""
+
+    def settle(self, session_id: UUID, *, committed: bool) -> None:
+        """Close the buffer. A committed turn's content is on the log and is
+        dropped; an uncommitted turn's is all that survives it, and is kept
+        aside as discarded."""
+
+
 @dataclass(frozen=True)
 class RecordedMessage:
     """One message the agent produced, ready to become an event.

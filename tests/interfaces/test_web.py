@@ -1619,8 +1619,14 @@ async def test_a_turn_reattaches_the_sessions_own_knowledge_graph(app_and_client
 
 @pytest.fixture
 async def activity_app(db_path, fake_model):
-    application = await _started(model=fake_model, db_path=db_path)
+    """One `TurnActivity` on both sides of the wire.
+
+    The supervisor writes into it and the catch-up route reads out of it; two
+    instances would give the route a different answer about the same turn than
+    the turn itself has.
+    """
     activity = TurnActivity()
+    application = await _started(model=fake_model, db_path=db_path, activity=activity)
     api = create_app(
         application.service,
         application.feed,
@@ -2633,6 +2639,62 @@ async def test_starting_a_run_answers_with_its_ids_before_it_has_finished(resear
     # is where everything the agent actually said is visible.
     assert UUID(body["session_id"])
     await application.research.wait(UUID(project_id))
+
+
+class RecordingBuffer:
+    """A `TurnActivityBuffer` that records the lifecycle driven against it.
+
+    `TurnActivity.current()` answers `[]` both for a buffer that was opened
+    and is still empty and for one that was never opened at all -- which are
+    exactly the two cases this test exists to tell apart.
+    """
+
+    def __init__(self) -> None:
+        self.begun: list[UUID] = []
+
+    def begin(self, session_id: UUID) -> None:
+        self.begun.append(session_id)
+
+    def reporter(self, session_id: UUID):
+        return lambda note: None
+
+    def settle(self, session_id: UUID, *, committed: bool) -> None:
+        pass
+
+
+async def test_a_rounds_turn_opens_an_activity_buffer_like_a_persons_does(db_path, fake_model):
+    """A run started from the course page leaves live output to catch up on.
+
+    The defect this covers: rounds were driven by `turns.run(session_id,
+    prompt)` from `composition.py` while only the HTTP route opened a buffer,
+    so the session view knew a turn was running -- `/turns/current` goes
+    through the supervisor, which every turn does -- and had nothing to show
+    for it. Fails against a build where the lifecycle lives in the route.
+    """
+    buffer = RecordingBuffer()
+    application = await _started(model=fake_model, db_path=db_path, activity=buffer)
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        research=application.research,
+        topics=application.topic_readers,
+        topic_seeder=application.topic_seeder,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as http:
+        project_id, _ = await _project_with_a_topic(application, http, fake_model)
+        fake_model.responses = [AIMessage(content="done", id="round")]
+        started = await http.post(
+            f"/api/projects/{project_id}/auto-research", json={"max_rounds": 1}
+        )
+        assert started.status_code == 202
+        session_id = UUID(started.json()["session_id"])
+        await application.research.wait(UUID(project_id))
+
+    assert session_id in buffer.begun
+    await application.close()
 
 
 async def test_a_started_run_reports_its_own_fold(research_client):
