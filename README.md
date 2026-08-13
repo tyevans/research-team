@@ -200,6 +200,7 @@ to skip the probe and say you meant it.
 | `/log [n]` | last `n` events (default 20), with timestamps |
 | `/state` | session id, event count, turn count, file count |
 | `/health` | whether the session list's projection is healthy |
+| `/checks` | per-check fire and override rates for this session's project |
 | `/rebuild` | derive the session list from the log again; safe at any time |
 | `/rewind <n>` | continue from a fork at event `n` |
 | `/fork <n>` | fork at event `n` and switch to it |
