@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from 'node:url'
 
+import { playwright } from '@vitest/browser-playwright'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
@@ -158,11 +159,13 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    /** Two suites, because they need two different worlds. The application is
-     *  tested in a DOM with the browser gaps stubbed; the build tooling reads
+    /** Three suites, because they need three different worlds. The application
+     *  is tested in a DOM with the browser gaps stubbed; the build tooling reads
      *  config files off disk and needs a real Node, where `import.meta.url` is
-     *  a file URL. Declaring that here beats a per-file docblock: the split is
-     *  a property of the project, not of one test that happened to notice. */
+     *  a file URL; and a handful of claims need a real engine that lays out and
+     *  applies a stylesheet. Declaring that here beats a per-file docblock: the
+     *  split is a property of the project, not of one test that happened to
+     *  notice. */
     projects: [
       {
         extends: true,
@@ -171,6 +174,10 @@ export default defineConfig({
           environment: 'jsdom',
           setupFiles: ['./vitest.setup.ts'],
           include: ['src/**/*.test.{ts,tsx}'],
+          // `*.test.tsx` would otherwise match `*.browser.test.tsx` too, and
+          // those files assert on geometry and computed styles -- every one of
+          // them fails under jsdom, which is the entire reason they exist.
+          exclude: ['src/**/*.browser.test.tsx'],
         },
       },
       {
@@ -179,6 +186,56 @@ export default defineConfig({
           name: 'build',
           environment: 'node',
           include: ['scripts/**/*.test.ts'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          /** The claims jsdom cannot judge, in an engine that can.
+           *
+           * jsdom lays nothing out and applies no stylesheet: `scrollHeight` is
+           * 0 on every element, `getComputedStyle` returns what the inline
+           * style says and nothing a rule contributed, and a selector that
+           * matches nothing is indistinguishable from one that matches. Four
+           * findings in a row have had their real assertion written as a
+           * comment for that reason, and one of them -- a chosen control
+           * drawing in the unchosen colour, because two Radix components wrote
+           * to the same `data-state` -- shipped past a fully green suite.
+           *
+           * **Not in `npm run verify`, deliberately, so not in CI.** The four
+           * gates are unchanged and this is a fifth thing you run: `npm run
+           * test:browser`. The cost is real and is the reason it is worth
+           * naming rather than discovering -- a suite nobody is forced to run
+           * is a suite that rots, and this one will be wrong the first time
+           * somebody changes a stylesheet without running it. It is here on the
+           * bet that a cheap local check beats a comment, and it earns a CI job
+           * the day it has caught something on its own.
+           *
+           * Headless Chromium via Playwright, one browser rather than three:
+           * these assertions are about whether *a* real engine agrees, not
+           * about cross-browser difference, and this console has one user on
+           * one machine. */
+          name: 'browser',
+          include: ['src/**/*.browser.test.tsx'],
+          // A different setup file, not this suite's. `vitest.setup.browser.ts`
+          // argues why at length; the short version is that the jsdom setup
+          // pins `offsetWidth`/`offsetHeight` to constants.
+          setupFiles: ['./vitest.setup.browser.ts'],
+          browser: {
+            enabled: true,
+            provider: playwright(),
+            headless: true,
+            // Stated, because the layout rules this suite exists to check are
+            // media queries and a media query reads the *viewport* -- not the
+            // width of whatever wrapper a test renders into. The first run of
+            // `layout.browser.test.tsx` failed on exactly that: a `Split` inside
+            // a 1200px div reported a horizontal collapsed title, correctly,
+            // because the default viewport is below `--bp-narrow` and the panes
+            // had stopped being columns. 1440x900 is the width every finding so
+            // far was measured at by hand.
+            viewport: { width: 1440, height: 900 },
+            instances: [{ browser: 'chromium' }],
+          },
         },
       },
     ],

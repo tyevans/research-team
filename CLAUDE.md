@@ -30,6 +30,38 @@ and a bundle-size budget. Run it rather than the individual commands -- the
 prettier check and the size budget are only in the chain, and they are the two
 that fail in CI.
 
+**There is a fifth command, and it is not a gate.**
+
+```
+cd frontend && npm run test:browser
+```
+
+Headless Chromium via vitest's browser mode, over `src/**/*.browser.test.tsx`.
+It is deliberately outside `verify` and outside CI, so nothing forces you to
+run it -- **run it when you touch a stylesheet, a layout primitive, or
+anything whose correctness is a computed style or a measurement.**
+
+The reason it exists: jsdom lays nothing out and applies no stylesheet, so
+`scrollHeight` is 0 everywhere, `getComputedStyle` returns only what an inline
+style said, and a selector that matches nothing is indistinguishable from one
+that matches. Four findings in a row had their real assertion written as a
+comment for that reason, and the fifth -- a chosen control drawing in the
+unchosen colour, because a `Tooltip` and a `RadioGroup` both wrote
+`data-state` to one element -- shipped past a fully green suite and was caught
+by eye.
+
+What it is not: a replacement for the jsdom suite (923 tests to its handful),
+or a place for anything jsdom can already judge. Roles, focus order, keyboard
+routing and rendered text belong in `*.test.tsx`, where they run in a second
+rather than a minute.
+
+Two things learned writing the first tests, both of which cost half an hour:
+the viewport is set in `vite.config.ts` and a media query reads *that*, not
+the width of the wrapper a test renders into; and `vitest.setup.browser.ts` is
+a separate file from `vitest.setup.ts` on purpose, because the jsdom setup
+pins `offsetWidth`/`offsetHeight` to constants and would blind the one suite
+whose job is measuring.
+
 **Do not run two `vitest` processes at once.** Concurrent runs fail
 spuriously, usually with a coverage temp-file error that names nothing about
 the real cause. If a frontend test fails, re-run it alone before investigating

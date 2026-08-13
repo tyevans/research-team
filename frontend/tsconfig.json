@@ -44,5 +44,5 @@
   // see `process` — the same rule as the rest of `src/`. It was under the Node
   // config only because `main.ts` sits beside it, and `main.ts` turns out to
   // touch no Node API at all.
-  "include": ["src", "vitest.setup.ts", ".storybook"]
+  "include": ["src", "vitest.setup.ts", "vitest.setup.browser.ts", ".storybook"]
 }
