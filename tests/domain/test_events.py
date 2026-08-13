@@ -48,8 +48,8 @@ def test_event_is_registered_under_its_name(event_class):
 
 
 @pytest.mark.parametrize("event_class", list(SESSION_EVENTS))
-def test_aggregate_type_is_coding_session(event_class):
-    assert event_class.model_fields["aggregate_type"].default == "CodingSession"
+def test_aggregate_type_is_session(event_class):
+    assert event_class.model_fields["aggregate_type"].default == "Session"
 
 
 def test_events_are_frozen():

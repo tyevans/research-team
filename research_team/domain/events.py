@@ -38,7 +38,7 @@ from eventsource import DomainEvent, register_event
 class SessionStarted(DomainEvent):
     """Creation event. Must be the first event on the stream."""
 
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     system_prompt: str
     model_name: str
     project_id: UUID
@@ -62,26 +62,26 @@ class SessionStarted(DomainEvent):
 
 @register_event
 class UserMessageSent(DomainEvent):
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     message: dict[str, Any]
 
 
 @register_event
 class AssistantMessageAdded(DomainEvent):
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     message: dict[str, Any]
 
 
 @register_event
 class ToolResultRecorded(DomainEvent):
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     message: dict[str, Any]
     is_error: bool = False
 
 
 @register_event
 class TurnCompleted(DomainEvent):
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     turn_index: int
 
 
@@ -100,7 +100,7 @@ class TurnFailed(DomainEvent):
     as ordinary failures -- which is what they were.
     """
 
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     turn_index: int
     error_type: str
     error_message: str
@@ -121,7 +121,7 @@ class ConversationCompacted(DomainEvent):
     the last message the summary stands in for.
     """
 
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     summary: str
     through_index: int
     strategy: str
@@ -147,14 +147,14 @@ class SessionForkedFrom(DomainEvent):
     wholesale, so lineage recorded ahead of it would be overwritten.
     """
 
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     source_session_id: UUID
     at_event: int
 
 
 @register_event
 class FileWritten(DomainEvent):
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     path: str
     file_data: dict[str, Any]
 
@@ -167,7 +167,7 @@ class FileEdited(DomainEvent):
     trail meaningful.
     """
 
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     path: str
     file_data: dict[str, Any]
     old_string: str
@@ -177,7 +177,7 @@ class FileEdited(DomainEvent):
 
 @register_event
 class FileDeleted(DomainEvent):
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     path: str
 
 
@@ -192,7 +192,7 @@ class ToolCallDecided(DomainEvent):
     call, and an audit trail that cannot tell them apart is a worse one.
     """
 
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     tool_name: str
     args: dict[str, Any]
     decision: str
@@ -242,7 +242,7 @@ class StageChecksEvaluated(DomainEvent):
     one. See BACKLOG.md B36 for why the tool path is like that.
     """
 
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     review_id: UUID
     """Joins this review to the decision that answered it.
 
@@ -277,7 +277,7 @@ class StageChecksEvaluated(DomainEvent):
 class AutonomyChanged(DomainEvent):
     """How much the agent may do without asking was changed mid-session."""
 
-    aggregate_type: str = "CodingSession"
+    aggregate_type: str = "Session"
     tool_name: str
     level: str
     """auto | ask | deny."""

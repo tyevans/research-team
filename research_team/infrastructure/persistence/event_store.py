@@ -19,7 +19,7 @@ from eventsource.application.aggregates.repository import AggregateRepository
 from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 
 from research_team.application import FeedEntry
-from research_team.domain import CodingSession, Corpus, Project
+from research_team.domain import Corpus, Project, Session
 from research_team.domain.learner import LearnerProgress
 from research_team.domain.research_run import ResearchRun
 from research_team.domain.topic import Topic
@@ -38,7 +38,7 @@ notice.
 """
 
 FEED_AGGREGATE_TYPES = (
-    CodingSession.aggregate_type,
+    Session.aggregate_type,
     Project.aggregate_type,
     Topic.aggregate_type,
     Corpus.aggregate_type,
@@ -220,7 +220,7 @@ def build_aggregate_repository(
     publisher: InMemoryEventBus | None = None,
     *,
     snapshot_store: SQLiteSnapshotStore,
-) -> AggregateRepository[CodingSession]:
+) -> AggregateRepository[Session]:
     """Sessions, over `store`, snapshotting into `snapshot_store`.
 
     `snapshot_store` is required rather than defaulted. It used to fall back to
@@ -234,7 +234,7 @@ def build_aggregate_repository(
     """
     return AggregateRepository(
         store,
-        CodingSession,
+        Session,
         # Publishing is a notification, not a delivery mechanism: subscribers
         # are told that something landed and go read the log for themselves.
         # It fires after the append commits, so a signal never runs ahead of
@@ -272,7 +272,7 @@ class EventStoreSessionRepository:
     def __init__(
         self,
         store: SQLiteEventStore,
-        aggregates: AggregateRepository[CodingSession],
+        aggregates: AggregateRepository[Session],
         publisher: InMemoryEventBus | None = None,
         snapshot_store: SQLiteSnapshotStore | None = None,
     ) -> None:
@@ -392,17 +392,17 @@ class EventStoreSessionRepository:
         except TimeoutError:
             return
 
-    def create(self, session_id: UUID) -> CodingSession:
+    def create(self, session_id: UUID) -> Session:
         return self._aggregates.create_new(session_id)
 
-    async def load(self, session_id: UUID) -> CodingSession:
+    async def load(self, session_id: UUID) -> Session:
         return await self._aggregates.load(session_id)
 
-    async def save(self, session: CodingSession) -> None:
+    async def save(self, session: Session) -> None:
         await self._aggregates.save(session)
 
     async def events_for(self, session_id: UUID) -> list[DomainEvent]:
-        stream = StreamId(session_id, CodingSession.aggregate_type)
+        stream = StreamId(session_id, Session.aggregate_type)
         return [envelope.event for envelope in await collect(self._store.read_stream(stream))]
 
     # ---- the EventFeed port ----
@@ -440,7 +440,7 @@ class EventStoreSessionRepository:
         appends to this same log, and both `seeding.py` and `ResearchView`
         already say in their own comments that a client sees new topics by
         invalidating on those frames -- but the filter above admitted only
-        `CodingSession`, so no topic event has ever reached the SSE feed and
+        `Session`, so no topic event has ever reached the SSE feed and
         neither claim held. A test that saves a `Topic` and asserts a feed
         entry for it is what would have failed.
 

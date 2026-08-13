@@ -45,7 +45,7 @@ from eventsource.ports.readmodels import Query, ReadModelRepository
 from eventsource.ports.readmodels.query import Filter
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from research_team.domain import CodingSession, StageChecksEvaluated, ToolCallDecided
+from research_team.domain import Session, StageChecksEvaluated, ToolCallDecided
 from research_team.infrastructure.persistence.read_models import (
     LOCAL_RETRY_POLICY,
     apply_schema,
@@ -385,7 +385,7 @@ class CheckTelemetryRunner:
         **Scoped by aggregate type, and not a comparison against the store's
         global position.** This is the one place this class diverges from
         `CorpusRunner`, and the divergence is not cosmetic: this subscription
-        consumes `CodingSession` events in a store that also holds `Project`,
+        consumes `Session` events in a store that also holds `Project`,
         `Corpus`, `Topic` and redstring's streams. Any append of another type
         moves the global end to a position this projection will never reach,
         and a wait on that position runs its full timeout and then raises a
@@ -407,7 +407,7 @@ class CheckTelemetryRunner:
             remaining = await collect(
                 self._store.read_all(
                     from_position=self._subscription.last_processed_position,
-                    options=FeedReadOptions(aggregate_type=CodingSession.aggregate_type),
+                    options=FeedReadOptions(aggregate_type=Session.aggregate_type),
                 )
             )
             if not remaining:
@@ -415,7 +415,7 @@ class CheckTelemetryRunner:
             await asyncio.sleep(0.01)
         raise TimeoutError(
             f"the check telemetry projection did not consume every "
-            f"{CodingSession.aggregate_type} event within {timeout}s"
+            f"{Session.aggregate_type} event within {timeout}s"
         )
 
     async def rebuild(self) -> None:

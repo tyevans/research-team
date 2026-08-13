@@ -22,11 +22,11 @@ from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from pydantic import ValidationError
 
 from research_team.domain import (
-    CodingSession,
     ConversationCompacted,
     Project,
     ProjectStageAdvanced,
     SendUserMessage,
+    Session,
     SessionStarted,
     StartSession,
     ToolCallDecided,
@@ -50,7 +50,7 @@ async def _write_old_event(
     version: int,
     event_type: str,
     payload: dict,
-    aggregate_type: str = "CodingSession",
+    aggregate_type: str = "Session",
 ) -> None:
     """Insert an event exactly as an older build would have left it.
 
@@ -101,7 +101,7 @@ async def test_a_turn_failure_written_before_cancellation_existed_still_loads(
         event_type="TurnFailed",
         payload={
             "aggregate_id": str(started),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 2,
             "turn_index": 1,
             "error_type": "RuntimeError",
@@ -128,7 +128,7 @@ async def test_a_compaction_written_before_token_counts_existed_still_loads(
         event_type="ConversationCompacted",
         payload={
             "aggregate_id": str(started),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 2,
             "summary": "they talked about files",
             "through_index": 4,
@@ -152,7 +152,7 @@ async def test_an_old_event_still_folds_into_state(repository, started, db_path)
         event_type="TurnFailed",
         payload={
             "aggregate_id": str(started),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 2,
             "turn_index": 1,
             "error_type": "RuntimeError",
@@ -177,7 +177,7 @@ async def test_a_tool_call_decision_written_before_edited_args_existed_still_loa
         event_type="ToolCallDecided",
         payload={
             "aggregate_id": str(started),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 2,
             "tool_name": "web_search",
             "args": {"query": "x"},
@@ -208,7 +208,7 @@ async def test_a_decision_written_before_review_ids_still_loads(repository, star
         event_type="ToolCallDecided",
         payload={
             "aggregate_id": str(started),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 2,
             "tool_name": "web_search",
             "args": {"query": "backward design"},
@@ -229,7 +229,7 @@ async def test_an_investigation_written_before_outcome_existed_still_loads(store
     default of "produced" would claim every historic round found something.
 
     Builds its own topic repository because the shared `repository` fixture
-    is a `CodingSession` repository, and `Topic` is a different aggregate
+    is a `Session` repository, and `Topic` is a different aggregate
     type over the same log.
     """
     topic_id = uuid4()
@@ -273,7 +273,7 @@ async def test_an_auto_run_started_before_the_fetch_grant_existed_still_loads(st
     before this feature actually was.
 
     Builds its own repository because the shared `repository` fixture is a
-    `CodingSession` repository, and `ResearchRun` is a different
+    `Session` repository, and `ResearchRun` is a different
     aggregate over the same log -- the same reason the topic test above does.
     Writes the payload with neither key present, which is the only shape that
     proves the defaults fill in; constructing the event through today's model
@@ -338,7 +338,7 @@ async def test_a_schema_version_bump_falls_back_to_replay(repository, session_id
     await repository.save(session)
     await repository.drain_snapshots()
 
-    monkeypatch.setattr(CodingSession, "schema_version", CodingSession.schema_version + 1)
+    monkeypatch.setattr(Session, "schema_version", Session.schema_version + 1)
     reloaded = await repository.load(session_id)
 
     assert reloaded.version == session.version
@@ -379,7 +379,7 @@ async def test_session_started_without_project_id_no_longer_loads(
         event_type="SessionStarted",
         payload={
             "aggregate_id": str(session_id),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 1,
             "system_prompt": "p",
             "model_name": "m",
@@ -406,7 +406,7 @@ async def test_session_started_with_a_project_id_loads(repository, started, db_p
         event_type="SessionStarted",
         payload={
             "aggregate_id": str(session_id),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 1,
             "system_prompt": "p",
             "model_name": "m",
@@ -450,7 +450,7 @@ async def test_a_before_validator_can_reshape_an_old_payload(repository, started
 
     @register_event(event_type=event_type)
     class RenamedFieldEvent(DomainEvent):
-        aggregate_type: str = "CodingSession"
+        aggregate_type: str = "Session"
         error_message: str
 
         @model_validator(mode="before")
@@ -473,7 +473,7 @@ async def test_a_before_validator_can_reshape_an_old_payload(repository, started
         event_type=event_type,
         payload={
             "aggregate_id": str(started),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 2,
             "reason": "written by the old shape",
         },

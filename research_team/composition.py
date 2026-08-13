@@ -68,7 +68,7 @@ from research_team.application.topic_dispatch import TopicDispatcher
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
-from research_team.domain import CodingSession, ProjectState, current_stage_of
+from research_team.domain import ProjectState, Session, current_stage_of
 from research_team.domain.commands import RecordStageReview, WriteFile
 from research_team.domain.research_run import Budget
 from research_team.domain.topic import Topic
@@ -620,7 +620,7 @@ def build_application(
     )
 
     async def running_workflow(
-        session: CodingSession,
+        session: Session,
     ) -> tuple[UUID, ProjectState, Preset] | None:
         """The workflow this session's run is under, or None if there is none.
 
@@ -673,7 +673,7 @@ def build_application(
             )
         return project_id, state, preset
 
-    async def workflow_tools(session: CodingSession) -> tuple[BaseTool, ...]:
+    async def workflow_tools(session: Session) -> tuple[BaseTool, ...]:
         """`advance_stage`, for a run that has a workflow to advance through.
 
         Registered per turn rather than with the project's other tools, which
@@ -697,7 +697,7 @@ def build_application(
             ProjectWorkflow(repository.projects, project_id), preset=preset
         )
 
-    async def granted_tools(session: CodingSession) -> tuple[BaseTool, ...]:
+    async def granted_tools(session: Session) -> tuple[BaseTool, ...]:
         """A grant-bound `fetch`, for a session `resolved_grants` holds one for.
 
         Resolved per turn, from the one `GrantRegistry` this build shares
@@ -737,7 +737,7 @@ def build_application(
         reader = ProjectCorpusReader(corpus, running[0]) if running is not None else None
         return (build_fetch_tool(recall=recall, corpus=reader, pages=pages, grant=grant),)
 
-    async def turn_tools(session: CodingSession) -> tuple[BaseTool, ...]:
+    async def turn_tools(session: Session) -> tuple[BaseTool, ...]:
         """Everything this turn adds on top of the registered set.
 
         `granted_tools` last, so a grant-bound `fetch` shadows whatever
@@ -748,7 +748,7 @@ def build_application(
         """
         return (*await workflow_tools(session), *await granted_tools(session))
 
-    async def turn_middleware(session: CodingSession) -> tuple[AgentMiddleware, ...]:
+    async def turn_middleware(session: Session) -> tuple[AgentMiddleware, ...]:
         """This turn's middleware: component feedback always, the stage gate if any.
 
         `ComponentFeedback` is unconditional because a component can appear in
@@ -883,9 +883,7 @@ def build_application(
             ),
         )
 
-    async def gate_review(
-        session: CodingSession, tool_name: str, args: dict
-    ) -> GateReview | None:
+    async def gate_review(session: Session, tool_name: str, args: dict) -> GateReview | None:
         """Run the stage's checks before anyone is asked to let it go.
 
         Only for `advance_stage`. Every other gated tool is gated because it

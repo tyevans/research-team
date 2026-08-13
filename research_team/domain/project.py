@@ -468,7 +468,7 @@ class Project(DeciderAggregate[ProjectState, ProjectCommand]):
 
     Everything the library needs from an aggregate (replay, snapshots, version
     checks, repository integration) is inherited; everything this project
-    decides lives in the functions above. Mirrors `CodingSession`'s shape
+    decides lives in the functions above. Mirrors `Session`'s shape
     exactly: the class attributes are bound directly to the module-level
     functions rather than wrapped in new method bodies, so there is exactly
     one implementation of each rule to keep in sync.

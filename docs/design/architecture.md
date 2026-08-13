@@ -4,11 +4,11 @@ How the pieces fit, and why the layering is asserted rather than described.
 
 ## The session aggregate
 
-One `CodingSession` aggregate owns one event stream carrying both the conversation
+One `Session` aggregate owns one event stream carrying both the conversation
 and the filesystem, so the ordering between "the model said X" and "file Y changed"
 is total. The session is written as a **decider**: `decide(command, state)` says
 which requests are legal and what facts they produce, `evolve(state, event)` says
-what each fact does, and `CodingSession` is a thin `DeciderAggregate` shell that
+what each fact does, and `Session` is a thin `DeciderAggregate` shell that
 connects those two pure functions to replay, snapshots, and the repository. The
 rules therefore test as rules -- `tests/domain/test_decider.py` folds commands
 through plain function calls with no aggregate, store, or event loop in sight --

@@ -40,7 +40,6 @@ from research_team.application.research_supervisor import ActiveRun
 from research_team.application.topic_read import TopicDetail, TopicView
 from research_team.domain import (
     AutonomyChanged,
-    CodingSession,
     ConversationCompacted,
     DocumentRecord,
     FileDeleted,
@@ -49,6 +48,7 @@ from research_team.domain import (
     ProjectStageAdvanced,
     ProjectState,
     ProjectWorkflowSelected,
+    Session,
     SessionForkedFrom,
     SessionStarted,
     TurnFailed,
@@ -209,7 +209,7 @@ def _revision_counts(events: list[DomainEvent]) -> dict[str, int]:
 
 
 def session_view(
-    session: CodingSession,
+    session: Session,
     events: list[DomainEvent],
     *,
     at: int | None = None,

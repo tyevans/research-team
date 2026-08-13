@@ -487,7 +487,7 @@ async def test_sse_frames_a_topic_change_as_its_own_project_shaped_frame(reposit
 
     The research page's topic list is refreshed off these frames. Two failures
     this pins: no frame at all (what shipped -- the feed read only
-    `CodingSession` streams, so a topic appeared only on a reload), and a frame
+    `Session` streams, so a topic appeared only on a reload), and a frame
     carrying the topic's id under `session_id`, which would put the session
     tree to work refetching a session that does not exist.
 
@@ -529,7 +529,7 @@ async def test_sse_frames_a_graph_change_addressed_to_its_project(repository):
     """An extraction reaches the live feed addressed to the project it changed.
 
     The graph pane redraws off these frames. Three failures this pins: no frame
-    at all (what shipped -- the feed read only `CodingSession` and `Topic`, so
+    at all (what shipped -- the feed read only `Session` and `Topic`, so
     entities appeared on a reload and never before it); a frame carrying the
     document stream's `uuid5` id under `session_id`, which would set the
     session tree hunting an aggregate that is a document; and a frame with no
@@ -579,7 +579,7 @@ async def test_sse_frames_a_stored_document_as_a_corpus_frame(repository):
     """A stored source reaches the live feed addressed to its project.
 
     The documents pane redraws off these frames. It shipped with no live path
-    of any kind -- the feed read only `CodingSession` and `Topic`, so a source
+    of any kind -- the feed read only `Session` and `Topic`, so a source
     the agent stored mid-session appeared in the rail only on a reload, while
     the reader watched the turn that fetched it scroll past.
 
@@ -622,7 +622,7 @@ async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
 
     The reported bug, at the layer where it is visible: `advance_stage`
     appended `ProjectStageAdvanced` and the course page's rail moved only on a
-    reload, because the feed read `CodingSession`, `Topic`, `Corpus` and
+    reload, because the feed read `Session`, `Topic`, `Corpus` and
     redstring's categories and nothing else.
 
     A `Project` frame rather than a log frame, for the reason `Topic` and

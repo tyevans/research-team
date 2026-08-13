@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage
 
 from research_team.application import ApprovalDecision, AutonomyPolicy
 from research_team.application.ports import ActivityMessage
-from research_team.domain import CodingSession, StartSession, ToolCallDecided
+from research_team.domain import Session, StartSession, ToolCallDecided
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 from research_team.infrastructure.agent.search import build_search_tool
 from tests.conftest import ToolAwareFakeChatModel
@@ -50,8 +50,8 @@ class Searches:
         return build_search_tool("http://searx.local", limit=5, client=client)
 
 
-def _session() -> CodingSession:
-    session = CodingSession(uuid4())
+def _session() -> Session:
+    session = Session(uuid4())
     session.execute(
         StartSession(
             session_id=session.aggregate_id,

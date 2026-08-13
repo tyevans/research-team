@@ -194,7 +194,7 @@ async def test_read_since_carries_topic_events(tmp_path):
     frames. Until this test existed the feed filtered every `Topic` stream out,
     so no topic event ever reached the SSE connection and a topic only appeared
     on a reload. Asserting the aggregate type, not just the count: an entry
-    that arrives labelled `CodingSession` sends the browser looking for a
+    that arrives labelled `Session` sends the browser looking for a
     session that does not exist.
     """
     repository = EventStoreSessionRepository.open(str(tmp_path / "sessions.db"))
@@ -270,13 +270,13 @@ async def test_read_since_carries_knowledge_graph_events(tmp_path):
 
     redstring writes `DocumentExtracted` into this same log, and the graph the
     research page draws is exactly what that event added. Until this test the
-    feed admitted only `CodingSession` and `Topic`, so an extraction that ran
+    feed admitted only `Session` and `Topic`, so an extraction that ran
     while a tab was open reached the browser through nothing at all and the
     entities appeared on the next reload.
 
     Asserting the aggregate type rather than only the count: `Document` is what
     tells `_sse` to write a graph frame instead of a session one, and an entry
-    arriving as `CodingSession` would send the session tree after an aggregate
+    arriving as `Session` would send the session tree after an aggregate
     that is a document. Asserting the tenant for the same reason -- the frame
     is addressed to a project, and the event is the only place that project id
     exists on this path.
@@ -347,14 +347,14 @@ async def test_read_since_carries_project_events(tmp_path):
 
     `advance_stage` appends `ProjectStageAdvanced` to this log and the rail on the
     course page *is* what that event moved. Until this test the feed admitted
-    `CodingSession`, `Topic`, `Corpus` and redstring's categories and nothing
+    `Session`, `Topic`, `Corpus` and redstring's categories and nothing
     else, so a stage advance reached the browser through nothing at all and the
     rail only moved on a reload -- the same shape as topics before `c4d81a9`
     and the graph before #70.
 
     Asserting the aggregate type rather than only the count, for the reason
     `test_read_since_carries_topic_events` gives: an entry arriving labelled
-    `CodingSession` sends the session tree after an aggregate that is a
+    `Session` sends the session tree after an aggregate that is a
     project. Asserting the aggregate id too, because a project's aggregate id
     *is* the project id and that identity is the whole of how `_sse` addresses
     the frame -- there is no lookup behind it.

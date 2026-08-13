@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from research_team.application import SEARCH_TOOL
 from research_team.application.autonomy import FETCH_TOOL
-from research_team.domain import CodingSession
+from research_team.domain import Session
 
 
 def _tool_names(application) -> set[str]:
@@ -26,12 +26,12 @@ def _tool_names(application) -> set[str]:
 async def _middleware_names(application) -> set[str]:
     """The names of this turn's middleware, for a session outside any project.
 
-    `CodingSession(uuid4())` with no `StartSession` executed is enough:
+    `Session(uuid4())` with no `StartSession` executed is enough:
     `running_workflow` answers `None` for a session with no project, which is
     the branch every one of these tests exercises, and building further would
     only test `StageMiddleware`'s wiring, which is covered elsewhere.
     """
-    session = CodingSession(uuid4())
+    session = Session(uuid4())
     middleware = await application.service._executor._middleware_provider(session)
     return {item.name for item in middleware}
 

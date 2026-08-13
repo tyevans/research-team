@@ -26,7 +26,7 @@ from research_team.domain.commands import StartSession
 from research_team.domain.corpus import Corpus, StoreSourceDocument
 from research_team.domain.project import CreateProject, Project
 from research_team.domain.research_run import ResearchRun, StartRun
-from research_team.domain.session import CodingSession
+from research_team.domain.session import Session
 from research_team.domain.topic import OpenTopic, Topic
 
 
@@ -45,7 +45,7 @@ def test_a_project_refuses_a_command_naming_another_project() -> None:
 def test_a_session_refuses_a_command_naming_another_session() -> None:
     """`StartSession.session_id` reaches `SessionStarted.aggregate_id` (session.py:138)."""
     theirs = uuid4()
-    session = CodingSession(uuid4())
+    session = Session(uuid4())
 
     with pytest.raises(AggregateIdMismatchError) as caught:
         session.execute(

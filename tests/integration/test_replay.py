@@ -1,7 +1,7 @@
 import pytest
 from langchain_core.messages import AIMessage
 
-from research_team.domain import CodingSession
+from research_team.domain import Session
 from tests.conftest import start_session
 
 
@@ -49,7 +49,7 @@ async def test_refolding_reproduces_state_exactly(
     # Rebuild from event zero with a repository that has no snapshot cache.
     from eventsource.application.aggregates.repository import AggregateRepository
 
-    cold_repo = AggregateRepository(store, CodingSession)
+    cold_repo = AggregateRepository(store, Session)
     replayed = await cold_repo.load(session_id)
 
     assert replayed.version == live.version
@@ -64,7 +64,7 @@ async def test_replay_reproduces_file_content(build_service, store, db_path, scr
 
     from eventsource.application.aggregates.repository import AggregateRepository
 
-    cold_repo = AggregateRepository(store, CodingSession)
+    cold_repo = AggregateRepository(store, Session)
     replayed = await cold_repo.load(session_id)
 
     assert replayed.state.files["/app.py"]["content"] == "x = 2\n"
@@ -79,8 +79,8 @@ async def test_replay_is_deterministic_across_repeats(
 
     from eventsource.application.aggregates.repository import AggregateRepository
 
-    first = await AggregateRepository(store, CodingSession).load(session_id)
-    second = await AggregateRepository(store, CodingSession).load(session_id)
+    first = await AggregateRepository(store, Session).load(session_id)
+    second = await AggregateRepository(store, Session).load(session_id)
 
     assert first.state == second.state
 

@@ -12,7 +12,7 @@ from uuid import UUID
 
 from eventsource import DomainEvent
 
-from research_team.domain import CodingSession
+from research_team.domain import Session
 
 if TYPE_CHECKING:
     # Imported for typing only: `summaries` imports nothing from here, and
@@ -24,20 +24,20 @@ if TYPE_CHECKING:
 
 
 class SessionRepository(Protocol):
-    """Loads and stores `CodingSession` aggregates, and reads raw event streams.
+    """Loads and stores `Session` aggregates, and reads raw event streams.
 
     The raw reads exist because this is an event-sourced application: the log
     itself is a first-class read model (`/log`, `/history`, `/diff`, forking),
     not just the aggregate's private bookkeeping.
     """
 
-    def create(self, session_id: UUID) -> CodingSession:
+    def create(self, session_id: UUID) -> Session:
         """A new, unsaved aggregate. Does not touch storage."""
         ...
 
-    async def load(self, session_id: UUID) -> CodingSession: ...
+    async def load(self, session_id: UUID) -> Session: ...
 
-    async def save(self, session: CodingSession) -> None:
+    async def save(self, session: Session) -> None:
         """Append the aggregate's pending events atomically."""
         ...
 
@@ -353,7 +353,7 @@ class GateReview:
     """
 
 
-GateReviewer = Callable[[CodingSession, str, dict], Awaitable[GateReview | None]]
+GateReviewer = Callable[[Session, str, dict], Awaitable[GateReview | None]]
 """Consulted for each gated call, before the human is.
 
 `None` means the harness has nothing to say about this tool, which is the
@@ -421,7 +421,7 @@ class TurnExecutor(Protocol):
 
     async def execute(
         self,
-        session: CodingSession,
+        session: Session,
         *,
         messages: list[dict],
         system_prompt: str,

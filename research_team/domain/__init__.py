@@ -82,7 +82,7 @@ from research_team.domain.research_run import (
     StartRun,
 )
 from research_team.domain.session import (
-    CodingSession,
+    Session,
     SessionState,
     decide,
     evolve,
@@ -97,7 +97,6 @@ __all__ = [
     "AutonomyChanged",
     "Budget",
     "ChangeAutonomy",
-    "CodingSession",
     "CompactConversation",
     "CompleteTurn",
     "ConversationCompacted",
@@ -141,6 +140,7 @@ __all__ = [
     "ResearchRunState",
     "SelectWorkflow",
     "SendUserMessage",
+    "Session",
     "SessionCommand",
     "SessionForkedFrom",
     "SessionStarted",

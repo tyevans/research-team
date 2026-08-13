@@ -6,12 +6,12 @@ import pytest
 
 from research_team.application import summarize_sessions
 from research_team.domain import (
-    CodingSession,
     CompleteTurn,
     DeleteFile,
     FailTurn,
     RecordForkSource,
     SendUserMessage,
+    Session,
     StartSession,
     WriteFile,
 )
@@ -26,7 +26,7 @@ def user_message(text: str) -> dict:
 
 @pytest.fixture
 def make_session(aggregates):
-    def make(first_message: str | None = None, project_id=None) -> CodingSession:
+    def make(first_message: str | None = None, project_id=None) -> Session:
         # A project of its own when the caller does not name one: the field is
         # required, and every test here that cares passes its own.
         project_id = project_id if project_id is not None else uuid4()

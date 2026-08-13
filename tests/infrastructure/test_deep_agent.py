@@ -21,7 +21,7 @@ from langchain_core.tools import tool
 
 from research_team.application import ApprovalDecision, ApprovalRefused, AutonomyPolicy
 from research_team.application.ports import ActivityDelta, GateReview
-from research_team.domain import CodingSession, StartSession
+from research_team.domain import Session, StartSession
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 from research_team.infrastructure.agent.search import build_search_tool
 from research_team.infrastructure.agent.stage_middleware import StageMiddleware
@@ -101,13 +101,13 @@ class ProviderSpy:
     middleware: tuple[AgentMiddleware, ...] = ()
     sessions: list[UUID] = field(default_factory=list)
 
-    async def __call__(self, session: CodingSession) -> tuple[AgentMiddleware, ...]:
+    async def __call__(self, session: Session) -> tuple[AgentMiddleware, ...]:
         self.sessions.append(session.aggregate_id)
         return self.middleware
 
 
-def _session() -> CodingSession:
-    session = CodingSession(uuid4())
+def _session() -> Session:
+    session = Session(uuid4())
     session.execute(
         StartSession(
             session_id=session.aggregate_id,
@@ -139,7 +139,7 @@ def _searching_model(model_cls: type = ToolAwareFakeChatModel) -> Any:
     )
 
 
-async def _run(executor: DeepAgentTurnExecutor, session: CodingSession) -> Any:
+async def _run(executor: DeepAgentTurnExecutor, session: Session) -> Any:
     return await executor.execute(
         session,
         messages=[executor.encode_user_message("hi")],
@@ -240,7 +240,7 @@ async def test_a_per_turn_tool_shadows_a_registered_tool_of_the_same_name():
         """The per-turn tool -- must win over the registered one."""
         return "shadow-response"
 
-    async def provide_tools(session: CodingSession) -> tuple[Any, ...]:
+    async def provide_tools(session: Session) -> tuple[Any, ...]:
         return (per_turn,)
 
     model = _searching_model()
@@ -358,7 +358,7 @@ def _gated_executor(approvals: Any, reviewer: Any) -> DeepAgentTurnExecutor:
 
 
 async def test_the_reviewers_context_reaches_the_approval():
-    async def reviewer(session: CodingSession, name: str, args: dict) -> GateReview:
+    async def reviewer(session: Session, name: str, args: dict) -> GateReview:
         return GateReview(context={"stage": "s.one", "findings": []})
 
     approvals = ScriptedApprovals(ApprovalDecision("approve"))
@@ -369,7 +369,7 @@ async def test_the_reviewers_context_reaches_the_approval():
 async def test_a_refusal_settles_the_call_without_asking_anybody():
     """An invariant failure is not a judgement, so there is nobody to put it to."""
 
-    async def reviewer(session: CodingSession, name: str, args: dict) -> GateReview:
+    async def reviewer(session: Session, name: str, args: dict) -> GateReview:
         return GateReview(context={}, refusal="a harness invariant failed")
 
     approvals = ScriptedApprovals(ApprovalDecision("approve"))
@@ -380,7 +380,7 @@ async def test_a_refusal_settles_the_call_without_asking_anybody():
 async def test_a_refusal_is_recorded_as_the_harness_deciding():
     """Not `policy`, which permitted the call, and not `human`, who never saw it."""
 
-    async def reviewer(session: CodingSession, name: str, args: dict) -> GateReview:
+    async def reviewer(session: Session, name: str, args: dict) -> GateReview:
         return GateReview(context={}, refusal="a harness invariant failed")
 
     session = _session()
@@ -396,7 +396,7 @@ async def test_a_refusal_is_recorded_as_the_harness_deciding():
 async def test_a_reviewer_that_raises_still_lets_the_approval_be_posed():
     """A bug in the advice must not cost a call the model already earned."""
 
-    async def reviewer(session: CodingSession, name: str, args: dict) -> GateReview:
+    async def reviewer(session: Session, name: str, args: dict) -> GateReview:
         raise RuntimeError("the reviewer is broken")
 
     approvals = ScriptedApprovals(ApprovalDecision("approve"))

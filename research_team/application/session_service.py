@@ -43,7 +43,6 @@ from research_team.domain import (
     AdvanceTip,
     AutonomyChanged,
     ChangeAutonomy,
-    CodingSession,
     CompactConversation,
     CompleteTurn,
     DeleteProject,
@@ -64,6 +63,7 @@ from research_team.domain import (
     RecordToolDecision,
     RecordToolResult,
     SendUserMessage,
+    Session,
     StartSession,
     WriteFile,
 )
@@ -410,7 +410,7 @@ class SessionService:
 
     # ---------------- reads ----------------
 
-    async def load(self, session_id: UUID) -> CodingSession:
+    async def load(self, session_id: UUID) -> Session:
         """One session's aggregate, folded from its events."""
         return await self._repository.load(session_id)
 
@@ -418,7 +418,7 @@ class SessionService:
         """Every event on one session's stream, in order."""
         return await self._repository.events_for(session_id)
 
-    async def state_at(self, session_id: UUID, at: int) -> CodingSession:
+    async def state_at(self, session_id: UUID, at: int) -> Session:
         """The session as it stood after its first `at` events.
 
         A pure fold of a prefix -- nothing is written, nothing is forked. This
@@ -876,7 +876,7 @@ class SessionService:
         """
         with self._tracer.span(
             "research_team.turn",
-            {ATTR_AGGREGATE_ID: str(session_id), ATTR_AGGREGATE_TYPE: "CodingSession"},
+            {ATTR_AGGREGATE_ID: str(session_id), ATTR_AGGREGATE_TYPE: "Session"},
         ):
             return await self._run_turn(session_id, user_input, on_activity)
 
@@ -951,7 +951,7 @@ class SessionService:
             to_index=saved.version,
         )
 
-    async def _save_turn(self, session_id: UUID, aggregate: CodingSession) -> CodingSession:
+    async def _save_turn(self, session_id: UUID, aggregate: Session) -> Session:
         """Append the turn's events, re-appending them if the save loses.
 
         A turn holds a version for as long as the model runs, which can be
@@ -980,10 +980,10 @@ class SessionService:
         """
         events = list(aggregate.uncommitted_events)
         base_version = aggregate.version - len(events)
-        pending: CodingSession | None = aggregate
+        pending: Session | None = aggregate
         lost: OptimisticLockError | None = None
 
-        async def attempt() -> CodingSession:
+        async def attempt() -> Session:
             # The first attempt saves the aggregate the turn ran on; every
             # later one rebuilds it, because an aggregate that lost a save
             # still holds the version it lost at and would lose again.
