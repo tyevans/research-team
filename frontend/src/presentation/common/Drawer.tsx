@@ -40,6 +40,7 @@ export const Drawer = ({
   label,
   actions,
   onClose,
+  flush = false,
   children,
 }: {
   /** Rendered as the drawer's heading. Named `heading` and not `title`: see
@@ -51,6 +52,23 @@ export const Drawer = ({
   /** Controls sitting beside the close button -- a link out, usually. */
   actions?: ReactNode
   onClose: () => void
+  /** The body pads its own content, and this turns that off for a caller that
+   *  brings its own -- a scroller with its own inset, prose with its own
+   *  measure.
+   *
+   * The default is the fix rather than the flag. Padding used to be every
+   * caller's job, stated in a comment beside `.confirm` in `tree.css`, and
+   * `.confirm` has that comment because it shipped without any: the paragraphs
+   * sat against the drawer's border and the confirm button landed on the last
+   * pixel column. `TopicStatusDialog` is the same omission still live, and
+   * every `Drawer` in the workbench is a third. A convention nobody can see
+   * they have broken gets broken; forgetting `flush` now costs a double inset,
+   * which is visible and mild, rather than text against a border.
+   *
+   * Named for what it does to the box, not for who wants it -- `flush` is a
+   * property of the edge. `padded={false}` was the alternative and reads as
+   * though the drawer is doing less, when the caller is doing more. */
+  flush?: boolean
   children: ReactNode
 }) => {
   /** Where focus was before this drawer took it, to give back on close.
@@ -122,7 +140,7 @@ export const Drawer = ({
           </button>
         </header>
 
-        <div className="drawer-body">{children}</div>
+        <div className={flush ? 'drawer-body is-flush' : 'drawer-body'}>{children}</div>
       </aside>
     </Overlay>
   )

@@ -42,6 +42,10 @@ export const DocumentList = ({ projectId }: { projectId: ProjectId }) => {
           heading={readingLabel(reading)}
           label={`Reading ${readingLabel(reading)}`}
           onClose={onClose}
+          // `.document-reader` carries its own 12/14/20 and its own measure,
+          // and it is rendered outside a drawer too -- so its padding cannot
+          // move here without following it everywhere else.
+          flush
         >
           <DocumentReader projectId={projectId} sourceId={reading} />
         </Drawer>

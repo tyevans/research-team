@@ -4,6 +4,13 @@ import type { ProjectRollup } from '@domain/project/landing.ts'
 import type { Project } from '@domain/project/project.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
+/* `Button`, not a bare `<button>`, and the tones and sizes are copied from
+   `ProjectList.tsx` -- `small` throughout, `accent` on the verb that starts
+   work. A story exists to show what ships; a bare button in a slot shows
+   something that does not. Since `tokens.css` gained its reset a bare button
+   renders as unbordered text, so these stories were demonstrating
+   primary-against-overflow with two pieces of prose. */
+import { Button } from '../../common/primitives.tsx'
 import { EntityStatus } from '../EntityStatus.tsx'
 import { ProjectCard } from './ProjectCard.tsx'
 
@@ -61,7 +68,13 @@ export const Free: Story = {
       <ProjectCard
         rollup={rollup()}
         href="#project"
-        slots={{ primary: <button type="button">Open</button> }}
+        slots={{
+          primary: (
+            <Button small tone="accent">
+              Open
+            </Button>
+          ),
+        }}
       />
     </Frame>
   ),
@@ -80,11 +93,11 @@ export const Held: Story = {
         })}
         href="#project"
         slots={{
-          primary: <button type="button">Resume 7d41e0aa</button>,
+          primary: <Button small>Resume 7d41e0aa</Button>,
           overflow: [
-            <button key="take" type="button">
+            <Button small tone="accent" key="take">
               New session
-            </button>,
+            </Button>,
           ],
         }}
       />
@@ -104,7 +117,11 @@ export const WithActivity: Story = {
         href="#project"
         slots={{
           activity: <EntityStatus status="running" detail="synthesising 2 topics" />,
-          primary: <button type="button">Open</button>,
+          primary: (
+            <Button small tone="accent">
+              Open
+            </Button>
+          ),
         }}
       />
     </Frame>
@@ -144,8 +161,12 @@ export const Expanded: Story = {
         href="#project"
         open
         slots={{
-          toggle: <button type="button">▾</button>,
-          primary: <button type="button">Open</button>,
+          toggle: <Button small>▾</Button>,
+          primary: (
+            <Button small tone="accent">
+              Open
+            </Button>
+          ),
           sessions: (
             <ul style={{ margin: 0, paddingLeft: 'var(--space-5)' }}>
               <li>7d41e0aa — 12 turns</li>

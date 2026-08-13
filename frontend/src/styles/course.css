@@ -602,11 +602,31 @@
   flex: 1 1 auto;
 }
 
+/* Padded, and the horizontal inset is `.drawer-head`'s 12px on purpose: the
+   heading and the first line under it are read as one column, and 12px against
+   0 put them visibly out of line. Measured in Chromium at
+   `layout/OverlayHost` FocusReturnsToTheRow, before this rule: the body's only
+   child ran from x=743 to x=1280 -- one pixel inside the drawer's left border,
+   out to the viewport's last column -- while the title above it sat at 755.
+
+   This used to be every caller's job. Three of four did it, in three different
+   insets, and the fourth (`TopicStatusDialog`) did not do it at all. The
+   vertical rhythm is `.conv`'s, which is the largest of the three and the one
+   a reader sees most. */
 .drawer-body {
   flex: 1 1 auto;
   overflow: auto;
   display: flex;
   flex-direction: column;
+  padding: 10px 12px 16px;
+}
+
+/* For a caller that brings its own inset -- prose with a measure, a scroller
+   with its own padding. Not the default, because the default is what a caller
+   gets by forgetting, and text against a border is a worse thing to get by
+   forgetting than an inset that is 12px larger than intended. */
+.drawer-body.is-flush {
+  padding: 0;
 }
 
 /* -------------------------------------------------------------- autonomy

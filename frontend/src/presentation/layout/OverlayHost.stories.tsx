@@ -5,6 +5,12 @@ import { useState } from 'react'
 // which is the only way a view should ever get one. A story that constructed
 // a bare host would be demonstrating an arrangement the design does not want.
 import { Drawer } from '../common/Drawer.tsx'
+// `Button` rather than a bare `<button>`: since `tokens.css` gained its reset a
+// bare button renders as unbordered text, and these stories are read by
+// pressing and tabbing -- "a control in the drawer", "a row on the page" and
+// the rest have to look like controls for the inertness they demonstrate to be
+// visible at all.
+import { Button } from '../common/primitives.tsx'
 import { Overlay } from './OverlayHost.tsx'
 import { Shell } from './Shell.tsx'
 
@@ -85,9 +91,9 @@ const DockAndDrawer = () => {
       chrome={
         <>
           <strong>research-team</strong>
-          <button type="button" onClick={() => setDockOpen((open) => !open)}>
+          <Button small onClick={() => setDockOpen((open) => !open)}>
             agents
-          </button>
+          </Button>
         </>
       }
     >
@@ -97,7 +103,7 @@ const DockAndDrawer = () => {
         layers.
       </p>
       <p style={{ padding: '0 var(--space-4)' }}>
-        <button type="button">a row on the page</button>
+        <Button small>a row on the page</Button>
       </p>
 
       {dockOpen ? (
@@ -105,9 +111,9 @@ const DockAndDrawer = () => {
           <div style={{ position: 'fixed', top: 'var(--topbar-h)', right: 'var(--space-4)' }}>
             <Panel>
               <p>2 agents running</p>
-              <button type="button" onClick={() => setWatching(true)}>
+              <Button small onClick={() => setWatching(true)}>
                 watch this session
-              </button>
+              </Button>
             </Panel>
           </div>
         </Overlay>
@@ -126,9 +132,9 @@ const DockAndDrawer = () => {
             }}
           >
             <h3>Watching a session</h3>
-            <button type="button" onClick={() => setWatching(false)}>
+            <Button small onClick={() => setWatching(false)}>
               Close
-            </button>
+            </Button>
             <p>The transcript.</p>
           </div>
         </Overlay>
@@ -152,7 +158,7 @@ export const TwoDeep: Story = {
       chrome={
         <>
           <strong>research-team</strong>
-          <button type="button">agents</button>
+          <Button small>agents</Button>
         </>
       }
     >
@@ -162,14 +168,14 @@ export const TwoDeep: Story = {
           first version of this story had nothing focusable behind it, which
           made it look like it demonstrated more than it did. */}
       <p style={{ padding: 'var(--space-4)' }}>
-        The page behind. <button type="button">a row on the page</button>
+        The page behind. <Button small>a row on the page</Button>
       </p>
       <Overlay label="Session detail" modal>
         <div style={{ position: 'fixed', inset: '10% 10% auto 10%' }}>
           <Panel>
             <h3>Session detail</h3>
             <p>Beneath the confirm: dimmed, inert, unreachable by Tab.</p>
-            <button type="button">a control in the drawer</button>
+            <Button small>a control in the drawer</Button>
           </Panel>
         </div>
       </Overlay>
@@ -178,7 +184,7 @@ export const TwoDeep: Story = {
           <Panel>
             <h3>Delete this session?</h3>
             <p>The session and its event log are removed.</p>
-            <button type="button">Cancel</button>
+            <Button small>Cancel</Button>
           </Panel>
         </div>
       </Overlay>
@@ -212,21 +218,21 @@ const DrawerFromARow = () => {
       chrome={
         <>
           <strong>research-team</strong>
-          <button type="button">a control in the chrome</button>
+          <Button small>a control in the chrome</Button>
         </>
       }
     >
       <p style={{ padding: 'var(--space-4)', display: 'flex', gap: 'var(--space-3)' }}>
-        <button type="button">before the row</button>
-        <button type="button" onClick={() => setOpen(true)}>
+        <Button small>before the row</Button>
+        <Button small onClick={() => setOpen(true)}>
           open the worker feed
-        </button>
-        <button type="button">after the row</button>
+        </Button>
+        <Button small>after the row</Button>
       </p>
       {open ? (
         <Drawer heading="Watching a worker" label="Worker detail" onClose={() => setOpen(false)}>
           <p style={{ padding: 'var(--space-4)' }}>
-            The transcript. <button type="button">a control in the body</button>
+            The transcript. <Button small>a control in the body</Button>
           </p>
         </Drawer>
       ) : null}

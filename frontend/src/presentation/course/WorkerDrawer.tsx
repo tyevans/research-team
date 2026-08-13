@@ -89,6 +89,10 @@ export const WorkerDrawer = ({
       heading={heading ? `${heading} · ${shortId(sessionId)}` : `Watching ${shortId(sessionId)}`}
       label={heading ? `Watching ${heading}` : `Watching session ${shortId(sessionId)}`}
       onClose={onClose}
+      // `Conversation` is the session view's own scroller and pads itself
+      // (`.conv`, `.activity`); it is the same component on a whole route, so
+      // its inset belongs to it rather than to whatever is showing it.
+      flush
       actions={
         <a className="btn btn-sm" href={sessionHref(sessionId)}>
           Open the session
