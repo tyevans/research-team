@@ -269,7 +269,7 @@ const RULES = [
   {
     phase: '5',
     what: "the decision bar's allow-all was dressed from the course view's stylesheet",
-    why: "Same replacement as the approval card, for a sharper reason. `AutonomyAllowAll` moved into the shell's `DecisionBar`, which is already utilities, and left its layout behind in `course.css` -- a file on the die-with-its-screen list. So the policy's own deletion path had a trap in it: rebuilding the course view deletes the stylesheet, and a control that is *not* the course view and is still on screen loses its column, its gap and its indent, with nothing failing. That is `.extraction-failed > .extraction-summary` again -- no test, no error, a rule that quietly stopped applying -- except the rule does not stop matching, it stops existing. `.autonomy-warn` and `.autonomy-error` are deliberately absent from this list: they are shared with `AutonomyPanel`, which is a real course-page surface, and forbidding them would be demanding the port this policy exists to avoid. `course.css` carries the note about that at the rules themselves.",
+    why: "Same replacement as the approval card, for a sharper reason. `AutonomyAllowAll` moved into the shell's `DecisionBar`, which is already utilities, and left its layout behind in `course.css` -- a file on the die-with-its-screen list. So the policy's own deletion path had a trap in it: rebuilding the course view deletes the stylesheet, and a control that is *not* the course view and is still on screen loses its column, its gap and its indent, with nothing failing. That is `.extraction-failed > .extraction-summary` again -- no test, no error, a rule that quietly stopped applying -- except the rule does not stop matching, it stops existing. `.autonomy-warn` and `.autonomy-error` are still absent from *this* list, and for a reason that has changed: they remain in `course.css` legitimately, because `AutonomyPanel` is a real course-page surface that dies with the file. What was wrong was `AutonomyAllowAll` also reaching for them; the rule below is that half.",
     where: 'styles',
     forbid: [
       /^\.autonomy-allow\b/m,
@@ -278,6 +278,41 @@ const RULES = [
       /^\.autonomy-result\b/m,
       /^\.autonomy-off\b/m,
     ],
+  },
+  {
+    phase: '5',
+    what: 'the decision bar reached into `course.css` for its warning and its write error',
+    why: "The other half of the rule above. `.autonomy-warn` and `.autonomy-error` stay in `course.css` for `AutonomyPanel`, which is a course-page surface and dies with the file -- but `AutonomyAllowAll` renders in the shell's decision bar on every route, so writing those classes there was a control borrowing dressing from a screen it outlives. It carries the same declarations as utilities now. Scoped to the one file by `only`, because the directory also holds `AutonomyPanel.tsx`, which must go on using them, and a rule that fired on the correct file is a rule somebody turns off.",
+    where: 'presentation/course',
+    only: /^presentation\/course\/AutonomyAllowAll\.tsx$/,
+    forbid: [/autonomy-warn/, /autonomy-error/],
+  },
+  {
+    phase: '5',
+    what: 'four shell-reached components were dressed from stylesheets that die with a screen',
+    why: '`docs/reports/stylesheet-orphan-sweep.md` found them by inverting the usual question -- not "what does this stylesheet dress" but "what dresses the components that outlive every view". `.drawer*` and the five gate-severity chip tones were in `course.css`, `.chip`\'s base was in `tree.css`, and `.btn-quiet` was in `composer.css`, while `Drawer`, `Chip`, `GateReview` and `AutonomyAllowAll` are all reached from the shell on every route. Deleting any of those files would have unstyled something still on screen with nothing failing -- jsdom applies no stylesheet and a class that resolves to nothing raises no error, which is why this was found by a sweep rather than by a build. The dressing is on the components now (`.btn-quiet` excepted; `shell.css` argues that one). A rule under `src/styles/` reclaiming any of these names is that coupling coming back.',
+    where: 'styles',
+    // Anchored to the start of a line, which is doing real work rather than
+    // being tidy: `responsive.css` legitimately keeps a `.drawer` inside a
+    // media query, indented, narrowing the panel below 820px. That override is
+    // the reason `Drawer` still writes the class at all, and a pattern that
+    // could not tell it from a base rule would fail on correct code.
+    // `.btn-quiet` is matched everywhere except `shell.css`, where it now lives
+    // beside `.btn` and the four other tones.
+    forbid: [
+      /^\.drawer\s*\{/m,
+      /^\.drawer-(head|title|spacer|body)\b/m,
+      /^\.chip\s*\{/m,
+      /^\.chip-(invariant|blocking|advisory|human_gate|critic_gate)\b/m,
+    ],
+  },
+  {
+    phase: '5',
+    what: 'the fifth button tone lived in the session composer',
+    why: "Same sweep, split out because its fix is the opposite one and the scope has to differ. `.btn-quiet` could not become utilities: `Button` renders `.btn`, `.btn` sets background, border-colour and colour unlayered, and Tailwind's utilities are in `@layer utilities`, which loses to an unlayered rule regardless of specificity. So it moved to `shell.css` beside the tones it belongs with. Forbidden everywhere else under `styles`, including back in `composer.css`.",
+    where: 'styles',
+    only: /^styles\/(?!shell\.css$)/,
+    forbid: [/^\.btn-quiet\b/m],
   },
   {
     phase: 'B',

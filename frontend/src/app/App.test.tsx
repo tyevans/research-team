@@ -229,19 +229,44 @@ it('puts a clicked stage in the address bar without a history entry', async () =
   expect(window.history.length).toBe(before)
 })
 
-it('sends the graph facets to the research view and the rest to the course', async () => {
-  // The dispatch is `App.tsx`'s alone and temporary -- it exists only until the
-  // two views merge -- so nothing else in the repository would notice it being
-  // wrong. Two assertions rather than one: a branch that sent *everything* to
-  // one view would satisfy either on its own.
+it('gives one project route three regions rather than a choice of two pages', async () => {
+  // The merge, seen from the route: every project facet now lands on the same
+  // page, and the page has three named regions. Reverted, this fails on the
+  // first assertion -- there was no `Project regions` group, because there was
+  // no container, and `#/p/<id>/entity/e1` reached a whole separate view whose
+  // heading said "Research".
   window.location.hash = `#/p/${ATLAS}/entity/e1`
-  const { unmount } = renderApp()
-  expect(await screen.findByRole('heading', { name: 'Research' })).toBeInTheDocument()
-  unmount()
-
-  window.location.hash = `#/p/${ATLAS}/stage/step1.framing`
   renderApp()
-  expect(await screen.findByRole('heading', { name: 'Hybrid' })).toBeInTheDocument()
+
+  expect(await screen.findByRole('group', { name: 'Project regions' })).toBeInTheDocument()
+  for (const region of ['Queue', 'Holding session', 'Material']) {
+    expect(screen.getByRole('region', { name: region })).toBeInTheDocument()
+  }
+})
+
+it('reaches the material region for a facet that used to reach nothing', async () => {
+  // `artifact` parsed and was linkable and no view read it: it fell through
+  // `RESEARCH_FACETS` onto the course page, which renders nothing about an
+  // artifact selection. Asserted through the open tab rather than through the
+  // region, because a page that mounted MATERIAL and ignored the facet would
+  // satisfy the test above.
+  window.location.hash = `#/p/${ATLAS}/artifact/objectives.md`
+  renderApp()
+
+  expect(await screen.findByRole('tab', { name: 'Artifacts', selected: true })).toBeInTheDocument()
+})
+
+it('keeps ask a view of its own rather than a region', async () => {
+  // The one arm of the old dispatch that survives, and the reason is in
+  // `regionOf`: the ask page is one conversation with no parts and nothing to
+  // read it against. A merge that swept it in with the rest would put a
+  // conversation in a third of a column beside two regions it cannot use.
+  window.location.hash = `#/p/${ATLAS}/ask`
+  renderApp()
+
+  await waitFor(() =>
+    expect(screen.queryByRole('group', { name: 'Project regions' })).not.toBeInTheDocument(),
+  )
 })
 
 it('hands the selected entity to the graph, not just the view', async () => {
