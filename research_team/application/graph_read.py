@@ -53,7 +53,20 @@ MAX_NEIGHBORHOOD_DEPTH = 2
 #: some way before a mature project's entity count does. Enforced inside the
 #: port, so no caller can ask for the whole of a graph that has outgrown one
 #: screen by skipping a layer above.
+#:
+#: `infer_relations` refuses above 500,000 pairs; at 500 entities that is at
+#: most 124,750, so the refusal is unreachable on this path today. Raising
+#: this cap past roughly 1,000 makes it reachable -- a note here rather than
+#: a runtime surprise a year later.
 MAX_GRAPH_NODES = 500
+
+#: How many inferred edges reach one drawing. Not a legibility bound -- a
+#: graph is unreadable long before this -- but the point past which a
+#: force-directed simulation in a browser stops responding at all. The
+#: relations drawn are sparse in every corpus measured, and "in practice" is
+#: not a bound: 500 entities inside one containing era is 124,750 pairs, and
+#: nothing between `infer_relations` and the canvas bounds edges otherwise.
+MAX_INFERRED_EDGES = 2_000
 
 
 @dataclass(frozen=True)
@@ -72,6 +85,15 @@ class GraphEntity:
     entity_id: str
     name: str
     entity_type: str
+    temporal: str | None = None
+    """When this entity happened, rendered for reading. `None` when undated.
+
+    Here rather than left to the edge that needed it, because a node at the
+    end of a temporal edge showing no date makes the edge look arbitrary --
+    the reader is shown a line asserting a containment and given nothing to
+    check it against. Most entities in a real graph are not events, so `None`
+    is the ordinary case rather than an error.
+    """
 
 
 @dataclass(frozen=True)
@@ -81,6 +103,23 @@ class GraphRelationship:
     source_id: str
     target_id: str
     relationship_type: str
+    inferred: bool = False
+    """Computed from two extents on this read, rather than recorded by the log.
+
+    They are not the same claim and must not draw the same. An asserted edge
+    is something a document said; an inferred one is arithmetic over two
+    dates that changes the next time either entity is re-extracted under a
+    new model version.
+    """
+
+    derivation: str | None = None
+    """The two extents this was computed from, as text. `None` when asserted.
+
+    An inferred edge with no visible derivation is indistinguishable from an
+    asserted one, which is the confusion redstring's `InferredRelation`
+    exists to prevent -- it carries `source_extent`/`target_extent` for
+    exactly this and nothing else.
+    """
 
 
 @dataclass(frozen=True)
@@ -128,6 +167,14 @@ class Graph:
     entities: tuple[GraphEntity, ...]
     relationships: tuple[GraphRelationship, ...]
     truncated: bool
+    inferred_truncated: bool = False
+    """Whether the inferred-edge cap dropped any. See `MAX_INFERRED_EDGES`.
+
+    Separate from `truncated` rather than folded into it: `truncated` says
+    entities are missing, and a reader told "this graph is incomplete" when
+    every entity is present and only some computed lines were dropped would
+    go looking for missing nodes that are all there.
+    """
 
 
 class GraphReadPort(Protocol):

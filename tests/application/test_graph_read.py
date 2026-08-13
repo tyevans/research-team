@@ -12,7 +12,14 @@ from redstring import InMemoryGraphStore
 from redstring.domain.entity import Entity, ExtractionMethod
 from redstring.domain.relationship import Relationship
 
-from research_team.application.graph_read import MAX_GRAPH_NODES, MAX_NEIGHBORHOOD_DEPTH
+from research_team.application.graph_read import (
+    MAX_GRAPH_NODES,
+    MAX_INFERRED_EDGES,
+    MAX_NEIGHBORHOOD_DEPTH,
+    Graph,
+    GraphEntity,
+    GraphRelationship,
+)
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 
 TENANT_ID = uuid4()
@@ -86,6 +93,42 @@ async def deep_graph(graph_reader):
         [_relationship(uuid4(), ids[n], ids[n + 1], "next") for n in range(5)]
     )
     return {"root_id": ids[0]}
+
+
+def test_a_relationship_is_asserted_unless_it_says_otherwise():
+    """The default is the safe one.
+
+    Every existing construction site omits these fields, so a default of
+    `True` -- or a required argument -- would relabel every stored edge in the
+    application as inferred. The flag's whole job is telling those apart.
+    """
+    edge = GraphRelationship(source_id="a", target_id="b", relationship_type="advised")
+    assert edge.inferred is False
+    assert edge.derivation is None
+
+
+def test_an_entity_is_undated_unless_it_says_otherwise():
+    node = GraphEntity(entity_id="a", name="Prandtl", entity_type="person")
+    assert node.temporal is None
+
+
+def test_a_graph_reports_its_two_truncations_separately():
+    """`truncated` is about entities; `inferred_truncated` is about lines.
+
+    One flag for both would tell a reader that nodes are missing when every
+    node is present, and send them looking for entities that are all there.
+    """
+    graph = Graph(entities=(), relationships=(), truncated=True)
+    assert graph.inferred_truncated is False
+
+
+def test_the_inferred_edge_cap_is_two_thousand():
+    """Pins the port's contract, not the adapter's -- Task 5 asserts the cap
+    actually bites; this just keeps the published number from drifting
+    unnoticed, since nothing else in this file constructs enough entities to
+    exercise it.
+    """
+    assert MAX_INFERRED_EDGES == 2_000
 
 
 async def test_a_neighborhood_carries_the_edges_among_what_it_returned(
