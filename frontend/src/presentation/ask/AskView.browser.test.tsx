@@ -135,9 +135,7 @@ it('caps the prose column below the width of the surface', async () => {
 
   const threadStyle = getComputedStyle(thread)
   const available =
-    thread.clientWidth -
-    parseFloat(threadStyle.paddingLeft) -
-    parseFloat(threadStyle.paddingRight)
+    thread.clientWidth - parseFloat(threadStyle.paddingLeft) - parseFloat(threadStyle.paddingRight)
 
   const width = column.getBoundingClientRect().width
   expect(width).toBeLessThan(available)

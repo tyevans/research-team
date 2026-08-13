@@ -29,7 +29,7 @@ export const AskActivityFold = ({
 
   return (
     <Disclosure
-      className="ask-activity"
+      className="text-sm"
       open={open}
       onToggle={onToggle}
       label={
@@ -38,7 +38,11 @@ export const AskActivityFold = ({
         </span>
       }
     >
-      <ul className="ask-activity-list">
+      {/* Zeroed because there is no preflight: a bare `<ul>` keeps the user
+          agent's margin, padding and bullets. `m-0`/`p-0` rather than plain
+          CSS -- `--spacing-0` is declared, so they really do emit; see
+          `AskView.browser.test.tsx`'s zeroing assertion. */}
+      <ul className="m-0 flex list-none flex-col gap-1 pt-2 pr-0 pb-0 pl-3 text-fg-faint">
         {activity.map((item) => (
           <li key={item.messageId}>
             <span className="mono">{activityName(item)}</span>

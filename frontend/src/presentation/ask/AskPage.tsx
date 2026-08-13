@@ -31,7 +31,12 @@ export const AskPage = ({
   onAsk: (question: string) => void
   onReset: () => void
 }) => (
-  <section className="ask">
+  // `ask` carries no rules of its own -- it is a selector hook for
+  // `AskView.browser.test.tsx`, which cannot query `section:has(...)`
+  // portably. The layout it names is the `flex`/`overflow-hidden` utilities
+  // beside it: the section owns the viewport and does not scroll, so
+  // `AskThread` can, which is what keeps the composer on the bottom edge.
+  <section className="ask flex min-h-0 flex-1 flex-col overflow-hidden">
     <AskHead projectId={projectId} onReset={onReset} />
 
     {/* A refusal made before the stream started -- a busy chat, a dead
@@ -40,7 +45,7 @@ export const AskPage = ({
         too: the store puts it in both the banner and the failed turn, since a
         rejection is the one case where it can afford to. */}
     {error ? (
-      <div className="ask-banner error-box" role="alert">
+      <div className="error-box mx-5 mt-4 shrink-0" role="alert">
         <strong>That question did not go through.</strong>
         {error}
       </div>

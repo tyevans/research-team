@@ -29,7 +29,7 @@ export const AskThread = ({
 
   if (transcript.length === 0) {
     return (
-      <div className="ask-thread ask-empty">
+      <div className="ask-thread flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-5">
         <EmptyState
           heading="Nothing asked yet."
           detail="Ask about this project’s sources, topics and findings. Nothing you ask here is written down."
@@ -39,8 +39,16 @@ export const AskThread = ({
   }
 
   return (
-    <div className="ask-thread">
-      <div className="ask-measure ask-thread-inner">
+    // `ask-thread` is the selector hook `AskView.browser.test.tsx` scrolls
+    // and measures; the scrolling itself is `overflow-y-auto` beside it.
+    // `padding-inline` in the old stylesheet is `px-5` here, room for the
+    // scrollbar and for the turn panels to breathe.
+    <div className="ask-thread min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-6">
+      {/* `ask-measure` is a bare hook too: `AskView.browser.test.tsx` and
+          `AskTurn.stories.tsx` both select it, so the actual cap has to live
+          on the utilities beside it or the selector would find an element
+          with nothing to measure. */}
+      <div className="ask-measure mx-auto flex w-full max-w-[72ch] flex-col gap-6">
         {transcript.map((turn, index) => (
           <AskTurn
             key={index}
