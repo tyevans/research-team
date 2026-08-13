@@ -208,6 +208,33 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+/* Pressed, for the sighted reader who was already being told by
+   `aria-pressed`. Accent border and accent text is not a new look: it is what
+   `.topic-status-choice-active` and `.topic-document-tab.is-on` both spelled
+   out for themselves, so this moves an existing house treatment onto the
+   attribute that already carries the state. `.topic-status-choice-active` is
+   deleted with it; the tab keeps its class because it is not a `.btn`.
+
+   Measured on `course-workerlist--after-a-failed-poll`: the watched worker's
+   button was `border rgb(35, 42, 51)`, `color rgb(215, 222, 231)` -- byte for
+   byte the unwatched one. A reader could not see which session they had
+   selected.
+
+   Scoped to `.btn` rather than written bare. `Flashcards` puts
+   `aria-pressed={flipped}` on a `role="button"` card, and a flipped card
+   turning accent-on-accent is a different decision from a toggle looking
+   pressed.
+
+   `.btn-accent` is excluded, and not for a case that exists today --
+   `Approvals` marks only its `default` and `quiet` decisions as pressable.
+   It is excluded because the treatment is accent *text*, and an
+   accent-filled button given it would draw its label in its own background
+   colour. A toggle that is already filled has nothing left to say by
+   turning accent anyway. */
+.btn[aria-pressed='true']:not(.btn-accent) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .btn-accent {
   background: var(--accent);
   border-color: var(--accent);
