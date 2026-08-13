@@ -18,9 +18,10 @@
     "format:check": "prettier --check .",
     "size": "node scripts/check-size.mjs",
     "deleted": "node scripts/check-deleted.mjs",
+    "check:tailwind": "node scripts/check-tailwind.mjs",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run size && npm run deleted"
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run size && npm run deleted && npm run check:tailwind"
   },
   "engines": {
     "node": ">=22"

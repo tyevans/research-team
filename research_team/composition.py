@@ -6,6 +6,7 @@ swapping any of them is an edit here and nowhere else.
 """
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID, uuid4
@@ -46,6 +47,7 @@ from research_team.application import (
     WorkerRoster,
 )
 from research_team.application.artifacts import stage_artifact_instructions
+from research_team.application.ask import AskService, ConversationRegistry
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
 from research_team.application.check_telemetry_read import CheckTelemetryReadPort
 from research_team.application.components import component_guidance
@@ -81,6 +83,7 @@ from research_team.infrastructure.agent import (
     build_extraction_model,
     build_model,
 )
+from research_team.infrastructure.agent.ask_agent import DeepAgentAskExecutor
 from research_team.infrastructure.agent.compaction import SummarizingStrategy
 from research_team.infrastructure.agent.component_feedback import ComponentFeedback
 from research_team.infrastructure.agent.corpus_tools import (
@@ -300,6 +303,18 @@ class Application:
     run registered -- or that a stopped run's entry is gone -- needs the
     identical registry the executor's gate and the grant-bound `fetch` tool
     consult, not a second one that would just happen to agree by accident."""
+
+    ask: AskService
+    """Read-only questions about a project, answered without touching its log.
+
+    A field beside `service` rather than something reached through it, because
+    it is deliberately not a session use case: it starts nothing, joins
+    nothing and appends nothing, and routing it through `SessionService` would
+    put an ephemeral path behind the one object whose whole job is durability.
+    It shares this instance's `open_graph` closure, so an ask reads the same
+    open graph store the attached agent writes to rather than a second one
+    rebuilt for the question -- which is also why it is constructed inside
+    `build_application` and cannot be assembled by a caller."""
 
     _initial_project_id: UUID | None = None
     """`project_id`, if `build_application` was given one. Attached in
@@ -1207,6 +1222,22 @@ def build_application(
         graphs=graphs,
     )
     turns = TurnSupervisor(service, activity=activity)
+    # Built here because `open_graph` is a closure over this build's stores:
+    # the ask agent takes the project tools that closure assembles and keeps
+    # the readers, so it cannot be constructed anywhere a caller could reach.
+    # `time.monotonic` rather than wall-clock for both clocks, because the only
+    # questions asked of them are durations -- how long a conversation has been
+    # idle -- and a clock that can step backwards would evict a chat somebody
+    # is in the middle of.
+    ask_service = AskService(
+        executor=DeepAgentAskExecutor(
+            model=resolved_model,
+            open_graph=open_graph,
+            project_files=service.project_files,
+        ),
+        conversations=ConversationRegistry(now=time.monotonic),
+        now=time.monotonic,
+    )
     runs = build_research_run_repository(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store
     )
@@ -1365,6 +1396,7 @@ def build_application(
         workers=worker_roster,
         policy=resolved_policy,
         grants=resolved_grants,
+        ask=ask_service,
         _initial_project_id=project_id,
     )
 
