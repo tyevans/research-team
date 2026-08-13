@@ -20,6 +20,32 @@ Found in the Task 1 review of the projects/redstring work and deferred as
 Minor, because the docstring convention is satisfied and nothing is
 misleading.
 
+### B54. Three components set a border width with no `border-solid`, so it draws nothing
+
+This build imports no Tailwind preflight, so an element's border style
+defaults to `none` unless a utility sets it. A width alone on a side whose
+style is `none` draws nothing — the inverse of the `border-0` trap recorded
+in `CLAUDE.md`. Three call sites carry a directional border-width utility
+with no `border-solid`, each sitting beside a padding utility (`pl-2`/`pl-3`)
+that only makes sense next to a visible rule, which is the tell that a line
+was intended:
+
+- `frontend/src/presentation/session/GateReview.tsx:135` —
+  `border-l-2 border-line-strong pl-2`
+- `frontend/src/presentation/shell/DecisionBar.tsx:44` —
+  `border-b border-k-tool`
+- `frontend/src/presentation/course/AutonomyAllowAll.tsx:78` and `:95` —
+  `border-l border-line-soft pl-3`
+
+Found while reviewing the ask-page redesign branch, which fixed the same
+class of defect within its own files (see that branch's story and the
+`border-0` entry in `CLAUDE.md`). Not fixed there because it is a pre-existing
+defect on `main`, outside that branch's scope, and each site needs a
+judgement call this can't make blind: whether the missing rule is what these
+three intended, or whether the surrounding padding should shrink instead. That
+wants eyes on the rendered result in Storybook, not a sed pass adding
+`border-solid` everywhere a directional border-width utility appears.
+
 ### B3. No type checking
 
 `mypy` is not configured and has never run against this codebase. The CI gate
