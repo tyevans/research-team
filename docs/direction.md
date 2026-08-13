@@ -9,7 +9,7 @@ why several plausible things are not.
 ## The organising observation
 
 This project's distinctive asset is that nearly everything is on the event log.
-Six aggregates — `CodingSession`, `Project`, `Topic`, `Corpus`,
+Six aggregates — `Session`, `Project`, `Topic`, `Corpus`,
 `LearnerProgress`, `AutoResearchRun` — cover the whole of what happens here,
 and `ToolCallDecided` and `AutonomyChanged` mean even the human's authorization
 decisions are durable and replayable.

@@ -17,7 +17,7 @@ from uuid import uuid4
 
 import aiosqlite
 import pytest
-from eventsource import StreamId, collect
+from eventsource import AggregateNotFoundError, EventTypeNotFoundError, StreamId, collect
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from pydantic import ValidationError
 
@@ -655,3 +655,106 @@ async def test_a_stage_advance_written_before_decision_existed_reads_as_approved
     assert advanced[-1].gate_decision == "written before the field existed"
     assert project.state.current_stage == "hybrid.step1.framing"
     assert current_stage_of(project.state, hybrid_default).id == "hybrid.step1.framing"
+
+
+async def test_an_event_renamed_by_the_naming_pass_no_longer_loads(
+    repository, started, db_path
+):
+    """The second deliberate break in this file, and the loud half of it.
+
+    Thirteen events were renamed to make `aggregate_type` inferable from the
+    class name -- `WorkflowSelected` to `ProjectWorkflowSelected`,
+    `SourceDocumentStored` to `CorpusDocumentStored`, and so on. Unlike the
+    field-shape cases above there is nothing to default and nothing to
+    translate: the registry is keyed by class name, and a name it has never
+    heard of is not a shape it can guess at.
+
+    So the read fails with `EventTypeNotFoundError`, naming the missing type
+    and listing what it does know. That is the good outcome, and it is pinned
+    here for the same reason as the `project_id` refusal above -- "old data
+    stops loading" should cost a test to change.
+
+    Written with a valid `ProjectCreated` ahead of it so the failure is
+    provably the rename rather than an empty or malformed stream: everything
+    up to version 2 reads, and version 2 is where it stops.
+    """
+    project_id = uuid4()
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=1,
+        event_type="ProjectCreated",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "Project",
+            "aggregate_version": 1,
+            "name": "atlas",
+        },
+        aggregate_type="Project",
+    )
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=2,
+        event_type="WorkflowSelected",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "Project",
+            "aggregate_version": 2,
+            "preset_id": "hybrid.default",
+            "preset_version": "1",
+        },
+        aggregate_type="Project",
+    )
+
+    with pytest.raises(EventTypeNotFoundError, match="WorkflowSelected"):
+        await repository.projects.load(project_id)
+
+
+async def test_a_session_stored_as_codingsession_reads_as_no_session_at_all(
+    repository, started, db_path
+):
+    """The other half of the break, and it fails in a different way.
+
+    `CodingSession` became `Session`, and `aggregate_type` is not just a label
+    on a row -- it is half of the stream identity. A stream read asks for
+    `(aggregate_id, "Session")`, the stored rows say `"CodingSession"`, and the
+    two never meet.
+
+    So this is not the loud `EventTypeNotFoundError` above. `events_for`
+    returns an empty list and `load` raises `AggregateNotFoundError` -- which
+    is precisely what both do for an id that was never written at all. The old
+    session does not fail to load *as a session*; it fails to exist. An
+    operator looking at one cannot tell "written by an older build" from
+    "wrong id pasted", and no error message will offer the distinction.
+
+    Worth pinning for that reason rather than for the raise itself. The
+    rename was still the right call and the cost is still affordable -- the
+    project is pre-release and holds no real data -- but the failure mode is
+    unhelpful in a way the event-name one is not, and anyone who meets it
+    should find this test rather than a mystery.
+
+    Both halves are asserted because they are separately surprising: the empty
+    read is what a projection would see, and the raise is what a caller would.
+    """
+    session_id = uuid4()
+    await _write_old_event(
+        db_path,
+        session_id,
+        version=1,
+        event_type="SessionStarted",
+        payload={
+            "aggregate_id": str(session_id),
+            "aggregate_type": "CodingSession",
+            "aggregate_version": 1,
+            "system_prompt": SYSTEM_PROMPT,
+            "model_name": MODEL_NAME,
+            "project_id": str(uuid4()),
+        },
+        aggregate_type="CodingSession",
+    )
+
+    assert await repository.events_for(session_id) == []
+
+    with pytest.raises(AggregateNotFoundError):
+        await repository.load(session_id)
