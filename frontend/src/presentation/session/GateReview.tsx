@@ -81,7 +81,7 @@ export const GateReview = ({
     {context.artifactPaths.length > 0 ? (
       <div className="flex flex-col gap-1">
         <span className="text-fg-dim">what it wrote</span>
-        <ul className="m-0 p-0 flex list-none flex-col gap-1">
+        <ul className="m-0 flex list-none flex-col gap-1 p-0">
           {context.artifactPaths.map((path) => (
             <li key={path}>
               <FileLink sessionId={sessionId} path={path} label={path} />
@@ -122,11 +122,11 @@ const Findings = ({ findings }: { findings: readonly GateFinding[] }) => {
     <div className="flex flex-col gap-3">
       {[...groups].map(([severity, group]) => (
         <div key={severity} className="flex flex-col gap-2">
-          <h4 className="m-0 font-normal flex items-center gap-2 text-sm text-fg-dim">
+          <h4 className="font-normal m-0 flex items-center gap-2 text-sm text-fg-dim">
             <Chip tone={severity}>{severityLabel(severity)}</Chip>
             {group.length}
           </h4>
-          <ul className="m-0 p-0 flex list-none flex-col gap-2">
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
             {group.map((finding, index) => (
               // A finding has no id; within one severity its position is the
               // only thing separating two identically worded ones.

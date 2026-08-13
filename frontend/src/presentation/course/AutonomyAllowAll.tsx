@@ -41,18 +41,16 @@ import { INSTANCE_WIDE, NO_POLICY, STAGE_GATE_HELD } from './autonomy-copy.ts'
  * alone deliberately, because converting them would be the forbidden port.
  * `course.css` says the same thing at the rules themselves.
  *
- * **`m-[0px]` rather than `m-0`, and this is not a style choice.** Tailwind
- * builds `m-0` as `calc(var(--spacing) * 0)`, and `--spacing` — the base step
- * the whole scale is derived from — is deliberately absent from `theme.css`,
- * which declares `--spacing-1` … `--spacing-6` and no root. So `m-0` generates
- * no rule at all and the paragraph keeps the user agent's 1em margin, which is
- * exactly what the deleted `margin: 0` existed to remove. Measured: grepping
- * the built stylesheet for `.m-0` after a `vite build` returns nothing, while
- * `.m-\[0px\]` is emitted as `margin:0`. `Approvals.tsx` and `GateReview.tsx`
- * both write `m-0` and `p-0` today and are silently getting nothing; that is a
- * pre-existing defect on already-shipped surfaces rather than one this change
- * introduces, and it is not fixed here because doing so moves pixels on two
- * surfaces this commit is not about.
+ * **This used to say `m-[0px]`, and the reason is worth keeping.** Tailwind
+ * builds a bare step it has no explicit key for as `calc(var(--spacing) * N)`
+ * off the base `--spacing` variable, which `theme.css` deliberately omits — so
+ * `m-0` generated no rule at all and this paragraph kept the user agent's 1em
+ * margin, which is exactly what the `margin: 0` it replaced existed to remove.
+ * The arbitrary value was the local dodge. `theme.css` now declares
+ * `--spacing-0`, so `m-0` emits `margin:var(--spacing-0)` and the two
+ * spellings are equivalent; this reads as the ordinary one because there is no
+ * longer anything to dodge. If `--spacing-0` is ever removed, `check-tailwind.mjs`
+ * fails rather than this paragraph silently regaining its margin.
  */
 export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
   const {
@@ -77,7 +75,7 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
     // same place: the reason the control is absent belongs where the control
     // was. `sub` stays — it is not one of the classes this file took over.
     return (
-      <p className="sub m-[0px] border-l border-line-soft pl-3">
+      <p className="sub m-0 border-l border-line-soft pl-3">
         {readNotFound || !readError ? NO_POLICY : readError}
       </p>
     )
@@ -139,7 +137,7 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
       </div>
 
       {lastAllowAll ? (
-        <p className="sub m-[0px]" role="status">
+        <p className="sub m-0" role="status">
           {lastAllowAll.changed.size === 0
             ? 'Nothing moved — those tools were already set that way.'
             : `Changed ${lastAllowAll.changed.size} tool(s): ${[...lastAllowAll.changed.keys()].join(', ')}.`}

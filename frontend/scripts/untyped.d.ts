@@ -54,6 +54,18 @@ declare module '*/check-deleted.mjs' {
   ) => { added: string[]; removed: string[] }
 }
 
+/** The silent-utility check. Same reasoning again: our module, a narrow shape,
+ *  and `check-tailwind.test.ts` asserts on `name` and `where` by name. The
+ *  `emits` predicate is a parameter rather than a closed-over constant
+ *  precisely so the test can supply one, and typing it here is what stops a
+ *  test passing a `(name: string) => string` and getting truthiness. */
+declare module '*/check-tailwind.mjs' {
+  export const findSilentUtilities: (
+    used: ReadonlyMap<string, ReadonlySet<string>>,
+    emits: (name: string) => boolean,
+  ) => { name: string; where: string[] }[]
+}
+
 declare module '*/mutate.mjs' {
   export const classify: (output: string) => {
     verdict: 'killed' | 'survived' | 'unparsed' | 'unknown'

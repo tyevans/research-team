@@ -188,7 +188,17 @@
 
   /* The spacing rhythm. Literal pixels everywhere before this, which was
      survivable while a row had one level of padding; the project row has
-     four nested ones. */
+     four nested ones.
+
+     `--space-0` is here for `theme.css`'s benefit rather than for any
+     stylesheet's: no rule in this repository reads it, and one that wanted
+     zero would write `0`. It exists because `theme.css` needs a `--spacing-0`
+     to make `m-0` and `p-0` generate rules at all, and `theme.test.ts` fails
+     any name in `@theme` that has no counterpart here. Declaring the pair is
+     cheaper than an exemption, and it means the first test also pins this step
+     at zero -- a `--spacing-0: 1px` would fail rather than quietly making
+     every `p-0` in the console one pixel. */
+  --space-0: 0px;
   --space-1: 3px;
   --space-2: 6px;
   --space-3: 10px;
