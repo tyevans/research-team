@@ -1128,6 +1128,39 @@ deleting one sidecar line erases a person from the graph without touching an
 event — and it is the only item on this list that becomes impossible the moment
 the first real transcript is ingested.
 
+### B54. The 122px hole cannot be reproduced, so nothing holds the keying
+
+`itemKey` in `frontend/src/presentation/tree/ProjectRows.tsx` records a real
+incident: when the projects query answered and every row shifted down by a
+heading, a project row's measured 155px stayed cached against the 33px heading
+that took its index, leaving 122px of nothing in the middle of the landing list.
+Identity keys fixed it, and the fix is still right.
+
+What #49 could not do is test it. `ProjectRows.browser.test.tsx` was written for
+exactly this, in a real engine because jsdom provably cannot hold a stale
+measurement — it lays nothing out, so `VirtualList`'s `|| estimate` fallback
+fires for every row and the cache never holds a measured height at all. Then
+inverting the fix to the index keying the incident blames, and reading the gaps
+between rows synchronously in the same statement as the render that inserts the
+headings, gave `[0,0,0,0,0,0,0]`. No gap, at the earliest moment one could be
+observed. The virtualizer re-measures through the `ResizeObserver` that
+`measureElement` installs, and the correction lands first.
+
+So the gap assertion was deleted rather than kept green against broken keying,
+which would have been worse than nothing. What is left is an assertion on the
+keys themselves, which holds the invariant but not the symptom.
+
+Two candidate explanations, neither established. The library may have gained the
+observer correction after the incident — in which case this is closed by writing
+that down and the keying is belt-and-braces. Or the incident had a contributing
+cause the harness does not reproduce, and the obvious candidate is scrolling: a
+row scrolled out of the rendered window is never re-measured, so its stale entry
+survives in a way an on-screen row's does not. Trying that is the next step, and
+it is cheap — scroll the list before inserting the headings, then assert.
+
+Worth doing because the alternative is a defect that shipped once, has a fix
+nobody can break loudly, and a docstring that will read as folklore in a year.
+
 ## The ask page
 
 Everything here was named in

@@ -6,21 +6,13 @@ import { errorMessage } from '@application/ports/errors.ts'
 import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
 import { isHeld, type Project } from '@domain/project/project.ts'
-import {
-  currentSession,
-  matches,
-  recencyOf,
-  rollups,
-  type ProjectRollup,
-  type Recency,
-} from '@domain/project/landing.ts'
+import { currentSession, matches, rollups, type ProjectRollup } from '@domain/project/landing.ts'
 import { shortId, type ProjectId } from '@domain/shared/identifier.ts'
 
 import { Confirm } from '../common/Confirm.tsx'
 import { Menu, MenuItem, MenuTrigger } from '../common/Menu.tsx'
 import { Button, EmptyState, ErrorBox } from '../common/primitives.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
-import { VirtualList } from '../common/VirtualList.tsx'
 import { ProjectCard, projectSessionsId } from '../entity/project/ProjectCard.tsx'
 import { WorkflowChip } from '../entity/project/WorkflowChip.tsx'
 // `plural` is gone from this file with `ProjectRow`: the card counts its own
@@ -30,6 +22,7 @@ import { fullTime, relativeTime } from '../formatting/format.ts'
 import { projectHref, sessionHref } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
 import { ActivityChip, useProjectActivity } from './ProjectActivity.tsx'
+import { ProjectRows, withHeadings } from './ProjectRows.tsx'
 import { SessionForest, SessionRow } from './SessionRow.tsx'
 import { useSessionForest } from './SessionTree.tsx'
 import { SkeletonRows } from './Skeletons.tsx'
@@ -131,12 +124,19 @@ export const ProjectList = ({
       <ProjectRows
         items={items}
         scrollRef={scrollRef}
-        openIds={open}
-        onToggle={toggle}
-        onTakeOver={(project) => setPending({ kind: 'takeOver', project })}
-        onDelete={(project) => setPending({ kind: 'delete', project })}
-        onOpen={(project) => join.mutate({ id: project.id, takeOver: false })}
-        busy={join.isPending || remove.isPending}
+        renderProject={(rollup) => (
+          <ProjectListRow
+            rollup={rollup}
+            open={open.has(rollup.project.id)}
+            onToggle={() => {
+              toggle(rollup.project.id)
+            }}
+            onTakeOver={() => setPending({ kind: 'takeOver', project: rollup.project })}
+            onDelete={() => setPending({ kind: 'delete', project: rollup.project })}
+            onOpen={() => join.mutate({ id: rollup.project.id, takeOver: false })}
+            busy={join.isPending || remove.isPending}
+          />
+        )}
       />
       {pending ? (
         <Confirm
@@ -194,122 +194,6 @@ const confirmCopy = ({ kind, project }: Confirmation) => {
     confirmLabel: 'Delete project',
     tone: 'danger' as const,
   }
-}
-
-type Item =
-  | { readonly kind: 'heading'; readonly recency: Recency; readonly count: number }
-  | { readonly kind: 'project'; readonly rollup: ProjectRollup }
-
-const HEADINGS: Readonly<Record<Recency, string>> = {
-  today: 'Today',
-  week: 'This week',
-  older: 'Older',
-  empty: 'Nothing in them yet',
-}
-
-/** The ranked list with its recency headings folded into it.
- *
- * One flat array rather than a list of groups because the whole thing is
- * virtualized: a virtualizer counts rows, and a nested structure would have to
- * be flattened for it anyway — at which point it may as well be flattened once,
- * here, where the ordering is decided.
- */
-const withHeadings = (shown: readonly ProjectRollup[], now: number): readonly Item[] => {
-  const items: Item[] = []
-  let current: Recency | null = null
-  for (const rollup of shown) {
-    const recency = recencyOf(rollup, now)
-    if (recency !== current) {
-      current = recency
-      items.push({
-        kind: 'heading',
-        recency,
-        count: shown.filter((other) => recencyOf(other, now) === recency).length,
-      })
-    }
-    items.push({ kind: 'project', rollup })
-  }
-  return items
-}
-
-const PROJECT_ROW_HEIGHT = 108
-const HEADING_HEIGHT = 30
-
-/** What identifies a row to React *and* to the virtualizer's measurement cache.
- *
- * The second is the one that bites. Measurements are cached against whatever
- * key the virtualizer is given, and its default is the array index -- so when
- * the projects query answers and every row shifts down by a heading, index 3
- * keeps the height measured for whatever used to be at index 3. That is not
- * theoretical: it put a project row's 155px against a 33px heading and left a
- * 122px hole in the middle of the list. Keying by identity means a measurement
- * follows its row. */
-const itemKey = (item: Item): string =>
-  item.kind === 'heading' ? `h-${item.recency}` : String(item.rollup.project.id)
-
-const ProjectRows = ({
-  items,
-  scrollRef,
-  openIds,
-  onToggle,
-  onTakeOver,
-  onDelete,
-  onOpen,
-  busy,
-}: {
-  items: readonly Item[]
-  scrollRef: RefObject<HTMLElement | null>
-  openIds: ReadonlySet<ProjectId>
-  onToggle: (id: ProjectId) => void
-  onTakeOver: (project: Project) => void
-  onDelete: (project: Project) => void
-  onOpen: (project: Project) => void
-  busy: boolean
-}) => {
-  return (
-    <VirtualList
-      items={items}
-      scrollRef={scrollRef}
-      className="rows"
-      getKey={(row) => itemKey(row)}
-      estimate={(index) => (items[index]?.kind === 'heading' ? HEADING_HEIGHT : PROJECT_ROW_HEIGHT)}
-      overscan={4}
-    >
-      {(row, position) => (
-        <li
-          ref={position.measure}
-          data-index={position.index}
-          className="rows-item"
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            // `top` is already corrected for where this list sits inside the
-            // scroll container; `VirtualList` takes its own offset back off.
-            transform: `translateY(${position.top}px)`,
-          }}
-        >
-          {row.kind === 'heading' ? (
-            <h3 className="rows-heading">
-              {HEADINGS[row.recency]}
-              <span className="rows-heading-count">{row.count}</span>
-            </h3>
-          ) : (
-            <ProjectListRow
-              rollup={row.rollup}
-              open={openIds.has(row.rollup.project.id)}
-              onToggle={() => onToggle(row.rollup.project.id)}
-              onTakeOver={() => onTakeOver(row.rollup.project)}
-              onDelete={() => onDelete(row.rollup.project)}
-              onOpen={() => onOpen(row.rollup.project)}
-              busy={busy}
-            />
-          )}
-        </li>
-      )}
-    </VirtualList>
-  )
 }
 
 /** One drawn row: everything that has to be fetched or decided, and nothing
