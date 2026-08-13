@@ -41,9 +41,10 @@ import { FileView } from './FileView.tsx'
  * go through it); the audience toggle shown without `lesson.interactive`; and
  * the render toggle offered for a non-markdown path.
  *
- * A fifth break -- removing `TabGroup`'s `if (option.id !== active)` guard --
- * failed nothing. The comment block at the end of this file explains why it is
- * unobservable rather than untested.
+ * A fifth break -- removing the local `TabGroup`'s `if (option.id !== active)`
+ * guard -- failed nothing. That component is gone; the comment block at the end
+ * of this file records where the guard went and why the successor is testable
+ * where this one was not.
  *
  * **What this does not assert:** how markdown renders (`content.tsx`), how a
  * lesson document renders (`LessonDocument`), or the revision history
@@ -107,8 +108,8 @@ it('starts a newly opened file on its contents, not on the last file’s tab', a
   const { rerender, wrapper } = view()
 
   await screen.findByText(/body text/)
-  await user.click(screen.getByRole('button', { name: 'history' }))
-  expect(screen.getByRole('button', { name: 'history' })).toHaveClass('active')
+  await user.click(screen.getByRole('tab', { name: 'history' }))
+  expect(screen.getByRole('tab', { name: 'history' })).toHaveAttribute('aria-selected', 'true')
 
   rerender(<FileView sessionId={SESSION} path={SCRIPT} scrub={ScrubPoint.head()} />)
 
@@ -118,22 +119,22 @@ it('starts a newly opened file on its contents, not on the last file’s tab', a
   // effect afterwards. The version this replaced showed the *previous* file's
   // history against the new file for one paint, and an assertion that waited
   // would have passed against it.
-  expect(screen.getByRole('button', { name: 'contents' })).toHaveClass('active')
-  expect(screen.getByRole('button', { name: 'history' })).not.toHaveClass('active')
+  expect(screen.getByRole('tab', { name: 'contents' })).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getByRole('tab', { name: 'history' })).toHaveAttribute('aria-selected', 'false')
   void wrapper
 })
 
 it('offers rendered and source for markdown only', async () => {
   const { unmount } = view()
   await screen.findByText(/body text/)
-  expect(screen.getByRole('button', { name: 'rendered' })).toBeInTheDocument()
+  expect(screen.getByRole('radio', { name: 'rendered' })).toBeInTheDocument()
   unmount()
 
   // A `.py` file has nothing to render. Absent rather than disabled, which is
   // the same choice `ScrubBar` makes for controls that cannot work.
   view({ path: SCRIPT })
   await screen.findByText(/body text/)
-  expect(screen.queryByRole('button', { name: 'rendered' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('radio', { name: 'rendered' })).not.toBeInTheDocument()
 })
 
 it('hides the render toggle while the history tab is open', async () => {
@@ -141,11 +142,11 @@ it('hides the render toggle while the history tab is open', async () => {
   view()
   await screen.findByText(/body text/)
 
-  await user.click(screen.getByRole('button', { name: 'history' }))
+  await user.click(screen.getByRole('tab', { name: 'history' }))
 
   // There is nothing being rendered to toggle. Leaving it up would offer a
   // control whose effect is invisible until the reader switches back.
-  expect(screen.queryByRole('button', { name: 'rendered' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('radio', { name: 'rendered' })).not.toBeInTheDocument()
 })
 
 it('shows the raw bytes in source mode', async () => {
@@ -153,7 +154,7 @@ it('shows the raw bytes in source mode', async () => {
   view()
   await screen.findByText(/body text/)
 
-  await user.click(screen.getByRole('button', { name: 'source' }))
+  await user.click(screen.getByRole('radio', { name: 'source' }))
 
   // `# Title` as literal text: rendered, it is a heading and the hash is gone.
   // Asserting the hash survives is what distinguishes the two modes without
@@ -168,7 +169,7 @@ it('does not offer the audience toggle for a document with nothing to withhold',
   // `interactive` is false, so there is no answer or rationale to hide and the
   // learner view would be identical to the author view. A control that does
   // nothing, in a header that is already crowded.
-  expect(screen.queryByRole('button', { name: 'learner' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('radio', { name: 'learner' })).not.toBeInTheDocument()
 })
 
 it('offers the audience toggle once the document has components', async () => {
@@ -195,10 +196,10 @@ it('offers the audience toggle once the document has components', async () => {
     },
   )
 
-  expect(await screen.findByRole('button', { name: 'learner' })).toBeInTheDocument()
+  expect(await screen.findByRole('radio', { name: 'learner' })).toBeInTheDocument()
   // Author first: this console's reader is the person building the course, and
   // the learner view is a preview of somebody else's screen.
-  expect(screen.getByRole('button', { name: 'author' })).toHaveClass('active')
+  expect(screen.getByRole('radio', { name: 'author' })).toHaveAttribute('aria-checked', 'true')
 })
 
 it('treats a missing file as an empty state, not as a failure', async () => {
@@ -258,19 +259,26 @@ it('offers a retry for a failure that could actually resolve', async () => {
   expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
 })
 
-/** **There is no test for `TabGroup`'s `if (option.id !== active)` guard, and
- *  that is a finding rather than an omission.**
+/** **The `if (option.id !== active)` guard this file used to admit was untested
+ *  has left the building, and the two halves of it landed differently.**
  *
- *  One was written and deleted. It clicked the already-active tab and asserted
- *  nothing changed, which passed with the guard removed -- so it was
- *  reassurance, not a test. The reason it cannot be written from outside is
- *  that React bails out of a re-render when a `useState` setter is called with
- *  the value the state already holds, so `setAudience('author')` while the
+ *  The original: a test for it was written and deleted, because clicking the
+ *  already-active tab and asserting nothing changed passed with the guard
+ *  removed. React bails out of a re-render when a `useState` setter is called
+ *  with the value the state already holds, so `setAudience('author')` while the
  *  audience is already `author` produces no render, no new query key and no
- *  refetch. The guard is therefore unobservable through the component's
- *  interface: it is defence in depth against a future `TabGroup` consumer
- *  whose `onChange` has a side effect that is not a state set.
+ *  refetch. Unobservable through the interface rather than merely uncovered.
  *
- *  Worth keeping and worth not pretending is covered. `git log` is where the
- *  reasoning for keeping it lives; this is where the absence of a test for it
- *  is admitted. */
+ *  Where it went. For the tabs, into Radix: `Tabs` does not call
+ *  `onValueChange` for the tab that is already open, so the guard is the
+ *  library's and is the same guard for every future call site rather than one
+ *  per component. Still unobservable from here, for the same React reason, and
+ *  still not asserted here.
+ *
+ *  For the choices it became something with teeth. `ToggleGroup` in single mode
+ *  reports `''` when the pressed item is pressed again, which is a *different*
+ *  value rather than the same one -- so React does not bail out, the query key
+ *  changes, and forwarding it would refetch the document for an audience that
+ *  does not exist. `Choices` drops it, and `Choices.test.tsx` fails if that line
+ *  is removed. The defence that could only be argued for is now the one that can
+ *  be proved. */

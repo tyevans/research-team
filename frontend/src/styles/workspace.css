@@ -85,7 +85,27 @@
   color: var(--fg-dim);
   background: var(--bg-raise);
 }
-.tab.active {
+/* The ARIA state rather than the `.active` class this replaced, and rather than
+   Radix's own `data-state`, which was tried first and is wrong here.
+
+   `data-state` is per-component and two Radix components can land on one
+   element: `Choices` puts a `Tooltip` trigger `asChild` over its
+   `RadioGroup.Item`, so the tooltip's own `data-state` -- "closed" -- overwrites
+   the radio's "checked" on exactly the options that carry an explanation.
+   Measured at 1440px on `common-tabs--file-view-header` with the `data-state`
+   selector: `author` was the chosen option and drew in `rgb(92, 102, 115)`, the
+   unchosen colour, while `rendered` beside it drew correctly in the accent.
+   `aria-checked` and `aria-selected` survive both, because a tooltip has no
+   opinion about them -- and they are the same attributes `Tabs.test.tsx` and
+   `Choices.test.tsx` assert, so the stylesheet and the tests now read one fact
+   instead of two.
+
+   No test can see any of this. jsdom applies no stylesheet, so a selector that
+   matches nothing passes every test in the suite and ships a header where the
+   chosen control looks unchosen. This one shipped for the length of one
+   Storybook check. */
+.tab[aria-selected='true'],
+.tab[aria-checked='true'] {
   color: var(--accent);
   background: var(--bg-raise);
   border-color: var(--accent-dim);

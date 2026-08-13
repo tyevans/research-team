@@ -12,9 +12,10 @@ import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
 import type { SessionId } from '@domain/shared/identifier.ts'
 
+import { Choices } from '../common/Choices.tsx'
 import { CodeBlock, Markdown } from '../common/content.tsx'
 import { EmptyState, ErrorBox, Loading } from '../common/primitives.tsx'
-import { Tooltip } from '../common/Tooltip.tsx'
+import { TabList, TabPanel, Tabs } from '../common/Tabs.tsx'
 import { LessonDocument } from '../lesson/LessonDocument.tsx'
 import { FileHistory } from './FileHistory.tsx'
 
@@ -63,19 +64,26 @@ export const FileView = ({
     )
   }
 
+  // One `Tabs` holding the header and both panels, rather than a header beside
+  // a ternary. The tab list has to be inside the root for Radix to wire
+  // `aria-controls` to the panel it opens, and that wiring is most of why this
+  // is a tab list at all. The two `Choices` sit inside the root too and are not
+  // part of it — they configure the panel below rather than choosing it, which
+  // is the distinction `Tabs.tsx` and `Choices.tsx` are split along.
   return (
-    <>
+    <Tabs value={tab} onValueChange={(next) => setTab(next as Tab)}>
       <div className="file-view-head">
         <span className="fv-path">{path.value}</span>
 
         {path.isMarkdown && tab === 'content' ? (
-          <TabGroup
+          <Choices
+            label="How to show this file"
             options={[
               { id: 'rendered', label: 'rendered' },
               { id: 'source', label: 'source' },
             ]}
-            active={mode}
-            onChange={setMode}
+            value={mode}
+            onValueChange={setMode}
           />
         ) : null}
 
@@ -83,7 +91,8 @@ export const FileView = ({
             file with nothing to withhold is a control that does nothing, and
             the header is already crowded. */}
         {showRendered && lesson.interactive ? (
-          <TabGroup
+          <Choices
+            label="Whose view of this document"
             options={[
               {
                 id: 'author',
@@ -98,25 +107,24 @@ export const FileView = ({
                   'Preview what a learner is sent: answers and rationales withheld, and graded on the server.',
               },
             ]}
-            active={audience}
+            value={audience}
             // Switching refetches rather than filters, because which fields
             // exist is the server's decision — that is the whole point of doing
             // the projection there — and the client has no key to hide anyway.
-            onChange={setAudience}
+            onValueChange={setAudience}
           />
         ) : null}
 
-        <TabGroup
+        <TabList
+          label="File view"
           options={[
             { id: 'content', label: 'contents' },
             { id: 'history', label: 'history' },
           ]}
-          active={tab}
-          onChange={setTab}
         />
       </div>
 
-      {tab === 'content' ? (
+      <TabPanel value="content">
         <Contents
           sessionId={sessionId}
           path={path}
@@ -124,10 +132,11 @@ export const FileView = ({
           rendered={showRendered}
           lesson={lesson}
         />
-      ) : (
+      </TabPanel>
+      <TabPanel value="history">
         <FileHistory sessionId={sessionId} path={path} />
-      )}
-    </>
+      </TabPanel>
+    </Tabs>
   )
 }
 
@@ -202,60 +211,5 @@ const Contents = ({
     <Markdown source={contents.data} className={stale} />
   ) : (
     <CodeBlock text={contents.data} className={stale} />
-  )
-}
-
-/** A row of mutually exclusive tabs.
- *
- * The header holds three of these and they behaved identically; three separate
- * button components was three places for the active-state rule to drift. */
-const TabGroup = <T extends string>({
-  options,
-  active,
-  onChange,
-}: {
-  options: readonly { id: T; label: string; explanation?: string }[]
-  active: T
-  onChange: (id: T) => void
-}) => (
-  <div className="tabs">
-    {options.map((option) => (
-      <TabButton key={option.id} option={option} active={active} onChange={onChange} />
-    ))}
-  </div>
-)
-
-/** One tab, wrapped in its explanation only when it has one.
- *
- * Two of the eight tabs in this header carry a sentence — author and learner,
- * where the difference between the two views is the whole reason the switch
- * exists and is not deducible from the two words on the buttons. The other six
- * are self-describing, and wrapping them anyway would put a `Tooltip` around
- * "contents" for the sake of uniformity. */
-const TabButton = <T extends string>({
-  option,
-  active,
-  onChange,
-}: {
-  option: { id: T; label: string; explanation?: string }
-  active: T
-  onChange: (id: T) => void
-}) => {
-  const button = (
-    <button
-      type="button"
-      className={clsx('tab', option.id === active && 'active')}
-      onClick={() => {
-        if (option.id !== active) onChange(option.id)
-      }}
-    >
-      {option.label}
-    </button>
-  )
-  if (!option.explanation) return button
-  return (
-    <Tooltip asChild explanation={option.explanation}>
-      {button}
-    </Tooltip>
   )
 }
