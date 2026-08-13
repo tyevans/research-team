@@ -20,7 +20,6 @@ back, and this is that something.
 
 import asyncio
 import json
-import re
 from datetime import datetime
 from uuid import UUID, uuid5
 
@@ -36,7 +35,10 @@ from eventsource import (
     create_async_engine,
     handles,
 )
-from eventsource.adapters.sql.readmodel_schema import generate_full_schema
+from eventsource.adapters.sql.readmodel_schema import (
+    generate_additive_migration,
+    generate_full_schema,
+)
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 from eventsource.application.projections.retry import ExponentialBackoffRetryPolicy
@@ -46,7 +48,11 @@ from eventsource.application.subscriptions import (
 )
 from eventsource.application.subscriptions.retry import RetryConfig
 from eventsource.ports.dlq import DLQEntry
-from eventsource.ports.readmodels import Query, ReadModelRepository
+from eventsource.ports.readmodels import (
+    Query,
+    ReadModelRepository,
+    ReadModelSchemaMismatchError,
+)
 from pydantic import Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -242,26 +248,6 @@ class SessionSummaryProjection(DeclarativeProjection):
         return row
 
 
-def _column_definitions(model: type[ReadModel]) -> list[tuple[str, str]]:
-    """The `(name, definition)` of every column in a model's generated DDL.
-
-    Read back out of the DDL rather than off the model's fields so there is
-    still one source of truth for how a field becomes a column -- the type
-    mapping, the defaults and the constraints are the generator's business,
-    and a second opinion here would drift from it silently.
-    """
-    body = re.search(r"CREATE TABLE[^(]*\((.*?)\n\);", model_schema(model), re.DOTALL)
-    if not body:
-        return []
-    columns = []
-    for line in body.group(1).splitlines():
-        stripped = line.strip().rstrip(",")
-        name, _, definition = stripped.partition(" ")
-        if name and definition:
-            columns.append((name, stripped))
-    return columns
-
-
 def model_schema(model: type[ReadModel]) -> str:
     return generate_full_schema(model, dialect="sqlite")
 
@@ -283,6 +269,22 @@ async def apply_schema(connection: aiosqlite.Connection, model: type[ReadModel])
     Only additions are handled -- a *renamed* or *retyped* column is a rebuild
     from scratch, and one that silently dropped data here would be worse than
     an error nobody can miss.
+
+    The additions come from `generate_additive_migration`, which is pure and
+    raises `ReadModelSchemaMismatchError` before returning any statement. So a
+    model carrying one addable column and one impossible one (`NOT NULL` with
+    no default, which has no honest value for the rows already stored) leaves
+    the table as it was rather than half-widened. The loop this replaced read
+    the column definitions back out of the generated DDL by regex and issued
+    one `ALTER` each, so SQLite refused the impossible column *after* the
+    addable ones had landed.
+
+    The generator refuses a required column with no default outright, where
+    SQLite refuses it only on a table that has rows. That difference matters
+    here: `project_id` is exactly such a column, and the incident above is
+    repaired by adding it to a database whose table is usually empty. So an
+    empty table takes the recreate path instead -- there is no data to lose,
+    which is the only reason it is honest.
     """
     await connection.executescript(model_schema(model))
     existing = {
@@ -291,15 +293,30 @@ async def apply_schema(connection: aiosqlite.Connection, model: type[ReadModel])
             await connection.execute(f"PRAGMA table_info({model.table_name()})")
         ).fetchall()
     }
-    for name, definition in _column_definitions(model):
-        if name not in existing:
-            # SQLite refuses `NOT NULL` with no default here, which is the
-            # right refusal: such a column has no honest value for the rows
-            # already stored. The error names the column, which is what a
-            # developer who has just added a field needs to see.
-            await connection.execute(
-                f"ALTER TABLE {model.table_name()} ADD COLUMN {definition}"
-            )
+    # Not the library's `reconcile_read_model_schema`, which does this whole
+    # function: it takes a SQLAlchemy `AsyncConnection | AsyncEngine`, and
+    # every store here owns a raw aiosqlite one. Threading an engine through
+    # two `open()` classmethods buys behaviour these few lines already have.
+    try:
+        statements = generate_additive_migration(model, existing, dialect="sqlite")
+    except ReadModelSchemaMismatchError:
+        rows = await (
+            await connection.execute(f"SELECT 1 FROM {model.table_name()} LIMIT 1")
+        ).fetchone()
+        if rows is not None:
+            # Rows exist and one of the new columns has no honest value for
+            # them. `/rebuild` is the answer, and an error nobody can miss is
+            # how they find out -- filling the column with a guess would be
+            # worse. `test_a_refused_reconcile_leaves_the_table_untouched`
+            # fails if any of the addable columns lands anyway.
+            raise
+        await connection.executescript(
+            f"DROP TABLE {model.table_name()};\n{model_schema(model)}"
+        )
+        await connection.commit()
+        return
+    for statement in statements:
+        await connection.execute(statement)
     await connection.commit()
 
 
@@ -726,9 +743,11 @@ class CorpusStore:
         cls, db_path: str, checkpoint_repo=None, dlq_repo=None, tracer=None
     ) -> "CorpusStore":
         connection = await aiosqlite.connect(db_path)
-        await connection.executescript(
-            generate_full_schema(CorpusDocumentRow, dialect="sqlite")
-        )
+        await apply_schema(connection, CorpusDocumentRow)
+        # `apply_schema` reconciles columns and not indexes, so this stays: it
+        # is not made redundant by the line above and deleting it would put
+        # every project's reads back on a full scan.
+        #
         # The generated schema indexes `deleted_at` and nothing else. Every
         # read here is by project, and a corpus is the one table expected to
         # grow into the millions of characters, so the scan is worth avoiding.

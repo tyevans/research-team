@@ -411,3 +411,40 @@ async def test_a_rebuild_reproduces_the_table_from_the_log(db_path, store, publi
         assert await runner.get(project_id, "s2") is None
     finally:
         await runner.stop()
+
+
+async def test_a_corpus_database_written_before_a_field_existed_gains_its_column(db_path):
+    """`CorpusStore.open` must reconcile the table, not only create it.
+
+    It called `executescript` directly, which is `CREATE TABLE IF NOT EXISTS`
+    and so does nothing to a table that already exists -- a field added to
+    `CorpusDocumentRow` would never reach a database anybody already had, and
+    every read of it would fail. That is the same defect
+    `test_a_database_written_before_a_field_existed_gains_its_column` in
+    `test_summary_store.py` records for `/sessions`, one store over, and this
+    is that test against `CorpusStore`.
+
+    Simulated by dropping `uri` back off, which is the shape of the problem: a
+    table one field behind the model.
+    """
+    import aiosqlite
+
+    store = await CorpusStore.open(db_path)
+    await store.close()
+
+    async with aiosqlite.connect(db_path) as connection:
+        await connection.execute(
+            f"ALTER TABLE {CorpusDocumentRow.table_name()} DROP COLUMN uri"
+        )
+        await connection.commit()
+
+    reopened = await CorpusStore.open(db_path)
+    try:
+        columns = await reopened._connection.execute(
+            f"PRAGMA table_info({CorpusDocumentRow.table_name()})"
+        )
+        assert "uri" in {row[1] for row in await columns.fetchall()}
+        # And it still answers, which is the failure a schema check alone misses.
+        assert await reopened.list(uuid4()) == []
+    finally:
+        await reopened.close()

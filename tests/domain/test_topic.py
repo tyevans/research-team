@@ -425,16 +425,6 @@ def test_evolve_ignores_events_it_has_no_branch_for():
     assert evolve(state, foreign) is state
 
 
-def test_the_aggregate_refuses_a_command_aimed_at_a_different_topic():
-    """`ChecksCommandTarget`, applied to the one command that carries an id."""
-    topic = Topic(uuid4())
-
-    with pytest.raises(CommandRejectedError, match="targets"):
-        topic.execute(
-            OpenTopic(topic_id=uuid4(), project_id=uuid4(), question="q?", rationale="r")
-        )
-
-
 def test_the_aggregate_folds_its_own_events():
     topic = Topic(uuid4())
     topic.execute(

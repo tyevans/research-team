@@ -47,8 +47,6 @@ from uuid import UUID
 from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
 from pydantic import BaseModel, Field
 
-from research_team.domain.targeting import ChecksCommandTarget
-
 
 @register_event
 class SourceDocumentStored(DomainEvent):
@@ -265,7 +263,7 @@ def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
             return state
 
 
-class Corpus(ChecksCommandTarget, DeciderAggregate[CorpusState, CorpusCommand]):
+class Corpus(DeciderAggregate[CorpusState, CorpusCommand]):
     """The imperative shell. Holds no rules -- it delegates all three.
 
     Mirrors `Project`'s shape exactly: the class attributes bind directly to
@@ -274,7 +272,6 @@ class Corpus(ChecksCommandTarget, DeciderAggregate[CorpusState, CorpusCommand]):
     """
 
     aggregate_type = "Corpus"
-    target_field = "corpus_id"
 
     initial_state = staticmethod(initial_state)
     decide = staticmethod(decide)

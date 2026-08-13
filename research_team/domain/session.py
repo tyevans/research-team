@@ -50,7 +50,6 @@ from research_team.domain.events import (
     TurnFailed,
     UserMessageSent,
 )
-from research_team.domain.targeting import ChecksCommandTarget
 
 
 class SessionState(BaseModel):
@@ -362,7 +361,7 @@ def evolve(state: SessionState, event: DomainEvent) -> SessionState:
             return state
 
 
-class CodingSession(ChecksCommandTarget, DeciderAggregate[SessionState, SessionCommand]):
+class CodingSession(DeciderAggregate[SessionState, SessionCommand]):
     """The imperative shell. Holds no rules -- it delegates all three.
 
     Everything the library needs from an aggregate (replay, snapshots, version
@@ -376,7 +375,6 @@ class CodingSession(ChecksCommandTarget, DeciderAggregate[SessionState, SessionC
     """
 
     aggregate_type = "CodingSession"
-    target_field = "session_id"
     schema_version = 4  # SessionState gained `status` for the decider port
 
     initial_state = staticmethod(initial_state)

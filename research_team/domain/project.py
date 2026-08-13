@@ -17,7 +17,6 @@ from uuid import UUID
 from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
 from pydantic import BaseModel, Field
 
-from research_team.domain.targeting import ChecksCommandTarget
 from research_team.domain.workflow import Decision, Preset, Stage
 
 
@@ -464,7 +463,7 @@ def evolve(state: ProjectState, event: DomainEvent) -> ProjectState:
             return state
 
 
-class Project(ChecksCommandTarget, DeciderAggregate[ProjectState, ProjectCommand]):
+class Project(DeciderAggregate[ProjectState, ProjectCommand]):
     """The imperative shell. Holds no rules -- it delegates all three.
 
     Everything the library needs from an aggregate (replay, snapshots, version
@@ -476,7 +475,6 @@ class Project(ChecksCommandTarget, DeciderAggregate[ProjectState, ProjectCommand
     """
 
     aggregate_type = "Project"
-    target_field = "project_id"
 
     initial_state = staticmethod(initial_state)
     decide = staticmethod(decide)

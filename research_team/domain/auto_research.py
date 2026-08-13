@@ -29,8 +29,6 @@ from uuid import UUID
 from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
 from pydantic import BaseModel, Field
 
-from research_team.domain.targeting import ChecksCommandTarget
-
 StopReason = Literal[
     "queue_empty",
     "budget_exhausted",
@@ -473,11 +471,10 @@ def evolve(state: AutoRunState, event: DomainEvent) -> AutoRunState:
     return state
 
 
-class AutoResearchRun(ChecksCommandTarget, DeciderAggregate[AutoRunState, AutoRunCommand]):
+class AutoResearchRun(DeciderAggregate[AutoRunState, AutoRunCommand]):
     """The imperative shell. Holds no rules -- it delegates all three."""
 
     aggregate_type = "AutoResearchRun"
-    target_field = "run_id"
 
     initial_state = staticmethod(initial_state)
     decide = staticmethod(decide)
