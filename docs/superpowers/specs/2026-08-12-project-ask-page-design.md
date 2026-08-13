@@ -88,10 +88,23 @@ The deep agent's built-in file tools are backed by a **read-only backend** over
 They raise rather than no-op so that a prompt attempting a write fails visibly
 in a test instead of appearing to succeed.
 
-No subagents and no `task` tool -- this is single-agent by choice. `fetch` and
-`web_search` are absent from the set entirely, which also means the approval-gate
-machinery (`interrupt_config`, `AutonomyPolicy`) has nothing to gate and is not
-wired in.
+No custom subagents are configured. `create_deep_agent`'s built-in `task` tool
+is still offered -- removing it was not worth fighting the library for, and it
+is harmless here because the general-purpose subagent inherits both the
+restricted filesystem middleware and the same filtered project readers. It gets
+no capability the main agent lacks.
+
+`fetch` and `web_search` are absent from the set entirely, which also means the
+approval-gate machinery (`interrupt_config`, `AutonomyPolicy`) has nothing to
+gate and is not wired in.
+
+The write file tools are not merely refused, they are never offered. Measured
+rather than assumed: `create_deep_agent`'s `permissions` parameter does **not**
+keep a tool off the model's list -- it denies the operation inside the tool --
+so the agent still sees `write_file`, `edit_file` and `delete` and only learns
+they are forbidden by calling one. Replacing `FilesystemMiddleware` with one
+whose `tools` list holds only `ls`, `read_file`, `glob` and `grep` is what
+actually removes them. `ReadOnlyProjectBackend` stays as the second layer.
 
 ### What pins the claim
 
