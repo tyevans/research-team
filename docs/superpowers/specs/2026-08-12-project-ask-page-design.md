@@ -69,10 +69,19 @@ The ask path keeps only the readers:
 
 - `graph_search`
 - `list_sources`, `read_source`
-- `list_topics`, `open_topic`
+- `list_topics`
 
 and drops every mutator: `remember`, `remember_page`, `unmerge`,
-`record_finding`, `record_gap`, `link_source`.
+`record_finding`, `record_gap`, `link_source`, `open_topic`.
+
+**`open_topic` is on that second list, and an earlier draft of this document
+had it on the first.** Its name reads like a reader and it is not:
+`RepositoryTopics.open_topic` executes an `OpenTopic` command and creates a
+`Topic` aggregate — its own docstring is "Start tracking a question." The
+review of the implementation caught it. It is recorded here rather than
+quietly corrected because the near-miss is the argument for the allowlist:
+the mechanism was sound and the contents were wrong, and only reading each
+tool's implementation found it.
 
 The deep agent's built-in file tools are backed by a **read-only backend** over
 `SessionService.project_files`: list and read succeed, write/edit/delete raise.
@@ -114,10 +123,18 @@ conversation, backing a "new chat" control.
 
 ### Citations are derived, not claimed
 
-The service records what the tools actually returned during the turn -- source
-ids from `read_source`, entity ids from `graph_search`, topic ids from
-`open_topic` -- and emits that set as the citations. Prose is never parsed for
-references.
+The service records what the tools actually opened during the turn -- source
+ids from `read_source` -- and emits that set as the citations. Prose is never
+parsed for references. Searching is not reading: `graph_search` and
+`list_sources` return candidates the agent may never open, so they earn no
+citation.
+
+`read_source` is the only citing tool, so `Citation.kind` is
+`Literal["source"]` rather than a union. An earlier draft also cited topics
+via `open_topic`; with that tool excluded as a mutation, nothing can open one
+identified topic, and a union member no tool can emit is a dead branch no test
+can reach. Widening it is trivial if a read-only topic reader is ever added --
+`BACKLOG.md` records that as the way topics become citable.
 
 The agent therefore cannot cite a document it did not open, because a citation
 originates in the read rather than in the sentence. A confabulated title in the
