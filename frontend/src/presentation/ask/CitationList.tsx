@@ -28,16 +28,19 @@ export const CitationList = ({
 
   return (
     <div className="flex flex-wrap items-baseline gap-2 text-sm">
-      <span className="text-xs tracking-[0.06em] text-fg-faint uppercase">Sources</span>
-      {/* Zeroed for the reason `AskThread`'s activity list is: no preflight,
-          so a bare `<ul>` arrives with the user agent's margin and bullets. */}
+      <span className="tracking-wide text-xs text-fg-faint uppercase">Sources</span>
+      {/* Zeroed as utilities rather than plain CSS: this build imports no
+          preflight, so a bare `<ul>` arrives with the user agent's margin,
+          padding and bullets, and `--spacing-0` makes `m-0`/`p-0` really emit
+          -- see `AskView.browser.test.tsx`'s zeroing assertion, which selects
+          this list. */}
       <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
         {citations.map((citation) => (
           <li key={citation.id}>
             {/* The project's document facet, not a bare id: the reader is on
                 the project page already, and this keeps them on it. */}
             <a
-              className="font-mono"
+              className="font-mono text-sm"
               href={projectHref(projectId, { facet: 'doc', id: citation.id })}
             >
               {citation.id}
