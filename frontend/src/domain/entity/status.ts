@@ -70,6 +70,19 @@ const TONES: Readonly<Record<string, StatusTone>> = {
   done: 'good',
   cancelled: 'neutral',
   failed: 'bad',
+  // topic flags
+  //
+  // Not statuses on the wire -- a topic carries `contested` and `isBlocked`
+  // as booleans beside its status -- but they are rendered through the same
+  // chip, so this is where "how is that word toned" is answered and there
+  // should not be a second place. They were absent, so both fell through to
+  // the `neutral` default and drew identically to `open`: the story
+  // `entity-topic--detail-needing-attention` named two states and showed
+  // neither. `bad` rather than `held`, which is the near miss: `held` is the
+  // system waiting for a person and doing what it was told, while a blocked
+  // topic and two findings that disagree are both something being wrong.
+  blocked: 'bad',
+  contested: 'bad',
   // run endings
   queue_empty: 'good',
   budget_exhausted: 'bad',

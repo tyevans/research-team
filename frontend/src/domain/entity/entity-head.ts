@@ -46,6 +46,13 @@ export interface EntityHead {
  * Exported because the fallback should be *visible* — a short id rendered in
  * the same weight as a name reads as a name, and a reader cannot tell that the
  * console does not know what this thing is called.
+ *
+ * A type predicate rather than a `boolean`, which is not decoration: it is
+ * what lets the only caller pass `head.label` to something that wants a
+ * `string`. As a plain boolean the check passes and the type does not narrow,
+ * so the caller either repeats the condition inline or asserts — and an
+ * assertion here would be the one place the absence this type exists to carry
+ * gets thrown away.
  */
-export const isNamed = (head: EntityHead): boolean =>
+export const isNamed = (head: EntityHead): head is EntityHead & { label: string } =>
   head.label !== null && head.label.trim().length > 0

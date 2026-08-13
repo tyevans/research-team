@@ -79,6 +79,34 @@ it('says when a topic is contested and stays quiet when it is not', () => {
   expect(screen.queryByText('contested')).toBeNull()
 })
 
+it('says when a topic is blocked, which it used not to say at all', () => {
+  // `isBlocked` was in the props type and read by nothing here, so a blocked
+  // topic and an open one rendered identically. `TopicRow` says it with a red
+  // left border and a detail has no rows to border, so the word is the only
+  // form left — and the better one, since a detail is read rather than
+  // scanned. Fails with the change reverted: the chip does not exist.
+  const { rerender } = render(<TopicDetail topic={aDetail({ isBlocked: true })} />)
+  expect(screen.getByText('blocked')).toBeInTheDocument()
+
+  rerender(<TopicDetail topic={aDetail({ isBlocked: false })} />)
+  expect(screen.queryByText('blocked')).toBeNull()
+})
+
+it('tones both flags apart from an ordinary status', () => {
+  // The other half of the same finding. Both flags were missing from the tone
+  // map, so both took the `neutral` default and drew exactly like `open` — the
+  // story named two states and showed neither. This fails on the tone map
+  // alone, with the chips rendering perfectly well.
+  const { container } = render(
+    <TopicDetail topic={aDetail({ isBlocked: true, contested: true })} />,
+  )
+  expect(screen.getByText('blocked').closest('.ent-status')).toHaveClass('ent-status-bad')
+  expect(screen.getByText('contested').closest('.ent-status')).toHaveClass('ent-status-bad')
+  // And the status itself is untouched by either: the fixture is
+  // `investigating`, which is `live` with or without a flag beside it.
+  expect(container.querySelector('.ent-status')).toHaveClass('ent-status-live')
+})
+
 it('omits a heading rather than heading an empty section', () => {
   // A topic opened in a hurry has no rationale. "Why this is being asked"
   // followed by nothing is worse than silence — it reads as a field that

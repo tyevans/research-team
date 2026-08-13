@@ -28,6 +28,10 @@
   font-family: var(--mono);
   font-size: var(--t-xs);
   white-space: nowrap;
+  /* So the chip can be narrower than its contents at all. Without it the
+     chip's intrinsic width wins over its container's, and a shrinkable detail
+     inside a chip that never shrinks shrinks nothing. */
+  max-width: 100%;
 }
 
 /* `neutral` has no chrome at all, which is a fix rather than a default.
@@ -88,14 +92,34 @@
   color: var(--k-failure);
 }
 
+/* The status itself never shrinks. It is the chip's identity and the thing the
+   tone is about; a row too narrow for both should eat the explanation. */
+.ent-status-label {
+  flex: 0 0 auto;
+}
+
 /* The reason, when there is one. Dimmer than the status itself and allowed to
    truncate: it is an explanation, and an explanation that pushes the status
-   off the row has cost more than it gave. */
+   off the row has cost more than it gave.
+
+   It used to say `max-width: 24ch`, which truncated at a fixed width whatever
+   the row could actually afford -- "model returned no content" clipped with a
+   thousand pixels free beside it, measured on
+   `entity-entitystatus--failure-with-reason` at 1440px. A fixed cap answers
+   "how much is too much" without asking how much there is. `flex: 0 1 auto`
+   with `min-width: 0` asks: the detail is now the only part of the chip that
+   gives way, and only when something is competing for the space.
+
+   `min-width: 0` is the line the ellipsis depends on -- a flex item defaults
+   to `min-width: auto` and refuses to shrink below its text, so `overflow`
+   and `text-overflow` below never engage. `.ent-ref-name` carries the same
+   line and the same reason. */
 .ent-status-detail {
   color: var(--fg-faint);
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 24ch;
 }
 
 /* ======================================================================= */

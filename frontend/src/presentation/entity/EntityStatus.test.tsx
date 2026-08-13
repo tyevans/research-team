@@ -16,7 +16,10 @@ import { EntityStatus } from './EntityStatus.tsx'
 
 it('paints a failure with the failing tone', () => {
   render(<EntityStatus status="failed" />)
-  expect(screen.getByText('failed')).toHaveClass('ent-status', 'ent-status-bad')
+  // `closest` rather than the matched element: the status word is its own
+  // span now, so that it can be told not to shrink when the reason beside it
+  // has to. The tone stays on the chip, which is what carries the chrome.
+  expect(screen.getByText('failed').closest('.ent-status')).toHaveClass('ent-status-bad')
 })
 
 it('paints a gate as held rather than as a failure', () => {
