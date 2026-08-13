@@ -167,6 +167,15 @@ def format_recalled(recalled: Recalled, query: str) -> str:
     because normalization means they need not be identical. A model that can
     see the difference can ask again; one that cannot would take results for a
     neighbouring question as answering its own.
+
+    It deliberately does *not* name `engines`, `categories` or `time_range`,
+    and that is not an omission. The query is reported because normalization
+    can merge two spellings of it, so a hit does not imply the same text. The
+    parameters are in the key unfolded, compared exactly, so a hit *does* imply
+    they were identical -- there is nothing to disagree about and a line saying
+    `time_range=year` would only restate the call the model just made. If the
+    parameters ever gain folding of their own, that argument expires and this
+    has to name them.
     """
     asked = "" if recalled.asked == query else f" for {recalled.asked!r}"
     return (
@@ -198,29 +207,88 @@ def build_search_tool(
     client: httpx.AsyncClient | None = None,
     recall: Recall | None = None,
     attempts: SearchAttempts | None = None,
+    engines: str | None = None,
+    categories: str | None = None,
+    time_range: str | None = None,
 ) -> BaseTool:
     """A `web_search` tool against one SearXNG instance.
 
     `client` is injectable so tests can stub the transport; nothing in the
-    suite touches the real network. `recall` is optional so callers that don't
-    want the behavior (or Task 6's wiring, before it lands) still get a tool
-    that works. `attempts` is likewise optional -- nothing wires it into the
-    application yet; that is Task 6.
+    suite touches the real network. `recall` and `attempts` are optional so a
+    caller that does not want either behaviour still gets a working tool.
+
+    `engines`, `categories` and `time_range` set instance defaults for a
+    deployment whose instance is configured for a particular kind of work; a
+    call that names one overrides it for that call alone. They are the
+    SearXNG parameters of the same names and are passed through unvalidated --
+    the list of engines a given instance runs is that instance's business, and
+    an unknown one is answered by the instance rather than guessed at here.
     """
+    # Bound to differently-named locals because the tool's own parameters
+    # shadow these: inside `web_search`, `engines` is what this call asked for
+    # and `default_engines` is what the deployment configured.
+    default_engines, default_categories = engines, categories
+    default_time_range = time_range
 
     @tool(SEARCH_TOOL)
-    async def web_search(query: str) -> str:
-        """Search the web. Returns titles, URLs, and short snippets."""
+    async def web_search(
+        query: str,
+        engines: str | None = None,
+        categories: str | None = None,
+        time_range: str | None = None,
+    ) -> str:
+        """Search the web. Returns titles, URLs, and short snippets.
+
+        `categories` narrows what kind of thing is searched -- `science` for
+        papers and scholarly sources, `news` for reporting, `it` for technical
+        documentation. Reach for it when the general web would bury what you
+        want under the wrong kind of page.
+
+        `time_range` bounds how recent a result may be: `day`, `week`, `month`
+        or `year`. Use it when the answer has changed and an older page would
+        be wrong rather than merely old -- a current version number, an ongoing
+        situation. Leave it off for anything settled; it discards good sources
+        that happen to be old.
+
+        `engines` names specific SearXNG engines (comma-separated, e.g.
+        `arxiv`, `wikipedia`) when you want one source rather than a
+        consensus. Which engines exist depends on the instance, so prefer
+        `categories` unless you know the instance runs the one you name.
+        """
+        query_engines = engines if engines is not None else default_engines
+        query_categories = categories if categories is not None else default_categories
+        query_time_range = time_range if time_range is not None else default_time_range
+        # Unset parameters are absent from the request, never sent empty:
+        # SearXNG reads an empty `time_range` and an absent one differently,
+        # and `test_a_search_with_no_parameters_sends_exactly_what_it_always_sent`
+        # fails if this becomes an unconditional dict with empty values.
+        request_params = {"q": query, "format": "json"}
+        if query_engines is not None:
+            request_params["engines"] = query_engines
+        if query_categories is not None:
+            request_params["categories"] = query_categories
+        if query_time_range is not None:
+            request_params["time_range"] = query_time_range
         if attempts is not None and attempts.exhausted():
             # Past the bound, the request is never made -- the whole point is
             # that another search would not help, so there is nothing to gain
             # by spending the round trip to confirm it.
             return _exhausted_notice(MAX_EMPTY_SEARCHES)
+        # Keyed explicitly rather than through `Recall`'s default, which would
+        # key on the bare normalized query and collide with `fetch`'s URL keys.
+        # The parameters are part of it because the instance answers
+        # differently for them; keyed on the query alone, a year-bounded search
+        # is served the unrestricted search's results under a `[recalled]`
+        # label. See `query_key`. The *resolved* values, not the call's, so a
+        # deployment default is as much a part of the key as an argument is.
+        memo_key = query_key(
+            query,
+            engines=query_engines,
+            categories=query_categories,
+            time_range=query_time_range,
+        )
         if recall is not None:
-            # Keyed explicitly rather than through `Recall`'s default, which
-            # would key on the bare normalized query and collide with `fetch`'s
-            # URL keys. See `query_key`.
-            remembered = recall.get(query, key=query_key(query))
+            remembered = recall.get(query, key=memo_key)
             if remembered is not None:
                 return format_recalled(remembered, query)
         owned = client is None
@@ -228,7 +296,7 @@ def build_search_tool(
         try:
             response = await http.get(
                 f"{base_url}/search",
-                params={"q": query, "format": "json"},
+                params=request_params,
             )
             response.raise_for_status()
             payload = response.json()
@@ -253,7 +321,7 @@ def build_search_tool(
                 # would have succeeded never happens -- the same failure this
                 # transport-error guard exists to prevent, reached by a path
                 # that never raises.
-                recall.put(query, results, key=query_key(query))
+                recall.put(query, results, key=memo_key)
             return results
         except ValueError:
             # Not JSON. Overwhelmingly the default-settings case, and worth

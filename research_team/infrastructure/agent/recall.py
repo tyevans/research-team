@@ -101,8 +101,26 @@ def normalize_url(url: str) -> str:
     return urlunsplit((parts.scheme.lower(), host, parts.path or "/", parts.query, ""))
 
 
-def query_key(request: str) -> str:
-    """The memo key for a search query.
+_FIELD = "\x1f"
+"""Separates the query from the parameters in a search key.
+
+A unit separator because `normalize_query` cannot emit one: Python counts
+`\\x1f` as whitespace, so `str.split` consumes it and the collapse turns it
+into a space. A query cannot therefore be written to look like a parameter
+suffix and land on a parameterised search's entry.
+`test_a_parameter_value_cannot_be_forged_from_the_query_text` fails if this
+becomes a printable character.
+"""
+
+
+def query_key(
+    request: str,
+    *,
+    engines: str | None = None,
+    categories: str | None = None,
+    time_range: str | None = None,
+) -> str:
+    """The memo key for a search query, with the parameters that change it.
 
     One `Recall` serves two tools, so the kind of request has to be part of
     the key. Without it the keyspaces overlap wherever a normalized query and
@@ -112,8 +130,32 @@ def query_key(request: str) -> str:
     labelled as the page, with no `url:` header and no body: a wrong answer
     wearing a right one's label, which is the failure this whole module is
     built to avoid.
+
+    The three SearXNG parameters join it for the same reason, read through
+    this module's normalization rule: fold only where the upstream is already
+    insensitive, and an instance is emphatically *not* insensitive to these --
+    changing what it returns is the entire reason for sending them. Keyed on
+    the query alone, the same words with `time_range="year"` would be answered
+    from the unrestricted search's entry.
+
+    The values are compared exactly, with none of the folding the query gets.
+    Whether `Arxiv` reaches the same engine as `arxiv`, or `news,it` the same
+    set as `it,news`, is a question about a given instance's configuration,
+    and this module does not get to assume the generous answer -- an extra
+    request is the cost of guessing wrong in the safe direction.
+
+    An unparameterised call keys byte-for-byte as it did before the parameters
+    existed, which is the overwhelming majority of searches.
     """
-    return f"q:{normalize_query(request)}"
+    key = f"q:{normalize_query(request)}"
+    for name, value in (
+        ("engines", engines),
+        ("categories", categories),
+        ("time_range", time_range),
+    ):
+        if value is not None:
+            key += f"{_FIELD}{name}={value}"
+    return key
 
 
 def url_key(url: str) -> str:

@@ -120,6 +120,68 @@ def test_a_url_keys_differently_as_a_query_than_as_a_page():
     assert query_key(url) != url_key(url)
 
 
+# ---- the parameters that change what a search returns ----
+
+
+def test_a_search_with_no_parameters_keys_exactly_as_it_always_did():
+    """Byte-for-byte, not merely "still distinct". Entries are keyed and read
+    within one process, so a changed shape would not corrupt anything -- but
+    the unparameterised call is the overwhelming majority of searches, and a
+    key that grows a suffix for all of them is a change nobody asked for. This
+    fails on any decoration of the plain key.
+    """
+    assert query_key("Backward Design") == "q:backward design"
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"time_range": "year"},
+        {"engines": "arxiv"},
+        {"categories": "science"},
+    ],
+)
+def test_a_parameter_that_changes_the_answer_changes_the_key(params):
+    """SearXNG is not insensitive to these -- changing what it returns is the
+    entire reason for sending them. Sharing a key with the unrestricted search
+    would hand the model results for a question it did not ask, labelled as
+    recalled and therefore trusted.
+    """
+    assert query_key("backward design", **params) != query_key("backward design")
+
+
+def test_each_parameter_occupies_its_own_slot_in_the_key():
+    """The same word in two different parameters is two different searches.
+    A key that concatenated values without saying which field they came from
+    would merge these.
+    """
+    assert query_key("q", engines="news") != query_key("q", categories="news")
+
+
+def test_two_parameter_values_that_differ_are_two_keys():
+    assert query_key("q", time_range="year") != query_key("q", time_range="month")
+
+
+def test_the_query_is_still_normalized_when_parameters_are_present():
+    """Extending the key must not cost the folding it already does; a
+    parameterised search that spells its query differently is still the same
+    search.
+    """
+    assert query_key("Backward  Design", time_range="year") == query_key(
+        "backward design", time_range="year"
+    )
+
+
+def test_a_parameter_value_cannot_be_forged_from_the_query_text():
+    """The suffix is separated by a unit separator, which `normalize_query`
+    cannot emit: Python treats \\x1f as whitespace, so `str.split` consumes it
+    and the collapse turns it into a space. A query crafted to look like a
+    parameter suffix therefore lands in a different key than the parameter
+    itself. Fails if the delimiter is ever changed to a printable character.
+    """
+    assert query_key("q\x1ftime_range=year") != query_key("q", time_range="year")
+
+
 # ---- the store ----
 
 
