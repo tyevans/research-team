@@ -13,23 +13,23 @@ import { StreamProvider } from '@presentation/shell/StreamProvider.tsx'
 
 import { ProjectView } from './ProjectView.tsx'
 
-/** That a `Split` inside a `Split` actually lays out, which is the one claim
- *  slice 0 made and could not check.
+/** That HOLDER's stacked column lays out — which is every claim slice 2 makes,
+ *  and jsdom can judge none of them.
  *
- * The slice's report argued the nesting from mechanism — nearest-provider
- * context, two group strings, two inline templates on two elements — and every
- * one of those is invisible to the jsdom suite. `vitest.setup.ts` pins
+ * Slice 0 wrote this file to check that a `Split` inside a `Split` laid out.
+ * Slice 2 removes that nesting, so the claims changed with it: HOLDER is now a
+ * scrub bar, two self-scrolling sections and a pinned composer in one flex
+ * column, and "which box owns the overflow" is the entire design. Every one of
+ * those is a computed style or a rectangle. `vitest.setup.ts` pins
  * `offsetWidth`/`offsetHeight` to constants and answers `false` to every media
- * query, so there the project split writes no template at all and every element
- * is 800x600 whatever the grid does. Three green jsdom tests about this file
- * said nothing about any of it.
+ * query, so the jsdom suite reports the same numbers whatever the markup does.
  *
  * **This mounts the real `ProjectView`, not a harness of `Split` and `Pane`.**
  * `SessionView.test.tsx` records why, and its reasoning transfers exactly: the
- * defect this guards against is one prop on one pane — HOLDER's
- * `scroll="regions"` — and a harness that composed the primitives correctly
- * would assert the harness. The cost is a fake container of nine ports, which
- * is the largest setup in this directory and is the reason the gap existed.
+ * defects here are one prop on one pane and a handful of utilities on three
+ * boxes, and a harness that composed them correctly would assert the harness.
+ * The cost is a fake container of nine ports, which is the largest setup in
+ * this directory and is the reason the gap existed.
  *
  * The viewport is 1440x900 and is set in `vite.config.ts`, not by anything
  * here: every assertion below is above `--bp-wide`, which is the only band in
@@ -132,134 +132,180 @@ const show = async () => {
     </ContainerProvider>,
   )
 
-  // The nested split only exists once the course resolves and names a holding
-  // session, so every test waits on something the inner tree renders.
+  // HOLDER's sections only exist once the course resolves and names a holding
+  // session, so every test waits on one of them. `Event log` is now a
+  // `<section aria-label>` rather than a `Pane`, and it is the same role and
+  // the same name — which is the point of labelling them by hand.
   await expect.element(page.getByRole('region', { name: 'Event log' })).toBeVisible()
 
   return { preferences: deps.preferences as InMemoryPreferenceStore }
 }
 
-const splits = () => ({
-  outer: document.querySelector<HTMLElement>('.lay-split[data-split="project"]')!,
-  inner: document.querySelector<HTMLElement>('.lay-split[data-split="session"]')!,
-})
+const outerSplit = () => document.querySelector<HTMLElement>('.lay-split[data-split="project"]')!
 
-/** Claim 1. The transcript gets a box with a height in it.
+/** HOLDER's body, and the three boxes stacked in it. */
+const holder = () => {
+  const body = document.querySelector<HTMLElement>('[data-pane="holder"] .lay-pane-body')!
+  return {
+    body,
+    log: body.querySelector<HTMLElement>('[aria-label="Event log"]')!,
+    conversation: body.querySelector<HTMLElement>('[aria-label="Conversation"]')!,
+    composer: body.querySelector<HTMLElement>('.composer')!,
+  }
+}
+
+/** Claim 1. HOLDER is one column of scrollers, and the column itself is not one.
  *
- * **Proved red**: changing HOLDER's `Pane` from `scroll="regions"` to the
- * default in `ProjectView.tsx` fails this at `expected 340.84375 to be greater
- * than 898` — the inner split stops at its content's height 557px short of the
- * body's bottom, because `layout.css:221` makes the default body an
- * `overflow: auto` block, a block box is not a flex container, and the split's
- * `flex: 1 1 auto` then means nothing. Note what that failure is *not*: the
- * split still has a height, the transcript still renders, and nothing errors.
- * It is a page that scrolls in the wrong box, which is the shape of defect this
- * suite exists for.
+ * The whole shape of the region in one test: the pane body does not scroll, the
+ * two sections inside it do, and neither is allowed to be the box that owns the
+ * page's overflow. Slice 0's version of this claim was about a nested `Split`
+ * taking the height; the boxes changed, the failure mode did not — a page that
+ * scrolls in the wrong box.
+ *
+ * **Proved red**, twice, because the claim has two halves and one inversion
+ * only breaks one:
+ *
+ * - Changing HOLDER's `Pane` from `scroll="regions"` to the default fails at
+ *   `expected 'block' to be 'flex'` (`layout.css:234` is what makes the body a
+ *   flex column, and a block box is not one, so `flex-1` on the two sections
+ *   below means nothing and both run to their content's height).
+ * - Dropping `overflow-auto` from the log's scroll box in `ProjectView.tsx`
+ *   fails at `expected 'visible' to be 'auto'`. That inversion leaves the first
+ *   pair green, which is why they are separate assertions.
  */
-it('gives the nested split the height of the pane holding it', async () => {
+it('stacks HOLDER as scrollers inside a column that does not scroll', async () => {
   await show()
-  const { inner } = splits()
-  const body = inner.closest('.lay-pane-body')!
+  const { body, log, conversation } = holder()
 
-  const nested = inner.getBoundingClientRect()
-  const holder = body.getBoundingClientRect()
+  // The pane body is a flex column and not a scroller. `scroll="regions"` is
+  // what makes that true and it is the prop this half guards.
+  //
+  // **Not** `scrollHeight <= clientHeight`, which is what this asserted first
+  // and which stayed green under the inversion. With `regions` dropped, this
+  // fixture's empty log and empty transcript do not fill 900px, so the body
+  // has nothing to overflow with and a body that *is* a scroller measures
+  // identically to one that is not — slice 1 threw away an assertion for
+  // exactly this reason and recorded it, and the lesson did not transfer until
+  // it happened again here. The declarations are read back from the browser's
+  // own cascade instead, which jsdom answers `''` to whatever the markup says.
+  const bodyStyle = getComputedStyle(body)
+  expect(bodyStyle.display).toBe('flex')
+  expect(bodyStyle.overflowY).toBe('hidden')
 
-  expect(nested.height).toBeGreaterThan(0)
-  // **Not** "the split is as tall as the body", which is what this asserted
-  // first and which failed at 815 against 861.5. `SessionView` renders its own
-  // header and scrub bar above its `Split`, so the split gets what is left --
-  // and it should, since the alternative is a page taller than its pane. The
-  // claim that survives that correction is the one actually worth making: the
-  // split takes *all* the leftover height, so its bottom edge lands on the
-  // body's. Reasoned from the first failure rather than tuned to pass it -- a
-  // threshold like `> holder * 0.9` would have gone green here while a split
-  // that stopped halfway down also would.
-  expect(nested.bottom).toBeGreaterThan(holder.bottom - 2)
-  // And it does not overflow the pane it is in, which is the other failure —
-  // an inner scroller taller than its container gives a box scrolling inside a
-  // box, where the outer one absorbs the wheel.
-  expect(nested.bottom).toBeLessThanOrEqual(holder.bottom + 1)
-  // The body itself must not be a scroller. `regions` is what makes that true,
-  // and it is the prop this whole test guards.
-  expect(body.scrollHeight).toBeLessThanOrEqual(body.clientHeight + 1)
+  // The log's own scroll box — the element `overflow-auto` is on, which is a
+  // wrapper rather than `.timeline` itself, because `timeline.css:4` gives
+  // `.timeline` no overflow at all and on `#/s/` the pane body scrolls it.
+  //
+  // Found by `data-holder-scroll` rather than by `.timeline`'s parent, which
+  // was the first attempt and threw: this fixture's log is empty, so `Timeline`
+  // renders an `EmptyState` and there is no `.timeline` element to walk up
+  // from. An attribute that exists whether or not there is anything to scroll
+  // is the difference between a test about the arrangement and one about the
+  // data.
+  const logScroller = log.querySelector<HTMLElement>('[data-holder-scroll="log"]')!
+  expect(getComputedStyle(logScroller).overflowY).toBe('auto')
+  // The transcript's is `.conv-scroll`, which `Conversation` renders and holds
+  // a ref on to stick to the bottom — so this asserts the box it already had
+  // still gets a height here rather than that a new one was added.
+  const convScroller = conversation.querySelector<HTMLElement>('.conv-scroll')!
+  expect(getComputedStyle(convScroller).overflowY).toBe('auto')
+  expect(convScroller.getBoundingClientRect().height).toBeGreaterThan(0)
 })
 
-/** Claim 2. Two templates, on two elements, neither overwriting the other.
+/** Claim 2. The two sections share the leftover height, and the composer is
+ *  pinned to the bottom of the region.
  *
- * This is the mechanism the slice report argued from, asserted as the mechanism
- * rather than as a symptom. `splitTemplate` writes `grid-template-columns`
- * inline; an inline style outranks any stylesheet unconditionally, so "one
- * split silently restyles the other" is the failure worth ruling out, and the
- * ruling-out is that they are different elements with different values.
+ * The brief's requirement, measured: the timeline and the conversation split
+ * what the scrub bar and the composer leave, and the composer's bottom edge
+ * lands on HOLDER's. Sharing is asserted as "within 40px of each other" rather
+ * than as equality — both are `flex-1` against the same basis, but they hold
+ * different chrome (the log has an activity feed pinned under it) and an exact
+ * comparison would be asserting the feed's height.
  *
- * **Proved red**, and the inversion is worth reading rather than trusting.
- * Giving `PROJECT_TRACKS` the same three numbers as `SESSION_TRACKS`
- * (`280/1.05`, `320/1.5`, `280/1.05`) fails the inequality — two identical
- * strings. That is a weaker inversion than the other two and I will not pretend
- * otherwise: identical tracks are not the same event as one split overwriting
- * the other's style. What it does establish is that the assertion
- * discriminates, which is the thing a green test has to earn. The `not.toBe('')`
- * halves carry the rest: an empty template means the wide branch never ran and
- * the whole test measured nothing.
+ * **Proved red**: replacing the conversation section's `flex-1` with `shrink-0`
+ * fails the share at `expected 491.140625 to be less than 40` — one section eats
+ * the region and the other becomes a caption. The composer half of the claim
+ * survives that inversion (it is still last and still pinned), so it is proved
+ * red separately: adding a second `Split` inside HOLDER fails it at
+ * `expected 637.9375 to be greater than 898`, the nesting this slice removes
+ * pushing the composer up off the region's floor.
+ *
+ * *(Slice 0's claim 2 — two grid templates on two `.lay-split` elements, neither
+ * overwriting the other — is **deleted rather than rewritten**. There is one
+ * split on this page now, so the claim has no subject: the mechanism it ruled
+ * out cannot occur. Claim 4 asserts the count that makes that true. Deleting a
+ * test that no longer describes the product is the right move and this note is
+ * the record of it; leaving it green against a single split would have been a
+ * test that reports on nothing.)*
  */
-it('writes one grid template per split, on the split it belongs to', async () => {
+it('shares HOLDER’s leftover height and pins the composer to its bottom', async () => {
   await show()
-  const { outer, inner } = splits()
+  const { body, log, conversation, composer } = holder()
 
-  const outerTemplate = outer.style.gridTemplateColumns
-  const innerTemplate = inner.style.gridTemplateColumns
+  const logBox = log.getBoundingClientRect()
+  const convBox = conversation.getBoundingClientRect()
+  const bodyBox = body.getBoundingClientRect()
 
-  expect(outerTemplate).not.toBe('')
-  expect(innerTemplate).not.toBe('')
-  expect(outerTemplate).not.toBe(innerTemplate)
-  // The values are `PROJECT_TRACKS` and `SESSION_TRACKS` respectively, and the
-  // floors are what tell them apart: the project page's queue column is 280px
-  // against the session workspace's 320px. Asserted as "contains the minimum"
-  // rather than as the whole string, because the whole string is three
-  // `minmax()` calls a browser may serialise its own way.
-  expect(outerTemplate).toContain('320px')
-  expect(innerTemplate).toContain('320px')
-  expect(outer.querySelectorAll(':scope > .lay-pane')).toHaveLength(3)
-  expect(inner.querySelectorAll(':scope > .lay-pane')).toHaveLength(3)
+  expect(logBox.height).toBeGreaterThan(0)
+  expect(convBox.height).toBeGreaterThan(0)
+  expect(Math.abs(logBox.height - convBox.height)).toBeLessThan(40)
+
+  // Pinned, not floating: the composer's bottom edge is the region's. A
+  // composer inside either scroller would leave the screen as the transcript
+  // grew, which is the defect `Pane`'s `footer` slot exists for and which this
+  // arrangement has to reproduce without a `Pane`.
+  const composerBox = composer.getBoundingClientRect()
+  expect(composerBox.bottom).toBeGreaterThan(bodyBox.bottom - 2)
+  expect(composerBox.bottom).toBeLessThanOrEqual(bodyBox.bottom + 1)
+  // And it is below both scrollers rather than between them.
+  expect(composerBox.top).toBeGreaterThanOrEqual(convBox.bottom - 1)
 })
 
-/** Claim 3. Folding a region does not fold a session pane, or the reverse.
+/** Claim 3. Folding a region still folds one region, and remembers it.
  *
- * **Proved red**: pointing `use-project-panes.ts`'s `GROUP` at `'session'` fails
- * the last pair at `expected [] to deeply equal [ 'queue' ]`. The failure is
- * one step off what I predicted, and the step is the informative part: nothing
- * is written under `project` at all, and both splits' folds land in one key,
- * where the later write replaces the earlier rather than joining it. So a
- * reader who folded QUEUE and then the event log would come back to a page with
- * one of the two remembered and no way to tell which. Note also what did *not*
- * go red — the on-screen assertions above all still passed with one group,
- * because the context is genuinely per-`Split` and the folds only collide in
- * storage. The crosstalk this page could actually have shipped is a stored one.
+ * Slice 0's version of this was about crosstalk between two splits and two
+ * preference groups. There is one split now, so what is left is the half that
+ * still has a subject: the fold works, lands in the `project` key, and the
+ * `session` key — which survives for the standalone `#/s/` route — is not
+ * written by this page at all.
+ *
+ * **Proved red**: pointing `use-project-panes.ts`'s `GROUP` at `'session'`
+ * fails at `expected [] to deeply equal [ 'queue' ]` — the `project` key is the
+ * assertion that fires first, and it is empty because both writes went to
+ * `session`. That is the
+ * assertion worth keeping past the un-nesting: the standalone route's stored
+ * layout is still a separate thing, and the project page writing into it would
+ * silently reinterpret somebody's session panes as regions.
  */
-it('folds a region without folding a session pane, and remembers them apart', async () => {
+it('folds a region, remembers it under `project`, and leaves `session` alone', async () => {
   const { preferences } = await show()
-  const { outer, inner } = splits()
+  const outer = outerSplit()
 
   await page.getByRole('button', { name: 'Collapse Queue' }).click()
 
   expect(outer.querySelector('[data-pane="queue"]')!.className).toContain('is-collapsed')
-  // Every session pane still open. `Event log` is the one a shared context or a
-  // shared track list would have taken with it, since it is the inner split's
-  // first pane just as `queue` is the outer's.
-  for (const pane of ['timeline', 'workspace', 'conversation']) {
-    expect(inner.querySelector(`[data-pane="${pane}"]`)!.className).not.toContain('is-collapsed')
-  }
-
-  await page.getByRole('button', { name: 'Collapse Event log' }).click()
-
-  expect(inner.querySelector('[data-pane="timeline"]')!.className).toContain('is-collapsed')
   expect(outer.querySelector('[data-pane="holder"]')!.className).not.toContain('is-collapsed')
   expect(outer.querySelector('[data-pane="material"]')!.className).not.toContain('is-collapsed')
 
-  // Two keys, each holding only its own split's pane. This is the assertion the
-  // one-group inversion above breaks.
   expect(preferences.collapsedPanes('project')).toEqual(['queue'])
-  expect(preferences.collapsedPanes('session')).toEqual(['timeline'])
+  expect(preferences.collapsedPanes('session')).toEqual([])
+})
+
+/** Claim 5. One split on the page, which is what "HOLDER is not a screen" means
+ *  structurally.
+ *
+ * The cheapest possible statement of this slice's headline, and the one that
+ * fails first if anybody re-mounts `SessionView` inside a region. Counted over
+ * the document rather than asserted as "no `[data-split='session']`", because
+ * the failure to catch is *a* nested split and not that particular one.
+ *
+ * **Proved red**: rendering a second `Split` inside the HOLDER pane fails at
+ * `expected …(2) to have a length of 1 but got 2`.
+ */
+it('leaves exactly one split on the project page', async () => {
+  await show()
+  expect(document.querySelectorAll('.lay-split')).toHaveLength(1)
+  expect(document.querySelector('.lay-split')!.getAttribute('data-split')).toBe('project')
 })
 
 /** Claim 4. The queue header keeps its height, and the queue scrolls past it.

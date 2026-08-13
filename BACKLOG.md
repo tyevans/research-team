@@ -1161,6 +1161,37 @@ it is cheap — scroll the list before inserting the headings, then assert.
 Worth doing because the alternative is a defect that shipped once, has a fix
 nobody can break loudly, and a docstring that will read as folklore in a year.
 
+### B55. Three shipped single-side borders draw nothing
+
+Found by increment C slice 2's mandated combinator grep, not by a gate, and
+filed rather than fixed because each one changes pixels in a region that slice
+did not own.
+
+`CLAUDE.md`'s single-side-border rule has two halves and these three write only
+one of them — a directional width with no `border-style` anywhere, so every
+side's style is still the browser default `none` and the rule draws nothing at
+all:
+
+- `presentation/project/queue/QueueHeader.tsx:75` — `border-b border-line`, the
+  line meant to separate the queue's header band from the stage list under it.
+  Shipped in slice 1, whose whole argument for the component is that the band
+  reads as one thing separate from the list.
+- `presentation/common/Drawer.tsx:163` — `border-b border-line` under a drawer
+  header.
+- `presentation/shell/DecisionBar.tsx:44` — `border-b border-k-tool`, which is
+  the one that matters most: the decision bar is a gated call waiting on a
+  human, and `--k-tool` is the colour saying so.
+
+The fix is `border-0 border-b border-solid border-line` in each, which is what
+`AskHead.tsx:27`, `AskComposer.tsx:43` and `AskTurn.tsx:36` already write and
+comment. Worth doing as one commit with one Storybook check, since the failure
+is invisible to every gate and to jsdom — a selector that applies perfectly and
+paints nothing.
+
+The cheaper half of the fix is a `check-tailwind.mjs` rule: a directional
+`border-{t,r,b,l}` in a class list with no `border-solid` (or other style) is
+always this bug. That would have caught all three at the commit that wrote them.
+
 ## The ask page
 
 Everything here was named in

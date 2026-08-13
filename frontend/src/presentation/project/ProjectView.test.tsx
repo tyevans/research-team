@@ -28,12 +28,25 @@ it('sends every facet the grammar declares to a region', () => {
  *  components and no regions at all, so there was no function to import. It is
  *  not reassurance. */
 it('puts the three facets that reached no view in a region each', () => {
-  // `file` in HOLDER because a project file is a file in a session's workspace
-  // and there is no other kind; `artifact` and `finding` in MATERIAL because
-  // both are things the project produced.
-  expect(regionOf('file')).toBe<Region>('holder')
+  // All three in MATERIAL, and `file` is the one that moved: slice 1 put it in
+  // HOLDER on the argument that a project file is a file in a session's
+  // workspace. That is true about where the bytes live and not about what the
+  // reader is asking, and MATERIAL is the region for "what has this project
+  // produced" — the workspace tree is the live half of the same shelf the
+  // artifacts sit on. `ProjectView.tsx` carries the full argument.
+  expect(regionOf('file')).toBe<Region>('material')
   expect(regionOf('artifact')).toBe<Region>('material')
   expect(regionOf('finding')).toBe<Region>('material')
+})
+
+/** That HOLDER is now exactly one facet wide, which is what makes the region
+ *  a stack rather than a screen.
+ *
+ * **This test would pass trivially before the change** — `session` was in
+ * HOLDER then too — so it is asserted as a count over `FACETS` rather than as a
+ * lookup. Reverted, `file` joins it and the count is 2. */
+it('leaves one facet in HOLDER, so the region shows one thing', () => {
+  expect(FACETS.filter((facet) => regionOf(facet) === 'holder')).toEqual(['session'])
 })
 
 /** The split that used to be a route boundary. `stage` came from the course
