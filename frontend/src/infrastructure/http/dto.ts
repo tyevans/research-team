@@ -627,6 +627,10 @@ export const graphEntityDto = z.object({
   entity_id: z.string(),
   name: z.string(),
   entity_type: z.string(),
+  // Nullable and defaulted so a body written before this field existed --
+  // by a server predating Task 3, or a fixture nobody updated -- still
+  // parses, rather than the whole entity failing to load over one field.
+  temporal: z.string().nullable().default(null),
 })
 
 export const graphEntityPageDto = z.object({
@@ -638,6 +642,9 @@ export const graphRelationshipDto = z.object({
   source_id: z.string(),
   target_id: z.string(),
   relationship_type: z.string(),
+  // See graphEntityDto.temporal for why these default rather than require.
+  inferred: z.boolean().default(false),
+  derivation: z.string().nullable().default(null),
 })
 
 /** `/api/projects/{id}/graph`: the whole graph, and whether the server's cap
@@ -646,6 +653,10 @@ export const graphWholeDto = z.object({
   entities: z.array(graphEntityDto).default([]),
   relationships: z.array(graphRelationshipDto).default([]),
   truncated: z.boolean().default(false),
+  // Whole-graph only, not the neighbourhood -- a neighbourhood is bounded by
+  // MAX_NEIGHBORHOOD_DEPTH over one root and never approaches the cap this
+  // flag protects against, so `graphNeighborhoodDto` deliberately omits it.
+  inferred_truncated: z.boolean().default(false),
 })
 
 export const graphNeighborhoodDto = z.object({

@@ -66,6 +66,12 @@ export interface WholeGraph {
   readonly entities: readonly GraphNode[]
   readonly relationships: readonly GraphLink[]
   readonly truncated: boolean
+  /** Whether the inferred edges among `relationships` were themselves capped
+   *  (`MAX_INFERRED_EDGES`), independent of `truncated`'s node cap. Required,
+   *  unlike the optional fields above: everything that builds a `WholeGraph`
+   *  is a mapper or a test fixture, both of which can say `false` outright,
+   *  so there is no legacy construction site this has to stay lenient for. */
+  readonly inferredTruncated: boolean
 }
 
 export interface GraphView {

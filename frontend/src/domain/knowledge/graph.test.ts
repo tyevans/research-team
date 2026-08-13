@@ -249,6 +249,7 @@ describe('loadWhole', () => {
       relationshipType: 'advised',
     })),
     truncated,
+    inferredTruncated: false,
   })
 
   it('draws every node and edge it was given', () => {

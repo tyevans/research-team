@@ -612,18 +612,22 @@ export const toGraphNode = (raw: Dto<typeof dto.graphEntityDto>): GraphNode => (
   id: raw.entity_id,
   name: raw.name,
   entityType: raw.entity_type,
+  temporal: raw.temporal,
 })
 
 export const toGraphLink = (raw: Dto<typeof dto.graphRelationshipDto>): GraphLink => ({
   source: raw.source_id,
   target: raw.target_id,
   relationshipType: raw.relationship_type,
+  inferred: raw.inferred,
+  derivation: raw.derivation,
 })
 
 export const toWholeGraph = (raw: Dto<typeof dto.graphWholeDto>): WholeGraph => ({
   entities: raw.entities.map(toGraphNode),
   relationships: raw.relationships.map(toGraphLink),
   truncated: raw.truncated,
+  inferredTruncated: raw.inferred_truncated,
 })
 
 export const toNeighborhood = (raw: Dto<typeof dto.graphNeighborhoodDto>): Neighborhood => ({
