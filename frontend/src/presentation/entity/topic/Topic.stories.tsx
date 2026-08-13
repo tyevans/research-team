@@ -84,6 +84,22 @@ export const Rows: Story = {
         href="#a"
         slots={{ primary: <button type="button">Synthesise</button> }}
       />
+      {/* The row as `TopicQueue` actually hands it over: a chip reporting a
+          dispatch, one verb, and the rest behind a `⋯`. Worth opening at the
+          340px this is drawn at rather than reading here -- the whole of #40
+          was that this chip began 1.5px before the clip edge and was painted
+          nowhere, which is invisible in the markup and obvious on screen. */}
+      <TopicRow
+        topic={topic({ question: 'What does the 2019 replication actually replicate?' })}
+        href="#d"
+        slots={{
+          note: (
+            <span className="topic-dispatch topic-dispatch-running">⟳ understanding · running</span>
+          ),
+          primary: <button type="button">Synthesise</button>,
+          overflow: [{ key: 'manage', label: 'Manage', onSelect: () => {} }],
+        }}
+      />
       <TopicRow
         topic={topic({ question: 'Short one?', status: 'open', sources: 0, findings: 0 })}
         href="#b"

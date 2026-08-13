@@ -48,6 +48,11 @@ const ordinal = (position: number): string => {
  * whose dispatch failed is not a failed topic, and painting `failed` in the
  * entity's own status palette beside the topic's real status (`investigating`)
  * puts two chips on one row that look like they disagree about the same fact.
+ *
+ * That worry is settled rather than still open: they are no longer beside each
+ * other. `TopicRow` shows this chip *in place of* the status while a dispatch
+ * is on the row, which #40 forced for width and which this paragraph had
+ * already argued for on its own terms.
  */
 export const DispatchChip = ({ dispatch }: { dispatch: Dispatch }) => {
   if (dispatch.status === 'queued') {
@@ -258,10 +263,12 @@ export const TopicQueue = ({
                     </Tooltip>
                   </>
                 ),
+                // Described rather than rendered, so the row can put it behind
+                // a `⋯`. It was a 58px button on a 294px line, and that button
+                // plus its gap is most of the reason the chip above it was
+                // drawn nowhere.
                 overflow: [
-                  <Button small key="manage" onClick={() => onManage(topic.topicId)}>
-                    Manage
-                  </Button>,
+                  { key: 'manage', label: 'Manage', onSelect: () => onManage(topic.topicId) },
                 ],
               }}
             />

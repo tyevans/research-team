@@ -17,7 +17,7 @@ import {
 import { shortId, type ProjectId } from '@domain/shared/identifier.ts'
 
 import { Confirm } from '../common/Confirm.tsx'
-import { Menu, MenuItem } from '../common/Menu.tsx'
+import { Menu, MenuItem, MenuTrigger } from '../common/Menu.tsx'
 import { Button, Chip, Disclosure, EmptyState, ErrorBox } from '../common/primitives.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
 import { VirtualList } from '../common/VirtualList.tsx'
@@ -463,15 +463,7 @@ const ProjectRow = ({
           label={`More actions for ${project.name}`}
           open={menuOpen}
           onOpenChange={setMenuOpen}
-          trigger={
-            <button
-              type="button"
-              className="menu-trigger"
-              aria-label={`More actions for ${project.name}`}
-            >
-              ⋯
-            </button>
-          }
+          trigger={<MenuTrigger aria-label={`More actions for ${project.name}`} />}
         >
           <MenuItem tone="danger" disabled={busy} onSelect={onDelete}>
             Delete

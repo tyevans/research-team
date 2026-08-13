@@ -264,10 +264,10 @@ a.ent-ref:hover .ent-ref-name {
    left to absorb. Two things claiming the same gap is how one of them quietly
    stops mattering, and the one that stopped is not the one a reader would
    guess. */
-.ent-topic-overflow {
-  display: inline-flex;
-  gap: var(--space-2);
-}
+/* `.ent-topic-overflow` is gone with the span it styled. It wrapped a list of
+   overflow verbs so they could sit in a row; there is one `⋯` there now, and a
+   flex wrapper around a single button is a box that can only ever agree with
+   its child. */
 
 /* The three conditions a queue is scanned for, in the order they outrank each
    other -- blocked beats flagged beats closed, which is the order the domain's

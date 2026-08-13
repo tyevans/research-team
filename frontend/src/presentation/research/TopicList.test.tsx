@@ -285,7 +285,11 @@ it('opens the status dialog for a topic on manage, reading its detail first', as
 
   renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
 
-  await userEvent.click(await screen.findByRole('button', { name: /manage/i }))
+  // Two clicks rather than one since #40: `Manage` is a `MenuItem` behind the
+  // row's `⋯`, which is what freed the 34px the dispatch chip needed. The
+  // dialog it opens is unchanged, which is the point of asserting it below.
+  await userEvent.click(await screen.findByRole('button', { name: /more actions/i }))
+  await userEvent.click(await screen.findByRole('menuitem', { name: /manage/i }))
 
   expect(read).toHaveBeenCalledWith(PROJECT, TopicId('22222222-2222-2222-2222-222222222222'))
   expect(await screen.findByRole('dialog')).toBeInTheDocument()
