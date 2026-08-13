@@ -49,6 +49,11 @@ export interface GraphState {
    *  a bigger one. The reader has to be told: a capped graph looks exactly
    *  like a complete one, and it is missing edges as well as nodes. */
   readonly partial: boolean
+  /** Whether the temporal edges the server computed were themselves capped
+   *  (`MAX_INFERRED_EDGES`), independent of `partial`'s node cap. A drawing
+   *  missing lines looks exactly like a drawing with none to miss -- this is
+   *  what keeps that silent. */
+  readonly edgesPartial: boolean
   readonly loading: boolean
   /** Draw the project's whole graph. What the pane opens with, rather than
    *  waiting for a search: a reader arriving at a project they have not read
@@ -93,6 +98,7 @@ export const createGraphStore = ({
     error: null,
     selected: null,
     partial: false,
+    edgesPartial: false,
     loading: false,
 
     async loadAll() {
@@ -102,6 +108,7 @@ export const createGraphStore = ({
         set((state) => ({
           view: loadWhole(state.view, graph),
           partial: graph.truncated,
+          edgesPartial: graph.inferredTruncated,
           loading: false,
           // A selection that survived into the new drawing stays; one that
           // did not would leave the detail panel describing a node the

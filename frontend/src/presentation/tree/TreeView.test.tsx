@@ -141,7 +141,10 @@ it('leads with projects and puts their sessions inside them', async () => {
     }),
   )
 
-  const row = (await screen.findByText('atlas')).closest('.project')!
+  // `.ent-project-card`, not `.project`: the landing page draws a project with
+  // `ProjectCard` now. The selector moved with the markup; nothing about what
+  // this test asserts did.
+  const row = (await screen.findByText('atlas')).closest('.ent-project-card')!
   expect(within(row as HTMLElement).getByText('1 session')).toBeInTheDocument()
   expect(
     within(row as HTMLElement).getByText(/How does spacing affect retention/),
@@ -183,7 +186,7 @@ it('reaches all four of a project’s destinations from its row', async () => {
   // A new session *in it*, which ends the holder and so asks first. Scoped to
   // the row: the action bar's quiet "New session" is the bare-session one, and
   // the two are deliberately different things.
-  const row = screen.getByText('atlas').closest('.project')!
+  const row = screen.getByText('atlas').closest('.ent-project-card')!
   await user.click(within(row as HTMLElement).getByRole('button', { name: 'New session' }))
   const dialog = await screen.findByRole('dialog')
   expect(within(dialog).getByText(/Its files carry over to the new session/)).toBeInTheDocument()
@@ -368,8 +371,27 @@ it('shows a project’s current session and keeps the rest folded away', async (
   expect(await screen.findByText('the one still open')).toBeInTheDocument()
   expect(screen.queryByText('an older one')).not.toBeInTheDocument()
 
-  await user.click(screen.getByRole('button', { name: /all 2 sessions/i }))
+  // The fold is a control the view supplies and a region the card draws, which
+  // is a seam `Disclosure` did not have -- it rendered both and wired them
+  // together itself. So the wiring is asserted here rather than assumed: the
+  // toggle's `aria-controls` has to resolve to a real element *while the fold
+  // is shut*, which is when a reader most needs to be told what the button
+  // opens. Both attributes are read off the same node deliberately; split
+  // across two elements this reads correct in the DOM and announces a button
+  // that expands nothing.
+  //
+  // Red before `ProjectCard` gave the region an id: with no `aria-controls`
+  // the attribute is null, `getElementById` is handed null and answers null.
+  const toggle = screen.getByRole('button', { name: /all 2 sessions/i })
+  expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  const region = document.getElementById(toggle.getAttribute('aria-controls') ?? '')
+  expect(region).toBeInTheDocument()
+
+  await user.click(toggle)
   expect(screen.getByText('an older one')).toBeInTheDocument()
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  // The same region, still the one named, now holding the list.
+  expect(region).toContainElement(screen.getByText('an older one'))
 })
 
 it('offers no fold for a project with a single session', async () => {

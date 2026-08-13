@@ -23,6 +23,34 @@ import { INSTANCE_WIDE, NO_POLICY, STAGE_GATE_HELD } from './autonomy-copy.ts'
  *
  * The scope warning is rendered on the control, not in a tooltip: see
  * `INSTANCE_WIDE`.
+ *
+ * **Styled with Tailwind utilities, and this one is not tidying.** The layout
+ * rules lived in `course.css` under a heading naming the decision bar, which
+ * was already conceded there as the wrong file. That filing became a trap
+ * when this control moved into the shell's decision bar: `course.css` is on
+ * the die-with-its-screen list, so deleting it when the course view is rebuilt
+ * would silently unstyle a control that is still on screen — no test failure,
+ * no error, the same failure family as the combinator hazard the spec records
+ * for this policy. Utilities travel with the markup, so the trap is gone
+ * rather than deferred. This is not a licence to port the other stylesheets:
+ * the standing policy is that they are deleted, never ported.
+ *
+ * **Still shared, and still a smaller version of the same trap:**
+ * `.autonomy-warn` and `.autonomy-error` below are `course.css` rules that
+ * `AutonomyPanel` — a genuine course-page surface — also uses. They are left
+ * alone deliberately, because converting them would be the forbidden port.
+ * `course.css` says the same thing at the rules themselves.
+ *
+ * **This used to say `m-[0px]`, and the reason is worth keeping.** Tailwind
+ * builds a bare step it has no explicit key for as `calc(var(--spacing) * N)`
+ * off the base `--spacing` variable, which `theme.css` deliberately omits — so
+ * `m-0` generated no rule at all and this paragraph kept the user agent's 1em
+ * margin, which is exactly what the `margin: 0` it replaced existed to remove.
+ * The arbitrary value was the local dodge. `theme.css` now declares
+ * `--spacing-0`, so `m-0` emits `margin:var(--spacing-0)` and the two
+ * spellings are equivalent; this reads as the ordinary one because there is no
+ * longer anything to dodge. If `--spacing-0` is ever removed, `check-tailwind.mjs`
+ * fails rather than this paragraph silently regaining its margin.
  */
 export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
   const {
@@ -43,7 +71,14 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
     // and this control is a convenience beside the approvals rather than the
     // reason the drawer is open. Said, though, not hidden — a missing control
     // with no explanation reads as a console that lost a feature.
-    return <p className="sub autonomy-off">{readNotFound || !readError ? NO_POLICY : readError}</p>
+    // Same indent-behind-a-rule as the section below, because it stands in the
+    // same place: the reason the control is absent belongs where the control
+    // was. `sub` stays — it is not one of the classes this file took over.
+    return (
+      <p className="sub m-0 border-l border-line-soft pl-3">
+        {readNotFound || !readError ? NO_POLICY : readError}
+      </p>
+    )
   }
 
   const held = stageGatesStillAsking(policy)
@@ -52,8 +87,19 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
   )
 
   return (
-    <section className="autonomy-allow" aria-label="Stop being asked">
-      <div className="autonomy-allow-head">
+    // The indent behind a rule is `.extraction`'s language, borrowed on the
+    // same argument: this control belongs to the approvals above it rather
+    // than standing on its own. `gap-2` is 6px and `pl-3` is 10px — the
+    // `--spacing-*` steps the deleted rules already spelled out by hand.
+    <section
+      className="flex flex-col gap-2 border-l border-line-soft pl-3"
+      aria-label="Stop being asked"
+    >
+      {/* `gap-[8px]` is arbitrary because 8px is not on the spacing scale
+          (3/6/10/14); the deleted rule used the literal too. Rounding it to
+          `gap-2` or `gap-3` would move the head's baseline row by 2px for
+          tidiness, which is a visual change smuggled into a filing fix. */}
+      <div className="flex flex-wrap items-baseline gap-[8px] text-sm">
         <strong>Stop being asked</strong>
         <span className="sub">
           {gatedNotAuto.length > 0
@@ -64,7 +110,7 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
 
       <p className="sub autonomy-warn">{INSTANCE_WIDE}</p>
 
-      <div className="autonomy-allow-actions">
+      <div className="flex flex-wrap gap-2">
         <Button
           tone="accent"
           small
@@ -91,7 +137,7 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
       </div>
 
       {lastAllowAll ? (
-        <p className="sub autonomy-result" role="status">
+        <p className="sub m-0" role="status">
           {lastAllowAll.changed.size === 0
             ? 'Nothing moved — those tools were already set that way.'
             : `Changed ${lastAllowAll.changed.size} tool(s): ${[...lastAllowAll.changed.keys()].join(', ')}.`}

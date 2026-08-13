@@ -2,10 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
 import { notify } from '@application/notifications/toast-store.ts'
-import { errorMessage } from '@application/ports/errors.ts'
+import { errorMessage, ResearchDisabledError } from '@application/ports/errors.ts'
 import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
-import { ResearchDisabledError } from '@infrastructure/http/project-repository.ts'
 import {
   ENDING_NOT_SEEN,
   endingFor,

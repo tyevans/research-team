@@ -10,12 +10,23 @@ export interface GraphNode {
   readonly id: string
   readonly name: string
   readonly entityType: string
+  /** The entity's date or date range, already formatted for display, or
+   *  `null` when it has none. Optional because every existing test and
+   *  construction site predates this field. */
+  readonly temporal?: string | null
 }
 
 export interface GraphLink {
   readonly source: string
   readonly target: string
   readonly relationshipType: string
+  /** Whether this edge was computed from two entities' dates rather than
+   *  asserted by a document -- see `linkKey` for why it is part of identity,
+   *  not just a display flag. Optional for the same reason as `temporal`. */
+  readonly inferred?: boolean
+  /** The arithmetic that produced an inferred edge (e.g. which two extents
+   *  overlapped), or `null` for an asserted edge or one predating this field. */
+  readonly derivation?: string | null
 }
 
 /** A page of entity-search results, plus whether the server held more back.
@@ -55,6 +66,12 @@ export interface WholeGraph {
   readonly entities: readonly GraphNode[]
   readonly relationships: readonly GraphLink[]
   readonly truncated: boolean
+  /** Whether the inferred edges among `relationships` were themselves capped
+   *  (`MAX_INFERRED_EDGES`), independent of `truncated`'s node cap. Required,
+   *  unlike the optional fields above: everything that builds a `WholeGraph`
+   *  is a mapper or a test fixture, both of which can say `false` outright,
+   *  so there is no legacy construction site this has to stay lenient for. */
+  readonly inferredTruncated: boolean
 }
 
 export interface GraphView {
@@ -72,7 +89,11 @@ export const emptyGraph: GraphView = {
 }
 
 const linkKey = (link: GraphLink): string =>
-  `${link.source}|${link.target}|${link.relationshipType}`
+  // Normalised to a boolean rather than trusting the field's optionality:
+  // `undefined` and `false` must key identically, or a link merged twice --
+  // once from a source that omitted the field, once from one that set it
+  // false -- would duplicate itself.
+  `${link.source}|${link.target}|${link.relationshipType}|${link.inferred === true}`
 
 /** Merge an arriving neighbourhood into the displayed graph.
  *
@@ -83,11 +104,17 @@ const linkKey = (link: GraphLink): string =>
  * from scratch on every click. So an id already present keeps its existing
  * object reference; only genuinely new ids get new objects.
  *
- * Links are directed and keyed on `source|target|relationshipType` rather
- * than on the unordered pair, because `advised(a→b)` and `advised(b→a)` are
- * different edges and both must survive. What collapses is the same
- * directed edge arriving twice, which happens whenever a neighbourhood is
- * fetched from either of its two endpoints.
+ * Links are directed and keyed on `source|target|relationshipType|inferred`
+ * rather than on the unordered pair, because `advised(a→b)` and `advised(b→a)`
+ * are different edges and both must survive. `inferred` extends that same
+ * argument by one field: an asserted `contains` and an inferred `CONTAINS`
+ * between the same pair are different claims -- one is what a document said,
+ * the other is arithmetic over two dates that changes on re-extraction -- so
+ * a key that ignored `inferred` would let one silently displace the other,
+ * with which one survived decided by arrival order. What collapses is the
+ * same directed edge, with the same provenance, arriving twice -- which
+ * happens whenever a neighbourhood is fetched from either of its two
+ * endpoints.
  *
  * The root is merged alongside `hood.entities` because the route does not put
  * it there (see `Neighborhood`). Leaving it out is not a missing dot: every

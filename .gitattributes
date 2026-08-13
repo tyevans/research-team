@@ -1,0 +1,31 @@
+# The committed console is build output, and a merge of it is never a decision.
+#
+# `research_team/interfaces/web/static/` is what `uv run web.py` serves, so it
+# is committed rather than built on demand -- see `.gitignore` and the README's
+# "Working on the console". The cost of committing it is that two branches
+# which both touched `frontend/src/` produce two different bundles, and git
+# offers you a conflict over which one to keep. There is no answer to that
+# question: neither side is right, because the merged *source* has not been
+# built yet. The only correct resolution is `npm run build` and take the
+# result.
+#
+# So this hands those paths to a driver that resolves them without asking, and
+# CI's "the committed build matches src/" step is what makes taking `ours` safe
+# -- it rebuilds after the merge and fails if the committed console differs
+# from what the merged source produces. The driver picks arbitrarily; that gate
+# is what turns "arbitrary" into "rebuilt before it can reach main".
+#
+# This only works because the filenames carry no content hash. With hashes,
+# each side's chunk is a *different path*, git reports rename/rename, and a
+# merge driver is never invoked -- there is no single path to invoke it on.
+# That was tested, not assumed. `vite.config.ts`'s `entryFileNames` carries the
+# reasoning and must not grow a `[hash]` back without this file changing too.
+#
+# **A driver named here is not a driver that exists.** Git resolves `merge=ours`
+# through `merge.ours.driver` in *config*, which is per-clone and cannot be
+# committed. Without it these lines do nothing at all, and do it silently: the
+# merge conflicts exactly as if this file were absent. Once per clone:
+#
+#     git config merge.ours.driver true
+#
+research_team/interfaces/web/static/** merge=ours

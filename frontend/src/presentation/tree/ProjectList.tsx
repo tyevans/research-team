@@ -18,10 +18,15 @@ import { shortId, type ProjectId } from '@domain/shared/identifier.ts'
 
 import { Confirm } from '../common/Confirm.tsx'
 import { Menu, MenuItem, MenuTrigger } from '../common/Menu.tsx'
-import { Button, Chip, Disclosure, EmptyState, ErrorBox } from '../common/primitives.tsx'
+import { Button, EmptyState, ErrorBox } from '../common/primitives.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
 import { VirtualList } from '../common/VirtualList.tsx'
-import { fullTime, plural, relativeTime } from '../formatting/format.ts'
+import { ProjectCard, projectSessionsId } from '../entity/project/ProjectCard.tsx'
+import { WorkflowChip } from '../entity/project/WorkflowChip.tsx'
+// `plural` is gone from this file with `ProjectRow`: the card counts its own
+// sessions and files, and its `3 sessions` / `1 session` is character-for-
+// character what `plural` produced — `ProjectCard.test.tsx` pins both forms.
+import { fullTime, relativeTime } from '../formatting/format.ts'
 import { projectHref, sessionHref } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
 import { ActivityChip, useProjectActivity } from './ProjectActivity.tsx'
@@ -291,7 +296,7 @@ const ProjectRows = ({
               <span className="rows-heading-count">{row.count}</span>
             </h3>
           ) : (
-            <ProjectRow
+            <ProjectListRow
               rollup={row.rollup}
               open={openIds.has(row.rollup.project.id)}
               onToggle={() => onToggle(row.rollup.project.id)}
@@ -307,14 +312,31 @@ const ProjectRows = ({
   )
 }
 
-/** One project: what state it is in, and every way into it.
+/** One drawn row: everything that has to be fetched or decided, and nothing
+ *  that is drawn.
  *
  * All four of the console's routes are one click from here. That is the point
  * of the row — the research view previously had no entry point on the landing
  * page at all, because the one button that said "Research" navigated to the
  * course page.
+ *
+ * **This is a container, not a card.** It renders no markup of its own: the
+ * drawing is `ProjectCard`, which is props-only and therefore has a story and
+ * a test that need neither a query client nor a container. What is left here
+ * is the three things a card may not know — what is running (a fetch), which
+ * verb a held project offers (a branch over what taking over *means*), and the
+ * menu's open state.
+ *
+ * **Why the hook is still per row, and what that did and did not buy.** A hook
+ * cannot be called in a loop, and `VirtualList`'s children argument is a
+ * render callback rather than a component, so "one `useProjectActivity` per
+ * drawn row" has to be a component per drawn row — this one. The request count
+ * is therefore **unchanged**: still two per drawn row, still only for rows the
+ * virtualizer has actually drawn. What changed is where the cost is visible.
+ * It is now one call in one container, so §2.7(c)'s `activity` on
+ * `/api/projects` becomes a prop swap here rather than a rewrite of the card.
  */
-const ProjectRow = ({
+const ProjectListRow = ({
   rollup,
   open,
   onToggle,
@@ -331,50 +353,86 @@ const ProjectRow = ({
   onOpen: () => void
   busy: boolean
 }) => {
-  const { project, sessions, sessionCount, fileCount, lastActivity } = rollup
+  const { project, sessions, sessionCount, lastActivity } = rollup
   const current = currentSession(rollup)
   const [menuOpen, setMenuOpen] = useState(false)
   const activity = useProjectActivity(project.id, true)
 
   return (
-    <div className="project">
-      <div className="project-head">
-        <span className="project-name">{project.name}</span>
-        <WorkflowChip project={project} />
-        {project.activeSessionId ? (
-          <Tooltip explanation={`held by session ${project.activeSessionId}`}>
-            <Chip tone="held">held by {shortId(project.activeSessionId)}</Chip>
-          </Tooltip>
-        ) : (
-          <Chip tone="ok">free</Chip>
-        )}
-        <ActivityChip label={activity.label} />
-      </div>
+    <ProjectCard
+      rollup={rollup}
+      open={open}
+      slots={{
+        badges: <WorkflowChip project={project} />,
+        activity: <ActivityChip label={activity.label} />,
 
-      <div className="project-stats">
-        <span>{plural(sessionCount, 'session')}</span>
-        <span>{plural(fileCount, 'file')}</span>
-        {/* Both of these show an abbreviation of something exact — a relative
-            time over a timestamp, eight characters over a full id — so the
-            tooltip is not a duplicate of the visible text and cannot simply be
-            deleted. Neither span is interactive, so the wrapper trigger costs
-            two tab stops per project row and buys the exact value for a reader
-            who never had it. */}
-        <Tooltip
-          explanation={lastActivity ? fullTime(lastActivity) : 'nothing has run in this project'}
-        >
-          {lastActivity ? relativeTime(lastActivity) : 'no sessions yet'}
-        </Tooltip>
-        <Tooltip explanation={project.id} className="project-id">
-          {shortId(project.id)}
-        </Tooltip>
-      </div>
+        /* The disclosure's control, at the head rather than under the row.
+           `Disclosure` cannot be used here: it renders its button and its body
+           as one element, and the card puts the two in different places -- the
+           control beside the name, the contents below everything else. So
+           `aria-expanded`, `aria-controls` and the caret are reproduced by
+           hand, and the two ARIA attributes are deliberately on the *same*
+           element: split across two, the DOM reads correct and a screen reader
+           announces a button that expands nothing.
 
-      <div className="node-actions">
-        {/* A held project offers two honest choices instead of one that
-            fails: go to whoever holds it, or end that session and take
-            the project on. "Join" was only ever right for a free one. */}
-        {project.activeSessionId ? (
+           `projectSessionsId` rather than a string written twice. The id is
+           the contract between a slot the view builds and a region the card
+           draws, and the failure mode of two spellings is silent -- an IDREF
+           that resolves to nothing announces exactly as much as no IDREF at
+           all.
+
+           Both labels are kept word for word, because they are what a reader
+           and a test both find this control by. */
+        toggle:
+          sessionCount > 1 ? (
+            <Button
+              small
+              tone="quiet"
+              aria-expanded={open}
+              aria-controls={projectSessionsId(project.id)}
+              onClick={onToggle}
+            >
+              <span className="disc-caret" aria-hidden="true">
+                {open ? '▾' : '▸'}
+              </span>
+              {open ? `sessions (${sessionCount})` : `all ${sessionCount} sessions`}
+            </Button>
+          ) : null,
+
+        /* Both of these show an abbreviation of something exact — a relative
+           time over a timestamp, eight characters over a full id — so the
+           tooltip is not a duplicate of the visible text and cannot simply be
+           deleted. Neither span is interactive, so the wrapper trigger costs
+           two tab stops per project row and buys the exact value for a reader
+           who never had it.
+
+           They are the view's words rather than the card's on purpose:
+           `lastActivity` is the newest session *start*, not the last turn, and
+           "no sessions yet" against "nothing has run in this project" is this
+           page choosing what it can honestly claim. */
+        meta: (
+          <>
+            <Tooltip
+              explanation={
+                lastActivity ? fullTime(lastActivity) : 'nothing has run in this project'
+              }
+            >
+              {lastActivity ? relativeTime(lastActivity) : 'no sessions yet'}
+            </Tooltip>
+            <Tooltip explanation={project.id} className="project-id">
+              {shortId(project.id)}
+            </Tooltip>
+          </>
+        ),
+
+        /* A held project offers two honest choices instead of one that
+           fails: go to whoever holds it, or end that session and take
+           the project on. "Join" was only ever right for a free one.
+
+           This branch is the reason `primary` is a slot: deciding it requires
+           knowing what taking over *means*, which is a fact about this page's
+           mutations rather than about a project. */
+        primary: project.activeSessionId ? (
           <>
             <Tooltip asChild explanation="Open the session currently holding this project">
               <Button small onClick={() => navigate(sessionHref(project.activeSessionId!))}>
@@ -394,141 +452,114 @@ const ProjectRow = ({
           <Button small tone="accent" disabled={busy} onClick={onOpen}>
             Open
           </Button>
-        )}
+        ),
 
-        <span className="node-actions-gap" />
+        overflow: [
+          /* Pushes the two navigation buttons away from the two that start
+             something, so the row reads as two groups rather than four
+             adjacent choices. */
+          <span className="node-actions-gap" key="gap" />,
 
-        {/* Disabled with the server's own reason rather than relabelled and
-            sent elsewhere. A project chooses its workflow once, at creation,
-            and `get_course` 409s with exactly this sentence for one that chose
-            none — so a button that said "Research" and went to the course page
-            was hiding a permanent fact behind a wrong word. */}
-        {/* `aria-disabled`, not `disabled`, and for the same reason as the
-            dispatch button in `TopicQueue`: the sentence this carries when it
-            is off is the *permanent* reason it is off, and a `disabled`
-            element cannot be focused, so the tooltip holding it would open for
-            nobody. The click is guarded below instead. */}
-        <Tooltip
-          asChild
-          explanation={
-            project.workflow
-              ? 'Every stage of this workflow, and every artifact it owes'
-              : 'this project runs no workflow'
-          }
-        >
-          <Button
-            small
-            aria-disabled={!project.workflow}
-            onClick={() => {
-              if (!project.workflow) return
-              navigate(projectHref(project.id))
-            }}
+          /* Disabled with the server's own reason rather than relabelled and
+             sent elsewhere. A project chooses its workflow once, at creation,
+             and `get_course` 409s with exactly this sentence for one that
+             chose none — so a button that said "Research" and went to the
+             course page was hiding a permanent fact behind a wrong word.
+
+             `aria-disabled`, not `disabled`, and for the same reason as the
+             dispatch button in `TopicQueue`: the sentence this carries when it
+             is off is the *permanent* reason it is off, and a `disabled`
+             element cannot be focused, so the tooltip holding it would open
+             for nobody. The click is guarded instead. */
+          <Tooltip
+            asChild
+            key="course"
+            explanation={
+              project.workflow
+                ? 'Every stage of this workflow, and every artifact it owes'
+                : 'this project runs no workflow'
+            }
           >
-            Course
-          </Button>
-        </Tooltip>
-        <Tooltip asChild explanation="Topics, documents and the knowledge graph for this project">
-          <Button
-            small
-            onClick={() => navigate(projectHref(project.id, { facet: 'entity', id: null }))}
+            <Button
+              small
+              aria-disabled={!project.workflow}
+              onClick={() => {
+                if (!project.workflow) return
+                navigate(projectHref(project.id))
+              }}
+            >
+              Course
+            </Button>
+          </Tooltip>,
+          <Tooltip
+            asChild
+            key="research"
+            explanation="Topics, documents and the knowledge graph for this project"
           >
-            Research
-          </Button>
-        </Tooltip>
+            <Button
+              small
+              onClick={() => navigate(projectHref(project.id, { facet: 'entity', id: null }))}
+            >
+              Research
+            </Button>
+          </Tooltip>,
 
-        {/* Destructive things behind one more click, so the row's default
-            reading is "ways in" rather than "ways to lose things".
+          /* Destructive things behind one more click, so the row's default
+             reading is "ways in" rather than "ways to lose things".
 
-            **Was a `Disclosure` wearing menu chrome**, which is what
-            `tree.css` said it was and what it should not have been: a
-            disclosure announces `aria-expanded` over a region, and everything
-            else a menu owes -- `role="menu"`, Up and Down between items,
-            Escape closing it, focus coming back to the button -- was simply
-            absent. A keyboard reader tabbed in, tabbed straight through into
-            the rest of the row, and had no route back.
+             **Was a `Disclosure` wearing menu chrome**, which is what
+             `tree.css` said it was and what it should not have been: a
+             disclosure announces `aria-expanded` over a region, and everything
+             else a menu owes -- `role="menu"`, Up and Down between items,
+             Escape closing it, focus coming back to the button -- was simply
+             absent. A keyboard reader tabbed in, tabbed straight through into
+             the rest of the row, and had no route back.
 
-            The `Tooltip` that wrapped Delete is deleted rather than moved.
-            "Retire this project" beside an item that says *Delete* is the
-            third of the three cases phase 3 sorted `title` attributes into --
-            an explanation that repeats the text next to it -- and a tooltip
-            inside a menu item is two floating layers arguing over one
-            keypress. The item's own label is the explanation.
+             The `Tooltip` that wrapped Delete is deleted rather than moved.
+             "Retire this project" beside an item that says *Delete* is the
+             third of the three cases phase 3 sorted `title` attributes into --
+             an explanation that repeats the text next to it -- and a tooltip
+             inside a menu item is two floating layers arguing over one
+             keypress. The item's own label is the explanation.
 
-            `disabled` while busy rather than `aria-disabled`: unlike the
-            dispatch button in `TopicQueue`, this carries no sentence that
-            exists *because* it is off, so there is nothing a reader needs to
-            reach it to hear. Radix skips a disabled item in the arrow-key
-            order, which is the behaviour wanted. */}
-        <Menu
-          label={`More actions for ${project.name}`}
-          open={menuOpen}
-          onOpenChange={setMenuOpen}
-          trigger={<MenuTrigger aria-label={`More actions for ${project.name}`} />}
-        >
-          <MenuItem tone="danger" disabled={busy} onSelect={onDelete}>
-            Delete
-          </MenuItem>
-        </Menu>
-      </div>
+             `disabled` while busy rather than `aria-disabled`: unlike the
+             dispatch button in `TopicQueue`, this carries no sentence that
+             exists *because* it is off, so there is nothing a reader needs to
+             reach it to hear. Radix skips a disabled item in the arrow-key
+             order, which is the behaviour wanted. */
+          <Menu
+            key="more"
+            label={`More actions for ${project.name}`}
+            open={menuOpen}
+            onOpenChange={setMenuOpen}
+            trigger={<MenuTrigger aria-label={`More actions for ${project.name}`} />}
+          >
+            <MenuItem tone="danger" disabled={busy} onSelect={onDelete}>
+              Delete
+            </MenuItem>
+          </Menu>,
+        ],
 
-      {/* One session, not a list of them. Which one is the question a landing
-          page exists to answer -- "where was I" -- so it is the session holding
-          the project when one does, and the newest otherwise. Expanding gives
-          the full forest, where fork lineage is the structure and worth the
-          space; collapsed, that lineage is a `forked @` chip on one row.
+        /* One session, not a list of them. Which one is the question a landing
+           page exists to answer -- "where was I" -- so it is the session
+           holding the project when one does, and the newest otherwise.
+           Expanding gives the full forest, where fork lineage is the structure
+           and worth the space; collapsed, that lineage is a `forked @` chip on
+           one row.
 
-          The preview gives way to the forest rather than sitting above it: the
-          current session is *in* that forest, and showing it twice reads as a
-          duplicated row rather than as a summary of the list below it. */}
-      {current && !open ? (
-        <SessionRow session={current} held={current.id === project.activeSessionId} />
-      ) : null}
+           The note takes the same slot because the two are alternatives: a
+           project with no sessions has nothing to preview and nothing to
+           expand, so it is the only case where this says something instead of
+           showing something. A project with one session shows it and needs no
+           note. */
+        preview: current ? (
+          <SessionRow session={current} held={current.id === project.activeSessionId} />
+        ) : sessionCount === 0 ? (
+          <p className="project-no-sessions">Nothing has run in this project yet.</p>
+        ) : null,
 
-      {sessionCount > 1 ? (
-        <Disclosure
-          className="project-sessions"
-          label={open ? `sessions (${sessionCount})` : `all ${sessionCount} sessions`}
-          open={open}
-          onToggle={onToggle}
-        >
-          <SessionForest nodes={sessions} heldBy={project.activeSessionId} />
-        </Disclosure>
-      ) : null}
-
-      {/* Only when there is nothing at all. A project with one session shows it
-          above and needs no note, and a fold offering no more than the row
-          already displays is a click that changes nothing. */}
-      {sessionCount === 0 ? (
-        <p className="project-no-sessions">Nothing has run in this project yet.</p>
-      ) : null}
-    </div>
-  )
-}
-
-/** One chip, showing the preset and how far through it this project is.
- *
- * "4 of 15" rather than the stage id alone: the id is precise and says nothing
- * about progress, which is the thing a list is being scanned for. */
-const WorkflowChip = ({ project }: { project: Project }) => {
-  if (!project.workflow) {
-    return (
-      <Tooltip explanation="No workflow selected. Projects choose one when they are created.">
-        <Chip>no workflow</Chip>
-      </Tooltip>
-    )
-  }
-  const { stage, workflow } = project
-  return (
-    <Tooltip
-      explanation={
-        stage
-          ? `Stage ${stage.index} of ${stage.of}: ${stage.name} (${stage.id})`
-          : // No stage means the preset is not one this build ships, so there is
-            // no stage list to place the project in. Say that rather than guess.
-            `Workflow ${workflow.id} is not available in this build`
-      }
-    >
-      <Chip>{stage ? `${workflow.name} · ${stage.index}/${stage.of}` : workflow.name}</Chip>
-    </Tooltip>
+        sessions: <SessionForest nodes={sessions} heldBy={project.activeSessionId} />,
+      }}
+    />
   )
 }

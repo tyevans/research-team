@@ -133,6 +133,22 @@ it('draws the whole graph, wired, without being asked for a node', async () => {
   expect(whole).toHaveBeenCalledWith(PROJECT)
 })
 
+it('surfaces the edge cap separately from the node cap', async () => {
+  const ada = node()
+  const whole = vi.fn().mockResolvedValue({
+    entities: [ada],
+    relationships: [],
+    truncated: false,
+    inferredTruncated: true,
+  })
+  const graph = store(fakeGraphs({ whole }))
+
+  await graph.getState().loadAll()
+
+  expect(graph.getState().partial).toBe(false)
+  expect(graph.getState().edgesPartial).toBe(true)
+})
+
 it('treats a complete graph as fully expanded, so clicking costs no request', async () => {
   const ada = node()
   const neighborhood = vi.fn()

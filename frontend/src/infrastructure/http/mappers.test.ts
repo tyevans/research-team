@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import * as dto from './dto.ts'
 import {
-  summariesAsForest,
   toApproval,
   toCourse,
   toForkNode,
+  toGraphLink,
+  toGraphNode,
   toLogEntry,
   toMessage,
   toNeighborhood,
@@ -14,6 +15,7 @@ import {
   toSession,
   toSessionSummary,
   toTurnRange,
+  toWholeGraph,
 } from './mappers.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
@@ -134,26 +136,6 @@ describe('toForkNode', () => {
       }),
     )
     expect(node.children[0]?.children[0]?.id).toBe('c')
-  })
-})
-
-describe('summariesAsForest', () => {
-  it('renders a flat list as roots, for when the tree projection has drifted', () => {
-    // A truthful degradation; "no sessions yet" would be a lie.
-    const forest = summariesAsForest([
-      {
-        id: 'a',
-        projectId: 'p1',
-        startedAt: null,
-        turns: null,
-        files: null,
-        firstMessage: null,
-        forkedFrom: null,
-        forkedAt: null,
-        failedTurns: null,
-      },
-    ] as never)
-    expect(forest[0]?.children).toEqual([])
   })
 })
 
@@ -369,11 +351,69 @@ describe('toNeighborhood', () => {
       }),
     )
 
-    expect(neighborhood.root).toEqual({ id: 'ada', name: 'Ada Lovelace', entityType: 'Person' })
+    expect(neighborhood.root).toEqual({
+      id: 'ada',
+      name: 'Ada Lovelace',
+      entityType: 'Person',
+      temporal: null,
+    })
     expect(neighborhood.entities).toHaveLength(2)
     expect(neighborhood.relationships).toEqual([
-      { source: 'ada', target: 'grace', relationshipType: 'advised' },
+      {
+        source: 'ada',
+        target: 'grace',
+        relationshipType: 'advised',
+        inferred: false,
+        derivation: null,
+      },
     ])
+  })
+})
+
+describe('toGraphNode', () => {
+  it('carries the entity temporal extent through', () => {
+    const node = toGraphNode(
+      parse(dto.graphEntityDto, {
+        entity_id: 'ada',
+        name: 'Ada Lovelace',
+        entity_type: 'Person',
+        temporal: '1815-1852',
+      }),
+    )
+
+    expect(node.temporal).toBe('1815-1852')
+  })
+})
+
+describe('toGraphLink', () => {
+  it('carries inferred and derivation through', () => {
+    const link = toGraphLink(
+      parse(dto.graphRelationshipDto, {
+        source_id: 'ada',
+        target_id: 'grace',
+        relationship_type: 'CONTAINS',
+        inferred: true,
+        derivation: 'ada contains grace by date range',
+      }),
+    )
+
+    expect(link.inferred).toBe(true)
+    expect(link.derivation).toBe('ada contains grace by date range')
+  })
+})
+
+describe('toWholeGraph', () => {
+  it('carries inferredTruncated through', () => {
+    const graph = toWholeGraph(
+      parse(dto.graphWholeDto, {
+        entities: [],
+        relationships: [],
+        truncated: false,
+        inferred_truncated: true,
+      }),
+    )
+
+    expect(graph.inferredTruncated).toBe(true)
   })
 })
 

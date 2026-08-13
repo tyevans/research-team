@@ -5,20 +5,34 @@ Seeded directly through `InMemoryGraphStore.upsert_entities` /
 test is the read side, and the write side has its own coverage.
 """
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from redstring import InMemoryGraphStore
+from redstring import DatePrecision, InMemoryGraphStore, TemporalExtent
 from redstring.domain.entity import Entity, ExtractionMethod
 from redstring.domain.relationship import Relationship
 
-from research_team.application.graph_read import MAX_GRAPH_NODES, MAX_NEIGHBORHOOD_DEPTH
+from research_team.application.graph_read import (
+    MAX_GRAPH_NODES,
+    MAX_INFERRED_EDGES,
+    MAX_NEIGHBORHOOD_DEPTH,
+    Graph,
+    GraphEntity,
+    GraphRelationship,
+)
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 
 TENANT_ID = uuid4()
 
 
-def _entity(entity_id, name: str, entity_type: str = "person") -> Entity:
+def _entity(
+    entity_id,
+    name: str,
+    entity_type: str = "person",
+    *,
+    temporal: TemporalExtent | None = None,
+) -> Entity:
     return Entity(
         id=entity_id,
         tenant_id=TENANT_ID,
@@ -27,6 +41,7 @@ def _entity(entity_id, name: str, entity_type: str = "person") -> Entity:
         entity_type=entity_type,
         extraction_method=ExtractionMethod.MANUAL,
         confidence=1.0,
+        temporal=temporal,
     )
 
 
@@ -86,6 +101,33 @@ async def deep_graph(graph_reader):
         [_relationship(uuid4(), ids[n], ids[n + 1], "next") for n in range(5)]
     )
     return {"root_id": ids[0]}
+
+
+def test_a_relationship_is_asserted_unless_it_says_otherwise():
+    """The default is the safe one.
+
+    Every existing construction site omits these fields, so a default of
+    `True` -- or a required argument -- would relabel every stored edge in the
+    application as inferred. The flag's whole job is telling those apart.
+    """
+    edge = GraphRelationship(source_id="a", target_id="b", relationship_type="advised")
+    assert edge.inferred is False
+    assert edge.derivation is None
+
+
+def test_an_entity_is_undated_unless_it_says_otherwise():
+    node = GraphEntity(entity_id="a", name="Prandtl", entity_type="person")
+    assert node.temporal is None
+
+
+def test_a_graph_reports_its_two_truncations_separately():
+    """`truncated` is about entities; `inferred_truncated` is about lines.
+
+    One flag for both would tell a reader that nodes are missing when every
+    node is present, and send them looking for entities that are all there.
+    """
+    graph = Graph(entities=(), relationships=(), truncated=True)
+    assert graph.inferred_truncated is False
 
 
 async def test_a_neighborhood_carries_the_edges_among_what_it_returned(
@@ -264,6 +306,255 @@ async def test_an_entity_merged_away_is_not_drawn_as_its_own_node(graph_reader):
 
     page = await reader.find_entities(name="Nova Scotia")
     assert [entity.entity_id for entity in page.entities] == [str(canonical_id)]
+
+
+async def test_an_entity_merged_away_is_not_drawn_in_a_neighborhood(graph_reader):
+    """What `whole` has always done, which `neighborhood` never did.
+
+    `GraphStore.neighbors` returns absorbed entities as well as canonical
+    ones -- a merge is not a delete, because the row is what `undo_merge`
+    restores. Passed through, a *correctly* consolidated pair draws as two
+    nodes: the canonical one carrying every edge, and the alias beside it
+    with none, because the merge redirected them. An isolated node bearing a
+    name already on the canvas is precisely the duplicate a reader reports.
+
+    Fails against the code as it was: the alias came back in `entities`.
+    """
+    reader, store = graph_reader
+    root_id, canonical_id, alias_id = uuid4(), uuid4(), uuid4()
+    await store.upsert_entities(
+        [
+            _entity(root_id, "Root"),
+            _entity(canonical_id, "Nova Scotia Duck Tolling Retriever"),
+            _entity(alias_id, "Nova Scotia Duck Tolling Retriever"),
+        ]
+    )
+    await store.upsert_relationships(
+        [
+            _relationship(uuid4(), root_id, canonical_id, "related_to"),
+            # The alias's own edge, unredirected in this fake store's `merge`
+            # -- an `Alias` row records that it was absorbed, but does not
+            # rewire relationships, so `neighbors`' BFS still reaches it
+            # exactly as it would in the store this reader actually runs
+            # against. Without that edge the alias is merely unconnected,
+            # which proves nothing about the filter under test.
+            _relationship(uuid4(), root_id, alias_id, "related_to"),
+        ]
+    )
+    await _merge_away(store, alias_id=alias_id, canonical_id=canonical_id)
+
+    hood = await reader.neighborhood(str(root_id), depth=1)
+
+    assert str(alias_id) not in {entity.entity_id for entity in hood.entities}
+    for edge in hood.relationships:
+        assert edge.source_id != str(alias_id)
+        assert edge.target_id != str(alias_id)
+
+
+def _year(year: int) -> TemporalExtent:
+    return TemporalExtent(
+        start_date=datetime(year, 1, 1, tzinfo=UTC),
+        end_date=datetime(year, 12, 31, tzinfo=UTC),
+        precision=DatePrecision.YEAR,
+    )
+
+
+def _month(year: int, month: int) -> TemporalExtent:
+    return TemporalExtent(
+        start_date=datetime(year, month, 1, tzinfo=UTC),
+        precision=DatePrecision.MONTH,
+    )
+
+
+async def test_a_temporal_edge_appears_between_entities_the_store_never_related(graph_reader):
+    """Inference ran, as opposed to a stored edge acquiring a flag.
+
+    The pair here has *no* stored relationship, which is what makes that
+    distinction checkable: an implementation that only labelled stored edges
+    produces nothing at all for this pair.
+
+    The extents are a year and a month inside it, so the relation is
+    `CONTAINS`. Two identical extents would give `EQUALS`, which would also
+    appear under an implementation that never compared anything and simply
+    paired every dated entity up.
+    """
+    reader, store = graph_reader
+    era_id, event_id = uuid4(), uuid4()
+    await store.upsert_entities(
+        [
+            _entity(era_id, "The Weimar Republic", temporal=_year(1923)),
+            _entity(event_id, "Hyperinflation Peaks", temporal=_month(1923, 11)),
+        ]
+    )
+
+    graph = await reader.whole()
+
+    inferred = [edge for edge in graph.relationships if edge.inferred]
+    assert len(inferred) == 1
+    edge = inferred[0]
+    assert {edge.source_id, edge.target_id} == {str(era_id), str(event_id)}
+    assert edge.relationship_type == "contains"
+    assert edge.derivation is not None
+
+
+async def test_a_stored_edge_between_the_same_pair_is_still_asserted(graph_reader):
+    """The other half of the pair above. Same two entities, related in the
+    store as well -- the stored edge must come back with `inferred=False` and
+    no derivation, alongside the computed one rather than instead of it."""
+    reader, store = graph_reader
+    era_id, event_id = uuid4(), uuid4()
+    await store.upsert_entities(
+        [
+            _entity(era_id, "The Weimar Republic", temporal=_year(1923)),
+            _entity(event_id, "Hyperinflation Peaks", temporal=_month(1923, 11)),
+        ]
+    )
+    await store.upsert_relationships([_relationship(uuid4(), era_id, event_id, "encompassed")])
+
+    graph = await reader.whole()
+
+    asserted = [edge for edge in graph.relationships if not edge.inferred]
+    inferred = [edge for edge in graph.relationships if edge.inferred]
+    assert len(asserted) == 1
+    assert asserted[0].relationship_type == "encompassed"
+    assert asserted[0].derivation is None
+    assert len(inferred) == 1
+    assert inferred[0].relationship_type == "contains"
+
+
+async def test_before_is_not_drawn(graph_reader):
+    """Two disjoint dated entities produce no edge at all.
+
+    `_DRAWN_RELATIONS` is the only thing keeping the drawing legible -- 100
+    dated entities is on the order of 4,950 `BEFORE` edges against at most 500
+    nodes, and a force-directed layout given that resolves to a solid disc. An
+    exemption nobody checks stops holding silently.
+    """
+    reader, store = graph_reader
+    earlier_id, later_id = uuid4(), uuid4()
+    await store.upsert_entities(
+        [
+            _entity(earlier_id, "Treaty Signed", temporal=_year(1918)),
+            _entity(later_id, "Armistice Anniversary", temporal=_year(1938)),
+        ]
+    )
+
+    graph = await reader.whole()
+
+    assert [edge for edge in graph.relationships if edge.inferred] == []
+
+
+async def test_undated_entities_are_drawn_and_take_no_part(graph_reader):
+    """One entity with no extent and one with an empty one, alongside a dated
+    pair that *does* infer an edge: both undated entities present as nodes,
+    both absent from every inferred edge, and the dated pair proves the
+    assertion actually ran. Most entities in a real graph are not events, so
+    the undated pair is the ordinary case rather than the edge case -- but a
+    fixture with only one dated entity can infer nothing at all, which would
+    let this pass with `_inferred_edges` deleted outright."""
+    reader, store = graph_reader
+    undated_id, empty_id, era_id, event_id = uuid4(), uuid4(), uuid4(), uuid4()
+    await store.upsert_entities(
+        [
+            _entity(undated_id, "No Extent At All"),
+            _entity(empty_id, "Empty Extent", temporal=TemporalExtent()),
+            _entity(era_id, "The Weimar Republic", temporal=_year(1923)),
+            _entity(event_id, "Hyperinflation Peaks", temporal=_month(1923, 11)),
+        ]
+    )
+
+    graph = await reader.whole()
+
+    assert {entity.entity_id for entity in graph.entities} == {
+        str(undated_id),
+        str(empty_id),
+        str(era_id),
+        str(event_id),
+    }
+    inferred = [edge for edge in graph.relationships if edge.inferred]
+    assert inferred, "the dated pair should have produced an inferred edge"
+    for edge in inferred:
+        assert str(undated_id) not in (edge.source_id, edge.target_id)
+        assert str(empty_id) not in (edge.source_id, edge.target_id)
+
+
+async def test_a_merged_pair_infers_no_edge_to_itself(graph_reader):
+    """The alias fix and inference, together, in `neighborhood`.
+
+    Inference knows nothing about merges and an absorbed entity keeps its own
+    `temporal`, so without Task 4 a canonical entity and its own alias produce
+    an `EQUALS` between what is really one thing -- a duplicate node wired to
+    itself. Reverting Task 4 turns this red.
+    """
+    reader, store = graph_reader
+    root_id, canonical_id, alias_id = uuid4(), uuid4(), uuid4()
+    same_date = _year(1923)
+    await store.upsert_entities(
+        [
+            _entity(root_id, "Root", temporal=_year(1920)),
+            _entity(canonical_id, "Weimar Republic", temporal=same_date),
+            _entity(alias_id, "Weimar Republic", temporal=same_date),
+        ]
+    )
+    await store.upsert_relationships(
+        [
+            _relationship(uuid4(), root_id, canonical_id, "related_to"),
+            _relationship(uuid4(), root_id, alias_id, "related_to"),
+        ]
+    )
+    await _merge_away(store, alias_id=alias_id, canonical_id=canonical_id)
+
+    hood = await reader.neighborhood(str(root_id), depth=1)
+
+    for edge in hood.relationships:
+        assert str(alias_id) not in (edge.source_id, edge.target_id)
+
+
+async def test_the_inferred_edge_cap_drops_lines_but_never_asserted_edges(graph_reader):
+    """`inferred_truncated` actually reflects the slice, not just the flag's
+    default.
+
+    65 entities sharing one identical extent produce `65 * 64 / 2 = 2,080`
+    `EQUALS` pairs -- over `MAX_INFERRED_EDGES` (2,000) and comfortably under
+    `MAX_GRAPH_NODES` (500), so the node cap never gets in the way of
+    reaching the edge cap. A stored relationship among the same entities is
+    seeded alongside them, so "asserted edges are never sacrificed to make
+    room for inferred ones" is asserted here rather than merely implied by
+    the slice being taken from the inferred list alone.
+    """
+    reader, store = graph_reader
+    same_date = _year(1923)
+    ids = [uuid4() for _ in range(65)]
+    await store.upsert_entities(
+        [_entity(i, f"Node {n}", temporal=same_date) for n, i in enumerate(ids)]
+    )
+    await store.upsert_relationships([_relationship(uuid4(), ids[0], ids[1], "next")])
+
+    graph = await reader.whole()
+
+    inferred = [edge for edge in graph.relationships if edge.inferred]
+    asserted = [edge for edge in graph.relationships if not edge.inferred]
+    assert len(inferred) == MAX_INFERRED_EDGES
+    assert len(asserted) == 1
+    assert graph.inferred_truncated is True
+
+
+async def test_a_graph_under_the_inferred_edge_cap_is_not_reported_truncated(graph_reader):
+    """The other half of the boundary: nothing dropped means the flag stays
+    false, the same "complete unless it says otherwise" contract `truncated`
+    already gives entities."""
+    reader, store = graph_reader
+    same_date = _year(1923)
+    ids = [uuid4() for _ in range(5)]
+    await store.upsert_entities(
+        [_entity(i, f"Node {n}", temporal=same_date) for n, i in enumerate(ids)]
+    )
+
+    graph = await reader.whole()
+
+    inferred = [edge for edge in graph.relationships if edge.inferred]
+    assert len(inferred) == 5 * 4 // 2
+    assert graph.inferred_truncated is False
 
 
 async def test_an_empty_project_reads_as_an_empty_graph(graph_reader):

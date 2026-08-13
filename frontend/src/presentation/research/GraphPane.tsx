@@ -54,7 +54,8 @@ export const GraphPane = ({
   // instead (the same split `ExtractionPane` uses). Destructuring them here
   // would also detach them from the store instance the way an unbound method
   // detaches from `this`, which this project's lint config catches.
-  const { view, results, knownTypes, truncated, searching, error, partial, loading } = store()
+  const { view, results, knownTypes, truncated, searching, error, partial, edgesPartial, loading } =
+    store()
 
   /** Draw the whole graph before the reader asks for anything.
    *
@@ -157,6 +158,7 @@ export const GraphPane = ({
       searching={searching}
       error={error}
       partial={partial}
+      edgesPartial={edgesPartial}
       loading={loading}
       entity={entity}
       term={term}
@@ -201,6 +203,7 @@ export const GraphBrowser = ({
   searching,
   error,
   partial,
+  edgesPartial,
   loading,
   entity,
   term,
@@ -223,6 +226,10 @@ export const GraphBrowser = ({
   error: string | null
   /** The drawing is part of a larger graph. */
   partial: boolean
+  /** The temporal edges among the drawn nodes were themselves capped, which
+   *  `partial` does not cover: a graph under the node cap can still have more
+   *  inferred lines than were computed for it. */
+  edgesPartial: boolean
   loading: boolean
   entity: string | null
   term: string
@@ -311,6 +318,14 @@ export const GraphBrowser = ({
           <p className="graph-truncated">
             Showing part of a larger graph -- search to find what is not drawn.
           </p>
+        ) : null}
+
+        {/* A drawing missing temporal edges looks exactly like a drawing with
+            none to miss, and this is the only case that says otherwise: it
+            can fire even when `partial` is false, since the edge cap and the
+            node cap are independent. */}
+        {edgesPartial ? (
+          <p className="graph-truncated">Some inferred date relationships are not drawn.</p>
         ) : null}
 
         {searching ? (
