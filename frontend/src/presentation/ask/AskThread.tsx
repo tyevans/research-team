@@ -1,11 +1,11 @@
 import { useState } from 'react'
 
-import type { AskActivity, AskTranscript, AskTurn } from '@domain/ask/conversation.ts'
+import type { AskTranscript, AskTurn } from '@domain/ask/conversation.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Markdown } from '../common/content.tsx'
-import { Chip, Disclosure, EmptyState } from '../common/primitives.tsx'
-import { plural } from '../formatting/format.ts'
+import { EmptyState } from '../common/primitives.tsx'
+import { AskActivityFold } from './AskActivity.tsx'
 import { CitationList } from './CitationList.tsx'
 
 /** The conversation so far: question, what was consulted, answer, sources.
@@ -86,43 +86,7 @@ const Turn = ({
       {turn.question}
     </p>
 
-    {/* Above the answer and collapsed, as `Segments` collapses a tool run: the
-        machinery is how the answer was reached and the answer is what was
-        asked for, so it is available and never in the way. `Disclosure`
-        renders nothing while closed -- it is not hidden by CSS -- which is
-        what makes the jsdom test of this a real test. */}
-    {turn.activity.length > 0 ? (
-      <Disclosure
-        className="text-sm"
-        open={open}
-        onToggle={onToggle}
-        label={
-          <span className="run-label">
-            <b>Looked at {plural(turn.activity.length, 'thing')}</b>
-          </span>
-        }
-      >
-        {/* The zeroing is load-bearing rather than tidy: this build imports no
-            preflight, so a bare `<ul>` keeps the user agent's margin, padding
-            and bullets.
-
-            `m-0` and `p-0` were both dead while this page was being written:
-            `@theme` declared `--spacing-1` upward and no base step, so they
-            compiled to `calc(var(--spacing) * 0)` and emitted nothing at all.
-            `--spacing-0` on main fixes that, and `check-tailwind.mjs` is what
-            now fails the build rather than a reader noticing an indent. Left
-            in the plain spelling deliberately -- the arbitrary `m-[0]` this
-            carried in the meantime would work forever and say nothing. */}
-        <ul className="m-0 flex list-none flex-col gap-1 pt-2 pr-0 pb-0 pl-3 text-fg-faint">
-          {turn.activity.map((item) => (
-            <li key={item.messageId}>
-              <span className="mono">{activityName(item)}</span>
-              {item.isError ? <Chip tone="fail">error</Chip> : null}
-            </li>
-          ))}
-        </ul>
-      </Disclosure>
-    ) : null}
+    <AskActivityFold activity={turn.activity} open={open} onToggle={onToggle} />
 
     {/* The model writes markdown, and it goes through the one sanitising
         renderer this application has -- see `Markdown`. */}
@@ -147,17 +111,3 @@ const Turn = ({
     <CitationList projectId={projectId} citations={turn.citations} />
   </article>
 )
-
-/** A tool's name if the frame carried one, its kind otherwise.
- *
- * `payload` is `unknown` by design -- the fold stores frames without
- * interpreting them -- so this narrows rather than casts. A frame whose shape
- * changes server-side degrades to "tool" here instead of throwing inside a
- * render. */
-const activityName = (item: AskActivity): string => {
-  if (typeof item.payload === 'object' && item.payload !== null && 'name' in item.payload) {
-    const { name } = item.payload
-    if (typeof name === 'string' && name) return name
-  }
-  return item.kind
-}
