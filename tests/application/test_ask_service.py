@@ -73,10 +73,11 @@ class LateNoteExecutor:
     The ordinary `FakeExecutor` cannot reach the drain loop's re-yield branch:
     its release event is pre-set, so it runs to completion before the pending
     `notes.get()` is ever polled and the note arrives by the ordinary path.
-    Here the note is queued in the same step as the return, so the executor
-    task's done-callback fires before the woken getter task is scheduled --
-    the wait wakes on the executor alone, and the note is only owed to the
-    reader by the drain of what is left in the queue.
+    Here the note is queued in the same step as the return, exercising the
+    tightest gap between the two: the `put_nowait` and the `return` happen in
+    the same step of `run`, so the note still reaches the reader through the
+    ordinary branch -- the woken getter is scheduled to run before the
+    executor task's completion is observed by `asyncio.wait`.
     """
 
     def __init__(self) -> None:
@@ -92,8 +93,12 @@ class LateNoteExecutor:
 async def test_a_note_queued_as_the_executor_returns_still_reaches_the_reader():
     """The last thing an agent says is usually the one worth reading.
 
-    Fails with the `while not notes.empty()` drain deleted: the note is lost
-    and only the answer arrives.
+    Pins that an executor which reports in its final step -- queuing its last
+    note in the same step it returns -- still delivers that note to the
+    reader, through the ordinary drain-loop branch rather than any special
+    handling: `put_nowait` wakes the pending `notes.get()` before the
+    executor task's own done-callback can run, so the woken getter always
+    gets its turn first.
     """
     executor = LateNoteExecutor()
     ask = service(executor)

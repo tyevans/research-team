@@ -122,6 +122,12 @@ class AskExecutor(Protocol):
 
     Implemented in `infrastructure/agent/ask_agent.py`; the port exists so
     this layer never names LangChain.
+
+    `on_activity` must not be called after `run` returns. `AskService._drain`
+    relies on every report happening-before the executor task's completion to
+    guarantee a final-step note still reaches the reader through its ordinary
+    branch; a report from a background callback that outlives `run` would
+    have no such guarantee and could be lost.
     """
 
     async def run(
@@ -230,14 +236,20 @@ class AskService:
             if getter in done:
                 yield getter.result()
                 continue
-            # The executor finished with nothing left owed. A note queued in
-            # its final step does not strand here: `put_nowait` resolves the
-            # pending `notes.get()`, and `asyncio.wait` cannot resume before
-            # that woken getter has had its step, so such a note arrives
-            # through the branch above instead. This was checked rather than
-            # reasoned -- 216 permutations of when the executor reports and
-            # returns, plus a `call_soon` and a cross-thread reporter, and the
-            # queue was empty here every time
+            # The executor finished with nothing left owed. This relies on
+            # `AskExecutor.run`'s contract (see its docstring) that
+            # `on_activity` is not called after `run` returns: every report
+            # made *during* `run` has its `put_nowait` happen-before the
+            # executor task's completion, so the getter it wakes is always
+            # scheduled before that task's completion callback runs, and the
+            # note arrives through the branch above instead. This is a
+            # consequence of that ordering, not of `asyncio.wait` itself --
+            # `asyncio.wait` can resume with the queue non-empty and the woken
+            # getter not yet stepped, so a report made *after* `run` returns
+            # would strand here. This was checked rather than reasoned -- 216
+            # permutations of when the executor reports and returns, plus a
+            # `call_soon` and a cross-thread reporter, and the queue was
+            # empty here every time
             # (`test_a_note_queued_as_the_executor_returns_still_reaches_the_reader`
             # pins the case that matters). A drain loop lived here for that
             # reason and was removed as unreachable; if `_drain` ever grows a
