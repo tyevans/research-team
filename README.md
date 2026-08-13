@@ -32,6 +32,13 @@ to any point (the workspace refolds — no fork, no write), per-file diffs of ea
 recorded edit, and the fork lineage as a tree. New events reach every open
 browser over SSE.
 
+A project's third page asks it about what it gathered. The answer comes from
+that project's own material — its knowledge graph and the sources behind it —
+and the agent cites the documents it opened rather than the ones it found by
+searching. The page starts no session and appends no events: the conversation
+is held in server memory, is dropped when you leave, and the tools it can reach
+are an allowlist of five readers with no write and no network among them.
+
 Point at your model server if it is not on the default
 `http://localhost:8080/v1/`:
 
