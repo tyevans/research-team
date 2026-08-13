@@ -86,9 +86,9 @@ const mount = async () => {
   await userEvent.click(page.getByRole('button', { name: /^ask$/i }))
   await expect.element(page.getByRole('link', { name: /s1/ })).toBeInTheDocument()
 
-  const view = document.querySelector('section.view') as HTMLElement
-  const thread = view.querySelector('div.overflow-y-auto') as HTMLElement
-  const composer = view.querySelector('form.composer') as HTMLElement
+  const view = document.querySelector('section.ask') as HTMLElement
+  const thread = view.querySelector('.ask-thread') as HTMLElement
+  const composer = view.querySelector('form.ask-composer') as HTMLElement
 
   // Enough turns to overflow, written straight into the thread rather than
   // typed: this test is about the box, and twelve round trips through the
@@ -112,8 +112,6 @@ it('scrolls the thread and not the page, so the composer keeps the bottom edge',
 
   expect(view.scrollHeight).toBeLessThanOrEqual(view.clientHeight)
 
-  // The composer's bottom edge, within a pixel of the surface's. `-mx-5` pulls
-  // it out to the page edges as well, which is the other half of sitting flush.
   const surface = view.getBoundingClientRect()
   const bar = composer.getBoundingClientRect()
   expect(Math.abs(bar.bottom - surface.bottom)).toBeLessThan(1)
@@ -121,29 +119,61 @@ it('scrolls the thread and not the page, so the composer keeps the bottom edge',
   expect(Math.abs(bar.right - surface.right)).toBeLessThan(1)
 })
 
+it('caps the prose column below the width of the surface', async () => {
+  // The fault this redesign exists for. Before it, these two were equal: the
+  // head was capped at 1100px by `.view-head` and overridden to `max-w-none!`
+  // to match a thread that had no cap at all, which made the page uniformly
+  // too wide rather than uniformly right.
+  //
+  // Compared against the thread's own available width, not `view.clientWidth`:
+  // `.ask-thread` carries its own inline padding, so the column is narrower
+  // than the surface *regardless of the cap*. Comparing against `view` passed
+  // even with `max-width: 72ch` commented out of `.ask-measure` -- the first
+  // draft of this assertion measured the thread's padding, not the cap.
+  const { thread } = await mount()
+  const column = thread.querySelector('.ask-measure') as HTMLElement
+
+  const threadStyle = getComputedStyle(thread)
+  const available =
+    thread.clientWidth - parseFloat(threadStyle.paddingLeft) - parseFloat(threadStyle.paddingRight)
+
+  const width = column.getBoundingClientRect().width
+  expect(width).toBeLessThan(available)
+  expect(width).toBeGreaterThan(0)
+})
+
+it('lines the question box up with the prose above it', async () => {
+  // The other half of the measure, and the one a stylesheet gets wrong
+  // silently: a thread that centres its column and a composer that does not
+  // both look fine alone.
+  //
+  // This passes partly because headless Chromium uses overlay scrollbars.
+  // `.ask-thread` is `overflow-y-auto` and really overflows here, so with
+  // classic (space-taking) scrollbars its content box would be narrower than
+  // the composer's by the scrollbar width, the two centred columns would sit
+  // a few pixels apart, and this assertion would go red -- and the columns
+  // would genuinely misalign for a reader on a platform with classic
+  // scrollbars. `px-5` on `.ask-thread` leaves room for the scrollbar but the
+  // composer carries the same `px-5` with no scrollbar to make room for, so
+  // it does not actually compensate. This console is Chromium by explicit
+  // choice (`vite.config.ts`), so it is not fixed here.
+  const { thread, composer } = await mount()
+  const prose = (thread.querySelector('.ask-measure') as HTMLElement).getBoundingClientRect()
+  const box = (composer.querySelector('.ask-measure') as HTMLElement).getBoundingClientRect()
+
+  expect(Math.abs(box.left - prose.left)).toBeLessThan(1)
+  expect(Math.abs(box.right - prose.right)).toBeLessThan(1)
+})
+
 it('zeroes the lists the missing preflight would otherwise leave indented', async () => {
   await mount()
 
-  // Both lists on the page: the citation row, which is on screen already, and
-  // the activity fold, which is not rendered until it is opened. Only the
-  // first is reachable here without driving the fold, and it is the one that
-  // caught the dead-zero bug described above.
-  const list = document.querySelector('section.view ul') as HTMLElement
+  // The citation row, which is on screen already. The activity fold's list is
+  // not rendered until it is opened -- `Disclosure` renders `{open ? … }` --
+  // so it is not reachable here without driving the fold.
+  const list = document.querySelector('section.ask ul') as HTMLElement
   const style = getComputedStyle(list)
   expect(style.marginBlockStart).toBe('0px')
   expect(style.paddingInlineStart).toBe('0px')
   expect(style.listStyleType).toBe('none')
-})
-
-it('keeps the head full-bleed against the unlayered rule that caps it', async () => {
-  // `.view-head` in `tree.css` is unlayered and sets `max-width: 1100px;
-  // margin: 0 auto`, and utilities live in `@layer utilities`, which loses to
-  // it whatever the specificity. The `!` on `max-w-none!` and `m-[0]!` is what
-  // makes this pass; drop either and the head centres itself inside a
-  // full-width thread.
-  const { view } = await mount()
-  const head = view.querySelector('.view-head') as HTMLElement
-
-  expect(getComputedStyle(head).maxWidth).toBe('none')
-  expect(Math.abs(head.getBoundingClientRect().width - view.clientWidth + 40)).toBeLessThan(1)
 })
