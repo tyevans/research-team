@@ -2,6 +2,8 @@ import { cva } from 'class-variance-authority'
 
 import { statusLabel, statusTone, type StatusTone } from '@domain/entity/status.ts'
 
+import { TruncatedText } from '../common/TruncatedText.tsx'
+
 /** A status, spelled and toned in one place.
  *
  * This is the first use of `class-variance-authority` in the codebase, and it
@@ -48,11 +50,20 @@ export const EntityStatus = ({
   /** Why the status is what it is, when the caller knows: a dispatch failure's
    *  reason, a block's cause. Rendered as text beside the status rather than
    *  as a `title`, because `title` is not keyboard-reachable, not available on
-   *  touch, and inconsistently announced — the defect S-D3 counts nine of. */
+   *  touch, and inconsistently announced — the defect S-D3 counts nine of.
+   *
+   *  It was then clipped at a fixed `24ch` with no way to read the rest, which
+   *  is `title` again with the one thing `title` was good at removed. It now
+   *  shrinks only when the row does, and says so when it has. */
   detail?: string
 }) => (
   <span className={chip({ tone: statusTone(status) })}>
-    {statusLabel(status)}
-    {detail === undefined ? null : <span className="ent-status-detail">{detail}</span>}
+    {/* An element rather than a bare text node, so it can be told not to
+        shrink. As a text node it is an anonymous flex item, which takes the
+        default `flex: 0 1 auto` and cannot be addressed by any rule — so a
+        narrow row shrank the status itself, which is the chip's identity,
+        rather than the explanation beside it. */}
+    <span className="ent-status-label">{statusLabel(status)}</span>
+    {detail === undefined ? null : <TruncatedText text={detail} className="ent-status-detail" />}
   </span>
 )

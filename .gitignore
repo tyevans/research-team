@@ -40,3 +40,7 @@ frontend/coverage/
 # useful while you are looking at one and is debris the moment it passes. The
 # suite is local-only, so these would only ever be committed by accident.
 frontend/src/**/__screenshots__/
+# And a second directory for the same debris, which the previous commit missed
+# because nothing had failed at the top level yet: the screenshot is written
+# beside the test, and the attachment the reporter links to is written here.
+frontend/.vitest-attachments/

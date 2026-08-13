@@ -3,6 +3,8 @@ import clsx from 'clsx'
 import { isNamed, type EntityHead } from '@domain/entity/entity-head.ts'
 import { shortId } from '@domain/shared/identifier.ts'
 
+import { TruncatedText } from '../common/TruncatedText.tsx'
+
 /** The `Ref` density: an entity named inside someone else's sentence.
  *
  * One line, no box, no actions. The density exists because seven sites in this
@@ -55,12 +57,23 @@ export const EntityRef = ({
   className?: string
 }) => {
   const named = isNamed(head)
-  const text = named ? head.label : shortId(head.id)
+  // `isNamed(head)` rather than the `named` const beside it: the predicate
+  // narrows `head.label` away from `string | null` and an alias does not, and
+  // the text is now handed to a `string` prop rather than to JSX children,
+  // which accepted a null and rendered nothing.
+  const text = isNamed(head) ? head.label : shortId(head.id)
 
   const body = (
     <>
       {prefix === undefined ? null : <span className="ent-ref-prefix">{prefix} </span>}
-      <span className={clsx('ent-ref-name', !named && 'ent-ref-id')}>{text}</span>
+      {/* Truncation was already correct here and unreadable: the rules clip a
+          long question in a narrow rail and offered nothing that would show
+          the rest. A short id never truncates -- it is eight characters -- so
+          the wrapper is only doing work on the named branch, and costs an
+          effect and an observer on the other. Kept unconditional anyway: two
+          spellings of one line, differing by which is measured, is how a
+          future edit fixes one and not the other. */}
+      <TruncatedText text={text} className={clsx('ent-ref-name', !named && 'ent-ref-id')} />
     </>
   )
 

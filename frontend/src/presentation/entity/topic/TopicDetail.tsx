@@ -52,6 +52,17 @@ export const TopicDetail = ({
           which is how the level got decided by a stylesheet. */}
       <h2 className="ent-topic-detail-question">{topic.question}</h2>
       <EntityStatus status={topic.status} />
+      {/* `isBlocked` was read by nowhere in this component, so a blocked topic
+          looked exactly like an open one — `TopicRow` says it with a red left
+          border, and a detail has no rows to border. Said in words here, which
+          is the better half of the pair anyway: the row is scanned and the
+          detail is read.
+
+          A chip rather than a fourth section, and beside the status rather
+          than under it, because both of these are the answer to "what state is
+          this in" — the thing a reader looks at the top of a detail to learn.
+          `triggers` below says *why*, and only when the server sent a reason. */}
+      {topic.isBlocked ? <EntityStatus status="blocked" /> : null}
       {topic.contested ? <EntityStatus status="contested" detail="findings disagree" /> : null}
       {slots.actions}
     </header>
