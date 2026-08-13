@@ -81,6 +81,17 @@ export default defineConfig({
   plugins: [tailwindcss(), react()],
   base: '/static/',
   resolve: {
+    /* One React, however a module got here. Added for the browser suite and
+       stated rather than left to look like hygiene: in browser mode Vite
+       pre-bundles `@tanstack/react-query` into its own optimised chunk, that
+       chunk resolved a second copy of React, and any test mounting a component
+       under `QueryClientProvider` died on "Invalid hook call" before rendering
+       anything -- `AgentWidget.browser.test.tsx` is the one that hit it. The
+       jsdom suite never saw it, because it does not pre-bundle the same way.
+       Costs nothing in the application build, where there is one copy already;
+       what it buys is that the browser suite can mount a real container-backed
+       component instead of a hand-written imitation of its markup. */
+    dedupe: ['react', 'react-dom'],
     alias: {
       '@domain': fileURLToPath(new URL('./src/domain', import.meta.url)),
       '@application': fileURLToPath(new URL('./src/application', import.meta.url)),
@@ -152,8 +163,49 @@ export default defineConfig({
           if (id.includes('node_modules/class-variance-authority/')) return 'ui'
           return 'vendor'
         },
-        entryFileNames: 'assets/app-[hash].js',
-        chunkFileNames: 'assets/[name]-[hash].js',
+        /** No `[hash]`, which is not the usual choice and is worth the
+         *  paragraph.
+         *
+         *  A content hash in the filename makes every rebuild a *rename*, and
+         *  this output is committed. Git detects the rename on both sides of a
+         *  merge -- a rebuilt chunk is ~99% identical to the one it replaces,
+         *  well past the similarity threshold -- and reports
+         *  `CONFLICT (rename/rename): app-AAA.js renamed to app-BBB.js in HEAD
+         *  and to app-CCC.js in <branch>` for every chunk, on top of a content
+         *  conflict in `index.html`. That happens whether or not the two
+         *  branches' *source* changes overlap at all, because the hash of a
+         *  bundle is a function of the whole bundle. Measured on #157 stacked
+         *  on #156: six conflicts, three of them purely this, none of them a
+         *  real disagreement. 89 of this repository's 297 commits carry build
+         *  output, so it is not rare.
+         *
+         *  Stable names turn that into an ordinary same-path content conflict,
+         *  which `.gitattributes` can hand to a merge driver and dispose of --
+         *  see the root `.gitattributes`. A driver cannot do the same for
+         *  rename/rename: the paths differ, so there is no single path for it
+         *  to be invoked on. That was tested rather than assumed, and it is the
+         *  reason dropping the hash comes first rather than the driver alone.
+         *
+         *  What the hash cost us to give up: cache-busting. Less than it
+         *  sounds, because this server was never taking the payoff. `StaticFiles`
+         *  sends `ETag` and `Last-Modified` and *no* `Cache-Control` (verified
+         *  against the installed starlette), so nothing here was being cached
+         *  far-future-immutable the way hashed assets normally are. The one
+         *  real exposure is heuristic freshness -- a browser may reuse a
+         *  long-unmodified file without revalidating, and a stable name means
+         *  the reuse is of the wrong bytes rather than of a file that no longer
+         *  exists. `app.py`'s static mount now sends `Cache-Control: no-cache`
+         *  to close exactly that window; the two changes only make sense
+         *  together, and separating them reintroduces the bug.
+         *
+         *  What a test would fail on: `scripts/check-size.mjs` buckets by
+         *  filename, and its keys are these names. */
+        entryFileNames: 'assets/app.js',
+        chunkFileNames: 'assets/[name].js',
+        // Vite's default is `assets/[name]-[hash][extname]`, which would leave
+        // the stylesheet as the one hashed file and so the one file still
+        // renaming on every build -- the whole problem, at 1/9th scale.
+        assetFileNames: 'assets/[name][extname]',
       },
     },
   },

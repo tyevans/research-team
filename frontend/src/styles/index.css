@@ -41,9 +41,11 @@
    primitive rather than adjusting it. */
 @import './layout.css';
 
-/* The entity presentation components. `ent-` prefixed throughout. The views
-   that still had their own row markup -- research's topics -- have migrated;
-   `.project` and the landing page's rows have not. */
+/* The entity presentation components. `ent-` prefixed throughout. Research's
+   topics and the landing page's project cards have both migrated; `.project`
+   and its head, name and stats rules are gone with `ProjectRow`. What is left
+   under a `project-` name in `tree.css` is what the *view* still writes into
+   the card's slots, which is a different thing from a card's own markup. */
 @import './entity.css';
 
 /* Last, so it can correct the structural differences above. */

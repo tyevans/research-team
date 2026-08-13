@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 
 from eventsource import CommandRejectedError, OptimisticLockError
 from eventsource.application.aggregates.repository import AggregateRepository
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -36,6 +36,7 @@ from research_team.application import (
     WorkerRoster,
     build_fork_tree,
 )
+from research_team.application.ask import AskAnswer, AskInFlight, AskService
 from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
@@ -45,6 +46,7 @@ from research_team.application.graph_read import (
     MAX_NEIGHBORHOOD_DEPTH,
     GraphReadPort,
 )
+from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.topic_dispatch import (
     DISPATCH_ACTIONS,
@@ -108,6 +110,44 @@ from research_team.workflows import PRESETS
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+class _RevalidatedStatics(StaticFiles):
+    """`StaticFiles`, plus the one response header its filenames now require.
+
+    The console's chunks are emitted without a content hash in their names, so
+    that rebuilding them is an edit rather than a rename and two branches can be
+    merged without a conflict per chunk -- `frontend/vite.config.ts` carries
+    that argument. The consequence is that a given URL no longer names fixed
+    bytes, and a browser must be told to check.
+
+    Starlette sends `ETag` and `Last-Modified` and no `Cache-Control` at all
+    (measured against starlette 1.3.1, not assumed). With no explicit freshness,
+    a browser is entitled to *heuristic* freshness -- conventionally a tenth of
+    the file's age -- and applies it without asking the server. That is harmless
+    for a hashed filename, which is never reused for different bytes. Here it is
+    the whole bug: a chunk untouched for a month may be served from cache for
+    days after it changes, beside an `index.html` that did change, and the pair
+    do not run. The failure is a blank console, not an error.
+
+    `no-cache` does not mean "do not store" -- it means "revalidate before
+    reuse". The cost is one conditional request per asset per load, answered
+    `304` with no body, against a server that is normally on the same machine.
+    That is the right trade for a console whose whole job is showing the state
+    of a running system.
+
+    What a test would fail on: `test_web_static_caching.py` asserts the header
+    is present on an asset. Delete this class and it goes red rather than
+    quietly reopening the window above.
+    """
+
+    async def get_response(self, path: str, scope: Any) -> Response:
+        response = await super().get_response(path, scope)
+        # Set on 404s and 304s too, which costs nothing and avoids a rule about
+        # which status codes carry it.
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
 
 KEEPALIVE_SECONDS = 15.0
 
@@ -342,6 +382,18 @@ class NewDispatch(BaseModel):
     action: str = "understanding"
 
 
+class AskRequest(BaseModel):
+    """One question on one ephemeral chat.
+
+    `chat_id` is the browser's, not the server's: nothing persists a chat, so
+    there is no id for a server to have issued. `ConversationRegistry` checks
+    the project it was opened under rather than trusting it.
+    """
+
+    chat_id: str
+    question: str
+
+
 class Decision(BaseModel):
     """A human's answer to a parked approval. `type` is langchain's vocabulary."""
 
@@ -395,6 +447,7 @@ def create_app(
     seeding: SeedingActivity | None = None,
     dispatcher: TopicDispatcher | None = None,
     dispatch: DispatchQueue | None = None,
+    ask: AskService | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -1360,6 +1413,121 @@ def create_app(
             return {"cancelled": False, "run": None}
         return {"cancelled": True, "run": run_view(run)}
 
+    def _ask_frame(note: object) -> str:
+        """One SSE `data:` line per note.
+
+        `message` mirrors ActivityMessage's fields so the browser reuses the
+        parsing it already has for the session activity feed.
+        """
+        if isinstance(note, ActivityDelta):
+            body: dict[str, Any] = {
+                "type": "delta",
+                "message_id": note.message_id,
+                "text": note.text,
+            }
+        elif isinstance(note, ActivityMessage):
+            body = {
+                "type": "message",
+                "message_id": note.message_id,
+                "kind": note.kind,
+                "payload": note.payload,
+                "is_error": note.is_error,
+            }
+        elif isinstance(note, AskAnswer):
+            body = {
+                "type": "answer",
+                "text": note.text,
+                "citations": [
+                    {"kind": citation.kind, "id": citation.id} for citation in note.citations
+                ],
+            }
+        else:  # ActivityRemark and anything added later
+            body = {"type": "message", "message_id": "", "kind": "assistant", "payload": {}}
+        return f"data: {json.dumps(body)}\n\n"
+
+    @app.post("/api/projects/{project_id}/ask")
+    async def ask_project(project_id: UUID, body: AskRequest):
+        if ask is None:
+            raise HTTPException(status_code=503, detail="asking is not configured")
+        # Guarded because `create_app` takes every dependency separately and the
+        # ask route tests pass `service=None`; without the guard they would fail
+        # on the check rather than on what they are about. The cost of skipping
+        # it there is that "unknown project" is only enforced in a build that
+        # has a session service -- which is every real one.
+        if service is not None:
+            await _require_project(project_id)
+
+        notes = ask.ask(project_id=project_id, chat_id=body.chat_id, question=body.question)
+        # `first` and `failed` are the two ways this can come back, and only
+        # one of them can still become a status code.
+        failed: Exception | None = None
+        try:
+            first = await anext(notes)
+        except AskInFlight as busy:
+            # Raised before any streaming begins, so it can still be a status code
+            # rather than an error frame the browser has to special-case.
+            raise HTTPException(status_code=409, detail=str(busy)) from busy
+        except StopAsyncIteration:
+            first = None
+        except Exception as failure:  # noqa: BLE001 -- the browser needs the reason
+            # An executor that fails before its first note -- the ordinary
+            # shape of a model that is simply unreachable. A 500 here would be
+            # honest but useless to a page that has already opened an
+            # EventSource, so it is reported as the same error frame a failure
+            # halfway through would produce, and the page needs one path.
+            first, failed = None, failure
+
+        async def stream():
+            try:
+                if failed is not None:
+                    raise failed
+                if first is not None:
+                    yield _ask_frame(first)
+                async for note in notes:
+                    yield _ask_frame(note)
+            except Exception as failure:  # noqa: BLE001 -- the browser needs the reason
+                # A stream that simply stops looks identical to a slow model, so a
+                # failure is reported in-band before the connection closes.
+                yield f"data: {json.dumps({'type': 'error', 'detail': str(failure)})}\n\n"
+            finally:
+                # The only path that cancels the executor task when a reader
+                # walks away: `AskService.ask`'s own `finally` runs when this
+                # `aclose()` reaches it, and nothing else would ever cancel a
+                # model call the reader has stopped waiting for. The cost of
+                # forgetting this line is a live model call per abandoned
+                # request.
+                #
+                # When it runs is the part worth knowing, because it is not
+                # "on disconnect". Starlette never calls `aclose()` on
+                # `body_iterator`: a disconnect either propagates an `OSError`
+                # out of `stream_response` or fires the task group's cancel
+                # scope, and in both cases *this* generator is left suspended
+                # at a `yield` and never resumed. The `finally` therefore runs
+                # when CPython finalises the generator -- the async-generator
+                # finalization hook schedules `aclose()` once the last
+                # reference drops, or `loop.shutdown_asyncgens` does it at
+                # shutdown. It does run; it is not guaranteed to run promptly,
+                # so an abandoned model call can outlive the request by as long
+                # as the last reference does.
+                await notes.aclose()
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.delete("/api/projects/{project_id}/ask/{chat_id}")
+    async def forget_ask(project_id: UUID, chat_id: str):
+        if ask is None:
+            raise HTTPException(status_code=503, detail="asking is not configured")
+        # No `_require_project` here, unlike the POST. Forgetting is local to an
+        # in-memory registry, costs nothing to run against an id that names no
+        # project, and a page tidying up after a project was deleted underneath
+        # it should not be answered 404 for doing so.
+        ask.forget(chat_id)
+        return {"ok": True}
+
     @app.get("/api/health")
     async def health():
         """Whether the derived views behind this API can be trusted.
@@ -1579,14 +1747,6 @@ def create_app(
     @app.post("/api/sessions/{session_id}/turns")
     async def run_turn(session_id: UUID, body: NewTurn):
         await _load(session_id)
-        if turns.is_running(session_id):
-            # Checked here as well as in the supervisor so that a refused
-            # second turn cannot reach `begin` and wipe the buffer of the turn
-            # that is legitimately running.
-            raise HTTPException(
-                status_code=409,
-                detail="a turn is already running on this session",
-            )
         # Re-attach per turn rather than only at join. One process serves
         # every browser session, so by the time this session takes a turn the
         # attached graph may belong to a project joined in another tab -- or,
@@ -1603,31 +1763,19 @@ def create_app(
             logger.warning(
                 "could not attach knowledge graph for %s", session_id, exc_info=True
             )
-        reporter = None
-        if activity is not None:
-            activity.begin(session_id)
-            reporter = activity.reporter(session_id)
         try:
-            outcome = await turns.run(session_id, body.input, reporter)
+            outcome = await turns.run(session_id, body.input)
         except TurnAlreadyRunning as error:
-            # No activity.settle() here on purpose: this request's own
-            # activity.begin() above raced the supervisor's check and lost --
-            # the buffer it opened belongs to the turn that is actually
-            # running, and that turn's own call to run() owns settling it.
             raise HTTPException(
                 status_code=409,
                 detail="a turn is already running on this session",
             ) from error
         except TurnCancelled as error:
-            if activity is not None:
-                activity.settle(session_id, committed=False)
             # Not a failure: someone asked for this. 499 is nginx's
             # "client closed request" -- the closest thing to a standard code
             # for work abandoned on purpose.
             raise HTTPException(status_code=499, detail=str(error)) from error
         except OptimisticLockError as error:
-            if activity is not None:
-                activity.settle(session_id, committed=False)
             # Another writer -- the REPL, or a second process -- got there
             # first. The log is append-only and the loser's events were
             # discarded whole, so nothing happened; this is a retry.
@@ -1635,13 +1783,6 @@ def create_app(
                 status_code=409,
                 detail="another turn was recorded on this session first; reload and retry",
             ) from error
-        except BaseException:
-            if activity is not None:
-                activity.settle(session_id, committed=False)
-            raise
-        else:
-            if activity is not None:
-                activity.settle(session_id, committed=True)
         return {
             "reply": outcome.reply,
             "turn_index": outcome.turn_index,
@@ -1847,11 +1988,16 @@ def create_app(
         )
 
     if STATIC_DIR.is_dir():
-        app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+        app.mount("/static", _RevalidatedStatics(directory=STATIC_DIR), name="static")
 
         @app.get("/")
         async def index() -> FileResponse:
-            return FileResponse(STATIC_DIR / "index.html")
+            # The same `no-cache` as the assets, and for a sharper reason: this
+            # is the file naming them. A cached index.html paired with rebuilt
+            # assets is the mismatch that paints nothing.
+            return FileResponse(
+                STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"}
+            )
 
     return app
 

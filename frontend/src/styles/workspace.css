@@ -6,6 +6,52 @@
   max-height: 34%;
   overflow: auto;
   border-bottom: 1px solid var(--line);
+}
+
+/* The file list's focus ring, drawn on the *scroller* rather than on the thing
+   that has focus, and drawn inward.
+ *
+ * The tab stop is the `role="listbox"` inside — a single stop for the whole
+ * list, with `aria-activedescendant` naming the row; see `FileList.tsx`. It has
+ * no class of its own, and so took the global `:focus-visible` from
+ * `tokens.css`: a 2px ring at `outline-offset: 1px`, i.e. 3px *outside* its
+ * border box. The listbox is the sole child and fills this element, which
+ * clips at its padding box, so every one of those 3px was thrown away.
+ *
+ * Measured, not reasoned — `FileList.browser.test.tsx` is the measurement.
+ * At 1440x900 the listbox's border box was 0..420 x 0..520 and this element's
+ * padding box was 0..420 x 0..176: the ring wanted -3..423 x -3..523 and not
+ * one pixel of it was inside the clip. Left, right and top were clipped
+ * outright; the bottom edge was 344px below the fold as well. jsdom sees none
+ * of this — it lays nothing out and reports the rule as applying perfectly.
+ *
+ * Two fixes were on the table. An inset ring on the listbox itself is what
+ * `.timeline:focus-visible` does and would have been the consistent choice,
+ * but the listbox *is* the scrolled content: its top edge scrolls out of view
+ * the moment the reader arrows down past the fold, which is exactly when they
+ * most need to know the list has focus. Drawing on the scroller costs a `:has`
+ * — already used in `responsive.css` — and buys a ring that stays put. The
+ * offset is negative so the ring lands inside this element's own border box
+ * and no ancestor's overflow can take it either.
+ *
+ * `.files:focus-visible` is in the same rule because this element turns out to
+ * be focusable, which is why the `outline: none` that used to sit in the block
+ * above is gone rather than merely moved. It read as dead — a wrapper with no
+ * `tabIndex` — and it was not: Chromium makes a scroll container focusable, and
+ * `files.focus()` in `FileList.browser.test.tsx` lands on it. Deleting the line
+ * outright would have handed that container the global outward ring; giving it
+ * the same inward one costs a selector and keeps the console from having a
+ * focusable box that draws nothing. */
+.files:focus-visible,
+.files:has([role='listbox']:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* And the listbox stops drawing its own, now that this element draws for it.
+   Not tidiness: `tokens.css` would otherwise still put 3px outside a border box
+   that is clipped on every side, which is invisible today and becomes a
+   half-clipped double ring the moment anything gives `.files` padding. */
+.files > [role='listbox']:focus-visible {
   outline: none;
 }
 .file-row {
@@ -24,6 +70,20 @@
 .file-row.selected {
   background: var(--bg-raise);
   border-left-color: var(--k-file);
+}
+/* The active descendant, and the reason this rule exists rather than being left
+   to the ring above: in an `aria-activedescendant` listbox the selected row *is*
+   the keyboard cursor, and without this it is painted identically whether the
+   arrows will move from it or the reader merely clicked it ten minutes ago. A
+   ring around the box plus an unchanged row says "this list has focus" and
+   leaves "from where" unanswered — the same gap `.ev:focus-visible .ev-cursor`
+   was added to close in the timeline, for the same reason.
+   One property, no new geometry: the mark the row already carries changes
+   colour. Deliberately not a background change — `--bg-raise` also signals
+   hover, and two meanings on one property is the bug `.tab[aria-selected]`
+   above was written to avoid. */
+.files:has([role='listbox']:focus-visible) .file-row.selected {
+  border-left-color: var(--accent);
 }
 .file-path {
   flex: 1 1 auto;

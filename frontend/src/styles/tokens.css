@@ -44,9 +44,36 @@
      the second palette the note above says this file exists to prevent. */
   --line-strong: #34404e;
 
+  /* Three tiers, and the bottom two are the values they are because of a
+     number rather than because of taste. Both were chosen against
+     `--bg-hover` (#1e242c), the *lightest* surface anything is written on, so
+     a tier that clears AA there clears it everywhere in this file; the ratios
+     against `--bg` (#0b0d10) are in brackets because that is the surface most
+     of the console actually is.
+
+     `--fg-faint` was #5c6673, which was 2.68:1 on `--bg-hover` and 3.34:1 on
+     `--bg` -- below AA's 4.5 against *every* surface in this palette, not an
+     unlucky one, and it is the console's densest text (counts, paths, chip
+     labels). #7f8d9f is 4.62 (5.76).
+
+     Darkening the surfaces instead was considered and is arithmetically
+     impossible, which is worth writing down so nobody re-derives it: #5c6673
+     on pure black is 3.60:1. There is no surface, in this palette or any
+     other, that the old value passes against.
+
+     `--fg-dim` was #8a95a3 and passed on its own (5.14 on `--bg-hover`). It
+     moved anyway, because raising only the faint tier collapses the
+     hierarchy: #7f8d9f against #8a95a3 is 3.2 points of CIE L*, which is
+     around the just-noticeable difference -- two tiers wearing three names.
+     #a7b1bd restores the gaps to 16.4 and 13.7 L* (they were 26.9 and 18.5).
+     The scale is a third shallower than it was and that is the honest price
+     of the floor moving up; it is still three steps a reader can see.
+
+     `Tabs.browser.test.tsx` pins `--fg-faint` as an rgb() literal and fails
+     if either of these is edited without meaning to. */
   --fg: #d7dee7;
-  --fg-dim: #8a95a3;
-  --fg-faint: #5c6673;
+  --fg-dim: #a7b1bd;
+  --fg-faint: #7f8d9f;
 
   --accent: #e2a457;
   --accent-dim: #7a5a2c;
@@ -198,7 +225,17 @@
 
   /* The spacing rhythm. Literal pixels everywhere before this, which was
      survivable while a row had one level of padding; the project row has
-     four nested ones. */
+     four nested ones.
+
+     `--space-0` is here for `theme.css`'s benefit rather than for any
+     stylesheet's: no rule in this repository reads it, and one that wanted
+     zero would write `0`. It exists because `theme.css` needs a `--spacing-0`
+     to make `m-0` and `p-0` generate rules at all, and `theme.test.ts` fails
+     any name in `@theme` that has no counterpart here. Declaring the pair is
+     cheaper than an exemption, and it means the first test also pins this step
+     at zero -- a `--spacing-0: 1px` would fail rather than quietly making
+     every `p-0` in the console one pixel. */
+  --space-0: 0px;
   --space-1: 3px;
   --space-2: 6px;
   --space-3: 10px;

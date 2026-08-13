@@ -13,13 +13,14 @@ import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 import { Button } from '../../common/primitives.tsx'
 import { EntityStatus } from '../EntityStatus.tsx'
 import { ProjectCard } from './ProjectCard.tsx'
+import { WorkflowChip } from './WorkflowChip.tsx'
 
 /** The `Card` density, and the one component in this slice that could not be
  *  extracted — it had to be prised apart.
  *
- * `ProjectList.tsx` is 542 lines and its `ProjectRow` calls
- * `useProjectActivity` **inside the card**, so the listing costs two requests
- * per drawn row and "a live project sorts first" was recorded as not built
+ * `ProjectList.tsx` used to draw its own card and called `useProjectActivity`
+ * **inside it**, so the listing costs two requests per drawn row and "a live
+ * project sorts first" was recorded as not built
  * precisely because liveness cost a request per project. Everything that
  * fetched is a slot here, which is what makes these stories possible at all:
  * a card that fetched could not be rendered on a gallery page without a mock,
@@ -122,6 +123,62 @@ export const WithActivity: Story = {
               Open
             </Button>
           ),
+        }}
+      />
+    </Frame>
+  ),
+}
+
+/** Every slot filled, as the landing page fills them.
+ *
+ * Worth a story because this migration's whole risk is drift: `ProjectRow` and
+ * this card were written independently as two drawings of one thing, and the
+ * differences between them were only findable by rendering both. This is the
+ * one that ships, so it is the one to look at when a change to `entity.css`
+ * moves something. `badges`, `meta` and `preview` exist for exactly the three
+ * things `ProjectRow` had and this card did not.
+ */
+export const AsTheLandingPageDrawsIt: Story = {
+  render: () => (
+    <Frame>
+      <ProjectCard
+        rollup={rollup({
+          project: project({
+            activeSessionId: SessionId('7d41e0aa-1111-2222-3333-444444444444'),
+            workflow: { id: 'hybrid', name: 'hybrid', version: 1 },
+            stage: { id: 's4', name: 'design', index: 4, of: 15 },
+          }),
+        })}
+        slots={{
+          badges: (
+            <WorkflowChip
+              project={project({
+                workflow: { id: 'hybrid', name: 'hybrid', version: 1 },
+                stage: { id: 's4', name: 'design', index: 4, of: 15 },
+              })}
+            />
+          ),
+          activity: <EntityStatus status="running" detail="synthesising 2 topics" />,
+          meta: (
+            <>
+              <span>2 days ago</span>
+              <span className="project-id">3f2a1b9c</span>
+            </>
+          ),
+          primary: <Button small>Resume 7d41e0aa</Button>,
+          overflow: [
+            <Button small tone="accent" key="take">
+              New session
+            </Button>,
+            <span className="node-actions-gap" key="gap" />,
+            <Button small key="course">
+              Course
+            </Button>,
+            <Button small key="research">
+              Research
+            </Button>,
+          ],
+          preview: <p style={{ margin: 0 }}>the current session sits here</p>,
         }}
       />
     </Frame>

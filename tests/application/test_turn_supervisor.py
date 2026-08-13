@@ -2,6 +2,7 @@
 
 import asyncio
 from typing import Any
+from uuid import UUID
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -81,6 +82,18 @@ class SlowModel(CountingModel):
 @pytest.fixture
 def slow_model() -> SlowModel:
     return SlowModel(responses=[AIMessage(content="eventually", id="s1")])
+
+
+class BrokenModel(ToolAwareFakeChatModel):
+    """A model that fails inside the turn, so the turn fails."""
+
+    async def _agenerate(self, *args: Any, **kwargs: Any):
+        raise RuntimeError("the model fell over")
+
+
+@pytest.fixture
+def failing_model() -> BrokenModel:
+    return BrokenModel(responses=[AIMessage(content="unused", id="b1")])
 
 
 @pytest.fixture
@@ -340,3 +353,146 @@ async def test_a_cancel_that_will_not_settle_says_so_rather_than_hanging(
     assert cancellation.cancelled is True
     assert cancellation.settled is False  # honest, rather than a hung request
     running.cancel()
+
+
+# ---------------- the activity buffer ----------------
+
+
+class RecordingBuffer:
+    """A `TurnActivityBuffer` that remembers what the supervisor did to it.
+
+    A fake rather than the real `TurnActivity`: what these tests are about is
+    the *order and count* of begin/settle against a turn's lifetime, and the
+    real buffer answers that only indirectly, through content a fake model may
+    or may not produce.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+
+    def begin(self, session_id: UUID) -> None:
+        self.calls.append(("begin", session_id))
+
+    def reporter(self, session_id: UUID):
+        self.calls.append(("reporter", session_id))
+        return lambda note: None
+
+    def settle(self, session_id: UUID, *, committed: bool) -> None:
+        self.calls.append(("settle", committed))
+
+    @property
+    def settlements(self) -> list[bool]:
+        return [committed for name, committed in self.calls if name == "settle"]
+
+
+async def test_a_turn_opens_a_buffer_and_settles_it_as_committed(build_service, fake_model):
+    service = await build_service(model=fake_model)
+    buffer = RecordingBuffer()
+    supervisor = TurnSupervisor(service, activity=buffer)
+    session_id = await start_session(service)
+
+    await supervisor.run(session_id, "hello")
+
+    assert buffer.calls[0] == ("begin", session_id)
+    assert buffer.settlements == [True]
+
+
+async def test_a_turn_that_fails_settles_its_buffer_as_uncommitted(
+    build_service, failing_model
+):
+    service = await build_service(model=failing_model)
+    buffer = RecordingBuffer()
+    supervisor = TurnSupervisor(service, activity=buffer)
+    session_id = await start_session(service)
+
+    with pytest.raises(RuntimeError):
+        await supervisor.run(session_id, "hello")
+
+    # Nothing reached the log, so what streamed is the only trace of this turn
+    # and the UI offers it as explicitly discarded.
+    assert buffer.settlements == [False]
+
+
+async def test_a_refused_second_turn_leaves_the_running_turns_buffer_alone(
+    build_service, slow_model
+):
+    """The loser of the race must not touch a buffer belonging to the winner.
+
+    This is why `begin` lives *inside* the `is_running` guard. With it outside,
+    the second request would reopen the first turn's buffer -- dropping
+    everything streamed so far -- and this asserts exactly one `begin`.
+    """
+    service = await build_service(model=slow_model)
+    buffer = RecordingBuffer()
+    supervisor = TurnSupervisor(service, activity=buffer)
+    session_id = await start_session(service)
+
+    running = asyncio.create_task(supervisor.run(session_id, "slow one"))
+    await once_inside_the_model(slow_model)
+    with pytest.raises(TurnAlreadyRunning):
+        await supervisor.run(session_id, "second")
+
+    assert [name for name, _ in buffer.calls].count("begin") == 1
+    assert buffer.settlements == []
+
+    await supervisor.cancel(session_id)
+    with pytest.raises((TurnCancelled, asyncio.CancelledError)):
+        await running
+
+
+async def test_a_cancelled_turn_settles_its_buffer_as_uncommitted(build_service, slow_model):
+    service = await build_service(model=slow_model)
+    buffer = RecordingBuffer()
+    supervisor = TurnSupervisor(service, activity=buffer)
+    session_id = await start_session(service)
+
+    running = asyncio.create_task(supervisor.run(session_id, "slow one"))
+    await once_inside_the_model(slow_model)
+    await supervisor.cancel(session_id)
+    with pytest.raises((TurnCancelled, asyncio.CancelledError)):
+        await running
+
+    assert buffer.settlements == [False]
+
+
+async def test_an_awaiter_going_away_settles_nothing_until_the_turn_itself_ends(
+    build_service, slow_model
+):
+    """The buffer's lifetime is the turn's, not the awaiter's.
+
+    `run` shields the turn precisely so a browser tab closing does not throw
+    away half a minute of model time. Settling from the awaiter's unwind --
+    which is what the HTTP route used to do -- files a *live* turn's content as
+    a failed turn's discards, and the next note then reopens a second buffer
+    that nothing will ever settle.
+
+    Fails against the previous design: the assertion below that no settlement
+    has happened yet is the one that catches it.
+    """
+    service = await build_service(model=slow_model)
+    buffer = RecordingBuffer()
+    supervisor = TurnSupervisor(service, activity=buffer)
+    session_id = await start_session(service)
+
+    awaiting = asyncio.create_task(supervisor.run(session_id, "slow one"))
+    await once_inside_the_model(slow_model)
+    awaiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await awaiting
+
+    # The awaiter is gone; the turn is not.
+    assert buffer.settlements == []
+    assert supervisor.is_running(session_id)
+
+    await supervisor.cancel(session_id)
+    assert buffer.settlements == [False]
+
+
+async def test_a_supervisor_without_a_buffer_still_runs_turns(fast_supervisor):
+    """`activity=None` is the REPL's case and most tests'; it must be inert."""
+    supervisor, service = fast_supervisor
+    session_id = await start_session(service)
+
+    outcome = await supervisor.run(session_id, "hello")
+
+    assert outcome.reply == "done"

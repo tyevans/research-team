@@ -6,7 +6,9 @@ sees half a turn, and equally never sees a turn in progress.
 """
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
+from uuid import UUID
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -41,6 +43,39 @@ class SlowWritingModel(CountingModel):
         self._enter()
         await asyncio.sleep(self.delay)
         return await super()._agenerate(*args, **kwargs)
+
+
+class WatchingBuffer:
+    """The real buffer, plus a tap on every note reported through it.
+
+    The supervisor now owns begin/settle, so a test can no longer open the
+    buffer itself and hand `run` a wrapped reporter -- it wraps the reporter
+    the supervisor asks for instead, and delegates everything else to the
+    real `TurnActivity` so behaviour off the tap is unchanged.
+    """
+
+    def __init__(
+        self,
+        inner: TurnActivity,
+        watch: Callable[[ActivityMessage | ActivityDelta], None],
+    ) -> None:
+        self._inner = inner
+        self._watch = watch
+
+    def begin(self, session_id: UUID) -> None:
+        self._inner.begin(session_id)
+
+    def reporter(self, session_id: UUID) -> Callable[[ActivityMessage | ActivityDelta], None]:
+        inner_reporter = self._inner.reporter(session_id)
+
+        def report(note: ActivityMessage | ActivityDelta) -> None:
+            self._watch(note)
+            inner_reporter(note)
+
+        return report
+
+    def settle(self, session_id: UUID, *, committed: bool) -> None:
+        self._inner.settle(session_id, committed=committed)
 
 
 @pytest.fixture
@@ -211,9 +246,7 @@ async def test_activity_streams_without_appending_to_the_log(build_application, 
     or cancelled turn could no longer be discarded whole, and the guarantee
     the other tests in this file exist to protect is gone.
     """
-    application = await build_application(model=writing_model)
     activity = TurnActivity()
-    session_id = await start_session(application.service)
 
     observed: list[ActivityMessage | ActivityDelta] = []
     first_note = asyncio.Event()
@@ -225,25 +258,21 @@ async def test_activity_streams_without_appending_to_the_log(build_application, 
         observed.append(note)
         first_note.set()
 
-    activity.begin(session_id)
-    reporter = activity.reporter(session_id)
-
-    def wrapped(note: ActivityMessage | ActivityDelta) -> None:
-        watch(note)
-        reporter(note)
+    # The supervisor now owns begin/settle (that is the change under test),
+    # so this test can no longer open the buffer itself and hand `run` a
+    # wrapped reporter -- it wraps the reporter the supervisor asks for
+    # instead, via a buffer that taps the first note and delegates the rest.
+    application = await build_application(
+        model=writing_model, activity=WatchingBuffer(activity, watch)
+    )
+    session_id = await start_session(application.service)
 
     before = len(await application.service.history(session_id))
-    turn = asyncio.create_task(application.turns.run(session_id, "write a file", wrapped))
+    turn = asyncio.create_task(application.turns.run(session_id, "write a file"))
     await asyncio.wait_for(first_note.wait(), timeout=5.0)
     during = len(await application.service.history(session_id))
 
-    try:
-        await turn
-    except BaseException:
-        activity.settle(session_id, committed=False)
-        raise
-    else:
-        activity.settle(session_id, committed=True)
+    await turn
     after = len(await application.service.history(session_id))
 
     assert observed, "the turn reported no activity at all -- this test would pass vacuously"

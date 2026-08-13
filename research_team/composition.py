@@ -6,6 +6,7 @@ swapping any of them is an edit here and nowhere else.
 """
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID, uuid4
@@ -41,10 +42,12 @@ from research_team.application import (
     SessionService,
     SummaryProjects,
     TopicRoundRunner,
+    TurnActivityBuffer,
     TurnSupervisor,
     WorkerRoster,
 )
 from research_team.application.artifacts import stage_artifact_instructions
+from research_team.application.ask import AskService, ConversationRegistry
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
 from research_team.application.check_telemetry_read import CheckTelemetryReadPort
 from research_team.application.components import component_guidance
@@ -80,6 +83,7 @@ from research_team.infrastructure.agent import (
     build_extraction_model,
     build_model,
 )
+from research_team.infrastructure.agent.ask_agent import DeepAgentAskExecutor
 from research_team.infrastructure.agent.compaction import SummarizingStrategy
 from research_team.infrastructure.agent.component_feedback import ComponentFeedback
 from research_team.infrastructure.agent.corpus_tools import (
@@ -300,6 +304,18 @@ class Application:
     identical registry the executor's gate and the grant-bound `fetch` tool
     consult, not a second one that would just happen to agree by accident."""
 
+    ask: AskService
+    """Read-only questions about a project, answered without touching its log.
+
+    A field beside `service` rather than something reached through it, because
+    it is deliberately not a session use case: it starts nothing, joins
+    nothing and appends nothing, and routing it through `SessionService` would
+    put an ephemeral path behind the one object whose whole job is durability.
+    It shares this instance's `open_graph` closure, so an ask reads the same
+    open graph store the attached agent writes to rather than a second one
+    rebuilt for the question -- which is also why it is constructed inside
+    `build_application` and cannot be assembled by a caller."""
+
     _initial_project_id: UUID | None = None
     """`project_id`, if `build_application` was given one. Attached in
     `start()` rather than at construction, because attaching talks to a
@@ -494,6 +510,7 @@ def build_application(
     policy: AutonomyPolicy | None = None,
     project_id: UUID | None = None,
     grants: GrantRegistry | None = None,
+    activity: TurnActivityBuffer | None = None,
 ) -> Application:
     """Wire everything over one event store.
 
@@ -511,6 +528,13 @@ def build_application(
     mode this feature is most exposed to. `None` builds a fresh one, which is
     correct for the REPL (no `WebApprovals` to share with) and for every test
     that does not care.
+
+    `activity` is the buffer every turn's provisional content flows through,
+    and it arrives here for the same reason `approvals` does: `web.py` builds
+    one `TurnActivity` and both halves of the channel must be that instance.
+    The supervisor writes into it; the catch-up route reads out of it. `None`
+    is the REPL's case and most tests' -- turns then run unbuffered, which is
+    what happened on every path but the web one before this was wired.
     """
     resolved_path = db_path if db_path is not None else config.default_db_path()
     resolved_model = model if model is not None else build_model()
@@ -1197,7 +1221,23 @@ def build_application(
         # instance that would cache independently of the one attachment uses.
         graphs=graphs,
     )
-    turns = TurnSupervisor(service)
+    turns = TurnSupervisor(service, activity=activity)
+    # Built here because `open_graph` is a closure over this build's stores:
+    # the ask agent takes the project tools that closure assembles and keeps
+    # the readers, so it cannot be constructed anywhere a caller could reach.
+    # `time.monotonic` rather than wall-clock for both clocks, because the only
+    # questions asked of them are durations -- how long a conversation has been
+    # idle -- and a clock that can step backwards would evict a chat somebody
+    # is in the middle of.
+    ask_service = AskService(
+        executor=DeepAgentAskExecutor(
+            model=resolved_model,
+            open_graph=open_graph,
+            project_files=service.project_files,
+        ),
+        conversations=ConversationRegistry(now=time.monotonic),
+        now=time.monotonic,
+    )
     runs = build_research_run_repository(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store
     )
@@ -1356,6 +1396,7 @@ def build_application(
         workers=worker_roster,
         policy=resolved_policy,
         grants=resolved_grants,
+        ask=ask_service,
         _initial_project_id=project_id,
     )
 

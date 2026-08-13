@@ -119,11 +119,13 @@ export const Timeline = ({ log, scrub, fresh, discarded, onSelect, onFork }: Tim
        front of the row that already has one.
 
        This is the rule pointing at genuinely correct code. The genuinely
-       *wrong* code nearby is what §2 of the component-system spec calls S-D7 --
-       an invisible column cursor where `→` silently changes what Enter does --
-       and no lint rule finds that one. Worth saying plainly so a reader does
-       not take a clean lint here as a verdict on this component; phase 4 is
-       where that gets fixed. */
+       *wrong* code nearby was what §2 of the component-system spec calls S-D7 --
+       an invisible column cursor where `→` silently changed what Enter does --
+       and no lint rule found that one. It is closed: `cursor` is threaded to
+       the row, rendered as `ev-cursor`, announced by `aria-activedescendant`
+       and drawn by `timeline.css`. The point the comment was making outlives
+       the defect, which is why it is still here -- a clean lint on this element
+       was never a verdict on this component. */
     /* eslint-disable-next-line jsx-a11y/interactive-supports-focus */
     <div
       className="timeline"

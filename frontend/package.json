@@ -18,13 +18,15 @@
     "format:check": "prettier --check .",
     "size": "node scripts/check-size.mjs",
     "deleted": "node scripts/check-deleted.mjs",
+    "check:tailwind": "node scripts/check-tailwind.mjs",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run size && npm run deleted"
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run size && npm run deleted && npm run check:tailwind"
   },
   "engines": {
     "node": ">=22"
   },
+  "//axe-core": "`axe-core` was already in the tree as a transitive of `eslint-plugin-jsx-a11y`, and is declared as a direct devDependency because `src/a11y.browser.test.tsx` imports it. An engine whose exact findings a test's expectations are pinned to should not have its version chosen by a lint plugin's resolution: a jsx-a11y bump could move axe a minor, change what the sweep reports, and leave nothing in either file to say why. Dev-only -- nothing outside that test imports it, so it reaches no bundle and the size budget does not move.",
   "//overrides": "eslint-plugin-jsx-a11y@6.10.2 -- the latest published -- declares `eslint@^3 || … || ^9`, and this project is on eslint@10. There is no version of the plugin that accepts 10; `npm view` shows 6.10.2 as `latest` with no prerelease. So the choice was: drop the plugin from phase 0, install the whole tree with `--legacy-peer-deps` (which silences *every* peer conflict in the repository, including the next real one), or narrow the exception to the single package that needs it. This is the third. It pins the plugin's `eslint` to the root's rather than letting npm hunt for a second copy, which is also what we want on the merits: two eslint versions in one tree is its own bug. The cost is that the plugin now runs outside its author's declared support window, so a break would be ours to notice -- which is why the plugin is exercised by `npm run lint` over the whole of `src/` in this very commit, and why `eslint.config.test.ts` asserts the rules actually fire rather than merely that the config loads. Remove this override the moment the plugin declares eslint 10.",
   "overrides": {
     "eslint-plugin-jsx-a11y": {
@@ -69,6 +71,7 @@
     "@vitest/browser": "^4.1.10",
     "@vitest/browser-playwright": "^4.1.10",
     "@vitest/coverage-v8": "^4.1.10",
+    "axe-core": "^4.13.0",
     "eslint": "^10.8.1",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-jsx-a11y": "^6.10.2",

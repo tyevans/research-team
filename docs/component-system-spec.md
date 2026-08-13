@@ -9,6 +9,15 @@ store on, and delete the floor it makes unnecessary", #90). The four feature
 indexes were written at `5a5a7cf` and `unified-ui-proposal.md` at `4a86e89`;
 neither intervening commit touches `frontend/`, so their UI claims are current.
 
+**`unified-ui-proposal.md` is not in this repository, and every citation of it
+below is a citation to something no reader can open.** `4a86e89` is a real
+commit and its tree does not contain the file, nor does any commit reachable
+from any ref; the eight other design documents cited here are tracked. It was
+therefore untracked on the machine it was read from — the same defect §3.1a's
+correction found once already, where a claim rested on a file no one else had.
+The disagreements in §14 and the sequencing in §11's phase 7 are recorded
+against a source that has to be produced before either can be re-checked.
+
 ## What I verified myself, and what I took on trust
 
 The standard in this repository is that a document says which of its facts it
@@ -429,6 +438,8 @@ ad-hoc `7px`/`12px` (S-§13.3) become `--spacing-*` during phase 5. Those values
 sit outside the `--space-*` scale because that part of the console was written
 before the scale existed; it is accumulated inconsistency rather than a
 decision anyone made, and phase 5 is the first work whose scope includes it.
+*(Phase 5 was dissolved — §11. `panes.css` is now paid down whenever the panes
+are rebuilt, or not at all; nothing schedules it.)*
 
 **What I did not do: invent new tokens.** `landing-page.md` §6 lists tokens as
 genuinely missing and every one it named has since landed *(checked —
@@ -685,7 +696,7 @@ prefixed **L-** landing, **R-** research, **C-** course, **S-** session, as
 | `Popover` | `react-popover` | L-F40 / S-F60 agent dock, R-F6.4 search results, R-F6.6 `GraphDetail` | 3 |
 | `Tabs` | `react-tabs` | S-F32 rendered/source, S-F35 contents/history, S-F33 + C-F65 audience | 3 |
 | `Select` | `react-select` | L-F46 workflow, R-F6.4 entity type | 4 |
-| `Toast` | `react-toast` | L-F37, S-F8 — and the keyboard dismissal L-F37 lacks | 4 |
+| ~~`Toast`~~ | ~~`react-toast`~~ | **declined — see Phase 4 below** | 4 |
 
 ### Tier 1 — first-party, no Radix equivalent, standardised anyway
 
@@ -781,7 +792,9 @@ convention, and the only thing that distinguishes a test from reassurance.
   twice — six behaviours, no test, and phase 4 changes the keyboard model on
   purpose.
 - *Before phase 5:* nothing new. `use-panes.test.tsx` already covers the hook,
-  and phase 5 is restyling, not rewriting.
+  and phase 5 is restyling, not rewriting. *(Phase 5 was dissolved — §11. The
+  premise inverts under its replacement: a surface reaching utilities is being
+  rewritten, not restyled, so it needs the coverage this entry excused.)*
 
 Composed stories (§6) make this cheaper than it sounds: the story enumerating a
 component's states is also the fixture the test renders, so the net and the
@@ -855,18 +868,126 @@ inaccessible content in the console. The floating-layer cost is paid once here
 and everything after is cheap.
 
 ### Phase 4 — the grid, the listbox, the toasts. **`ui-` 46.3 kB.**
-**Prerequisite: the six session tests in §10.**
+**Prerequisite: the six session tests in §10 — met before the phase began.**
 
-`Select`, `Toast` (with the keyboard dismissal L-F37 lacks), `DataGrid` and
-`ListBox`. The fork column gets visible state and `aria-colindex`, closing
-S-D7. `VirtualList` unifies L-F8's and R-F5.1's configurations and becomes
-available to the timeline, which needs it (S-§14.3).
+**All four of this phase's proposed components were declined, and the phase
+still closed real defects.** That is not a reversal of §3.1's argument for
+Radix; it is what happens when a plan written in one sitting meets four
+increments of intervening work. What each was wanted for had either already
+shipped by another route, or turned out not to need a component at all. The
+audit that established this is recorded per item below, because the decision is
+only worth as much as the evidence under it.
 
-**Why it ships alone:** it is the phase that fixes the most dangerous defect in
-the console — an invisible mode where an arrow key silently turns Enter from
-"scrub" into "create a session irreversibly". **It is also the phase most
-likely to break something**, which is exactly why its prerequisite is not
-negotiable.
+**`Select` is declined.** Both call sites are already native `<select>` with
+proper labels — the workflow picker at `NewProjectForm.tsx` and the entity-type
+filter at `GraphPane.tsx`. Native selects are keyboard-operable and
+screen-reader-correct for free, and the likely original complaint was
+appearance: a light UA popup in a dark console. That was fixed by
+`color-scheme: dark` in `tokens.css`, which has its own browser test. Paying
++5.6 kB gzipped — the most expensive remaining primitive, and the one whose
+marginal §3.1a actually measured — to replace two correct controls with
+something that gives up the OS picker is the worst value in this document.
+
+**`DataGrid` is declined as a one-caller abstraction.** `role="grid"` appears
+exactly once in the codebase, in `Timeline.tsx`. The deliverable that justified
+it — "a **visible** column cursor, which is the fix for S-D7" — had already
+shipped inline there, with `aria-colindex`, an `aria-activedescendant` naming
+the current cell, a rendered cursor class and a rule in `timeline.css` that
+draws it. Extracting the pattern now would put working, argued, tested code
+behind an interface with one consumer, and #26 is scheduled to restructure that
+component's keyboard model anyway.
+
+**`ListBox` is declined for the same reason, and its real defect was CSS.**
+`FileList.tsx` is the only listbox, and its `aria-activedescendant` half was
+already correct. What was actually broken was the other half of the spec's own
+one-line description — "and a real focus ring". There was one, from the global
+`:focus-visible` rule, and **none of it was visible**: `outline-offset: 1px`
+draws outside the border box, and the listbox fills a scroll container that
+clips exactly there. Measured in Chromium, the ring extended to `-3..423 x
+-3..523` against a clip box of `0..420 x 0..176`. Zero pixels. Fixed with an
+inward ring on the scroller, and a focus-dependent treatment on the selected
+row, since in an `aria-activedescendant` listbox the selected row *is* the
+keyboard cursor and a box ring alone does not say where you are.
+
+That finding generalised, which is the most valuable thing this phase produced.
+A sweep found the same shape wherever a scroller has no padding and its child is
+`width: 100%`: the agent roster and the document list, both with rings entirely
+clipped in their ordinary state, plus two scroll containers that Chromium makes
+focusable with no `tabIndex` at all — a trap that reasoning gets wrong and only
+measurement catches. Scrollers with ≥4px of padding have room for the ring and
+were fine. The browser suite is where all of this lives, for the reason
+`CLAUDE.md` gives: jsdom computes no layout, so every one of these bugs was
+invisible to a fully green jsdom run.
+
+**`Toast` is declined, and the two features it was wanted for were built by
+hand instead.** L-F37 was already closed in `Toasts.tsx` — a real `<button>`
+per toast rather than `role="button"` inside the live region, named for the
+message it closes, with a hold on the expiry timer while a pointer or focus is
+in the stack. Adopting `react-toast` meant rewriting all of that correct and
+argued code to buy swipe-to-dismiss (irrelevant on a localhost desktop
+console) plus an F6 hotkey and a focus restore on dismiss, which are ~20 lines
+each. The price was +3.2 kB gzipped and the churn. Both features now exist:
+F6 moves focus into the stack, registered only while a toast is up so the
+browser keeps the key the rest of the time, and dismissing hands focus to the
+next toast, then the previous, then back to wherever the reader came in from.
+
+**Left undone:** F6 does not cycle *out* of the region (ARIA practices cycles
+landmarks; this is one-way), and neither it nor the tree's `/` is documented
+anywhere a reader would find it — `KeyboardHelp` is the surface for that and
+§13 defers it to phase 7 on purpose.
+
+**The two remaining items had already shipped.** The fork column's visible state
+and `aria-colindex` closed S-D7 in an earlier increment, and `VirtualList`
+already unifies L-F8's and R-F5.1's configurations — one wrapper, used by
+`DocumentBrowser` and `ProjectList`. What has *not* shipped is the third thing
+that sentence claims: the timeline is not virtualized. That is #26, and it is
+not a follow-up to this phase but a redesign — a virtualizer unmounts
+off-screen rows, and the timeline's tab stop lives *on* a row, so the moment the
+selected row scrolls out the tab stop leaves the DOM, focus falls to `<body>`,
+the grid's key handler stops receiving anything and `aria-activedescendant`
+points at an id that no longer exists. Every one of those failures is silent.
+The fix is to move the tab stop to the container with a two-level cursor, which
+`2026-08-10-final-path-design.md` sequences after increment C on purpose.
+
+It was also, when that was written, unmeasured: nothing in this repository
+established how long a real session log gets, and the code's own prose assumes
+"a hundred" rows — an order of magnitude below where virtualization pays for
+itself. **It should be gated behind a measurement of a real log rather than
+built on the assumption that a list wants virtualizing.**
+
+**The measurement, taken 2026-08-13 against `~/.research-team/sessions.db`.**
+Four sessions, 484 events in the database altogether, of which the `Session`
+streams hold 195, 51, 12 and 1. So the longest real session log is **195 rows**,
+the median is 32, and the code's "a hundred" was a better guess than the plan
+that wanted to virtualize it. A virtualizer starts paying somewhere in the
+thousands; two hundred rows of a grid this simple is not a performance problem
+and nobody has reported one.
+
+**The sample is weak and that is stated rather than hidden**: four sessions,
+all written the same day, on a development machine, so it is evidence about
+this database and not about a production one. It is still the only evidence
+that exists, and the direction is not marginal — 195 against a threshold an
+order of magnitude away is not the kind of gap a better sample closes.
+
+So #26 is **declined until a real log crosses roughly a thousand rows**, and
+the measurement is cheap enough to repeat: count rows per `aggregate_id` in
+`events` where `aggregate_type` is `Session`. What survives from the task is
+not the virtualizer but its finding — the timeline's tab stop lives on a row,
+and *any* future change that unmounts rows breaks four things silently. That
+is worth knowing whether or not a virtualizer is ever the thing that does it.
+
+**Why it shipped alone:** the reasoning below was written when this phase was
+believed to be four new primitives and a keyboard-model change. It shipped alone
+for a better reason than the one predicted — every increment in it was a defect
+fix landing in a stylesheet or a component that already existed, verifiable in
+isolation, with nothing downstream waiting on it.
+
+**What the plan got wrong, kept because it is the useful part:** the most
+dangerous defect named here — the invisible mode where an arrow key turns Enter
+from "scrub" into "fork irreversibly" — was real, and was fixed before the phase
+meant to fix it ever started. A phase defined by the components it adds will
+mis-describe itself the moment the defects it was aimed at get closed another
+way. The defects were the durable part of this plan; the component list was not.
 
 ### Phase 5 — the stylesheet migration completes.
 
@@ -878,6 +999,60 @@ to `@theme` plus the handful of layout constants.
 
 **Why it ships alone:** `app-` falls as stylesheets are deleted, and it is
 individually revertible per file.
+
+**This phase was dissolved on 2026-08-10 and is not scheduled. Everything
+above it is the superseded plan, kept because what it got wrong is the useful
+part.** The replacement is a standing policy rather than a phase: **new and
+rewritten surfaces use Tailwind utilities, and existing stylesheets are
+deleted, never ported.**
+
+The reason is arithmetic rather than taste. Roughly 6430 lines across the 22
+stylesheets dress markup that increment C — the QUEUE / HOLDER / MATERIAL
+route merge that §11's phase 7 anticipates — rebuilds anyway. Porting them is
+work written once and deleted once, and the deletion was already scheduled
+before the port would have finished. No amount of care in the porting changes
+that; the files were never the durable artifact.
+
+**What is genuinely lost, and it is the two things the paragraph above claimed
+as the reason to ship this alone.** `app-` no longer falls as a consequence of
+migrating: it falls only when a surface is rebuilt for its own reasons, on
+increment C's schedule rather than this document's, and §14.1's 23 kB of
+head-room stops being a coexistence budget and becomes ordinary slack.
+And the per-file revertibility goes with it — a stylesheet deleted alongside
+the rewrite of the markup it dressed cannot be restored on its own, because
+there is no longer anything for it to style. Those were real benefits and they
+are being paid away deliberately, on the grounds that a benefit of doing work
+is not a reason to do work that will be thrown away.
+
+**The policy is now a mechanism rather than a promise.**
+`frontend/scripts/check-deleted.mjs` freezes a manifest of the 22 stylesheets
+and compares it against the directory, failing in both directions: a 23rd file
+fails as a policy violation, and a removal fails too, so a deliberate deletion
+is recorded in a diff rather than passing silently. Its comment states the hole
+instead of papering over it — two hundred new lines appended to `research.css`
+are the same violation wearing an old filename, and no check here catches that.
+Read the comment above `STYLESHEETS` before relying on the check for more than
+it claims.
+
+**The hazard the replacement policy inherits: migrating markup silently
+invalidates combinators.** A child (`>`) or adjacent-sibling (`+`) selector is
+a claim about the shape of the DOM, and rewriting a surface's markup to
+utilities while leaving its stylesheet in place breaks that claim with no test
+failure and no error — the rule simply stops matching. Measured by counting
+combinators per file: `research.css` 10, `responsive.css` 9,
+`conversation.css` 8, `course.css` 6, `tree.css` 3, single digits elsewhere;
+`+` is nearly absent, one each in `states.css` and `agents.css`.
+`responsive.css` is the worst of them by nature rather than by count, because
+its combinators sit inside media queries — they are markup claims that only
+apply at some viewports, so they cannot fail visibly in a default-width test
+even in a browser suite. This is not hypothetical: `check-deleted.mjs` cites
+`.extraction-failed > .extraction-summary` as exactly this failure already
+having happened, "no test, no error, just a rule that quietly stopped
+applying".
+
+**The actionable form, and the only part of this worth remembering at a
+keyboard: grep a stylesheet for `>` and `+` before touching the markup it
+dresses.**
 
 ### Phase 6 — real-browser accessibility.
 
@@ -936,6 +1111,14 @@ progressive field-dropping in the agent dock at 560px and 420px (L-F41) are
 where I would expect the failures, because they are the rules least likely to
 be exercised by anyone's normal window size.
 
+*Phase 5 was dissolved — §11 — and this entry is kept whole rather than
+trimmed, because none of it became wrong. The risk was never a property of the
+phase; it is a property of rewriting the markup those rules describe, which
+increment C does. So the three responsive layouts and the agent dock's
+progressive field-dropping at 560px and 420px are not a risk retired here but
+a risk deferred onto whoever rebuilds those surfaces — with the combinator
+hazard in §11 as the mechanism by which they will fail quietly.*
+
 **Not broken by anything here:** no event shape, no read model, no API
 contract, no Python file. This is a frontend-only specification, which means
 `CLAUDE.md`'s two most expensive traps — a schema evolution that cannot read
@@ -993,7 +1176,9 @@ states "the bundle budget is `app-` 57 and `total` 512". The current limits are
 `app-` **80** and `total` 512 *(checked — `check-size.mjs`)*, raised on the
 owner's instruction with the reasoning recorded in the file itself. This is not
 a nitpick: 23 kB of `app-` head-room is what makes phase 5's coexistence period
-affordable, and a document arguing that a merged page "grows `app-`" against a
+affordable *(phase 5 was dissolved — §11; the head-room is now ordinary slack
+rather than a budget earmarked for two stylesheet languages at once)*, and a
+document arguing that a merged page "grows `app-`" against a
 57 kB ceiling reaches a more pessimistic conclusion than the facts support.
 
 **14.2 Its §10 declines "a new design system or dependency", and the argument
@@ -1125,6 +1310,13 @@ will look like the wrong trade, and by then it will be four phases deep.
    frozen — which is a coherent, permanent, two-language end state, and is
    exactly what §15 warns against. I take the complete-the-migration arm and I
    am least confident about it.
+
+   **Answered, 2026-08-10, against the arm I took** — see §11's phase 5. The
+   decision is close to the conservative branch offered here: utilities for new
+   and rewritten surfaces, the rest neither ported nor frozen but deleted when
+   the markup they dress is rebuilt. That is a two-language state, as §15
+   warns, but a terminating one rather than a permanent one, and the freeze in
+   `check-deleted.mjs` is what keeps the second language from growing.
 5. **Does `presentation/lesson/` belong in this at all?** Six components, zero
    tests, four interactive widget types with their own keyboard models
    (C-F65, S-F34), and grading that is server-side by design. It is the one

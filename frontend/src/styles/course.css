@@ -200,10 +200,22 @@
 .artifact:last-child {
   border-bottom: none;
 }
-.artifact-missing {
-  opacity: 0.62;
-}
+/* `.artifact-missing` styles nothing and has no rule here any more.
+   `Artifacts.tsx` still sets the class, deliberately: it is what its comment
+   about `prettier-plugin-tailwindcss` mangling the class name is about, and
+   it is the hook anything later would hang off.
 
+   It was `opacity: 0.62`, applied to a row whose quietest element is a
+   `.chip-missing` in `--fg-faint`: 5.46:1 on `--bg-panel` became 3.55:1, and
+   with the old token it was 1.97:1 -- the worst pair in the console. No
+   foreground value survives being composited, so the property had to go.
+
+   What the dimming communicated is said twice over in the row already, which
+   is why nothing replaces it: the name renders as plain text instead of a
+   link because there is no file to open, and a `not written` chip sits at the
+   end of the line with a tooltip naming the path that is absent. Reading
+   "missing" out of a 38% opacity drop was the least of the three signals and
+   the only one a screen reader never had. */
 .artifact-top {
   display: flex;
   align-items: center;
@@ -635,11 +647,16 @@
  * course page (`.autonomy-panel`, a sibling of `.worker-panel` and
  * `.run-panel`, and deliberately built from the same three declarations so it
  * reads as another band of the same page rather than a modal escape hatch),
- * and the allow-all control in the shell's decision bar (`.autonomy-allow`,
- * which borrows `.extraction`'s indent-behind-a-rule language because it
- * likewise belongs to the thing above it — the approvals). It used to sit in
- * the worker drawer; only its parent changed, so every rule below still
- * matches and none of them was written against an ancestor.
+ * and the allow-all control in the shell's decision bar — which is no longer
+ * dressed from here at all. Its rules were utilities-ised onto
+ * `AutonomyAllowAll.tsx` once it moved out of the worker drawer, because a
+ * screen stylesheet dressing a control that outlives the screen is a deletion
+ * trap rather than a filing preference. See the block further down where they
+ * used to be.
+ *
+ * What is left of that split is `.autonomy-warn` and `.autonomy-error`, shared
+ * by both surfaces and therefore still a smaller version of the same problem.
+ * The note above those two rules is the one to read before deleting this file.
  *
  * `.autonomy-warn` carries the scope warning and is the one thing here that
  * must not be quiet: it uses the accent border rather than `--line`, because a
@@ -710,6 +727,20 @@
   margin: 0;
 }
 
+/* **Read this before deleting `course.css`.** These two rules are used by two
+ * surfaces on two different schedules: `AutonomyPanel`, which is a course-page
+ * component and dies with this file, and `AutonomyAllowAll`, which lives in the
+ * shell's decision bar and does not. The allow-all's *layout* rules were moved
+ * onto that component for exactly this reason; these two were left because
+ * moving them would mean porting rules a course-page surface still needs,
+ * which the standing policy rules out.
+ *
+ * So deleting this file unstyles the scope warning and the write error in the
+ * decision bar, silently -- nothing renders a class it cannot find, and no
+ * test in either suite asserts a computed style here. Whoever deletes it owes
+ * `AutonomyAllowAll` the two utilities equivalent to these declarations, in
+ * the same commit. The trade is 2px of accent border against a whole
+ * stylesheet's worth of pre-paid migration; it is small on purpose. */
 .autonomy-warn {
   margin: 0;
   padding: 6px 8px;
@@ -802,35 +833,16 @@
   flex: 1 1 12ch;
 }
 
-/* --- the decision bar's allow-all ------------------------------------- */
-.autonomy-allow {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-left: 10px;
-  border-left: 1px solid var(--line-soft);
-}
-
-.autonomy-allow-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: var(--t-sm);
-}
-
-.autonomy-allow-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.autonomy-result {
-  margin: 0;
-}
-
-.autonomy-off {
-  margin: 0;
-  padding-left: 10px;
-  border-left: 1px solid var(--line-soft);
-}
+/* --- the decision bar's allow-all ------------------------------------- *
+ *
+ * Gone. `.autonomy-allow`, `.autonomy-allow-head`, `.autonomy-allow-actions`,
+ * `.autonomy-result` and `.autonomy-off` are Tailwind utilities on
+ * `AutonomyAllowAll.tsx`, which is the file `check-deleted.mjs`'s phase-5
+ * entry now holds them to.
+ *
+ * Not a port -- the policy is that these stylesheets are deleted, never
+ * ported. This block was a trap in the deletion path itself: the control moved
+ * into the shell's decision bar, which is already utilities, so this file was
+ * dressing a surface that outlives it. Deleting `course.css` with the course
+ * view would have unstyled a control still on screen, with no test failing and
+ * no error raised. */
