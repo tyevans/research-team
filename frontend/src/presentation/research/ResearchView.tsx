@@ -65,6 +65,9 @@ export const ResearchView = ({
           <a className="btn btn-quiet" href={projectHref(projectId)}>
             Course
           </a>
+          <a className="btn btn-quiet" href={projectHref(projectId, { facet: 'ask', id: null })}>
+            Ask
+          </a>
         </div>
       </div>
 

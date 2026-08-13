@@ -1102,6 +1102,108 @@ deleting one sidecar line erases a person from the graph without touching an
 event — and it is the only item on this list that becomes impossible the moment
 the first real transcript is ingested.
 
+## The ask page
+
+Everything here was named in
+`docs/superpowers/specs/2026-08-12-project-ask-page-design.md` as deliberately
+not built. The page is a parallel path beside `SessionService`, and each entry
+below is a reason to revisit whether that was right: a session already has
+persistence, forking, a place to steer work from, and a supervisor that can fan
+out. Picking up any one of these on the parallel path means rebuilding a piece
+of the session machinery, and picking up two or three means the ask page should
+have been a session after all.
+
+### B48. An ask is not persisted, so there is no history and no resumption
+
+The conversation lives in a `ConversationRegistry` in server memory, keyed by a
+browser-minted chat id, and is dropped on `forget` or on restart. Nothing
+records that a question was ever asked. A reader who found an answer useful
+cannot come back to it, cannot link to it, and cannot see what anyone else
+asked.
+
+Picking it up means choosing where it lands. Events are the obvious home and
+the one the design refused: appending them moves the project's tip, which is
+what "ephemeral" was bought with, and
+`tests/integration/test_ask_writes_nothing.py` fails the moment anything on
+that path appends. A separate store answers that, and then owes an answer for
+why the project's own log is not the record of what was asked of it.
+
+### B49. No forking and no time travel over an ask
+
+A session can be scrubbed to any point and forked from it; an ask cannot. There
+is no way to take a conversation five turns in, branch it, and try a different
+question from the same context, and no way to look at what the transcript held
+before the last answer replaced it.
+
+This one is downstream of B48 — there is nothing to travel over until there is
+something stored — but it is the sharper reason to reopen the session
+question, because scrub and fork are exactly what the session machinery already
+does and what a bespoke store would have to reimplement.
+
+### B50. The chat cannot steer the project it is asking about
+
+The tool set is a read-only allowlist, so a reader who notices a gap while
+asking — an unexamined topic, a claim with one source — has no way to act on
+it from the page. Seeding a topic or dispatching a research run means leaving,
+finding the Research page, and restating by hand what the chat already knows.
+
+The obstacle is not the tools, it is the hold: writing to a project means
+joining it, and joining forks the previous holder's filesystem and takes
+exclusive hold. An asking surface that could also dispatch would need either
+that hold or a narrow write path that does not fork — and a design for the
+second is the actual work here.
+
+### B51. One agent answers wide questions that want fan-out
+
+"What did we find across every source?" runs as a single agent reading one
+document at a time. The supervisor's subagent fan-out is not available on this
+path, so breadth costs latency linearly and a long question can exhaust the
+context that a set of parallel readers would each have had to spare.
+
+Worth measuring before building: it is unknown how wide a question has to be
+before this hurts, and the fix is substantial (a second executor shape,
+per-subagent activity frames on the stream, citations merged across children).
+
+### B52. No admitted tool reads one identified topic, so topics are not citable
+
+`open_topic` was in the read-only tool set until review found that it *creates*
+topics — `RepositoryTopics.open_topic` executes an `OpenTopic` command, so
+naming a topic that does not exist brings it into being, and the page would
+have written to the project by asking about it. Removing it was correct.
+
+The cost is recorded in `domain/ask/conversation.ts` and in the server's
+`Citation`: no admitted tool opens one identified topic, so nothing can emit a
+topic citation, and `Citation.kind` is `Literal["source"]` rather than a union.
+A genuine read-only topic reader — one that returns a topic or reports its
+absence, and never opens one — is how topics become citable again, and it is a
+small addition to `RepositoryTopics` rather than a redesign.
+
+### B53. Minors deferred across the ask page's reviews
+
+Each was found in review, reproduced, and judged not worth holding the task
+for. None is a correctness bug on the happy path.
+
+- **Task 1** — `dict(files)` is a shallow copy, so nested per-file dicts stay
+  shared and a caller mutating one in place leaks through `_read_files()`.
+  Worst case is a stale read, not a write.
+- **Task 3** — abandonment after the executor has already failed skips the
+  cancel branch and never retrieves the exception, so asyncio logs noise; and
+  `suppress(CancelledError)` around `await running` can swallow a cancellation
+  aimed at the consumer's own task.
+- **Task 6** — purity is asserted through output values only. No test proves
+  the input transcript and its turns are left unmutated by reference, though
+  the implementation is immutable.
+- **Task 7** — the SSE reader has no `try/finally reader.cancel()`, so an
+  `onEvent` that throws leaves the body locked until GC; a 200 with an absent
+  body throws `ApiError` with status 200, collapsing two distinct failures;
+  frame delimiter and `data:` matching are `\n`-only, not CRLF and not
+  space-less; and there is no final zero-arg `decoder.decode()` flush.
+- **Task 9** — `AskThread`'s open-fold set is keyed by turn index and survives
+  "New chat", so a reopened page can show a fold open on an unrelated turn;
+  `reset()` is not guarded by `asking`, so "New chat" during an in-flight
+  question is possible; the scroll column is unasserted and would need a
+  browser test; and nothing manages focus after send.
+
 ## Waiting on redstring
 
 **Closed by redstring 0.3.0 and eventsource 0.12.0.** Every ask in this section

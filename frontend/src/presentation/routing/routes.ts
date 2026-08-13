@@ -73,6 +73,10 @@ export const FACETS = [
   'file',
   'artifact',
   'finding',
+  // Selects nothing -- the ask page is one conversation and has no parts worth
+  // a URL. It is a facet anyway because it is a *place on the project*, and
+  // giving it a route of its own would be a second grammar for the same idea.
+  'ask',
 ] as const
 
 type PlainFacet = Exclude<Facet, 'session' | 'file'>

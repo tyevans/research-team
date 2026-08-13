@@ -1,0 +1,139 @@
+/** Parsing an SSE body that arrives in whatever chunks the network chose.
+ *
+ * The split-frame cases are the reason this is tested rather than trusted: a
+ * parser that assumes one chunk is one frame works locally and drops events
+ * the moment a body is split across packets.
+ */
+import { expect, it, vi } from 'vitest'
+
+import { ApiError } from '@application/ports/errors.ts'
+import type { AskEvent } from '@domain/ask/conversation.ts'
+import { ProjectId } from '@domain/shared/identifier.ts'
+
+import { HttpAskRepository } from './ask-repository.ts'
+
+const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
+
+const body = (...chunks: string[]) => {
+  const encoder = new TextEncoder()
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+      controller.close()
+    },
+  })
+}
+
+const respond = (...chunks: string[]) =>
+  vi.fn().mockResolvedValue(new Response(body(...chunks), { status: 200 }))
+
+const collect = async (fetcher: typeof fetch) => {
+  const seen: AskEvent[] = []
+  await new HttpAskRepository('', fetcher).ask(PROJECT, 'c', 'why?', (e) => seen.push(e))
+  return seen
+}
+
+it('yields one event per frame', async () => {
+  const seen = await collect(
+    respond(
+      'data: {"type":"delta","message_id":"m1","text":"two"}\n\n',
+      'data: {"type":"answer","text":"two papers","citations":[]}\n\n',
+    ),
+  )
+
+  expect(seen).toEqual([
+    { type: 'delta', messageId: 'm1', text: 'two' },
+    { type: 'answer', text: 'two papers', citations: [] },
+  ])
+})
+
+it('reassembles a frame split across chunks', async () => {
+  const seen = await collect(
+    respond('data: {"type":"delta","mess', 'age_id":"m1","text":"two"}\n\n'),
+  )
+
+  expect(seen).toEqual([{ type: 'delta', messageId: 'm1', text: 'two' }])
+})
+
+it('reads two frames delivered in one chunk', async () => {
+  const seen = await collect(
+    respond(
+      'data: {"type":"delta","message_id":"m1","text":"a"}\n\ndata: {"type":"delta","message_id":"m1","text":"b"}\n\n',
+    ),
+  )
+
+  expect(seen).toHaveLength(2)
+})
+
+it('reads a last frame the server did not terminate', async () => {
+  // A body that ends without its trailing blank line -- the final answer would
+  // sit unparsed in the buffer forever if the loop only flushed on '\n\n'.
+  const seen = await collect(respond('data: {"type":"answer","text":"x","citations":[]}\n'))
+
+  expect(seen).toEqual([{ type: 'answer', text: 'x', citations: [] }])
+})
+
+it('maps citations off the wire', async () => {
+  const seen = await collect(
+    respond('data: {"type":"answer","text":"x","citations":[{"kind":"source","id":"s1"}]}\n\n'),
+  )
+
+  expect(seen[0]).toEqual({ type: 'answer', text: 'x', citations: [{ kind: 'source', id: 's1' }] })
+})
+
+it('drops a frame whose shape this build does not understand', async () => {
+  // A frame from a newer server should cost one event, not the whole stream.
+  const seen = await collect(
+    respond(
+      'data: {"type":"something_new"}\n\n',
+      'data: {"type":"answer","text":"x","citations":[]}\n\n',
+    ),
+  )
+
+  expect(seen).toEqual([{ type: 'answer', text: 'x', citations: [] }])
+})
+
+it('carries an in-band failure through as an event', async () => {
+  // After streaming starts the route has no status code left, so the only
+  // report of an executor failure is this frame.
+  const seen = await collect(respond('data: {"type":"error","detail":"model unreachable"}\n\n'))
+
+  expect(seen).toEqual([{ type: 'error', detail: 'model unreachable' }])
+})
+
+it('raises an ApiError carrying the status when the server refuses', async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response('{"detail":"busy"}', { status: 409 }))
+
+  await expect(
+    new HttpAskRepository('', fetcher).ask(PROJECT, 'c', 'why?', () => {}),
+  ).rejects.toMatchObject({ status: 409 })
+  await expect(
+    new HttpAskRepository('', fetcher).ask(PROJECT, 'c', 'why?', () => {}),
+  ).rejects.toBeInstanceOf(ApiError)
+})
+
+it('posts the chat id and question', async () => {
+  const fetcher = respond('data: {"type":"answer","text":"x","citations":[]}\n\n')
+
+  await collect(fetcher)
+
+  const [url, init] = fetcher.mock.calls[0] as [string, RequestInit]
+  expect(url).toBe(`/api/projects/${PROJECT}/ask`)
+  expect(JSON.parse(init.body as string)).toEqual({ chat_id: 'c', question: 'why?' })
+})
+
+it('forgets a chat by deleting it, and reports a refusal', async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }))
+
+  await new HttpAskRepository('', fetcher).forget(PROJECT, 'c 1')
+
+  const [url, init] = fetcher.mock.calls[0] as [string, RequestInit]
+  // The chat id is caller-chosen text, so the segment is encoded.
+  expect(url).toBe(`/api/projects/${PROJECT}/ask/c%201`)
+  expect(init.method).toBe('DELETE')
+
+  const refusing = vi.fn().mockResolvedValue(new Response('', { status: 503 }))
+  await expect(new HttpAskRepository('', refusing).forget(PROJECT, 'c')).rejects.toBeInstanceOf(
+    ApiError,
+  )
+})

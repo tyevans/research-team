@@ -62,6 +62,9 @@ export const CourseView = ({
           <a className="btn btn-quiet" href={projectHref(projectId, { facet: 'entity', id: null })}>
             Research
           </a>
+          <a className="btn btn-quiet" href={projectHref(projectId, { facet: 'ask', id: null })}>
+            Ask
+          </a>
           {course.data?.holdingSessionId ? (
             <a className="btn btn-quiet" href={sessionHref(course.data.holdingSessionId)}>
               Open holding session
