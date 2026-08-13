@@ -5,30 +5,8 @@ import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
 import type { Course } from '@domain/project/course.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
-import type { Track } from '@presentation/layout/split-tracks.ts'
 
 import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
-
-/** Which view's layout this is. See `use-session-panes.ts`: the group is what
- *  keeps three views' stored layouts apart. */
-export const COURSE_GROUP = 'course'
-
-/** The course page's two columns, as data.
- *
- * The same numbers `.course-panes` carried, and taken from there rather than
- * chosen: `minmax(0, 1fr) minmax(0, 1.2fr)`. The artifact list is the wider of
- * the two because its rows carry a provenance line and the rail's carry a
- * name and a count.
- *
- * A `min` of 0 rather than a pixel floor, also unchanged. This page scrolls,
- * so a column that becomes too narrow to read reflows rather than forcing a
- * horizontal scrollbar on the whole page, and a floor here would produce the
- * second thing.
- */
-export const COURSE_TRACKS: readonly Track[] = [
-  { id: 'stages', min: 0, weight: 1 },
-  { id: 'artifacts', min: 0, weight: 1.2 },
-]
 
 /** The course.
  *

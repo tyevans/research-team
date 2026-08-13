@@ -1,4 +1,38 @@
-/* The course view: stage rail, artifacts, provenance and findings. */
+/* What the course view left behind: stage rail, artifacts, provenance,
+   findings, the worker roster, the extraction pane and the autonomy panel.
+
+   **There is no course view any more, and this file did not die with it.**
+   That is a departure from the policy — stylesheets die with the screen they
+   dress — and it is deliberate rather than deferred. `CourseView` is deleted
+   and every rule that was a claim about *its* markup went with it in the same
+   commit: `.view-course`, the four `.lay-split[data-split='course']`
+   combinators, `.course-findings`, and their four counterparts in
+   `responsive.css`. What is left dresses six component families, five of which
+   are still on screen after the merge:
+
+     - `AutonomyPanel`   (16 rules)  -> QUEUE, and the policy is instance-wide
+     - `ExtractionPane`  (12)        -> QUEUE
+     - `WorkerList`      (9 + `worker-dot-${kind}`) -> QUEUE
+     - `Artifacts`       (7 + `.prov-src`)          -> MATERIAL
+     - `Findings`        (4 + `finding-${severity}`) -> MATERIAL
+     - `StageRail`       (13 + `rail-${status}`)     -> QUEUE, until the row
+                                                        union replaces it
+     - the `Chip` severity tones (`chip-${tone}`, from `common/primitives.tsx`,
+       reached by `Artifacts` and `StageRail`)
+
+   The plan for the route merge expected this file to die in the QUEUE slice
+   and named two passengers to rescue first. There are six, three of the seven
+   families above are written from template literals and so are invisible to a
+   grep for a class name, and deleting the file today would silently strip the
+   autonomy panel, the extraction pane, the roster, every artifact row and every
+   finding — the `AutonomyAllowAll` trap at five times the size. So the file
+   stays until the components do.
+
+   One correction to the note further down, since a stale comment about a
+   deletion trap is itself a trap: `.autonomy-warn` and `.autonomy-error` are
+   described there as shared by the panel and by `AutonomyAllowAll`. They are
+   not, any more — `AutonomyAllowAll` is utilities throughout, and these two are
+   `AutonomyPanel`'s alone. */
 
 /* ---------------------------------------------------------------- course
  *
@@ -10,51 +44,6 @@
  * Missing artifacts are dimmed rather than hidden or reddened. Hidden loses
  * the gap the view exists to surface; red calls it a failure, which is a
  * verdict, and verdicts here belong to the check library. */
-
-/* Scrolls as a page, unlike the session view whose panes scroll separately:
- * a rail and its artifact list are read together and top to bottom. */
-.view-course {
-  overflow: auto;
-  padding: 26px 28px 60px;
-}
-/* The tracks are `COURSE_TRACKS` now, written inline by `Split` above
-   `--bp-wide` and by `responsive.css` in the band below it. What is left here
-   is what this page needs that the primitive does not assume.
-
-   `flex: 0 0 auto` against the primitive's `1 1 auto`: `Split` is built for a
-   view that owns the viewport and gives its columns the height, and this page
-   scrolls instead -- the rail and its artifact list are read together and top
-   to bottom. So the split takes its content's height and the page scrolls
-   around it. */
-.lay-split[data-split='course'] {
-  flex: 0 0 auto;
-  gap: 14px;
-}
-
-/* Cards rather than columns divided by a rule, which is what the gap above
-   already implies -- `.lay-pane`'s right-hand divider would draw a second line
-   just inside the border of the left one. */
-.lay-split[data-split='course'] > .lay-pane {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  border-right: 1px solid var(--line);
-}
-
-/* The one rule that has to fight the primitive, and the reason is the page's
-   scrolling: a pane body that scrolls on its own would put a second scrollbar
-   inside a page that already scrolls, and clip a rail of twelve stages to
-   whatever height the grid happened to give it. `visible` restores what
-   `.course-panes .pane-body` said, for the same reason it said it. */
-.lay-split[data-split='course'] > .lay-pane > .lay-pane-body {
-  overflow: visible;
-}
-
-/* A folded pane must not keep the height of the open one beside it. Grid
-   stretches both to the row's height by default, which on a page that scrolls
-   means a 34px rail drawn as a 900px empty column. */
-.lay-split[data-split='course'] > .lay-pane.is-collapsed {
-  align-self: start;
-}
 
 .rail {
   list-style: none;
@@ -277,9 +266,6 @@
   color: var(--k-message);
 }
 
-.course-findings {
-  margin: 0 0 10px;
-}
 .findings-head {
   font-size: var(--t-sm);
   color: var(--fg-dim);
@@ -349,17 +335,6 @@
  * in flight, so this panel lists them by kind rather than folding them into
  * the run's summary. The dot carries the kind's colour so a scan of the list
  * reads as a legend for itself, the same rule the event log follows. */
-.worker-panel {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
-  padding: 10px 12px;
-  margin: 0 0 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .worker-head {
   display: flex;
   align-items: center;
@@ -567,37 +542,30 @@
 
 /* -------------------------------------------------------------- autonomy
  *
- * Two surfaces over one instance-wide policy: the full per-tool panel on the
- * course page (`.autonomy-panel`, a sibling of `.worker-panel` and
- * `.run-panel`, and deliberately built from the same three declarations so it
- * reads as another band of the same page rather than a modal escape hatch),
- * and the allow-all control in the shell's decision bar — which is no longer
- * dressed from here at all. Its rules were utilities-ised onto
- * `AutonomyAllowAll.tsx` once it moved out of the worker drawer, because a
- * screen stylesheet dressing a control that outlives the screen is a deletion
- * trap rather than a filing preference. See the block further down where they
- * used to be.
+ * Two surfaces over one instance-wide policy: the full per-tool panel, now a
+ * band of the project page's QUEUE header, and the allow-all control in the
+ * shell's decision bar — which is no longer dressed from here at all. Its
+ * rules were utilities-ised onto `AutonomyAllowAll.tsx` once it moved out of
+ * the worker drawer, because a screen stylesheet dressing a control that
+ * outlives the screen is a deletion trap rather than a filing preference. See
+ * the block further down where they used to be.
  *
- * What is left of that split is `.autonomy-warn` and `.autonomy-error`, shared
- * by both surfaces and therefore still a smaller version of the same problem.
- * The note above those two rules is the one to read before deleting this file.
+ * `.autonomy-panel` itself is gone, along with `.worker-panel` here and
+ * `.run-panel` in `components.css`. The three were one card written out three
+ * times — the duplication this comment used to describe as deliberate — and
+ * `QueueHeader` now spells that card once, in utilities, around all four
+ * panels. Nothing writes any of the three class names.
+ *
+ * `.autonomy-warn` and `.autonomy-error` are **not** shared with the allow-all
+ * control, which an earlier version of this note said they were.
+ * `AutonomyAllowAll` is utilities throughout; these two are this panel's alone,
+ * and they die with it.
  *
  * `.autonomy-warn` carries the scope warning and is the one thing here that
  * must not be quiet: it uses the accent border rather than `--line`, because a
  * reader skimming past it and flipping a switch is the specific failure this
  * whole panel is shaped to prevent.
  */
-.autonomy-panel {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
-  padding: 10px 12px;
-  margin: 0 0 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .autonomy-head {
   display: flex;
   align-items: center;

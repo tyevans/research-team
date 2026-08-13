@@ -1,147 +1,25 @@
-/* The research view: topics, seeding, documents and the graph.
+/* What the research view left behind: topics, documents and the graph.
 
-   A rail of context beside a stage, rather than four equal panes in a grid.
-   The regions are not peers: the graph is what the page is for, and topics
-   and documents are what you read it against, so they are sized like it.
+   **There is no research view any more.** `ResearchView` is deleted and its
+   three regions are tenants of the project page -- topics in QUEUE, documents
+   and the graph in MATERIAL. What went with it in the same commit is every
+   rule that was a claim about *its* markup: `.view-research`,
+   `.research-rail`, `.research-workbench` and the eleven selectors descending
+   from those two, plus their four counterparts in `responsive.css`. Every one
+   of them was a `>` combinator or a descendant selector naming an ancestor
+   nothing writes now, which is precisely the failure mode
+   `component-system-spec.md` §11 describes: a rule that quietly stops applying,
+   with no test failure and no error.
 
-   The view owns the viewport and does not scroll. Each region scrolls on its
-   own instead, which is the whole reason the graph can fill the height it is
-   given -- inside a scrolling page every pane needs a fixed pixel height, and
-   fixed heights are what made this page a stack of small boxes with the
-   largest artifact in the smallest one. */
+   What is left dresses three components that outlive the page, and it dies
+   with them rather than with the view -- slice 3 of the route merge, which
+   rewrites the reader those three become. Until then this file is live and the
+   `check-deleted.mjs` freeze keeps it honest.
 
-.view-research {
-  overflow: hidden;
-  /* Was 22/24/20px. On the spacing rhythm now, and slightly tighter with it:
-     every pixel this page does not spend on its own margin is a pixel the two
-     short rail panes get. */
-  padding: var(--space-5) var(--space-5) var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-height: 0;
-  flex: 1;
-}
-
-/* `.view-head` is capped at 1100px and centred, which suits the tree it was
-   written for. This page is full-bleed, and a centred title over a full-width
-   workbench reads as a different page's header dropped on top of this one. */
-.view-research .view-head {
-  max-width: none;
-  margin: 0;
-}
-
-.research-workbench {
-  display: grid;
-  /* The rail is sized to its content's needs and the stage takes the rest.
-     `minmax(0, 1fr)` on the stage rather than `auto`: without the zero
-     minimum a wide canvas would push the grid instead of being bounded by
-     it, and the rail would shrink away as the graph grew. */
-  grid-template-columns: 340px minmax(0, 1fr);
-  gap: var(--space-4);
-  flex: 1;
-  min-height: 0;
-}
-
-/* The rail's list panes scroll their own contents, side by side down the
-   column, rather than the rail scrolling as one strip. When it did, the
-   documents pane began roughly two thousand pixels down it -- the topics list
-   renders every open question, and reaching your sources meant scrolling past
-   all of them.
-   The rail itself now scrolls too, but only in the case that arrangement did
-   not have an answer for: a viewport too short for both lists to be legible.
-   The difference from what it replaces is that the panes are bounded, so the
-   rail can overflow by at most the slack between the floor below and the
-   viewport, not by the length of the queue. */
-.research-rail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  overflow-y: auto;
-  min-height: 0;
-}
-
-/* Seeding is a control, not a list: it takes the height it needs and gives up
-   none of it. A folded pane is the same -- it is now only a head, and
-   `layout.css` already says so for `[data-collapse-to='strip']`, so the
-   `.is-folded` half of this rule is gone rather than restated. */
-.research-rail > [data-pane='seeding'] {
-  flex: 0 0 auto;
-}
-
-/* The two lists split what is left. `1 1 0` rather than `1 1 auto` so they
-   split the *space* evenly instead of in proportion to how much content each
-   happens to hold -- otherwise a project with three hundred topics and four
-   documents would hand almost the whole rail to the topics again, which is
-   the thing this is fixing.
-
-   The 240px floor that used to be here is now `minContent={240}` on the two
-   `Pane`s. It is the same number for the same reason -- an even split of a
-   laptop viewport across three regions left each list showing three or four
-   rows, which is a scrollbar rather than a list, and 240px is roughly seven
-   document rows or five topic rows -- but as a parameter it travels with the
-   pane instead of being a literal in one stylesheet selected by two pane
-   names. Below the floor the rail scrolls rather than squashing them further,
-   and folding a pane is how you get the space back on a short screen. */
-.research-rail > [data-pane='topics'],
-.research-rail > [data-pane='documents'] {
-  flex: 1 1 0;
-  overflow: hidden;
-}
-
-/* Folded, the pane is a strip: `layout.css` gives it `flex: 0 0 auto` and
-   leaves its title level, which is what `is-folded` existed to say. The second
-   class name is gone because `data-collapse-to` is the parameter it stood in
-   for. */
-
-.research-workbench > .lay-pane,
-.research-rail > .lay-pane {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
-  /* `.lay-pane` carries a right-hand divider, which is right inside a `Split`
-     and wrong here: these four are free-standing cards, and the divider draws
-     a second line just inside the border. */
-  border-right: 1px solid var(--line);
-}
-
-/* The head lays out toggle · title · meta and pushes the ends apart. These
-   heads carry no meta, so the default would strand the title against the
-   right edge with the toggle alone on the left. */
-.research-workbench .lay-pane-head {
-  justify-content: flex-start;
-  gap: var(--space-2);
-}
-
-/* The rail's bodies carry the page's padding. The three rules this replaces
-   also each set `flex`, `min-height` and `overflow`, and two of them set
-   exactly what `data-scroll='regions'` now sets -- so topics and documents
-   declare `scroll="regions"` on the `Pane` and only their padding is left
-   here. That is the same trade as `minContent`: the shape is a parameter, the
-   spacing is this page's business. */
-.research-rail > .lay-pane > .lay-pane-body {
-  padding: 10px 12px 12px;
-}
-
-/* Seeding is the exception `regions` does not cover: its body takes its height
-   from its content. The primitive's default is `flex: 1 1 auto; min-height: 0`,
-   which is right inside a pane whose height comes from a track and collapses
-   to zero inside one sized by what it holds -- a zero-height body with visible
-   overflow is how the seeding controls came to be drawn on top of the topics
-   below them. */
-.research-rail > [data-pane='seeding'] > .lay-pane-body {
-  flex: 0 0 auto;
-  min-height: auto;
-  overflow: visible;
-}
-
-.research-workbench > [data-pane='graph'] {
-  /* Reads as a surface the graph sits on rather than another card in the stack
-     -- the one place on this page where depth is doing work. The flex column,
-     the zero minimum and the clipped overflow all come from
-     `scroll="regions"` now. */
-  background: var(--bg);
-}
+   The one thing worth knowing before editing: this is now a file named after a
+   screen that does not exist, which is a filing accident rather than a design.
+   Renaming it costs an entry in `STYLESHEETS` and buys nothing while it is
+   scheduled for deletion. */
 
 /* ---------------------------------------------------------------- topics
  *
