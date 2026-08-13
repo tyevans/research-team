@@ -65,7 +65,11 @@ const toEvent = (raw: z.output<typeof askFrameDto>): AskEvent => {
 export class HttpAskRepository implements AskRepository {
   constructor(
     private readonly baseUrl: string = '',
-    private readonly fetcher: typeof fetch = fetch,
+    // Wrapped rather than passed bare: `fetch` is a method of `Window`, and
+    // holding it in a property means `this.fetcher(...)` calls it with the
+    // repository as its receiver, which a browser rejects outright. The arrow
+    // keeps the global as the receiver while leaving the seam tests inject on.
+    private readonly fetcher: typeof fetch = (...args) => fetch(...args),
   ) {}
 
   async ask(

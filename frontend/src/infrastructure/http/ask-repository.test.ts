@@ -4,7 +4,7 @@
  * parser that assumes one chunk is one frame works locally and drops events
  * the moment a body is split across packets.
  */
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@application/ports/errors.ts'
 import type { AskEvent } from '@domain/ask/conversation.ts'
@@ -120,6 +120,50 @@ it('posts the chat id and question', async () => {
   const [url, init] = fetcher.mock.calls[0] as [string, RequestInit]
   expect(url).toBe(`/api/projects/${PROJECT}/ask`)
   expect(JSON.parse(init.body as string)).toEqual({ chat_id: 'c', question: 'why?' })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+/** The receiver matters, and only in a browser.
+ *
+ * `fetch` is defined on `Window`, and a browser rejects a call whose `this` is
+ * anything else -- Firefox with "'fetch' called on an object that does not
+ * implement interface Window", Chrome with "Illegal invocation". Holding the
+ * global in an instance property and calling `this.fetcher(...)` hands it the
+ * repository as its receiver, so every question failed in a real browser while
+ * every test above passed: they all inject a `fetcher`, which left the default
+ * -- the only branch `container.ts` uses -- unexercised.
+ *
+ * Node's `fetch` has no such brand check, so jsdom cannot fail this on its own
+ * and the stub below supplies the check the browser would apply. Reverting the
+ * fix turns these two red.
+ */
+const brandChecked = () =>
+  vi.fn(function (this: unknown) {
+    if (this !== undefined && this !== globalThis) {
+      throw new TypeError("'fetch' called on an object that does not implement interface Window.")
+    }
+    return Promise.resolve(new Response('{}', { status: 200 }))
+  })
+
+it('asks through the global fetch with a receiver a browser accepts', async () => {
+  const global = brandChecked()
+  vi.stubGlobal('fetch', global)
+
+  await new HttpAskRepository().ask(PROJECT, 'c', 'why?', () => {})
+
+  expect(global).toHaveBeenCalledOnce()
+})
+
+it('forgets through the global fetch with a receiver a browser accepts', async () => {
+  const global = brandChecked()
+  vi.stubGlobal('fetch', global)
+
+  await new HttpAskRepository().forget(PROJECT, 'c')
+
+  expect(global).toHaveBeenCalledOnce()
 })
 
 it('forgets a chat by deleting it, and reports a refusal', async () => {
