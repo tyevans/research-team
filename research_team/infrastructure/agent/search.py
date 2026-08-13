@@ -10,6 +10,9 @@ result set is a context leak of exactly the kind the `elide` and `compact`
 strategies exist to clean up afterwards, and it is cheaper not to make the mess.
 """
 
+from contextvars import ContextVar
+from dataclasses import dataclass
+
 import httpx
 from langchain_core.tools import BaseTool, tool
 
@@ -40,6 +43,16 @@ depends on the exact value.
 """
 
 
+@dataclass
+class _Counter:
+    """One turn's streak of empty searches.
+
+    A class and not an `int` on purpose -- see `SearchAttempts`.
+    """
+
+    empty: int = 0
+
+
 class SearchAttempts:
     """How many consecutive searches this turn came back with nothing.
 
@@ -56,38 +69,66 @@ class SearchAttempts:
     evidence for. `build_search_tool` enforces this by comparing the result
     string, not by catching exceptions here.
 
-    **This instance is process-wide, not per-turn, though the name and every
-    docstring in this class say "this turn."** `build_application` constructs
-    one `SearchAttempts` for the one `web_search` tool the whole process
-    shares (`composition.py`), so two turns running concurrently -- different
-    sessions, or an auto-research run alongside a web turn -- share one
-    counter. One turn's empty searches can bound another's first search, and
-    either turn's boundary reset can clear the other's streak mid-turn. The
-    contract this class states is not true under concurrency.
+    The instance is process-wide -- `build_application` constructs one for the
+    one `web_search` tool the whole process shares -- but the *count* is not:
+    it lives in a `ContextVar` that `SearchAttemptsMiddleware.begin_turn`
+    refreshes before each turn's first model call, so two turns running
+    concurrently hold two counts. The tool and its SearXNG client are still
+    built once; only the counter is per-turn, which is the whole of what needs
+    to be. `test_two_concurrent_turns_do_not_bound_each_other` fails if that
+    stops being true.
 
-    Accepted for now because the blast radius is small and nothing durable
-    depends on the count: the failure modes are a spurious in-band notice
-    telling a model to stop searching when it hasn't really exhausted three
-    tries, or a bound that fails to apply when it should. Nothing is corrupted
-    and nothing silently persists the wrong thing -- worth fixing, not worth
-    the larger change of making the tool (and its dependency on a single
-    SearXNG client) rebuildable per turn. See BACKLOG.md.
+    **What the var holds is a mutable counter, never a bare `int`, and that is
+    load-bearing.** A child task copies its parent's context at spawn: a value
+    set before the spawn is visible in the child, but a `set()` performed
+    inside the child is invisible to the parent and to siblings. Storing a
+    mutable object means the tool mutates state the middleware installed and
+    can still see, whether or not langgraph runs a tool call in the same task
+    as `before_agent`. Simplifying this to an integer would leave every test
+    passing and lose the count on any turn whose tool calls run in child tasks.
     """
 
     def __init__(self) -> None:
-        self._empty = 0
+        # One counter shared by every context that never had one installed:
+        # a tool built without the middleware around it -- a test, or any
+        # caller wiring the tool alone -- stays unbounded-per-process rather
+        # than raising, exactly as it behaved when the count lived on the
+        # instance. It is a field rather than the var's default because ruff's
+        # B039 rejects mutable ContextVar defaults, and rightly: a default is
+        # evaluated once and shared, which here is the intent but is the bug
+        # everywhere else.
+        self._unwired = _Counter()
+        # Per-instance rather than module-level so two applications in one
+        # process do not share a count.
+        self._counter: ContextVar[_Counter | None] = ContextVar(
+            f"search_attempts_{id(self):x}", default=None
+        )
+
+    def _current(self) -> _Counter:
+        installed = self._counter.get()
+        return self._unwired if installed is None else installed
+
+    def begin_turn(self) -> None:
+        """Install a fresh count for this turn.
+
+        Distinct from `reset()`: `reset()` clears whatever counter this context
+        can already see, which is what a productive search wants. This replaces
+        it, so a turn cannot clear a concurrent turn's streak.
+        """
+        self._counter.set(_Counter())
 
     def record_empty(self) -> int:
-        """One more consecutive empty result; returns the new count."""
-        self._empty += 1
-        return self._empty
+        """One more consecutive empty result this turn; returns the new count."""
+        counter = self._current()
+        counter.empty += 1
+        return counter.empty
 
     def reset(self) -> None:
-        """Any non-empty result, or a new turn, clears the streak."""
-        self._empty = 0
+        """Any non-empty result clears this turn's streak."""
+        self._current().empty = 0
 
     def exhausted(self) -> bool:
-        return self._empty >= MAX_EMPTY_SEARCHES
+        return self._current().empty >= MAX_EMPTY_SEARCHES
 
 
 def format_results(payload: object, limit: int) -> str:

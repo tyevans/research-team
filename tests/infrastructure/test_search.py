@@ -4,6 +4,8 @@ No test here reaches the network. The live test lives behind the `live`
 marker, like the model tests do.
 """
 
+import asyncio
+
 import httpx
 import pytest
 from hypothesis import given
@@ -377,6 +379,100 @@ def test_the_bound_does_not_touch_the_autonomy_policy() -> None:
     from research_team.application.autonomy import TOOL_FLOORS
 
     assert TOOL_FLOORS == {"fetch": "ask", "advance_stage": "ask"}
+
+
+async def test_two_concurrent_turns_do_not_bound_each_other() -> None:
+    """The claim the whole per-turn contract rests on.
+
+    One `SearchAttempts`, one tool and one middleware -- exactly the
+    process-wide wiring `build_application` produces -- driven by two asyncio
+    tasks. The events pin the interleaving so the failure is deterministic
+    rather than a race: both turns start, then turn A exhausts its streak,
+    then turn B searches for the first time in its own turn.
+
+    Against a counter held on the instance this fails on B's assertion: A's
+    three empty searches bound B, and B is handed the notice instead of a
+    result. It passes only if each turn's count lives in its own context.
+    """
+    attempts = SearchAttempts()
+    middleware = SearchAttemptsMiddleware(attempts)
+    calls: list[int] = []
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_empty_handler(calls)), attempts=attempts
+    )
+
+    a_started = asyncio.Event()
+    b_started = asyncio.Event()
+    a_exhausted = asyncio.Event()
+
+    async def turn_a() -> str:
+        middleware.before_agent({})
+        a_started.set()
+        await b_started.wait()
+        for _ in range(MAX_EMPTY_SEARCHES):
+            await tool.ainvoke({"query": "a"})
+        a_exhausted.set()
+        return await tool.ainvoke({"query": "a"})
+
+    async def turn_b() -> str:
+        await a_started.wait()
+        middleware.before_agent({})
+        b_started.set()
+        await a_exhausted.wait()
+        return await tool.ainvoke({"query": "b"})
+
+    a_result, b_result = await asyncio.gather(turn_a(), turn_b())
+
+    # A tried three times and nothing was there, so A is told to stop.
+    assert "record_gap" in a_result
+    # B has tried nothing. Its first search must reach the instance.
+    assert b_result == "No results."
+
+
+async def test_a_turn_starts_at_zero_however_the_last_one_ended() -> None:
+    """`before_agent` installs a fresh count rather than decrementing or
+    trusting whatever the previous turn left behind. Reverting the middleware
+    to a no-op fails this on the second turn's first search."""
+    attempts = SearchAttempts()
+    middleware = SearchAttemptsMiddleware(attempts)
+    calls: list[int] = []
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_empty_handler(calls)), attempts=attempts
+    )
+
+    middleware.before_agent({})
+    for _ in range(MAX_EMPTY_SEARCHES):
+        await tool.ainvoke({"query": "q"})
+    assert "record_gap" in await tool.ainvoke({"query": "q"})
+
+    middleware.before_agent({})
+    assert await tool.ainvoke({"query": "q"}) == "No results."
+
+
+def test_exhausted_turns_true_exactly_at_the_bound() -> None:
+    """Off-by-one guard: the notice must not fire one search early, which
+    would tell a model to give up while a phrasing it has not tried remains."""
+    attempts = SearchAttempts()
+    for _ in range(MAX_EMPTY_SEARCHES - 1):
+        attempts.record_empty()
+    assert not attempts.exhausted()
+    attempts.record_empty()
+    assert attempts.exhausted()
+
+
+async def test_a_tool_built_without_middleware_still_counts() -> None:
+    """`build_search_tool` is reachable without the agent around it -- tests,
+    and any caller wiring the tool alone. That path never calls `before_agent`,
+    so it depends on the var's default existing. It is unbounded-per-process
+    rather than raising, which is what it was before the count moved."""
+    attempts = SearchAttempts()
+    calls: list[int] = []
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_empty_handler(calls)), attempts=attempts
+    )
+    for _ in range(MAX_EMPTY_SEARCHES):
+        assert await tool.ainvoke({"query": "q"}) == "No results."
+    assert "record_gap" in await tool.ainvoke({"query": "q"})
 
 
 async def test_errors_are_not_counted() -> None:
