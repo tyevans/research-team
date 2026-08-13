@@ -524,7 +524,7 @@ def test_a_tool_decision_can_name_the_review_it_answers():
     """`review_id` rides through `RecordToolDecision` onto the event.
 
     This is the only join between a finding and the decision that followed it;
-    `ToolCallDecided` names no stage, and `StageAdvanced` -- which does -- is on
+    `ToolCallDecided` names no stage, and `ProjectStageAdvanced` -- which does -- is on
     the `Project` stream and is not written at all when a gate is rejected.
     """
     review_id = uuid4()

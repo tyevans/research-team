@@ -621,7 +621,7 @@ async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
     """An advanced stage reaches the live feed addressed to its project.
 
     The reported bug, at the layer where it is visible: `advance_stage`
-    appended `StageAdvanced` and the course page's rail moved only on a
+    appended `ProjectStageAdvanced` and the course page's rail moved only on a
     reload, because the feed read `CodingSession`, `Topic`, `Corpus` and
     redstring's categories and nothing else.
 
@@ -634,7 +634,7 @@ async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
     rather than needing a catch-up route.
 
     `change` rather than a stage name, so the frame stays independent of
-    `StageAdvanced`'s payload -- which is being extended under separate work.
+    `ProjectStageAdvanced`'s payload -- which is being extended under separate work.
     """
     from research_team.application import LiveFeed
     from research_team.domain.project import AdvanceStage, CreateProject, SelectWorkflow
@@ -668,7 +668,7 @@ async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
     payload = json.loads(frames[0].split("data: ", 1)[1])
     assert payload["type"] == "Project"
     assert payload["project_id"] == str(project_id)
-    assert payload["change"] == "StageAdvanced"
+    assert payload["change"] == "ProjectStageAdvanced"
     # The verdict, not only that a boundary was crossed (#80). The one payload
     # field this frame carries, because unlike a stage name it describes the
     # transition rather than the current state and so cannot disagree with the

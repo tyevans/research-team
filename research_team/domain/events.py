@@ -207,7 +207,7 @@ class ToolCallDecided(DomainEvent):
     None for every gated call that is not an `advance_stage`, and for every
     `advance_stage` decided before this field existed -- which is what its
     absence always meant. `ToolCallDecided` names no stage otherwise, and
-    `StageAdvanced`, which does, is on the `Project` stream and is not written
+    `ProjectStageAdvanced`, which does, is on the `Project` stream and is not written
     at all when a gate is rejected. So this is the only join.
     """
 

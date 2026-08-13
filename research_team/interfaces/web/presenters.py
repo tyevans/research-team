@@ -46,12 +46,12 @@ from research_team.domain import (
     FileDeleted,
     FileEdited,
     FileWritten,
+    ProjectStageAdvanced,
     ProjectState,
+    ProjectWorkflowSelected,
     SessionForkedFrom,
     SessionStarted,
-    StageAdvanced,
     TurnFailed,
-    WorkflowSelected,
 )
 from research_team.domain.auto_research import AutoRunState
 from research_team.domain.learner import LearnerProgressState
@@ -82,9 +82,9 @@ def event_summary(event: DomainEvent) -> str:
             f"first {event.through_index} messages now behind a summary "
             f"({event.strategy}{saved})"
         )
-    if isinstance(event, WorkflowSelected):
+    if isinstance(event, ProjectWorkflowSelected):
         return f"{event.preset_id} v{event.preset_version}"
-    if isinstance(event, StageAdvanced):
+    if isinstance(event, ProjectStageAdvanced):
         # Both ends of the move, and the reason. A preset has up to fifteen
         # stages, so "now at X" does not say what was left; and the rationale
         # is what a reviewer scrolling the log is actually looking for, since
@@ -631,12 +631,12 @@ def project_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
     lean on.
 
     One frame type for the whole aggregate, and `change` is what tells its
-    events apart. `StageAdvanced` is what was reported, but `WorkflowSelected`
+    events apart. `ProjectStageAdvanced` is what was reported, but `ProjectWorkflowSelected`
     turns the course page from a 409 into a rail and the lifecycle events move
     the holding-session link, so a frame per event class would be five frame
     types where the client wants one invalidation.
 
-    Carries no stage. It would be `to_stage` off `StageAdvanced` and nothing at
+    Carries no stage. It would be `to_stage` off `ProjectStageAdvanced` and nothing at
     all off the other four, so a client would need the read anyway and would
     have two descriptions of the current stage that can disagree -- the same
     argument `corpus_change` makes about a document. The frame is a nudge;
@@ -653,7 +653,7 @@ def project_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
     how.
 
     Read through `getattr` with a `None` default rather than off the class,
-    because this frame serves all six project events and only `StageAdvanced`
+    because this frame serves all six project events and only `ProjectStageAdvanced`
     has one. A client reads a null `decision` as "not that kind of change"
     rather than as a missing verdict. Nothing on the page renders it yet; it is
     on the frame so the live path does not have to be widened again the first

@@ -29,8 +29,8 @@ class ProjectCreated(DomainEvent):
 
 
 @register_event
-class SessionJoinedProject(DomainEvent):
-    """A session took the project, inheriting the filesystem at `inherited_at`."""
+class ProjectSessionJoined(DomainEvent):
+    """The project admitted a session, which inherits the filesystem at `inherited_at`."""
 
     aggregate_type: str = "Project"
     session_id: UUID
@@ -62,7 +62,7 @@ class ProjectDeleted(DomainEvent):
 
 
 @register_event
-class WorkflowSelected(DomainEvent):
+class ProjectWorkflowSelected(DomainEvent):
     """This project is running an instructional-design preset.
 
     Records the preset by id and version rather than by value. A preset is
@@ -78,7 +78,7 @@ class WorkflowSelected(DomainEvent):
 
 
 @register_event
-class StageAdvanced(DomainEvent):
+class ProjectStageAdvanced(DomainEvent):
     """A stage was completed and the project moved to the next one.
 
     `from_stage` is recorded even though it is derivable, because the point of
@@ -104,7 +104,7 @@ class StageAdvanced(DomainEvent):
     decision: Decision = "approve"
     """What the reviewer decided, as opposed to what they were shown.
 
-    Case 1 of `events.py`'s evolution strategy: every `StageAdvanced` written
+    Case 1 of `events.py`'s evolution strategy: every `ProjectStageAdvanced` written
     before this existed was an advance somebody let through, so `approve` is
     the only default that does not invent a verdict nobody gave.
 
@@ -282,7 +282,7 @@ def decide(command: ProjectCommand, state: ProjectState) -> list[DomainEvent]:
 
         case JoinProject(session_id=session_id), ProjectState(active_session_id=None):
             return [
-                SessionJoinedProject(
+                ProjectSessionJoined(
                     aggregate_id=project_id,
                     session_id=session_id,
                     inherited_at=state.tip_at_event,
@@ -303,7 +303,7 @@ def decide(command: ProjectCommand, state: ProjectState) -> list[DomainEvent]:
             )
         case SelectWorkflow(preset=preset), _:
             return [
-                WorkflowSelected(
+                ProjectWorkflowSelected(
                     aggregate_id=project_id,
                     preset_id=preset.id,
                     preset_version=preset.version,
@@ -351,7 +351,7 @@ def decide(command: ProjectCommand, state: ProjectState) -> list[DomainEvent]:
 _NOT_AN_ADVANCE: frozenset[str] = frozenset({"amend_upstream", "send_back", "halt"})
 """`Decision` values that mean the stage did *not* move.
 
-Refused rather than stored. `StageAdvanced` is the only stage event there is
+Refused rather than stored. `ProjectStageAdvanced` is the only stage event there is
 and its whole content is that the project went forward one stage, so a payload
 carrying `send_back` would be a fact contradicting the event it rides on.
 `workflow-engine.md` §3.4 is the record that these three need their own events
@@ -367,7 +367,7 @@ enum this field was added to carry.
 
 def _advanced(
     state: ProjectState, command: "AdvanceStage", preset: Preset, to_stage: str
-) -> StageAdvanced:
+) -> ProjectStageAdvanced:
     """The one legal move from where this project stands, or a refusal.
 
     Only the immediately next stage is legal. Skipping ahead is the failure the
@@ -402,7 +402,7 @@ def _advanced(
         raise CommandRejectedError(
             f"project is at {current}; the next stage is {expected}, not {to_stage}"
         )
-    return StageAdvanced(
+    return ProjectStageAdvanced(
         aggregate_id=state.project_id,
         from_stage=current,
         to_stage=to_stage,
@@ -425,7 +425,7 @@ def evolve(state: ProjectState, event: DomainEvent) -> ProjectState:
             # back off `state` for every command but the first.
             return ProjectState(project_id=event.aggregate_id, status="created", name=name)
 
-        case SessionJoinedProject(session_id=session_id):
+        case ProjectSessionJoined(session_id=session_id):
             return state.model_copy(
                 update={
                     "member_session_ids": [*state.member_session_ids, session_id],
@@ -433,10 +433,10 @@ def evolve(state: ProjectState, event: DomainEvent) -> ProjectState:
                 }
             )
 
-        case WorkflowSelected(preset_id=preset_id, preset_version=version):
+        case ProjectWorkflowSelected(preset_id=preset_id, preset_version=version):
             return state.model_copy(update={"preset_id": preset_id, "preset_version": version})
 
-        case StageAdvanced(to_stage=to_stage):
+        case ProjectStageAdvanced(to_stage=to_stage):
             return state.model_copy(
                 update={
                     "current_stage": to_stage,

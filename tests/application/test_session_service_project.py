@@ -339,7 +339,7 @@ async def test_the_fork_point_recorded_is_the_one_actually_taken(
 
     Catching the tip up is a write, and the reason to do it rather than
     quietly fork further along than the pointer says is this: `inherited_at`
-    on `SessionJoinedProject` and `at_event` on `SessionForkedFrom` are the
+    on `ProjectSessionJoined` and `at_event` on `SessionForkedFrom` are the
     two records of where a session's filesystem came from, and a fork that
     outran the pointer would leave both of them describing a point that is not
     where anything was copied from.

@@ -25,9 +25,9 @@ from research_team.domain import (
     CodingSession,
     ConversationCompacted,
     Project,
+    ProjectStageAdvanced,
     SendUserMessage,
     SessionStarted,
-    StageAdvanced,
     StartSession,
     ToolCallDecided,
     TurnFailed,
@@ -491,7 +491,7 @@ async def test_a_project_written_before_workflows_existed_still_loads(
 
     The events did not change shape here -- the *state* did, which is the case
     the module docstring's rule 1 covers from the other side. An old project's
-    stream simply has no `WorkflowSelected` in it, so the defaults have to mean
+    stream simply has no `ProjectWorkflowSelected` in it, so the defaults have to mean
     "runs no workflow" rather than crash or, worse, imply a preset.
 
     Depends on `started` only to guarantee the tables exist; schema init
@@ -601,7 +601,7 @@ async def test_an_old_project_snapshot_without_workflow_fields_still_loads(
 async def test_a_stage_advance_written_before_decision_existed_reads_as_approved(
     store, repository, started, db_path
 ):
-    """`StageAdvanced.decision` is a case-1 addition; absence must mean `approve`.
+    """`ProjectStageAdvanced.decision` is a case-1 addition; absence must mean `approve`.
 
     Every advance stored before the field existed had a human behind it -- the
     tool floors at `ask` and nothing else could call the command -- so the
@@ -615,10 +615,10 @@ async def test_a_stage_advance_written_before_decision_existed_reads_as_approved
     project_id = uuid4()
     payloads = (
         (1, "ProjectCreated", {"name": "atlas"}),
-        (2, "WorkflowSelected", {"preset_id": "hybrid.default", "preset_version": "1"}),
+        (2, "ProjectWorkflowSelected", {"preset_id": "hybrid.default", "preset_version": "1"}),
         (
             3,
-            "StageAdvanced",
+            "ProjectStageAdvanced",
             {
                 "from_stage": "tyler.step0.intake",
                 "to_stage": "hybrid.step1.framing",
@@ -648,7 +648,7 @@ async def test_a_stage_advance_written_before_decision_existed_reads_as_approved
         for envelope in await collect(
             store.read_stream(StreamId(project_id, Project.aggregate_type))
         )
-        if isinstance(envelope.event, StageAdvanced)
+        if isinstance(envelope.event, ProjectStageAdvanced)
     ]
 
     assert advanced[-1].decision == "approve"

@@ -345,7 +345,7 @@ async def test_read_since_carries_corpus_events(tmp_path):
 async def test_read_since_carries_project_events(tmp_path):
     """The course page's live path, and the fourth instance of one bug.
 
-    `advance_stage` appends `StageAdvanced` to this log and the rail on the
+    `advance_stage` appends `ProjectStageAdvanced` to this log and the rail on the
     course page *is* what that event moved. Until this test the feed admitted
     `CodingSession`, `Topic`, `Corpus` and redstring's categories and nothing
     else, so a stage advance reached the browser through nothing at all and the
@@ -359,7 +359,7 @@ async def test_read_since_carries_project_events(tmp_path):
     *is* the project id and that identity is the whole of how `_sse` addresses
     the frame -- there is no lookup behind it.
 
-    Both events, not just the advance. `WorkflowSelected` is what turns the
+    Both events, not just the advance. `ProjectWorkflowSelected` is what turns the
     course page from a 409 into a rail, so a feed that carried the advance and
     not the selection would leave the page reading "no course to show" until a
     reload -- the same defect one event earlier.
@@ -389,8 +389,8 @@ async def test_read_since_carries_project_events(tmp_path):
         ]
         assert [type(entry.event).__name__ for entry in entries] == [
             "ProjectCreated",
-            "WorkflowSelected",
-            "StageAdvanced",
+            "ProjectWorkflowSelected",
+            "ProjectStageAdvanced",
         ]
     finally:
         await repository.close()

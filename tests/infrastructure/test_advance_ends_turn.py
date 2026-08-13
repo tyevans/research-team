@@ -24,7 +24,7 @@ from research_team.domain.project import (
     AdvanceStage,
     ProjectCreated,
     ProjectState,
-    WorkflowSelected,
+    ProjectWorkflowSelected,
     decide,
     evolve,
     initial_state,
@@ -65,7 +65,7 @@ def _project(preset=hybrid_default) -> FakeWorkflow:
     state = evolve(initial_state(), ProjectCreated(aggregate_id=project_id, name="research"))
     state = evolve(
         state,
-        WorkflowSelected(
+        ProjectWorkflowSelected(
             aggregate_id=project_id, preset_id=preset.id, preset_version=preset.version
         ),
     )

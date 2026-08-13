@@ -29,7 +29,7 @@ from research_team.domain.project import (
     ProjectCreated,
     ProjectDeleted,
     ProjectState,
-    WorkflowSelected,
+    ProjectWorkflowSelected,
     decide,
     evolve,
     initial_state,
@@ -46,7 +46,7 @@ def _created(project_id: UUID) -> ProjectState:
 def _with_workflow(project_id: UUID, preset: Preset = hybrid_default) -> ProjectState:
     return evolve(
         _created(project_id),
-        WorkflowSelected(
+        ProjectWorkflowSelected(
             aggregate_id=project_id, preset_id=preset.id, preset_version=preset.version
         ),
     )

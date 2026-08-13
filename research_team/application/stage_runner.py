@@ -208,11 +208,11 @@ class ExitCondition:
     def evidence(self) -> str:
         """What the harness can honestly say about why the gate is being posed.
 
-        This is what goes into `StageAdvanced.gate_decision`, which under the
+        This is what goes into `ProjectStageAdvanced.gate_decision`, which under the
         tool holds a model's `rationale` and under a runner cannot: there is no
         model in this path. Machine prose is the honest substitute and it is
         the more useful of the two, but it is a different kind of thing -- the
-        field is evidence here and verdict there. `StageAdvanced.decision` is
+        field is evidence here and verdict there. `ProjectStageAdvanced.decision` is
         where the verdict went; see its docstring.
         """
         advisory = len(self.review.findings) - len(self.review.invariant_failures)
@@ -757,7 +757,7 @@ class StageRunner:
                 to_stage=following,
                 decided_by=decided_by,
                 # Evidence, not verdict: there is no model rationale on this
-                # path. See `StageAdvanced.gate_decision`.
+                # path. See `ProjectStageAdvanced.gate_decision`.
                 gate_decision=str(args.get("rationale") or condition.evidence),
                 decision="approve_with_edits" if decision_type == "edit" else "approve",
             )

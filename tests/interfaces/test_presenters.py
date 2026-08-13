@@ -12,14 +12,14 @@ from research_team.domain import (
     FileDeleted,
     FileEdited,
     FileWritten,
+    ProjectStageAdvanced,
+    ProjectWorkflowSelected,
     SessionForkedFrom,
     SessionStarted,
-    StageAdvanced,
     ToolResultRecorded,
     TurnCompleted,
     TurnFailed,
     UserMessageSent,
-    WorkflowSelected,
 )
 from research_team.interfaces.web.presenters import (
     SUMMARY_LIMIT,
@@ -335,12 +335,12 @@ def test_a_feed_event_always_has_a_summary_string():
 def test_a_selected_workflow_is_summarised_by_the_preset_it_chose():
     """The fallback returns "" for these, which loses the entire content.
 
-    `WorkflowSelected` carries no `turn_index` and no `message`, so before
-    this branch a timeline row said `WorkflowSelected` and nothing else --
+    `ProjectWorkflowSelected` carries no `turn_index` and no `message`, so before
+    this branch a timeline row said `ProjectWorkflowSelected` and nothing else --
     the one fact worth recording, which preset the run is now bound to, was
     the fact that went missing.
     """
-    event = make(WorkflowSelected, preset_id="hybrid.default", preset_version="1")
+    event = make(ProjectWorkflowSelected, preset_id="hybrid.default", preset_version="1")
     summary = event_summary(event)
     assert "hybrid.default" in summary
     assert "1" in summary
@@ -349,7 +349,7 @@ def test_a_selected_workflow_is_summarised_by_the_preset_it_chose():
 def test_an_advanced_stage_is_summarised_by_both_ends_of_the_move():
     """From *and* to: a stage list is long and "now at X" does not say what moved."""
     event = make(
-        StageAdvanced,
+        ProjectStageAdvanced,
         from_stage="tyler.step0.intake",
         to_stage="hybrid.step1.framing",
         decided_by="agent",

@@ -462,17 +462,17 @@ class EventStoreSessionRepository:
         the sources whose failure a reader needs to see listed.
 
         **`Project` is read for the course page, which had no live path at
-        all.** `StageAdvanced` and `WorkflowSelected` are appended here and the
+        all.** `ProjectStageAdvanced` and `ProjectWorkflowSelected` are appended here and the
         rail is what they moved, so a stage that advanced while a tab was open
         reached the browser through nothing and the page only moved on a
         reload. It is the same shape as `Topic`, the graph and `Corpus` before
         it -- the fourth time -- which is why `FEED_AGGREGATE_TYPES` and
         `UNROUTED_AGGREGATE_TYPES` now exist instead of a literal here.
 
-        One admission covers the whole aggregate rather than `StageAdvanced`
-        alone, and that is deliberate: `WorkflowSelected` is what turns the
+        One admission covers the whole aggregate rather than `ProjectStageAdvanced`
+        alone, and that is deliberate: `ProjectWorkflowSelected` is what turns the
         course page from a 409 into a rail, and the lifecycle events
-        (`SessionJoinedProject`, `ProjectTipAdvanced`, `ProjectDeleted`) move
+        (`ProjectSessionJoined`, `ProjectTipAdvanced`, `ProjectDeleted`) move
         the holding-session link and the project list. Filtering to one event
         class would have fixed the reported symptom and left its siblings
         invisible until the next report.
