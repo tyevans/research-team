@@ -44,6 +44,16 @@ declare module '*/eslint.config.js' {
  *  `eslint.config.js` and makes the eslint config itself typed — surfacing an
  *  unrelated pre-existing mismatch in `eslint-config.test.ts`. Two lines of
  *  duplication is the cheaper of the two. */
+/** The deletion check. Same reasoning as `mutate.mjs` below: our module, a
+ *  narrow shape, and `check-deleted.test.ts` asserts on the two field names —
+ *  so `any` would let `added`/`removed` be renamed and typecheck. */
+declare module '*/check-deleted.mjs' {
+  export const compareStylesheets: (
+    present: string[],
+    manifest: string[],
+  ) => { added: string[]; removed: string[] }
+}
+
 declare module '*/mutate.mjs' {
   export const classify: (output: string) => {
     verdict: 'killed' | 'survived' | 'unparsed' | 'unknown'
