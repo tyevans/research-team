@@ -236,34 +236,18 @@
 
 /* --- a project ---------------------------------------------------------- */
 
-.project {
-  background: var(--bg-panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: var(--space-3) var(--space-4);
-  margin: var(--space-2) 0;
-  transition:
-    border-color 0.12s,
-    background 0.12s;
-}
-.project:hover {
-  background: var(--bg-panel-2);
-  border-color: var(--line-strong);
-}
-.project-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-.project-name {
-  font-size: var(--t-lg);
-  font-weight: 600;
-  color: var(--fg);
-  letter-spacing: -0.01em;
-  margin-right: var(--space-1);
-}
-.project-stats,
+/* `.project`, `.project-head`, `.project-name`, `.project-stats` and
+   `.project-sessions` are gone with `ProjectRow`. The landing page draws a
+   project with `ProjectCard` now, so the rules that dressed it live in
+   `entity.css` beside the component, and the ones deleted here would have
+   matched nothing -- which is the failure `.extraction-failed >
+   .extraction-summary` recorded: no test, no error, a rule that quietly
+   stopped applying.
+
+   `.project-id` and `.project-no-sessions` survive because the *view* still
+   writes both: the short id in the card's `meta` slot, the note in its
+   `preview` slot. They are this page's words, not the card's. */
+
 .row-stats {
   display: flex;
   gap: var(--space-3);
@@ -273,13 +257,9 @@
   color: var(--fg-faint);
   flex-wrap: wrap;
 }
-.project-stats b,
 .row-stats b {
   color: var(--fg-dim);
   font-weight: 600;
-}
-.project-sessions {
-  margin-top: var(--space-2);
 }
 .project-no-sessions {
   margin: var(--space-2) 0 0;
