@@ -23,7 +23,7 @@ variable:
 | `AGENT_TRACING` | unset | set to `1` to export OpenTelemetry traces (needs the `tracing` extra) |
 | `AGENT_OTLP_ENDPOINT` | `http://localhost:4318/v1/traces` | where traces are sent |
 | `AGENT_SERVICE_NAME` | `research-team` | what this process calls itself in a trace |
-| `AGENT_AUTO_RESEARCH` | *(unset)* | set to `1` to expose the autonomous-run routes over HTTP; unset means they are absent |
+| `AGENT_RESEARCH_RUN` | *(unset)* | set to `1` to expose the autonomous-run routes over HTTP; unset means they are absent |
 | `AGENT_SEARXNG_URL` | *(unset)* | SearXNG base URL; unset means no search tool is registered |
 | `AGENT_SEARXNG_RESULTS` | `5` | how many results reach the model |
 | `AGENT_GRAPH_STORE` | `memory` | what backs the knowledge graph: `memory` or `neo4j` |
