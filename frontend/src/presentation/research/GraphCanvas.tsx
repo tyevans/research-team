@@ -229,7 +229,18 @@ export const GraphCanvas = memo(function GraphCanvas({
             framedAt.current = settledAt
             graph.current?.zoomToFit(400, 48)
           }}
-          nodeLabel={(node) => `${String(node.name)} (${String(node.entityType)})`}
+          // A node's date, appended when it has one: a temporal edge points
+          // at two nodes, and a reader checking what it asserts needs the
+          // dates on both ends, not just the derivation text on the line
+          // between them. Most entities are not events and carry no date --
+          // the ordinary case leaves the label as it was, not "(undated)".
+          // The painted label on the canvas itself is untouched; see its own
+          // comment for why it stays short.
+          nodeLabel={(node) =>
+            node.temporal
+              ? `${String(node.name)} (${String(node.entityType)}) -- ${String(node.temporal)}`
+              : `${String(node.name)} (${String(node.entityType)})`
+          }
           // An inferred edge's label is the arithmetic that produced it (e.g.
           // "1923 contains November 1923"), not `relationshipType` -- the
           // dashes below already say "inferred", so restating that word on

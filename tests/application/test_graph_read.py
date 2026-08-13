@@ -445,16 +445,21 @@ async def test_before_is_not_drawn(graph_reader):
 
 
 async def test_undated_entities_are_drawn_and_take_no_part(graph_reader):
-    """One entity with no extent and one with an empty one: both present as
-    nodes, both absent from every inferred edge. Most entities in a real graph
-    are not events, so this is the ordinary case rather than the edge case."""
+    """One entity with no extent and one with an empty one, alongside a dated
+    pair that *does* infer an edge: both undated entities present as nodes,
+    both absent from every inferred edge, and the dated pair proves the
+    assertion actually ran. Most entities in a real graph are not events, so
+    the undated pair is the ordinary case rather than the edge case -- but a
+    fixture with only one dated entity can infer nothing at all, which would
+    let this pass with `_inferred_edges` deleted outright."""
     reader, store = graph_reader
-    undated_id, empty_id, dated_id = uuid4(), uuid4(), uuid4()
+    undated_id, empty_id, era_id, event_id = uuid4(), uuid4(), uuid4(), uuid4()
     await store.upsert_entities(
         [
             _entity(undated_id, "No Extent At All"),
             _entity(empty_id, "Empty Extent", temporal=TemporalExtent()),
-            _entity(dated_id, "Has A Date", temporal=_year(1923)),
+            _entity(era_id, "The Weimar Republic", temporal=_year(1923)),
+            _entity(event_id, "Hyperinflation Peaks", temporal=_month(1923, 11)),
         ]
     )
 
@@ -463,12 +468,14 @@ async def test_undated_entities_are_drawn_and_take_no_part(graph_reader):
     assert {entity.entity_id for entity in graph.entities} == {
         str(undated_id),
         str(empty_id),
-        str(dated_id),
+        str(era_id),
+        str(event_id),
     }
-    for edge in graph.relationships:
-        if edge.inferred:
-            assert str(undated_id) not in (edge.source_id, edge.target_id)
-            assert str(empty_id) not in (edge.source_id, edge.target_id)
+    inferred = [edge for edge in graph.relationships if edge.inferred]
+    assert inferred, "the dated pair should have produced an inferred edge"
+    for edge in inferred:
+        assert str(undated_id) not in (edge.source_id, edge.target_id)
+        assert str(empty_id) not in (edge.source_id, edge.target_id)
 
 
 async def test_a_merged_pair_infers_no_edge_to_itself(graph_reader):

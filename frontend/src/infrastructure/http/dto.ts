@@ -627,9 +627,11 @@ export const graphEntityDto = z.object({
   entity_id: z.string(),
   name: z.string(),
   entity_type: z.string(),
-  // Nullable and defaulted so a body written before this field existed --
-  // by a server predating Task 3, or a fixture nobody updated -- still
-  // parses, rather than the whole entity failing to load over one field.
+  // Nullable and defaulted, matching `truncated` below: this project breaks
+  // contracts rather than migrating them (server and bundle ship from one
+  // repository, so there is no older server to tolerate), but a fixture in
+  // this test suite that predates the field is real and should not have to
+  // be found and updated just because this one entity gained an attribute.
   temporal: z.string().nullable().default(null),
 })
 

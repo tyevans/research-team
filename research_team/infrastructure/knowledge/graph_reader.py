@@ -81,8 +81,18 @@ def _inferred_edges(entities: list[Any]) -> tuple[tuple[GraphRelationship, ...],
             target_id=str(relation.target_entity_id),
             relationship_type=relation.relation.value,
             inferred=True,
-            derivation=f"{render_extent(relation.source_extent)} / "
-            f"{render_extent(relation.target_extent)}",
+            # The verb between the two extents, not a separator standing in
+            # for it: "1923 contains November 1923" tells a reader which of
+            # the three drawn relations the line asserts, where "1923 /
+            # November 1923" would not. `render_extent` can in principle
+            # return `None` for an extent with no `start_date` -- none of
+            # `_DRAWN_RELATIONS` is expected to pair a dated entity with one
+            # of those, so this falls back to the empty string rather than
+            # add a branch for a case `infer_relations` is not believed to
+            # produce.
+            derivation=f"{render_extent(relation.source_extent) or ''} "
+            f"{relation.relation.value} "
+            f"{render_extent(relation.target_extent) or ''}",
         )
         for relation in capped
     )
@@ -267,11 +277,16 @@ class ProjectGraphReader:
         )
         # Over root plus neighbors, same as the stored edges above. The cap
         # flag is discarded, not threaded through: `Neighborhood` has no
-        # `inferred_truncated` field, because a neighborhood is already
-        # bounded by `MAX_NEIGHBORHOOD_DEPTH` -- unlike `whole`, it is never
-        # the caller's only view of the graph, so a silently short list of
-        # computed lines here does not hide anything a reader has no other
-        # way to see.
+        # `inferred_truncated` field. That is not because a neighborhood is
+        # bounded to something far smaller than `MAX_INFERRED_EDGES` -- it
+        # isn't: `self._store.neighbors` applies no `MAX_GRAPH_NODES` and no
+        # cap of its own, so a depth-2 traversal from a hub can return
+        # thousands of entities, and this branch's own test trips the cap at
+        # 65 entities sharing one era. The omission stands because, unlike
+        # `whole`, a neighborhood is never the caller's only view of the
+        # graph -- a reader can always widen the search -- so an unmeasured
+        # risk of a silently short list here is judged acceptable rather
+        # than proven safe.
         inferred, _inferred_truncated = _inferred_edges([root, *neighbors])
         return Neighborhood(
             root=_to_graph_entity(root),
