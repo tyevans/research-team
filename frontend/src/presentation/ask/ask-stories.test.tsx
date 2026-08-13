@@ -20,8 +20,11 @@ import * as citationListStories from './CitationList.stories.tsx'
  * what the behavioural tests and eyes-on-Storybook are for.
  *
  * `CitationList`'s `None` story renders nothing at all by design (see its
- * story file's docstring), so it is skipped rather than asserted to have
- * produced a container -- `render` not throwing is still exercised for it.
+ * story file's docstring) -- worth noting because it is the one story here
+ * where an empty container is the correct outcome, not a sign the story
+ * failed to render. No story in this file, that one included, is asserted
+ * to have produced any particular output; `render` not throwing is all any
+ * of them are checked for.
  */
 describe('ask stories render without throwing', () => {
   const suites = {

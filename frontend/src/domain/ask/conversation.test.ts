@@ -53,6 +53,10 @@ it('keeps citations with the turn they belong to', () => {
 it('records activity in arrival order', () => {
   let transcript = open()
 
+  // `payload` shape is arbitrary here: this test asserts it lands in
+  // `activity[]` byte-for-byte unchanged, and `applyEvent` never inspects
+  // it, so any value would pass. Not the langchain-shaped fiction from the
+  // activityName bug (fixed in 939c58e) -- this one has nothing to hide.
   transcript = applyEvent(transcript, {
     type: 'message',
     messageId: 'm1',
