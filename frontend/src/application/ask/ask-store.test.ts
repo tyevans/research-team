@@ -9,7 +9,7 @@ import { createAskStore } from './ask-store.ts'
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
 
 const fakeAsk = (over: Partial<AskRepository> = {}): AskRepository => ({
-  ask: vi.fn(async (_p, _c, _q, onEvent) => {
+  ask: vi.fn<AskRepository['ask']>(async (_p, _c, _q, onEvent) => {
     onEvent({ type: 'answer', text: 'two papers', citations: [] })
   }),
   forget: vi.fn().mockResolvedValue(undefined),
@@ -30,7 +30,7 @@ it('records the question before the first frame arrives', async () => {
 
   const sending = asking.getState().send('what did we find?')
 
-  expect(asking.getState().transcript[0].question).toBe('what did we find?')
+  expect(asking.getState().transcript[0]!.question).toBe('what did we find?')
   await sending
 })
 
@@ -39,8 +39,8 @@ it('folds streamed events into the transcript', async () => {
 
   await asking.getState().send('what did we find?')
 
-  expect(asking.getState().transcript[0].answer).toBe('two papers')
-  expect(asking.getState().transcript[0].settled).toBe(true)
+  expect(asking.getState().transcript[0]!.answer).toBe('two papers')
+  expect(asking.getState().transcript[0]!.settled).toBe(true)
 })
 
 it('clears the asking flag once the answer settles', async () => {
@@ -67,8 +67,8 @@ it('marks the open turn failed when the stream breaks', async () => {
   await asking.getState().send('why?')
 
   // Without this the turn spins forever with no answer and no reason.
-  expect(asking.getState().transcript[0].settled).toBe(true)
-  expect(asking.getState().transcript[0].error).toBe('network gone')
+  expect(asking.getState().transcript[0]!.settled).toBe(true)
+  expect(asking.getState().transcript[0]!.error).toBe('network gone')
 })
 
 it('refuses a second question while one is running', async () => {
@@ -86,7 +86,7 @@ it('refuses a second question while one is running', async () => {
 })
 
 it('sends the same chat id for every question in a conversation', async () => {
-  const ask = vi.fn(async (_p, _c, _q, onEvent) => {
+  const ask = vi.fn<AskRepository['ask']>(async (_p, _c, _q, onEvent) => {
     onEvent({ type: 'answer', text: 'x', citations: [] })
   })
   const asking = store(fakeAsk({ ask }))
@@ -94,7 +94,7 @@ it('sends the same chat id for every question in a conversation', async () => {
   await asking.getState().send('one')
   await asking.getState().send('two')
 
-  expect(ask.mock.calls[0][1]).toBe(ask.mock.calls[1][1])
+  expect(ask.mock.calls[0]![1]).toBe(ask.mock.calls[1]![1])
 })
 
 it('reset forgets the server copy and starts a new chat id', async () => {

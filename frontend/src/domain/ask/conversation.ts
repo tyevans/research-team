@@ -52,11 +52,12 @@ export const asked = (transcript: AskTranscript, question: string): AskTranscrip
 
 export const applyEvent = (transcript: AskTranscript, event: AskEvent): AskTranscript => {
   const open = transcript.length - 1
-  // A settled turn is closed: a late frame belongs to nothing, and writing it
-  // in would corrupt an answer the reader has already read.
-  if (open < 0 || transcript[open].settled) return transcript
-
   const turn = transcript[open]
+  // A settled turn is closed: a late frame belongs to nothing, and writing it
+  // in would corrupt an answer the reader has already read. The `undefined`
+  // arm is the empty transcript -- an event before any question was asked.
+  if (turn === undefined || turn.settled) return transcript
+
   const replaced = (next: AskTurn): AskTranscript => [
     ...transcript.slice(0, open),
     next,

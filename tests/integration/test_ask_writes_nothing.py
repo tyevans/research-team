@@ -53,6 +53,13 @@ async def test_the_real_executor_opens_a_graph_and_still_appends_nothing(build_a
     network. The graph really opens: `opened` fails this test if a refactor
     ever makes the ask path skip it, at which point the assertion below would
     be passing for the wrong reason.
+
+    Read the claim no further than it goes. `latest_position()` is
+    `MAX(global_position)` over the events table alone, so this observes the
+    event log and nothing else -- a write to the snapshot store or the vector
+    store would leave it identical. And the graph store defaults to "memory"
+    under test, so what is genuinely exercised here is the replay-and-open
+    path against the real SQLite log.
     """
     project = uuid4()
     application = await build_application(

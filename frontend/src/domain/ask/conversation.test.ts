@@ -13,9 +13,9 @@ const open = (question = 'what did we find?'): AskTranscript => asked([], questi
 it('opens an unsettled turn holding the question', () => {
   const [turn] = open()
 
-  expect(turn.question).toBe('what did we find?')
-  expect(turn.answer).toBe('')
-  expect(turn.settled).toBe(false)
+  expect(turn!.question).toBe('what did we find?')
+  expect(turn!.answer).toBe('')
+  expect(turn!.settled).toBe(false)
 })
 
 it('accumulates deltas into the open turn', () => {
@@ -24,7 +24,7 @@ it('accumulates deltas into the open turn', () => {
   transcript = applyEvent(transcript, { type: 'delta', messageId: 'm1', text: 'two ' })
   transcript = applyEvent(transcript, { type: 'delta', messageId: 'm1', text: 'papers' })
 
-  expect(transcript[0].answer).toBe('two papers')
+  expect(transcript[0]!.answer).toBe('two papers')
 })
 
 it('replaces the accumulated deltas with the final answer rather than appending', () => {
@@ -34,8 +34,8 @@ it('replaces the accumulated deltas with the final answer rather than appending'
   transcript = applyEvent(transcript, { type: 'answer', text: 'two papers', citations: [] })
 
   // Appending would render the answer twice: the deltas are the same words.
-  expect(transcript[0].answer).toBe('two papers')
-  expect(transcript[0].settled).toBe(true)
+  expect(transcript[0]!.answer).toBe('two papers')
+  expect(transcript[0]!.settled).toBe(true)
 })
 
 it('keeps citations with the turn they belong to', () => {
@@ -47,17 +47,21 @@ it('keeps citations with the turn they belong to', () => {
     citations: [{ kind: 'source', id: 's1' }],
   })
 
-  expect(transcript[0].citations).toEqual([{ kind: 'source', id: 's1' }])
+  expect(transcript[0]!.citations).toEqual([{ kind: 'source', id: 's1' }])
 })
 
 it('records activity in arrival order', () => {
   let transcript = open()
 
   transcript = applyEvent(transcript, {
-    type: 'message', messageId: 'm1', kind: 'tool', payload: { name: 'read_source' }, isError: false,
+    type: 'message',
+    messageId: 'm1',
+    kind: 'tool',
+    payload: { name: 'read_source' },
+    isError: false,
   })
 
-  expect(transcript[0].activity).toEqual([
+  expect(transcript[0]!.activity).toEqual([
     { messageId: 'm1', kind: 'tool', payload: { name: 'read_source' }, isError: false },
   ])
 })
@@ -67,8 +71,8 @@ it('settles a turn on error and keeps the reason', () => {
 
   transcript = applyEvent(transcript, { type: 'error', detail: 'model fell over' })
 
-  expect(transcript[0].error).toBe('model fell over')
-  expect(transcript[0].settled).toBe(true)
+  expect(transcript[0]!.error).toBe('model fell over')
+  expect(transcript[0]!.settled).toBe(true)
 })
 
 it('leaves a settled turn alone when a late event arrives', () => {
@@ -79,7 +83,7 @@ it('leaves a settled turn alone when a late event arrives', () => {
 
   // A late delta belongs to nothing; writing it into the settled turn would
   // corrupt an answer the reader has already read.
-  expect(transcript[0].answer).toBe('done')
+  expect(transcript[0]!.answer).toBe('done')
 })
 
 it('ignores an event with no turn open at all', () => {
@@ -95,6 +99,6 @@ it('appends a second turn without disturbing the first', () => {
   transcript = asked(transcript, 'and the second?')
 
   expect(transcript).toHaveLength(2)
-  expect(transcript[0].answer).toBe('two papers')
-  expect(transcript[1].settled).toBe(false)
+  expect(transcript[0]!.answer).toBe('two papers')
+  expect(transcript[1]!.settled).toBe(false)
 })
