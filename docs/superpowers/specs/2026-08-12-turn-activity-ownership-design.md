@@ -104,10 +104,11 @@ exist.
 
 `run` loses its third parameter. This is a **clean break** — no default
 passthrough, no deprecation — and it is safe to make one because
-`interfaces/web/app.py` is the only caller that passed a reporter, and no test
-does. The REPL is unaffected: it calls `service.run_turn` directly with its own
-printing reporter, which remains a legitimate second implementation of
-`ActivityReporter`.
+`interfaces/web/app.py` is the only production caller that passed a reporter,
+and `tests/integration/test_turn_visibility.py` is the only test that did; both
+move to the buffer the supervisor now drives itself. The REPL is unaffected: it
+calls `service.run_turn` directly with its own printing reporter, which remains
+a legitimate second implementation of `ActivityReporter`.
 
 ```python
 async def run(self, session_id: UUID, user_input: str) -> TurnOutcome:
@@ -164,6 +165,15 @@ as a person's failed turn does.
 The frontend needs no change either. Once the buffer fills, `ActivityFeed`'s
 existing `isBusy && size > 0` gate is satisfied by the `watching` turn state
 that `applyRunning` already sets from `/turns/current`.
+
+The same is true of `topic_seeding.py:137` and `stage_runner.py:567` — they
+call `run` on the same shared supervisor, so their turns now open and settle
+buffers and publish frames on the SSE stream too. This is a decision, not just
+an auto-research side effect: it is consistent (a seeding or stage run is a
+turn like any other) and safe (buffers are keyed per session, so concurrent
+turns do not collide), and it costs extra frames on the stream during a
+seeding or stage run that nothing currently reads. Nothing consumes them
+today, but nothing has to change for that to become true later.
 
 ## Testing
 
