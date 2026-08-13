@@ -239,10 +239,39 @@
   color: var(--fg-dim);
   /* A model's error message can be a paragraph. Clamped rather than wrapped:
      the row is in a 320px rail, and one failure must not push forty topics
-     off the screen. The full text is in the title attribute. `max-width` as
-     well as `nowrap`, because a nowrap flex item with no cap sets its own
-     base size from the untruncated text and pushes the row's other items out
-     instead of being clipped. */
+     off the screen. The full text is in the tooltip. `max-width` as well as
+     `nowrap`, because a nowrap flex item with no cap sets its own base size
+     from the untruncated text and pushes the row's other items out instead of
+     being clipped.
+
+     `display: inline-block` is what makes the three lines above do anything,
+     and its absence is why this chip was believed clamped for as long as it
+     was. `max-width`, `width`, `overflow` and `text-overflow` **do not apply
+     to a non-replaced inline box** -- they applied here only while the chip
+     was a direct flex child, because a flex item is blockified. Then the
+     failed chip gained a `Tooltip`, its parent became the trigger button
+     rather than the flex line, the chip went back to `display: inline`, and
+     every one of those declarations silently became a comment. Measured in
+     Chromium: the failed chip drew **708px wide** inside a 294px line, with
+     the meta line's scrollWidth at 1113.
+
+     Blockifying here rather than in `Tooltip` on purpose: the wrapper is
+     documented as the element that puts the trigger in the tab order and
+     otherwise must not be seen, and giving it a layout role would make every
+     tooltip in the console a layout participant.
+
+     `flex: none` is the opposite failure on the same line, and it was live in
+     the same story. `overflow: hidden` sets a flex item's automatic minimum
+     size to zero, so the three chips that are *not* wrapped in a tooltip were
+     free to shrink all the way -- measured at **0px** for
+     `⟳ understanding · running`, which is to say the feedback for pressing the
+     button was not drawn at all. Refusing to shrink puts every fact on this
+     line under one rule: each is its own width, and `.ent-topic-facts` clips
+     the tail. A hard clip shows the beginning of the sentence; shrinking
+     showed nothing and looked like a chip that had not rendered. */
+  display: inline-block;
+  vertical-align: middle;
+  flex: none;
   max-width: 18ch;
   overflow: hidden;
   text-overflow: ellipsis;

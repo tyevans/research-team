@@ -136,7 +136,14 @@ export const NothingToSynthesise: Story = {
 /** Four dispatches at once, which is what the chip set is for. The failure is
  *  the row that matters: it is clamped to the meta line rather than given a
  *  line of its own, so a model error that runs to a paragraph cannot push the
- *  rest of the queue off the screen. Its full text is in the `title`. */
+ *  rest of the queue off the screen. Its full text is in the tooltip.
+ *
+ *  This paragraph was false for as long as the chip was wrapped in that
+ *  tooltip, and looking at the story is what found it: the wrapper made the
+ *  chip an inline box, which is a box `max-width` does not apply to, and the
+ *  failed chip drew 708px wide in a 294px line. It is the story's job to be
+ *  the place that is true, so the measurements are in `research.css` beside
+ *  the rule rather than here. */
 export const Dispatched: Story = {
   args: {
     ...base,

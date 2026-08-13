@@ -83,6 +83,41 @@ it('renders only the affordances it was given', () => {
   expect(screen.getByRole('button', { name: 'Synthesise' })).toBeInTheDocument()
 })
 
+it('puts what is read and what is pressed in different groups', () => {
+  // The structural half of the give-order. Which group a node is in decides
+  // whether it survives a line narrower than its contents -- `.ent-topic-facts`
+  // shrinks and clips, `.ent-topic-verbs` does not -- and jsdom can see the
+  // grouping even though it can see none of the shrinking.
+  //
+  // This is the assertion that fails if a later change passes the dispatch chip
+  // inside `primary` again, which is where it was and is what put a 708px
+  // sentence in the group that must never yield. It would pass with the CSS
+  // reverted: the widths are a browser's business, and the story is where they
+  // were measured.
+  const { container } = render(
+    <TopicRow
+      topic={aTopic()}
+      slots={{
+        note: <span data-testid="note">✕ understanding · failed</span>,
+        primary: <button type="button">Synthesise</button>,
+        overflow: [
+          <button type="button" key="manage">
+            Manage
+          </button>,
+        ],
+      }}
+    />,
+  )
+
+  const facts = container.querySelector('.ent-topic-facts')
+  const verbs = container.querySelector('.ent-topic-verbs')
+
+  expect(facts).toContainElement(screen.getByTestId('note'))
+  expect(verbs).toContainElement(screen.getByRole('button', { name: 'Synthesise' }))
+  expect(verbs).toContainElement(screen.getByRole('button', { name: 'Manage' }))
+  expect(facts?.contains(screen.getByRole('button', { name: 'Manage' }))).toBe(false)
+})
+
 it('marks blocked ahead of flagged, and flagged ahead of closed', () => {
   // The precedence the domain's own `byUrgency` sorts in. A topic that is both
   // blocked and closed is blocked: it is waiting on a person either way, and

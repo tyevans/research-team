@@ -177,7 +177,16 @@ a.ent-ref:hover .ent-ref-name {
    neighbours, which is precisely the guarantee a virtualizer estimates
    against -- and L-F8 records what a mis-measured row costs: a 122px hole at
    three projects. In a rail too narrow for a chip, three counts and a button,
-   something has to give, and it must not be the height. */
+   something has to give, and it must not be the height.
+
+   What gives is `.ent-topic-facts`, and naming that was the fix rather than a
+   tidy-up. `overflow: hidden` decides *nothing* about what is lost -- it hides
+   whatever DOM order put last, which here was both verbs. Measured in Chromium
+   at the 340px rail the queue actually gets: 468px of content in 292px, with
+   `Write understanding` rendering as `W` and `Manage` sitting whole at x=384
+   against a right edge of 317 -- present, painted nowhere, and unreachable by
+   mouse. True of every row in every `TopicQueue` story, so it is the normal
+   case rather than an edge one. */
 .ent-topic-meta {
   display: flex;
   align-items: center;
@@ -185,6 +194,30 @@ a.ent-ref:hover .ent-ref-name {
   min-width: 0;
   flex-wrap: nowrap;
   overflow: hidden;
+}
+
+/* Everything read rather than pressed, and the only thing allowed to shrink.
+   `min-width: 0` because a flex item's automatic minimum size is its content,
+   which is what let the facts refuse to yield and push the verbs out instead. */
+.ent-topic-facts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Pinned. `flex: 0 0 auto` is the whole policy in one declaration: a row is
+   worth more with its verbs and no counts than with its counts and a verb
+   nobody can click. The cost is real and is the reason it is written down --
+   at rail width the facts get roughly 100px, so the counts are gone and the
+   status chip is clipped, and the row leans on `TopicDetail` for both. */
+.ent-topic-verbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
 }
 
 /* `nowrap` on each count, not only on the flex line above. `flex-wrap: nowrap`
@@ -202,8 +235,12 @@ a.ent-ref:hover .ent-ref-name {
   white-space: nowrap;
 }
 
+/* `margin-left: auto` is gone rather than kept-in-case: `.ent-topic-facts` now
+   takes the free space with `flex: 1 1 auto`, so the auto margin had nothing
+   left to absorb. Two things claiming the same gap is how one of them quietly
+   stops mattering, and the one that stopped is not the one a reader would
+   guess. */
 .ent-topic-overflow {
-  margin-left: auto;
   display: inline-flex;
   gap: var(--space-2);
 }
