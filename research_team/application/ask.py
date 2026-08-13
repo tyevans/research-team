@@ -13,6 +13,7 @@ this feature lives behind `AskExecutor` in `infrastructure/agent/ask_agent.py`.
 import asyncio
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from typing import Literal, Protocol
 from uuid import UUID
@@ -173,22 +174,49 @@ class AskService:
                     on_activity=notes.put_nowait,
                 )
             )
-            async for note in self._drain(notes, running):
-                yield note
-            answer = await running
-        finally:
-            self._running.discard(chat_id)
+            try:
+                async for note in self._drain(notes, running):
+                    yield note
+                answer = await running
+            finally:
+                # A reader that walks away -- an SSE client disconnecting is
+                # the ordinary case -- closes this generator at whichever
+                # `yield` it was parked on, and nothing else would ever
+                # retrieve the executor's result. Left alone that is a model
+                # call still burning tokens for nobody, plus a "Task exception
+                # was never retrieved" warning if it fails. The cost of
+                # cancelling here is that a nearly-finished answer is thrown
+                # away rather than recorded; the reader has already gone, so
+                # there is no one it could be shown to.
+                if not running.done():
+                    running.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await running
 
-        # Recorded only on success. A stored question with no reply would make
-        # the next answer refer to an exchange the reader never saw.
-        self._conversations.put(
-            conversation.appended(
-                AskMessage(role="user", text=question),
-                AskMessage(role="assistant", text=answer.text),
-                at=self._now(),
+            # Recorded only on success, and deliberately *before* the yield
+            # rather than after. Moving it after was tried, to close the window
+            # where a reader vanishes between the record and the delivery: that
+            # window does not exist, because there is no suspension point
+            # between these two statements for a cancellation to land in, and
+            # by the time the generator parks on this `yield` the consumer is
+            # holding the answer. Recording afterwards only changes the case
+            # where a reader takes the answer and stops iterating -- an SSE
+            # route closing after its last frame is exactly that -- and there
+            # it silently loses an exchange the reader did see, which
+            # `test_an_answer_the_reader_kept_is_remembered_even_if_it_stops_there`
+            # fails on.
+            self._conversations.put(
+                conversation.appended(
+                    AskMessage(role="user", text=question),
+                    AskMessage(role="assistant", text=answer.text),
+                    at=self._now(),
+                )
             )
-        )
-        yield answer
+            yield answer
+        finally:
+            # Freed last, so the guard means what its docstring says: the slot
+            # is held until the answer has actually been handed over.
+            self._running.discard(chat_id)
 
     @staticmethod
     async def _drain(
@@ -202,9 +230,17 @@ class AskService:
             if getter in done:
                 yield getter.result()
                 continue
+            # The executor finished with nothing left owed. A note queued in
+            # its final step does not strand here: `put_nowait` resolves the
+            # pending `notes.get()`, and `asyncio.wait` cannot resume before
+            # that woken getter has had its step, so such a note arrives
+            # through the branch above instead. This was checked rather than
+            # reasoned -- 216 permutations of when the executor reports and
+            # returns, plus a `call_soon` and a cross-thread reporter, and the
+            # queue was empty here every time
+            # (`test_a_note_queued_as_the_executor_returns_still_reaches_the_reader`
+            # pins the case that matters). A drain loop lived here for that
+            # reason and was removed as unreachable; if `_drain` ever grows a
+            # second consumer, that assumption is what breaks first.
             getter.cancel()
-            # The executor finished; anything it queued just before returning
-            # is still owed to the reader.
-            while not notes.empty():
-                yield notes.get_nowait()
             return

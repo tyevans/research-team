@@ -67,6 +67,132 @@ async def test_activity_is_yielded_before_the_answer():
     assert notes[-1] == AskAnswer(text="an answer")
 
 
+class LateNoteExecutor:
+    """Reports its note only once the drain loop is already parked.
+
+    The ordinary `FakeExecutor` cannot reach the drain loop's re-yield branch:
+    its release event is pre-set, so it runs to completion before the pending
+    `notes.get()` is ever polled and the note arrives by the ordinary path.
+    Here the note is queued in the same step as the return, so the executor
+    task's done-callback fires before the woken getter task is scheduled --
+    the wait wakes on the executor alone, and the note is only owed to the
+    reader by the drain of what is left in the queue.
+    """
+
+    def __init__(self) -> None:
+        self.note = ActivityDelta(message_id="m1", text="a last thought")
+        self.parked = asyncio.Event()
+
+    async def run(self, *, project_id, history, question, on_activity: ActivityReporter):
+        await self.parked.wait()
+        on_activity(self.note)
+        return AskAnswer(text="an answer")
+
+
+async def test_a_note_queued_as_the_executor_returns_still_reaches_the_reader():
+    """The last thing an agent says is usually the one worth reading.
+
+    Fails with the `while not notes.empty()` drain deleted: the note is lost
+    and only the answer arrives.
+    """
+    executor = LateNoteExecutor()
+    ask = service(executor)
+    iterator = ask.ask(project_id=uuid4(), chat_id="c", question="why?")
+
+    pending = asyncio.create_task(anext(iterator))
+    # Let the drain loop reach its `await`, so the getter is genuinely parked
+    # on an empty queue before anything is put into it.
+    for _ in range(5):
+        await asyncio.sleep(0)
+    executor.parked.set()
+
+    first = await asyncio.wait_for(pending, timeout=2.0)
+    rest = await asyncio.wait_for(drain(iterator), timeout=2.0)
+
+    assert first == executor.note
+    assert rest == [AskAnswer(text="an answer")]
+
+
+class AbandonedExecutor:
+    """Reports one note, then parks forever unless someone cancels it.
+
+    A second call answers at once, so the same executor can show that
+    abandonment left the service usable rather than wedged.
+    """
+
+    def __init__(self) -> None:
+        self.note = ActivityDelta(message_id="m1", text="think")
+        self.cancelled = False
+        self.calls: list[tuple[Sequence[AskMessage], str]] = []
+
+    async def run(self, *, project_id, history, question, on_activity: ActivityReporter):
+        self.calls.append((tuple(history), question))
+        if len(self.calls) > 1:
+            return AskAnswer(text="an answer")
+        on_activity(self.note)
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        raise AssertionError("the executor was never cancelled")  # pragma: no cover
+
+
+async def test_abandoning_the_stream_cancels_the_executor_and_records_nothing():
+    """A closed SSE connection must not leave a model call running for nobody.
+
+    Three claims, all of which fail against the pre-fix code: the executor
+    task is cancelled rather than orphaned; the exchange is not written to the
+    history, because the reader never received the reply; and the chat slot is
+    free for the next question.
+    """
+    executor = AbandonedExecutor()
+    ask = service(executor)
+    project = uuid4()
+
+    iterator = ask.ask(project_id=project, chat_id="c", question="one")
+    assert await asyncio.wait_for(anext(iterator), timeout=2.0) == executor.note
+    await asyncio.wait_for(iterator.aclose(), timeout=2.0)
+
+    assert executor.cancelled
+
+    notes = await asyncio.wait_for(
+        drain(ask.ask(project_id=project, chat_id="c", question="two")), timeout=2.0
+    )
+    assert notes[-1] == AskAnswer(text="an answer")
+    history, _ = executor.calls[1]
+    assert history == ()
+
+
+async def test_an_answer_the_reader_kept_is_remembered_even_if_it_stops_there():
+    """A route that closes its stream after the last frame still had the answer.
+
+    This is why the exchange is recorded before the final yield rather than
+    after: a reader holding the answer has been served, whether or not it ever
+    asks the generator for another item. Recording afterwards passes every
+    other test in this file and loses this one.
+    """
+    executor = FakeExecutor(answer=AskAnswer(text="two papers"))
+    ask = service(executor)
+    project = uuid4()
+
+    iterator = ask.ask(project_id=project, chat_id="c", question="one")
+    answer = None
+    async for note in iterator:
+        if isinstance(note, AskAnswer):
+            answer = note
+            break
+    await iterator.aclose()
+
+    assert answer == AskAnswer(text="two papers")
+    await drain(ask.ask(project_id=project, chat_id="c", question="two"))
+    history, _ = executor.calls[1]
+    assert history == (
+        AskMessage(role="user", text="one"),
+        AskMessage(role="assistant", text="two papers"),
+    )
+
+
 async def test_the_next_question_sees_the_previous_exchange():
     """'And the second one?' is the reason conversations are held at all."""
     executor = FakeExecutor(answer=AskAnswer(text="two papers"))
@@ -85,7 +211,17 @@ async def test_the_next_question_sees_the_previous_exchange():
 
 
 async def test_a_second_question_on_the_same_chat_is_refused_while_one_runs():
-    """Two answers interleaving into one transcript is worse than a refusal."""
+    """Two answers interleaving into one transcript is worse than a refusal.
+
+    The refusal is pinned to the *first* `__anext__`, not merely to somewhere
+    in the stream: the route turns it into a 409 before any body is written,
+    which it cannot do if notes have already gone out.
+
+    Every wait here is bounded because a broken guard does not fail this test,
+    it hangs it -- the second question would block on the un-released executor
+    and CI would time out with nothing to read. Two seconds is far longer than
+    anything this test does (no I/O, no sleeps) and short enough to report.
+    """
     executor = FakeExecutor()
     executor.release.clear()
     ask = service(executor)
@@ -94,13 +230,14 @@ async def test_a_second_question_on_the_same_chat_is_refused_while_one_runs():
     first = asyncio.create_task(
         drain(ask.ask(project_id=project, chat_id="c", question="one"))
     )
-    await executor.started.wait()
+    await asyncio.wait_for(executor.started.wait(), timeout=2.0)
 
+    second = ask.ask(project_id=project, chat_id="c", question="two")
     with pytest.raises(AskInFlight):
-        await drain(ask.ask(project_id=project, chat_id="c", question="two"))
+        await asyncio.wait_for(anext(second), timeout=2.0)
 
     executor.release.set()
-    await first
+    await asyncio.wait_for(first, timeout=2.0)
 
 
 async def test_a_different_chat_may_ask_while_one_is_running():
