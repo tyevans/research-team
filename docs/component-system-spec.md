@@ -685,7 +685,7 @@ prefixed **L-** landing, **R-** research, **C-** course, **S-** session, as
 | `Popover` | `react-popover` | L-F40 / S-F60 agent dock, R-F6.4 search results, R-F6.6 `GraphDetail` | 3 |
 | `Tabs` | `react-tabs` | S-F32 rendered/source, S-F35 contents/history, S-F33 + C-F65 audience | 3 |
 | `Select` | `react-select` | L-F46 workflow, R-F6.4 entity type | 4 |
-| `Toast` | `react-toast` | L-F37, S-F8 — and the keyboard dismissal L-F37 lacks | 4 |
+| ~~`Toast`~~ | ~~`react-toast`~~ | **declined — see Phase 4 below** | 4 |
 
 ### Tier 1 — first-party, no Radix equivalent, standardised anyway
 
@@ -857,8 +857,24 @@ and everything after is cheap.
 ### Phase 4 — the grid, the listbox, the toasts. **`ui-` 46.3 kB.**
 **Prerequisite: the six session tests in §10.**
 
-`Select`, `Toast` (with the keyboard dismissal L-F37 lacks), `DataGrid` and
-`ListBox`. The fork column gets visible state and `aria-colindex`, closing
+`Select`, `DataGrid` and `ListBox`.
+
+**`Toast` is declined, and the two features it was wanted for were built by
+hand instead.** L-F37 was already closed in `Toasts.tsx` — a real `<button>`
+per toast rather than `role="button"` inside the live region, named for the
+message it closes, with a hold on the expiry timer while a pointer or focus is
+in the stack. Adopting `react-toast` meant rewriting all of that correct and
+argued code to buy swipe-to-dismiss (irrelevant on a localhost desktop
+console) plus an F6 hotkey and a focus restore on dismiss, which are ~20 lines
+each. The price was +3.2 kB gzipped and the churn. Both features now exist:
+F6 moves focus into the stack, registered only while a toast is up so the
+browser keeps the key the rest of the time, and dismissing hands focus to the
+next toast, then the previous, then back to wherever the reader came in from.
+
+**Left undone:** F6 does not cycle *out* of the region (ARIA practices cycles
+landmarks; this is one-way), and neither it nor the tree's `/` is documented
+anywhere a reader would find it — `KeyboardHelp` is the surface for that and
+§13 defers it to phase 7 on purpose. The fork column gets visible state and `aria-colindex`, closing
 S-D7. `VirtualList` unifies L-F8's and R-F5.1's configurations and becomes
 available to the timeline, which needs it (S-§14.3).
 
