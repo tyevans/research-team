@@ -1619,8 +1619,14 @@ async def test_a_turn_reattaches_the_sessions_own_knowledge_graph(app_and_client
 
 @pytest.fixture
 async def activity_app(db_path, fake_model):
-    application = await _started(model=fake_model, db_path=db_path)
+    """One `TurnActivity` on both sides of the wire.
+
+    The supervisor writes into it and the catch-up route reads out of it; two
+    instances would give the route a different answer about the same turn than
+    the turn itself has.
+    """
     activity = TurnActivity()
+    application = await _started(model=fake_model, db_path=db_path, activity=activity)
     api = create_app(
         application.service,
         application.feed,
