@@ -101,7 +101,27 @@ const useCourseRefresh = (projectId: ProjectId) => {
       // that moves them. One frame, three reads -- cheaper than three
       // subscriptions that would each fire on all of them anyway.
       void queryClient.invalidateQueries({ queryKey: queryKeys.workers(projectId) })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.projects() })
+      // `queryKeys.projects()` used to be invalidated here too, and it is gone
+      // rather than narrowed. The plan asked for a single-row invalidation in
+      // its place; there is no such row. `/api/projects` answers the whole list
+      // as one response and `queryKeys.projects()` is one cache entry for it --
+      // a per-project key would need a per-project route, which is backend work
+      // and not this slice's.
+      //
+      // Removing it is the right end of that trade rather than the cheap one.
+      // The list is the *landing page's* data, and this hook is only mounted on
+      // a project page, so the entry it marked stale had no visible reader --
+      // with one exception: the agent dock, in the shell on every page, reads
+      // `projects()` while expanded, and only for project *names*. A name is
+      // not something a project frame moves. So what the invalidation bought
+      // was nothing, and what it cost is O(projects) of server-side fold per
+      // project frame, on a page that is now the one you leave open all day.
+      //
+      // What this drops, stated plainly: nothing refreshes the landing page's
+      // workflow and stage columns while somebody else advances a stage. That
+      // was already true everywhere except a course page left open behind an
+      // expanded dock, and the answer is a subscription on the landing page
+      // rather than one on this page paying for it.
     },
   )
 }
