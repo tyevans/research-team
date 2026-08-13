@@ -605,7 +605,7 @@ async def test_ingest_keeps_the_source_text(tmp_path, build_adapter):
     envelopes = await _corpus_events(store, project_id)
     assert len(envelopes) == 1
     stored = envelopes[0].event
-    assert type(stored).__name__ == "SourceDocumentStored"
+    assert type(stored).__name__ == "CorpusDocumentStored"
     assert stored.source_id == "notes"
     assert stored.text == "Ada Lovelace worked with Charles Babbage."
     assert stored.uri == "https://example.test/ada"

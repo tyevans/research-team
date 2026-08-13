@@ -13,7 +13,7 @@ from uuid import uuid4
 import pytest
 from eventsource import CommandRejectedError
 
-from research_team.domain.corpus import SourceDocumentStored
+from research_team.domain.corpus import CorpusDocumentStored
 from research_team.domain.topic import (
     AcknowledgeTrigger,
     AddSubQuestion,
@@ -418,7 +418,7 @@ def test_evolve_ignores_events_it_has_no_branch_for():
     """
     state = opened()
 
-    foreign = SourceDocumentStored(
+    foreign = CorpusDocumentStored(
         aggregate_id=uuid4(), source_id="s1", text="hello", sha256="abc"
     )
 

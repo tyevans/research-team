@@ -30,11 +30,11 @@ from research_team.domain.commands import (
 )
 from research_team.domain.corpus import (
     Corpus,
+    CorpusDocumentDropped,
+    CorpusDocumentStored,
     CorpusState,
     DocumentRecord,
     DropSourceDocument,
-    SourceDocumentDropped,
-    SourceDocumentStored,
     StoreSourceDocument,
 )
 from research_team.domain.events import (
@@ -105,6 +105,8 @@ __all__ = [
     "CompleteTurn",
     "ConversationCompacted",
     "Corpus",
+    "CorpusDocumentDropped",
+    "CorpusDocumentStored",
     "CorpusState",
     "CreateProject",
     "DeleteFile",
@@ -141,8 +143,6 @@ __all__ = [
     "SessionJoinedProject",
     "SessionStarted",
     "SessionState",
-    "SourceDocumentDropped",
-    "SourceDocumentStored",
     "StageAdvanced",
     "StageChecksEvaluated",
     "StartRun",

@@ -4,10 +4,10 @@ import pytest
 from eventsource import CommandRejectedError, DomainEvent
 
 from research_team.domain.corpus import (
+    CorpusDocumentDropped,
+    CorpusDocumentStored,
     DocumentRecord,
     DropSourceDocument,
-    SourceDocumentDropped,
-    SourceDocumentStored,
     StoreSourceDocument,
     decide,
     evolve,
@@ -40,7 +40,7 @@ def test_storing_a_document_records_it():
         initial_state(),
     )
 
-    assert isinstance(event, SourceDocumentStored)
+    assert isinstance(event, CorpusDocumentStored)
     assert event.aggregate_id == corpus_id
     assert event.text == "hello"
     assert event.uri == "https://x/1"
@@ -136,7 +136,7 @@ def test_storing_over_a_dropped_source_id_brings_it_back():
     state = _with(
         corpus_id,
         _stored(corpus_id, source_id="s1", text="v1"),
-        SourceDocumentDropped(aggregate_id=corpus_id, source_id="s1", reason="wrong paper"),
+        CorpusDocumentDropped(aggregate_id=corpus_id, source_id="s1", reason="wrong paper"),
     )
 
     state = evolve(state, _stored(corpus_id, source_id="s1", text="v2"))
@@ -150,7 +150,7 @@ def test_dropping_records_the_reason():
 
     [event] = decide(DropSourceDocument(source_id="s1", reason="paywalled stub"), state)
 
-    assert isinstance(event, SourceDocumentDropped)
+    assert isinstance(event, CorpusDocumentDropped)
     assert event.reason == "paywalled stub"
     assert evolve(state, event).documents["s1"].dropped_reason == "paywalled stub"
 
@@ -182,7 +182,7 @@ def test_dropping_twice_is_rejected():
     state = _with(
         corpus_id,
         _stored(corpus_id, source_id="s1"),
-        SourceDocumentDropped(aggregate_id=corpus_id, source_id="s1", reason="first"),
+        CorpusDocumentDropped(aggregate_id=corpus_id, source_id="s1", reason="first"),
     )
 
     with pytest.raises(CommandRejectedError, match="already dropped"):
@@ -196,7 +196,7 @@ def test_a_dropped_document_no_longer_claims_its_digest():
     state = _with(
         corpus_id,
         stored,
-        SourceDocumentDropped(aggregate_id=corpus_id, source_id="s1", reason="superseded"),
+        CorpusDocumentDropped(aggregate_id=corpus_id, source_id="s1", reason="superseded"),
     )
 
     assert stored.sha256 not in state.by_digest

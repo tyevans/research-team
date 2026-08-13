@@ -613,7 +613,7 @@ async def test_sse_frames_a_stored_document_as_a_corpus_frame(repository):
     payload = json.loads(frames[0].split("data: ", 1)[1])
     assert payload["type"] == "Corpus"
     assert payload["project_id"] == str(project_id)
-    assert payload["change"] == "SourceDocumentStored"
+    assert payload["change"] == "CorpusDocumentStored"
     assert "session_id" not in payload
 
 

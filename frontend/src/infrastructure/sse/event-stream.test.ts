@@ -169,10 +169,10 @@ describe('decodeFrame', () => {
       frame({
         type: 'Corpus',
         project_id: 'p1',
-        change: 'SourceDocumentStored',
+        change: 'CorpusDocumentStored',
         occurred_at: '2026-01-01T00:00:00Z',
       }),
-    ).toEqual({ kind: 'corpus', projectId: 'p1', change: 'SourceDocumentStored' })
+    ).toEqual({ kind: 'corpus', projectId: 'p1', change: 'CorpusDocumentStored' })
   })
 
   it('reads a project frame as its own kind, not as a session log entry', () => {

@@ -74,7 +74,7 @@ def test_an_auto_research_run_refuses_a_command_naming_another_run() -> None:
 
 
 def test_a_corpus_refuses_a_command_naming_another_corpus() -> None:
-    """`StoreSourceDocument.corpus_id` reaches `SourceDocumentStored` (corpus.py:168)."""
+    """`StoreSourceDocument.corpus_id` reaches `CorpusDocumentStored` (corpus.py:168)."""
     theirs = uuid4()
     corpus = Corpus(uuid4())
 

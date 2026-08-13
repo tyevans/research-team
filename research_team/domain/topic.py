@@ -20,7 +20,7 @@ being mistaken for a recorded fact.
 **Status is VEX's vocabulary, not `open`/`closed`.** A dependency scanner that
 only tracked open and closed would be useless, because the interesting states
 are "we looked and it does not apply" and "we are looking". Every transition
-carries a required justification, for the same reason `SourceDocumentDropped`
+carries a required justification, for the same reason `CorpusDocumentDropped`
 requires a reason: a topic that stops being pursued without one is
 indistinguishable from a topic nobody got to.
 

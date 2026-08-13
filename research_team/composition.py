@@ -1067,7 +1067,7 @@ def build_application(
             # `repository.publisher`, like every other repository built here,
             # and it was the one that did not have it. The corpus read model
             # follows the log through this bus, so without it a `remember`
-            # appended `SourceDocumentStored` and woke nothing: the event was
+            # appended `CorpusDocumentStored` and woke nothing: the event was
             # in the log, `topic_corpus_facts` had it (that repository
             # publishes), and `corpus_documents` stayed empty for the life of
             # the process -- which is "Documents" listing nothing while

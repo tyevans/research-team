@@ -7,7 +7,7 @@ aggregate is the other half: the log keeps the bytes, so a quote can be
 verified against them years later.
 
 **The state holds no text.** `DocumentRecord` carries metadata and a digest;
-the text lives only in the `SourceDocumentStored` payload, and retrieval is a
+the text lives only in the `CorpusDocumentStored` payload, and retrieval is a
 read model's job. Snapshots are taken every 50 events, and a text field here
 would fold whole corpora into each one. The cost is that answering "what does
 s1 say" needs a projection rather than a state read, which is the trade we
@@ -18,7 +18,7 @@ settings -- so `CorpusCreated` would be an empty payload whose only effect is
 to make the first store fail if a caller forgot it. It shares its UUID with
 its project and is a distinct stream by `StreamId(aggregate_id, "Corpus")`,
 so there is nothing for creation to establish that the project's own creation
-has not already established. The first `SourceDocumentStored` creates it. The
+has not already established. The first `CorpusDocumentStored` creates it. The
 house `status: "new" | "created"` vocabulary is kept anyway, because it is
 what a reader of `project.py` expects and because "empty" still has to answer
 for itself: a drop against a corpus that never held anything is a caller bug
@@ -49,7 +49,7 @@ from pydantic import BaseModel, Field
 
 
 @register_event
-class SourceDocumentStored(DomainEvent):
+class CorpusDocumentStored(DomainEvent):
     """The text of a source, kept verbatim. Also the corpus's creation event.
 
     `published_at` is text, not a date: sources report dates in whatever shape
@@ -69,7 +69,7 @@ class SourceDocumentStored(DomainEvent):
 
 
 @register_event
-class SourceDocumentDropped(DomainEvent):
+class CorpusDocumentDropped(DomainEvent):
     """A source was excluded, and why.
 
     The reason is required and non-empty. A document that disappears without
@@ -160,7 +160,7 @@ def decide(command: CorpusCommand, state: CorpusState) -> list[DomainEvent]:
     match command, state:
         case StoreSourceDocument(), _:
             return [
-                SourceDocumentStored(
+                CorpusDocumentStored(
                     # From the command, not the state: this is the creation
                     # command, so on a fresh corpus `state.corpus_id` is None.
                     aggregate_id=command.corpus_id,
@@ -193,7 +193,7 @@ def decide(command: CorpusCommand, state: CorpusState) -> list[DomainEvent]:
                     f"source {source_id!r} already dropped: {record.dropped_reason}"
                 )
             return [
-                SourceDocumentDropped(
+                CorpusDocumentDropped(
                     aggregate_id=corpus_id, source_id=source_id, reason=reason
                 )
             ]
@@ -209,7 +209,7 @@ def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
     replays instead of failing halfway through.
     """
     match event:
-        case SourceDocumentStored():
+        case CorpusDocumentStored():
             previous = state.documents.get(event.source_id)
             by_digest = dict(state.by_digest)
             if previous is not None and by_digest.get(previous.sha256) == event.source_id:
@@ -238,7 +238,7 @@ def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
                 }
             )
 
-        case SourceDocumentDropped():
+        case CorpusDocumentDropped():
             record = state.documents.get(event.source_id)
             if record is None:
                 return state

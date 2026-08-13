@@ -59,14 +59,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from research_team.application import SessionSummary, SummaryHealth
 from research_team.domain import (
     CodingSession,
+    CorpusDocumentDropped,
+    CorpusDocumentStored,
     DocumentRecord,
     FileDeleted,
     FileEdited,
     FileWritten,
     SessionForkedFrom,
     SessionStarted,
-    SourceDocumentDropped,
-    SourceDocumentStored,
     TurnCompleted,
     TurnFailed,
     UserMessageSent,
@@ -670,8 +670,8 @@ class CorpusProjection(DeclarativeProjection):
             tracer=tracer,
         )
 
-    @handles(SourceDocumentStored)
-    async def _on_stored(self, event: SourceDocumentStored) -> None:
+    @handles(CorpusDocumentStored)
+    async def _on_stored(self, event: CorpusDocumentStored) -> None:
         """Write the document, superseding whatever the source held before.
 
         The existing row is loaded and mutated rather than replaced wholesale,
@@ -701,8 +701,8 @@ class CorpusProjection(DeclarativeProjection):
             setattr(existing, name, value)
         await self._rows.save(existing)
 
-    @handles(SourceDocumentDropped)
-    async def _on_dropped(self, event: SourceDocumentDropped) -> None:
+    @handles(CorpusDocumentDropped)
+    async def _on_dropped(self, event: CorpusDocumentDropped) -> None:
         row = await self._require(event.aggregate_id, event.source_id)
         row.dropped_reason = event.reason
         await self._rows.save(row)
