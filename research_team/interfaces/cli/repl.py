@@ -30,7 +30,7 @@ from research_team.application.check_telemetry_read import (
 )
 from research_team.application.ports import ActivityNote
 from research_team.domain import CreateProject
-from research_team.domain.auto_research import Budget
+from research_team.domain.research_run import Budget
 from research_team.infrastructure import config
 from research_team.interfaces.cli.formatters import (
     format_activity,

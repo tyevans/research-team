@@ -53,8 +53,8 @@ from research_team.domain import (
     SessionStarted,
     TurnFailed,
 )
-from research_team.domain.auto_research import AutoRunState
 from research_team.domain.learner import LearnerProgressState
+from research_team.domain.research_run import ResearchRunState
 from research_team.domain.workflow import Preset, Stage
 
 FILE_EVENTS = (FileWritten, FileEdited, FileDeleted)
@@ -837,7 +837,7 @@ def topic_detail_view(detail: TopicDetail) -> dict[str, Any]:
     }
 
 
-def run_view(run: ActiveRun, state: AutoRunState | None = None) -> dict[str, Any]:
+def run_view(run: ActiveRun, state: ResearchRunState | None = None) -> dict[str, Any]:
     """One autonomous run: what it is, and -- if folded -- how it is going.
 
     Two arguments because the two halves come from different places and one of

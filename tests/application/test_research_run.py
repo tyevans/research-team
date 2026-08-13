@@ -19,22 +19,22 @@ from uuid import UUID, uuid4
 import pytest
 from eventsource import CommandRejectedError
 
-from research_team.application.auto_research import (
-    AutoResearchDriver,
+from research_team.application.grants import GrantRegistry
+from research_team.application.research_run import (
+    ResearchRunDriver,
     RoundOutcome,
     RunReport,
 )
-from research_team.application.grants import GrantRegistry
 from research_team.application.topic_attention import Finding, TopicAttention
-from research_team.domain.auto_research import (
-    AutoResearchRun,
-    AutoRoundCompleted,
-    AutoRunStarted,
-    AutoRunStopped,
+from research_team.domain.research_run import (
     BeginRound,
     Budget,
     CompleteRound,
     FailRound,
+    ResearchRoundCompleted,
+    ResearchRun,
+    ResearchRunStarted,
+    ResearchRunStopped,
     StartRun,
     StopRun,
     decide,
@@ -91,7 +91,7 @@ def test_a_run_records_the_autonomy_policy_it_started_under():
         initial_state(),
     )
 
-    assert isinstance(event, AutoRunStarted)
+    assert isinstance(event, ResearchRunStarted)
     assert event.autonomy_snapshot == {"fetch": "ask", "default": "auto"}
     assert event.read_only is True
 
@@ -113,7 +113,7 @@ def test_a_run_records_and_folds_the_fetch_grant():
         initial_state(),
     )
 
-    assert isinstance(event, AutoRunStarted)
+    assert isinstance(event, ResearchRunStarted)
     assert event.fetch_hosts == ["example.com", "docs.rs"]
     assert event.fetch_budget == 5
 
@@ -239,10 +239,10 @@ def test_any_real_production_resets_novelty_decay(produced):
 
 
 def test_produced_nothing_reads_off_the_event_rather_than_the_narration():
-    empty = AutoRoundCompleted(aggregate_id=uuid4(), round_number=1, topic_id=uuid4())
+    empty = ResearchRoundCompleted(aggregate_id=uuid4(), round_number=1, topic_id=uuid4())
     assert empty.produced_nothing
 
-    real = AutoRoundCompleted(
+    real = ResearchRoundCompleted(
         aggregate_id=uuid4(), round_number=1, topic_id=uuid4(), findings=1
     )
     assert not real.produced_nothing
@@ -328,7 +328,7 @@ def test_the_stop_event_carries_what_the_run_is_leaving_behind():
 
     [event] = decide(StopRun(reason="max_rounds", unexamined_topics=5), state)
 
-    assert isinstance(event, AutoRunStopped)
+    assert isinstance(event, ResearchRunStopped)
     assert (event.rounds, event.findings, event.unexamined_topics) == (1, 2, 5)
 
 
@@ -378,7 +378,7 @@ class FakeRuns:
     """The aggregate itself, saved to nothing."""
 
     def create_new(self, run_id):
-        return AutoResearchRun(run_id)
+        return ResearchRun(run_id)
 
     async def save(self, aggregate):
         return None
@@ -392,7 +392,7 @@ def runs():
 async def test_a_run_over_an_empty_queue_stops_immediately_and_cleanly(runs):
     """The good ending: nothing wanted attention, so nothing was left behind."""
     queue = FakeQueue()
-    driver = AutoResearchDriver(runs, FakeTopics(), queue, run_round=_never_called)
+    driver = ResearchRunDriver(runs, FakeTopics(), queue, run_round=_never_called)
 
     report = await driver.run(uuid4(), uuid4())
 
@@ -424,7 +424,7 @@ async def test_a_started_run_registers_its_grant_from_the_folded_state(runs):
         queue.resolve(topic_id)
         return RoundOutcome(findings=1)
 
-    driver = AutoResearchDriver(runs, FakeTopics(), queue, run_round=work, grants=grants)
+    driver = ResearchRunDriver(runs, FakeTopics(), queue, run_round=work, grants=grants)
     task = asyncio.ensure_future(
         driver.run(uuid4(), session_id, fetch_hosts=["a.example"], fetch_budget=3)
     )
@@ -455,7 +455,7 @@ async def test_a_run_granted_nothing_is_still_registered(runs):
         queue.resolve(topic_id)
         return RoundOutcome(findings=1)
 
-    driver = AutoResearchDriver(runs, FakeTopics(), queue, run_round=work, grants=grants)
+    driver = ResearchRunDriver(runs, FakeTopics(), queue, run_round=work, grants=grants)
     task = asyncio.ensure_future(driver.run(uuid4(), session_id))
     await asyncio.sleep(0)
     gate.set()
@@ -484,7 +484,7 @@ async def test_a_stopped_runs_grant_is_released(runs):
         queue.resolve(topic_id)
         return RoundOutcome(findings=1)
 
-    driver = AutoResearchDriver(runs, FakeTopics(), queue, run_round=work, grants=grants)
+    driver = ResearchRunDriver(runs, FakeTopics(), queue, run_round=work, grants=grants)
     task = asyncio.ensure_future(
         driver.run(uuid4(), session_id, fetch_hosts=["a.example"], fetch_budget=1)
     )
@@ -501,7 +501,7 @@ async def test_without_a_registry_a_run_behaves_exactly_as_before(runs):
     """`grants=None` is the default, and every existing caller of `.run()` in
     this file relies on it: no registry, nothing registered, nothing to
     release, and no error either way."""
-    driver = AutoResearchDriver(runs, FakeTopics(), FakeQueue(), run_round=_never_called)
+    driver = ResearchRunDriver(runs, FakeTopics(), FakeQueue(), run_round=_never_called)
 
     report = await driver.run(uuid4(), uuid4())
 
@@ -527,7 +527,7 @@ async def test_a_crash_mid_run_still_releases_the_grant(runs):
     """
     grants = GrantRegistry()
     session_id = uuid4()
-    driver = AutoResearchDriver(
+    driver = ResearchRunDriver(
         runs, FakeTopics(), _ExplodingQueue(), run_round=_never_called, grants=grants
     )
 
@@ -546,7 +546,7 @@ async def test_a_run_works_the_queue_until_it_empties(runs):
         queue.resolve(topic_id)
         return RoundOutcome(findings=1)
 
-    driver = AutoResearchDriver(runs, topics, queue, run_round=work)
+    driver = ResearchRunDriver(runs, topics, queue, run_round=work)
 
     report = await driver.run(uuid4(), uuid4())
 
@@ -568,7 +568,7 @@ async def test_the_round_is_told_why_its_topic_was_raised(runs):
         queue.resolve(topic_id)
         return RoundOutcome(findings=1)
 
-    await AutoResearchDriver(runs, FakeTopics(), queue, run_round=work).run(uuid4(), uuid4())
+    await ResearchRunDriver(runs, FakeTopics(), queue, run_round=work).run(uuid4(), uuid4())
 
     assert seen == [(raised.topic_id, ("topic.source_dropped",), ("s1",))]
 
@@ -586,7 +586,7 @@ async def test_a_look_is_recorded_even_when_the_round_finds_nothing(runs):
         queue.resolve(topic_id)
         return RoundOutcome()
 
-    await AutoResearchDriver(runs, topics, queue, run_round=work).run(uuid4(), uuid4())
+    await ResearchRunDriver(runs, topics, queue, run_round=work).run(uuid4(), uuid4())
 
     assert len(topics.looks) == 1
 
@@ -598,7 +598,7 @@ async def test_novelty_decay_stops_a_run_the_queue_would_never_empty(runs):
     async def work(topic_id, why):
         return RoundOutcome()  # never resolves anything
 
-    report = await AutoResearchDriver(runs, FakeTopics(), queue, run_round=work).run(
+    report = await ResearchRunDriver(runs, FakeTopics(), queue, run_round=work).run(
         uuid4(), uuid4(), budget=Budget(quiet_rounds=2, max_rounds=50)
     )
 
@@ -614,7 +614,7 @@ async def test_a_failing_round_does_not_end_the_run_but_a_streak_does(runs):
         attempts.append(topic_id)
         raise RuntimeError("boom")
 
-    report = await AutoResearchDriver(runs, FakeTopics(), queue, run_round=work).run(
+    report = await ResearchRunDriver(runs, FakeTopics(), queue, run_round=work).run(
         uuid4(), uuid4(), budget=Budget(max_consecutive_failures=3, max_rounds=50)
     )
 
@@ -629,7 +629,7 @@ async def test_a_run_that_stops_early_reports_what_it_left_behind(runs):
     async def work(topic_id, why):
         return RoundOutcome()
 
-    report = await AutoResearchDriver(runs, FakeTopics(), queue, run_round=work).run(
+    report = await ResearchRunDriver(runs, FakeTopics(), queue, run_round=work).run(
         uuid4(), uuid4(), budget=Budget(quiet_rounds=1, max_rounds=50)
     )
 
@@ -645,7 +645,7 @@ async def test_max_rounds_bounds_a_run_whose_rounds_keep_producing(runs):
     async def work(topic_id, why):
         return RoundOutcome(findings=1)
 
-    report = await AutoResearchDriver(runs, FakeTopics(), queue, run_round=work).run(
+    report = await ResearchRunDriver(runs, FakeTopics(), queue, run_round=work).run(
         uuid4(), uuid4(), budget=Budget(max_rounds=4)
     )
 
@@ -667,7 +667,7 @@ async def test_a_cancelled_run_stops_between_rounds_and_records_why(runs):
         stop_after.append(topic_id)
         return RoundOutcome(findings=1)
 
-    report = await AutoResearchDriver(runs, FakeTopics(), queue, run_round=work).run(
+    report = await ResearchRunDriver(runs, FakeTopics(), queue, run_round=work).run(
         uuid4(),
         uuid4(),
         budget=Budget(max_rounds=50, quiet_rounds=50),
@@ -684,7 +684,7 @@ async def test_a_run_can_be_named_before_it_starts(runs):
     """So a caller that starts one in the background can report on it at once."""
     named = uuid4()
 
-    report = await AutoResearchDriver(
+    report = await ResearchRunDriver(
         runs, FakeTopics(), FakeQueue(), run_round=_never_called
     ).run(uuid4(), uuid4(), run_id=named)
 
@@ -692,7 +692,7 @@ async def test_a_run_can_be_named_before_it_starts(runs):
 
 
 async def test_a_run_that_starts_cancelled_does_no_work(runs):
-    report = await AutoResearchDriver(
+    report = await ResearchRunDriver(
         runs, FakeTopics(), FakeQueue(attention()), run_round=_never_called
     ).run(uuid4(), uuid4(), cancelled=lambda: True)
 

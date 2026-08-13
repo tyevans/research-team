@@ -20,8 +20,8 @@ from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 
 from research_team.application import FeedEntry
 from research_team.domain import CodingSession, Corpus, Project
-from research_team.domain.auto_research import AutoResearchRun
 from research_team.domain.learner import LearnerProgress
+from research_team.domain.research_run import ResearchRun
 from research_team.domain.topic import Topic
 
 SNAPSHOT_THRESHOLD = 50
@@ -58,7 +58,7 @@ merging -- so it is written to match the order `_sse` tests the types in.
 
 UNROUTED_AGGREGATE_TYPES = frozenset(
     {
-        AutoResearchRun.aggregate_type,
+        ResearchRun.aggregate_type,
         LearnerProgress.aggregate_type,
     }
 )
@@ -70,7 +70,7 @@ went a release with a live path that carried nothing. Listing the exclusions
 makes silence impossible: a new aggregate type is in one list or the other,
 and the guard fails until somebody says which.
 
-`AutoResearchRun` is off because the course page reads a run's state through
+`ResearchRun` is off because the course page reads a run's state through
 `/api/projects/{id}/run`, refreshed off the session frames a round already
 emits -- its own frames would be a second signal for the same repaint. See
 `useTreeRefresh`, which invalidates `allRuns` on log frames.
@@ -109,25 +109,25 @@ def build_project_repository(
     )
 
 
-def build_auto_research_repository(
+def build_research_run_repository(
     store: SQLiteEventStore,
     publisher: InMemoryEventBus | None = None,
     snapshot_store: SQLiteSnapshotStore | None = None,
-) -> AggregateRepository[AutoResearchRun]:
+) -> AggregateRepository[ResearchRun]:
     """Autonomous runs, over the same log as the sessions whose turns they drive.
 
     Published like everything else, which is what puts a run's rounds on the
     live feed without a second channel: a browser watching a project sees
-    `AutoRoundStarted` arrive the same way it sees a turn's events.
+    `ResearchRoundStarted` arrive the same way it sees a turn's events.
 
     Snapshots at the usual threshold. A long run appends three events per
-    round, so a fold is cheap for a while and not forever, and `AutoRunState`
+    round, so a fold is cheap for a while and not forever, and `ResearchRunState`
     holds counters and ids -- the one unbounded field is `topics_seen`, which
     is bounded in practice by `MAX_OPEN_TOPICS`.
     """
     return AggregateRepository(
         store,
-        AutoResearchRun,
+        ResearchRun,
         event_publisher=publisher,
         snapshot_store=snapshot_store,
         snapshot_threshold=SNAPSHOT_THRESHOLD,
@@ -415,7 +415,7 @@ class EventStoreSessionRepository:
 
         Scoped by aggregate type rather than taking the whole feed. This store
         is shared, and it holds streams belonging to aggregates nothing
-        subscribing here can place -- `AutoResearchRun` and `LearnerProgress`
+        subscribing here can place -- `ResearchRun` and `LearnerProgress`
         among them. Unscoped, every one of them would arrive as a `FeedEntry`
         addressed to something no subscriber knows how to route. What is
         admitted is `FEED_AGGREGATE_TYPES` and what is held back is

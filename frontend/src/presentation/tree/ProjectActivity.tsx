@@ -14,7 +14,7 @@ import { elapsed } from '../formatting/format.ts'
  * The one genuinely new read on this page, and the reason it is worth leaving
  * open. Rows already changed under the reader — turn counts ticked, file
  * counts ticked — with nothing to say why and nothing that said "a turn is
- * running in this project". The `AutoResearchDriver` is designed to run
+ * running in this project". The `ResearchRunDriver` is designed to run
  * unattended for a long time, so "come back and see what it did" is a
  * first-class arrival and the page it arrives on could not answer it.
  *

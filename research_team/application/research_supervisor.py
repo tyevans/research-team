@@ -1,6 +1,6 @@
 """Owning an autonomous run while it is in flight.
 
-`AutoResearchDriver.run` is a coroutine that takes as long as the work takes --
+`ResearchRunDriver.run` is a coroutine that takes as long as the work takes --
 which is right for the REPL, where somebody is watching it, and useless over
 HTTP, where the request has to return long before round two. This is the piece
 that bridges those: it starts a run as a task, hands back its id immediately,
@@ -26,8 +26,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
-from research_team.application.auto_research import RunReport
-from research_team.domain.auto_research import AutoRunState, Budget
+from research_team.application.research_run import RunReport
+from research_team.domain.research_run import Budget, ResearchRunState
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class ResearchSupervisor:
         Synchronous on purpose: everything that could fail slowly happens
         inside the task, so a caller gets an id or an exception without
         waiting on a model. The id is minted here rather than by the driver
-        precisely so it can be returned now -- see `AutoResearchDriver.run`'s
+        precisely so it can be returned now -- see `ResearchRunDriver.run`'s
         `run_id`.
 
         `after` is for a caller that made the session this run works in and has
@@ -219,7 +219,7 @@ class ResearchSupervisor:
         self._cancelled.add(handle.run_id)
         return handle
 
-    async def state(self, run_id: UUID) -> AutoRunState | None:
+    async def state(self, run_id: UUID) -> ResearchRunState | None:
         """Fold one run's stream. None when there is no such run.
 
         The only status source. A run in flight and a run that ended last week

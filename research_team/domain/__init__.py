@@ -5,12 +5,6 @@ langchain, no deepagents, no SQLite, no environment. Everything above may
 import from here; nothing here imports from above.
 """
 
-from research_team.domain.auto_research import (
-    AutoResearchRun,
-    AutoRunState,
-    Budget,
-    StartRun,
-)
 from research_team.domain.commands import (
     ChangeAutonomy,
     CompactConversation,
@@ -81,6 +75,12 @@ from research_team.domain.project import (
     SelectWorkflow,
     current_stage_of,
 )
+from research_team.domain.research_run import (
+    Budget,
+    ResearchRun,
+    ResearchRunState,
+    StartRun,
+)
 from research_team.domain.session import (
     CodingSession,
     SessionState,
@@ -94,8 +94,6 @@ __all__ = [
     "AdvanceStage",
     "AdvanceTip",
     "AssistantMessageAdded",
-    "AutoResearchRun",
-    "AutoRunState",
     "AutonomyChanged",
     "Budget",
     "ChangeAutonomy",
@@ -139,6 +137,8 @@ __all__ = [
     "RecordStageReview",
     "RecordToolDecision",
     "RecordToolResult",
+    "ResearchRun",
+    "ResearchRunState",
     "SelectWorkflow",
     "SendUserMessage",
     "SessionCommand",

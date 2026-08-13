@@ -164,7 +164,7 @@ def searxng_results() -> int:
     return int(os.getenv("AGENT_SEARXNG_RESULTS", str(DEFAULT_SEARXNG_RESULTS)))
 
 
-def auto_research_over_http() -> bool:
+def research_run_over_http() -> bool:
     """Whether the web UI may start an autonomous run. Off unless asked.
 
     The one switch in front of the loop, and it is configuration rather than a
@@ -178,7 +178,7 @@ def auto_research_over_http() -> bool:
     has no equivalent switch and needs none: somebody is at the terminal, which
     is the property this variable is standing in for.
     """
-    return os.getenv("AGENT_AUTO_RESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("AGENT_RESEARCH_RUN", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def graph_store() -> str:

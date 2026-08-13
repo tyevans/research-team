@@ -12,7 +12,7 @@ ends for four reasons -- the model wrote the artifacts and stopped, the model
 ran out of things to say, the turn raised, a human cancelled it -- and only the
 first may lead anywhere. `TurnOutcome` cannot tell the first from the second,
 and a model asked whether it has finished says yes fluently, which
-`auto_research.py` already refuses to trust for the research loop. So nothing
+`research_run.py` already refuses to trust for the research loop. So nothing
 here reads a turn's prose. What decides is `stage_exit_condition` below,
 computed over the aggregate as it stands *after* `_save_turn` has committed.
 
@@ -34,7 +34,7 @@ policy, so an unattended run is reachable only through
 `relax_all(include_stage_gates=True)` -- which is built, routed, and recorded
 as `AutonomyChanged`. A second mechanism here would disagree with that one
 eventually, and it would be the thing a caller sets without the recorded act.
-`auto_research.py` states the same rule for the research loop: "a loop that
+`research_run.py` states the same rule for the research loop: "a loop that
 could lower its own floors would make `TOOL_FLOORS` advisory".
 
 **Why this may execute `AdvanceStage` at all**, which `workflow-engine.md` §3.2
@@ -106,7 +106,7 @@ Two rather than one because the first can legitimately be a turn spent reading
 working. More than two is a run paying for a model that has nothing to add.
 
 Measured against the events the turn appended, not against its prose, which is
-how `AutoRoundCompleted.produced_nothing` is measured in the other aggregate
+how `ResearchRoundCompleted.produced_nothing` is measured in the other aggregate
 and for the same reason. This is a count over what the log says; it decides
 whether anything is happening, not whether the work is converging.
 """
@@ -116,7 +116,7 @@ whether anything is happening, not whether the work is converging.
 class StageBudget:
     """What one stage of a run is allowed to spend.
 
-    Separate from `domain.auto_research.Budget` rather than reusing it. That
+    Separate from `domain.research_run.Budget` rather than reusing it. That
     type counts rounds, and a round is a research-loop concept with no meaning
     here -- a stage has turns and a boundary. Sharing the type would have half
     its fields be noise a reader has to decide to ignore, which is how a
@@ -389,7 +389,7 @@ class StageRunner:
         self._approvals = approvals
         # Read, never written. There is no method on this class that sets a
         # level, and `test_the_runner_never_writes_the_autonomy_policy` fails
-        # if one appears -- the rule `auto_research.py` states for the research
+        # if one appears -- the rule `research_run.py` states for the research
         # loop, which is that a component able to lower its own gate makes the
         # gate advisory.
         self._policy = policy

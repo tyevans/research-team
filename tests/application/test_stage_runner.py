@@ -626,7 +626,7 @@ def test_advancing_is_only_reachable_through_the_function_that_asks():
 
 
 def test_the_runner_never_writes_the_autonomy_policy():
-    """Mirrors the rule `auto_research.py` states for the research loop.
+    """Mirrors the rule `research_run.py` states for the research loop.
 
     A component that could lower its own gate makes the gate advisory. The
     runner holds the policy and may only read it, so `set` and `relax_all` must

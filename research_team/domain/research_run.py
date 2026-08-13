@@ -15,7 +15,7 @@ than merely documented:
   a model asked whether it has finished says yes fluently, which is exactly the
   failure this aggregate exists to make impossible.
 
-**Progress is measured in artifacts, not narration.** `AutoRoundCompleted`
+**Progress is measured in artifacts, not narration.** `ResearchRoundCompleted`
 carries counts of what the round actually appended. A round that recorded no
 finding, linked no source and opened no sub-question is empty however well it
 described itself, and `produced_nothing` is what the novelty-decay stop reads.
@@ -88,7 +88,7 @@ class Budget(BaseModel):
 
 
 @register_event
-class AutoRunStarted(DomainEvent):
+class ResearchRunStarted(DomainEvent):
     """A run began, against one project, under this budget and this policy.
 
     `autonomy_snapshot` records the tool policy as it stood at the start. The
@@ -104,7 +104,7 @@ class AutoRunStarted(DomainEvent):
     `fetch_hosts`/`fetch_budget` are the pre-authorization: which hosts a
     granted run may fetch from, and how many calls it gets. Unlike
     `autonomy_snapshot`, which is written here and nowhere folded onto
-    `AutoRunState` (so "what tool policy did this run start under" is
+    `ResearchRunState` (so "what tool policy did this run start under" is
     answerable only by reading this one event by hand), `evolve` below
     carries these two onto state -- because enforcement needs to answer "what
     was this run allowed to do?" from a fold, the same way `exhausted()`
@@ -113,7 +113,7 @@ class AutoRunStarted(DomainEvent):
     field existed and every run today that nobody authorizes.
     """
 
-    aggregate_type: str = "AutoResearchRun"
+    aggregate_type: str = "ResearchRun"
     project_id: UUID
     session_id: UUID
     budget: dict = Field(default_factory=dict)
@@ -124,7 +124,7 @@ class AutoRunStarted(DomainEvent):
 
 
 @register_event
-class AutoRoundStarted(DomainEvent):
+class ResearchRoundStarted(DomainEvent):
     """One round began, on one topic, for these reasons.
 
     `triggers` and `evidence` are the "no round without a reason" invariant made
@@ -133,7 +133,7 @@ class AutoRoundStarted(DomainEvent):
     against the corpus.
     """
 
-    aggregate_type: str = "AutoResearchRun"
+    aggregate_type: str = "ResearchRun"
     round_number: int
     topic_id: UUID
     triggers: list[str] = Field(default_factory=list)
@@ -142,7 +142,7 @@ class AutoRoundStarted(DomainEvent):
 
 
 @register_event
-class AutoRoundCompleted(DomainEvent):
+class ResearchRoundCompleted(DomainEvent):
     """One round finished, having produced this much.
 
     The counts are of events the round actually appended to the topic's stream.
@@ -150,7 +150,7 @@ class AutoRoundCompleted(DomainEvent):
     describe progress they did not make.
     """
 
-    aggregate_type: str = "AutoResearchRun"
+    aggregate_type: str = "ResearchRun"
     round_number: int
     topic_id: UUID
     findings: int = 0
@@ -163,7 +163,7 @@ class AutoRoundCompleted(DomainEvent):
 
 
 @register_event
-class AutoRoundFailed(DomainEvent):
+class ResearchRoundFailed(DomainEvent):
     """A round's turn failed, or was refused, and the run carried on.
 
     Recorded rather than raised, so one bad topic does not end a run -- but
@@ -171,7 +171,7 @@ class AutoRoundFailed(DomainEvent):
     reporting nothing.
     """
 
-    aggregate_type: str = "AutoResearchRun"
+    aggregate_type: str = "ResearchRun"
     round_number: int
     topic_id: UUID
     error_type: str
@@ -179,7 +179,7 @@ class AutoRoundFailed(DomainEvent):
 
 
 @register_event
-class AutoRunStopped(DomainEvent):
+class ResearchRunStopped(DomainEvent):
     """The run ended, for exactly one of the reasons in `StopReason`.
 
     `unexamined_topics` is the count still wanting attention when it stopped,
@@ -189,7 +189,7 @@ class AutoRunStopped(DomainEvent):
     unsatisfied instead of pretending they passed.
     """
 
-    aggregate_type: str = "AutoResearchRun"
+    aggregate_type: str = "ResearchRun"
     reason: str
     detail: str = ""
     rounds: int = 0
@@ -243,13 +243,13 @@ class StopRun:
     unexamined_topics: int = 0
 
 
-AutoRunCommand = StartRun | BeginRound | CompleteRound | FailRound | StopRun
+ResearchRunCommand = StartRun | BeginRound | CompleteRound | FailRound | StopRun
 
 
 # ---------------- state ----------------
 
 
-class AutoRunState(BaseModel):
+class ResearchRunState(BaseModel):
     """Everything derivable from a run's stream.
 
     The counters here are the whole of the stop logic: every `StopReason` other
@@ -312,20 +312,20 @@ class AutoRunState(BaseModel):
         return None
 
 
-def initial_state() -> AutoRunState:
-    return AutoRunState()
+def initial_state() -> ResearchRunState:
+    return ResearchRunState()
 
 
 # ---------------- decide ----------------
 
 
-def decide(command: AutoRunCommand, state: AutoRunState) -> list[DomainEvent]:
+def decide(command: ResearchRunCommand, state: ResearchRunState) -> list[DomainEvent]:
     """Which requests are legal, and what facts they produce."""
     run_id = state.run_id
     match command, state:
-        case StartRun(), AutoRunState(status="new"):
+        case StartRun(), ResearchRunState(status="new"):
             return [
-                AutoRunStarted(
+                ResearchRunStarted(
                     aggregate_id=command.run_id,
                     project_id=command.project_id,
                     session_id=command.session_id,
@@ -339,10 +339,10 @@ def decide(command: AutoRunCommand, state: AutoRunState) -> list[DomainEvent]:
         case StartRun(), _:
             raise CommandRejectedError("run already started")
 
-        case _, AutoRunState(status="new"):
+        case _, ResearchRunState(status="new"):
             raise CommandRejectedError("run not started")
 
-        case _, AutoRunState(status="stopped"):
+        case _, ResearchRunState(status="stopped"):
             # A stopped run is finished. Appending to it would make the stop
             # event a lie, and the stop is the thing an audit reads first.
             raise CommandRejectedError("run already stopped")
@@ -358,7 +358,7 @@ def decide(command: AutoRunCommand, state: AutoRunState) -> list[DomainEvent]:
                     f"round {state.rounds} is still in flight on {state.in_flight_topic}"
                 )
             return [
-                AutoRoundStarted(
+                ResearchRoundStarted(
                     aggregate_id=run_id,
                     round_number=state.rounds + 1,
                     topic_id=topic_id,
@@ -372,7 +372,7 @@ def decide(command: AutoRunCommand, state: AutoRunState) -> list[DomainEvent]:
             if state.in_flight_topic is None:
                 raise CommandRejectedError("no round is in flight")
             return [
-                AutoRoundCompleted(
+                ResearchRoundCompleted(
                     aggregate_id=run_id,
                     round_number=state.rounds,
                     topic_id=topic_id,
@@ -386,7 +386,7 @@ def decide(command: AutoRunCommand, state: AutoRunState) -> list[DomainEvent]:
             if state.in_flight_topic is None:
                 raise CommandRejectedError("no round is in flight")
             return [
-                AutoRoundFailed(
+                ResearchRoundFailed(
                     aggregate_id=run_id,
                     round_number=state.rounds,
                     topic_id=topic_id,
@@ -397,7 +397,7 @@ def decide(command: AutoRunCommand, state: AutoRunState) -> list[DomainEvent]:
 
         case StopRun(reason=reason, detail=detail, unexamined_topics=unexamined), _:
             return [
-                AutoRunStopped(
+                ResearchRunStopped(
                     aggregate_id=run_id,
                     reason=reason,
                     detail=detail,
@@ -413,11 +413,11 @@ def decide(command: AutoRunCommand, state: AutoRunState) -> list[DomainEvent]:
 # ---------------- evolve ----------------
 
 
-def evolve(state: AutoRunState, event: DomainEvent) -> AutoRunState:
+def evolve(state: ResearchRunState, event: DomainEvent) -> ResearchRunState:
     """What each fact does to the state. Total, like every other fold here."""
     match event:
-        case AutoRunStarted(project_id=project_id, session_id=session_id):
-            return AutoRunState(
+        case ResearchRunStarted(project_id=project_id, session_id=session_id):
+            return ResearchRunState(
                 run_id=event.aggregate_id,
                 project_id=project_id,
                 session_id=session_id,
@@ -428,7 +428,7 @@ def evolve(state: AutoRunState, event: DomainEvent) -> AutoRunState:
                 fetch_budget=event.fetch_budget,
             )
 
-        case AutoRoundStarted(topic_id=topic_id):
+        case ResearchRoundStarted(topic_id=topic_id):
             seen = state.topics_seen
             return state.model_copy(
                 update={
@@ -439,7 +439,7 @@ def evolve(state: AutoRunState, event: DomainEvent) -> AutoRunState:
                 }
             )
 
-        case AutoRoundCompleted():
+        case ResearchRoundCompleted():
             produced = bool(
                 event.findings or event.sources_linked or event.sub_questions_opened
             )
@@ -457,7 +457,7 @@ def evolve(state: AutoRunState, event: DomainEvent) -> AutoRunState:
                 }
             )
 
-        case AutoRoundFailed():
+        case ResearchRoundFailed():
             return state.model_copy(
                 update={
                     "consecutive_failures": state.consecutive_failures + 1,
@@ -465,16 +465,16 @@ def evolve(state: AutoRunState, event: DomainEvent) -> AutoRunState:
                 }
             )
 
-        case AutoRunStopped(reason=reason):
+        case ResearchRunStopped(reason=reason):
             return state.model_copy(update={"status": "stopped", "stop_reason": reason})
 
     return state
 
 
-class AutoResearchRun(DeciderAggregate[AutoRunState, AutoRunCommand]):
+class ResearchRun(DeciderAggregate[ResearchRunState, ResearchRunCommand]):
     """The imperative shell. Holds no rules -- it delegates all three."""
 
-    aggregate_type = "AutoResearchRun"
+    aggregate_type = "ResearchRun"
 
     initial_state = staticmethod(initial_state)
     decide = staticmethod(decide)

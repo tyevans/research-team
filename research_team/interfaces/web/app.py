@@ -54,8 +54,8 @@ from research_team.application.topic_dispatch import (
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
 from research_team.domain import Corpus, CreateProject, Project, ProjectState, SelectWorkflow
-from research_team.domain.auto_research import Budget
 from research_team.domain.project import current_stage_of
+from research_team.domain.research_run import Budget
 from research_team.domain.topic import (
     AddSubQuestion,
     ResolveSubQuestion,
@@ -720,7 +720,7 @@ def create_app(
         routes in declaration order, and `seed` would otherwise be parsed as
         a topic id and 422 on every call.
 
-        202, matching `start_auto_research`: the turn has not finished when
+        202, matching `start_research_run`: the turn has not finished when
         this answers, and what it hands back is the id of a run that has
         *begun*. The topics it opens arrive over the log like any other
         `open_topic` call -- a client that wants them invalidates its topic
@@ -730,7 +730,7 @@ def create_app(
         this build is missing configuration, not the project this id names.
         409 when a seed is already running on this project -- see
         `seeding.py`'s `SeedingActivity.start` for why it is the same
-        exception `start_auto_research` maps the same way.
+        exception `start_research_run` maps the same way.
         """
         if topic_seeder is None or seeding is None:
             raise HTTPException(status_code=503, detail="topic seeding is not configured")
@@ -815,7 +815,7 @@ def create_app(
         gives: FastAPI matches in declaration order.
 
         **202 with `queued`, never 409.** This is the one place this API
-        deliberately differs from `seed_topics` and `start_auto_research`, and
+        deliberately differs from `seed_topics` and `start_research_run`, and
         `dispatch.py`'s module docstring carries the argument: those two back a
         control that appears once on a page, where refusing a second press is
         correct. This one backs a control on every topic row, where refusing
@@ -1196,7 +1196,7 @@ def create_app(
         return {"id": str(session_id), "project_id": str(project_id), "warning": None}
 
     @app.post("/api/projects/{project_id}/auto-research")
-    async def start_auto_research(project_id: UUID, body: NewRun | None = None):
+    async def start_research_run(project_id: UUID, body: NewRun | None = None):
         """Start an autonomous run over this project's topic queue.
 
         202 rather than 200, and the reason is the whole shape of this route:
@@ -1204,11 +1204,11 @@ def create_app(
         of a run that has *begun*, which is enough to fold its stream, watch
         its rounds arrive on `/api/stream`, and stop it.
 
-        Off unless `AGENT_AUTO_RESEARCH` says otherwise, and absent rather
+        Off unless `AGENT_RESEARCH_RUN` says otherwise, and absent rather
         than refusing when it is off -- 404, not 403, because a route that
         answers 403 has told an unauthenticated caller that there is an
         unattended research loop on the other side of this port. See
-        `config.auto_research_over_http`.
+        `config.research_run_over_http`.
 
         A session is required and one is started by default, because a run's
         rounds are turns and a turn needs a session. Starting one goes through
@@ -1224,7 +1224,7 @@ def create_app(
                 status_code=404,
                 detail=(
                     "autonomous runs are not enabled on this instance; "
-                    "set AGENT_AUTO_RESEARCH=1 to enable them"
+                    "set AGENT_RESEARCH_RUN=1 to enable them"
                 ),
             )
         await _require_project(project_id)
@@ -1267,7 +1267,7 @@ def create_app(
         return JSONResponse(status_code=202, content=run_view(run))
 
     @app.get("/api/projects/{project_id}/auto-research")
-    async def get_auto_research(project_id: UUID):
+    async def get_research_run(project_id: UUID):
         """This project's run in flight, folded. 404 when nothing is running.
 
         Deliberately only the live one. "Every run this project has ever done"
@@ -1344,7 +1344,7 @@ def create_app(
         }
 
     @app.post("/api/projects/{project_id}/auto-research/cancel")
-    async def cancel_auto_research(project_id: UUID):
+    async def cancel_research_run(project_id: UUID):
         """Ask this project's run to stop after the round it is in.
 
         200 with `cancelled: false` when there was nothing running, rather

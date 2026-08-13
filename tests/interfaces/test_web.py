@@ -2593,7 +2593,7 @@ async def research_client(db_path, fake_model):
     """A client whose app was wired *with* a research supervisor.
 
     Separate from `client` because the default app is deliberately built
-    without one: `AGENT_AUTO_RESEARCH` gates the wiring in `web.py`, and the
+    without one: `AGENT_RESEARCH_RUN` gates the wiring in `web.py`, and the
     unwired case is a behaviour these tests check rather than a setup detail.
     """
     application = await _started(model=fake_model, db_path=db_path)
@@ -2617,7 +2617,7 @@ async def test_the_run_routes_are_absent_unless_the_instance_was_wired_for_them(
     response = await client.post(f"/api/projects/{project_id}/auto-research", json={})
 
     assert response.status_code == 404
-    assert "AGENT_AUTO_RESEARCH" in response.json()["detail"]
+    assert "AGENT_RESEARCH_RUN" in response.json()["detail"]
 
 
 async def test_starting_a_run_answers_with_its_ids_before_it_has_finished(research_client):

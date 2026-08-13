@@ -92,7 +92,7 @@ export class ResearchDisabledError extends Error {
 
 /** Matched on "not enabled" rather than on the variable name: the GET says only
  *  that much, and only the POST spells out what to set. */
-const saysDisabled = (message: string): boolean => /not enabled|AGENT_AUTO_RESEARCH/.test(message)
+const saysDisabled = (message: string): boolean => /not enabled|AGENT_RESEARCH_RUN/.test(message)
 
 export class HttpResearchRepository implements ResearchRepository {
   constructor(private readonly http: HttpClient) {}
