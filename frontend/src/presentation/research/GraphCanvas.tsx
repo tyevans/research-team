@@ -154,6 +154,8 @@ export const GraphCanvas = memo(function GraphCanvas({
       label: token('--fg', '#d7dee7'),
       accent: token('--accent', '#e2a457'),
       mono: token('--mono', 'monospace'),
+      link: token('--link', 'rgba(138, 149, 163, 0.35)'),
+      linkInferred: token('--link-inferred', 'rgba(138, 149, 163, 0.18)'),
     }
   }, [])
 
@@ -227,10 +229,45 @@ export const GraphCanvas = memo(function GraphCanvas({
             framedAt.current = settledAt
             graph.current?.zoomToFit(400, 48)
           }}
-          nodeLabel={(node) => `${String(node.name)} (${String(node.entityType)})`}
-          linkLabel={(link) => String(link.relationshipType)}
+          // A node's date, appended when it has one: a temporal edge points
+          // at two nodes, and a reader checking what it asserts needs the
+          // dates on both ends, not just the derivation text on the line
+          // between them. Most entities are not events and carry no date --
+          // the ordinary case leaves the label as it was, not "(undated)".
+          // The painted label on the canvas itself is untouched; see its own
+          // comment for why it stays short.
+          nodeLabel={(node) =>
+            node.temporal
+              ? `${String(node.name)} (${String(node.entityType)}) -- ${String(node.temporal)}`
+              : `${String(node.name)} (${String(node.entityType)})`
+          }
+          // An inferred edge's label is the arithmetic that produced it (e.g.
+          // "1923 contains November 1923"), not `relationshipType` -- the
+          // dashes below already say "inferred", so restating that word on
+          // hover would tell a reader nothing the line hadn't already.
+          // `derivation` can be null for an edge that predates the field
+          // (schema-evolution case, not defensive boilerplate) -- fall back
+          // to `relationshipType` rather than let `String(null)` render the
+          // literal text "null" in the hover tooltip.
+          linkLabel={(link) =>
+            link.inferred && link.derivation
+              ? String(link.derivation)
+              : String(link.relationshipType)
+          }
           linkDirectionalArrowLength={4}
-          linkColor={() => 'rgba(138, 149, 163, 0.35)'}
+          // Dashed rather than a different hue: colour on this canvas already
+          // means entity type (see the node painter's selection-ring comment
+          // below), so giving inferred edges a second colour would trade that
+          // fact for this one instead of adding it. The dimming is a change
+          // of alpha within the same grey, not a new colour -- both literals
+          // now live in `tokens.css` as `--link`/`--link-inferred`.
+          //
+          // Not asserted by any test: jsdom paints nothing to a `<canvas>`,
+          // and a browser-mode test screenshotting one would be asserting on
+          // pixels rather than on anything this suite can judge. Verified by
+          // eye instead -- see the task report.
+          linkColor={(link) => (link.inferred ? theme.linkInferred : theme.link)}
+          linkLineDash={(link) => (link.inferred ? [2, 2] : null)}
           nodeRelSize={5}
           // Names are drawn on the canvas rather than left to the hover
           // tooltip: a field of identical unlabelled dots gives a reader

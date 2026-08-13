@@ -1230,6 +1230,29 @@ path is still keyed by `source_id`.
 
 *(Entries below are kept for the reasoning; the asks themselves are closed.)*
 
+### B48. Nothing notices if `infer_relations` starts emitting a new relation
+
+`_DRAWN_RELATIONS` in `graph_reader.py` is `{CONTAINS, OVERLAPS, EQUALS}`, and
+its comment calls that *complete* rather than a subset: `infer_relations`
+canonicalises every dated pair to one edge, folding `AFTER` into its target's
+`BEFORE` and `DURING` into its target's `CONTAINS`, so only four of
+`TemporalRelation`'s six members can ever arrive. That is true of redstring
+0.2.0 and it is the reason the set needs no `AFTER`/`DURING` entry.
+
+It is also the one claim in that comment which is a *promise by another
+package* rather than arithmetic this repository can check. If redstring ever
+stopped canonicalising — or added a seventh relation — `_DRAWN_RELATIONS`
+would silently exclude it, and the drawing would quietly lose a kind of edge
+with nothing failing anywhere. Every other quantity in that comment is
+verifiable here; this one is not.
+
+Deliberately not tested, because the test would assert redstring's behaviour
+rather than this adapter's, and a library's canonicalisation is not ours to
+pin. The honest mitigation is to re-read it at the next redstring bump, which
+is what this entry is for: the dependency pins already force that upgrade to
+be a deliberate act (see `pyproject.toml`), so this is a line on the checklist
+when it happens, not standing work.
+
 ### B20. `Relationship` carries no provenance at all
 
 redstring 0.2.0's `Relationship` model has neither `source_id` nor
