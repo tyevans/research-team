@@ -55,6 +55,22 @@ npm run dev      # http://localhost:5173, proxying /api to the server above
 npm run build    # rebuilds what web.py serves; commit the result
 ```
 
+Because the built console is committed, two branches that both touched
+`frontend/src/` produce two different bundles and git offers a conflict over
+which to keep. Neither side is right — the merged *source* has not been built
+yet, so the only correct resolution is to rebuild. `.gitattributes` hands those
+paths to a merge driver that resolves them without asking, and CI's "the
+committed build matches src/" step rebuilds afterwards and fails if the result
+is stale. The driver is resolved through git *config*, which cannot be
+committed, so once per clone:
+
+```bash
+git config merge.ours.driver true
+```
+
+Skip it and the merge conflicts exactly as if `.gitattributes` were not there,
+with nothing to say why.
+
 `frontend/README.md` has the layering and the three files carrying most of the
 subtlety.
 
