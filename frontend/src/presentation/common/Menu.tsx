@@ -161,7 +161,17 @@ export const MenuItem = ({
     // selected. `outline-none` for the same reason -- the highlight *is* the
     // focus indicator here, and a ring on top of it draws two.
     className={clsx(
-      'rounded-sm py-1.5 flex w-full cursor-pointer items-center px-3 text-sm outline-none select-none',
+      // `py-2` rather than the `py-1.5` this was written as: `1.5` is a
+      // *fractional* step, which Tailwind resolves through the base
+      // `--spacing` variable rather than through this project's explicit
+      // `--spacing-N` keys, and that base step is absent from `theme.css` on
+      // purpose. So `py-1.5` generated no rule and these items have had no
+      // vertical padding at all -- checked by grepping the built stylesheet,
+      // where `.py-1\.5` does not appear. `--spacing-2` is 6px, which is the
+      // 1.5 × 4px the fractional step was reaching for, so this is the same
+      // intent spelled on the scale. It makes each item 12px taller than it
+      // has been shipping.
+      'rounded-sm flex w-full cursor-pointer items-center px-3 py-2 text-sm outline-none select-none',
       'data-[disabled]:cursor-default data-[disabled]:text-fg-faint data-[highlighted]:bg-bg-hover',
       tone === 'danger' ? 'text-k-failure' : 'text-fg',
     )}

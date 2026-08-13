@@ -69,6 +69,7 @@ const RENAMED: Readonly<Record<string, string>> = {
   '--radius': '--radius-md',
   '--mono': '--font-mono',
   '--sans': '--font-sans',
+  '--space-0': '--spacing-0',
   '--space-1': '--spacing-1',
   '--space-2': '--spacing-2',
   '--space-3': '--spacing-3',
