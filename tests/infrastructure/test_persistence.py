@@ -11,7 +11,7 @@ from redstring.events.streams import document_stream
 from research_team.application.session_service import NO_SEARCH_CLAUSE, project_context
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import StartSession, StoreSourceDocument
-from research_team.domain.learner import ChecklistProgressRecorded
+from research_team.domain.learner import LearnerChecklistRecorded
 from research_team.domain.project import AdvanceStage, CreateProject, SelectWorkflow
 from research_team.domain.topic import OpenTopic
 from research_team.infrastructure.agent.corpus_tools import CORPUS_PROMPT
@@ -247,7 +247,7 @@ async def test_read_since_ignores_events_from_other_aggregate_types(tmp_path):
         await repository.store.append(
             StreamId(aggregate_id=learner_id, category="LearnerProgress"),
             [
-                ChecklistProgressRecorded(
+                LearnerChecklistRecorded(
                     aggregate_id=learner_id,
                     path="lesson.md",
                     component_id="check-1",

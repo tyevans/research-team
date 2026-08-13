@@ -24,9 +24,9 @@ import pytest
 from eventsource import CommandRejectedError
 
 from research_team.domain.learner import (
-    ChecklistProgressRecorded,
-    ItemAnswered,
-    ItemCompleted,
+    LearnerChecklistRecorded,
+    LearnerItemAnswered,
+    LearnerItemCompleted,
     RecordAttempt,
     RecordChecklistState,
     decide,
@@ -73,7 +73,7 @@ def test_an_attempt_is_recorded_with_its_verdict():
     )
 
     answered = events[0]
-    assert isinstance(answered, ItemAnswered)
+    assert isinstance(answered, LearnerItemAnswered)
     assert answered.aggregate_id == progress_id
     assert answered.path == "/lesson.md"
     assert answered.component_id == "sev-1"
@@ -143,9 +143,9 @@ def test_a_correct_answer_completes_the_item():
 
     events = decide(_attempt(progress_id, correct=True, score=1.0), initial_state())
 
-    assert isinstance(events[0], ItemAnswered)
+    assert isinstance(events[0], LearnerItemAnswered)
     completed = events[1]
-    assert isinstance(completed, ItemCompleted)
+    assert isinstance(completed, LearnerItemCompleted)
     assert completed.attempts == 1
 
 
@@ -157,7 +157,7 @@ def test_completion_says_how_many_tries_it_took():
     _, state = _apply(_attempt(progress_id, correct=False), state)
     events, state = _apply(_attempt(progress_id, correct=True, score=1.0), state)
 
-    completed = next(e for e in events if isinstance(e, ItemCompleted))
+    completed = next(e for e in events if isinstance(e, LearnerItemCompleted))
     assert completed.attempts == 3
 
 
@@ -167,7 +167,7 @@ def test_a_wrong_answer_completes_nothing():
     events = decide(_attempt(progress_id, correct=False, score=0.5), initial_state())
 
     assert len(events) == 1
-    assert isinstance(events[0], ItemAnswered)
+    assert isinstance(events[0], LearnerItemAnswered)
 
 
 def test_an_item_is_completed_once_however_often_it_is_answered_again():
@@ -180,7 +180,7 @@ def test_an_item_is_completed_once_however_often_it_is_answered_again():
     _, state = _apply(_attempt(progress_id, correct=True, score=1.0), state)
     events, state = _apply(_attempt(progress_id, correct=True, score=1.0), state)
 
-    assert not any(isinstance(e, ItemCompleted) for e in events)
+    assert not any(isinstance(e, LearnerItemCompleted) for e in events)
 
 
 def test_being_wrong_later_does_not_undo_having_been_right():
@@ -246,7 +246,7 @@ def test_checklist_state_is_remembered():
         initial_state(),
     )
 
-    assert isinstance(event, ChecklistProgressRecorded)
+    assert isinstance(event, LearnerChecklistRecorded)
     # Canonical: two clients reporting the same boxes in a different order must
     # not read as two different states.
     assert event.checked == [0, 2]
@@ -340,7 +340,7 @@ def test_an_unknown_event_leaves_the_state_alone():
     from research_team.domain.events import TurnCompleted
 
     state = _with(
-        ItemAnswered(
+        LearnerItemAnswered(
             aggregate_id=uuid4(),
             path="/a.md",
             component_id="x",
@@ -358,7 +358,7 @@ def test_an_unknown_event_leaves_the_state_alone():
 def test_completion_folds_to_nothing_because_the_attempt_already_said_it():
     """Two sources for one fact is how they come to disagree."""
     progress_id = uuid4()
-    answered = ItemAnswered(
+    answered = LearnerItemAnswered(
         aggregate_id=progress_id,
         path="/a.md",
         component_id="x",
@@ -367,7 +367,7 @@ def test_completion_folds_to_nothing_because_the_attempt_already_said_it():
         correct=True,
         score=1.0,
     )
-    completed = ItemCompleted(
+    completed = LearnerItemCompleted(
         aggregate_id=progress_id, path="/a.md", component_id="x", attempts=1
     )
 
