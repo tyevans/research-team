@@ -49,6 +49,24 @@ export const SubQuestions = ({
     onError: (error) => notify(errorMessage(error), 'bad'),
   })
 
+  /** Resolving lives here rather than in the row it draws.
+   *
+   * The row is a label, an input and a button — nothing about it needs a
+   * repository, and while it held one it could not be rendered, story-booked or
+   * tested without a container and a query client behind it. Which row is busy
+   * comes off the mutation's own `variables` instead of a second `useState`,
+   * because react-query already knows what is in flight and a duplicate would
+   * be a second thing to keep in step.
+   *
+   * This changes no behaviour a test can see: the suite below drives resolution
+   * through `SubQuestions` and passes either way. */
+  const resolve = useMutation({
+    mutationFn: ({ key: subKey, answer }: { key: string; answer: string }) =>
+      topics.resolveSubQuestion(projectId, topic.topicId, subKey, answer),
+    onSuccess: invalidate,
+    onError: (error) => notify(errorMessage(error), 'bad'),
+  })
+
   const keyId = useId()
   const questionId = useId()
 
@@ -58,10 +76,9 @@ export const SubQuestions = ({
         {topic.subQuestions.map((sub) => (
           <SubQuestionRow
             key={sub.key}
-            projectId={projectId}
-            topic={topic}
             sub={sub}
-            onDone={invalidate}
+            busy={resolve.isPending && resolve.variables?.key === sub.key}
+            onResolve={(answer) => resolve.mutate({ key: sub.key, answer })}
           />
         ))}
       </ul>
@@ -95,29 +112,25 @@ export const SubQuestions = ({
   )
 }
 
+/** One sub-question, and the means to settle it if it is open.
+ *
+ * Props only: it is handed what to draw and one callback, and the typed answer
+ * is the single piece of state it owns because nothing outside the row reads
+ * it. Nothing clears that box on success — the successful case refetches the
+ * topic, the sub comes back `resolved`, and the branch holding the input stops
+ * rendering, so clearing it would only be visible in a render that does not
+ * happen. */
 const SubQuestionRow = ({
-  projectId,
-  topic,
   sub,
-  onDone,
+  busy,
+  onResolve,
 }: {
-  projectId: ProjectId
-  topic: TopicDetail
   sub: TopicDetail['subQuestions'][number]
-  onDone: () => void
+  busy: boolean
+  onResolve: (answer: string) => void
 }) => {
-  const { topics } = useContainer()
   const [answer, setAnswer] = useState('')
   const answerId = useId()
-
-  const resolve = useMutation({
-    mutationFn: () => topics.resolveSubQuestion(projectId, topic.topicId, sub.key, answer.trim()),
-    onSuccess: () => {
-      setAnswer('')
-      onDone()
-    },
-    onError: (error) => notify(errorMessage(error), 'bad'),
-  })
 
   return (
     <li className={sub.resolved ? 'sub-question sub-question-resolved' : 'sub-question'}>
@@ -133,12 +146,8 @@ const SubQuestionRow = ({
             value={answer}
             onChange={(event) => setAnswer(event.target.value)}
           />
-          <Button
-            small
-            disabled={!answer.trim() || resolve.isPending}
-            onClick={() => resolve.mutate()}
-          >
-            {resolve.isPending ? 'Resolving…' : 'Resolve'}
+          <Button small disabled={!answer.trim() || busy} onClick={() => onResolve(answer.trim())}>
+            {busy ? 'Resolving…' : 'Resolve'}
           </Button>
         </div>
       )}

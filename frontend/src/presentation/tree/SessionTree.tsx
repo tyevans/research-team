@@ -3,8 +3,7 @@ import { useMemo } from 'react'
 
 import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
-import { summariesAsForest } from '@infrastructure/http/mappers.ts'
-import { flatten } from '@domain/project/landing.ts'
+import { flatten, summariesAsForest } from '@domain/project/landing.ts'
 import type { ForkNode, SessionSummary } from '@domain/session/session.ts'
 
 /** Every session, as the fork tree it actually is.

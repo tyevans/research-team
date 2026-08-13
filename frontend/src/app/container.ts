@@ -2,6 +2,7 @@ import type { EventStream } from '@application/ports/event-stream.ts'
 import type { PreferenceStore } from '@application/ports/preferences.ts'
 import type {
   ApprovalRepository,
+  AskRepository,
   AutonomyRepository,
   DocumentRepository,
   ExtractionRepository,
@@ -16,6 +17,7 @@ import type {
   WorkerRepository,
   WorkspaceRepository,
 } from '@application/ports/repositories.ts'
+import { HttpAskRepository } from '@infrastructure/http/ask-repository.ts'
 import { HttpAutonomyRepository } from '@infrastructure/http/autonomy-repository.ts'
 import { HttpDocumentRepository } from '@infrastructure/http/document-repository.ts'
 import { HttpGraphRepository } from '@infrastructure/http/graph-repository.ts'
@@ -58,6 +60,9 @@ export interface Container {
   readonly workers: WorkerRepository
   readonly extractions: ExtractionRepository
   readonly health: HealthRepository
+  /** Its own adapter rather than one built on `HttpClient`: it POSTs and reads
+   *  a stream, and `HttpClient` reads whole bodies. */
+  readonly ask: AskRepository
   readonly stream: EventStream
   readonly preferences: PreferenceStore
   /** Injected so tests can drive it, and so nothing below reaches for the
@@ -82,6 +87,7 @@ export const createContainer = (baseUrl = ''): Container => {
     workers: new HttpWorkerRepository(http),
     extractions: new HttpExtractionRepository(http),
     health: new HttpHealthRepository(http),
+    ask: new HttpAskRepository(baseUrl),
     stream: new SseEventStream(`${baseUrl}/api/stream`),
     preferences: new LocalPreferenceStore(),
     now: () => Date.now(),

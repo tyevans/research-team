@@ -45,6 +45,25 @@ export interface ProjectRollup {
 export const flatten = (nodes: readonly ForkNode[]): readonly SessionSummary[] =>
   nodes.flatMap((node) => [node as SessionSummary, ...flatten(node.children)])
 
+/** A flat session list rendered as a tree of roots.
+ *
+ * Used when `/api/tree` answers empty but sessions plainly exist — the
+ * projection has drifted, and a flat list is a truthful degradation where "no
+ * sessions" is a lie. That choice is the whole content of this function, and it
+ * is a claim about sessions rather than about a response: every session is a
+ * root, because with the tree gone there is no lineage to be had and inventing
+ * one would be worse than admitting to none.
+ *
+ * Beside `flatten` rather than in `infrastructure/http/mappers.ts`, where it
+ * lived, because it never touched a wire type — it takes `SessionSummary` and
+ * returns `ForkNode`, both of them domain — so its old address made a
+ * presentation hook import the HTTP adapter to reach a decision the domain
+ * owns. Deliberately *not* folded into `forest` below: that one rebuilds real
+ * lineage and is what to call when the data is trustworthy; this one is the
+ * degradation, and a caller should have to name which it means. */
+export const summariesAsForest = (summaries: readonly SessionSummary[]): readonly ForkNode[] =>
+  summaries.map((summary) => ({ ...summary, children: [] }))
+
 /** Arrange sessions into the forest their fork lineage describes.
  *
  * The browser's copy of `build_fork_tree`, and it exists for the same reason
