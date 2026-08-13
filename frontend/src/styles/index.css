@@ -20,6 +20,9 @@
 @import './diff.css';
 @import './conversation.css';
 @import './composer.css';
+/* After `composer.css` and not instead of it: the session page still draws a
+   `.composer`, and the ask page draws its own. */
+@import './ask.css';
 @import './states.css';
 @import './responsive.css';
 @import './course.css';

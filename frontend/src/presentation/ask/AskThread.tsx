@@ -29,35 +29,34 @@ export const AskThread = ({
 
   if (transcript.length === 0) {
     return (
-      <EmptyState
-        heading="Nothing asked yet."
-        detail="Ask about this project’s sources, topics and findings. Nothing you ask here is written down."
-      />
+      <div className="ask-thread ask-empty">
+        <EmptyState
+          heading="Nothing asked yet."
+          detail="Ask about this project’s sources, topics and findings. Nothing you ask here is written down."
+        />
+      </div>
     )
   }
 
   return (
-    // The one scrolling box on this page: the view does not scroll, so the
-    // composer stays on the bottom edge whether the thread has one turn or
-    // forty -- which is precisely when somebody wants to type the next
-    // question. `pr-2` is room for the scrollbar; `pb-3` keeps the last answer
-    // off the composer's top border.
-    <div className="flex min-h-0 flex-auto flex-col gap-4 overflow-y-auto pr-2 pb-3">
-      {transcript.map((turn, index) => (
-        <AskTurn
-          key={index}
-          projectId={projectId}
-          turn={turn}
-          open={open.has(index)}
-          onToggle={() =>
-            setOpen((current) => {
-              const next = new Set(current)
-              if (!next.delete(index)) next.add(index)
-              return next
-            })
-          }
-        />
-      ))}
+    <div className="ask-thread">
+      <div className="ask-measure ask-thread-inner">
+        {transcript.map((turn, index) => (
+          <AskTurn
+            key={index}
+            projectId={projectId}
+            turn={turn}
+            open={open.has(index)}
+            onToggle={() =>
+              setOpen((current) => {
+                const next = new Set(current)
+                if (!next.delete(index)) next.add(index)
+                return next
+              })
+            }
+          />
+        ))}
+      </div>
     </div>
   )
 }

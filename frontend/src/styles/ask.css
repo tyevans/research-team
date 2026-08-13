@@ -1,0 +1,284 @@
+/* The ask page: a thread of two speakers, a question box, and one column of
+   prose shared by both.
+
+   Page-specific on purpose. The alternative was widening `.composer` and
+   `.view-head`, which the session page and the tree page respectively depend
+   on -- rewriting a shared class from a page-specific redesign is how two
+   pages come to disagree about what a composer is. */
+
+/* --- the page ---------------------------------------------------------- */
+
+/* Owns the viewport and does not scroll, so `.ask-thread` can and the
+   composer keeps the bottom edge whether the thread holds one turn or forty
+   -- which is precisely when somebody wants to type the next question. */
+.ask {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* The readable column, and the reason this file exists. Set on the thread's
+   inner wrapper and on the composer's, so the question box sits under the
+   column of prose rather than under the viewport.
+
+   `ch` rather than a pixel width: the cap should follow the font. The
+   neighbouring cap in `tree.css` is 1100px, chosen for a tree of nodes, and
+   inheriting it is how an answer came to run 1400px wide at 1440px. */
+.ask-measure {
+  width: 100%;
+  max-width: 72ch;
+  margin-inline: auto;
+}
+
+/* --- head -------------------------------------------------------------- */
+
+.ask-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  border-bottom: 1px solid var(--line-soft);
+}
+.ask-head h1 {
+  margin: 0;
+  font-size: var(--t-2xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+/* No preflight, so a bare `<p>` keeps the user agent's 1em block margins. */
+.ask-sub {
+  margin: var(--space-1) 0 0;
+  max-width: 60ch;
+  color: var(--fg-dim);
+  font-size: var(--t-sm);
+}
+.ask-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* --- facets ------------------------------------------------------------ */
+
+/* One control in three states rather than three buttons: the border belongs
+   to the group, and the links divide it. */
+.ask-facets {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.ask-facet {
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: var(--t-sm);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.ask-facet:first-child {
+  border-left: 0;
+}
+.ask-facet:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+/* Selected by the same attribute a screen reader is told, so the two cannot
+   disagree -- a `.is-current` class beside `aria-current` is two facts that
+   drift. */
+.ask-facet[aria-current='page'] {
+  background: var(--bg-raise);
+  color: var(--fg);
+}
+
+/* --- banner ------------------------------------------------------------ */
+
+.ask-banner {
+  flex: 0 0 auto;
+  margin: var(--space-4) var(--space-5) 0;
+}
+
+/* --- thread ------------------------------------------------------------ */
+
+/* The one scrolling box on this page. `padding-inline` is room for the
+   scrollbar and for the turn panels to breathe; the measure sits inside it. */
+.ask-thread {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-5) var(--space-6);
+}
+.ask-thread-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* --- a turn ------------------------------------------------------------ */
+
+.ask-turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+/* Every turn but the first: a rule between exchanges, because a 28px gap was
+   the only thing separating turn n's answer from turn n+1's question and a
+   dozen turns of that reads as one long document. */
+.ask-turn + .ask-turn {
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--space-6);
+}
+
+/* The reader's own words, in a panel. Told apart from the answer by ground
+   rather than by a bubble or an avatar: there are only two speakers here and
+   one of them is you, so a label on every line would be noise on every turn. */
+.ask-question {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--bg-panel-2);
+  color: var(--fg);
+  font-size: var(--t-md);
+  white-space: pre-wrap;
+}
+
+/* `--fg`, not `--fg-dim`. Dimming the answer -- the thing the reader came for
+   -- was backwards; the machinery around it is what should recede. */
+.ask-answer {
+  color: var(--fg);
+}
+
+.ask-activity {
+  font-size: var(--t-sm);
+}
+/* Zeroed because there is no preflight: a bare `<ul>` keeps the user agent's
+   margin, padding and bullets. Written in plain CSS rather than as `m-0 p-0`
+   utilities, which is the pair that silently emitted nothing until
+   `--spacing-0` was declared. */
+.ask-activity-list {
+  margin: 0;
+  padding: var(--space-2) 0 0 var(--space-3);
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--fg-faint);
+}
+
+.ask-turn-error {
+  margin: 0;
+  color: var(--k-failure);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+.ask-pending {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--fg-faint);
+  font-size: var(--t-sm);
+}
+
+/* --- sources ----------------------------------------------------------- */
+
+.ask-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--t-sm);
+}
+.ask-sources-label {
+  color: var(--fg-faint);
+  font-size: var(--t-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ask-sources-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.ask-source {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+
+/* --- composer ---------------------------------------------------------- */
+
+/* Full-bleed against the page edge and bordered on top, so it reads as the
+   floor of the page rather than as a card sitting on it -- while its contents
+   stay on `.ask-measure`, lined up with the prose above. That alignment is
+   what `AskView.browser.test.tsx` measures. */
+.ask-composer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  background: var(--bg-panel);
+  padding: var(--space-3) var(--space-5);
+}
+.ask-composer-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ask-composer textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 52px;
+  max-height: 180px;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: var(--t-md);
+  line-height: 1.5;
+}
+/* `:focus`, not `:focus-visible`: a pointer user clicking into a field wants
+   the same confirmation a keyboard user gets. Nothing here sets `overflow`,
+   so no ring is clipped -- the audit `composer.css` records applies. */
+.ask-composer textarea:focus {
+  border-color: var(--accent-dim);
+  outline: none;
+}
+.ask-composer textarea:disabled {
+  opacity: 0.55;
+}
+.ask-composer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.ask-composer-hint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-faint);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- empty ------------------------------------------------------------- */
+
+.ask-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}

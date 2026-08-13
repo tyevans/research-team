@@ -29,28 +29,25 @@ export const AskComposer = ({
   }
 
   return (
-    // Negative margin out to the page edge: `.composer` is bordered on top and
-    // is meant to sit flush against the bottom of the view, which carries
-    // `px-5` for everything above it.
-    <form className="composer -mx-5" onSubmit={submit}>
-      <textarea
-        rows={2}
-        placeholder="Ask about this project…  (Ctrl+Enter)"
-        aria-label="Question"
-        value={draft}
-        disabled={asking}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submit(event)
-        }}
-      />
-      <div className="composer-row">
-        <span className="composer-hint">
+    <form className="ask-composer" onSubmit={submit}>
+      <div className="ask-measure ask-composer-inner">
+        <textarea
+          rows={2}
+          placeholder="Ask about this project…  (Ctrl+Enter)"
+          aria-label="Question"
+          value={draft}
+          disabled={asking}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submit(event)
+          }}
+        />
+        <div className="ask-composer-row">
           {/* Said again here, at the moment somebody is about to type
               something they may want back. */}
-          <span className="txt">Not saved — this conversation goes when you leave.</span>
-        </span>
-        <div className="composer-actions">
+          <span className="ask-composer-hint">
+            Not saved — this conversation goes when you leave.
+          </span>
           <Button tone="accent" type="submit" disabled={asking || !draft.trim()}>
             Ask
           </Button>
