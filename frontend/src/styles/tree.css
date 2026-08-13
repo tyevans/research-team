@@ -356,15 +356,20 @@ ul.tree ul > li:last-child::after {
 
 /* --- chips -------------------------------------------------------------- */
 
-.chip {
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  padding: 1px var(--space-2);
-  border-radius: 3px;
-  border: 1px solid var(--line);
-  color: var(--fg-dim);
-  white-space: nowrap;
-}
+/* The `.chip` base is gone from here and is `CHIP_SHAPE`/`CHIP_DRESS` in
+   `presentation/common/primitives.tsx`. It was the landing view's stylesheet
+   holding the shape of a primitive nineteen files render, one of them
+   (`GateReview`) from the decision bar on every route -- so deleting this file
+   with its screen would have left every chip in the console as unbordered,
+   unpadded body text at inherited size, silently. Found by a sweep, not by a
+   failure.
+
+   The tones below stay, and keep working unchanged: they are unlayered rules
+   and Tailwind's utilities are in `@layer utilities`, so an unlayered `.chip-*`
+   beats the base regardless of specificity or order -- the same way it beat the
+   base rule that used to sit here. Verified in Chromium rather than reasoned;
+   `common/shell-reached-dressing.browser.test.tsx` fails if it ever stops being
+   true. */
 .chip-fork {
   color: var(--k-session);
   border-color: var(--tint-session-line);

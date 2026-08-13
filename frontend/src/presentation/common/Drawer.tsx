@@ -130,17 +130,72 @@ export const Drawer = ({
           stop a click inside the drawer reaching the backdrop is gone with it
           -- the backdrop is the layer's, a sibling rather than an ancestor, so
           a click inside the drawer never reaches it in the first place. */}
-      <aside className="drawer">
-        <header className="drawer-head">
-          <h3 className="drawer-title">{heading}</h3>
-          <span className="drawer-spacer" />
+      {/* The box is Tailwind utilities rather than `course.css`'s `.drawer*`
+          rules, and this is a deletion fix rather than a filing preference.
+          `Drawer` is reached from the shell on every route -- `AgentWidget` ->
+          `WorkerDrawer` -> `Drawer` -- and is the base of `Confirm`, while
+          `course.css` is on the die-with-its-screen list. Deleting that file
+          with the course view would have taken `position: fixed`, the
+          right-anchored box, the surface, the border, the flex column and the
+          body's inset off a dialog that is still on screen, with nothing
+          failing: jsdom applies no stylesheet, so no test could see it, and a
+          class that resolves to nothing raises no error. Found by
+          `docs/reports/stylesheet-orphan-sweep.md` rather than by a failure,
+          which is the whole point about it.
+
+          The values are the deleted rules' own, not the nearest scale step:
+          `w-[42vw]`, `max-w-[640px]`, `min-w-[360px]` and the 12px/16px insets
+          are arbitrary because 42vw, 640, 360, 12 and 16 are not on this
+          project's spacing scale (3/6/10/14/20/28). Rounding them would be a
+          visual change smuggled into a filing fix.
+
+          **`drawer` stays on the class list and is now a hook rather than a
+          rule.** `responsive.css` narrows this panel to full width below 820px
+          and is a shared stylesheet that survives the route merge. Keeping the
+          name keeps that override -- and it now actually applies: an unlayered
+          `.drawer` beats a `@layer utilities` one regardless of order, where
+          before it lost outright, because `index.css` imports `responsive.css`
+          *above* `course.css` and both selectors were 0-1-0. So a narrow
+          viewport gets the full-width drawer it has been asking for since that
+          rule was written. That is a behaviour change, at one breakpoint, in
+          the direction the rule already stated. */}
+      <aside className="drawer fixed inset-y-0 right-0 left-auto flex w-[42vw] max-w-[640px] min-w-[360px] flex-col overflow-hidden border-l border-line bg-bg-panel">
+        <header className="flex flex-none items-center gap-[8px] border-b border-line px-[12px] py-3">
+          <h3 className="font-semibold m-0 text-sm">{heading}</h3>
+          <span className="flex-auto" />
           {actions}
           <button type="button" className="btn btn-sm" ref={closeButtonRef} onClick={onClose}>
             Close
           </button>
         </header>
 
-        <div className={flush ? 'drawer-body is-flush' : 'drawer-body'}>{children}</div>
+        {/* The body's inset, carried whole from `course.css` because the
+            measurement is the reason for it and would not survive being
+            paraphrased. The horizontal 12px is the head's 12px on purpose: the
+            heading and the first line under it are read as one column, and 12px
+            against 0 put them visibly out of line. Measured in Chromium at
+            `layout/OverlayHost` FocusReturnsToTheRow, before the rule existed:
+            the body's only child ran from x=743 to x=1280 -- one pixel inside
+            the drawer's left border, out to the viewport's last column -- while
+            the title above it sat at 755. The vertical rhythm is `.conv`'s,
+            which is the largest of the three insets callers used and the one a
+            reader sees most.
+
+            `data-flush` rather than the old `is-flush` class: the class was a
+            selector `course.css` keyed on, and a class name kept after its rule
+            is gone is the `.sub` orphan this same sweep found elsewhere. The
+            attribute says the same thing to a test and claims no dressing. */}
+        <div
+          data-drawer="body"
+          data-flush={flush || undefined}
+          className={
+            flush
+              ? 'flex flex-auto flex-col overflow-auto p-0'
+              : 'flex flex-auto flex-col overflow-auto px-[12px] pt-3 pb-[16px]'
+          }
+        >
+          {children}
+        </div>
       </aside>
     </Overlay>
   )

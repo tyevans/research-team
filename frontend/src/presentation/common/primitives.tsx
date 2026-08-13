@@ -31,8 +31,46 @@ export const Button = ({ tone = 'default', small, className, ...rest }: ButtonPr
  * rather than deprecated so that the eleven were a compile error rather than a
  * grep, and an explained chip is now `<Tooltip><Chip>…</Chip></Tooltip>`,
  * which supplies the tab stop the chip cannot. */
-export const Chip = ({ tone, children }: { tone?: string; children: ReactNode }) => (
-  <span className={clsx('chip', tone && `chip-${tone}`)}>{children}</span>
+/** The shape: mono face, `--t-xs`, a 1px hairline and a 3px radius. Utilities
+ *  rather than `tree.css`'s `.chip`, because `Chip` outlives the landing view
+ *  that stylesheet dresses -- `GateReview` renders one from the decision bar on
+ *  every route, and seventeen other files render one. Taking `tree.css` with
+ *  its screen would have left every chip in the console as unbordered,
+ *  unpadded body text at inherited size. `px-2` is `--spacing-2` (6px);
+ *  `py-px`, `rounded-[3px]` and the 1px border are arbitrary because 1px and
+ *  3px are on no scale here and `--radius-md` is 5px. */
+const CHIP_SHAPE = 'font-mono text-xs px-2 py-px rounded-[3px] border whitespace-nowrap'
+
+/** The colour trio, separated from the shape and *replaceable* rather than
+ *  overridable. Two utilities setting the same property both land in
+ *  `@layer utilities`, where the winner is Tailwind's own sort order and not
+ *  the order of the class attribute -- so a base `text-fg-dim` beside a
+ *  `text-k-failure` is a coin toss. Passing one string or the other is not. */
+const CHIP_DRESS = 'border-line text-fg-dim'
+
+export const Chip = ({
+  tone,
+  dress,
+  children,
+}: {
+  /** A tone whose rule still lives in a stylesheet -- `chip-fork`,
+   *  `chip-done`, `chip-run-bad`. Kept as a `string` and kept working: those
+   *  rules are unlayered, so they beat the utilities above outright, exactly as
+   *  they beat `tree.css`'s `.chip` before it. When a view's stylesheet is
+   *  deleted its tones go with it, and this prop goes when the last one does. */
+  tone?: string
+  /** Utility dressing that *replaces* `CHIP_DRESS`, for a tone whose stylesheet
+   *  is on the deletion list and whose caller therefore has to carry it.
+   *  `GateReview` is the only user today; see `SEVERITY_DRESS` there.
+   *
+   *  `| undefined` explicitly, because `exactOptionalPropertyTypes` is on and
+   *  the one caller reaches this through a `Record` lookup that may miss — a
+   *  severity the map has never seen. Absent and "looked up and not found" are
+   *  the same thing here and both mean "use the default". */
+  dress?: string | undefined
+  children: ReactNode
+}) => (
+  <span className={clsx(CHIP_SHAPE, dress ?? CHIP_DRESS, tone && `chip-${tone}`)}>{children}</span>
 )
 
 /** `heading` rather than `title` throughout this file, and in `Drawer`,

@@ -218,9 +218,9 @@ it('closes when the backdrop is clicked and stays open when its own body is', as
 })
 
 it('pads its body unless the caller says it brings its own', () => {
-  // A class assertion rather than a padding one, because jsdom applies no
-  // stylesheet: `.drawer-body`'s inset and `.is-flush`'s zero are both real
-  // only in a browser, and the measurement is in `course.css` beside the rule.
+  // An attribute assertion rather than a padding one, because jsdom applies no
+  // stylesheet: the body's inset and `flush`'s zero are both real only in a
+  // browser. `Drawer.browser.test.tsx` measures them; this holds the branch.
   //
   // What this holds is the *default*, which is the decision. Padding used to be
   // every caller's job; three of four did it and `TopicStatusDialog` did not,
@@ -231,7 +231,7 @@ it('pads its body unless the caller says it brings its own', () => {
       body
     </Drawer>,
   )
-  expect(container.querySelector('.drawer-body')).not.toHaveClass('is-flush')
+  expect(container.querySelector('[data-drawer="body"]')).not.toHaveAttribute('data-flush')
 
   rerender(
     <OverlayHost>
@@ -240,7 +240,7 @@ it('pads its body unless the caller says it brings its own', () => {
       </Drawer>
     </OverlayHost>,
   )
-  expect(container.querySelector('.drawer-body')).toHaveClass('is-flush')
+  expect(container.querySelector('[data-drawer="body"]')).toHaveAttribute('data-flush')
 })
 
 it('names itself for a screen reader without borrowing the heading markup', () => {
