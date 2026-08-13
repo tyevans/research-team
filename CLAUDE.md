@@ -108,6 +108,43 @@ The general rule outlives that fix: **when you change a projection or a read
 model, run it against a database that predates the change.** A copy of a real
 one is best. "It works on my fresh database" is the sound of this bug.
 
+**A copy of a real one does not open where you put it.** Copy
+`~/.research-team/sessions.db` anywhere else and nothing starts:
+
+```
+PositionForeignError: cannot order positions from
+'sqlite:/home/you/.research-team/sessions.db' and 'sqlite:/tmp/copy.db'
+```
+
+`eventsource` derives a store's id from the database string it was handed --
+`f"sqlite:{database}"` -- and every row in `projection_checkpoints` carries
+that id inside its position token. A position from one store cannot be ordered
+against a position from another, so the subscription fails to transition and
+`start()` raises before a single event is replayed. The path is the only thing
+that changed, and it is enough.
+
+```
+uv run python -m research_team.infrastructure.persistence.local_copy /tmp/probe.db
+```
+
+That copies the database (`VACUUM INTO`, from a read-only connection, so the
+`-wal` comes with it and nothing can write to a database you are still using)
+and rewrites the store id in each checkpoint to the copy's own path. It prints
+the `AGENT_DB=` line to run against it.
+
+**Deleting the checkpoints also gets it up, and quietly defeats the rule.** It
+is the obvious fix -- an empty `projection_checkpoints` has no foreign position
+to compare -- but a projection with no checkpoint replays the whole log and
+rewrites every row, which is `/rebuild` by another name. The half of the bug
+that survives `apply_schema` is the half it hides: `apply_schema` widens the
+table but leaves the new column empty in the rows already there, and against a
+real database the projection resumes near the end of the log and never
+backfills them. That is what the endpoint is wrong about. Measured, on
+2026-08-13, by emptying `session_summary_rows` in two copies of the real
+database and starting each: the copy with its checkpoints cleared came back
+with all four rows, the copy with them rebound came back with none. The rebound
+one is the honest reproduction.
+
 ## Events
 
 Events already written are not rewritten, so a change to an event's shape has
