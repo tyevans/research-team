@@ -1,12 +1,10 @@
 import { useState } from 'react'
 
-import type { AskTranscript, AskTurn } from '@domain/ask/conversation.ts'
+import type { AskTranscript } from '@domain/ask/conversation.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
-import { Markdown } from '../common/content.tsx'
 import { EmptyState } from '../common/primitives.tsx'
-import { AskActivityFold } from './AskActivity.tsx'
-import { CitationList } from './CitationList.tsx'
+import { AskTurn } from './AskTurn.tsx'
 
 /** The conversation so far: question, what was consulted, answer, sources.
  *
@@ -46,7 +44,7 @@ export const AskThread = ({
     // off the composer's top border.
     <div className="flex min-h-0 flex-auto flex-col gap-4 overflow-y-auto pr-2 pb-3">
       {transcript.map((turn, index) => (
-        <Turn
+        <AskTurn
           key={index}
           projectId={projectId}
           turn={turn}
@@ -63,51 +61,3 @@ export const AskThread = ({
     </div>
   )
 }
-
-const Turn = ({
-  projectId,
-  turn,
-  open,
-  onToggle,
-}: {
-  projectId: ProjectId
-  turn: AskTurn
-  open: boolean
-  onToggle: () => void
-}) => (
-  <article className="flex flex-col gap-2">
-    {/* The question is the reader's own words and the answer is the model's,
-        told apart by weight and a rule rather than by a bubble or an avatar:
-        there are only two speakers here and one of them is you, so a label per
-        line would be noise on every turn. `border-solid` is spelled out
-        because this build takes Tailwind's utilities without preflight, so
-        nothing else sets a border style. */}
-    <p className="font-semibold border-l-2 border-solid border-accent-dim pl-3 whitespace-pre-wrap text-fg">
-      {turn.question}
-    </p>
-
-    <AskActivityFold activity={turn.activity} open={open} onToggle={onToggle} />
-
-    {/* The model writes markdown, and it goes through the one sanitising
-        renderer this application has -- see `Markdown`. */}
-    {turn.answer ? <Markdown className="text-fg-dim" source={turn.answer} /> : null}
-
-    {/* In the turn as well as in the page's banner. The banner is what a
-        reader who has scrolled away sees; this is what says which question
-        died. The only red line on the page, because a failed question is the
-        one thing here that must not be mistaken for an answer. */}
-    {turn.error ? <p className="font-mono text-sm text-k-failure">{turn.error}</p> : null}
-
-    {!turn.settled ? (
-      // `role="status"` rather than a bare span: the answer arrives without
-      // any focus change, so a screen reader is otherwise told nothing at all
-      // between the question and the answer.
-      <p className="text-sm text-fg-faint" role="status">
-        <span className="spinner" aria-hidden="true" />
-        Thinking…
-      </p>
-    ) : null}
-
-    <CitationList projectId={projectId} citations={turn.citations} />
-  </article>
-)
