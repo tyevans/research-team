@@ -9,6 +9,15 @@ store on, and delete the floor it makes unnecessary", #90). The four feature
 indexes were written at `5a5a7cf` and `unified-ui-proposal.md` at `4a86e89`;
 neither intervening commit touches `frontend/`, so their UI claims are current.
 
+**`unified-ui-proposal.md` is not in this repository, and every citation of it
+below is a citation to something no reader can open.** `4a86e89` is a real
+commit and its tree does not contain the file, nor does any commit reachable
+from any ref; the eight other design documents cited here are tracked. It was
+therefore untracked on the machine it was read from — the same defect §3.1a's
+correction found once already, where a claim rested on a file no one else had.
+The disagreements in §14 and the sequencing in §11's phase 7 are recorded
+against a source that has to be produced before either can be re-checked.
+
 ## What I verified myself, and what I took on trust
 
 The standard in this repository is that a document says which of its facts it
@@ -429,6 +438,8 @@ ad-hoc `7px`/`12px` (S-§13.3) become `--spacing-*` during phase 5. Those values
 sit outside the `--space-*` scale because that part of the console was written
 before the scale existed; it is accumulated inconsistency rather than a
 decision anyone made, and phase 5 is the first work whose scope includes it.
+*(Phase 5 was dissolved — §11. `panes.css` is now paid down whenever the panes
+are rebuilt, or not at all; nothing schedules it.)*
 
 **What I did not do: invent new tokens.** `landing-page.md` §6 lists tokens as
 genuinely missing and every one it named has since landed *(checked —
@@ -781,7 +792,9 @@ convention, and the only thing that distinguishes a test from reassurance.
   twice — six behaviours, no test, and phase 4 changes the keyboard model on
   purpose.
 - *Before phase 5:* nothing new. `use-panes.test.tsx` already covers the hook,
-  and phase 5 is restyling, not rewriting.
+  and phase 5 is restyling, not rewriting. *(Phase 5 was dissolved — §11. The
+  premise inverts under its replacement: a surface reaching utilities is being
+  rewritten, not restyled, so it needs the coverage this entry excused.)*
 
 Composed stories (§6) make this cheaper than it sounds: the story enumerating a
 component's states is also the fixture the test renders, so the net and the
@@ -966,6 +979,60 @@ to `@theme` plus the handful of layout constants.
 **Why it ships alone:** `app-` falls as stylesheets are deleted, and it is
 individually revertible per file.
 
+**This phase was dissolved on 2026-08-10 and is not scheduled. Everything
+above it is the superseded plan, kept because what it got wrong is the useful
+part.** The replacement is a standing policy rather than a phase: **new and
+rewritten surfaces use Tailwind utilities, and existing stylesheets are
+deleted, never ported.**
+
+The reason is arithmetic rather than taste. Roughly 6430 lines across the 22
+stylesheets dress markup that increment C — the QUEUE / HOLDER / MATERIAL
+route merge that §11's phase 7 anticipates — rebuilds anyway. Porting them is
+work written once and deleted once, and the deletion was already scheduled
+before the port would have finished. No amount of care in the porting changes
+that; the files were never the durable artifact.
+
+**What is genuinely lost, and it is the two things the paragraph above claimed
+as the reason to ship this alone.** `app-` no longer falls as a consequence of
+migrating: it falls only when a surface is rebuilt for its own reasons, on
+increment C's schedule rather than this document's, and §14.1's 23 kB of
+head-room stops being a coexistence budget and becomes ordinary slack.
+And the per-file revertibility goes with it — a stylesheet deleted alongside
+the rewrite of the markup it dressed cannot be restored on its own, because
+there is no longer anything for it to style. Those were real benefits and they
+are being paid away deliberately, on the grounds that a benefit of doing work
+is not a reason to do work that will be thrown away.
+
+**The policy is now a mechanism rather than a promise.**
+`frontend/scripts/check-deleted.mjs` freezes a manifest of the 22 stylesheets
+and compares it against the directory, failing in both directions: a 23rd file
+fails as a policy violation, and a removal fails too, so a deliberate deletion
+is recorded in a diff rather than passing silently. Its comment states the hole
+instead of papering over it — two hundred new lines appended to `research.css`
+are the same violation wearing an old filename, and no check here catches that.
+Read the comment above `STYLESHEETS` before relying on the check for more than
+it claims.
+
+**The hazard the replacement policy inherits: migrating markup silently
+invalidates combinators.** A child (`>`) or adjacent-sibling (`+`) selector is
+a claim about the shape of the DOM, and rewriting a surface's markup to
+utilities while leaving its stylesheet in place breaks that claim with no test
+failure and no error — the rule simply stops matching. Measured by counting
+combinators per file: `research.css` 10, `responsive.css` 9,
+`conversation.css` 8, `course.css` 6, `tree.css` 3, single digits elsewhere;
+`+` is nearly absent, one each in `states.css` and `agents.css`.
+`responsive.css` is the worst of them by nature rather than by count, because
+its combinators sit inside media queries — they are markup claims that only
+apply at some viewports, so they cannot fail visibly in a default-width test
+even in a browser suite. This is not hypothetical: `check-deleted.mjs` cites
+`.extraction-failed > .extraction-summary` as exactly this failure already
+having happened, "no test, no error, just a rule that quietly stopped
+applying".
+
+**The actionable form, and the only part of this worth remembering at a
+keyboard: grep a stylesheet for `>` and `+` before touching the markup it
+dresses.**
+
 ### Phase 6 — real-browser accessibility.
 
 `@storybook/addon-vitest` with browser mode, so axe's colour-contrast rules
@@ -1022,6 +1089,14 @@ load-bearing to vanish. The three responsive layouts (S-F19) and the
 progressive field-dropping in the agent dock at 560px and 420px (L-F41) are
 where I would expect the failures, because they are the rules least likely to
 be exercised by anyone's normal window size.
+
+*Phase 5 was dissolved — §11 — and this entry is kept whole rather than
+trimmed, because none of it became wrong. The risk was never a property of the
+phase; it is a property of rewriting the markup those rules describe, which
+increment C does. So the three responsive layouts and the agent dock's
+progressive field-dropping at 560px and 420px are not a risk retired here but
+a risk deferred onto whoever rebuilds those surfaces — with the combinator
+hazard in §11 as the mechanism by which they will fail quietly.*
 
 **Not broken by anything here:** no event shape, no read model, no API
 contract, no Python file. This is a frontend-only specification, which means
@@ -1080,7 +1155,9 @@ states "the bundle budget is `app-` 57 and `total` 512". The current limits are
 `app-` **80** and `total` 512 *(checked — `check-size.mjs`)*, raised on the
 owner's instruction with the reasoning recorded in the file itself. This is not
 a nitpick: 23 kB of `app-` head-room is what makes phase 5's coexistence period
-affordable, and a document arguing that a merged page "grows `app-`" against a
+affordable *(phase 5 was dissolved — §11; the head-room is now ordinary slack
+rather than a budget earmarked for two stylesheet languages at once)*, and a
+document arguing that a merged page "grows `app-`" against a
 57 kB ceiling reaches a more pessimistic conclusion than the facts support.
 
 **14.2 Its §10 declines "a new design system or dependency", and the argument
@@ -1212,6 +1289,13 @@ will look like the wrong trade, and by then it will be four phases deep.
    frozen — which is a coherent, permanent, two-language end state, and is
    exactly what §15 warns against. I take the complete-the-migration arm and I
    am least confident about it.
+
+   **Answered, 2026-08-10, against the arm I took** — see §11's phase 5. The
+   decision is close to the conservative branch offered here: utilities for new
+   and rewritten surfaces, the rest neither ported nor frozen but deleted when
+   the markup they dress is rebuilt. That is a two-language state, as §15
+   warns, but a terminating one rather than a permanent one, and the freeze in
+   `check-deleted.mjs` is what keeps the second language from growing.
 5. **Does `presentation/lesson/` belong in this at all?** Six components, zero
    tests, four interactive widget types with their own keyboard models
    (C-F65, S-F34), and grading that is server-side by design. It is the one
