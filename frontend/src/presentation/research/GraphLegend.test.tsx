@@ -1,7 +1,12 @@
 import { render, screen } from '@testing-library/react'
 import { expect, it } from 'vitest'
 
-import { emptyGraph, type GraphNode, type GraphView } from '@domain/knowledge/graph.ts'
+import {
+  emptyGraph,
+  type GraphLink,
+  type GraphNode,
+  type GraphView,
+} from '@domain/knowledge/graph.ts'
 
 import { GraphLegend } from './GraphLegend.tsx'
 
@@ -49,4 +54,29 @@ it('drops the hollow-node rule when the graph is drawn whole', () => {
   expect(screen.queryByText(/hollow nodes have more to pull in/i)).not.toBeInTheDocument()
   // The colour key is still the reason this box exists.
   expect(screen.getAllByRole('listitem')).toHaveLength(1)
+})
+
+it('says what a dashed edge means, when the view has one', () => {
+  const link: GraphLink = {
+    source: 'a',
+    target: 'b',
+    relationshipType: 'temporally-near',
+    inferred: true,
+  }
+  render(
+    <GraphLegend view={{ ...viewOf([node('a', 'fact'), node('b', 'fact')]), links: [link] }} />,
+  )
+
+  expect(screen.getByText(/dashed edges are inferred from dates/i)).toBeInTheDocument()
+})
+
+it('drops the dashed-edge rule when no edge on the canvas is inferred', () => {
+  // No inferred link means no dashed line, and a key describing a mark that
+  // is not on the canvas sends the reader hunting for one.
+  const link: GraphLink = { source: 'a', target: 'b', relationshipType: 'asserted' }
+  render(
+    <GraphLegend view={{ ...viewOf([node('a', 'fact'), node('b', 'fact')]), links: [link] }} />,
+  )
+
+  expect(screen.queryByText(/dashed edges are inferred from dates/i)).not.toBeInTheDocument()
 })

@@ -106,6 +106,12 @@
   --color-accent-dim: #7a5a2c;
   --color-accent-fg: #17120a;
 
+  /* Graph-canvas edges. `GraphCanvas.tsx` reads these the same way it reads
+     the kind palette below -- `getComputedStyle` at runtime, not this layer's
+     utilities. */
+  --color-link: rgba(138, 149, 163, 0.35);
+  --color-link-inferred: rgba(138, 149, 163, 0.18);
+
   /* Event kinds carry the only other colour in the UI, so the log reads as a
      legend for itself. `entity-colors.ts` reads these at runtime with
      `getComputedStyle` for the graph canvas; `@theme` still emits them as

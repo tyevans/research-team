@@ -52,6 +52,16 @@
   --accent-dim: #7a5a2c;
   --accent-fg: #17120a;
 
+  /* Graph-canvas edges. Both were one inlined literal (`linkColor`) until the
+     inferred/asserted split needed a second -- moving both here rather than
+     adding a token for only the new one keeps the exception in one place
+     instead of two. Same grey, lower alpha for the inferred line: colour on
+     that canvas already carries entity type, so distinguishing an inferred
+     edge by hue would overload a channel instead of adding one -- see
+     `GraphCanvas.tsx`'s `linkColor`. */
+  --link: rgba(138, 149, 163, 0.35);
+  --link-inferred: rgba(138, 149, 163, 0.18);
+
   --k-session: #a78bfa;
   --k-message: #6ba7f5;
   --k-tool: #e2a457;

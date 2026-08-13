@@ -154,6 +154,8 @@ export const GraphCanvas = memo(function GraphCanvas({
       label: token('--fg', '#d7dee7'),
       accent: token('--accent', '#e2a457'),
       mono: token('--mono', 'monospace'),
+      link: token('--link', 'rgba(138, 149, 163, 0.35)'),
+      linkInferred: token('--link-inferred', 'rgba(138, 149, 163, 0.18)'),
     }
   }, [])
 
@@ -228,9 +230,27 @@ export const GraphCanvas = memo(function GraphCanvas({
             graph.current?.zoomToFit(400, 48)
           }}
           nodeLabel={(node) => `${String(node.name)} (${String(node.entityType)})`}
-          linkLabel={(link) => String(link.relationshipType)}
+          // An inferred edge's label is the arithmetic that produced it (e.g.
+          // "1923 contains November 1923"), not `relationshipType` -- the
+          // dashes below already say "inferred", so restating that word on
+          // hover would tell a reader nothing the line hadn't already.
+          linkLabel={(link) =>
+            link.inferred ? String(link.derivation) : String(link.relationshipType)
+          }
           linkDirectionalArrowLength={4}
-          linkColor={() => 'rgba(138, 149, 163, 0.35)'}
+          // Dashed rather than a different hue: colour on this canvas already
+          // means entity type (see the node painter's selection-ring comment
+          // below), so giving inferred edges a second colour would trade that
+          // fact for this one instead of adding it. The dimming is a change
+          // of alpha within the same grey, not a new colour -- both literals
+          // now live in `tokens.css` as `--link`/`--link-inferred`.
+          //
+          // Not asserted by any test: jsdom paints nothing to a `<canvas>`,
+          // and a browser-mode test screenshotting one would be asserting on
+          // pixels rather than on anything this suite can judge. Verified by
+          // eye instead -- see the task report.
+          linkColor={(link) => (link.inferred ? theme.linkInferred : theme.link)}
+          linkLineDash={(link) => (link.inferred ? [2, 2] : null)}
           nodeRelSize={5}
           // Names are drawn on the canvas rather than left to the hover
           // tooltip: a field of identical unlabelled dots gives a reader

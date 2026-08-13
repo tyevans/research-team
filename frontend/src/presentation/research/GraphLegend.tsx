@@ -61,6 +61,17 @@ export const GraphLegend = ({ view }: { view: GraphView }) => {
           Hollow nodes have more to pull in. Click one to expand it.
         </p>
       ) : null}
+      {/* A sibling of the note above, on the same terms: prose rather than a
+          swatch, because a dashed line is a rule about where an edge came
+          from, not another category to swatch alongside entity types. And
+          withheld the same way, when the drawn graph has no inferred edge --
+          otherwise this key would explain a mark nobody can see. */}
+      {view.links.some((link) => link.inferred) ? (
+        <p className="graph-legend-note">
+          Dashed edges are inferred from dates, not asserted by a document. Hover one to see the
+          arithmetic.
+        </p>
+      ) : null}
     </aside>
   )
 }
