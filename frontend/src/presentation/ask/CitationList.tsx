@@ -27,17 +27,17 @@ export const CitationList = ({
   if (citations.length === 0) return null
 
   return (
-    <div className="flex flex-wrap items-baseline gap-2 text-sm">
-      <span className="text-xs tracking-[0.06em] text-fg-faint uppercase">Sources</span>
-      {/* Zeroed for the reason `AskThread`'s activity list is: no preflight,
+    <div className="ask-sources">
+      <span className="ask-sources-label">Sources</span>
+      {/* Zeroed in `ask.css` rather than here: this build imports no preflight,
           so a bare `<ul>` arrives with the user agent's margin and bullets. */}
-      <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
+      <ul className="ask-sources-list">
         {citations.map((citation) => (
           <li key={citation.id}>
             {/* The project's document facet, not a bare id: the reader is on
                 the project page already, and this keeps them on it. */}
             <a
-              className="font-mono"
+              className="ask-source"
               href={projectHref(projectId, { facet: 'doc', id: citation.id })}
             >
               {citation.id}
