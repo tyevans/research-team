@@ -4,7 +4,15 @@ import type { Project } from './project.ts'
 import type { SessionSummary } from '../session/session.ts'
 import { ProjectId, SessionId } from '../shared/identifier.ts'
 
-import { currentSession, flatten, forest, matches, recencyOf, rollups } from './landing.ts'
+import {
+  currentSession,
+  flatten,
+  forest,
+  matches,
+  recencyOf,
+  rollups,
+  summariesAsForest,
+} from './landing.ts'
 
 const ATLAS = ProjectId('11111111-1111-1111-1111-111111111111')
 const RETENTION = ProjectId('22222222-2222-2222-2222-222222222222')
@@ -30,6 +38,19 @@ const session = (id: string, over: Partial<SessionSummary> = {}): SessionSummary
   forkedAt: null,
   failedTurns: 0,
   ...over,
+})
+
+/** Moved here with the function, from `infrastructure/http/mappers.test.ts`.
+ *
+ * The second assertion is the one that is not a restatement of the first: it
+ * pins that lineage is *dropped* rather than rebuilt, which is what separates
+ * this from `forest` and is the only way the two could be silently swapped. It
+ * would fail against `forest`, which would nest `b` under `a`. */
+it('renders a flat list as roots, discarding lineage rather than guessing at it', () => {
+  const roots = summariesAsForest([session('a'), session('b', { forkedFrom: SessionId('a') })])
+
+  expect(roots.map((root) => root.id)).toEqual(['a', 'b'])
+  expect(roots.every((root) => root.children.length === 0)).toBe(true)
 })
 
 it('puts each session under the project it belongs to', () => {

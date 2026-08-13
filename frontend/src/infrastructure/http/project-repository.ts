@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { ApiError } from '@application/ports/errors.ts'
+import { ApiError, ResearchDisabledError } from '@application/ports/errors.ts'
 import type {
   ExtractionRepository,
   HealthRepository,
@@ -75,18 +75,6 @@ export class HttpProjectRepository implements ProjectRepository {
 
   async course(id: ProjectId): Promise<Course> {
     return toCourse(await this.http.get(`/api/projects/${seg(id)}/course`, dto.courseDto), id)
-  }
-}
-
-/** This instance was not wired for autonomous research at all.
- *
- * Distinct from "nothing is running", which the API expresses with the same
- * 404. Worth saying once and never asking about again — polling a feature that
- * is switched off is noise on somebody's log. */
-export class ResearchDisabledError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'ResearchDisabledError'
   }
 }
 

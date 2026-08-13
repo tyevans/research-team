@@ -8,9 +8,10 @@
    stylesheets. The prefix goes when the views migrate and the old rules are
    deleted.
 
-   Nothing in the running console uses any of this yet. It is added with the
-   components so the gallery renders them as they will actually look, and it
-   changes no existing page. */
+   The landing page is the first view to migrate: `.project` and its head, name
+   and stats rules are deleted from `tree.css` and the card block below is what
+   draws a project on screen now. So this file is no longer gallery-only, and a
+   change here is a change to what a reader sees. */
 
 /* ======================================================================= */
 /* status                                                                  */
@@ -377,28 +378,56 @@ a.ent-ref:hover .ent-ref-name {
 /* project card                                                            */
 /* ======================================================================= */
 
+/* The margin and the hover are carried over from `.project`, which this
+   replaced on the landing page. Neither is decoration there: the list is
+   virtualized and each card is absolutely positioned in its own `<li>`, so the
+   margin *is* the gap between rows and without it they touch. The `<li>` is
+   `position: absolute`, which establishes a block formatting context, so the
+   margin does not collapse out through it and the measured height still
+   includes it -- which is what a virtualizer needs and what would silently
+   overlap rows if it stopped being true. */
 .ent-project-card {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3);
+  margin: var(--space-2) 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg-panel);
+  transition:
+    border-color 0.12s,
+    background 0.12s;
+}
+.ent-project-card:hover {
+  background: var(--bg-panel-2);
+  border-color: var(--line-strong);
 }
 .ent-project-card.is-selected {
   border-color: var(--line-strong);
 }
 
+/* `flex-wrap` is the one rule here that is a bug fix rather than a carry-over.
+   Without it the head is a single line, and the landing page puts five things
+   on it -- a disclosure, a name, a workflow chip, a holder and a run marker.
+   At rail width that clipped, which is the defect already filed twice against
+   the topic row's meta line and its dispatch chip. `.project-head` wrapped;
+   this has to as well. */
 .ent-project-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
   min-width: 0;
 }
 
+/* The size is `.project-name`'s. A card is a list item a reader scans, and the
+   name is the thing being scanned for; at the body size it sat level with the
+   chips beside it and stopped being the entry point. */
 .ent-project-name {
+  font-size: var(--t-lg);
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .ent-project-holder {
@@ -419,8 +448,12 @@ a.ent-ref:hover .ent-ref-name {
   font-size: var(--t-xs);
 }
 
+/* `align-items: center` because the overflow slot may hold a `⋯` trigger and a
+   flex spacer alongside ordinary buttons, and `stretch` made the spacer a
+   full-height invisible column. */
 .ent-project-actions {
   display: flex;
+  align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
 }
