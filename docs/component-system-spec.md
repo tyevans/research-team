@@ -949,11 +949,32 @@ points at an id that no longer exists. Every one of those failures is silent.
 The fix is to move the tab stop to the container with a two-level cursor, which
 `2026-08-10-final-path-design.md` sequences after increment C on purpose.
 
-It is also, on the evidence here, unmeasured: nothing in this repository
-establishes how long a real session log gets, and the code's own prose assumes
+It was also, when that was written, unmeasured: nothing in this repository
+established how long a real session log gets, and the code's own prose assumes
 "a hundred" rows — an order of magnitude below where virtualization pays for
 itself. **It should be gated behind a measurement of a real log rather than
 built on the assumption that a list wants virtualizing.**
+
+**The measurement, taken 2026-08-13 against `~/.research-team/sessions.db`.**
+Four sessions, 484 events in the database altogether, of which the `Session`
+streams hold 195, 51, 12 and 1. So the longest real session log is **195 rows**,
+the median is 32, and the code's "a hundred" was a better guess than the plan
+that wanted to virtualize it. A virtualizer starts paying somewhere in the
+thousands; two hundred rows of a grid this simple is not a performance problem
+and nobody has reported one.
+
+**The sample is weak and that is stated rather than hidden**: four sessions,
+all written the same day, on a development machine, so it is evidence about
+this database and not about a production one. It is still the only evidence
+that exists, and the direction is not marginal — 195 against a threshold an
+order of magnitude away is not the kind of gap a better sample closes.
+
+So #26 is **declined until a real log crosses roughly a thousand rows**, and
+the measurement is cheap enough to repeat: count rows per `aggregate_id` in
+`events` where `aggregate_type` is `Session`. What survives from the task is
+not the virtualizer but its finding — the timeline's tab stop lives on a row,
+and *any* future change that unmounts rows breaks four things silently. That
+is worth knowing whether or not a virtualizer is ever the thing that does it.
 
 **Why it shipped alone:** the reasoning below was written when this phase was
 believed to be four new primitives and a keyboard-model change. It shipped alone
