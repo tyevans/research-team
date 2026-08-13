@@ -336,29 +336,12 @@
   color: var(--fg-dim);
 }
 
-.chip-invariant {
-  color: var(--k-failure);
-  border-color: #45272a;
-  background: #241417;
-}
-.chip-blocking {
-  color: var(--accent);
-  border-color: var(--accent-dim);
-  background: #241d10;
-}
-.chip-advisory {
-  color: var(--fg-dim);
-}
-.chip-human_gate {
-  color: var(--k-session);
-  border-color: #3a3060;
-  background: #1a1630;
-}
-.chip-critic_gate {
-  color: var(--k-compaction);
-  border-color: #2b3a42;
-  background: #121b20;
-}
+/* The five gate severities were here — `.chip-invariant`, `.chip-blocking`,
+   `.chip-advisory`, `.chip-human_gate`, `.chip-critic_gate` — and are
+   `SEVERITY_DRESS` in `presentation/session/GateReview.tsx` now, with the hexes
+   unchanged and named as tokens where a token exists. `GateReview` renders from
+   the shell's decision bar on every route, so this file dressing it was the
+   same deletion trap `.autonomy-allow*` and `.drawer*` left by. */
 
 /* ---------------------------------------------------------------- workers
  *
@@ -562,84 +545,25 @@
 
 /* ---------------------------------------------------------------- drawer
  *
- * A read-only overlay, not a third pane: it opens over whatever the course
- * page is already showing rather than reflowing it, because watching a
- * worker is a glance, not a navigation. Right-anchored so it reads as
- * something laid over the page, the same convention as everything else here
- * that opens on top rather than beside.
+ * Nothing here any more. `.drawer`, `.drawer-head`, `.drawer-title`,
+ * `.drawer-spacer`, `.drawer-body` and `.drawer-body.is-flush` are Tailwind
+ * utilities on `presentation/common/Drawer.tsx`, which carries the reasoning
+ * that used to sit above each rule -- including task #42's measurement for the
+ * body inset, quoted there rather than summarised.
  *
- * `.drawer-backdrop` used to live here, at `z-index: 20`, and is deleted:
- * `Drawer` is an `Overlay` now, so the dimming is `.lay-layer-backdrop` and
- * the stacking is `--z-overlay` on the one host. That deletion is the fix for
- * the dock popover painting over this dialog -- the popover was at 40 and this
- * was at 20 -- and `scripts/check-deleted.mjs` fails if the class comes back.
+ * Why they left: `Drawer` is reached from the shell on every route and is the
+ * base of `Confirm`, and this file is on the die-with-its-screen list. A view
+ * stylesheet dressing a component that outlives the view is a deletion trap,
+ * the same one `.autonomy-allow*` was moved out for further down. Found by a
+ * sweep (`docs/reports/stylesheet-orphan-sweep.md`), not by a failure, because
+ * there is no failure to have: jsdom applies no stylesheet and a class that
+ * resolves to nothing is silent.
  *
- * `position: fixed` rather than absolute inside the layer: `.lay-layer-content`
- * is `position: relative` with no size of its own, so an absolute child would
- * resolve against a zero-height box at the top of the viewport. Fixed is also
- * what the host's own stories use for the same reason, and the host is a fixed
- * box over the viewport anyway, so the two agree. */
-.drawer {
-  position: fixed;
-  /* Right-anchored, full height. Was `display: flex; justify-content:
-     flex-end` on the deleted backdrop; expressed on the panel itself now,
-     because there is no longer a flex parent to be the end of. */
-  inset: 0 0 0 auto;
-  width: 42vw;
-  max-width: 640px;
-  min-width: 360px;
-  background: var(--bg-panel);
-  border-left: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.drawer-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
-  flex: 0 0 auto;
-}
-
-.drawer-title {
-  margin: 0;
-  font-size: var(--t-sm);
-  font-weight: 600;
-}
-
-.drawer-spacer {
-  flex: 1 1 auto;
-}
-
-/* Padded, and the horizontal inset is `.drawer-head`'s 12px on purpose: the
-   heading and the first line under it are read as one column, and 12px against
-   0 put them visibly out of line. Measured in Chromium at
-   `layout/OverlayHost` FocusReturnsToTheRow, before this rule: the body's only
-   child ran from x=743 to x=1280 -- one pixel inside the drawer's left border,
-   out to the viewport's last column -- while the title above it sat at 755.
-
-   This used to be every caller's job. Three of four did it, in three different
-   insets, and the fourth (`TopicStatusDialog`) did not do it at all. The
-   vertical rhythm is `.conv`'s, which is the largest of the three and the one
-   a reader sees most. */
-.drawer-body {
-  flex: 1 1 auto;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  padding: 10px 12px 16px;
-}
-
-/* For a caller that brings its own inset -- prose with a measure, a scroller
-   with its own padding. Not the default, because the default is what a caller
-   gets by forgetting, and text against a border is a worse thing to get by
-   forgetting than an inset that is 12px larger than intended. */
-.drawer-body.is-flush {
-  padding: 0;
-}
+ * `Drawer` still writes `drawer` as a class. That is deliberate and it is a
+ * hook, not a rule: `responsive.css` narrows the panel below 820px and is
+ * shared. `scripts/check-deleted.mjs` fails if a top-level `.drawer {` comes
+ * back under `src/styles/`; the indented one inside that media query is
+ * exempt by construction, since the pattern is anchored. */
 
 /* -------------------------------------------------------------- autonomy
  *

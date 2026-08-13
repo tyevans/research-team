@@ -105,17 +105,12 @@ select.input {
   color: var(--fg-dim);
 }
 
-/* Cancel: available, but never louder than the primary action. */
-.btn-quiet {
-  background: transparent;
-  border-color: #3a2b2c;
-  color: var(--del-fg);
-}
-.btn-quiet:hover:not(:disabled, [aria-disabled='true']) {
-  background: #24151700;
-  background: #241517;
-  border-color: #543336;
-}
+/* `.btn-quiet` was here and is in `shell.css` now, beside `.btn` and the four
+   other tones. It is the fifth tone of a button primitive, and it was the only
+   one filed in a *view* stylesheet -- so deleting this file with the composer
+   would have turned every quiet button in the console into a default one,
+   including the "Also allow the review gate" button the decision bar renders on
+   every route. `shell.css` says why it could not become utilities. */
 
 /* the "turn 3 · events 14–21" jump chip */
 .turn-range {
