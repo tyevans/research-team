@@ -12,10 +12,15 @@ import { EntityStatus } from '../EntityStatus.tsx'
  * dispatch" against "row with nothing", and so a type error catches a row
  * rendering a verb it was not given.
  *
- * **Two, and the ceiling is four.** The design's own tripwire: more than four
+ * **Three, and the ceiling is four.** The design's own tripwire: more than four
  * named slots means the density set is wrong rather than the slot set, and the
  * correction at that point is a fifth density, not a sixth slot. Recording the
  * count here is what makes that checkable later instead of aspirational.
+ *
+ * The third was not a new affordance. `note` was already being passed, inside
+ * `primary`, which is how a paragraph-length error came to sit in the group
+ * that must never shrink. Splitting it is what gives the line a give-order at
+ * all.
  */
 export interface TopicRowSlots {
   /** The one verb this row offers — today a dispatch button. The view owns it
@@ -23,6 +28,14 @@ export interface TopicRowSlots {
    *  control is carefully reasoned about at its call site, and a row that
    *  decided its own disabled-ness would have to re-derive that reasoning. */
   primary: ReactNode
+  /** What the row reports about itself — today a dispatch chip. Not a verb:
+   *  it is read, not pressed, so it belongs on the side of the line that gives
+   *  way rather than the side that is pinned.
+   *
+   *  Separate from `primary` because it arrived inside it, and that is what
+   *  put an unbounded sentence in the pinned group: a failed dispatch's chip
+   *  measured **708px** in a 294px line and pushed both verbs off the row. */
+  note: ReactNode
   /** Verbs behind a menu. A list rather than a node so the row can decide
    *  whether one item deserves a menu at all — "a menu holding a single item
    *  is a click in front of a button", which the existing row says in a
@@ -75,24 +88,39 @@ export const TopicRow = ({
       {href === undefined ? topic.question : <a href={href}>{topic.question}</a>}
     </div>
 
+    {/* Two groups, and which is which is the row's whole layout policy: what is
+        read gives way, what is pressed does not. The line is narrower than its
+        contents at rail width and always will be — 468px of content in 292px,
+        measured — so the only question is what goes first, and a verb clipped
+        off the right edge is still in the DOM and unreachable by mouse. */}
     <div className="ent-topic-meta">
-      <EntityStatus status={topic.status} />
+      <div className="ent-topic-facts">
+        <EntityStatus status={topic.status} />
 
-      {/* Counts, not percentages, and each says what it counts. `findings` is
-          an `int` here and `findingNotes` is a list of strings on the detail —
-          two different fields the wire spells with two different keys, which a
-          props contract mapping both onto `findings` would turn into a bug
-          that typechecks. */}
-      <span className="ent-topic-count">{topic.sources} sources</span>
-      <span className="ent-topic-count">{topic.findings} findings</span>
-      {topic.openSubQuestions > 0 ? (
-        <span className="ent-topic-count">{topic.openSubQuestions} open</span>
-      ) : null}
+        {slots.note}
 
-      {slots.primary}
-      {slots.overflow !== undefined && slots.overflow.length > 0 ? (
-        <span className="ent-topic-overflow">{slots.overflow}</span>
-      ) : null}
+        {/* Counts, not percentages, and each says what it counts. `findings` is
+            an `int` here and `findingNotes` is a list of strings on the detail —
+            two different fields the wire spells with two different keys, which a
+            props contract mapping both onto `findings` would turn into a bug
+            that typechecks.
+
+            Last, so they are what the clip eats first. They are a scanning aid
+            and every one of them is on the detail; the status is the row's
+            identity and the note is what just happened to it. */}
+        <span className="ent-topic-count">{topic.sources} sources</span>
+        <span className="ent-topic-count">{topic.findings} findings</span>
+        {topic.openSubQuestions > 0 ? (
+          <span className="ent-topic-count">{topic.openSubQuestions} open</span>
+        ) : null}
+      </div>
+
+      <div className="ent-topic-verbs">
+        {slots.primary}
+        {slots.overflow !== undefined && slots.overflow.length > 0 ? (
+          <span className="ent-topic-overflow">{slots.overflow}</span>
+        ) : null}
+      </div>
     </div>
   </li>
 )

@@ -211,13 +211,17 @@ export const TopicQueue = ({
               key={topic.topicId}
               topic={topic}
               slots={{
-                // The chip travels with the verb rather than below the row,
-                // because it reports on that verb and because a row whose
-                // height depends on whether a dispatch happened is the
-                // variable-height row `TopicRow` exists to rule out.
+                // The chip stays on the meta line rather than taking one of
+                // its own, because a row whose height depends on whether a
+                // dispatch happened is the variable-height row `TopicRow`
+                // exists to rule out. It is `note` rather than part of
+                // `primary` because it is read rather than pressed: it reports
+                // on the verb, it is not the verb, and inside `primary` it sat
+                // in the group that must never yield -- which is how a failed
+                // dispatch's sentence came to push both verbs off the row.
+                note: dispatch ? <DispatchChip dispatch={dispatch} /> : null,
                 primary: (
                   <>
-                    {dispatch ? <DispatchChip dispatch={dispatch} /> : null}
                     {/* One button rather than the split control the design
                         sketches: with one action there is nothing to split,
                         and a menu holding a single item is a click in front of
