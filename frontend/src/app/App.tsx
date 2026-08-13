@@ -6,17 +6,10 @@ import { queryKeys } from '@application/queries/keys.ts'
 import { createSessionStore, type SessionStore } from '@application/session/session-store.ts'
 import type { Course } from '@domain/project/course.ts'
 import { AskView } from '@presentation/ask/AskView.tsx'
-import { CourseView } from '@presentation/course/CourseView.tsx'
 import { Shell } from '@presentation/layout/Shell.tsx'
-import {
-  homeHref,
-  projectHref,
-  sessionSelection,
-  type Route,
-  type Selection,
-} from '@presentation/routing/routes.ts'
-import { navigate, useRoute } from '@presentation/routing/use-route.ts'
-import { ResearchView } from '@presentation/research/ResearchView.tsx'
+import { ProjectView } from '@presentation/project/ProjectView.tsx'
+import { homeHref, type Route } from '@presentation/routing/routes.ts'
+import { useRoute } from '@presentation/routing/use-route.ts'
 import { SessionView } from '@presentation/session/SessionView.tsx'
 import { Breadcrumbs } from '@presentation/shell/Breadcrumbs.tsx'
 import { ConnectionBadge, DriftBadge } from '@presentation/shell/ConnectionBadge.tsx'
@@ -138,65 +131,21 @@ const CurrentView = ({
 
   const { id, selection } = route
 
-  if (selection !== null && RESEARCH_FACETS.has(selection.facet)) {
-    return (
-      <ResearchView
-        key={id}
-        projectId={id}
-        entity={
-          selection.facet === 'entity' && typeof selection.id === 'string' ? selection.id : null
-        }
-        // Replaced rather than pushed, for the reason scrubbing replaces.
-        // Browsing a graph also *grows* it -- every selection pulls in a
-        // neighbourhood -- so a back button that restored the previous
-        // entity could not also un-draw what that click added. It would
-        // return a URL describing a smaller graph than the one on screen,
-        // which is worse than not offering the step back at all.
-        onEntity={(entity) =>
-          navigate(projectHref(id, { facet: 'entity', id: entity }), { replace: true })
-        }
-      />
-    )
-  }
-
-  // Before the course fallthrough, and not in `RESEARCH_FACETS`: ask is its
-  // own view, not a facet the research page answers.
+  // Ahead of the project page rather than inside it, and the last arm of the
+  // old dispatch left standing: ask is one conversation with no parts worth a
+  // URL and nothing to read it against, so it is a view rather than a region.
+  // `ProjectView.regionOf` maps it anyway, and says why.
   if (selection?.facet === 'ask') return <AskView key={id} projectId={id} />
 
-  const openStage = selection?.facet === 'stage' ? (selection.id ?? null) : null
-
+  // Unconditional, which is the whole of what this slice changed here. The
+  // branch that stood between the two facet sets, and the `RESEARCH_FACETS`
+  // table that fed it, are gone -- the comment on that table named this change
+  // as the one that would delete it. Every facet now reaches a region rather
+  // than three of them landing on a page that reads none.
   return (
-    <CourseView
-      key={id}
-      projectId={id}
-      onLoaded={onCourse}
-      watching={selection?.facet === 'session' ? selection.id : null}
-      onWatch={(sessionId) => navigate(projectHref(id, sessionSelection(sessionId)))}
-      openStage={openStage}
-      onToggleStage={(stageId) =>
-        // Replaced rather than pushed, for the reason the graph's selection is:
-        // opening a stage is a glance, and forty glances in the back stack make
-        // the back button useless. Replacing keeps it linkable without that
-        // cost -- which is the objection `useCourse` raised against routing
-        // this at all, and it is answered rather than ignored.
-        navigate(projectHref(id, openStage === stageId ? null : { facet: 'stage', id: stageId }), {
-          replace: true,
-        })
-      }
-    />
+    <ProjectView key={id} projectId={id} selection={selection} store={store} onLoaded={onCourse} />
   )
 }
-
-/** Which facets the research view answers, until the two views merge.
- *
- * A dispatch table rather than a `switch` with two arms because it is a
- * *temporary* fact -- §3.2 of the proposal deletes both views into one page,
- * and at that point this set and the branch it feeds both go. Facets outside it
- * land on the course view, including the three (`file`, `artifact`, `finding`)
- * that no view reads yet: they parse and they are linkable, and the region that
- * renders them is a later slice.
- */
-const RESEARCH_FACETS: ReadonlySet<Selection['facet']> = new Set(['entity', 'topic', 'doc'])
 
 /** The tree is a projection of every session, so any log frame can change it.
  *
