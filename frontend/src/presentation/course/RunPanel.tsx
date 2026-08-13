@@ -285,10 +285,16 @@ const Counters = ({ run, live }: { run: ResearchRun; live: boolean }) => {
           explanation="Consecutive failed turns; enough of them stop the run"
         />
       </div>
+      {/* The tense is the whole content of this line. `workingOn` is the last
+          topic the run claimed and it stays set after the run stops, so a
+          stopped run printed "working on does spacing help?" directly above a
+          box saying it had stopped -- a present-tense claim about work in
+          flight, which is the one reading this panel exists to prevent. `live`
+          was already consulted for the *absent* case and not for this one. */}
       <div className="run-working">
         {progress?.workingOn ? (
           <>
-            <span className="muted">working on </span>
+            <span className="muted">{live ? 'working on ' : 'last worked on '}</span>
             <span className="run-topic">{progress.workingOn}</span>
           </>
         ) : (
