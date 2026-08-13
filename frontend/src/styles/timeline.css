@@ -6,6 +6,24 @@
   flex-direction: column;
   outline: none;
 }
+/* Inert today, deliberately kept, and worth saying so rather than leaving the
+   next reader to infer that this element takes focus. Measured in Chromium:
+   `.timeline` has no `tabIndex` (the grid is a roving tabindex whose stop lives
+   on a row -- `Timeline.tsx` argues that at length) and no overflow of its own
+   (client and scroll were both 520x1827, so it is not the scroll container
+   Chromium would make focusable regardless). `focus()` on it does nothing and
+   neither rule has ever matched.
+
+   Kept because the pair is the *correct* answer the moment that changes, and
+   the thing it guards against is live: `.lay-pane-body` around this element is
+   `overflow: auto`, so a `.timeline` that gained a tab stop would take the
+   global outward ring from `tokens.css` and have it clipped at the pane's
+   padding box -- the `FileList` bug, in a component phase 4 is scheduled to
+   rework the keyboard model of. Two dead declarations cost nothing; the ring
+   they replace costs a keyboard reader the whole indication.
+
+   The suppression above and the inset ring below are one decision and must move
+   together. Deleting only the second is what turns this into that bug. */
 .timeline:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 1px var(--accent);
@@ -21,7 +39,16 @@
   position: relative;
   outline: none;
 }
-/* The row itself is the tab stop, so it needs a visible focus ring. */
+/* The row itself is the tab stop, so it needs a visible focus ring.
+   `inset` is load-bearing rather than stylistic, and this is where the audit
+   that fixed `.agents-row` and `.document-row-open` found the console already
+   right: a row is full-width inside `.lay-pane-body`, which is `overflow: auto`,
+   so the global outward ring from `tokens.css` would lose both sides to the
+   pane's padding box. An inset shadow is drawn within the border box and no
+   ancestor's overflow can touch it. Measured at 1440x900: row `0..520 x 90..135`
+   inside a clip of `0..520 x 0..300`, ring wholly inside. The `outline: none`
+   above is what makes room for it and is not a bare suppression -- the two are
+   one decision, as in `.timeline` above. */
 .ev:focus-visible,
 .head-marker:focus-visible {
   box-shadow: inset 0 0 0 2px var(--accent);
@@ -171,10 +198,19 @@
 .ev:focus-within .ev-time {
   visibility: hidden;
 }
-.ev-fork:focus-visible {
-  visibility: visible;
-  outline: 2px solid var(--accent);
-}
+/* `.ev-fork:focus-visible` was deleted here, and it was dead three times over
+   rather than once -- which is why this is a deletion and not a comment.
+   Measured in Chromium (`focus()` on the button, forty rows, the pane body
+   scrolling): `focused=false`, because `visibility: hidden` above makes an
+   element unfocusable, so the rule's own `visibility: visible` could never be
+   what revealed it. Nor could anything else reach it: the button is
+   `tabIndex={-1}` unconditionally (`Timeline.tsx`) so Tab never lands, and
+   nothing in `src/` calls `focus()` on it. And had it fired, its two
+   declarations were already true -- `.ev:focus-within .ev-fork` three rules up
+   covers a focused fork button by definition, and the outline was `tokens.css`'s
+   global ring restated at the same width and colour.
+   Not a clipped-ring case, incidentally: `.ev-cell-act` is shrink-wrapped at
+   `441..514` inside a `0..520` pane, so a ring there had room on both sides. */
 .ev-strategy {
   color: var(--k-compaction);
 }
