@@ -315,11 +315,11 @@ export interface AskRepository {
    *  caller must surface that rather than retry, since retrying would join a
    *  queue that does not exist.
    *
-   *  Only a refusal made *before* streaming starts can be a status code. A
-   *  failure after the first frame -- including asking about a project that
-   *  does not exist, which these routes never check for -- arrives as an
-   *  `error` event and resolves, so a caller that only handles rejection will
-   *  show a turn that silently stops. */
+   *  Only a refusal made *before* streaming starts can be a status code --
+   *  an unknown project rejects with a 404 the same way, since the route
+   *  checks it before opening the stream. A failure after the first frame
+   *  arrives as an `error` event and resolves instead, so a caller that only
+   *  handles rejection will show a turn that silently stops. */
   ask(
     projectId: ProjectId,
     chatId: string,

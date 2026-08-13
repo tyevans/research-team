@@ -61,10 +61,10 @@ export const AskView = ({ projectId }: { projectId: ProjectId }) => {
       </div>
 
       {/* A refusal made before the stream started -- a busy chat, a dead
-          network -- never becomes an answer, so it has nowhere to live in the
-          transcript's own error and needs saying here. An unknown project is
-          *not* one of these: those routes never check, so it arrives as an
-          in-band error frame on a 200 and lands in the failed turn. */}
+          network, an unknown project -- never becomes an answer, so it has
+          nowhere to live in the transcript's own error and needs saying
+          here too: the store puts it in both the banner and the failed
+          turn, since a rejection is the one case where it can afford to. */}
       {error ? (
         <div className="error-box ask-banner" role="alert">
           <strong>That question did not go through.</strong>

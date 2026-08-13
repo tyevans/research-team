@@ -37,7 +37,7 @@ that project's own material â€” its knowledge graph and the sources behind it â€
 and the agent cites the documents it opened rather than the ones it found by
 searching. The page starts no session and appends no events: the conversation
 is held in server memory, is dropped when you leave, and the tools it can reach
-are an allowlist of five readers with no write and no network among them.
+are an allowlist of four readers with no write and no network among them.
 
 Point at your model server if it is not on the default
 `http://localhost:8080/v1/`:
