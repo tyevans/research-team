@@ -81,6 +81,17 @@ export default defineConfig({
   plugins: [tailwindcss(), react()],
   base: '/static/',
   resolve: {
+    /* One React, however a module got here. Added for the browser suite and
+       stated rather than left to look like hygiene: in browser mode Vite
+       pre-bundles `@tanstack/react-query` into its own optimised chunk, that
+       chunk resolved a second copy of React, and any test mounting a component
+       under `QueryClientProvider` died on "Invalid hook call" before rendering
+       anything -- `AgentWidget.browser.test.tsx` is the one that hit it. The
+       jsdom suite never saw it, because it does not pre-bundle the same way.
+       Costs nothing in the application build, where there is one copy already;
+       what it buys is that the browser suite can mount a real container-backed
+       component instead of a hand-written imitation of its markup. */
+    dedupe: ['react', 'react-dom'],
     alias: {
       '@domain': fileURLToPath(new URL('./src/domain', import.meta.url)),
       '@application': fileURLToPath(new URL('./src/application', import.meta.url)),

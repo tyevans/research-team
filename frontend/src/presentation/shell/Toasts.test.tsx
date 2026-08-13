@@ -141,6 +141,168 @@ it('stops the clock while focus is inside a toast', async () => {
   expect(screen.getByText('saved')).toBeInTheDocument()
 })
 
+/** The second half: reachable, and survivable to leave.
+ *
+ * The close button closed L-F37 but left two holes either side of it. A toast
+ * raised while the reader is deep in the timeline is a fixed column at the end
+ * of the document, so the only route to it is Tab through the entire page --
+ * an affordance you can only reach by giving up your place is one most people
+ * will not use. And pressing Enter on it dropped focus to `<body>`, so the
+ * price of dismissing a notification was your place in the page anyway.
+ *
+ * F6 is the ARIA-practices key for cycling to a notification region and the
+ * one Radix chose; nothing else in this console binds it (Escape is taken
+ * three times over, `/` once). The listener exists only while a toast does,
+ * which is what keeps the browser's own F6 intact the rest of the time.
+ */
+
+it('names the region, so arriving in it says where you are', () => {
+  act(() => {
+    notify('saved', 'good')
+  })
+  render(<Toasts />)
+
+  // Without the name, F6 lands the reader in an unnamed `div` and a screen
+  // reader announces the button and nothing about the place it is in. The
+  // landmark is also what makes F6 *conventional* rather than merely bound.
+  expect(screen.getByRole('region', { name: 'Notifications' })).toBeInTheDocument()
+})
+
+it('brings focus to the stack from anywhere in the page', async () => {
+  const user = userEvent.setup()
+  act(() => {
+    notify('could not reach the server', 'bad')
+  })
+  render(
+    <>
+      <button type="button">somewhere in the page</button>
+      <Toasts />
+    </>,
+  )
+
+  await user.click(screen.getByRole('button', { name: 'somewhere in the page' }))
+  await user.keyboard('{F6}')
+
+  // The oldest toast, not the newest: the stack reads top-down and the top is
+  // where a reader starts.
+  expect(screen.getByRole('button', { name: 'Dismiss: could not reach the server' })).toHaveFocus()
+})
+
+it('leaves F6 to the browser when there is nothing to reach', async () => {
+  const user = userEvent.setup()
+  render(
+    <>
+      <button type="button">somewhere in the page</button>
+      <Toasts />
+    </>,
+  )
+  const elsewhere = screen.getByRole('button', { name: 'somewhere in the page' })
+  await user.click(elsewhere)
+  await user.keyboard('{F6}')
+
+  // **This passes with the change reverted**, and is here anyway: it is the
+  // guard on the part of the design that is not visible in the code, which is
+  // that F6 keeps its browser meaning (pane cycling in Chrome and Firefox)
+  // every moment the console has nothing to say. An empty stack registers no
+  // listener at all, so there is nothing to consume the key.
+  expect(elsewhere).toHaveFocus()
+})
+
+it('hands focus to the next toast when one is dismissed', async () => {
+  const user = userEvent.setup()
+  act(() => {
+    notify('saved', 'good')
+    notify('could not reach the server', 'bad')
+  })
+  render(<Toasts />)
+
+  await user.tab()
+  await user.keyboard('{Enter}')
+
+  // Rejected: returning to the page after each dismissal, which makes clearing
+  // three toasts three round trips. The stack is frozen while focus is in it,
+  // so the next toast is guaranteed to still be there to receive this.
+  expect(screen.getByRole('button', { name: 'Dismiss: could not reach the server' })).toHaveFocus()
+})
+
+it('hands focus to the previous toast when the last one is dismissed', async () => {
+  const user = userEvent.setup()
+  act(() => {
+    notify('saved', 'good')
+    notify('could not reach the server', 'bad')
+  })
+  render(<Toasts />)
+
+  await user.tab()
+  await user.tab()
+  await user.keyboard('{Enter}')
+
+  expect(screen.getByRole('button', { name: 'Dismiss: saved' })).toHaveFocus()
+})
+
+it('returns the reader to where they came from when the stack empties', async () => {
+  const user = userEvent.setup()
+  act(() => {
+    notify('saved', 'good')
+  })
+  render(
+    <>
+      <button type="button">somewhere in the page</button>
+      <Toasts />
+    </>,
+  )
+
+  const elsewhere = screen.getByRole('button', { name: 'somewhere in the page' })
+  await user.click(elsewhere)
+  await user.keyboard('{F6}')
+  // Asserted before the dismissal, and not as reassurance: without it the case
+  // is vacuous under a revert, because focus never leaves this button and
+  // `{Enter}` merely presses it again.
+  expect(screen.getByRole('button', { name: 'Dismiss: saved' })).toHaveFocus()
+  await user.keyboard('{Enter}')
+
+  // The whole point of the hotkey: a detour you can come back from. Recorded
+  // on entry to the region rather than in the F6 handler, so a reader who
+  // arrived by Tab is returned the same way.
+  expect(elsewhere).toHaveFocus()
+})
+
+it('unfreezes the stack when the last toast is dismissed from the keyboard', async () => {
+  const user = userEvent.setup()
+  act(() => {
+    notify('saved', 'good')
+  })
+  render(
+    <>
+      <button type="button">somewhere in the page</button>
+      <Toasts />
+    </>,
+  )
+
+  const elsewhere = screen.getByRole('button', { name: 'somewhere in the page' })
+  await user.click(elsewhere)
+  // Entered by Tab rather than F6, which is the other half of the claim: the
+  // return target is recorded on entry to the region, so it does not matter
+  // which way the reader got in.
+  await user.tab()
+  await user.keyboard('{Enter}')
+  expect(elsewhere).toHaveFocus()
+
+  // A latent bug the focus restore closes rather than sets out to fix.
+  // Removing a focused element from the DOM fires no `blur` in any browser, so
+  // the toast that unmounts under the reader's focus never releases its hold
+  // -- and `tick` returns early forever after. Every later toast in the
+  // session becomes immortal. Moving focus *before* the unmount is what makes
+  // the release happen at all.
+  expect(useToasts.getState().holds).toBe(0)
+
+  act(() => {
+    notify('and another', 'good')
+  })
+  step(4_000)
+  expect(screen.queryByText('and another')).not.toBeInTheDocument()
+})
+
 it('keeps holding while any one reason to hold remains', async () => {
   const user = userEvent.setup()
   act(() => {

@@ -456,6 +456,18 @@
   border-radius: var(--radius);
 }
 
+/* A tab stop, though nothing here says so: Chromium makes a scroll container
+   focusable even with no `tabIndex`, and a virtualized corpus always scrolls.
+   The same trap `workspace.css` records for `.files`, met a third time.
+   Inward, because an outward ring would be drawn on the far side of this
+   element's own 1px border and then clipped by whatever the rail does with
+   overflow -- measured at 1440x900, `-3..343 x -3..203` against a border box
+   of `0..340 x 0..200`. `DocumentBrowser.browser.test.tsx` is the measurement. */
+.document-list-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .document-list {
   list-style: none;
   margin: 0;
@@ -486,6 +498,28 @@
 
 .document-row-open:hover {
   background: var(--bg-panel-2);
+}
+
+/* Drawn inside the row, for the reason `workspace.css` sets out for the file
+   list: the global `:focus-visible` in `tokens.css` is 2px at
+   `outline-offset: 1px` -- three pixels *outside* the border box -- and this
+   button is `width: 100%` inside a scroller with no padding, so its border box
+   is the scroller's padding box horizontally. `overflow` clips at the padding
+   box, so both sides went.
+
+   Measured at 1440x900 with the scroller 340x200 and its clip at
+   `1..339 x 1..199`: the first row's ring wanted `-2..342 x -2..55` (left,
+   right and top outside) and a middle row's `-2..342 x 136..193` (left and
+   right). Every row in the list lost its sides; the first, which is the one a
+   reader meets, kept only a 2px line along its bottom. Rows further down were
+   the weaker case and are fixed by the same declaration rather than separately.
+
+   Hover already paints the whole row, so the ring is what distinguishes
+   "focused" from "pointed at" -- it cannot be traded for a background change
+   here the way `.graph-result` trades it for a left border. */
+.document-row-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .document-row-title {
