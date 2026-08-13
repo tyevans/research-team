@@ -1,9 +1,11 @@
 import { render, screen } from '@testing-library/react'
-import { expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { expect, it, vi } from 'vitest'
 
 import type { TopicView } from '@domain/research/topic.ts'
 import { TopicId } from '@domain/shared/identifier.ts'
 
+import { OverlayHost } from '../../layout/OverlayHost.tsx'
 import { TopicRow } from './TopicRow.tsx'
 
 /** The `Row` density's contract, and the slot discipline.
@@ -100,11 +102,7 @@ it('puts what is read and what is pressed in different groups', () => {
       slots={{
         note: <span data-testid="note">✕ understanding · failed</span>,
         primary: <button type="button">Synthesise</button>,
-        overflow: [
-          <button type="button" key="manage">
-            Manage
-          </button>,
-        ],
+        overflow: [{ key: 'manage', label: 'Manage', onSelect: () => {} }],
       }}
     />,
   )
@@ -114,8 +112,57 @@ it('puts what is read and what is pressed in different groups', () => {
 
   expect(facts).toContainElement(screen.getByTestId('note'))
   expect(verbs).toContainElement(screen.getByRole('button', { name: 'Synthesise' }))
-  expect(verbs).toContainElement(screen.getByRole('button', { name: 'Manage' }))
-  expect(facts?.contains(screen.getByRole('button', { name: 'Manage' }))).toBe(false)
+
+  // The overflow verb is a `⋯` now rather than the `Manage` button it was, and
+  // the name is what a screen reader gets in place of the word: `⋯` names
+  // nothing, and a queue of rows each offering "More actions" gives no way to
+  // tell which row is which.
+  const more = screen.getByRole('button', { name: /More actions/ })
+  expect(verbs).toContainElement(more)
+  expect(facts?.contains(more)).toBe(false)
+})
+
+it('shows the note in place of the status, not beside it', () => {
+  // #40's other half, and the only half jsdom can judge: whether the chip is
+  // *drawn* is a measurement and lives in the browser suite, but which of the
+  // two is in the DOM is structure. The row has 294px at rail width; the
+  // status word takes 100 of the 138 the facts group gets, and a 113px chip
+  // does not fit beside it however the rest is shaved.
+  const { rerender } = render(<TopicRow topic={aTopic({ status: 'investigating' })} />)
+  expect(screen.getByText('investigating')).toBeInTheDocument()
+
+  rerender(
+    <TopicRow
+      topic={aTopic({ status: 'investigating' })}
+      slots={{ note: <span>⟳ understanding · running</span> }}
+    />,
+  )
+  expect(screen.getByText('⟳ understanding · running')).toBeInTheDocument()
+  expect(screen.queryByText('investigating')).toBeNull()
+})
+
+it('keeps overflow verbs behind the menu until it is opened', async () => {
+  // Behind, not merely styled small: the 34px this frees on a 294px line is
+  // half of what makes the dispatch chip visible at all, and it is only freed
+  // while the verb is not on the line. A regression that rendered the items
+  // inline would look right in a wide pane and clip the chip in the rail,
+  // which is the shape of #40.
+  const onSelect = vi.fn()
+  render(
+    <OverlayHost>
+      <TopicRow
+        topic={aTopic()}
+        slots={{ overflow: [{ key: 'manage', label: 'Manage', onSelect }] }}
+      />
+    </OverlayHost>,
+  )
+
+  expect(screen.queryByRole('menuitem', { name: 'Manage' })).toBeNull()
+
+  await userEvent.click(screen.getByRole('button', { name: /More actions/ }))
+  await userEvent.click(await screen.findByRole('menuitem', { name: 'Manage' }))
+
+  expect(onSelect).toHaveBeenCalledTimes(1)
 })
 
 it('marks blocked ahead of flagged, and flagged ahead of closed', () => {

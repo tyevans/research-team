@@ -78,6 +78,47 @@ export const Menu = ({
   </MenuPrimitive.Root>
 )
 
+/** The `⋯` button, for the two rows that have one.
+ *
+ * A component rather than the `.menu-trigger` class it replaces, and the
+ * reason is where that class lived: `tree.css`, a *screen* stylesheet, which
+ * the topic row is not in and which phase 5 deletes with its screen. The
+ * choices were to copy six declarations into `entity.css` or to move them to
+ * the primitive that owns the trigger, and a duplicated rule is how two
+ * `⋯` buttons come to look different for no reason anybody chose.
+ *
+ * `aria-label` is required rather than optional, because the label is the
+ * whole accessibility of this button: `⋯` names nothing, and a list of rows
+ * each offering "More actions" is a screen-reader reading with no way to tell
+ * which row it is on. Name it after the row.
+ *
+ * It takes and spreads `rest` because Radix's `Trigger asChild` clones it with
+ * `aria-haspopup`, `aria-expanded`, `aria-controls`, `data-state` and a ref.
+ * Dropping them would leave a button that opens a menu and says nothing about
+ * it -- which is the failure the `Disclosure` version had, arriving a second
+ * way.
+ */
+export const MenuTrigger = ({
+  'aria-label': label,
+  ...rest
+}: { 'aria-label': string } & React.ComponentPropsWithoutRef<'button'>) => (
+  <button
+    type="button"
+    aria-label={label}
+    // `border-solid` spelled out for the reason given on the content below:
+    // `theme.css` does not import Tailwind's preflight, so `border` alone sets
+    // a width against `border-style: none` and draws nothing. `leading-none`
+    // is what keeps this to the row's height -- the glyph's line box is taller
+    // than the character, and a trigger a few pixels taller than the buttons
+    // beside it grows the row, which is the height contract `TopicRow` is
+    // built on.
+    className="cursor-pointer rounded-md border border-solid border-line bg-bg-panel-2 px-2 py-1 leading-none text-fg-dim"
+    {...rest}
+  >
+    ⋯
+  </button>
+)
+
 /** One verb.
  *
  * A thin wrapper rather than a re-export, and the reason is the styling below

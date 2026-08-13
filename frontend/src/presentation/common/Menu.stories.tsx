@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useState } from 'react'
 
 import { Shell } from '../layout/Shell.tsx'
-import { Menu, MenuItem } from './Menu.tsx'
+import { Menu, MenuItem, MenuTrigger } from './Menu.tsx'
 
 /** A menu, shown where the two things jsdom cannot judge are visible.
  *
@@ -49,11 +49,7 @@ const Row = ({ name }: { name: string }) => {
         open={open}
         onOpenChange={setOpen}
         label={`More actions for ${name}`}
-        trigger={
-          <button type="button" className="menu-trigger" aria-label={`More actions for ${name}`}>
-            ⋯
-          </button>
-        }
+        trigger={<MenuTrigger aria-label={`More actions for ${name}`} />}
       >
         <MenuItem onSelect={() => {}}>Rename</MenuItem>
         <MenuItem onSelect={() => {}}>Duplicate</MenuItem>

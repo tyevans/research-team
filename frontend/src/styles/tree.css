@@ -429,14 +429,12 @@ ul.tree ul > li:last-child::after {
    `check-deleted.mjs` as well: a combinator is a claim about markup, and every
    one of these three would have gone on parsing, matching nothing, and saying
    nothing about it. */
-.menu-trigger {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-panel-2);
-  color: var(--fg-dim);
-  padding: var(--space-1) var(--space-3);
-  cursor: pointer;
-}
+/* And the trigger has gone the same way, one phase later. It is `MenuTrigger`
+   now: six declarations in a *screen* stylesheet, wanted by a second row in a
+   different one, where the choice was to copy them into `entity.css` or to
+   move them to the primitive that owns the button. `TopicRow` is the second
+   caller, and two `⋯` buttons drifting apart is the failure that would not
+   look like a failure. */
 
 /* --- drift, said in the page -------------------------------------------- */
 

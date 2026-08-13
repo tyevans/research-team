@@ -156,6 +156,13 @@ const RULES = [
     forbid: [/querySelector<HTMLElement>\('button'\)/, /\btoggleRef\b/],
   },
   {
+    phase: '5',
+    what: "the `\u22ef` trigger and the topic row's overflow wrapper",
+    why: '`.menu-trigger` was six declarations in `tree.css`, which is a *screen* stylesheet, and the topic row wanted the same button -- so the choice was a second copy in `entity.css` or a `MenuTrigger` in the primitive that owns it. Two `\u22ef` buttons drifting apart is a defect nobody would report. `.ent-topic-overflow` went with the span it styled: it wrapped a list of overflow verbs, and there is one `\u22ef` there now. Over `styles` because both are rules, and a rule that matches nothing goes on saying nothing about it.',
+    where: 'styles',
+    forbid: [/\.menu-trigger\s*\{/, /\.ent-topic-overflow\s*\{/],
+  },
+  {
     phase: '4',
     what: 'the row menu was a Disclosure wearing menu chrome',
     why: '`.menu > .disc-head`, `.menu > .disc-head .disc-caret` and `.menu > .disc-body:not([hidden])` dressed a disclosure up as a menu and got the ARIA contract wrong doing it: `aria-expanded` over a region, no `role="menu"`, no arrow-key movement between items, no typeahead, and no focus return. It is a `Menu` now. The three `>` selectors are the reason this rule is over `styles` as well -- a combinator is a claim about markup, and this one silently stopped matching the moment the markup moved.',

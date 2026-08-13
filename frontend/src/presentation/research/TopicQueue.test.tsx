@@ -115,7 +115,15 @@ it('reports each row’s verbs against that row’s own topic', async () => {
   // The second row: blocked sorts first in the story's own data, so this is
   // deliberately not the one a bug closing over "the first topic" would hit.
   await userEvent.click(screen.getAllByRole('button', { name: 'Write understanding' })[1]!)
-  await userEvent.click(screen.getAllByRole('button', { name: 'Manage' })[1]!)
+
+  // `Manage` is behind a `⋯` now, which #40 needed for its 34px and which also
+  // fixes the thing the index above is working around: the trigger is named
+  // after its row, so a reader hearing "More actions" gets told which topic
+  // rather than hearing the same three words down the whole queue.
+  const more = screen.getAllByRole('button', { name: /More actions/ })[1]!
+  expect(more).toHaveAccessibleName(/spacing interact with sleep/)
+  await userEvent.click(more)
+  await userEvent.click(await screen.findByRole('menuitem', { name: 'Manage' }))
 
   expect(onDispatch).toHaveBeenCalledWith('22222222-2222-2222-2222-222222222222')
   expect(onManage).toHaveBeenCalledWith('22222222-2222-2222-2222-222222222222')

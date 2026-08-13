@@ -138,6 +138,13 @@ export const NothingToSynthesise: Story = {
  *  line of its own, so a model error that runs to a paragraph cannot push the
  *  rest of the queue off the screen. Its full text is in the tooltip.
  *
+ *  **The chip stands where the topic's status word did.** #40: with `Manage`
+ *  behind a `⋯` the facts group gets 138px at rail width, the status takes
+ *  100 of it, and a 113px chip began 1.5px before the clip edge and was drawn
+ *  nowhere at all. The status is what gives -- argued in `TopicRow`, and it is
+ *  the chip's own docstring below that had already called the pair two chips
+ *  disagreeing about one fact.
+ *
  *  This paragraph was false for as long as the chip was wrapped in that
  *  tooltip, and looking at the story is what found it: the wrapper made the
  *  chip an inline box, which is a box `max-width` does not apply to, and the
