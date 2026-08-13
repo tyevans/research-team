@@ -11,10 +11,15 @@ import { ProjectId } from '@domain/shared/identifier.ts'
  *  story whose screenshot can never be compared with yesterday's. */
 export const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
 
+/** `payload` is shaped the way the server really sends it -- langchain's
+ *  `message_to_dict`, `{type, data}` -- not the flat `{name}` this fixture
+ *  used to invent. The flat shape is what let `activityName`'s top-level
+ *  lookup pass its test while reading `item.kind` in production; see
+ *  `AskActivity.test.tsx`. */
 export const activity = (over: Partial<AskActivity> = {}): AskActivity => ({
   messageId: 'm1',
   kind: 'tool',
-  payload: { name: 'read_source' },
+  payload: { type: 'tool', data: { name: 'read_source' } },
   isError: false,
   ...over,
 })

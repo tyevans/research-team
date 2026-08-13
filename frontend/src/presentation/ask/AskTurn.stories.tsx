@@ -42,9 +42,16 @@ export const WithActivity: Story = {
   args: {
     turn: turn({
       activity: [
-        activity({ messageId: 'm1', payload: { name: 'read_source' } }),
-        activity({ messageId: 'm2', payload: { name: 'search_findings' } }),
-        activity({ messageId: 'm3', payload: { name: 'read_source' }, isError: true }),
+        activity({ messageId: 'm1', payload: { type: 'tool', data: { name: 'read_source' } } }),
+        activity({
+          messageId: 'm2',
+          payload: { type: 'tool', data: { name: 'search_findings' } },
+        }),
+        activity({
+          messageId: 'm3',
+          payload: { type: 'tool', data: { name: 'read_source' } },
+          isError: true,
+        }),
       ],
     }),
   },

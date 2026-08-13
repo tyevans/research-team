@@ -1,4 +1,5 @@
 import type { AskActivity } from '@domain/ask/conversation.ts'
+import { callSummary } from '@domain/conversation/message.ts'
 
 import { Chip, Disclosure } from '../common/primitives.tsx'
 import { plural } from '../formatting/format.ts'
@@ -54,16 +55,39 @@ export const AskActivityFold = ({
   )
 }
 
-/** A tool's name if the frame carried one, its kind otherwise.
+/** A call summary (`name(key=value  +n)`) if the frame carried one, its kind
+ * otherwise.
  *
  * `payload` is `unknown` by design -- the fold stores frames without
- * interpreting them -- so this narrows rather than casts. A frame whose shape
- * changes server-side degrades to its kind here instead of throwing inside a
- * render. */
+ * interpreting them -- so this narrows rather than casts. The real payload is
+ * langchain's `message_to_dict` output, `{type, data}`: a tool frame's name
+ * and no arguments live at `data.name`; an assistant frame's calls live at
+ * `data.tool_calls[]`, each `{name, args}`, and only the first is shown
+ * because this is a one-line-per-row fold, not the full transcript. A frame
+ * whose shape changes server-side degrades to its kind here instead of
+ * throwing inside a render -- the same contract `callSummary` and
+ * `Segments.tsx` already rely on for the session view of this data. */
 export const activityName = (item: AskActivity): string => {
-  if (typeof item.payload === 'object' && item.payload !== null && 'name' in item.payload) {
-    const { name } = item.payload
-    if (typeof name === 'string' && name) return name
+  const payload = item.payload
+  if (typeof payload !== 'object' || payload === null) return item.kind
+  const data = (payload as Record<string, unknown>)['data']
+  if (typeof data !== 'object' || data === null) return item.kind
+  const record = data as Record<string, unknown>
+
+  const name = record['name']
+  if (typeof name === 'string' && name) return callSummary({ name })
+
+  const calls = record['tool_calls']
+  if (Array.isArray(calls) && calls.length > 0) {
+    const call: unknown = calls[0]
+    if (call && typeof call === 'object') {
+      const callRecord = call as Record<string, unknown>
+      const callName = callRecord['name']
+      if (typeof callName === 'string' && callName) {
+        return callSummary({ name: callName, args: callRecord['args'] })
+      }
+    }
   }
+
   return item.kind
 }
