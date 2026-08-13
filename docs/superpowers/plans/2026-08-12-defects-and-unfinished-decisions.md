@@ -132,3 +132,41 @@
 - [ ] `uv run pytest` — the whole suite, once, on a quiet machine. A failure under load is not evidence until it reproduces alone; re-run a failure in isolation before investigating it, and then re-run the whole suite, because some failures only appear in company.
 - [ ] `cd frontend && npm run verify` — untouched by this work and run anyway. Three of four gates is not passing.
 - [ ] Open the PR.
+
+---
+
+## Corrections found in execution
+
+Appended rather than edited in place. The tasks above are left as they were
+written, because a plan that is quietly repaired loses the evidence that it was
+wrong, and both of these were worth knowing.
+
+**Task 1's "the var's default" is not implementable under this repo's ruff
+configuration.** `B039` rejects a mutable `ContextVar` default, and it is right
+in general: a default is evaluated once and shared across every context, which
+is a bug nearly everywhere and was precisely the intent here. The committed
+resolution keeps the semantics exactly — a fallback counter held as an instance
+field and consulted by `_current()` when the var is unset, which is the same
+single shared object a default would have handed every context. Read "a
+fallback consulted when the var is unset" wherever the task says "the var's
+default".
+
+The integrator initially directed a `# noqa: B039` instead and was wrong. The
+objection given was that the alternative would install a counter lazily on
+first use, and that a lazy `.set()` inside a child task is invisible to the
+parent and its siblings — true, and not what was built. `.set()` is called in
+exactly one place, `begin_turn()`; the unwired path never sets the var at all.
+With behaviour identical either way, a named `_unwired` field beats a standing
+claim that a lint rule does not apply, which a future reader would have to
+re-derive to trust.
+
+**Task 3's test as specified could not pass on any correct version of the
+file.** The plan asks that `ArtifactType` appear in `checks.py` "only inside
+string literals", on the strength of a count that was wrong. The import and the
+`Artifact.artifact_type` / `TypeFilter.artifact_type` annotations are
+legitimate non-string uses that commit to no methodology, and forbidding them
+would leave the check library unable to describe the filter it is handed. The
+property that is actually true after the fix and false before it is narrower:
+**`checks.py` names no *member* of `ArtifactType`.** The intent — shared checks
+know no domain — is unchanged and is now enforced; only the mechanical wording
+was unsatisfiable.
