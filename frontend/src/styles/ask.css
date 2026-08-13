@@ -1,0 +1,124 @@
+/* The ask page: a question box under a thread of question/answer pairs.
+
+   A column that owns the viewport, like the research view and unlike the
+   course view: the composer must sit at the bottom whether the thread has one
+   turn or forty, and a page that scrolls as a whole puts it below the fold on
+   a long conversation -- which is precisely when somebody wants to type the
+   next question. So the view does not scroll and `.ask-thread` does. */
+
+.view-ask {
+  overflow: hidden;
+  padding: var(--space-5) var(--space-5) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  flex: 1;
+}
+
+/* Full-bleed, for the reason `.view-research .view-head` is: the centred cap
+   `.view-head` carries suits the tree, and a centred title over a full-width
+   thread reads as another page's header dropped on this one. */
+.view-ask .view-head {
+  max-width: none;
+  margin: 0;
+}
+
+.ask-thread {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  /* Room for the scrollbar and for the last answer to clear the composer's
+     top border rather than touching it. */
+  padding-right: var(--space-2);
+  padding-bottom: var(--space-3);
+}
+
+.ask-turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* The question is the reader's own words, and the answer is the model's. They
+   are told apart by weight rather than by a bubble or an avatar: there are
+   only two speakers here and one of them is you, so a label per line would be
+   noise on every turn. */
+.ask-question {
+  font-weight: 600;
+  color: var(--fg);
+  border-left: 2px solid var(--accent-dim);
+  padding-left: var(--space-3);
+  white-space: pre-wrap;
+}
+
+.ask-answer {
+  color: var(--fg-dim);
+}
+
+.ask-activity {
+  font-size: var(--t-sm);
+}
+.ask-activity-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) 0 0 var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--fg-faint);
+}
+
+/* Never red on its own line elsewhere on this page -- a failed question is the
+   one thing here that must not be mistaken for an answer. */
+.ask-error {
+  color: var(--k-failure);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+
+.ask-busy {
+  color: var(--fg-faint);
+  font-size: var(--t-sm);
+}
+
+.ask-cites {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--t-sm);
+}
+.ask-cites-label {
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: var(--t-xs);
+}
+.ask-cites ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.ask-cites a {
+  font-family: var(--mono);
+}
+
+/* The banner sits above the thread rather than inside it, because the failure
+   it reports may have no turn to belong to -- a chat refused before its first
+   frame never opened one. */
+.ask-banner {
+  flex: 0 0 auto;
+}
+
+/* `.composer` is bordered on top and sits flush against the page's bottom
+   edge, so the view's own bottom padding is 0 above. */
+.ask-composer {
+  margin: 0 calc(var(--space-5) * -1);
+}

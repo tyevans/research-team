@@ -1,0 +1,145 @@
+/** The ask page, from a reader's point of view. */
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
+import { expect, it, vi } from 'vitest'
+
+import type { Container as AppContainer } from '@app/container.ts'
+import { ContainerProvider } from '@app/container-context.tsx'
+import type { AskRepository } from '@application/ports/repositories.ts'
+import type { AskEvent } from '@domain/ask/conversation.ts'
+import { ProjectId } from '@domain/shared/identifier.ts'
+
+import { AskView } from './AskView.tsx'
+
+const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
+
+const renderAsk = (ask: Partial<AskRepository>) => {
+  const container = { ask: { forget: vi.fn(), ...ask } } as unknown as AppContainer
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <ContainerProvider container={container}>{children}</ContainerProvider>
+  )
+  return render(<AskView projectId={PROJECT} />, { wrapper })
+}
+
+/** `Citation.kind` is `'source'` alone -- the tool that would have produced a
+ *  topic citation created topics rather than read them and was dropped from
+ *  this read-only page, so nothing can emit one. */
+const answering = (text: string, citations: { kind: 'source'; id: string }[] = []) =>
+  vi.fn(
+    async (
+      _p: ProjectId,
+      _c: string,
+      _q: string,
+      onEvent: (event: AskEvent) => void,
+    ): Promise<void> => {
+      onEvent({ type: 'answer', text, citations })
+    },
+  )
+
+const ask = async (question: string) => {
+  await userEvent.type(screen.getByRole('textbox'), question)
+  await userEvent.click(screen.getByRole('button', { name: /^ask$/i }))
+}
+
+it('shows the question and its answer', async () => {
+  renderAsk({ ask: answering('two papers') })
+
+  await ask('what did we find?')
+
+  expect(await screen.findByText('what did we find?')).toBeInTheDocument()
+  expect(await screen.findByText('two papers')).toBeInTheDocument()
+})
+
+it('links a source citation to the project document it came from', async () => {
+  renderAsk({ ask: answering('two papers', [{ kind: 'source', id: 's1' }]) })
+
+  await ask('why?')
+
+  const link = await screen.findByRole('link', { name: /s1/ })
+  expect(link).toHaveAttribute('href', `#/p/${PROJECT}/doc/s1`)
+})
+
+it('says the page keeps nothing', () => {
+  // The contract is ephemerality; a reader who does not know that will expect
+  // to find this conversation again tomorrow.
+  //
+  // Scoped to the subtitle rather than left as a page-wide text search. The
+  // page says this in more than one place by design -- the head states it and
+  // the empty thread repeats it, which is the two moments a reader could form
+  // the wrong expectation -- and an unscoped `getByText` throws on the second
+  // match. Narrowing the query keeps the claim and drops the accident.
+  renderAsk({ ask: answering('x') })
+
+  expect(screen.getByText(/not saved/i, { selector: '.sub' })).toBeInTheDocument()
+})
+
+it('surfaces a refusal to the reader', async () => {
+  renderAsk({ ask: vi.fn().mockRejectedValue(new Error('busy')) })
+
+  await ask('why?')
+
+  // Twice, and both are asserted because both are load-bearing: the banner is
+  // what a reader who has scrolled away sees, and the turn's own copy is what
+  // says *which question* failed. A page-wide `findByText(/busy/)` would throw
+  // on the pair rather than checking either.
+  expect(await screen.findByRole('alert')).toHaveTextContent(/busy/)
+  expect(screen.getByText(/busy/, { selector: '.ask-error' })).toBeInTheDocument()
+})
+
+it('clears the thread on a new chat', async () => {
+  renderAsk({ ask: answering('two papers') })
+  await ask('why?')
+  expect(await screen.findByText('two papers')).toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole('button', { name: /new chat/i }))
+
+  expect(screen.queryByText('two papers')).not.toBeInTheDocument()
+})
+
+it('keeps tool activity out of the way until asked for', async () => {
+  const spy = vi.fn(
+    async (
+      _p: ProjectId,
+      _c: string,
+      _q: string,
+      onEvent: (event: AskEvent) => void,
+    ): Promise<void> => {
+      onEvent({
+        type: 'message',
+        messageId: 'm1',
+        kind: 'tool',
+        payload: { name: 'read_source' },
+        isError: false,
+      })
+      onEvent({ type: 'answer', text: 'two papers', citations: [] })
+    },
+  )
+  renderAsk({ ask: spy })
+
+  await ask('why?')
+
+  // Collapsed, not absent: the reader wants the answer, and the trace second.
+  // Sound in jsdom only because collapsed means *not rendered* -- `Disclosure`
+  // renders `{open ? children : null}`. Were it hidden by a stylesheet this
+  // assertion would pass against a page that showed the trace, and the claim
+  // would belong in the browser suite instead.
+  const disclosure = await screen.findByRole('button', { name: /looked at|activity/i })
+  expect(disclosure).toBeInTheDocument()
+  expect(screen.queryByText(/read_source/)).not.toBeInTheDocument()
+
+  await userEvent.click(disclosure)
+  expect(screen.getByText(/read_source/)).toBeInTheDocument()
+})
+
+it('refuses to send while a question is in flight', async () => {
+  // The store already refuses; this pins that the composer says so rather than
+  // looking available and silently dropping the second question.
+  const spy = vi.fn(async (): Promise<void> => new Promise(() => {}))
+  renderAsk({ ask: spy })
+
+  await ask('why?')
+
+  expect(screen.getByRole('button', { name: /^ask$/i })).toBeDisabled()
+  expect(screen.getByRole('textbox')).toBeDisabled()
+})
