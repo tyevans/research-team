@@ -234,8 +234,14 @@ export const GraphCanvas = memo(function GraphCanvas({
           // "1923 contains November 1923"), not `relationshipType` -- the
           // dashes below already say "inferred", so restating that word on
           // hover would tell a reader nothing the line hadn't already.
+          // `derivation` can be null for an edge that predates the field
+          // (schema-evolution case, not defensive boilerplate) -- fall back
+          // to `relationshipType` rather than let `String(null)` render the
+          // literal text "null" in the hover tooltip.
           linkLabel={(link) =>
-            link.inferred ? String(link.derivation) : String(link.relationshipType)
+            link.inferred && link.derivation
+              ? String(link.derivation)
+              : String(link.relationshipType)
           }
           linkDirectionalArrowLength={4}
           // Dashed rather than a different hue: colour on this canvas already
