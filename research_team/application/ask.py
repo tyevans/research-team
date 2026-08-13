@@ -33,11 +33,14 @@ class AskMessage:
 class Citation:
     """Something the agent opened while answering.
 
-    `kind` is deliberately narrow: a citation records a read, and only
-    `read_source` and `open_topic` read a specific identified thing.
+    `kind` is a one-member union rather than a bare `str`: a citation records a
+    read, and `read_source` is the only tool the ask agent holds that opens one
+    identified thing. `"topic"` was the second member until `open_topic` turned
+    out to be a mutation and left the agent's allowlist -- a branch nothing can
+    emit cannot be tested, and widening this back out is one word.
     """
 
-    kind: Literal["source", "topic"]
+    kind: Literal["source"]
     id: str
 
 

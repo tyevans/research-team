@@ -9,17 +9,16 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any
 from uuid import UUID
 
-from deepagents import create_deep_agent
+from deepagents import FilesystemMiddleware, create_deep_agent
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import BaseTool
-from langgraph.checkpoint.memory import MemorySaver
 
 from research_team.application.ask import AskAnswer, AskMessage, Citation
 from research_team.application.corpus_read import LIST_SOURCES_TOOL, READ_SOURCE_TOOL
 from research_team.application.knowledge import GRAPH_SEARCH_TOOL
 from research_team.application.ports import ActivityReporter
-from research_team.application.topics import LIST_TOPICS_TOOL, OPEN_TOPIC_TOOL
+from research_team.application.topics import LIST_TOPICS_TOOL
 from research_team.infrastructure.agent.deep_agent import (
     to_activity_delta,
     to_activity_message,
@@ -33,7 +32,6 @@ READ_ONLY_TOOLS = frozenset(
         READ_SOURCE_TOOL,
         GRAPH_SEARCH_TOOL,
         LIST_TOPICS_TOOL,
-        OPEN_TOPIC_TOOL,
     }
 )
 """The tools the ask agent may hold.
@@ -43,19 +41,45 @@ later is excluded until someone names it here. `fetch` and `web_search` are
 absent, which is also why this path wires no approval gate: there is nothing
 to gate.
 
+`open_topic` was named here when this was written, on the spec's description of
+it as a reader. It is not: it runs an `OpenTopic` command and creates a `Topic`
+aggregate, so a page whose whole contract is that it changes nothing cannot
+hold it. Every other topic tool was already excluded for the same reason.
+
 The names are imported from the application layer rather than retyped, so a
 tool renamed at its definition cannot leave a stale string here silently
 filtering it out.
 """
 
-CITED_BY_TOOL = {
-    READ_SOURCE_TOOL: ("source", "source_id"),
-    OPEN_TOPIC_TOOL: ("topic", "topic_id"),
-}
+READ_ONLY_FILE_TOOLS = ["ls", "read_file", "glob", "grep"]
+"""The built-in file tools the agent is offered at all.
+
+`permissions=[FilesystemPermission(..., mode="deny")]` was tried first and is
+not this: it leaves `write_file`, `edit_file` and `delete` on the model's tool
+list and answers a call with a permission error, which costs a wasted turn and
+contradicts a prompt that says the project cannot be changed. Only
+`FilesystemMiddleware`'s own `tools` argument drops them before they are
+advertised, and passing a replacement in `middleware` is how `create_deep_agent`
+lets a caller reach it -- it merges by middleware name, so the default
+filesystem stack is replaced rather than doubled, and the general-purpose
+subagent inherits the replacement.
+
+`ReadOnlyProjectBackend` still raises on a write. This list decides what is
+offered; the backend decides what could ever land, and neither is trusted to
+be the only one.
+"""
+
+CITED_BY_TOOL = {READ_SOURCE_TOOL: ("source", "source_id")}
 """Tool name -> (citation kind, the argument naming what was read).
 
-Only these two open one identified thing. A search returns candidates the
-agent may never read, so it earns no citation.
+`read_source` alone: it is the only admitted tool that opens one identified
+thing. A search returns candidates the agent may never read, so it earns no
+citation, and listing is not reading either.
+
+`open_topic` was mapped here too, to `("topic", "topic_id")` -- an argument it
+does not have, so no real call could ever have produced that citation. It is
+gone from the allowlist above, and `Citation.kind` narrowed with it rather than
+keeping a union member nothing can emit.
 """
 
 ASK_PROMPT = """You are answering questions about one research project's gathered material.
@@ -140,15 +164,22 @@ class DeepAgentAskExecutor:
         to reach the reader.
         """
         _knowledge, project_tools = await self._open_graph(project_id)
+        backend = ReadOnlyProjectBackend(await self._project_files(project_id))
         agent = create_deep_agent(
             model=self._model,
             tools=list(readable(project_tools)) or None,
-            backend=ReadOnlyProjectBackend(await self._project_files(project_id)),
+            backend=backend,
+            middleware=[FilesystemMiddleware(backend=backend, tools=READ_ONLY_FILE_TOOLS)],
             system_prompt=self._system_prompt,
-            # In memory and per question, as the turn executor's is per turn:
-            # an ask conversation is ephemeral by design, and its transcript
-            # is carried in `history` rather than parked in a checkpoint.
-            checkpointer=MemorySaver(),
+            # No checkpointer. A `MemorySaver` was wired here on the turn
+            # executor's pattern and was worse than useless: langgraph refuses
+            # to run a checkpointed root graph without a `thread_id` in the
+            # config, and `astream` below passes none, so *every* question
+            # raised `ValueError`. Adding a thread id would have bought a
+            # checkpoint nothing ever resumes -- the agent is fresh per
+            # question and the transcript is carried in `history`.
+            # `test_the_answer_is_the_models_last_text` is what fails if a
+            # checkpointer comes back without a config.
         )
 
         messages = _history(history, question)
