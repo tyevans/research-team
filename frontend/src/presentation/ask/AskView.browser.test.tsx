@@ -146,6 +146,17 @@ it('lines the question box up with the prose above it', async () => {
   // The other half of the measure, and the one a stylesheet gets wrong
   // silently: a thread that centres its column and a composer that does not
   // both look fine alone.
+  //
+  // This passes partly because headless Chromium uses overlay scrollbars.
+  // `.ask-thread` is `overflow-y-auto` and really overflows here, so with
+  // classic (space-taking) scrollbars its content box would be narrower than
+  // the composer's by the scrollbar width, the two centred columns would sit
+  // a few pixels apart, and this assertion would go red -- and the columns
+  // would genuinely misalign for a reader on a platform with classic
+  // scrollbars. `px-5` on `.ask-thread` leaves room for the scrollbar but the
+  // composer carries the same `px-5` with no scrollbar to make room for, so
+  // it does not actually compensate. This console is Chromium by explicit
+  // choice (`vite.config.ts`), so it is not fixed here.
   const { thread, composer } = await mount()
   const prose = (thread.querySelector('.ask-measure') as HTMLElement).getBoundingClientRect()
   const box = (composer.querySelector('.ask-measure') as HTMLElement).getBoundingClientRect()
