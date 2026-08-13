@@ -147,7 +147,13 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # `.nvmrc` rather than a literal, so a developer's `nvm use` and this
-          # runner cannot disagree about which Node the build ran on.
+          # runner cannot disagree about which Node the build ran on. It names a
+          # full version rather than `24` for the same reason: a major resolves
+          # to whatever the runner has newest, so the npm that reads the
+          # lockfile could change with no commit anywhere. That is not
+          # hypothetical -- it happened on #126, and the failure lands at
+          # `npm ci`, which means every step below is *skipped* rather than
+          # failed and the pull request goes green-ish with nothing checked.
           node-version-file: frontend/.nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json

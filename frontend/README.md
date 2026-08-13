@@ -12,6 +12,24 @@ npm run verify   # everything CI runs, in CI's order
 `npm run dev` expects the API server to be up (`uv run web.py` in the repo
 root). Point it somewhere else with `RT_API_URL`.
 
+### Which Node
+
+`.nvmrc` names a full version, and `nvm use` before touching the lockfile is
+not optional. The version there is the one CI runs, so the npm that writes
+`package-lock.json` is the npm that reads it.
+
+It said `24` once, which resolved to whatever the runner had newest. A machine
+a few minor versions behind wrote a lockfile CI's npm rejected, and the
+rejection came from `npm ci` — before any check ran, so the frontend gates were
+skipped rather than failed. The pull request looked green.
+
+The cost is a deliberate commit each time Node moves, and it is the intended
+cost: bumping the pin is the moment to regenerate the lockfile with the new npm
+and see the result before it is anyone else's problem. There is no `engines`
+field to go with it — an exact version there would turn every bump into a hard
+stop for whoever is mid-change, which buys strictness by making the pin
+expensive to move, and a pin nobody moves goes stale.
+
 ## The pipeline
 
 `npm run verify` is the whole gate, and `.github/workflows/ci.yml` runs the same
