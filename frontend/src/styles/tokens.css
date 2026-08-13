@@ -10,6 +10,29 @@
    only other colour in the UI, so the log reads as a legend for itself. */
 
 :root {
+  /* The browser is told which way round this console is, once, before any of
+     the tokens below try to say it a control at a time. Everything the UA
+     draws for itself follows from this and from nothing in this file: the
+     `<select>` popup, the date picker, the checkbox and radio, the focus
+     ring, and the canvas behind a page that has not painted yet.
+
+     It is one declaration and it is not a small change -- it repaints every
+     native control at once -- so it was looked at in Chromium rather than
+     reasoned about, side by side with and without. What that showed: a
+     checkbox and a radio are white squares without it and dark ones with it,
+     which is the live defect, because `background` does not reach a control
+     the UA paints through `appearance` and the rule below therefore never
+     touched them. Scrollbars are not part of the change; `base.css` already
+     draws those itself, both ways round.
+
+     What it does *not* do is make the rules further down redundant, which was
+     the open question. `color-scheme: dark` gives fields the UA's dark field
+     colour -- Chromium's `rgb(59, 59, 59)` -- not `--bg` (#0b0d10), so a bare
+     `<input>` beside a `.input` would sit two shades apart on the same line.
+     The `background: var(--bg)` rule below still does work and stays;
+     `color-scheme.browser.test.tsx` fails if that ever stops being true. */
+  color-scheme: dark;
+
   --bg: #0b0d10;
   --bg-panel: #111418;
   --bg-panel-2: #15191e;
@@ -222,11 +245,15 @@ select {
    the workbench and whatever is written next rather than fixing a live
    defect; it is here because the rule above already had to be widened once.
 
-   Background only, not border: the UA's black `outset` border disappears
-   against `--bg`, so a bare button reads as unbordered text. That matches
-   what the fields already do -- they keep their UA border too -- and giving
-   controls an outline is a decision about how the console looks, not about
-   whether its text can be read. */
+   Background only, not border, and the reason has since changed under it.
+   This said the UA's black `outset` border disappeared against `--bg`, so a
+   bare button read as unbordered text; with `color-scheme: dark` declared at
+   the top of this file that border is white, and a bare button now reads as a
+   button. The rule is unchanged and the conclusion still holds -- what a
+   control's outline should be is a decision about how the console looks
+   rather than about whether its text can be read -- but the sentence is
+   updated because a comment that describes a colour the browser stopped
+   painting is worse than none. */
 button,
 input,
 textarea,
