@@ -244,13 +244,6 @@
   display: contents;
 }
 
-/* Both of these defeat a `display` that would otherwise win over the user
-   agent's `[hidden]` rule -- `flex` on the body, `contents` on the footer.
-   This is the usual reason `hidden` looks broken. */
-.lay-pane-footer[hidden] {
-  display: none;
-}
-
 /* --- collapsed: rail ----------------------------------------------------
    A fixed 34px column with the title turned on its side. The pane stays on
    screen rather than vanishing, because the title is how you know what you
@@ -288,14 +281,6 @@
    because the first one's rules would have rotated the title. */
 .lay-pane.is-collapsed[data-collapse-to='strip'] {
   flex: 0 0 auto;
-}
-
-/* A body kept in the tree while collapsed carries `hidden`, which already
-   removes it from the layout; this rule exists so that `hidden` cannot be
-   defeated by the `display: flex` above it, which is a real hazard and the
-   usual reason `hidden` appears not to work. */
-.lay-pane-body[hidden] {
-  display: none;
 }
 
 /* ======================================================================= */

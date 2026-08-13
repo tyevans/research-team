@@ -19,3 +19,41 @@
 *::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* the hidden attribute ---------------------------------------------------- */
+
+/* `[hidden]` is only the *user agent's* `display: none`, and this build imports
+   no Tailwind preflight, so nothing author-level restores it. `[hidden]` and
+   `.flex` have equal specificity (0,1,0), utilities are emitted after this
+   file, and later wins -- so any element carrying both a `hidden` attribute and
+   a display utility stays on screen. That is not hypothetical: Radix hides an
+   inactive `Tabs.Content` with `hidden` and nothing else, and the project
+   page's MATERIAL region drew two tab panels at once because two of its four
+   panels needed `flex` to lay out their children. Measured in the running app
+   at 1440x900 before this rule: the `doc` panel `hidden=true` and
+   `display: flex`, the `entity` panel active, both `flex: 1` in a 790px column,
+   each therefore 395px -- the document list in the top half and the graph in
+   the bottom.
+
+   `!important` is the whole rule. Without it this line changes nothing at all,
+   which is why it is Tailwind's own preflight text rather than a plain
+   `display: none`: an author declaration cannot outrank a same-specificity
+   utility any other way. The cost is that an element cannot be `hidden` and
+   visible, and nothing here wants to be.
+
+   `:where(...)` keeps the selector at zero specificity so the `!important`
+   flag, not the selector's weight, is what does the work -- and it exempts
+   `hidden="until-found"`, whose whole purpose is to be found by in-page search
+   and revealed.
+
+   Three local patches for this same missing rule are deleted in the commit that
+   adds this one: `.drift[hidden]` in `shell.css`, and `.lay-pane-footer[hidden]`
+   and `.lay-pane-body[hidden]` in `layout.css`. Two of the three carried a
+   comment calling this "the usual reason `hidden` looks broken" -- the cause was
+   diagnosed correctly three times and repaired locally each time, which is how
+   a fourth caller with the same problem got no help from any of them. That is
+   the argument for fixing it here rather than adding a fourth: the patches were
+   not wrong, they were just not reusable. */
+[hidden]:where(:not([hidden='until-found'])) {
+  display: none !important;
+}
