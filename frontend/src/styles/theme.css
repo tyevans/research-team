@@ -96,10 +96,13 @@
   --color-line-soft: #1a2027;
   --color-line-strong: #34404e;
 
-  /* Text. */
+  /* Text. The two lower tiers were raised for AA; `tokens.css` carries the
+     ratios and the reasoning, and these are the same values spelled for
+     Tailwind. A copy that disagrees with that one is the bug this comment
+     exists to make findable. */
   --color-fg: #d7dee7;
-  --color-fg-dim: #8a95a3;
-  --color-fg-faint: #5c6673;
+  --color-fg-dim: #a7b1bd;
+  --color-fg-faint: #7f8d9f;
 
   /* The one accent. */
   --color-accent: #e2a457;

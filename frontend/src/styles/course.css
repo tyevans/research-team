@@ -200,10 +200,22 @@
 .artifact:last-child {
   border-bottom: none;
 }
-.artifact-missing {
-  opacity: 0.62;
-}
+/* `.artifact-missing` styles nothing and has no rule here any more.
+   `Artifacts.tsx` still sets the class, deliberately: it is what its comment
+   about `prettier-plugin-tailwindcss` mangling the class name is about, and
+   it is the hook anything later would hang off.
 
+   It was `opacity: 0.62`, applied to a row whose quietest element is a
+   `.chip-missing` in `--fg-faint`: 5.46:1 on `--bg-panel` became 3.55:1, and
+   with the old token it was 1.97:1 -- the worst pair in the console. No
+   foreground value survives being composited, so the property had to go.
+
+   What the dimming communicated is said twice over in the row already, which
+   is why nothing replaces it: the name renders as plain text instead of a
+   link because there is no file to open, and a `not written` chip sits at the
+   end of the line with a tooltip naming the path that is absent. Reading
+   "missing" out of a 38% opacity drop was the least of the three signals and
+   the only one a screen reader never had. */
 .artifact-top {
   display: flex;
   align-items: center;

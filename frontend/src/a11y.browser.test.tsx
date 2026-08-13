@@ -93,33 +93,26 @@ const AXE_OPTIONS: axe.RunOptions = {
  * colour rather than the declared one is the single most useful thing it does
  * here, and it is a number no stylesheet grep could have produced.
  *
- * **Deliberately not fixed in this commit**, and this is a judgement rather
- * than an oversight. Raising `--fg-faint` to 4.5:1 on `--bg-panel` puts it
- * within a hair of `--fg-dim` (`#8a95a3`, which passes at 6.3:1), collapsing a
- * three-tier text hierarchy into two across 60 declarations -- a redesign of
- * the console's visual language, with a diff in every stylesheet, arriving
- * inside a commit whose subject is a test harness. The `opacity` states need a
- * separate answer again, since the fix there is to stop dimming text that is
- * already the dimmest thing on the page. Both belong in their own change, with
- * someone looking at the result.
+ * **All twelve are now paid, and the list is empty rather than deleted.** The
+ * two paragraphs above are kept because they are the record of what the sweep
+ * found on the day it was first run, and an empty array with no history reads
+ * as "axe never found anything here", which is the opposite of true.
+ *
+ * The fix was two token values, not the 60-declaration redesign feared above.
+ * `--fg-faint` went to `#7f8d9f` (4.62:1 worst case) and `--fg-dim` had to move
+ * with it to `#a7b1bd` -- raising only the faint tier put the two within 3.2
+ * points of CIE L*, which is the just-noticeable threshold, so they would have
+ * been legally distinct and visually identical. Both `opacity` states were
+ * removed rather than retuned, because opacity multiplies every descendant and
+ * no foreground value survives it.
+ *
+ * **An empty list still fails in one direction, which is the direction that
+ * matters.** Any new failing pair fails this assertion, so the zero is a floor
+ * that has to be held rather than a box that was ticked. Adding an entry back
+ * is how a deliberate exception gets recorded, and it should carry the argument
+ * for why that one is acceptable.
  */
-const KNOWN_CONTRAST_DEBT: readonly string[] = [
-  // `--fg-faint` on each surface it is drawn over.
-  '#5c6673 on #0b0d10', // --bg
-  '#5c6673 on #111418', // --bg-panel
-  '#5c6673 on #15191e', // --bg-panel-2
-  '#5c6673 on #1b2027', // --bg-raise
-  '#5c6673 on #1e242c', // --bg-hover
-  '#5c6673 on #241417', // --tint-fail
-  // The same token seen through `opacity: 0.6` on `.ent-topic-row.is-closed`.
-  '#3c424b on #0b0d10',
-  '#3d444d on #0b0d10',
-  '#3e454f on #111418',
-  // Through `opacity: 0.62` on `.artifact-missing`.
-  '#575f68 on #0b0d10',
-  '#5a616b on #0b0d10',
-  '#5a616b on #111418',
-]
+const KNOWN_CONTRAST_DEBT: readonly string[] = []
 
 /** What the sweep saw, so a claim can be made about whether it saw anything.
  *
