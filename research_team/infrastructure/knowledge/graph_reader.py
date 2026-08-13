@@ -11,15 +11,37 @@ from typing import Any
 from uuid import UUID
 
 from eventsource.domain.tenant_context import tenant_scope
+from redstring import TemporalRelation, infer_relations
 
 from research_team.application.graph_read import (
     MAX_GRAPH_NODES,
+    MAX_INFERRED_EDGES,
     MAX_NEIGHBORHOOD_DEPTH,
     EntityPage,
     Graph,
     GraphEntity,
     GraphRelationship,
     Neighborhood,
+)
+from research_team.infrastructure.knowledge.temporal_rendering import render_extent
+
+#: The only relations `infer_relations` produces that are worth a line on the
+#: canvas. It emits four -- `BEFORE`, `CONTAINS`, `OVERLAPS`, `EQUALS` -- of
+#: `TemporalRelation`'s six, canonicalising each dated pair to one edge:
+#: `AFTER` arrives here as its target's `BEFORE`, and `DURING` as its
+#: target's `CONTAINS`. So this set is complete against what can ever be
+#: emitted, not a subset that still needs `AFTER`/`DURING` added -- those two
+#: would be config that can never fire.
+#:
+#: `BEFORE` is excluded on purpose, not by omission. It is the relation
+#: nearly every pair of dated entities in a real corpus satisfies: a hundred
+#: dated entities is on the order of 4,950 `BEFORE` pairs against at most 500
+#: nodes, and a force-directed layout given that many edges resolves to a
+#: solid disc rather than a graph. `CONTAINS`, `OVERLAPS` and `EQUALS` are the
+#: relations that are still sparse at that scale, because they require the
+#: two extents to actually coincide rather than merely be ordered.
+_DRAWN_RELATIONS = frozenset(
+    {TemporalRelation.CONTAINS, TemporalRelation.OVERLAPS, TemporalRelation.EQUALS}
 )
 
 
@@ -28,6 +50,7 @@ def _to_graph_entity(entity: Any) -> GraphEntity:
         entity_id=str(entity.id),
         name=entity.name,
         entity_type=entity.entity_type,
+        temporal=render_extent(entity.temporal),
     )
 
 
@@ -37,6 +60,33 @@ def _to_graph_relationship(relationship: Any) -> GraphRelationship:
         target_id=str(relationship.target_entity_id),
         relationship_type=relationship.relationship_type,
     )
+
+
+def _inferred_edges(entities: list[Any]) -> tuple[tuple[GraphRelationship, ...], bool]:
+    """Temporal edges among `entities`, plus whether the cap dropped any.
+
+    No store round trip: `infer_relations` is pure arithmetic over the
+    extents already carried on `entities`, the same set `whole`/`neighborhood`
+    already fetched. Returning the cap's verdict alongside the edges rather
+    than leaving a caller to compare `len(edges)` to `MAX_INFERRED_EDGES`
+    avoids the same off-by-one `whole`'s own truncation test guards against --
+    a result that lands exactly at the cap is complete, not truncated, and a
+    length comparison alone cannot tell those apart.
+    """
+    relations = infer_relations(entities, relations=_DRAWN_RELATIONS)
+    capped = relations[:MAX_INFERRED_EDGES]
+    edges = tuple(
+        GraphRelationship(
+            source_id=str(relation.source_entity_id),
+            target_id=str(relation.target_entity_id),
+            relationship_type=relation.relation.value,
+            inferred=True,
+            derivation=f"{render_extent(relation.source_extent)} / "
+            f"{render_extent(relation.target_extent)}",
+        )
+        for relation in capped
+    )
+    return edges, len(relations) > len(capped)
 
 
 class ProjectGraphReader:
@@ -169,10 +219,15 @@ class ProjectGraphReader:
             if relationship.source_entity_id in returned_ids
             and relationship.target_entity_id in returned_ids
         )
+        # Over `kept`, not `entities`: an entity the cap already excluded is
+        # not on the canvas, so a temporal edge to it would be exactly the
+        # dangling reference `returned_ids` above exists to prevent.
+        inferred, inferred_truncated = _inferred_edges(kept)
         return Graph(
             entities=tuple(_to_graph_entity(entity) for entity in kept),
-            relationships=edges,
+            relationships=edges + inferred,
             truncated=len(entities) > capped,
+            inferred_truncated=inferred_truncated,
         )
 
     async def neighborhood(self, entity_id: str, *, depth: int = 1) -> Neighborhood | None:
@@ -210,8 +265,16 @@ class ProjectGraphReader:
             if relationship.source_entity_id in returned_ids
             and relationship.target_entity_id in returned_ids
         )
+        # Over root plus neighbors, same as the stored edges above. The cap
+        # flag is discarded, not threaded through: `Neighborhood` has no
+        # `inferred_truncated` field, because a neighborhood is already
+        # bounded by `MAX_NEIGHBORHOOD_DEPTH` -- unlike `whole`, it is never
+        # the caller's only view of the graph, so a silently short list of
+        # computed lines here does not hide anything a reader has no other
+        # way to see.
+        inferred, _inferred_truncated = _inferred_edges([root, *neighbors])
         return Neighborhood(
             root=_to_graph_entity(root),
             entities=tuple(_to_graph_entity(entity) for entity in neighbors),
-            relationships=edges,
+            relationships=edges + inferred,
         )
