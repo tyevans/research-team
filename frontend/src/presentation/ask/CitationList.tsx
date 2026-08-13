@@ -27,14 +27,22 @@ export const CitationList = ({
   if (citations.length === 0) return null
 
   return (
-    <div className="ask-cites">
-      <span className="ask-cites-label">Sources</span>
-      <ul>
+    <div className="flex flex-wrap items-baseline gap-2 text-sm">
+      <span className="text-xs tracking-[0.06em] text-fg-faint uppercase">Sources</span>
+      {/* Zeroed for the same reason the activity list is, and in the same
+          arbitrary-value spelling, which `AskThread` explains: no preflight,
+          and no `0` step on the spacing scale to write `m-0` against. */}
+      <ul className="m-[0] flex list-none flex-wrap gap-2 p-[0]">
         {citations.map((citation) => (
           <li key={citation.id}>
             {/* The project's document facet, not a bare id: the reader is on
                 the project page already, and this keeps them on it. */}
-            <a href={projectHref(projectId, { facet: 'doc', id: citation.id })}>{citation.id}</a>
+            <a
+              className="font-mono"
+              href={projectHref(projectId, { facet: 'doc', id: citation.id })}
+            >
+              {citation.id}
+            </a>
           </li>
         ))}
       </ul>

@@ -37,8 +37,18 @@ export const AskView = ({ projectId }: { projectId: ProjectId }) => {
   const error = store((state) => state.error)
 
   return (
-    <section className="view view-ask">
-      <div className="view-head">
+    // `.view` supplies the column; these add what this page needs on top of
+    // it -- it owns the viewport and does not scroll, so that `AskThread` can
+    // (see there for why the composer must stay on the bottom edge).
+    <section className="view min-h-0 flex flex-1 flex-col gap-3 overflow-hidden px-5 pt-5">
+      {/* Full-bleed, for the reason `.view-research .view-head` is: the
+          centred 1100px cap suits the tree it was written for, and a centred
+          title over a full-width thread reads as another page's header dropped
+          on this one. Both carry `!` because `.view-head` in `tree.css` is
+          unlayered and utilities are in `@layer utilities`, which loses to it
+          whatever the specificity -- the layering `theme.css` documents, met
+          from the other side. */}
+      <div className="view-head m-[0]! max-w-none!">
         <div>
           <h1>Ask</h1>
           <p className="sub">
@@ -66,7 +76,7 @@ export const AskView = ({ projectId }: { projectId: ProjectId }) => {
           here too: the store puts it in both the banner and the failed
           turn, since a rejection is the one case where it can afford to. */}
       {error ? (
-        <div className="error-box ask-banner" role="alert">
+        <div className="error-box flex-none" role="alert">
           <strong>That question did not go through.</strong>
           {error}
         </div>

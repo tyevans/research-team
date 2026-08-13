@@ -84,7 +84,11 @@ it('surfaces a refusal to the reader', async () => {
   // says *which question* failed. A page-wide `findByText(/busy/)` would throw
   // on the pair rather than checking either.
   expect(await screen.findByRole('alert')).toHaveTextContent(/busy/)
-  expect(screen.getByText(/busy/, { selector: '.ask-error' })).toBeInTheDocument()
+  // `article p` rather than a class: the turn's copy is a paragraph inside the
+  // turn and the banner is a `div` outside every turn, which is the same
+  // distinction the old `.ask-error` selector drew and is now the only one on
+  // offer -- the page's styles are utilities, so there is no name to select.
+  expect(screen.getByText(/busy/, { selector: 'article p' })).toBeInTheDocument()
 })
 
 it('clears the thread on a new chat', async () => {

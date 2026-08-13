@@ -29,7 +29,10 @@ export const AskComposer = ({
   }
 
   return (
-    <form className="composer ask-composer" onSubmit={submit}>
+    // Negative margin out to the page edge: `.composer` is bordered on top and
+    // is meant to sit flush against the bottom of the view, which carries
+    // `px-5` for everything above it.
+    <form className="composer -mx-5" onSubmit={submit}>
       <textarea
         rows={2}
         placeholder="Ask about this project…  (Ctrl+Enter)"
