@@ -32,40 +32,78 @@ design, not a defect.
 
 ## Defects and unfinished decisions
 
-These are wrong now, in the tree, and cost something.
+**All five are closed.** They are kept here rather than deleted because in each
+case the general form outlived the fix, and because two of them were closed by
+finding the recorded diagnosis wider than the problem — which is the pattern
+worth carrying forward, not the individual bugs.
 
-**`SearchAttempts` is process-wide while claiming to be per-turn.**
-`infrastructure/agent/search.py` — every docstring says "this turn"; the object
-outlives the turn because the tool and its SearXNG client are built once. A run
-of empty searches near the end of one turn bounds a turn that has not tried
-anything. The blocker is making the tool rebuildable per turn, which is worth
-doing for its own sake. Shipping a class whose own docstring admits its stated
-contract is false is the one place here where something knowingly wrong is
-tolerated.
+**`SearchAttempts` was process-wide while claiming to be per-turn. Fixed.**
+Every docstring in `infrastructure/agent/search.py` said "this turn" and one
+paragraph admitted the contract was false; two concurrent turns shared a
+counter, so one turn's empty searches could bound another's first search. The
+count now lives in a `ContextVar` holding a mutable counter that the middleware
+installs per turn.
 
-**Token counting excludes tool-call arguments.** Measured at 224 counted
-tokens against roughly 2,600 real ones on the same messages. The compaction
-trigger is therefore not where it says it is, and on a tool-heavy session it may
-never fire at all. A trigger that silently does not fire is worse than a wrong
-threshold, because nothing reports it.
+The general form is the part to keep: **the recorded blocker was wider than the
+problem, and that is why it stayed deferred.** The docstring and the backlog
+entry both named the blocker as making the tool and its SearXNG client
+rebuildable per turn — a real cost, and not one this needed. What had to be
+per-turn was the counter. Rebuilding the client would have discarded connection
+pooling to buy nothing. A deferral is a claim about cost, and a claim about cost
+is a thing that can be wrong; this one had gone unchallenged long enough to read
+as a fact about the code.
 
-**`checks.py` has one line of domain coupling left.** `tyler.criterion_doc_authored`
-selects `ArtifactType.CRITERION_DOCUMENT` directly. Every other check routes
-through `TypeFilter`. Moving that one selection into a `TypeFilter` parameter on
-the binding makes "shared checks know no domain" an enforceable property rather
-than an observed one — worth having regardless of anything else, because it is
-the rule that keeps the check library from silently becoming three.
+**Token counting excluded tool-call arguments. Fixed.** Measured at 224 counted
+tokens against roughly 2,600 real ones on the same messages, so the compaction
+trigger was not where it said it was and on a tool-heavy session might never
+have fired at all. `_billable_text` now counts tool-call names and arguments
+alongside content, and the measurement survives in `_tokens`' docstring as the
+justification rather than as a bug report.
 
-**The unreadable-page ceiling is undecided.** `fetch.py`'s `UNREADABLE` path is
-a dead end for any JS-rendered page, and `FETCH_PROMPT` already tells the model
-an app shell will come back empty however many times it asks. That may be the
-right answer — a headless browser is a large dependency and a new class of
-failure — but it is currently a default rather than a decision. Write down which
-it is.
+Kept here rather than deleted, because the general form is the useful part: **a
+trigger that silently does not fire is worse than a wrong threshold**, since
+nothing reports it. Anything else in this system that measures its own input in
+order to decide when to act is exposed to the same failure, and the failure
+looks like nothing happening.
 
-**Search exposes none of SearXNG's `engines`, `categories` or `time_range`.**
-For an agent choosing between a general query and a scholarly one, that is a
-capability gap rather than a simplification.
+**`checks.py`'s last line of domain coupling is gone, and its absence is a
+test.** `tyler.criterion_doc_authored` took its type through a `TypeFilter` on
+the binding, like every other check. The deliverable was never the line: "shared
+checks know no domain" is now enforced by a test that parses `checks.py` and
+fails on any reference to a *member* of `ArtifactType`.
+
+Two things worth keeping. **A rule with one live exception erodes at the next
+one** — that is how one check library silently becomes three, one per
+methodology. And the property as first stated ("`ArtifactType` appears only
+inside string literals") was unsatisfiable: the import and two annotations are
+legitimate uses committing to no methodology, and forbidding them would leave
+the library unable to describe the filter it is handed. The enforceable property
+was narrower than the one it was natural to write down.
+
+**The unreadable-page ceiling is decided: the headless browser is refused.**
+`fetch.py`'s `UNREADABLE` path stays a dead end for JS-rendered pages. The cost
+is not the install but a browser binary, a CI download step, and a new class of
+failure on the path to a citation — render timeouts, anti-bot challenges, pages
+slow enough to change what a turn costs. Today an app shell fails one way,
+immediately, and says which; a rendered fetch that works most of the time
+produces an intermittent gap, which the coverage machinery cannot represent and
+which is worse than a plain one. `B43` carries the argument and names its own
+trigger for revisiting.
+
+The general form: **a default and a decision look identical in a diff and fail
+very differently a year later.** The refusal is only worth anything because it
+says what would overturn it.
+
+**Search now exposes SearXNG's `engines`, `categories` and `time_range`.** A
+capability gap rather than a defect, closed because it sat in the file the first
+item was already open in.
+
+The lesson is in the half that was not plumbing. The parameters had to enter the
+memo key, because otherwise the same words with a recency bound hit the
+unrestricted search's entry and the model is handed — labelled as recalled, and
+therefore trusted — an answer to a question it did not ask. **Any cache key that
+omits an input the upstream is sensitive to does not miss; it lies**, and it lies
+in the one format the reader has been told to believe.
 
 ## Worth building
 
