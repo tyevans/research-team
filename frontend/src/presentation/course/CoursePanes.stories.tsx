@@ -4,11 +4,30 @@ import { useState } from 'react'
 import { allArtifacts, writtenCount } from '@domain/project/course.ts'
 
 import { Pane } from '../layout/Pane.tsx'
+import type { Track } from '../layout/split-tracks.ts'
 import { Split } from '../layout/Split.tsx'
 import { ArtifactList } from './ArtifactList.tsx'
 import { StageList, stagesLeftBehind } from './StageList.tsx'
 import { artifact, course, stage } from './course-fixtures.ts'
-import { COURSE_TRACKS } from './use-course.ts'
+
+/** The two columns, declared here rather than imported.
+ *
+ * They were `COURSE_TRACKS` in `use-course.ts`, which died with `CourseView`.
+ * These stories outlive that page because they are not about it: they are the
+ * only place `StageList` and `ArtifactList` render real content side by side
+ * with no `QueryClientProvider` around them, and deleting five assertions to
+ * remove one import would have been a bad trade. So the pair keeps a workbench,
+ * and the workbench owns its own geometry.
+ *
+ * The numbers are unchanged -- `minmax(0, 1fr) minmax(0, 1.2fr)`, the artifact
+ * column wider because its rows carry a provenance line where the rail's carry
+ * a name and a count. A `min` of 0 rather than a pixel floor so a narrow column
+ * reflows instead of forcing a horizontal scrollbar.
+ */
+const PANE_TRACKS: readonly Track[] = [
+  { id: 'stages', min: 0, weight: 1 },
+  { id: 'artifacts', min: 0, weight: 1.2 },
+]
 
 /** The course page's two panes, side by side, which is the only way to see the
  *  thing they are for: a rail saying where the run is against a list saying
@@ -34,11 +53,11 @@ const Panes = ({ data = course() }: { data?: ReturnType<typeof course> }) => {
   const slots = allArtifacts(data)
 
   return (
-    <section className="view view-course">
+    <section className="view">
       <Split
         id="course"
         label="Course panes"
-        tracks={COURSE_TRACKS}
+        tracks={PANE_TRACKS}
         collapsed={collapsed}
         onCollapsedChange={setCollapsed}
       >
