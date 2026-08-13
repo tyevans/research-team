@@ -711,20 +711,35 @@ def source_text_view(document: StoredDocument, span: Span) -> dict[str, Any]:
 
 
 def entity_view(entity: GraphEntity) -> dict[str, Any]:
-    """One node, in the shape a graph browser draws: id, label, kind."""
+    """One node, in the shape a graph browser draws: id, label, kind.
+
+    `temporal` is passed through as the port already rendered it -- `None`
+    for an entity with no extent, a string for one that has it -- rather
+    than reshaped here, so there is one place, not two, that decides what a
+    temporal edge is allowed to compare.
+    """
     return {
         "entity_id": entity.entity_id,
         "name": entity.name,
         "entity_type": entity.entity_type,
+        "temporal": entity.temporal,
     }
 
 
 def relationship_view(relationship: GraphRelationship) -> dict[str, Any]:
-    """One edge: the two ends a browser connects, and the label on the line."""
+    """One edge: the two ends a browser connects, and the label on the line.
+
+    `inferred` and `derivation` travel with every edge, not only inferred
+    ones, so a client never has to treat their absence as "false" -- see
+    `GraphRelationship.derivation`'s docstring for why an inferred edge with
+    no visible derivation would be indistinguishable from a stored one.
+    """
     return {
         "source_id": relationship.source_id,
         "target_id": relationship.target_id,
         "relationship_type": relationship.relationship_type,
+        "inferred": relationship.inferred,
+        "derivation": relationship.derivation,
     }
 
 
@@ -749,7 +764,10 @@ def graph_view(graph: Graph) -> dict[str, Any]:
     match the other response's shape would be inventing a fact. `truncated`
     is passed through rather than being left implicit in the entity count --
     a client cannot tell a complete graph of 500 from the first 500 of 900 by
-    counting.
+    counting. `inferred_truncated` is the same guarantee for the inferred
+    edges specifically: they are capped separately from the node limit (see
+    `MAX_INFERRED_EDGES`), so a graph can be complete on `truncated` and still
+    have dropped inferred edges.
     """
     return {
         "entities": [entity_view(entity) for entity in graph.entities],
@@ -757,6 +775,7 @@ def graph_view(graph: Graph) -> dict[str, Any]:
             relationship_view(relationship) for relationship in graph.relationships
         ],
         "truncated": graph.truncated,
+        "inferred_truncated": graph.inferred_truncated,
     }
 
 

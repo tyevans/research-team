@@ -3,12 +3,14 @@
 import asyncio
 import hashlib
 import json
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
 from eventsource.ports.positions import ExpectedVersion
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
+from redstring import DatePrecision, TemporalExtent
 from redstring.events.document import DocumentExtracted
 from redstring.events.streams import document_stream
 
@@ -3285,7 +3287,14 @@ async def test_setting_autonomy_on_an_unknown_session_is_a_404(client):
 # ---------------- graph ----------------
 
 
-def _graph_entity(entity_id, tenant_id, name: str, entity_type: str = "person"):
+def _graph_entity(
+    entity_id,
+    tenant_id,
+    name: str,
+    entity_type: str = "person",
+    *,
+    temporal: TemporalExtent | None = None,
+):
     from redstring.domain.entity import Entity, ExtractionMethod
 
     return Entity(
@@ -3296,6 +3305,22 @@ def _graph_entity(entity_id, tenant_id, name: str, entity_type: str = "person"):
         entity_type=entity_type,
         extraction_method=ExtractionMethod.MANUAL,
         confidence=1.0,
+        temporal=temporal,
+    )
+
+
+def _year(year: int) -> TemporalExtent:
+    return TemporalExtent(
+        start_date=datetime(year, 1, 1, tzinfo=UTC),
+        end_date=datetime(year, 12, 31, tzinfo=UTC),
+        precision=DatePrecision.YEAR,
+    )
+
+
+def _month(year: int, month: int) -> TemporalExtent:
+    return TemporalExtent(
+        start_date=datetime(year, month, 1, tzinfo=UTC),
+        precision=DatePrecision.MONTH,
     )
 
 
@@ -3395,8 +3420,11 @@ async def test_a_neighborhood_carries_root_entities_and_relationships(app_and_cl
             "source_id": str(ids["prandtl_id"]),
             "target_id": str(ids["karman_id"]),
             "relationship_type": "advised",
+            "inferred": False,
+            "derivation": None,
         }
     ]
+    assert "inferred_truncated" not in body
 
 
 async def test_asking_past_the_depth_cap_is_refused(app_and_client):
@@ -3466,9 +3494,48 @@ async def test_reading_the_whole_graph_returns_every_entity_and_edge(app_and_cli
             "source_id": str(ids["prandtl_id"]),
             "target_id": str(ids["karman_id"]),
             "relationship_type": "advised",
+            "inferred": False,
+            "derivation": None,
         }
     ]
     assert body["truncated"] is False
+
+
+async def test_a_dated_pair_in_the_graph_produces_a_temporal_edge(app_and_client):
+    """The wire shape Task 7 onward depends on: `temporal` on entities that
+    have it, `inferred`/`derivation` on the edge inference produced rather
+    than a stored one, and `inferred_truncated` on the body -- all snake_case,
+    all pass-through from the port so there is nothing here to disagree with
+    `ProjectGraphReader` about."""
+    application, client = app_and_client
+    created = await client.post("/api/projects", json={"name": f"graph-{uuid4()}"})
+    assert created.status_code == 200
+    project_id = created.json()["id"]
+    tenant_id = UUID(project_id)
+
+    store = await application.graphs.open(tenant_id)
+    era_id, event_id = uuid4(), uuid4()
+    await store.upsert_entities(
+        [
+            _graph_entity(era_id, tenant_id, "The Weimar Republic", temporal=_year(1923)),
+            _graph_entity(
+                event_id, tenant_id, "Hyperinflation Peaks", temporal=_month(1923, 11)
+            ),
+        ]
+    )
+
+    response = await client.get(f"/api/projects/{project_id}/graph")
+
+    assert response.status_code == 200
+    body = response.json()
+    entities_by_id = {row["entity_id"]: row for row in body["entities"]}
+    assert entities_by_id[str(era_id)]["temporal"] is not None
+    assert entities_by_id[str(event_id)]["temporal"] is not None
+    assert len(body["relationships"]) == 1
+    edge = body["relationships"][0]
+    assert edge["inferred"] is True
+    assert edge["derivation"] is not None
+    assert body["inferred_truncated"] is False
 
 
 async def test_reading_the_whole_graph_of_an_empty_project_is_not_an_error(
@@ -3483,7 +3550,12 @@ async def test_reading_the_whole_graph_of_an_empty_project_is_not_an_error(
     response = await client.get(f"/api/projects/{project_id}/graph")
 
     assert response.status_code == 200
-    assert response.json() == {"entities": [], "relationships": [], "truncated": False}
+    assert response.json() == {
+        "entities": [],
+        "relationships": [],
+        "truncated": False,
+        "inferred_truncated": False,
+    }
 
 
 async def test_an_oversized_limit_is_clamped_rather_than_refused(app_and_client):
