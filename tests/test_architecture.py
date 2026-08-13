@@ -146,3 +146,54 @@ def test_composition_root_is_the_only_place_that_wires_adapters() -> None:
             source = module.read_text()
             named = {name for name in wiring if name in source}
             assert not named, f"{module.relative_to(PACKAGE)} names adapters: {named}"
+
+
+def test_the_shared_check_library_names_no_artifact_type() -> None:
+    """The shared checks know no domain, and it is a property rather than a habit.
+
+    Every check selects through a `TypeFilter` its binding supplies, which is
+    what keeps one check library from becoming three, one per methodology. A
+    rule with one live exception erodes at the next one, so the absence is
+    asserted here instead of observed by whoever next reads the file.
+
+    What is forbidden is naming a *member* -- `ArtifactType.CRITERION_DOCUMENT`
+    is a vocabulary choice and belongs to the preset making it. Naming the
+    enum itself is not: `Artifact.artifact_type` and `TypeFilter.artifact_type`
+    are annotations, they commit to no methodology, and forbidding them would
+    mean the check library could not describe the filter it is handed. The
+    mentions inside docstrings and error strings (`"is not ArtifactType.field"`)
+    are prose about the vocabulary rather than uses of it.
+
+    Parsed rather than grepped because that distinction is the whole test. A
+    grep for `ArtifactType.` matches all three cases and cannot tell them
+    apart, and would pass on an occurrence someone had commented out -- which
+    would report the coupling gone while it sat one keystroke from returning.
+    Reverting `_criterion_doc_authored` to select
+    `TypeFilter(artifact_type=ArtifactType.CRITERION_DOCUMENT)` fails this.
+    """
+    module = PACKAGE / "application" / "checks.py"
+    tree = ast.parse(module.read_text())
+
+    # The three spellings of "reach into the enum". Attribute is the one that
+    # has actually appeared; the other two are cheap to close and are the
+    # obvious detours around a rule stated only in terms of attribute access.
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        reached = None
+        if isinstance(node, ast.Attribute):
+            reached = f"ArtifactType.{node.attr}"
+        elif isinstance(node, ast.Subscript):
+            reached = "ArtifactType[...]"
+        elif isinstance(node, ast.Call):
+            reached = "ArtifactType(...)"
+        else:
+            continue
+        target = node.func if isinstance(node, ast.Call) else node.value
+        if isinstance(target, ast.Name) and target.id == "ArtifactType":
+            offenders.append(f"line {node.lineno}: {reached}")
+
+    assert not offenders, (
+        f"checks.py names domain vocabulary: {offenders}; "
+        "take the type through a TypeFilter on the check's params, so the "
+        "binding that knows the methodology is the thing that states it"
+    )

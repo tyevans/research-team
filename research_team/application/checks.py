@@ -1832,6 +1832,21 @@ class CriterionDocAuthoredParams(Params):
     require_human_signature: bool = True
     forbid_derivation_from: TypeFilter | None = None
     signature_field: str = "authored_by"
+    documents: TypeFilter = TypeFilter.model_validate("CriterionDocument")
+    """Which artifacts count as criterion documents, supplied by the binding.
+
+    This check selected the type itself until the binding could state it, and
+    it was the last place in the library that named domain vocabulary in code
+    rather than taking it as a parameter --
+    `test_the_shared_check_library_names_no_artifact_type` is what keeps it
+    that way. The default costs nothing and is what makes the change
+    behaviour-preserving: spelled as the string shorthand rather than
+    `ArtifactType.CRITERION_DOCUMENT` so that the enum member is named by the
+    presets that chose it, not here.
+
+    A methodology that keeps its criteria under another type can now bind this
+    check without the library learning that type's name.
+    """
 
 
 @_register("tyler.criterion_doc_authored", CriterionDocAuthoredParams)
@@ -1858,15 +1873,18 @@ def _criterion_doc_authored(
     """
     documents = [
         artifact
-        for artifact in _select(
-            context, TypeFilter(artifact_type=ArtifactType.CRITERION_DOCUMENT)
-        )
+        for artifact in _select(context, params.documents)
         if params.doc in {artifact.id, artifact.subtype, artifact.fields.get("name")}
     ]
     if not documents:
         return [
             (
-                f"no CriterionDocument named {params.doc!r} is present, so the "
+                # `describe()` rather than a literal so the message follows the
+                # filter: it is byte-identical for the default (`ArtifactType`
+                # is a `StrEnum`, so this renders "CriterionDocument"), and a
+                # binding that scopes the check elsewhere no longer gets told
+                # its own artifacts are missing under a name it never used.
+                f"no {params.documents.describe()} named {params.doc!r} is present, so the "
                 "screen has nothing authored to cite",
                 (),
                 f"author {params.doc!r} before running the screen; a screen "
