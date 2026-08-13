@@ -1,4 +1,5 @@
 import type { Approval, ApprovalAnswer } from '@domain/approval/approval.ts'
+import type { AskEvent } from '@domain/ask/conversation.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
@@ -306,6 +307,28 @@ export interface ExtractionRepository {
     readonly current: readonly ExtractionFrame[]
     readonly last: readonly ExtractionFrame[]
   }>
+}
+
+export interface AskRepository {
+  /** Streams one question's answer, calling `onEvent` per frame. Rejects with
+   *  a 409 `ApiError` when the chat already has a question running -- the
+   *  caller must surface that rather than retry, since retrying would join a
+   *  queue that does not exist.
+   *
+   *  Only a refusal made *before* streaming starts can be a status code. A
+   *  failure after the first frame -- including asking about a project that
+   *  does not exist, which these routes never check for -- arrives as an
+   *  `error` event and resolves, so a caller that only handles rejection will
+   *  show a turn that silently stops. */
+  ask(
+    projectId: ProjectId,
+    chatId: string,
+    question: string,
+    onEvent: (event: AskEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void>
+  /** Forgets the server's copy of a conversation, backing "new chat". */
+  forget(projectId: ProjectId, chatId: string): Promise<void>
 }
 
 export interface HealthRepository {
