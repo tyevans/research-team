@@ -189,6 +189,10 @@ class ProjectGraphReader:
             neighbors = await self._store.neighbors(
                 root_id, self._project_id, depth=capped_depth
             )
+            # Absorbed entities dropped here, as `whole` already drops them --
+            # see `_without_aliases`. Costs one `resolve_entity_ids` round trip
+            # per read, which is what `whole` already pays.
+            neighbors = await self._without_aliases(list(neighbors))
 
             # Every edge among the entities this call is about to return, in
             # one round trip -- resolved over the *result* set (root plus its

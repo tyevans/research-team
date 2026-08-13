@@ -309,6 +309,49 @@ async def test_an_entity_merged_away_is_not_drawn_as_its_own_node(graph_reader):
     assert [entity.entity_id for entity in page.entities] == [str(canonical_id)]
 
 
+async def test_an_entity_merged_away_is_not_drawn_in_a_neighborhood(graph_reader):
+    """What `whole` has always done, which `neighborhood` never did.
+
+    `GraphStore.neighbors` returns absorbed entities as well as canonical
+    ones -- a merge is not a delete, because the row is what `undo_merge`
+    restores. Passed through, a *correctly* consolidated pair draws as two
+    nodes: the canonical one carrying every edge, and the alias beside it
+    with none, because the merge redirected them. An isolated node bearing a
+    name already on the canvas is precisely the duplicate a reader reports.
+
+    Fails against the code as it was: the alias came back in `entities`.
+    """
+    reader, store = graph_reader
+    root_id, canonical_id, alias_id = uuid4(), uuid4(), uuid4()
+    await store.upsert_entities(
+        [
+            _entity(root_id, "Root"),
+            _entity(canonical_id, "Nova Scotia Duck Tolling Retriever"),
+            _entity(alias_id, "Nova Scotia Duck Tolling Retriever"),
+        ]
+    )
+    await store.upsert_relationships(
+        [
+            _relationship(uuid4(), root_id, canonical_id, "related_to"),
+            # The alias's own edge, unredirected in this fake store's `merge`
+            # -- an `Alias` row records that it was absorbed, but does not
+            # rewire relationships, so `neighbors`' BFS still reaches it
+            # exactly as it would in the store this reader actually runs
+            # against. Without that edge the alias is merely unconnected,
+            # which proves nothing about the filter under test.
+            _relationship(uuid4(), root_id, alias_id, "related_to"),
+        ]
+    )
+    await _merge_away(store, alias_id=alias_id, canonical_id=canonical_id)
+
+    hood = await reader.neighborhood(str(root_id), depth=1)
+
+    assert str(alias_id) not in {entity.entity_id for entity in hood.entities}
+    for edge in hood.relationships:
+        assert edge.source_id != str(alias_id)
+        assert edge.target_id != str(alias_id)
+
+
 async def test_an_empty_project_reads_as_an_empty_graph(graph_reader):
     """A project with nothing extracted yet is the commonest way to reach
     this read at all, and it must answer rather than fail."""
