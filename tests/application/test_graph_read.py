@@ -130,15 +130,6 @@ def test_a_graph_reports_its_two_truncations_separately():
     assert graph.inferred_truncated is False
 
 
-def test_the_inferred_edge_cap_is_two_thousand():
-    """Pins the port's contract, not the adapter's -- Task 5 asserts the cap
-    actually bites; this just keeps the published number from drifting
-    unnoticed, since nothing else in this file constructs enough entities to
-    exercise it.
-    """
-    assert MAX_INFERRED_EDGES == 2_000
-
-
 async def test_a_neighborhood_carries_the_edges_among_what_it_returned(
     graph_reader, seeded_graph
 ):
@@ -510,6 +501,53 @@ async def test_a_merged_pair_infers_no_edge_to_itself(graph_reader):
 
     for edge in hood.relationships:
         assert str(alias_id) not in (edge.source_id, edge.target_id)
+
+
+async def test_the_inferred_edge_cap_drops_lines_but_never_asserted_edges(graph_reader):
+    """`inferred_truncated` actually reflects the slice, not just the flag's
+    default.
+
+    65 entities sharing one identical extent produce `65 * 64 / 2 = 2,080`
+    `EQUALS` pairs -- over `MAX_INFERRED_EDGES` (2,000) and comfortably under
+    `MAX_GRAPH_NODES` (500), so the node cap never gets in the way of
+    reaching the edge cap. A stored relationship among the same entities is
+    seeded alongside them, so "asserted edges are never sacrificed to make
+    room for inferred ones" is asserted here rather than merely implied by
+    the slice being taken from the inferred list alone.
+    """
+    reader, store = graph_reader
+    same_date = _year(1923)
+    ids = [uuid4() for _ in range(65)]
+    await store.upsert_entities(
+        [_entity(i, f"Node {n}", temporal=same_date) for n, i in enumerate(ids)]
+    )
+    await store.upsert_relationships([_relationship(uuid4(), ids[0], ids[1], "next")])
+
+    graph = await reader.whole()
+
+    inferred = [edge for edge in graph.relationships if edge.inferred]
+    asserted = [edge for edge in graph.relationships if not edge.inferred]
+    assert len(inferred) == MAX_INFERRED_EDGES
+    assert len(asserted) == 1
+    assert graph.inferred_truncated is True
+
+
+async def test_a_graph_under_the_inferred_edge_cap_is_not_reported_truncated(graph_reader):
+    """The other half of the boundary: nothing dropped means the flag stays
+    false, the same "complete unless it says otherwise" contract `truncated`
+    already gives entities."""
+    reader, store = graph_reader
+    same_date = _year(1923)
+    ids = [uuid4() for _ in range(5)]
+    await store.upsert_entities(
+        [_entity(i, f"Node {n}", temporal=same_date) for n, i in enumerate(ids)]
+    )
+
+    graph = await reader.whole()
+
+    inferred = [edge for edge in graph.relationships if edge.inferred]
+    assert len(inferred) == 5 * 4 // 2
+    assert graph.inferred_truncated is False
 
 
 async def test_an_empty_project_reads_as_an_empty_graph(graph_reader):

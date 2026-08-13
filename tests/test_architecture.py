@@ -153,7 +153,7 @@ def test_inner_layers_name_no_framework(layer: str, module: Path) -> None:
     ids=[f"{layer}/{module.name}" for layer, module in ALL_MODULES],
 )
 def test_redstring_is_named_only_through_its_public_surface(layer: str, module: Path) -> None:
-    """`redstring.domain`, never `redstring.domain.something`.
+    """Anything under `redstring.domain.` is out; everything else is in.
 
     redstring's contract is that anything reached by a dotted path is internal
     and may change in a patch release -- so a dotted import into `domain` is a
