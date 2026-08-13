@@ -317,6 +317,115 @@ def test_the_review_counts_what_it_looked_at():
     assert review.artifact_count == 1
 
 
+# --- the denominator ----------------------------------------------------------
+#
+# A fire rate needs to know how often a check ran, not only how often it had
+# something to say. `StageReview` reported findings and unimplemented names, so
+# "this check has never once fired" and "this check has never run" were the
+# same observation, and the difference between them is the whole point of
+# measuring a check at all.
+
+
+def test_a_review_reports_the_checks_that_passed_as_well_as_those_that_fired():
+    """Without this, a fire rate has a numerator and no denominator.
+
+    The course holds one unlinked `Intent` and no `EvidenceSpec`, so `coverage`
+    fires on the intent and `orphan` quantifies over an empty domain and passes.
+    Reverted, `orphan` is absent from the review entirely.
+    """
+    stage = specify(
+        "s.one",
+        Check(
+            check="shared.coverage",
+            params={
+                "from": {"artifact_type": "Intent"},
+                "to": {"artifact_type": "EvidenceSpec"},
+            },
+        ),
+        Check(
+            check="shared.orphan",
+            params={
+                "type": {"artifact_type": "EvidenceSpec"},
+                "must_link_to": {"artifact_type": "Intent"},
+            },
+        ),
+    )
+    review = review_stage(
+        preset_of(stage),
+        stage,
+        {"/course/00-intent.md": artifact_file(artifact_type="Intent")},
+    )
+
+    by_name = {entry.check: entry for entry in review.evaluated}
+    assert set(by_name) == {"shared.coverage", "shared.orphan"}
+    assert by_name["shared.orphan"].findings == 0
+    assert by_name["shared.coverage"].findings > 0
+
+
+def test_an_evaluated_check_carries_the_severity_the_finding_would_have():
+    """A spec's `fixed_severity` wins over the binding's, as `run_check` decides.
+
+    `shared.verdict_citation` is registered `fixed_severity="invariant"`. A
+    binding that says `advisory` does not get to soften it, and a report that
+    recorded the binding's word would be wrong for exactly the two checks where
+    severity carries the most weight.
+    """
+    stage = specify(
+        "s.one",
+        Check(
+            check="shared.verdict_citation",
+            params={"ledger": {"artifact_type": "VerdictLedger"}},
+            severity="advisory",
+        ),
+    )
+    review = review_stage(
+        preset_of(stage),
+        stage,
+        {
+            "/course/00-verdict-ledger.md": file(
+                "---\nartifact_type: VerdictLedger\nverdicts:\n"
+                "  - {candidate_id: c1, verdict: reject}\n---\nb"
+            )
+        },
+    )
+
+    entry = next(e for e in review.evaluated if e.check == "shared.verdict_citation")
+    assert entry.severity == "invariant"
+
+
+def test_an_unimplemented_binding_is_not_reported_as_having_passed():
+    """`findings == 0` must never be readable as "ran and found nothing".
+
+    A binding naming no registered check neither ran nor passed. It stays out
+    of `evaluated` entirely and appears in `unimplemented_bindings` with the
+    severity the binding declared -- there is no spec to resolve a fixed one
+    from, which is what being unimplemented means.
+    """
+    stage = specify("s.one", Check(check="addie.no_such_check", severity="advisory"))
+    review = review_stage(preset_of(stage), stage, {})
+
+    assert review.evaluated == ()
+    assert [e.check for e in review.unimplemented_bindings] == ["addie.no_such_check"]
+    assert review.unimplemented_bindings[0].severity == "advisory"
+    assert review.unimplemented == ("addie.no_such_check",)
+
+
+def test_a_check_that_raises_is_recorded_as_having_fired(monkeypatch):
+    """From the gate's point of view a crashed check is a check that blocked.
+
+    A fire rate that excluded crashes would under-report the cost of a broken
+    check, which is the thing most worth surfacing. The message says it
+    crashed; the count says it fired.
+    """
+    break_check(monkeypatch, "shared.provenance")
+    stage = specify("s.one", Check(check="shared.provenance"))
+    review = review_stage(preset_of(stage), stage, {})
+
+    entry = next(e for e in review.evaluated if e.check == "shared.provenance")
+    assert entry.findings == 1
+    assert entry.severity == "blocking"
+
+
 # --- the two invariants -------------------------------------------------------
 
 

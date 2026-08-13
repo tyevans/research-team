@@ -28,10 +28,12 @@ from research_team.domain import (
     FileEdited,
     RecordAssistantMessage,
     RecordForkSource,
+    RecordStageReview,
     RecordToolDecision,
     RecordToolResult,
     SendUserMessage,
     SessionStarted,
+    StageChecksEvaluated,
     StartSession,
     ToolCallDecided,
     ToolResultRecorded,
@@ -473,3 +475,84 @@ def test_supervision_events_leave_the_state_alone():
     )
 
     assert after == state
+
+
+def test_a_stage_review_is_recorded_as_an_audit_event():
+    """`RecordStageReview` produces one event and touches no state.
+
+    Fails if the command is unhandled, and fails differently if someone makes
+    `evolve` fold it: `SessionState` tracks what the session *is*, and what a
+    check found at a gate is not that.
+    """
+    state = started()
+    review_id = uuid4()
+    project_id = uuid4()
+
+    (event,) = decide(
+        RecordStageReview(
+            review_id=review_id,
+            project_id=project_id,
+            stage="analysis",
+            preset="hybrid.default",
+            preset_version="1",
+            evaluated=[{"check": "shared.coverage", "severity": "blocking", "findings": 2}],
+            unimplemented=[{"check": "ubd.uncoverage", "severity": "blocking"}],
+            posed_by="runner",
+        ),
+        state,
+    )
+
+    assert isinstance(event, StageChecksEvaluated)
+    assert event.aggregate_id == state.session_id
+    assert event.review_id == review_id
+    assert event.project_id == project_id
+    assert (event.stage, event.preset, event.preset_version) == (
+        "analysis",
+        "hybrid.default",
+        "1",
+    )
+    assert event.posed_by == "runner"
+    assert event.evaluated == [
+        {"check": "shared.coverage", "severity": "blocking", "findings": 2}
+    ]
+    assert event.unimplemented == [{"check": "ubd.uncoverage", "severity": "blocking"}]
+    # The audit half: nothing about the session changed.
+    assert evolve(state, event) == state
+
+
+def test_a_tool_decision_can_name_the_review_it_answers():
+    """`review_id` rides through `RecordToolDecision` onto the event.
+
+    This is the only join between a finding and the decision that followed it;
+    `ToolCallDecided` names no stage, and `StageAdvanced` -- which does -- is on
+    the `Project` stream and is not written at all when a gate is rejected.
+    """
+    review_id = uuid4()
+
+    (event,) = decide(
+        RecordToolDecision(
+            tool_name="advance_stage",
+            args={"rationale": "3 findings"},
+            decision="approve",
+            decided_by="human",
+            review_id=review_id,
+        ),
+        started(),
+    )
+
+    assert event.review_id == review_id
+
+
+def test_a_tool_decision_that_answers_no_review_says_so():
+    """The default is None, which is what every non-gate tool call means."""
+    (event,) = decide(
+        RecordToolDecision(
+            tool_name="web_search",
+            args={"query": "x"},
+            decision="approve",
+            decided_by="human",
+        ),
+        started(),
+    )
+
+    assert event.review_id is None

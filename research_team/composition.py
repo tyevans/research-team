@@ -8,7 +8,7 @@ swapping any of them is an edit here and nowhere else.
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from uuid import UUID
+from uuid import UUID, uuid4
 
 # Imported for its side effect as much as its names: redstring registers its
 # event types at import time, and the session store may hold them -- the
@@ -46,6 +46,7 @@ from research_team.application import (
 )
 from research_team.application.artifacts import stage_artifact_instructions
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
+from research_team.application.check_telemetry_read import CheckTelemetryReadPort
 from research_team.application.components import component_guidance
 from research_team.application.grants import GrantRegistry
 from research_team.application.ports import GateReview
@@ -69,7 +70,7 @@ from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import CodingSession, ProjectState, current_stage_of
 from research_team.domain.auto_research import Budget
-from research_team.domain.commands import WriteFile
+from research_team.domain.commands import RecordStageReview, WriteFile
 from research_team.domain.topic import Topic
 from research_team.domain.workflow import Preset
 from research_team.infrastructure import config
@@ -134,6 +135,10 @@ from research_team.infrastructure.persistence import (
     build_learner_progress_repository,
     build_topic_repository,
 )
+from research_team.infrastructure.persistence.check_telemetry import CheckTelemetryRunner
+from research_team.infrastructure.persistence.check_telemetry_reader import (
+    ProjectCheckTelemetryReader,
+)
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
@@ -171,6 +176,23 @@ class Application:
     A field for the same reason `corpus` is one: the queue is read by the
     agent through the tools attached with a project, and by anything driving an
     autonomous run, which shares nothing else with a session."""
+
+    check_telemetry: CheckTelemetryRunner
+    """Keeps `check_outcomes` following the log. Idle until `start()`.
+
+    A field for the reason `corpus` is one, with the emphasis reversed: nothing
+    *reads* this on the hot path -- `/checks` is a maintainer's occasional
+    question -- but everything writes to it, on every gate, and a projection
+    that is constructed and never started records nothing while looking wired.
+    Exposing it here is what makes `rebuild()` and `failures()` reachable when
+    the numbers turn out to disagree with the log."""
+
+    check_telemetry_readers: Callable[[UUID], CheckTelemetryReadPort]
+    """One project's `CheckTelemetryReadPort`, built fresh per call.
+
+    A factory for `topic_readers`' reason: the project is bound at construction
+    so no caller can read another project's measurements, and the CLI has no
+    business knowing a reader is a runner plus a project id."""
 
     graphs: ProjectGraphs
     """The single owner of every project's open graph store in this instance.
@@ -323,6 +345,7 @@ class Application:
         await self.summaries.start()
         await self.corpus.start()
         await self.topics.start()
+        await self.check_telemetry.start()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
@@ -364,6 +387,17 @@ class Application:
         """
         await self.corpus.caught_up()
 
+    async def check_telemetry_caught_up(self) -> None:
+        """Wait until `check_outcomes` has seen every session event appended.
+
+        A test affordance more than a production one, unlike its three
+        neighbours: nothing in a run reads these numbers back, so nothing races
+        the projection. It exists because a test that drives a gate and then
+        asks `/checks` what happened would otherwise be asserting against
+        whatever the projection had got to.
+        """
+        await self.check_telemetry.caught_up()
+
     async def close(self) -> None:
         """Stop anything still running, then let go of the store.
 
@@ -382,6 +416,7 @@ class Application:
         await self.summaries.stop()
         await self.corpus.stop()
         await self.topics.stop()
+        await self.check_telemetry.stop()
         await self.service.close()
         await self.detach_project()
         # Every project this instance ever opened a graph for, not just the
@@ -573,6 +608,14 @@ def build_application(
     # Same reasoning as `corpus`: `open_graph` closes over it, so the thing the
     # topic tools read has to exist by the time that callable is defined.
     topics = TopicRunner(
+        repository.store, resolved_path, repository.publisher, resolved_tracer
+    )
+    # Unlike its two neighbours nothing closes over this one -- no tool reads
+    # check telemetry -- but it is built here anyway so that all four
+    # projections over this store are constructed in one place and started by
+    # one line in `start()`. A projection wired somewhere else is a projection
+    # somebody forgets to start.
+    check_telemetry = CheckTelemetryRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
 
@@ -890,7 +933,7 @@ def build_application(
         running = await running_workflow(session)
         if running is None:
             return None
-        _, state, preset = running
+        project_id, state, preset = running
         stage = current_stage_of(state, preset)
         if stage is None:
             return None
@@ -899,7 +942,43 @@ def build_application(
         session.execute(
             WriteFile(path=path, file_data={"content": render_review(review, preset)})
         )
-        return GateReview(context=gate_context(review, path), refusal=refusal(review))
+        # Recorded here rather than in `review_stage`, for the reason
+        # `_gate_and_advance` states: `course_progress` reviews a stage on
+        # every course view, and counting those would make a fire rate a
+        # measure of how often somebody opened a page.
+        #
+        # Both this and the `RecordToolDecision` that answers it land at
+        # `_save_turn` on this path, milliseconds apart, which is why the event
+        # carries `posed_by="tool"`: a consumer must report no duration rather
+        # than an instant one. See BACKLOG.md B36.
+        review_id = uuid4()
+        session.execute(
+            RecordStageReview(
+                review_id=review_id,
+                project_id=project_id,
+                stage=stage.id,
+                preset=preset.id,
+                preset_version=str(preset.version),
+                evaluated=[
+                    {
+                        "check": entry.check,
+                        "severity": entry.severity,
+                        "findings": entry.findings,
+                    }
+                    for entry in review.evaluated
+                ],
+                unimplemented=[
+                    {"check": entry.check, "severity": entry.severity}
+                    for entry in review.unimplemented_bindings
+                ],
+                posed_by="tool",
+            )
+        )
+        return GateReview(
+            context=gate_context(review, path),
+            refusal=refusal(review),
+            review_id=review_id,
+        )
 
     executor = DeepAgentTurnExecutor(
         resolved_model,
@@ -1140,6 +1219,15 @@ def build_application(
             topics, topic_repository, topics.corpus_facts, target_project_id
         )
 
+    def check_telemetry_reader(target_project_id: UUID) -> CheckTelemetryReadPort:
+        """This project's `CheckTelemetryReadPort`, over the one runner above.
+
+        Built per call rather than held, mirroring `topic_reader`: two
+        attribute reads and an object, and the project bound at construction is
+        the point of having it at all.
+        """
+        return ProjectCheckTelemetryReader(check_telemetry, target_project_id)
+
     async def start_run(
         run_id: UUID,
         run_project_id: UUID,
@@ -1258,6 +1346,8 @@ def build_application(
         summaries=summaries,
         corpus=corpus,
         topics=topics,
+        check_telemetry=check_telemetry,
+        check_telemetry_readers=check_telemetry_reader,
         graphs=graphs,
         topic_readers=topic_reader,
         topic_repository=topic_repository,

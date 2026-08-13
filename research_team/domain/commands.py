@@ -130,6 +130,21 @@ class RecordToolDecision(Command):
     decision: str
     decided_by: str
     edited_args: dict[str, Any] | None = None
+    review_id: UUID | None = None
+    """The stage review this decision answered. None when it answered none."""
+
+
+class RecordStageReview(Command):
+    """The check library ran at a gate; here is what it was asked and found."""
+
+    review_id: UUID
+    project_id: UUID
+    stage: str
+    preset: str
+    preset_version: str
+    evaluated: list[dict[str, Any]]
+    unimplemented: list[dict[str, Any]]
+    posed_by: str
 
 
 class ChangeAutonomy(Command):
@@ -152,6 +167,7 @@ SessionCommand = (
     | EditFile
     | DeleteFile
     | RecordToolDecision
+    | RecordStageReview
     | ChangeAutonomy
 )
 """Every request a session accepts.

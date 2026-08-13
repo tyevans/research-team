@@ -183,18 +183,52 @@ arguments; there is no safe equivalent for shell, and for file writes the
 obvious path-prefix generalization is the one with a long history of granting
 more than intended. One solved case is not a method.
 
-### 4. Closing the loop on checks
+### 4. Closing the loop on checks — built
 
-Findings inform rather than block, deliberately: a check that refuses to advance
-teaches people to switch checks off. But a check that has fired forty times and
-been advanced past forty times is not informing anyone, and nothing currently
-records that, because a finding is a file rather than an event.
+Kept here rather than deleted, for the reason the defects section keeps its
+closed items: the general form outlived the work.
 
-Recording findings as events and folding them against the approval that
-followed gives per-check fire rate, override rate and time-to-decision — a
-mechanical, model-free answer to which of the seventeen checks earn their place.
-It is the same discipline the check library already holds itself to, turned on
-itself.
+A gate now writes `StageChecksEvaluated` on the session stream, and the
+`ToolCallDecided` that answers it carries the same `review_id`. A projection
+folds the pair into one row per check per review — the review's facts written
+when the gate is posed, the decision's columns filled when the decision arrives
+— and `/checks` in the REPL reads per-check fire rate, override rate and
+time-to-decision out of it. Both gate paths emit, including the refusals and the
+denials, because a rejected gate writes no `StageAdvanced` anywhere and was
+otherwise the outcome that left no trace.
+
+**The lesson is the denominator: a record modelled on the report you already
+have will measure only what that report already shows.** The obvious design
+starts from `/course/NN-check-findings.md`, because that is where the findings
+are. But that file lists findings, so an event modelled on it counts numerators
+forever and never produces a rate — "this check has never fired" and "this check
+has never run" arrive as the same observation. The event therefore records every
+*bound* check, including the ones that ran and found nothing, and an
+unimplemented binding is stored under a status of its own so that its zero
+findings can never be read as a pass. That is the single decision the rest of
+the feature depends on, and it is invisible from the artefact you would
+naturally start from.
+
+What is measured, and what is not, stated plainly because an instrument that
+overstates its reach is worse than a missing one:
+
+- **No time-to-decision on the tool path.** There the review and the decision
+  both reach the store at `_save_turn`, so the gap between their timestamps
+  measures serialization rather than deliberation. Those rows contribute null,
+  never zero — zero is a number that reads as an instant approval and is
+  actually an absent measurement. Only the runner path, where a human's
+  deliberation genuinely sits between two appends, is timed.
+- **Policy approvals are reported beside the override rate, not inside it.**
+  `decided_by == "policy"` means `advance_stage` was set to `auto` and nobody
+  was asked. Folding those into the override rate would describe a system
+  ignoring its checks, when what happened is that no human saw anything.
+- **The two standing gates are marked, not hidden.** `ubd.uncoverage` and
+  `addie.expert_gap_flag` are registered with no `run` and can never pass, so
+  their 100% fire rate is a specification rather than a finding. They are
+  recognised from the registry, so a third one needs no edit here.
+
+What this does not do is act on the numbers. B22 and B38 are the two questions
+it was built to make answerable and both are still open; see `BACKLOG.md`.
 
 ### 5. Recording exhausted searches
 

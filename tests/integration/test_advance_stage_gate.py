@@ -20,7 +20,12 @@ from langchain_core.messages import AIMessage
 
 from research_team.application import ApprovalDecision, ApprovalRequest, AutonomyPolicy
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL
-from research_team.domain import CreateProject, SelectWorkflow, ToolCallDecided
+from research_team.domain import (
+    CreateProject,
+    SelectWorkflow,
+    StageChecksEvaluated,
+    ToolCallDecided,
+)
 from research_team.workflows import hybrid_default
 from tests.conftest import ToolAwareFakeChatModel
 
@@ -404,3 +409,46 @@ async def test_a_project_with_no_workflow_is_not_reviewed(build_application):
     await application.service.run_turn(session_id, "write a note")
 
     assert approvals.seen[0].context is None
+
+
+async def test_the_tool_path_records_the_review_and_the_decision_that_answered_it(
+    build_application,
+):
+    """The other gate. Both events on the session stream, joined by `review_id`.
+
+    Here as well as in `test_stage_runner.py` because the two gates share no
+    code: the runner asks through `SessionService`, and this path runs inside a
+    turn and appends to the aggregate the executor is holding. An instrument
+    wired at one of them and not the other has its hole in the path a model
+    takes unattended, which is the path nobody is watching.
+
+    `posed_by == "tool"` is what a consumer reads to know that the two
+    `occurred_at` values here are commit timestamps from the same `_save_turn`
+    and measure serialization rather than deliberation.
+    """
+    approvals = ScriptedApprovals(ApprovalDecision("approve"))
+    application = await build_application(model=_advancing_model(), approvals=approvals)
+    project_id = await _project(application)
+    session_id = await _in_project(application, project_id)
+
+    await application.service.run_turn(session_id, "are we done here?")
+
+    history = await application.service.history(session_id)
+    [review] = [event for event in history if isinstance(event, StageChecksEvaluated)]
+    [decision] = [
+        event
+        for event in history
+        if isinstance(event, ToolCallDecided) and event.tool_name == ADVANCE_STAGE_TOOL
+    ]
+    assert review.posed_by == "tool"
+    assert review.project_id == project_id
+    assert review.stage == "tyler.step0.intake"
+    assert review.preset == hybrid_default.id
+    # The denominator: every binding the stage declares is here, whether it
+    # fired or not, and the two lists together account for all of them.
+    bound = {check.check for check in hybrid_default.stages[0].checks}
+    recorded = {entry["check"] for entry in review.evaluated} | {
+        entry["check"] for entry in review.unimplemented
+    }
+    assert recorded == bound
+    assert decision.review_id == review.review_id

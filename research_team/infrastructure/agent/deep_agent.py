@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
+from uuid import UUID
 
 from deepagents import create_deep_agent
 from langchain.agents.middleware import AgentMiddleware
@@ -507,6 +508,10 @@ class DeepAgentTurnExecutor:
                 "message": f"The {name} tool is not permitted in this session.",
             }
         gate = await self._review_gate(session, name, args)
+        # Every decision from here down answers a review, when there was one.
+        # The two above are recorded before `_review_gate` runs and get no
+        # `review_id` on purpose: no review ran, so there is nothing to name.
+        review_id = gate.review_id if gate is not None else None
         if gate is not None and gate.refusal is not None:
             # Refused without the human seeing it, which is the same shape as
             # the `deny` arm above and for a related reason: there is no
@@ -515,7 +520,11 @@ class DeepAgentTurnExecutor:
             # it was the check library that objected.
             session.execute(
                 RecordToolDecision(
-                    tool_name=name, args=args, decision="reject", decided_by="harness"
+                    tool_name=name,
+                    args=args,
+                    decision="reject",
+                    decided_by="harness",
+                    review_id=review_id,
                 )
             )
             return {"type": "reject", "message": gate.refusal}
@@ -538,11 +547,15 @@ class DeepAgentTurnExecutor:
             # person saw this call and rejected it. Nobody did.
             session.execute(
                 RecordToolDecision(
-                    tool_name=name, args=args, decision="reject", decided_by="policy"
+                    tool_name=name,
+                    args=args,
+                    decision="reject",
+                    decided_by="policy",
+                    review_id=review_id,
                 )
             )
             return {"type": "reject", "message": str(refused)}
-        return self._apply(session, name, args, decision)
+        return self._apply(session, name, args, decision, review_id)
 
     async def _review_gate(
         self, session: CodingSession, name: str, args: dict
@@ -570,8 +583,15 @@ class DeepAgentTurnExecutor:
         name: str,
         args: dict,
         decision: ApprovalDecision,
+        review_id: UUID | None = None,
     ) -> dict:
-        """Record a human's decision and translate it into langchain's shape."""
+        """Record a human's decision and translate it into langchain's shape.
+
+        `review_id` is passed in rather than obtained by re-running the
+        reviewer: `_review_gate` emits the review event, so a second call would
+        record a second review that nobody was asked about and halve every fire
+        rate.
+        """
         if decision.type == "edit":
             edited = dict(decision.edited_args or args)
             session.execute(
@@ -581,12 +601,17 @@ class DeepAgentTurnExecutor:
                     decision="edit",
                     decided_by="human",
                     edited_args=edited,
+                    review_id=review_id,
                 )
             )
             return {"type": "edit", "edited_action": {"name": name, "args": edited}}
         session.execute(
             RecordToolDecision(
-                tool_name=name, args=args, decision=decision.type, decided_by="human"
+                tool_name=name,
+                args=args,
+                decision=decision.type,
+                decided_by="human",
+                review_id=review_id,
             )
         )
         if decision.type == "approve":

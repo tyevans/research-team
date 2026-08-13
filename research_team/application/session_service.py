@@ -36,6 +36,7 @@ from research_team.application.ports import (
 )
 from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.retry import with_retry
+from research_team.application.stage_exit import EvaluatedCheck
 from research_team.application.summaries import SessionSummary
 from research_team.domain import (
     AdvanceTip,
@@ -58,6 +59,7 @@ from research_team.domain import (
     RecordAttempt,
     RecordChecklistState,
     RecordForkSource,
+    RecordStageReview,
     RecordToolDecision,
     RecordToolResult,
     SendUserMessage,
@@ -698,6 +700,7 @@ class SessionService:
         args: dict[str, Any],
         decision: str,
         decided_by: str,
+        review_id: UUID | None = None,
     ) -> None:
         """Note in the log that a gated call was allowed, refused, or amended.
 
@@ -711,11 +714,68 @@ class SessionService:
         no turn to defer to: the decision is made and acted on before the next
         one starts, and a decision that reached the store only if some later
         turn succeeded would be missing from exactly the runs that went wrong.
+
+        `review_id` names the stage review this decision answered, when it
+        answered one. None for every gated call that is not an advance.
         """
         aggregate = await self._repository.load(session_id)
         aggregate.execute(
             RecordToolDecision(
-                tool_name=tool_name, args=args, decision=decision, decided_by=decided_by
+                tool_name=tool_name,
+                args=args,
+                decision=decision,
+                decided_by=decided_by,
+                review_id=review_id,
+            )
+        )
+        await self._repository.save(aggregate)
+
+    async def record_stage_review(
+        self,
+        session_id: UUID,
+        review_id: UUID,
+        project_id: UUID,
+        stage: str,
+        preset: str,
+        preset_version: str,
+        evaluated: tuple[EvaluatedCheck, ...],
+        unimplemented: tuple[EvaluatedCheck, ...],
+        posed_by: str,
+    ) -> None:
+        """Note what the checks were asked at a gate, and what they answered.
+
+        Appends immediately, for `record_tool_decision`'s reason and one of its
+        own: the decision that answers this review is appended separately a
+        moment later, and the gap between the two `occurred_at` values is the
+        only measurement of how long a reviewer took. Deferring either to a
+        turn would collapse that gap into a commit boundary.
+
+        Takes `EvaluatedCheck`s and flattens them to dicts here rather than
+        making the caller do it, so that the event's payload shape is decided
+        in one place; `domain` cannot name `EvaluatedCheck`, which is why the
+        event carries dicts at all.
+        """
+        aggregate = await self._repository.load(session_id)
+        aggregate.execute(
+            RecordStageReview(
+                review_id=review_id,
+                project_id=project_id,
+                stage=stage,
+                preset=preset,
+                preset_version=preset_version,
+                evaluated=[
+                    {
+                        "check": entry.check,
+                        "severity": entry.severity,
+                        "findings": entry.findings,
+                    }
+                    for entry in evaluated
+                ],
+                unimplemented=[
+                    {"check": entry.check, "severity": entry.severity}
+                    for entry in unimplemented
+                ],
+                posed_by=posed_by,
             )
         )
         await self._repository.save(aggregate)

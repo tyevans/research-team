@@ -25,6 +25,7 @@ import pytest
 from eventsource import StreamId, collect
 
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, AutonomyPolicy
+from research_team.application.course import course_progress
 from research_team.application.ports import ApprovalDecision, ApprovalRequest
 from research_team.application.session_service import TurnOutcome
 from research_team.application.stage_runner import (
@@ -34,7 +35,13 @@ from research_team.application.stage_runner import (
     stage_exit_condition,
 )
 from research_team.application.turn_supervisor import TurnCancelled
-from research_team.domain import CreateProject, Project, StageAdvanced, ToolCallDecided
+from research_team.domain import (
+    CreateProject,
+    Project,
+    StageAdvanced,
+    StageChecksEvaluated,
+    ToolCallDecided,
+)
 from research_team.domain.project import SelectWorkflow
 from research_team.domain.workflow import (
     ArtifactType,
@@ -106,9 +113,9 @@ def _self_reviewing(stage_id: str, generator_stage: str) -> ScreenStage:
     )
 
 
-def _preset(*stages: Any) -> Preset:
+def _preset(*stages: Any, preset_id: str = "test.runner") -> Preset:
     return Preset(
-        id="test.runner",
+        id=preset_id,
         name="Runner test preset",
         version="1",
         description="Built for these tests only.",
@@ -963,3 +970,219 @@ async def test_a_stage_sees_artifacts_written_after_the_project_was_released(
     assert run.stages[0].advanced
     later = await service.load(run.stages[1].session_id)
     assert STAGE_ONE_ARTIFACT in later.state.files
+
+
+# --- check telemetry ---------------------------------------------------------
+#
+# The gate is where a check run becomes a fact worth counting. Everything below
+# asserts on `service.history`, which reads the committed session stream, rather
+# than on anything the runner returns: a review that only reached a return value
+# would be missing from exactly the runs that mattered.
+
+_GATE_CHECKS = (
+    Check(check="shared.orphan", params={"type": "EvidenceSpec", "must_link_to": "Intent"}),
+    Check(check="addie.no_such_check", severity="advisory"),
+)
+"""One check that runs and passes, and one binding naming nothing registered.
+
+Bound to `EvidenceSpec`, which stage one does not produce, so the check runs
+over an empty domain and finds nothing -- which is the case the denominator
+exists for and the one a findings file cannot record at all. Bound to `Intent`
+it fires, and a review where everything fired would not distinguish "recorded
+every binding" from "recorded every finding".
+
+`addie.no_such_check` follows the spelling `test_stage_exit.py` established for
+a name that is not and will not be registered. Both are here because the two
+land in different fields of the event, and the distinction between them --
+"passed" against "never ran" -- is the one the denominator exists to keep.
+"""
+
+
+async def _checked_project(service, monkeypatch) -> tuple[UUID, Preset]:
+    """A project running a preset whose first stage actually binds checks.
+
+    `TWO_STAGES` binds none, so a review of it has an empty denominator and
+    every assertion below would hold vacuously.
+    """
+    from research_team.application import stage_runner
+
+    preset = _preset(
+        _specify("s.one", ArtifactType.INTENT, *_GATE_CHECKS),
+        _specify("s.two", ArtifactType.EVIDENCE_SPEC),
+        _no_outputs("s.end"),
+        preset_id="test.runner.checked",
+    )
+    monkeypatch.setitem(stage_runner.PRESETS, preset.id, preset)
+    aggregate = service.projects.create_new(uuid4())
+    aggregate.execute(CreateProject(project_id=aggregate.aggregate_id, name="checked"))
+    aggregate.execute(SelectWorkflow(preset=preset))
+    await service.projects.save(aggregate)
+    return aggregate.aggregate_id, preset
+
+
+async def _reviews(service, session_id) -> list[StageChecksEvaluated]:
+    return [
+        event
+        for event in await service.history(session_id)
+        if isinstance(event, StageChecksEvaluated)
+    ]
+
+
+async def _gate_decisions(service, session_id) -> list[ToolCallDecided]:
+    return [
+        event
+        for event in await service.history(session_id)
+        if isinstance(event, ToolCallDecided) and event.tool_name == ADVANCE_STAGE_TOOL
+    ]
+
+
+async def test_the_gate_records_what_the_checks_were_asked(
+    service, workflows, policy, monkeypatch
+):
+    """Every bound check reaches the log, not only the ones that fired.
+
+    `shared.orphan` passes against a well-formed Intent, so a record modelled
+    on the findings file would say nothing at all about this gate. It is the
+    entry reading "ran, found nothing" that makes a fire rate divisible.
+    """
+    project_id, preset = await _checked_project(service, monkeypatch)
+    approvals = _Approvals(ApprovalDecision(type="approve"))
+    turns = _Turns(service, {STAGE_ONE_ARTIFACT: _artifact("Intent", "s.one")})
+
+    run = await _runner(service, turns, workflows, approvals, policy).run(project_id)
+
+    [review] = await _reviews(service, run.stages[0].session_id)
+    assert review.posed_by == "runner"
+    assert review.project_id == project_id
+    assert review.stage == "s.one"
+    assert review.preset == preset.id
+    assert review.preset_version == "1"
+    assert [entry["check"] for entry in review.evaluated] == ["shared.orphan"]
+    assert review.evaluated[0]["findings"] == 0
+    # The unimplemented binding is in neither `evaluated` nor a finding: it did
+    # not run, and recording it as a run that passed is the specific lie the
+    # second field exists to prevent.
+    assert [entry["check"] for entry in review.unimplemented] == ["addie.no_such_check"]
+    assert review.unimplemented[0]["severity"] == "advisory"
+
+
+async def test_the_decision_names_the_review_it_answered(
+    service, workflows, policy, monkeypatch
+):
+    """The join. Fails if `review_id` is dropped anywhere along the path.
+
+    Nothing else connects the two: `ToolCallDecided` names no stage, and
+    `StageAdvanced`, which does, is on the project's stream and is not written
+    at all when a gate is refused.
+    """
+    project_id, _ = await _checked_project(service, monkeypatch)
+    approvals = _Approvals(ApprovalDecision(type="approve"))
+    turns = _Turns(service, {STAGE_ONE_ARTIFACT: _artifact("Intent", "s.one")})
+
+    run = await _runner(service, turns, workflows, approvals, policy).run(project_id)
+
+    session_id = run.stages[0].session_id
+    [review] = await _reviews(service, session_id)
+    [decision] = await _gate_decisions(service, session_id)
+    assert decision.decision == "approve"
+    assert decision.review_id == review.review_id
+
+
+async def test_a_rejected_gate_still_records_both(service, workflows, policy, monkeypatch):
+    """Rejections are the signal an override rate is measured against.
+
+    They are also the case with no `StageAdvanced` behind them -- the project
+    stream records nothing at all when a gate is refused -- so if this pair is
+    missing, the most interesting outcome is the one that leaves no trace.
+    """
+    project_id, _ = await _checked_project(service, monkeypatch)
+    approvals = _Approvals(ApprovalDecision(type="reject", message="thin"))
+    turns = _Turns(service, {STAGE_ONE_ARTIFACT: _artifact("Intent", "s.one")})
+
+    run = await _runner(service, turns, workflows, approvals, policy).run(project_id)
+
+    session_id = run.stages[0].session_id
+    [review] = await _reviews(service, session_id)
+    [decision] = await _gate_decisions(service, session_id)
+    assert decision.decision == "reject"
+    assert decision.review_id == review.review_id
+    assert await _advances(service, project_id) == []
+
+
+async def test_a_gate_nobody_was_asked_to_open_is_recorded_as_policy(
+    service, workflows, monkeypatch
+):
+    """`advance_stage: auto` emits both events with `decided_by="policy"`.
+
+    Recorded rather than skipped, because a standing approval is a real
+    outcome; reported separately by the read surface, because counting it as
+    an override would describe a system ignoring its checks when what happened
+    is that nobody was asked.
+    """
+    project_id, _ = await _checked_project(service, monkeypatch)
+    unattended = AutonomyPolicy(default="auto")
+    unattended.relax_all(include_stage_gates=True)
+    approvals = _Approvals()
+    turns = _Turns(service, {STAGE_ONE_ARTIFACT: _artifact("Intent", "s.one")})
+
+    run = await _runner(service, turns, workflows, approvals, unattended).run(project_id)
+
+    session_id = run.stages[0].session_id
+    [review] = await _reviews(service, session_id)
+    [decision] = await _gate_decisions(service, session_id)
+    assert approvals.requests == []
+    assert (decision.decision, decision.decided_by) == ("approve", "policy")
+    assert decision.review_id == review.review_id
+
+
+async def test_a_denied_gate_records_the_review_it_refused(service, workflows, monkeypatch):
+    """`advance_stage: deny` never poses anything, and the checks still ran.
+
+    The review is emitted before the deny branch for this reason. A check that
+    fired at a gate nobody was allowed to open still ran, and dropping it would
+    make a denied session look like a session with no checks in it.
+    """
+    project_id, _ = await _checked_project(service, monkeypatch)
+    denied = AutonomyPolicy(default="auto")
+    denied.set(ADVANCE_STAGE_TOOL, "deny")
+    approvals = _Approvals()
+    turns = _Turns(service, {STAGE_ONE_ARTIFACT: _artifact("Intent", "s.one")})
+
+    run = await _runner(service, turns, workflows, approvals, denied).run(project_id)
+
+    session_id = run.stages[0].session_id
+    [review] = await _reviews(service, session_id)
+    [decision] = await _gate_decisions(service, session_id)
+    assert approvals.requests == []
+    assert (decision.decision, decision.decided_by) == ("reject", "policy")
+    assert decision.review_id == review.review_id
+
+
+async def test_viewing_a_course_records_no_telemetry(service, workflows, policy, monkeypatch):
+    """`course_progress` recomputes findings on every view and must not count.
+
+    Emission is at the gate, not in `review_stage`, precisely so that a page
+    refresh is not a check run. Fails if anyone moves the event into
+    `review_stage`, which is the obvious-looking place for it.
+
+    Here rather than in `test_course.py`, which the plan named: `course_progress`
+    takes a preset, a state and a filesystem and holds no session, so a test
+    beside it could only assert that a function with nothing to emit onto
+    emitted nothing. What is worth pinning is that neither it nor `review_stage`
+    has grown a session, and that needs a real one with a gate already recorded
+    on it to be a claim rather than a nod.
+    """
+    project_id, preset = await _checked_project(service, monkeypatch)
+    approvals = _Approvals(ApprovalDecision(type="approve"))
+    turns = _Turns(service, {STAGE_ONE_ARTIFACT: _artifact("Intent", "s.one")})
+    run = await _runner(service, turns, workflows, approvals, policy).run(project_id)
+    session_id = run.stages[0].session_id
+    before = await _reviews(service, session_id)
+    assert before, "the gate recorded nothing, so this would prove nothing about a view"
+
+    state = await service.project_state(project_id)
+    files = await service.project_files(project_id)
+    for _ in range(3):
+        course_progress(preset, state, files)
+
+    assert await _reviews(service, session_id) == before

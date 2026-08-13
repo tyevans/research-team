@@ -309,6 +309,12 @@ Found in review of the check library and deferred because it changes the
 contract between presets and the engine, which is a decision worth making
 deliberately rather than inside a review round.
 
+**The evidence now exists: `/checks` reports how often this check runs, fires
+and is overridden, per stage it is bound at.** That answers "whether its absence
+costs anything" with numbers instead of argument. Deciding what to do about them
+— more bindings, or an engine-level assertion — is still entirely open, and the
+telemetry round deliberately did not touch it.
+
 ### B38. Four `matrix_density` bindings still have no axes, so they still report
 
 `stage_exit.course_matrices` builds the matrix a `matrix_density` binding is
@@ -337,6 +343,91 @@ Not fixed here because each needs a course written the way its methodology's
 prompts (which for ADDIE and Tyler do not exist yet) would write one, and a
 matrix bound to axes nobody has validated against real output is the same
 always-reports defect with a different message.
+
+**`/checks` now counts it: these four should show a fire rate at or near 100%
+with an override rate to match, which is the shape this entry asserts and could
+not previously demonstrate.** The numbers make the case; wiring the axes is
+still the open work and nothing about it was fixed.
+
+### B44. Check telemetry has no HTTP route and no browser view, deliberately
+
+`/checks` in the REPL is the only way to read the `check_outcomes` table.
+`create_app` gained no parameter and `tests/interfaces/test_web_entrypoint.py`
+passes untouched, which is the intended state rather than an omission.
+
+The reasoning, from
+`docs/superpowers/specs/2026-08-12-check-telemetry-design.md`: these numbers are
+a maintainer's instrument for deciding which checks earn their place — a
+decision made once in a while, by the person who can change `checks.py` — and
+not a per-project surface a course author needs. A JSON route with no UI behind
+it is a route nobody calls, and building the UI is a frontend round that ought
+to be justified by somebody actually wanting it. `CorpusRunner` and
+`TopicRunner` already set the precedent of a projection whose `rebuild()` has no
+HTTP surface.
+
+**The trigger to revisit: someone wanting these numbers who is not editing
+`checks.py`.** Recorded because a deferral without a trigger is a
+rationalisation — it reads as a decision and behaves as a default, and nothing
+ever overturns it.
+
+The work if that trigger fires is a route over
+`ProjectCheckTelemetryReader.stats()` plus the view, and the honesty constraints
+travel with it: the null median on the tool path and the separated policy
+approvals are guards in `summarise`, not notes in a docstring, so any surface
+reading through that function inherits them. A surface that recomputed the
+statistics from rows would not.
+
+### B45. `test_advisory_findings_do_not_fail_the_condition` passes for the wrong reason
+
+`tests/application/test_stage_runner.py:324` binds
+`Check(check="shared.orphan", params={"artifact_type": "Intent"})`.
+`OrphanParams` declares `type` and `must_link_to` and nothing else, and `Params`
+is `extra="forbid"` — deliberately, so that a misspelled parameter is loud. So
+the binding raises `MalformedCheck`, `review_stage` turns that into one
+**blocking** finding, and the advisory finding the test's name promises is never
+produced.
+
+It still passes, because `review.blocked` is `bool(invariant_failures)` and a
+blocking finding is not an invariant failure. That is the correct behaviour and
+worth pinning — but the test as written pins it against a crashed check rather
+than against an advisory one, so the case in its docstring is untested and the
+name misdescribes what runs.
+
+Made visible by the telemetry round: `StageReview.evaluated` now reports
+`severity='blocking'` for that binding, which is what exposed the mismatch. Left
+alone there because it is a different task's file and the fix is a judgement
+about what the test should assert, not a rename. The binding that would exercise
+the intended case is `params={"type": "EvidenceSpec", "must_link_to": "Intent"}`
+— which runs over an empty domain and finds nothing, so whoever fixes this needs
+a course that produces an actual advisory finding, not just a corrected
+parameter dict.
+
+Worth checking the neighbours at the same time: one wrong parameter spelling in
+a test file is rarely alone, and nothing fails when a check quietly stops
+running.
+
+### B46. No test drives a real gate through to a rendered `/checks` table
+
+The path from a gate to a number is covered in three overlapping pieces and
+nowhere as a whole: `tests/application/test_stage_runner.py` proves both gate
+paths emit, `tests/infrastructure/test_check_telemetry.py` proves the projection
+folds a review and its decision, and
+`test_an_application_wires_a_reader_that_is_actually_following` proves the
+runner is started and reachable through a real `Application`. No single test
+walks from a stage review to a rendered row.
+
+The gap is not hypothetical. The seam the three pieces do not cover between them
+is the projection subscribing to a real store in a real composition and keeping
+up with it — and Task 4 measured that a wrong `caught_up` there fails as a bare
+`TimeoutError` naming nothing about the cause. `check_telemetry_caught_up()`
+exists and has no caller, so nothing currently exercises it either.
+
+Deferred rather than skipped: building it means driving `StageRunner` to a gate
+inside a built `Application`, and `tests/application/test_stage_runner.py` uses
+its own harness instead. That is a new fixture rather than a reuse, which is why
+it did not belong in a task scoped to the read surface. It belongs beside
+`tests/integration/test_advance_stage_gate.py`, which already drives the tool
+path through a real application.
 
 ## Topics and autonomous research
 

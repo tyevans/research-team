@@ -11,6 +11,7 @@ from research_team.application import (
     SummaryHealth,
     TurnOutcome,
 )
+from research_team.application.check_telemetry_read import CheckStat
 from research_team.application.ports import ActivityDelta, ActivityNote
 from research_team.domain import (
     CodingSession,
@@ -258,3 +259,56 @@ def format_summary_health(health: SummaryHealth) -> str:
         f"session list  DRIFTED: {health.failed_events} event(s) were never applied\n"
         f"              some rows are wrong; /rebuild to derive the list again"
     )
+
+
+STANDING_GATE_MARK = "*"
+"""Marks a check that cannot pass, so its 100% is not read as a defect."""
+
+_CHECKS_HEADER = (
+    f"{'check':<34} {'ran':>5} {'fired':>6} {'fire%':>6} "
+    f"{'over':>5} {'refus':>6} {'auto':>5} {'med s':>7}"
+)
+
+
+def format_checks(stats: list[CheckStat]) -> str:
+    """Per-check fire and override rates, most-firing first.
+
+    Counts beside the percentage rather than the percentage alone: 1 of 1 and
+    200 of 200 both render as 100%, and they warrant opposite conclusions about
+    whether a check earns its place -- which is the only question this table is
+    for.
+
+    Two absences are printed as absences rather than as zeros, because a zero
+    here would be a claim. `med s` is `-` on the tool path, where the review and
+    the decision are committed together and the interval measures serialization
+    (see the spec's honesty constraints). `fire%` is `-` for a check that has
+    only ever been bound without being registered, which has no rate at all.
+
+    Standing gates are marked rather than dropped: `ubd.uncoverage` and
+    `addie.expert_gap_flag` are meant to fire every time, and hiding them would
+    leave someone wondering why a bound check has no row.
+    """
+    if not stats:
+        return "no checks have run in this project yet"
+    lines = [_CHECKS_HEADER]
+    for stat in stats:
+        name = stat.check + (STANDING_GATE_MARK if stat.standing_gate else "")
+        rate = f"{100 * stat.fired / stat.evaluated:.0f}%" if stat.evaluated else "-"
+        median = (
+            f"{stat.median_seconds_to_decision:.1f}"
+            if stat.median_seconds_to_decision is not None
+            else "-"
+        )
+        lines.append(
+            f"{name:<34} {stat.evaluated:>5} {stat.fired:>6} {rate:>6} "
+            f"{stat.overridden:>5} {stat.refused:>6} {stat.auto_approved:>5} {median:>7}"
+        )
+    unimplemented = [stat for stat in stats if stat.unimplemented]
+    if unimplemented:
+        # Named individually rather than counted: an unimplemented binding is a
+        # typo or a rename, and the name is the whole of the fix.
+        names = ", ".join(stat.check for stat in unimplemented)
+        lines.append(f"bound but not registered: {names}")
+    if any(stat.standing_gate for stat in stats):
+        lines.append(f"{STANDING_GATE_MARK} always fires by design -- it is a standing gate")
+    return "\n".join(lines)
