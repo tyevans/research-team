@@ -193,6 +193,37 @@ async def test_a_tool_call_decision_written_before_edited_args_existed_still_loa
     assert decision.edited_args is None
 
 
+async def test_a_decision_written_before_review_ids_still_loads(repository, started, db_path):
+    """An old `ToolCallDecided` has no `review_id`, and None is what it meant.
+
+    Absence means "this decision answered no stage review", which is true of
+    every decision recorded before the field existed and of every gated call
+    that is not an advance. Reading the field as anything else would invent a
+    join that was never made.
+    """
+    await _write_old_event(
+        db_path,
+        started,
+        version=2,
+        event_type="ToolCallDecided",
+        payload={
+            "aggregate_id": str(started),
+            "aggregate_type": "CodingSession",
+            "aggregate_version": 2,
+            "tool_name": "web_search",
+            "args": {"query": "backward design"},
+            "decision": "approve",
+            "decided_by": "human",
+        },
+    )
+
+    events = await repository.events_for(started)
+
+    decision = events[-1]
+    assert isinstance(decision, ToolCallDecided)
+    assert decision.review_id is None
+
+
 async def test_an_investigation_written_before_outcome_existed_still_loads(store, db_path):
     """Reads back with `outcome` absent, not defaulted to a real value. A
     default of "produced" would claim every historic round found something.

@@ -26,6 +26,7 @@ from research_team.domain.commands import (
     FailTurn,
     RecordAssistantMessage,
     RecordForkSource,
+    RecordStageReview,
     RecordToolDecision,
     RecordToolResult,
     SendUserMessage,
@@ -42,6 +43,7 @@ from research_team.domain.events import (
     FileWritten,
     SessionForkedFrom,
     SessionStarted,
+    StageChecksEvaluated,
     ToolCallDecided,
     ToolResultRecorded,
     TurnCompleted,
@@ -245,15 +247,19 @@ def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
             return [FileDeleted(aggregate_id=session_id, path=path)]
 
         # ---- supervision ----
-        # Both of these are audit records: they say what was decided about a
-        # tool call, or how a tool's autonomy level changed. Neither is a fact
-        # `SessionState` tracks, so `evolve` deliberately leaves them alone.
+        # All three are audit records: what was decided about a tool call, how
+        # a tool's autonomy level changed, and what the checks found at a gate.
+        # None is a fact `SessionState` tracks, so `evolve` deliberately leaves
+        # them alone. A stage review in particular is about a moment rather
+        # than about the session, and folding it would put a growing list into
+        # every snapshot.
         case RecordToolDecision(
             tool_name=tool_name,
             args=args,
             decision=decision,
             decided_by=decided_by,
             edited_args=edited_args,
+            review_id=review_id,
         ), _:
             return [
                 ToolCallDecided(
@@ -263,6 +269,31 @@ def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
                     decision=decision,
                     decided_by=decided_by,
                     edited_args=edited_args,
+                    review_id=review_id,
+                )
+            ]
+
+        case RecordStageReview(
+            review_id=review_id,
+            project_id=project_id,
+            stage=stage,
+            preset=preset,
+            preset_version=preset_version,
+            evaluated=evaluated,
+            unimplemented=unimplemented,
+            posed_by=posed_by,
+        ), _:
+            return [
+                StageChecksEvaluated(
+                    aggregate_id=session_id,
+                    review_id=review_id,
+                    project_id=project_id,
+                    stage=stage,
+                    preset=preset,
+                    preset_version=preset_version,
+                    evaluated=evaluated,
+                    unimplemented=unimplemented,
+                    posed_by=posed_by,
                 )
             ]
 
