@@ -10,7 +10,7 @@ why several plausible things are not.
 
 This project's distinctive asset is that nearly everything is on the event log.
 Six aggregates — `Session`, `Project`, `Topic`, `Corpus`,
-`LearnerProgress`, `AutoResearchRun` — cover the whole of what happens here,
+`LearnerProgress`, `ResearchRun` — cover the whole of what happens here,
 and `ToolCallDecided` and `AutonomyChanged` mean even the human's authorization
 decisions are durable and replayable.
 
@@ -231,7 +231,7 @@ folds the pair into one row per check per review — the review's facts written
 when the gate is posed, the decision's columns filled when the decision arrives
 — and `/checks` in the REPL reads per-check fire rate, override rate and
 time-to-decision out of it. Both gate paths emit, including the refusals and the
-denials, because a rejected gate writes no `StageAdvanced` anywhere and was
+denials, because a rejected gate writes no `ProjectStageAdvanced` anywhere and was
 otherwise the outcome that left no trace.
 
 **The lesson is the denominator: a record modelled on the report you already
