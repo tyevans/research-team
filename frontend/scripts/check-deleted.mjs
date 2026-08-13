@@ -287,6 +287,79 @@ const RULES = [
   },
 ]
 
+/** Every stylesheet under `src/styles/` that exists today, frozen.
+ *
+ * **The decision this records, which is written down nowhere else.** The spec's
+ * phase 5 planned to port these 22 files to Tailwind utilities one at a time.
+ * That plan was dropped on 2026-08-10 and replaced with: *new and rewritten
+ * surfaces use Tailwind utilities; existing stylesheets are deleted, never
+ * ported.* The arithmetic behind it is the whole argument -- roughly 6430 lines
+ * across these files are attached to markup that increment C's route merge
+ * rebuilds anyway, so porting them is work thrown away twice, once writing it
+ * and once deleting it. No migration is scheduled. The stylesheets die with the
+ * screens they dress.
+ *
+ * A policy nobody can point at is a policy that lasts until the next person who
+ * has not read it, which is why this is a list and not a paragraph in a
+ * document. The list is deliberately exhaustive rather than a count: a count
+ * fails on the right *number* and says nothing about which file moved.
+ *
+ * **Why a removal fails too, which reads backwards until you see what it is
+ * for.** Deleting one of these is the direction this project wants. The check
+ * is not objecting -- it has no way to distinguish a stylesheet deleted on
+ * purpose from one lost in a bad merge, and only one of those should be
+ * silent. Failing makes the deletion appear in a diff with a line removed from
+ * this array beside it, which is the same trade the `RULES` above make and for
+ * the same stated reason.
+ *
+ * **The hole, stated plainly because it is real.** This freezes the *set of
+ * files*. It catches a 23rd stylesheet; it does not catch 200 lines of rules
+ * for a brand-new surface appended to `research.css`, which is the same policy
+ * violation wearing an existing filename. A line-count ratchet per file was
+ * considered as the fix and rejected: its failure mode is a build failing on
+ * every legitimate three-line correction to a surface that still exists and is
+ * still allowed to be corrected -- friction on the common case to catch the
+ * rare one, which is how a check earns being switched off. Review is what
+ * covers the hole, and this comment is what tells a reviewer to look. */
+const STYLESHEETS = [
+  'agents.css',
+  'base.css',
+  'components.css',
+  'composer.css',
+  'conversation.css',
+  'course.css',
+  'diff.css',
+  'entity.css',
+  'index.css',
+  'layout.css',
+  'markdown.css',
+  'research.css',
+  'responsive.css',
+  'scrub-bar.css',
+  'shell.css',
+  'states.css',
+  'structure.css',
+  'theme.css',
+  'timeline.css',
+  'tokens.css',
+  'tree.css',
+  'workspace.css',
+]
+
+/** Exported so the comparison can be tested in both directions without a
+ *  subprocess, the same shape `mutate.mjs` gives `classify` -- the part that
+ *  can be wrong silently is pure, and the I/O around it is either right or
+ *  obviously broken.
+ *
+ *  Non-`.css` entries are the caller's problem, not this function's: the
+ *  directory also holds `color-scheme.browser.test.tsx` and a `__screenshots__`
+ *  directory, and a freeze that fired on a new browser test would be forbidding
+ *  exactly the kind of test this repository keeps asking for more of. */
+export const compareStylesheets = (present, manifest) => ({
+  added: present.filter((name) => !manifest.includes(name)).sort(),
+  removed: manifest.filter((name) => !present.includes(name)).sort(),
+})
+
 /** Comments removed before matching, which `theme.test.ts` also does and for
  *  the same reason: this asks whether a mechanism has come back, and a
  *  docstring explaining why one was removed is the opposite of that. The first
@@ -302,47 +375,82 @@ const RULES = [
 const withoutComments = (source) =>
   source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 
-const files = (function walk(dir) {
-  return readdirSync(dir).flatMap((entry) => {
-    const path = join(dir, entry)
-    return statSync(path).isDirectory() ? walk(path) : [path]
-  })
-})(SRC)
+/** Everything below runs only when this file is invoked as a CLI, so that
+ *  `compareStylesheets` can be imported by a test without the walk, the
+ *  `console.log` and the `process.exit` coming with it. Guard copied from
+ *  `mutate.mjs`, which does the same for `classify`. */
+const main = () => {
+  const files = (function walk(dir) {
+    return readdirSync(dir).flatMap((entry) => {
+      const path = join(dir, entry)
+      return statSync(path).isDirectory() ? walk(path) : [path]
+    })
+  })(SRC)
 
-const failures = []
-for (const rule of RULES) {
-  // `where` is a directory prefix, which is the right unit for every rule that
-  // deleted something from a *view*. `only` narrows further by filename, and
-  // exists because one deletion is about a kind of file rather than a place:
-  // stories mounting their own `OverlayHost`. Forbidding that anywhere under
-  // `presentation` would fail on `Shell.tsx` and `OverlayHost.test.tsx`, which
-  // are the two files that must keep doing it.
-  const scope = files.filter((path) => {
-    const name = relative(SRC, path)
-    return name.startsWith(rule.where) && (!rule.only || rule.only.test(name))
-  })
-  for (const path of scope) {
-    const source = withoutComments(readFileSync(path, 'utf8'))
-    for (const pattern of rule.forbid) {
-      if (!pattern.test(source)) continue
-      failures.push({ rule, path: relative(SRC, path), pattern })
+  const failures = []
+  for (const rule of RULES) {
+    // `where` is a directory prefix, which is the right unit for every rule that
+    // deleted something from a *view*. `only` narrows further by filename, and
+    // exists because one deletion is about a kind of file rather than a place:
+    // stories mounting their own `OverlayHost`. Forbidding that anywhere under
+    // `presentation` would fail on `Shell.tsx` and `OverlayHost.test.tsx`, which
+    // are the two files that must keep doing it.
+    const scope = files.filter((path) => {
+      const name = relative(SRC, path)
+      return name.startsWith(rule.where) && (!rule.only || rule.only.test(name))
+    })
+    for (const path of scope) {
+      const source = withoutComments(readFileSync(path, 'utf8'))
+      for (const pattern of rule.forbid) {
+        if (!pattern.test(source)) continue
+        failures.push({ rule, path: relative(SRC, path), pattern })
+      }
     }
   }
+
+  const present = readdirSync(join(SRC, 'styles')).filter((name) => name.endsWith('.css'))
+  const { added, removed } = compareStylesheets(present, STYLESHEETS)
+
+  if (failures.length === 0 && added.length === 0 && removed.length === 0) {
+    console.log(
+      `Nothing has come back — ${String(RULES.length)} deletion rules hold, ` +
+        `and ${String(STYLESHEETS.length)} stylesheets stay frozen.`,
+    )
+    process.exit(0)
+  }
+
+  for (const { rule, path, pattern } of failures) {
+    console.error(`\n✗ src/${path} matches ${String(pattern)}`)
+    console.error(`  Phase ${rule.phase} deleted ${rule.what}.`)
+    console.error(`  ${rule.why}`)
+  }
+
+  for (const name of added) {
+    console.error(`\n✗ src/styles/${name} is a stylesheet this project decided not to add.`)
+    console.error(
+      `  New and rewritten surfaces use Tailwind utilities against the \`@theme\` tokens, as` +
+        ` \`DecisionBar.tsx\` and \`Approvals.tsx\` already do. The 22 stylesheets that remain are` +
+        ` attached to markup the route merge rebuilds anyway; they are being deleted, never` +
+        ` ported, and a 23rd is the accumulation that decision was made to stop.`,
+    )
+  }
+
+  for (const name of removed) {
+    console.error(`\n✗ src/styles/${name} is in the manifest and not on disk.`)
+    console.error(
+      `  If you deleted it: good, that is the direction — remove the line from \`STYLESHEETS\` in` +
+        ` scripts/check-deleted.mjs in the same commit and this passes. The failure is not an` +
+        ` objection, it is how a deletion gets recorded in a diff rather than happening quietly.` +
+        ` If you did not delete it, something else did, which is the case this exists to catch.`,
+    )
+  }
+
+  const total = failures.length + added.length + removed.length
+  console.error(
+    `\n${String(total)} thing(s) need a decision. If one of these is deliberate, edit the rule or` +
+      ` the manifest in scripts/check-deleted.mjs in the same commit and say why.`,
+  )
+  process.exit(1)
 }
 
-if (failures.length === 0) {
-  const count = RULES.length
-  console.log(`Nothing has come back — ${String(count)} deletion rules hold.`)
-  process.exit(0)
-}
-
-for (const { rule, path, pattern } of failures) {
-  console.error(`\n✗ src/${path} matches ${String(pattern)}`)
-  console.error(`  Phase ${rule.phase} deleted ${rule.what}.`)
-  console.error(`  ${rule.why}`)
-}
-console.error(
-  `\n${String(failures.length)} superseded thing(s) are back. If one of these is deliberate, ` +
-    `delete its rule in scripts/check-deleted.mjs in the same commit and say why.`,
-)
-process.exit(1)
+if (process.argv[1]?.endsWith('check-deleted.mjs')) main()
