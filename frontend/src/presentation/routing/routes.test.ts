@@ -79,6 +79,11 @@ describe('the facet grammar', () => {
       hash: '#/p/abc/artifact/findings.md',
     },
     { facet: 'finding', selection: { facet: 'finding', id: 'f1' }, hash: '#/p/abc/finding/f1' },
+    // The only facet with nothing to select: the ask page is one ephemeral
+    // conversation, and there is no id that would name a part of it. Its
+    // entry here is `id: null` rather than a stand-in, so the four cases
+    // below describe the URL that actually exists.
+    { facet: 'ask', selection: { facet: 'ask', id: null }, hash: '#/p/abc/ask' },
   ]
 
   it.each(cases)('builds $facet', ({ selection, hash }) => {

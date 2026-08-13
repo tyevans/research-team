@@ -36,6 +36,7 @@ from research_team.application import (
     WorkerRoster,
     build_fork_tree,
 )
+from research_team.application.ask import AskAnswer, AskInFlight, AskService
 from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
@@ -45,6 +46,7 @@ from research_team.application.graph_read import (
     MAX_NEIGHBORHOOD_DEPTH,
     GraphReadPort,
 )
+from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.topic_dispatch import (
     DISPATCH_ACTIONS,
@@ -342,6 +344,18 @@ class NewDispatch(BaseModel):
     action: str = "understanding"
 
 
+class AskRequest(BaseModel):
+    """One question on one ephemeral chat.
+
+    `chat_id` is the browser's, not the server's: nothing persists a chat, so
+    there is no id for a server to have issued. `ConversationRegistry` checks
+    the project it was opened under rather than trusting it.
+    """
+
+    chat_id: str
+    question: str
+
+
 class Decision(BaseModel):
     """A human's answer to a parked approval. `type` is langchain's vocabulary."""
 
@@ -395,6 +409,7 @@ def create_app(
     seeding: SeedingActivity | None = None,
     dispatcher: TopicDispatcher | None = None,
     dispatch: DispatchQueue | None = None,
+    ask: AskService | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -1359,6 +1374,121 @@ def create_app(
         if run is None:
             return {"cancelled": False, "run": None}
         return {"cancelled": True, "run": run_view(run)}
+
+    def _ask_frame(note: object) -> str:
+        """One SSE `data:` line per note.
+
+        `message` mirrors ActivityMessage's fields so the browser reuses the
+        parsing it already has for the session activity feed.
+        """
+        if isinstance(note, ActivityDelta):
+            body: dict[str, Any] = {
+                "type": "delta",
+                "message_id": note.message_id,
+                "text": note.text,
+            }
+        elif isinstance(note, ActivityMessage):
+            body = {
+                "type": "message",
+                "message_id": note.message_id,
+                "kind": note.kind,
+                "payload": note.payload,
+                "is_error": note.is_error,
+            }
+        elif isinstance(note, AskAnswer):
+            body = {
+                "type": "answer",
+                "text": note.text,
+                "citations": [
+                    {"kind": citation.kind, "id": citation.id} for citation in note.citations
+                ],
+            }
+        else:  # ActivityRemark and anything added later
+            body = {"type": "message", "message_id": "", "kind": "assistant", "payload": {}}
+        return f"data: {json.dumps(body)}\n\n"
+
+    @app.post("/api/projects/{project_id}/ask")
+    async def ask_project(project_id: UUID, body: AskRequest):
+        if ask is None:
+            raise HTTPException(status_code=503, detail="asking is not configured")
+        # Guarded because `create_app` takes every dependency separately and the
+        # ask route tests pass `service=None`; without the guard they would fail
+        # on the check rather than on what they are about. The cost of skipping
+        # it there is that "unknown project" is only enforced in a build that
+        # has a session service -- which is every real one.
+        if service is not None:
+            await _require_project(project_id)
+
+        notes = ask.ask(project_id=project_id, chat_id=body.chat_id, question=body.question)
+        # `first` and `failed` are the two ways this can come back, and only
+        # one of them can still become a status code.
+        failed: Exception | None = None
+        try:
+            first = await anext(notes)
+        except AskInFlight as busy:
+            # Raised before any streaming begins, so it can still be a status code
+            # rather than an error frame the browser has to special-case.
+            raise HTTPException(status_code=409, detail=str(busy)) from busy
+        except StopAsyncIteration:
+            first = None
+        except Exception as failure:  # noqa: BLE001 -- the browser needs the reason
+            # An executor that fails before its first note -- the ordinary
+            # shape of a model that is simply unreachable. A 500 here would be
+            # honest but useless to a page that has already opened an
+            # EventSource, so it is reported as the same error frame a failure
+            # halfway through would produce, and the page needs one path.
+            first, failed = None, failure
+
+        async def stream():
+            try:
+                if failed is not None:
+                    raise failed
+                if first is not None:
+                    yield _ask_frame(first)
+                async for note in notes:
+                    yield _ask_frame(note)
+            except Exception as failure:  # noqa: BLE001 -- the browser needs the reason
+                # A stream that simply stops looks identical to a slow model, so a
+                # failure is reported in-band before the connection closes.
+                yield f"data: {json.dumps({'type': 'error', 'detail': str(failure)})}\n\n"
+            finally:
+                # The only path that cancels the executor task when a reader
+                # walks away: `AskService.ask`'s own `finally` runs when this
+                # `aclose()` reaches it, and nothing else would ever cancel a
+                # model call the reader has stopped waiting for. The cost of
+                # forgetting this line is a live model call per abandoned
+                # request.
+                #
+                # When it runs is the part worth knowing, because it is not
+                # "on disconnect". Starlette never calls `aclose()` on
+                # `body_iterator`: a disconnect either propagates an `OSError`
+                # out of `stream_response` or fires the task group's cancel
+                # scope, and in both cases *this* generator is left suspended
+                # at a `yield` and never resumed. The `finally` therefore runs
+                # when CPython finalises the generator -- the async-generator
+                # finalization hook schedules `aclose()` once the last
+                # reference drops, or `loop.shutdown_asyncgens` does it at
+                # shutdown. It does run; it is not guaranteed to run promptly,
+                # so an abandoned model call can outlive the request by as long
+                # as the last reference does.
+                await notes.aclose()
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.delete("/api/projects/{project_id}/ask/{chat_id}")
+    async def forget_ask(project_id: UUID, chat_id: str):
+        if ask is None:
+            raise HTTPException(status_code=503, detail="asking is not configured")
+        # No `_require_project` here, unlike the POST. Forgetting is local to an
+        # in-memory registry, costs nothing to run against an id that names no
+        # project, and a page tidying up after a project was deleted underneath
+        # it should not be answered 404 for doing so.
+        ask.forget(chat_id)
+        return {"ok": True}
 
     @app.get("/api/health")
     async def health():
