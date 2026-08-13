@@ -8,13 +8,15 @@
  * that generates *no rule at all* reads identically to one that lays the page
  * out correctly.
  *
- * **Proved red, and it caught a real one.** `m-0` and `p-0` were the first
- * spelling of the zeroing below, and they emit nothing: `@theme` declares
- * `--spacing-1` through `--spacing-6` and no `--spacing` base, so the `0` step
- * has no value to compute from. Against that spelling the second test failed
- * with the user agent's `16px` margin and `40px` padding still on the lists;
- * every other gate passed, `npm run build` included. It is the same silent
- * failure `theme.css` predicts for `md:` variants, met on the spacing scale.
+ * **Proved red, and it caught a real one.** While this page was being written
+ * `m-0` and `p-0` emitted nothing -- `@theme` declared `--spacing-1` upward
+ * and no base step, so the `0` step had no value to compute from -- and the
+ * second test failed with the user agent's `16px` margin still on the lists
+ * while every other gate passed, `npm run build` included. `--spacing-0` and
+ * `check-tailwind.mjs` landed on main independently and fix the class of
+ * defect at the source. This stays anyway: that check proves the utility
+ * *compiles*, and this proves it lands on the element a reader is looking at,
+ * which is the half no build-output grep can see.
  *
  * The first test fails against a view that scrolls as a whole -- drop
  * `overflow-hidden` from the section or `overflow-y-auto` from the thread and
@@ -125,7 +127,7 @@ it('zeroes the lists the missing preflight would otherwise leave indented', asyn
   // Both lists on the page: the citation row, which is on screen already, and
   // the activity fold, which is not rendered until it is opened. Only the
   // first is reachable here without driving the fold, and it is the one that
-  // caught the `m-0` bug.
+  // caught the dead-zero bug described above.
   const list = document.querySelector('section.view ul') as HTMLElement
   const style = getComputedStyle(list)
   expect(style.marginBlockStart).toBe('0px')

@@ -40,7 +40,7 @@ export const AskView = ({ projectId }: { projectId: ProjectId }) => {
     // `.view` supplies the column; these add what this page needs on top of
     // it -- it owns the viewport and does not scroll, so that `AskThread` can
     // (see there for why the composer must stay on the bottom edge).
-    <section className="view min-h-0 flex flex-1 flex-col gap-3 overflow-hidden px-5 pt-5">
+    <section className="view flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-5 pt-5">
       {/* Full-bleed, for the reason `.view-research .view-head` is: the
           centred 1100px cap suits the tree it was written for, and a centred
           title over a full-width thread reads as another page's header dropped
@@ -48,7 +48,7 @@ export const AskView = ({ projectId }: { projectId: ProjectId }) => {
           unlayered and utilities are in `@layer utilities`, which loses to it
           whatever the specificity -- the layering `theme.css` documents, met
           from the other side. */}
-      <div className="view-head m-[0]! max-w-none!">
+      <div className="view-head m-0! max-w-none!">
         <div>
           <h1>Ask</h1>
           <p className="sub">

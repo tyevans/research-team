@@ -120,7 +120,7 @@ export const Tooltip = ({
           className={
             asChild
               ? undefined
-              : clsx('p-0 cursor-help border-0 bg-transparent text-left', className)
+              : clsx('cursor-help border-0 bg-transparent p-0 text-left', className)
           }
         >
           {children}

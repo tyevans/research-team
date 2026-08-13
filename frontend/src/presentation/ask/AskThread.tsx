@@ -44,7 +44,7 @@ export const AskThread = ({
     // forty -- which is precisely when somebody wants to type the next
     // question. `pr-2` is room for the scrollbar; `pb-3` keeps the last answer
     // off the composer's top border.
-    <div className="min-h-0 flex flex-auto flex-col gap-4 overflow-y-auto pr-2 pb-3">
+    <div className="flex min-h-0 flex-auto flex-col gap-4 overflow-y-auto pr-2 pb-3">
       {transcript.map((turn, index) => (
         <Turn
           key={index}
@@ -106,13 +106,14 @@ const Turn = ({
             preflight, so a bare `<ul>` keeps the user agent's margin, padding
             and bullets.
 
-            `m-[0]` and not `m-0`, which is the trap `theme.css` describes for
-            breakpoints, met on the spacing scale. `@theme` declares
-            `--spacing-1` through `--spacing-6` and no `--spacing` base, so the
-            `0` step has no value to compute from and `m-0` generates *no rule
-            at all* -- a class that looks right, passes every gate, and does
-            nothing. The arbitrary value sidesteps the scale entirely. */}
-        <ul className="m-[0] flex list-none flex-col gap-1 pt-2 pr-[0] pb-[0] pl-3 text-fg-faint">
+            `m-0` and `p-0` were both dead while this page was being written:
+            `@theme` declared `--spacing-1` upward and no base step, so they
+            compiled to `calc(var(--spacing) * 0)` and emitted nothing at all.
+            `--spacing-0` on main fixes that, and `check-tailwind.mjs` is what
+            now fails the build rather than a reader noticing an indent. Left
+            in the plain spelling deliberately -- the arbitrary `m-[0]` this
+            carried in the meantime would work forever and say nothing. */}
+        <ul className="m-0 flex list-none flex-col gap-1 pt-2 pr-0 pb-0 pl-3 text-fg-faint">
           {turn.activity.map((item) => (
             <li key={item.messageId}>
               <span className="mono">{activityName(item)}</span>
