@@ -54,9 +54,17 @@
    survive greyscale, and that only works while it is the loudest thing here.
 
    **Dimming `neutral`'s text to `--fg-faint`**: measured at 3.34 against the
-   page, which fails AA. `--fg-dim` is 6.40. The palette has no step between
+   page, which failed AA. `--fg-dim` was 6.40. The palette has no step between
    them, and inventing one would be the second literal `tokens.css` exists to
    prevent.
+
+   Both those numbers have since moved -- the tiers were raised to clear AA,
+   so `--fg-faint` is 5.76 against the page and `--fg-dim` is 8.96 -- and the
+   rejection survives it, for the *second* reason rather than the first. There
+   is still no step between them to invent, and the two tiers are now 13.7
+   points of L* apart rather than 18.5, so borrowing the lower one to carry a
+   semantic distinction would be leaning on a smaller difference than the one
+   that was already judged too small.
 
    So the separation moves off the colour channel entirely: a status with an
    opinion is a filled, bordered chip; a status without one is bare text.
@@ -280,8 +288,22 @@ a.ent-ref:hover .ent-ref-name {
 .ent-topic-row.needs-attention {
   border-left: 2px solid var(--accent);
 }
+/* A border like its two siblings, and it was `opacity: 0.6` -- which is the
+   one thing this row must not do. Opacity composites *every* descendant
+   against the surface, including `.ent-topic-count`, which is already the
+   faintest text on the page: it took `--fg-faint` on `--bg-panel` from 5.46:1
+   down to 3.55:1, and did the same to the old value from 3.17 to 1.91. There
+   is no foreground value that survives being multiplied, which is why the fix
+   is the property rather than the number.
+
+   Nothing is lost by the swap, and `TopicRow.tsx`'s own comment is where that
+   was already written down: it says `blocked`, `flagged` and `closed` "are
+   drawn as the row's left border either way", which was true of two of the
+   three. `EntityStatus` says the word as well. The border is quieter than the
+   other two on purpose -- closed is the absence of anything to do, and it
+   must not compete with the red that means blocked. */
 .ent-topic-row.is-closed {
-  opacity: 0.6;
+  border-left: 2px solid var(--line-strong);
 }
 .ent-topic-row.is-selected {
   background: var(--bg-hover);

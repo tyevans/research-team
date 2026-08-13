@@ -36,7 +36,7 @@ import { TabList, TabPanel, Tabs } from './Tabs.tsx'
  * are `--accent` and `--fg-faint` as measured; if the palette moves on purpose
  * this test says so and gets updated. */
 const ACCENT = 'rgb(226, 164, 87)'
-const DIM = 'rgb(92, 102, 115)'
+const DIM = 'rgb(127, 141, 159)'
 
 const colourOf = (element: Element) => getComputedStyle(element).color
 
