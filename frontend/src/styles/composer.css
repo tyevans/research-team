@@ -23,6 +23,19 @@
   font-size: var(--t-sm);
   line-height: 1.5;
 }
+/* Audited against the clipped-ring sweep that fixed `.agents-row` and
+   `.document-row-open`, and left alone: `.composer` sets no `overflow`, so
+   nothing here clips a ring, and the suppression is paid for in the same rule
+   rather than left bare -- the border goes to the accent, and a text field also
+   grows a caret, which a row in a list does not. `:focus` rather than
+   `:focus-visible` on purpose: a pointer user clicking into a field wants the
+   same confirmation a keyboard user gets.
+   What was *not* settled here and is written down instead of quietly passed:
+   `select.input` below takes the same treatment and has no caret, so a keyboard
+   reader tabbing to the workflow picker has a 1px border shifting `--line` to
+   `--accent-dim` and nothing else. That is a contrast question rather than a
+   geometry one, it needs a number this sweep did not measure, and inventing a
+   ring for it here would have been a change made on a hunch. */
 .composer textarea:focus {
   border-color: var(--accent-dim);
   outline: none;

@@ -137,6 +137,26 @@
   overflow-y: auto;
 }
 
+/* This element is a tab stop, which is the assumption that did not survive
+   being measured — the same one `workspace.css` records for `.files`. It has no
+   `tabIndex` and reads as an inert wrapper, and Chromium makes a scroll
+   container focusable regardless: past eight agents this really scrolls, and
+   `.agents-rows` really takes focus. `AgentWidget.browser.test.tsx` asserts
+   `document.activeElement` is it.
+
+   So it needs a ring, and the ring has to be inward. Its own `overflow` does
+   not clip its own outline, but `.agents-panel` around it is `overflow: hidden`
+   and does: measured at 1440x900, the outward ring wanted `-2..530 x -3..219`
+   against a panel clip of `1..527 x 1..217` — outside on all four sides.
+
+   Deliberately not extended to `.agents-panel`, which keeps its `outline: none`
+   below: Radix focuses the panel on open, and that is not a tab stop a reader
+   arrived at. */
+.agents-rows:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .agents-quiet {
   margin: 0;
   padding: var(--space-3);
@@ -171,6 +191,30 @@
 
 .agents-row:hover {
   background: var(--bg-hover);
+}
+
+/* Drawn *inside* the row, for the reason `workspace.css` sets out at length for
+   the file list: `tokens.css` gives every `:focus-visible` a 2px ring at
+   `outline-offset: 1px`, i.e. three pixels outside the border box, and this row
+   is `width: 100%` inside a scroller with no padding. The row's border box is
+   the scroller's padding box horizontally, and `overflow` clips at the padding
+   box, so both of those sides were thrown away — with `.agents-panel`'s
+   `overflow: hidden` a second clip behind the first.
+
+   Measured, not reasoned; `AgentWidget.browser.test.tsx` is the measurement.
+   At 1440x900 with twelve agents the clip was `1..527 x 0..216` and the first
+   row's ring wanted `-2..530 x -3..34`: left, right and top gone, one 2px line
+   under the row left of it. With a *single* agent — the ordinary case — the
+   scroller is one row tall, the clip is `1..527 x 0..30`, and the ring at
+   `-2..530 x -3..33` is outside it on every side. Nothing rendered at all.
+
+   `-2px` rather than the `-1px` `.rail-row` uses: the rows carry a 1px
+   `border-bottom`, and a ring flush with the border box reads as a thickened
+   separator on the row above rather than as a ring. The cost is two pixels of
+   the row's 12px horizontal padding, which nothing else is using. */
+.agents-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .agents-row-flat {
