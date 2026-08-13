@@ -344,7 +344,7 @@ So a dispatch is observed on three levels, and only the third is new:
 
 **1. What it did — already works, and this is not luck.** `read_since` in
 `infrastructure/persistence/event_store.py` filters the feed to exactly
-`(CodingSession.aggregate_type, Topic.aggregate_type)`, because the SQLite file
+`(Session.aggregate_type, Topic.aggregate_type)`, because the SQLite file
 is shared with redstring's `Document` and `Consolidation` streams whose
 aggregate ids no subscriber can place. **That tuple is the gate on this whole
 channel: an aggregate type not in it never reaches SSE at all.** Because this

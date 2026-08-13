@@ -48,7 +48,7 @@ from research_team.application.topic_attention import (
     attention_for,
     corpus_position,
 )
-from research_team.domain.corpus import SourceDocumentDropped, SourceDocumentStored
+from research_team.domain.corpus import CorpusDocumentDropped, CorpusDocumentStored
 from research_team.domain.topic import (
     Acknowledgement,
     Contest,
@@ -358,8 +358,8 @@ class TopicProjection(DeclarativeProjection):
             raise LookupError(f"no topic row for {topic_id}")
         return row
 
-    @handles(SourceDocumentStored)
-    async def _on_source_stored(self, event: SourceDocumentStored) -> None:
+    @handles(CorpusDocumentStored)
+    async def _on_source_stored(self, event: CorpusDocumentStored) -> None:
         """Record where in the log this source most recently landed.
 
         A re-store is a supersession, so `stored_at` moves forward and `dropped`
@@ -384,8 +384,8 @@ class TopicProjection(DeclarativeProjection):
         existing.dropped = False
         await self._facts.save(existing)
 
-    @handles(SourceDocumentDropped)
-    async def _on_source_dropped(self, event: SourceDocumentDropped) -> None:
+    @handles(CorpusDocumentDropped)
+    async def _on_source_dropped(self, event: CorpusDocumentDropped) -> None:
         row_id = CorpusFactsRow.row_id(event.aggregate_id, event.source_id)
         existing = await self._facts.get(row_id)
         if existing is None:

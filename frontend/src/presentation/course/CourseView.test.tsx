@@ -82,7 +82,7 @@ const fakeStream = () => {
     stream,
     pushProject: (
       projectId: string = PROJECT,
-      change = 'StageAdvanced',
+      change = 'ProjectStageAdvanced',
       decision: string | null = 'approve',
     ) =>
       act(() => {
@@ -158,7 +158,7 @@ const renderCourse = (projects: Partial<ProjectRepository>, stream: EventStream)
 }
 
 it('moves the rail when a stage advances, without a reload', async () => {
-  // The reported bug. `advance_stage` appended `StageAdvanced` and this page
+  // The reported bug. `advance_stage` appended `ProjectStageAdvanced` and this page
   // went on showing the stage it had read at mount until somebody refreshed --
   // half of it because the server's feed filtered `Project` streams out
   // entirely, half because this view subscribed to nothing.
@@ -183,8 +183,8 @@ it('moves the rail when a stage advances, without a reload', async () => {
 
 it('draws a rail when a workflow is chosen, without a reload', async () => {
   // The sibling defect, and the reason the subscription is not filtered to
-  // `StageAdvanced`. Before a workflow is selected the course route answers
-  // 409 and this page says "No course to show"; `WorkflowSelected` is what
+  // `ProjectStageAdvanced`. Before a workflow is selected the course route answers
+  // 409 and this page says "No course to show"; `ProjectWorkflowSelected` is what
   // makes there be a course at all, so a frame filter naming only the advance
   // would leave the page reading its error until a reload.
   const list = vi
@@ -196,7 +196,7 @@ it('draws a rail when a workflow is chosen, without a reload', async () => {
   renderCourse({ course: list }, feed.stream)
   expect(await screen.findByText(/no course to show/i)).toBeInTheDocument()
 
-  feed.pushProject(PROJECT, 'WorkflowSelected', null)
+  feed.pushProject(PROJECT, 'ProjectWorkflowSelected', null)
 
   expect(await screen.findByText('Intake', {}, { timeout: 2_000 })).toBeInTheDocument()
 })

@@ -487,7 +487,7 @@ async def test_sse_frames_a_topic_change_as_its_own_project_shaped_frame(reposit
 
     The research page's topic list is refreshed off these frames. Two failures
     this pins: no frame at all (what shipped -- the feed read only
-    `CodingSession` streams, so a topic appeared only on a reload), and a frame
+    `Session` streams, so a topic appeared only on a reload), and a frame
     carrying the topic's id under `session_id`, which would put the session
     tree to work refetching a session that does not exist.
 
@@ -529,7 +529,7 @@ async def test_sse_frames_a_graph_change_addressed_to_its_project(repository):
     """An extraction reaches the live feed addressed to the project it changed.
 
     The graph pane redraws off these frames. Three failures this pins: no frame
-    at all (what shipped -- the feed read only `CodingSession` and `Topic`, so
+    at all (what shipped -- the feed read only `Session` and `Topic`, so
     entities appeared on a reload and never before it); a frame carrying the
     document stream's `uuid5` id under `session_id`, which would set the
     session tree hunting an aggregate that is a document; and a frame with no
@@ -579,7 +579,7 @@ async def test_sse_frames_a_stored_document_as_a_corpus_frame(repository):
     """A stored source reaches the live feed addressed to its project.
 
     The documents pane redraws off these frames. It shipped with no live path
-    of any kind -- the feed read only `CodingSession` and `Topic`, so a source
+    of any kind -- the feed read only `Session` and `Topic`, so a source
     the agent stored mid-session appeared in the rail only on a reload, while
     the reader watched the turn that fetched it scroll past.
 
@@ -613,7 +613,7 @@ async def test_sse_frames_a_stored_document_as_a_corpus_frame(repository):
     payload = json.loads(frames[0].split("data: ", 1)[1])
     assert payload["type"] == "Corpus"
     assert payload["project_id"] == str(project_id)
-    assert payload["change"] == "SourceDocumentStored"
+    assert payload["change"] == "CorpusDocumentStored"
     assert "session_id" not in payload
 
 
@@ -621,8 +621,8 @@ async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
     """An advanced stage reaches the live feed addressed to its project.
 
     The reported bug, at the layer where it is visible: `advance_stage`
-    appended `StageAdvanced` and the course page's rail moved only on a
-    reload, because the feed read `CodingSession`, `Topic`, `Corpus` and
+    appended `ProjectStageAdvanced` and the course page's rail moved only on a
+    reload, because the feed read `Session`, `Topic`, `Corpus` and
     redstring's categories and nothing else.
 
     A `Project` frame rather than a log frame, for the reason `Topic` and
@@ -634,7 +634,7 @@ async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
     rather than needing a catch-up route.
 
     `change` rather than a stage name, so the frame stays independent of
-    `StageAdvanced`'s payload -- which is being extended under separate work.
+    `ProjectStageAdvanced`'s payload -- which is being extended under separate work.
     """
     from research_team.application import LiveFeed
     from research_team.domain.project import AdvanceStage, CreateProject, SelectWorkflow
@@ -668,7 +668,7 @@ async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
     payload = json.loads(frames[0].split("data: ", 1)[1])
     assert payload["type"] == "Project"
     assert payload["project_id"] == str(project_id)
-    assert payload["change"] == "StageAdvanced"
+    assert payload["change"] == "ProjectStageAdvanced"
     # The verdict, not only that a boundary was crossed (#80). The one payload
     # field this frame carries, because unlike a stage name it describes the
     # transition rather than the current state and so cannot disagree with the
@@ -2593,7 +2593,7 @@ async def research_client(db_path, fake_model):
     """A client whose app was wired *with* a research supervisor.
 
     Separate from `client` because the default app is deliberately built
-    without one: `AGENT_AUTO_RESEARCH` gates the wiring in `web.py`, and the
+    without one: `AGENT_RESEARCH_RUN` gates the wiring in `web.py`, and the
     unwired case is a behaviour these tests check rather than a setup detail.
     """
     application = await _started(model=fake_model, db_path=db_path)
@@ -2617,7 +2617,7 @@ async def test_the_run_routes_are_absent_unless_the_instance_was_wired_for_them(
     response = await client.post(f"/api/projects/{project_id}/auto-research", json={})
 
     assert response.status_code == 404
-    assert "AGENT_AUTO_RESEARCH" in response.json()["detail"]
+    assert "AGENT_RESEARCH_RUN" in response.json()["detail"]
 
 
 async def test_starting_a_run_answers_with_its_ids_before_it_has_finished(research_client):

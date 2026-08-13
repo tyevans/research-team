@@ -4,16 +4,6 @@ Depends on the domain and on its own port declarations -- never on a concrete
 store, model provider, or user interface.
 """
 
-from research_team.application.auto_research import (
-    AutoResearchDriver,
-    RoundOutcome,
-    RunReport,
-)
-from research_team.application.auto_round import (
-    ROUND_INSTRUCTIONS,
-    TopicRoundRunner,
-    round_prompt,
-)
 from research_team.application.autonomy import (
     GATED_TOOLS,
     SEARCH_TOOL,
@@ -66,6 +56,16 @@ from research_team.application.ports import (
     TurnResult,
 )
 from research_team.application.project_graphs import ProjectGraphs
+from research_team.application.research_round import (
+    ROUND_INSTRUCTIONS,
+    TopicRoundRunner,
+    round_prompt,
+)
+from research_team.application.research_run import (
+    ResearchRunDriver,
+    RoundOutcome,
+    RunReport,
+)
 from research_team.application.research_supervisor import (
     ActiveRun,
     ResearchSupervisor,
@@ -116,7 +116,6 @@ __all__ = [
     "ApprovalPort",
     "ApprovalRefused",
     "ApprovalRequest",
-    "AutoResearchDriver",
     "AutonomyPolicy",
     "Cancellation",
     "CloseGraph",
@@ -147,6 +146,7 @@ __all__ = [
     "PreparedContext",
     "ProjectGraphs",
     "RecordedMessage",
+    "ResearchRunDriver",
     "ResearchSupervisor",
     "Roster",
     "RoundOutcome",

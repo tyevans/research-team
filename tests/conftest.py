@@ -12,8 +12,8 @@ from redstring import FakeLlmProvider
 from research_team import composition
 from research_team.application import SessionService
 from research_team.domain import (
-    CodingSession,
     CreateProject,
+    Session,
     StartSession,
 )
 from research_team.infrastructure.persistence import (
@@ -162,7 +162,7 @@ def project_id():
 
 
 @pytest.fixture
-def session(aggregates, session_id, project_id) -> CodingSession:
+def session(aggregates, session_id, project_id) -> Session:
     aggregate = aggregates.create_new(session_id)
     aggregate.execute(
         StartSession(

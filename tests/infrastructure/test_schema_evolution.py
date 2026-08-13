@@ -17,27 +17,27 @@ from uuid import uuid4
 
 import aiosqlite
 import pytest
-from eventsource import StreamId, collect
+from eventsource import AggregateNotFoundError, EventTypeNotFoundError, StreamId, collect
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from pydantic import ValidationError
 
 from research_team.domain import (
-    CodingSession,
     ConversationCompacted,
     Project,
+    ProjectStageAdvanced,
     SendUserMessage,
+    Session,
     SessionStarted,
-    StageAdvanced,
     StartSession,
     ToolCallDecided,
     TurnFailed,
     current_stage_of,
 )
-from research_team.domain.auto_research import AutoRunStarted
+from research_team.domain.research_run import ResearchRunStarted
 from research_team.domain.topic import OpenTopic, TopicInvestigated
 from research_team.infrastructure.persistence.event_store import (
-    build_auto_research_repository,
     build_project_repository,
+    build_research_run_repository,
     build_topic_repository,
 )
 from research_team.workflows import hybrid_default
@@ -50,7 +50,7 @@ async def _write_old_event(
     version: int,
     event_type: str,
     payload: dict,
-    aggregate_type: str = "CodingSession",
+    aggregate_type: str = "Session",
 ) -> None:
     """Insert an event exactly as an older build would have left it.
 
@@ -101,7 +101,7 @@ async def test_a_turn_failure_written_before_cancellation_existed_still_loads(
         event_type="TurnFailed",
         payload={
             "aggregate_id": str(started),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 2,
             "turn_index": 1,
             "error_type": "RuntimeError",
@@ -128,7 +128,7 @@ async def test_a_compaction_written_before_token_counts_existed_still_loads(
         event_type="ConversationCompacted",
         payload={
             "aggregate_id": str(started),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 2,
             "summary": "they talked about files",
             "through_index": 4,
@@ -152,7 +152,7 @@ async def test_an_old_event_still_folds_into_state(repository, started, db_path)
         event_type="TurnFailed",
         payload={
             "aggregate_id": str(started),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 2,
             "turn_index": 1,
             "error_type": "RuntimeError",
@@ -177,7 +177,7 @@ async def test_a_tool_call_decision_written_before_edited_args_existed_still_loa
         event_type="ToolCallDecided",
         payload={
             "aggregate_id": str(started),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 2,
             "tool_name": "web_search",
             "args": {"query": "x"},
@@ -208,7 +208,7 @@ async def test_a_decision_written_before_review_ids_still_loads(repository, star
         event_type="ToolCallDecided",
         payload={
             "aggregate_id": str(started),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 2,
             "tool_name": "web_search",
             "args": {"query": "backward design"},
@@ -229,7 +229,7 @@ async def test_an_investigation_written_before_outcome_existed_still_loads(store
     default of "produced" would claim every historic round found something.
 
     Builds its own topic repository because the shared `repository` fixture
-    is a `CodingSession` repository, and `Topic` is a different aggregate
+    is a `Session` repository, and `Topic` is a different aggregate
     type over the same log.
     """
     topic_id = uuid4()
@@ -273,7 +273,7 @@ async def test_an_auto_run_started_before_the_fetch_grant_existed_still_loads(st
     before this feature actually was.
 
     Builds its own repository because the shared `repository` fixture is a
-    `CodingSession` repository, and `AutoResearchRun` is a different
+    `Session` repository, and `ResearchRun` is a different
     aggregate over the same log -- the same reason the topic test above does.
     Writes the payload with neither key present, which is the only shape that
     proves the defaults fill in; constructing the event through today's model
@@ -283,30 +283,30 @@ async def test_an_auto_run_started_before_the_fetch_grant_existed_still_loads(st
     # Applies the schema, which the library does lazily on first use of the
     # connection -- writing the raw payload below is the store's first
     # touch otherwise, and `events` would not exist yet to insert into.
-    await collect(store.read_stream(StreamId(run_id, "AutoResearchRun")))
+    await collect(store.read_stream(StreamId(run_id, "ResearchRun")))
     await _write_old_event(
         db_path,
         run_id,
         version=1,
-        event_type="AutoRunStarted",
+        event_type="ResearchRunStarted",
         payload={
             "aggregate_id": str(run_id),
-            "aggregate_type": "AutoResearchRun",
+            "aggregate_type": "ResearchRun",
             "aggregate_version": 1,
             "project_id": str(uuid4()),
             "session_id": str(uuid4()),
         },
-        aggregate_type="AutoResearchRun",
+        aggregate_type="ResearchRun",
     )
 
-    stream = StreamId(run_id, "AutoResearchRun")
+    stream = StreamId(run_id, "ResearchRun")
     events = [envelope.event for envelope in await collect(store.read_stream(stream))]
     started = events[0]
-    assert isinstance(started, AutoRunStarted)
+    assert isinstance(started, ResearchRunStarted)
     assert started.fetch_hosts == []
     assert started.fetch_budget == 0
 
-    runs = build_auto_research_repository(store)
+    runs = build_research_run_repository(store)
     run = await runs.load(run_id)
     assert run.state.fetch_hosts == []
     assert run.state.fetch_budget == 0
@@ -338,7 +338,7 @@ async def test_a_schema_version_bump_falls_back_to_replay(repository, session_id
     await repository.save(session)
     await repository.drain_snapshots()
 
-    monkeypatch.setattr(CodingSession, "schema_version", CodingSession.schema_version + 1)
+    monkeypatch.setattr(Session, "schema_version", Session.schema_version + 1)
     reloaded = await repository.load(session_id)
 
     assert reloaded.version == session.version
@@ -379,7 +379,7 @@ async def test_session_started_without_project_id_no_longer_loads(
         event_type="SessionStarted",
         payload={
             "aggregate_id": str(session_id),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 1,
             "system_prompt": "p",
             "model_name": "m",
@@ -406,7 +406,7 @@ async def test_session_started_with_a_project_id_loads(repository, started, db_p
         event_type="SessionStarted",
         payload={
             "aggregate_id": str(session_id),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 1,
             "system_prompt": "p",
             "model_name": "m",
@@ -450,7 +450,7 @@ async def test_a_before_validator_can_reshape_an_old_payload(repository, started
 
     @register_event(event_type=event_type)
     class RenamedFieldEvent(DomainEvent):
-        aggregate_type: str = "CodingSession"
+        aggregate_type: str = "Session"
         error_message: str
 
         @model_validator(mode="before")
@@ -473,7 +473,7 @@ async def test_a_before_validator_can_reshape_an_old_payload(repository, started
         event_type=event_type,
         payload={
             "aggregate_id": str(started),
-            "aggregate_type": "CodingSession",
+            "aggregate_type": "Session",
             "aggregate_version": 2,
             "reason": "written by the old shape",
         },
@@ -491,7 +491,7 @@ async def test_a_project_written_before_workflows_existed_still_loads(
 
     The events did not change shape here -- the *state* did, which is the case
     the module docstring's rule 1 covers from the other side. An old project's
-    stream simply has no `WorkflowSelected` in it, so the defaults have to mean
+    stream simply has no `ProjectWorkflowSelected` in it, so the defaults have to mean
     "runs no workflow" rather than crash or, worse, imply a preset.
 
     Depends on `started` only to guarantee the tables exist; schema init
@@ -601,7 +601,7 @@ async def test_an_old_project_snapshot_without_workflow_fields_still_loads(
 async def test_a_stage_advance_written_before_decision_existed_reads_as_approved(
     store, repository, started, db_path
 ):
-    """`StageAdvanced.decision` is a case-1 addition; absence must mean `approve`.
+    """`ProjectStageAdvanced.decision` is a case-1 addition; absence must mean `approve`.
 
     Every advance stored before the field existed had a human behind it -- the
     tool floors at `ask` and nothing else could call the command -- so the
@@ -615,10 +615,10 @@ async def test_a_stage_advance_written_before_decision_existed_reads_as_approved
     project_id = uuid4()
     payloads = (
         (1, "ProjectCreated", {"name": "atlas"}),
-        (2, "WorkflowSelected", {"preset_id": "hybrid.default", "preset_version": "1"}),
+        (2, "ProjectWorkflowSelected", {"preset_id": "hybrid.default", "preset_version": "1"}),
         (
             3,
-            "StageAdvanced",
+            "ProjectStageAdvanced",
             {
                 "from_stage": "tyler.step0.intake",
                 "to_stage": "hybrid.step1.framing",
@@ -648,10 +648,113 @@ async def test_a_stage_advance_written_before_decision_existed_reads_as_approved
         for envelope in await collect(
             store.read_stream(StreamId(project_id, Project.aggregate_type))
         )
-        if isinstance(envelope.event, StageAdvanced)
+        if isinstance(envelope.event, ProjectStageAdvanced)
     ]
 
     assert advanced[-1].decision == "approve"
     assert advanced[-1].gate_decision == "written before the field existed"
     assert project.state.current_stage == "hybrid.step1.framing"
     assert current_stage_of(project.state, hybrid_default).id == "hybrid.step1.framing"
+
+
+async def test_an_event_renamed_by_the_naming_pass_no_longer_loads(
+    repository, started, db_path
+):
+    """The second deliberate break in this file, and the loud half of it.
+
+    Thirteen events were renamed to make `aggregate_type` inferable from the
+    class name -- `WorkflowSelected` to `ProjectWorkflowSelected`,
+    `SourceDocumentStored` to `CorpusDocumentStored`, and so on. Unlike the
+    field-shape cases above there is nothing to default and nothing to
+    translate: the registry is keyed by class name, and a name it has never
+    heard of is not a shape it can guess at.
+
+    So the read fails with `EventTypeNotFoundError`, naming the missing type
+    and listing what it does know. That is the good outcome, and it is pinned
+    here for the same reason as the `project_id` refusal above -- "old data
+    stops loading" should cost a test to change.
+
+    Written with a valid `ProjectCreated` ahead of it so the failure is
+    provably the rename rather than an empty or malformed stream: everything
+    up to version 2 reads, and version 2 is where it stops.
+    """
+    project_id = uuid4()
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=1,
+        event_type="ProjectCreated",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "Project",
+            "aggregate_version": 1,
+            "name": "atlas",
+        },
+        aggregate_type="Project",
+    )
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=2,
+        event_type="WorkflowSelected",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "Project",
+            "aggregate_version": 2,
+            "preset_id": "hybrid.default",
+            "preset_version": "1",
+        },
+        aggregate_type="Project",
+    )
+
+    with pytest.raises(EventTypeNotFoundError, match="WorkflowSelected"):
+        await repository.projects.load(project_id)
+
+
+async def test_a_session_stored_as_codingsession_reads_as_no_session_at_all(
+    repository, started, db_path
+):
+    """The other half of the break, and it fails in a different way.
+
+    `CodingSession` became `Session`, and `aggregate_type` is not just a label
+    on a row -- it is half of the stream identity. A stream read asks for
+    `(aggregate_id, "Session")`, the stored rows say `"CodingSession"`, and the
+    two never meet.
+
+    So this is not the loud `EventTypeNotFoundError` above. `events_for`
+    returns an empty list and `load` raises `AggregateNotFoundError` -- which
+    is precisely what both do for an id that was never written at all. The old
+    session does not fail to load *as a session*; it fails to exist. An
+    operator looking at one cannot tell "written by an older build" from
+    "wrong id pasted", and no error message will offer the distinction.
+
+    Worth pinning for that reason rather than for the raise itself. The
+    rename was still the right call and the cost is still affordable -- the
+    project is pre-release and holds no real data -- but the failure mode is
+    unhelpful in a way the event-name one is not, and anyone who meets it
+    should find this test rather than a mystery.
+
+    Both halves are asserted because they are separately surprising: the empty
+    read is what a projection would see, and the raise is what a caller would.
+    """
+    session_id = uuid4()
+    await _write_old_event(
+        db_path,
+        session_id,
+        version=1,
+        event_type="SessionStarted",
+        payload={
+            "aggregate_id": str(session_id),
+            "aggregate_type": "CodingSession",
+            "aggregate_version": 1,
+            "system_prompt": SYSTEM_PROMPT,
+            "model_name": MODEL_NAME,
+            "project_id": str(uuid4()),
+        },
+        aggregate_type="CodingSession",
+    )
+
+    assert await repository.events_for(session_id) == []
+
+    with pytest.raises(AggregateNotFoundError):
+        await repository.load(session_id)

@@ -63,12 +63,12 @@ export const useCourse = (projectId: ProjectId, onLoaded?: (course: Course | nul
 /** The rail moves when the project does, without a reload.
  *
  * It did not, and that was the whole of the reported bug: `advance_stage`
- * appended `StageAdvanced` and this page showed the old stage until somebody
+ * appended `ProjectStageAdvanced` and this page showed the old stage until somebody
  * refreshed. The missing half was on the server -- the feed filtered `Project`
  * streams out, so no frame ever arrived -- but a subscription had to exist
  * here too, and none did.
  *
- * Every project frame, not only a stage advance. `WorkflowSelected` is what
+ * Every project frame, not only a stage advance. `ProjectWorkflowSelected` is what
  * turns this page from "No course to show" into a rail, and the lifecycle
  * events move the holding-session link in the header; they all want this same
  * read, so filtering by `change` would be a list to maintain for no fewer
@@ -97,7 +97,7 @@ const useCourseRefresh = (projectId: ProjectId) => {
     () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.course(projectId) })
       // The header's "Open holding session" link and the roster both come off
-      // a project's lifecycle events, and `SessionJoinedProject` is the frame
+      // a project's lifecycle events, and `ProjectSessionJoined` is the frame
       // that moves them. One frame, three reads -- cheaper than three
       // subscriptions that would each fire on all of them anyway.
       void queryClient.invalidateQueries({ queryKey: queryKeys.workers(projectId) })

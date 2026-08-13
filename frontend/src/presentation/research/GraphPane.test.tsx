@@ -80,7 +80,7 @@ const fakeStream = () => {
         listener?.onFrame({
           kind: 'corpus',
           projectId: PROJECT,
-          change: 'SourceDocumentStored',
+          change: 'CorpusDocumentStored',
         })
       }),
   }

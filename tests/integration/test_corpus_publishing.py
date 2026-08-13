@@ -3,7 +3,7 @@
 The corpus read model follows the log through the in-memory bus, and an
 aggregate repository only announces on that bus if it was handed one. The
 corpus repository was the one repository in `composition.py` built without it,
-so `SourceDocumentStored` was appended and nothing woke: the events were in the
+so `CorpusDocumentStored` was appended and nothing woke: the events were in the
 log, `topic_corpus_facts` had them (its repository does publish), and
 `corpus_documents` stayed empty for the life of the process. On screen that is
 "Documents" listing nothing while research is visibly fetching pages.

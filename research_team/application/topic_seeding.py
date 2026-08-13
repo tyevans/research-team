@@ -1,6 +1,6 @@
 """Naming a project's first topics in one turn, not a run.
 
-`auto_research.py` argues at length for round-per-turn scheduling, because
+`research_run.py` argues at length for round-per-turn scheduling, because
 investigation is long, failure-prone and unbounded: "A turn is atomic: a
 failure discards the aggregate and appends a lone marker. All-or-nothing over
 an hour of work is worthless." Seeding shares none of those properties. It is
@@ -13,7 +13,7 @@ simplicity of "one turn, one outcome" for machinery that exists to survive a
 failure mode seeding does not have.
 
 So this holds no state the log does not have and drives no loop.
-`TopicSeeder.seed` joins the project the same way `start_auto_research` does
+`TopicSeeder.seed` joins the project the same way `start_research_run` does
 -- `start_in_project` then `attach_project`, so `open_topic` is bound -- runs
 exactly one `TurnSupervisor` turn, and releases. There is no driver here
 because there is nothing to drive: a turn either names topics or it does not,
@@ -118,7 +118,7 @@ class TopicSeeder:
         crash that cost seconds and produced nothing. Joining itself
         (`start_in_project`) is not guarded the same way -- a project that
         was never joined has nothing to release, and `release_project` on an
-        id that was never attached is the ordinary case `start_auto_research`
+        id that was never attached is the ordinary case `start_research_run`
         already relies on.
 
         `run_id` is accepted rather than always minted here so a caller that

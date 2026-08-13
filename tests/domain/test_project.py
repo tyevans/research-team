@@ -12,11 +12,11 @@ from research_team.domain.project import (
     JoinProject,
     ProjectCreated,
     ProjectDeleted,
+    ProjectSessionJoined,
+    ProjectStageAdvanced,
     ProjectTipAdvanced,
+    ProjectWorkflowSelected,
     SelectWorkflow,
-    SessionJoinedProject,
-    StageAdvanced,
-    WorkflowSelected,
     current_stage_of,
     decide,
     evolve,
@@ -56,14 +56,14 @@ def test_a_session_joins_and_inherits_the_current_tip():
     state = initial_state()
     for event in (
         ProjectCreated(aggregate_id=project_id, name="research"),
-        SessionJoinedProject(aggregate_id=project_id, session_id=first, inherited_at=0),
+        ProjectSessionJoined(aggregate_id=project_id, session_id=first, inherited_at=0),
         ProjectTipAdvanced(aggregate_id=project_id, session_id=first, at_event=12),
     ):
         state = evolve(state, event)
 
     [event] = decide(JoinProject(session_id=second), state)
 
-    assert isinstance(event, SessionJoinedProject)
+    assert isinstance(event, ProjectSessionJoined)
     assert event.aggregate_id == project_id
     assert event.session_id == second
     assert event.inherited_at == 12
@@ -74,7 +74,7 @@ def test_a_second_concurrent_session_is_rejected_by_name():
     state = initial_state()
     for event in (
         ProjectCreated(aggregate_id=project_id, name="research"),
-        SessionJoinedProject(aggregate_id=project_id, session_id=holder, inherited_at=0),
+        ProjectSessionJoined(aggregate_id=project_id, session_id=holder, inherited_at=0),
     ):
         state = evolve(state, event)
 
@@ -87,7 +87,7 @@ def test_advancing_the_tip_releases_the_project():
     state = initial_state()
     for event in (
         ProjectCreated(aggregate_id=project_id, name="research"),
-        SessionJoinedProject(aggregate_id=project_id, session_id=session_id, inherited_at=0),
+        ProjectSessionJoined(aggregate_id=project_id, session_id=session_id, inherited_at=0),
         ProjectTipAdvanced(aggregate_id=project_id, session_id=session_id, at_event=7),
     ):
         state = evolve(state, event)
@@ -102,7 +102,7 @@ def test_only_the_active_session_may_advance_the_tip():
     state = initial_state()
     for event in (
         ProjectCreated(aggregate_id=project_id, name="research"),
-        SessionJoinedProject(aggregate_id=project_id, session_id=holder, inherited_at=0),
+        ProjectSessionJoined(aggregate_id=project_id, session_id=holder, inherited_at=0),
     ):
         state = evolve(state, event)
 
@@ -128,7 +128,7 @@ def test_a_deleted_project_keeps_what_it_was():
     project_id, session_id = uuid4(), uuid4()
     state = _created(project_id, name="atlas")
     for event in (
-        SessionJoinedProject(aggregate_id=project_id, session_id=session_id, inherited_at=0),
+        ProjectSessionJoined(aggregate_id=project_id, session_id=session_id, inherited_at=0),
         ProjectTipAdvanced(aggregate_id=project_id, session_id=session_id, at_event=4),
         ProjectDeleted(aggregate_id=project_id),
     ):
@@ -145,7 +145,7 @@ def test_a_held_project_cannot_be_deleted_until_it_is_released():
     project_id, holder = uuid4(), uuid4()
     state = evolve(
         _created(project_id),
-        SessionJoinedProject(aggregate_id=project_id, session_id=holder, inherited_at=0),
+        ProjectSessionJoined(aggregate_id=project_id, session_id=holder, inherited_at=0),
     )
 
     with pytest.raises(CommandRejectedError, match=str(holder)):
@@ -187,7 +187,7 @@ def _with_workflow(project_id, preset=hybrid_default):
     state = _created(project_id)
     return evolve(
         state,
-        WorkflowSelected(
+        ProjectWorkflowSelected(
             aggregate_id=project_id, preset_id=preset.id, preset_version=preset.version
         ),
     )
@@ -198,7 +198,7 @@ def test_selecting_a_workflow_emits_workflow_selected():
 
     [event] = decide(SelectWorkflow(preset=hybrid_default), _created(project_id))
 
-    assert isinstance(event, WorkflowSelected)
+    assert isinstance(event, ProjectWorkflowSelected)
     assert event.preset_id == "hybrid.default"
     assert event.preset_version == hybrid_default.version
 
@@ -235,7 +235,7 @@ def test_advancing_moves_to_the_next_stage_in_the_preset():
         state,
     )
 
-    assert isinstance(event, StageAdvanced)
+    assert isinstance(event, ProjectStageAdvanced)
     assert event.from_stage == "tyler.step0.intake"
     assert event.to_stage == "hybrid.step1.framing"
     assert event.decided_by == "human"
@@ -282,7 +282,7 @@ def test_advancing_backwards_is_rejected():
     project_id = uuid4()
     state = evolve(
         _with_workflow(project_id),
-        StageAdvanced(
+        ProjectStageAdvanced(
             aggregate_id=project_id,
             from_stage="tyler.step0.intake",
             to_stage="hybrid.step1.framing",
@@ -313,7 +313,7 @@ def test_advancing_past_the_final_stage_is_rejected():
     ):
         state = evolve(
             state,
-            StageAdvanced(
+            ProjectStageAdvanced(
                 aggregate_id=project_id,
                 from_stage=earlier,
                 to_stage=later,
@@ -401,12 +401,12 @@ def test_selecting_a_workflow_keeps_everything_else_about_the_project():
     project_id, session_id = uuid4(), uuid4()
     state = evolve(
         _created(project_id, name="atlas"),
-        SessionJoinedProject(aggregate_id=project_id, session_id=session_id, inherited_at=0),
+        ProjectSessionJoined(aggregate_id=project_id, session_id=session_id, inherited_at=0),
     )
 
     state = evolve(
         state,
-        WorkflowSelected(
+        ProjectWorkflowSelected(
             aggregate_id=project_id, preset_id="hybrid.default", preset_version="1"
         ),
     )
@@ -420,7 +420,7 @@ def test_the_reviewers_verdict_is_recorded_beside_the_evidence():
     """`decision` is the human's verdict; `gate_decision` is what they were shown.
 
     Fails with the change reverted: `AdvanceStage` has no `decision` to pass
-    and `StageAdvanced` no field to hold it, so this is a TypeError before it
+    and `ProjectStageAdvanced` no field to hold it, so this is a TypeError before it
     is an assertion.
     """
     state = _with_workflow(uuid4())
@@ -443,7 +443,7 @@ def test_the_reviewers_verdict_is_recorded_beside_the_evidence():
 def test_an_advance_with_no_stated_verdict_reads_as_an_approval():
     """Case 1 of the evolution strategy: absence means what it always meant.
 
-    Every `StageAdvanced` written before this field existed was an advance a
+    Every `ProjectStageAdvanced` written before this field existed was an advance a
     human let through, so `approve` is the only default that does not invent a
     verdict nobody gave.
     """
@@ -491,7 +491,7 @@ def _released(project_id, session_id, at):
     state = initial_state()
     for event in (
         ProjectCreated(aggregate_id=project_id, name="research"),
-        SessionJoinedProject(aggregate_id=project_id, session_id=session_id, inherited_at=0),
+        ProjectSessionJoined(aggregate_id=project_id, session_id=session_id, inherited_at=0),
         ProjectTipAdvanced(aggregate_id=project_id, session_id=session_id, at_event=at),
     ):
         state = evolve(state, event)
@@ -555,7 +555,7 @@ def test_a_held_project_refuses_a_catch_up_from_the_old_tip():
     project_id, old_tip, holder = uuid4(), uuid4(), uuid4()
     state = evolve(
         _released(project_id, old_tip, 7),
-        SessionJoinedProject(aggregate_id=project_id, session_id=holder, inherited_at=7),
+        ProjectSessionJoined(aggregate_id=project_id, session_id=holder, inherited_at=7),
     )
 
     with pytest.raises(CommandRejectedError, match="does not hold"):

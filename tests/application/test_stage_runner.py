@@ -38,7 +38,7 @@ from research_team.application.turn_supervisor import TurnCancelled
 from research_team.domain import (
     CreateProject,
     Project,
-    StageAdvanced,
+    ProjectStageAdvanced,
     StageChecksEvaluated,
     ToolCallDecided,
 )
@@ -244,8 +244,8 @@ def _runner(service, turns, workflows, approvals, policy, **budget):
     )
 
 
-async def _advances(service, project_id) -> list[StageAdvanced]:
-    """Every `StageAdvanced` on the project's stream, read back from the store.
+async def _advances(service, project_id) -> list[ProjectStageAdvanced]:
+    """Every `ProjectStageAdvanced` on the project's stream, read back from the store.
 
     From the store rather than from folded state, because the state records
     only where the project ended up: a run that advanced and was somehow rolled
@@ -256,7 +256,9 @@ async def _advances(service, project_id) -> list[StageAdvanced]:
         service.projects.event_store.read_stream(StreamId(project_id, Project.aggregate_type))
     )
     return [
-        envelope.event for envelope in envelopes if isinstance(envelope.event, StageAdvanced)
+        envelope.event
+        for envelope in envelopes
+        if isinstance(envelope.event, ProjectStageAdvanced)
     ]
 
 
@@ -550,11 +552,11 @@ async def test_no_stage_advanced_without_a_decision_recorded_against_it(
 ):
     """The amended form of the test `workflow-engine.md` §3.2 asked for.
 
-    §3.2 asked for "drive a stage to completion and check no `StageAdvanced`
+    §3.2 asked for "drive a stage to completion and check no `ProjectStageAdvanced`
     was appended", which was the right test for a design where the driver may
     not execute the command. `stage-boundaries.md` §4.4 narrows the rule to
     *no advance with no decision behind it*, which is strictly stronger and is
-    what this asserts: every `StageAdvanced` on the project's stream is
+    what this asserts: every `ProjectStageAdvanced` on the project's stream is
     matched by a `ToolCallDecided` on some session, for `advance_stage`, that
     let it through.
 
@@ -624,7 +626,7 @@ def test_advancing_is_only_reachable_through_the_function_that_asks():
 
 
 def test_the_runner_never_writes_the_autonomy_policy():
-    """Mirrors the rule `auto_research.py` states for the research loop.
+    """Mirrors the rule `research_run.py` states for the research loop.
 
     A component that could lower its own gate makes the gate advisory. The
     runner holds the policy and may only read it, so `set` and `relax_all` must
@@ -1072,7 +1074,7 @@ async def test_the_decision_names_the_review_it_answered(
     """The join. Fails if `review_id` is dropped anywhere along the path.
 
     Nothing else connects the two: `ToolCallDecided` names no stage, and
-    `StageAdvanced`, which does, is on the project's stream and is not written
+    `ProjectStageAdvanced`, which does, is on the project's stream and is not written
     at all when a gate is refused.
     """
     project_id, _ = await _checked_project(service, monkeypatch)
@@ -1091,7 +1093,7 @@ async def test_the_decision_names_the_review_it_answered(
 async def test_a_rejected_gate_still_records_both(service, workflows, policy, monkeypatch):
     """Rejections are the signal an override rate is measured against.
 
-    They are also the case with no `StageAdvanced` behind them -- the project
+    They are also the case with no `ProjectStageAdvanced` behind them -- the project
     stream records nothing at all when a gate is refused -- so if this pair is
     missing, the most interesting outcome is the one that leaves no trace.
     """

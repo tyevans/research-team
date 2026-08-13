@@ -2,7 +2,7 @@
 
 The driver, the queue, the round runner and the topic tools were each tested in
 isolation while nothing connected them -- which is the shape of gap a green
-suite hides, and is what `AutoResearchDriver` being wired into no interface
+suite hides, and is what `ResearchRunDriver` being wired into no interface
 meant in practice. So nothing here reaches past the model: a topic is opened
 against the real repository, the real queue raises it, and a scripted model
 answers a round by calling `record_finding` the way an agent would.
@@ -21,7 +21,7 @@ from langchain_core.messages import AIMessage
 
 from research_team.application.autonomy import FETCH_TOOL
 from research_team.domain import CreateProject
-from research_team.domain.auto_research import Budget
+from research_team.domain.research_run import Budget
 from research_team.domain.topic import OpenTopic, Topic
 from research_team.infrastructure.persistence import build_topic_repository
 from tests.conftest import ToolAwareFakeChatModel
@@ -184,7 +184,7 @@ async def test_a_granted_runs_grant_reaches_the_fold_and_is_released_on_stop(
     build_application, db_path
 ):
     """Both required properties in one run: the grant `research.start` was
-    given is readable back off the folded state (the same fold `AutoRunStarted`
+    given is readable back off the folded state (the same fold `ResearchRunStarted`
     feeds -- see `test_a_run_records_and_folds_the_fetch_grant` for the event
     itself), and once the run has stopped, this run's session is gone from
     `application.grants` -- the one registry the gate, the grant-bound

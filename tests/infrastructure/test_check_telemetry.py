@@ -19,9 +19,9 @@ import pytest
 from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 
 from research_team.domain import (
-    CodingSession,
     RecordStageReview,
     RecordToolDecision,
+    Session,
     StartSession,
 )
 from research_team.infrastructure.persistence.check_telemetry import (
@@ -48,7 +48,7 @@ def projection(rows) -> CheckTelemetryProjection:
     return CheckTelemetryProjection(rows)
 
 
-def _session(project_id=None) -> CodingSession:
+def _session(project_id=None) -> Session:
     """A started session, because `decide` stamps the aggregate id from state.
 
     Driving the real aggregate rather than hand-building events keeps these
@@ -56,7 +56,7 @@ def _session(project_id=None) -> CodingSession:
     that is what `RecordStageReview` puts on the event, not because a fixture
     said so.
     """
-    session = CodingSession(uuid4())
+    session = Session(uuid4())
     session.execute(
         StartSession(
             session_id=session.aggregate_id,
@@ -484,7 +484,7 @@ async def test_caught_up_returns_with_other_aggregate_types_in_the_store(
 ):
     """The divergence from `CorpusRunner`, pinned.
 
-    This projection is scoped to `CodingSession` in a store holding many types,
+    This projection is scoped to `Session` in a store holding many types,
     so a `caught_up` comparing against the store's *global* position would wait
     for an event it must never process and time out. The `Project` append below
     is what any real session produces on the way past.
@@ -556,7 +556,7 @@ async def _append_a_non_session_event(store, publisher, project_id) -> None:
     """Move the store's global position with something this projection ignores.
 
     A `Project` append is the realistic case -- `start_in_project` ends with
-    one -- and any aggregate type other than `CodingSession` would do.
+    one -- and any aggregate type other than `Session` would do.
     """
     from research_team.domain.project import CreateProject, Project
     from research_team.infrastructure.persistence.event_store import build_project_repository

@@ -54,7 +54,7 @@ const fakeStream = () => {
   }
   return {
     stream,
-    pushCorpus: (projectId: string = PROJECT, change = 'SourceDocumentStored') =>
+    pushCorpus: (projectId: string = PROJECT, change = 'CorpusDocumentStored') =>
       act(() => {
         listener?.onFrame({ kind: 'corpus', projectId, change })
       }),

@@ -4,10 +4,10 @@ from research_team.infrastructure.persistence.event_store import (
     SNAPSHOT_THRESHOLD,
     EventStoreSessionRepository,
     build_aggregate_repository,
-    build_auto_research_repository,
     build_corpus_repository,
     build_learner_progress_repository,
     build_project_repository,
+    build_research_run_repository,
     build_topic_repository,
 )
 from research_team.infrastructure.persistence.read_models import (
@@ -45,9 +45,9 @@ __all__ = [
     "TopicRunner",
     "TopicStore",
     "build_aggregate_repository",
-    "build_auto_research_repository",
     "build_corpus_repository",
     "build_learner_progress_repository",
     "build_project_repository",
+    "build_research_run_repository",
     "build_topic_repository",
 ]

@@ -35,7 +35,7 @@ from uuid import UUID, uuid4
 
 from research_team.application.grants import FetchGrant, GrantRegistry
 from research_team.application.topic_attention import TopicAttention
-from research_team.domain.auto_research import (
+from research_team.domain.research_run import (
     BeginRound,
     Budget,
     CompleteRound,
@@ -97,7 +97,7 @@ RunRound = Callable[[UUID, TopicAttention], Awaitable[RoundOutcome]]
 class RunReport:
     """How a run ended, in the shape a caller wants to print.
 
-    Mirrors `AutoRunStopped` rather than adding to it: everything here is
+    Mirrors `ResearchRunStopped` rather than adding to it: everything here is
     already in the log, and a report that could say something the log does not
     is a second account of the same run.
     """
@@ -119,7 +119,7 @@ class RunReport:
         return self.reason == "queue_empty" and self.unexamined_topics == 0
 
 
-class AutoResearchDriver:
+class ResearchRunDriver:
     """Works a project's topic queue until a computed condition says stop."""
 
     def __init__(
@@ -182,7 +182,7 @@ class AutoResearchDriver:
 
         `fetch_hosts`/`fetch_budget` default to nothing granted, matching the
         REPL's `/research` (spec §6: "The REPL's `/research` gains nothing").
-        They are recorded on `StartRun` and folded onto `AutoRunState` by the
+        They are recorded on `StartRun` and folded onto `ResearchRunState` by the
         domain either way; what changes here is what this method does *with*
         the fold once it has one -- see the registration below.
         """

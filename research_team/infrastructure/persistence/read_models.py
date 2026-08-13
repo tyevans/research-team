@@ -58,15 +58,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.application import SessionSummary, SummaryHealth
 from research_team.domain import (
-    CodingSession,
+    CorpusDocumentDropped,
+    CorpusDocumentStored,
     DocumentRecord,
     FileDeleted,
     FileEdited,
     FileWritten,
+    Session,
     SessionForkedFrom,
     SessionStarted,
-    SourceDocumentDropped,
-    SourceDocumentStored,
     TurnCompleted,
     TurnFailed,
     UserMessageSent,
@@ -526,7 +526,7 @@ class SessionSummaryRunner:
         end, and that was wrong in a way nothing could reach until now.** This
         store is shared: `Project`, `Corpus`, `Topic` and redstring's own
         streams live in it, while this subscription is scoped to
-        `CodingSession`. Any append of another type moves the global end to a
+        `Session`. Any append of another type moves the global end to a
         position this projection will never reach, and the wait runs its full
         timeout.
 
@@ -548,14 +548,14 @@ class SessionSummaryRunner:
             remaining = await collect(
                 self._store.read_all(
                     from_position=self._subscription.last_processed_position,
-                    options=FeedReadOptions(aggregate_type=CodingSession.aggregate_type),
+                    options=FeedReadOptions(aggregate_type=Session.aggregate_type),
                 )
             )
             if not remaining:
                 return
             await asyncio.sleep(0.01)
         raise TimeoutError(
-            f"the /sessions projection did not consume every {CodingSession.aggregate_type} "
+            f"the /sessions projection did not consume every {Session.aggregate_type} "
             f"event within {timeout}s"
         )
 
@@ -670,8 +670,8 @@ class CorpusProjection(DeclarativeProjection):
             tracer=tracer,
         )
 
-    @handles(SourceDocumentStored)
-    async def _on_stored(self, event: SourceDocumentStored) -> None:
+    @handles(CorpusDocumentStored)
+    async def _on_stored(self, event: CorpusDocumentStored) -> None:
         """Write the document, superseding whatever the source held before.
 
         The existing row is loaded and mutated rather than replaced wholesale,
@@ -701,8 +701,8 @@ class CorpusProjection(DeclarativeProjection):
             setattr(existing, name, value)
         await self._rows.save(existing)
 
-    @handles(SourceDocumentDropped)
-    async def _on_dropped(self, event: SourceDocumentDropped) -> None:
+    @handles(CorpusDocumentDropped)
+    async def _on_dropped(self, event: CorpusDocumentDropped) -> None:
         row = await self._require(event.aggregate_id, event.source_id)
         row.dropped_reason = event.reason
         await self._rows.save(row)

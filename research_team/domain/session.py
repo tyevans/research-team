@@ -1,11 +1,11 @@
-"""The CodingSession decider: the rules, as three pure functions.
+"""The Session decider: the rules, as three pure functions.
 
 `initial_state` says what a session is before anything has happened, `decide`
 says which requests are legal and what facts they produce, and `evolve` says
 what each fact does to the state. None of them touch a store, a version, an
 aggregate, or anything async, so the rules can be read and tested as rules.
 
-`CodingSession` at the bottom is the shell that connects them to the library's
+`Session` at the bottom is the shell that connects them to the library's
 machinery -- replay, snapshots, optimistic concurrency, the repository. It
 holds no logic of its own, which is the point: everything that decides
 anything is above it, and everything below it is bookkeeping.
@@ -361,7 +361,7 @@ def evolve(state: SessionState, event: DomainEvent) -> SessionState:
             return state
 
 
-class CodingSession(DeciderAggregate[SessionState, SessionCommand]):
+class Session(DeciderAggregate[SessionState, SessionCommand]):
     """The imperative shell. Holds no rules -- it delegates all three.
 
     Everything the library needs from an aggregate (replay, snapshots, version
@@ -374,7 +374,7 @@ class CodingSession(DeciderAggregate[SessionState, SessionCommand]):
     the session rather than about its event count.
     """
 
-    aggregate_type = "CodingSession"
+    aggregate_type = "Session"
     schema_version = 4  # SessionState gained `status` for the decider port
 
     initial_state = staticmethod(initial_state)

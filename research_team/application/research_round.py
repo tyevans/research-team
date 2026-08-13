@@ -1,6 +1,6 @@
 """One round, as a turn: what the agent is told, and how its work is counted.
 
-The driver in `auto_research.py` names no executor -- it takes a `RunRound`
+The driver in `research_run.py` names no executor -- it takes a `RunRound`
 callable and asks it for counts. This is the implementation of that callable,
 and it is the only place where "a round" and "a turn" meet.
 
@@ -32,7 +32,7 @@ links one source; the message says so, and that is what the round is for.
 from collections.abc import Awaitable, Callable
 from uuid import UUID
 
-from research_team.application.auto_research import RoundOutcome
+from research_team.application.research_run import RoundOutcome
 from research_team.application.topic_attention import TopicAttention
 
 ROUND_INSTRUCTIONS = (

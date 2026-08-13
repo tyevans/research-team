@@ -105,8 +105,8 @@ export type FeedFrame =
    * Not a `log` frame, for `topic`'s reason: a project's aggregate id under
    * `sessionId` would send the session tree after a session that is a project.
    *
-   * One kind for every project event, told apart by `change`. `StageAdvanced`
-   * is the one that was reported, but `WorkflowSelected` is what turns the
+   * One kind for every project event, told apart by `change`. `ProjectStageAdvanced`
+   * is the one that was reported, but `ProjectWorkflowSelected` is what turns the
    * course page from an error into a rail and the lifecycle events move the
    * holding-session link -- and all of them want the same invalidation, so
    * five kinds would be five ways to spell one refetch. */

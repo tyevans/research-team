@@ -34,7 +34,7 @@ from research_team.application.ports import (
     GateReview,
     GateReviewer,
 )
-from research_team.domain import CodingSession, RecordToolDecision
+from research_team.domain import RecordToolDecision, Session
 from research_team.infrastructure import config
 from research_team.infrastructure.agent.approval import interrupt_config
 from research_team.infrastructure.agent.backend import EventSourcedBackend
@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 #: stands, because this executor rebuilds its agent on every pass and a
 #: workflow stage can change between two of them. It takes the session rather
 #: than closing over one so that a single executor can serve many.
-MiddlewareProvider = Callable[[CodingSession], Awaitable[Sequence[AgentMiddleware]]]
+MiddlewareProvider = Callable[[Session], Awaitable[Sequence[AgentMiddleware]]]
 
 #: Extra tools for one turn, resolved when that turn's agent is built.
 #:
@@ -68,7 +68,7 @@ MiddlewareProvider = Callable[[CodingSession], Awaitable[Sequence[AgentMiddlewar
 #: `StageMiddleware` can only filter down, so anything a stage might permit has
 #: to be registered here at creation. A tool resolved per turn and a middleware
 #: resolved per turn from the same fold is what keeps those two consistent.
-ToolProvider = Callable[[CodingSession], Awaitable[Sequence[BaseTool]]]
+ToolProvider = Callable[[Session], Awaitable[Sequence[BaseTool]]]
 
 
 def build_model() -> BaseChatModel:
@@ -327,7 +327,7 @@ class DeepAgentTurnExecutor:
 
     async def execute(
         self,
-        session: CodingSession,
+        session: Session,
         *,
         messages: list[dict],
         system_prompt: str,
@@ -342,7 +342,7 @@ class DeepAgentTurnExecutor:
 
     async def _invoke(
         self,
-        session: CodingSession,
+        session: Session,
         messages: list[BaseMessage],
         system_prompt: str,
         on_activity: ActivityReporter | None,
@@ -433,7 +433,7 @@ class DeepAgentTurnExecutor:
             decisions = await self._settle(session, interrupts)
             payload = Command(resume={"decisions": decisions})
 
-    async def _resolved_middleware(self, session: CodingSession) -> Sequence[AgentMiddleware]:
+    async def _resolved_middleware(self, session: Session) -> Sequence[AgentMiddleware]:
         """Whatever the provider says applies to this turn, or nothing.
 
         Asked on every pass because that is the only place the answer can come
@@ -453,7 +453,7 @@ class DeepAgentTurnExecutor:
             return ()
         return await self._middleware_provider(session)
 
-    async def _resolved_tools(self, session: CodingSession) -> Sequence[BaseTool]:
+    async def _resolved_tools(self, session: Session) -> Sequence[BaseTool]:
         """Whatever tools this turn gets on top of the registered set, or none.
 
         Kept separate from `set_tools` because the two answer different
@@ -472,7 +472,7 @@ class DeepAgentTurnExecutor:
             return ()
         return await self._tools_provider(session)
 
-    async def _settle(self, session: CodingSession, interrupts: Sequence[Any]) -> list[dict]:
+    async def _settle(self, session: Session, interrupts: Sequence[Any]) -> list[dict]:
         """One decision per interrupted call, in the order they were requested.
 
         The order and the count are both load-bearing: langchain pairs the
@@ -488,7 +488,7 @@ class DeepAgentTurnExecutor:
                 decisions.append(await self._decide(session, request, review))
         return decisions
 
-    async def _decide(self, session: CodingSession, request: dict, review: dict) -> dict:
+    async def _decide(self, session: Session, request: dict, review: dict) -> dict:
         """Settle one interrupted call, recording the decision either way.
 
         `deny` is refused here without the human ever seeing it -- that is the
@@ -557,9 +557,7 @@ class DeepAgentTurnExecutor:
             return {"type": "reject", "message": str(refused)}
         return self._apply(session, name, args, decision, review_id)
 
-    async def _review_gate(
-        self, session: CodingSession, name: str, args: dict
-    ) -> GateReview | None:
+    async def _review_gate(self, session: Session, name: str, args: dict) -> GateReview | None:
         """What the harness has to say about this call, or nothing.
 
         Never lets the reviewer's failure become the turn's, exactly as
@@ -579,7 +577,7 @@ class DeepAgentTurnExecutor:
 
     def _apply(
         self,
-        session: CodingSession,
+        session: Session,
         name: str,
         args: dict,
         decision: ApprovalDecision,

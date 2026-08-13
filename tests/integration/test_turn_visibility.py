@@ -15,8 +15,8 @@ from research_team.application import FeedEntry, TurnCancelled
 from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.domain import (
     AssistantMessageAdded,
-    CodingSession,
     FileWritten,
+    Session,
     ToolResultRecorded,
     TurnCompleted,
     TurnFailed,
@@ -93,13 +93,13 @@ async def _watch(feed, collected: list[FeedEntry], start_at=None) -> None:
     turn being visible while it ran and failed three tests here that were
     describing something true.
 
-    Scoping to `CodingSession` is what these tests always meant. Left
+    Scoping to `Session` is what these tests always meant. Left
     unfiltered they would fail again on the next aggregate admitted to the
     feed, and the failure would look like a broken atomicity guarantee rather
     than a widened feed -- the expensive kind of wrong.
     """
     async for entry in feed.follow(from_position=start_at, from_start=start_at is None):
-        if entry.aggregate_type == CodingSession.aggregate_type:
+        if entry.aggregate_type == Session.aggregate_type:
             collected.append(entry)
 
 

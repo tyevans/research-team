@@ -13,11 +13,11 @@ from deepagents.backends.protocol import EditResult
 from deepagents.backends.state import StateBackend
 
 from research_team.domain import DeleteFile, EditFile, WriteFile
-from research_team.domain.session import CodingSession
+from research_team.domain.session import Session
 
 
 class EventSourcedBackend(StateBackend):
-    def __init__(self, aggregate: CodingSession) -> None:
+    def __init__(self, aggregate: Session) -> None:
         self._aggregate = aggregate
         self._edit_intent: tuple[str, str, bool] | None = None
 

@@ -8,15 +8,15 @@ which is the wrong way round -- replays are rare and turns are not.
 from uuid import uuid4
 
 from research_team.domain import (
-    CodingSession,
     SendUserMessage,
+    Session,
     StartSession,
 )
 from research_team.infrastructure.persistence import SNAPSHOT_THRESHOLD
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
 
-async def _grow_past_threshold(session: CodingSession) -> None:
+async def _grow_past_threshold(session: Session) -> None:
     """Append enough events that the next save crosses the snapshot threshold."""
     for index in range(SNAPSHOT_THRESHOLD + 1):
         session.execute(

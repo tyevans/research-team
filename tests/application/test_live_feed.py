@@ -25,7 +25,7 @@ class FakeFeed:
         self.entries.append(
             FeedEntry(
                 aggregate_id=name,
-                aggregate_type="CodingSession",
+                aggregate_type="Session",
                 event=name,
                 position=position,
             )

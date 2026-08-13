@@ -14,11 +14,11 @@ from research_team.application import (
 from research_team.application.check_telemetry_read import CheckStat
 from research_team.application.ports import ActivityDelta, ActivityNote, ActivityRemark
 from research_team.domain import (
-    CodingSession,
     ConversationCompacted,
     FileDeleted,
     FileEdited,
     FileWritten,
+    Session,
     SessionForkedFrom,
     TurnFailed,
 )
@@ -170,7 +170,7 @@ def format_file_history(events: list[DomainEvent], path: str) -> str:
     return "\n".join(rows) if rows else f"(no history for {path})"
 
 
-def format_state(session: CodingSession, event_count: int, context_mode: str = "full") -> str:
+def format_state(session: Session, event_count: int, context_mode: str = "full") -> str:
     state = session.state
     compacted = f"\ncontext  {context_mode}" + (
         f" ({state.compacted_through} message(s) behind a summary)"
@@ -207,7 +207,7 @@ def format_turn(outcome: TurnOutcome) -> str:
     return f"{outcome.reply}\n{footer}" if outcome.reply else footer
 
 
-def format_resumed(session: CodingSession) -> str:
+def format_resumed(session: Session) -> str:
     state = session.state
     return f"resumed {state.session_id} -- {state.turn_index} turns, {len(state.files)} files"
 

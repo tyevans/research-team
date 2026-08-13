@@ -169,10 +169,10 @@ describe('decodeFrame', () => {
       frame({
         type: 'Corpus',
         project_id: 'p1',
-        change: 'SourceDocumentStored',
+        change: 'CorpusDocumentStored',
         occurred_at: '2026-01-01T00:00:00Z',
       }),
-    ).toEqual({ kind: 'corpus', projectId: 'p1', change: 'SourceDocumentStored' })
+    ).toEqual({ kind: 'corpus', projectId: 'p1', change: 'CorpusDocumentStored' })
   })
 
   it('reads a project frame as its own kind, not as a session log entry', () => {
@@ -184,14 +184,14 @@ describe('decodeFrame', () => {
       frame({
         type: 'Project',
         project_id: 'p1',
-        change: 'StageAdvanced',
+        change: 'ProjectStageAdvanced',
         decision: 'approve_with_edits',
         occurred_at: '2026-01-01T00:00:00Z',
       }),
     ).toEqual({
       kind: 'project',
       projectId: 'p1',
-      change: 'StageAdvanced',
+      change: 'ProjectStageAdvanced',
       // What the reviewer decided, not only that a boundary was crossed --
       // the difference between the live update being a notification and
       // being the information.
@@ -200,21 +200,21 @@ describe('decodeFrame', () => {
   })
 
   it('reads every project event as one kind, told apart by change', () => {
-    // `WorkflowSelected` is what turns the course page from an error into a
-    // rail, so a decoder that admitted only `StageAdvanced` would have fixed
+    // `ProjectWorkflowSelected` is what turns the course page from an error into a
+    // rail, so a decoder that admitted only `ProjectStageAdvanced` would have fixed
     // the reported symptom and left its sibling invisible.
     expect(
       frame({
         type: 'Project',
         project_id: 'p1',
-        change: 'WorkflowSelected',
+        change: 'ProjectWorkflowSelected',
         decision: null,
         occurred_at: '2026-01-01T00:00:00Z',
       }),
     ).toEqual({
       kind: 'project',
       projectId: 'p1',
-      change: 'WorkflowSelected',
+      change: 'ProjectWorkflowSelected',
       decision: null,
     })
   })
@@ -228,10 +228,10 @@ describe('decodeFrame', () => {
       frame({
         type: 'Project',
         project_id: 'p1',
-        change: 'StageAdvanced',
+        change: 'ProjectStageAdvanced',
         occurred_at: '2026-01-01T00:00:00Z',
       }),
-    ).toEqual({ kind: 'project', projectId: 'p1', change: 'StageAdvanced', decision: null })
+    ).toEqual({ kind: 'project', projectId: 'p1', change: 'ProjectStageAdvanced', decision: null })
   })
 
   it('drops a log frame with no index rather than guessing a position', () => {

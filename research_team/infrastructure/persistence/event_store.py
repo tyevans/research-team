@@ -19,9 +19,9 @@ from eventsource.application.aggregates.repository import AggregateRepository
 from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 
 from research_team.application import FeedEntry
-from research_team.domain import CodingSession, Corpus, Project
-from research_team.domain.auto_research import AutoResearchRun
+from research_team.domain import Corpus, Project, Session
 from research_team.domain.learner import LearnerProgress
+from research_team.domain.research_run import ResearchRun
 from research_team.domain.topic import Topic
 
 SNAPSHOT_THRESHOLD = 50
@@ -38,7 +38,7 @@ notice.
 """
 
 FEED_AGGREGATE_TYPES = (
-    CodingSession.aggregate_type,
+    Session.aggregate_type,
     Project.aggregate_type,
     Topic.aggregate_type,
     Corpus.aggregate_type,
@@ -58,7 +58,7 @@ merging -- so it is written to match the order `_sse` tests the types in.
 
 UNROUTED_AGGREGATE_TYPES = frozenset(
     {
-        AutoResearchRun.aggregate_type,
+        ResearchRun.aggregate_type,
         LearnerProgress.aggregate_type,
     }
 )
@@ -70,7 +70,7 @@ went a release with a live path that carried nothing. Listing the exclusions
 makes silence impossible: a new aggregate type is in one list or the other,
 and the guard fails until somebody says which.
 
-`AutoResearchRun` is off because the course page reads a run's state through
+`ResearchRun` is off because the course page reads a run's state through
 `/api/projects/{id}/run`, refreshed off the session frames a round already
 emits -- its own frames would be a second signal for the same repaint. See
 `useTreeRefresh`, which invalidates `allRuns` on log frames.
@@ -109,25 +109,25 @@ def build_project_repository(
     )
 
 
-def build_auto_research_repository(
+def build_research_run_repository(
     store: SQLiteEventStore,
     publisher: InMemoryEventBus | None = None,
     snapshot_store: SQLiteSnapshotStore | None = None,
-) -> AggregateRepository[AutoResearchRun]:
+) -> AggregateRepository[ResearchRun]:
     """Autonomous runs, over the same log as the sessions whose turns they drive.
 
     Published like everything else, which is what puts a run's rounds on the
     live feed without a second channel: a browser watching a project sees
-    `AutoRoundStarted` arrive the same way it sees a turn's events.
+    `ResearchRoundStarted` arrive the same way it sees a turn's events.
 
     Snapshots at the usual threshold. A long run appends three events per
-    round, so a fold is cheap for a while and not forever, and `AutoRunState`
+    round, so a fold is cheap for a while and not forever, and `ResearchRunState`
     holds counters and ids -- the one unbounded field is `topics_seen`, which
     is bounded in practice by `MAX_OPEN_TOPICS`.
     """
     return AggregateRepository(
         store,
-        AutoResearchRun,
+        ResearchRun,
         event_publisher=publisher,
         snapshot_store=snapshot_store,
         snapshot_threshold=SNAPSHOT_THRESHOLD,
@@ -220,7 +220,7 @@ def build_aggregate_repository(
     publisher: InMemoryEventBus | None = None,
     *,
     snapshot_store: SQLiteSnapshotStore,
-) -> AggregateRepository[CodingSession]:
+) -> AggregateRepository[Session]:
     """Sessions, over `store`, snapshotting into `snapshot_store`.
 
     `snapshot_store` is required rather than defaulted. It used to fall back to
@@ -234,7 +234,7 @@ def build_aggregate_repository(
     """
     return AggregateRepository(
         store,
-        CodingSession,
+        Session,
         # Publishing is a notification, not a delivery mechanism: subscribers
         # are told that something landed and go read the log for themselves.
         # It fires after the append commits, so a signal never runs ahead of
@@ -272,7 +272,7 @@ class EventStoreSessionRepository:
     def __init__(
         self,
         store: SQLiteEventStore,
-        aggregates: AggregateRepository[CodingSession],
+        aggregates: AggregateRepository[Session],
         publisher: InMemoryEventBus | None = None,
         snapshot_store: SQLiteSnapshotStore | None = None,
     ) -> None:
@@ -392,17 +392,17 @@ class EventStoreSessionRepository:
         except TimeoutError:
             return
 
-    def create(self, session_id: UUID) -> CodingSession:
+    def create(self, session_id: UUID) -> Session:
         return self._aggregates.create_new(session_id)
 
-    async def load(self, session_id: UUID) -> CodingSession:
+    async def load(self, session_id: UUID) -> Session:
         return await self._aggregates.load(session_id)
 
-    async def save(self, session: CodingSession) -> None:
+    async def save(self, session: Session) -> None:
         await self._aggregates.save(session)
 
     async def events_for(self, session_id: UUID) -> list[DomainEvent]:
-        stream = StreamId(session_id, CodingSession.aggregate_type)
+        stream = StreamId(session_id, Session.aggregate_type)
         return [envelope.event for envelope in await collect(self._store.read_stream(stream))]
 
     # ---- the EventFeed port ----
@@ -415,7 +415,7 @@ class EventStoreSessionRepository:
 
         Scoped by aggregate type rather than taking the whole feed. This store
         is shared, and it holds streams belonging to aggregates nothing
-        subscribing here can place -- `AutoResearchRun` and `LearnerProgress`
+        subscribing here can place -- `ResearchRun` and `LearnerProgress`
         among them. Unscoped, every one of them would arrive as a `FeedEntry`
         addressed to something no subscriber knows how to route. What is
         admitted is `FEED_AGGREGATE_TYPES` and what is held back is
@@ -440,7 +440,7 @@ class EventStoreSessionRepository:
         appends to this same log, and both `seeding.py` and `ResearchView`
         already say in their own comments that a client sees new topics by
         invalidating on those frames -- but the filter above admitted only
-        `CodingSession`, so no topic event has ever reached the SSE feed and
+        `Session`, so no topic event has ever reached the SSE feed and
         neither claim held. A test that saves a `Topic` and asserts a feed
         entry for it is what would have failed.
 
@@ -462,17 +462,17 @@ class EventStoreSessionRepository:
         the sources whose failure a reader needs to see listed.
 
         **`Project` is read for the course page, which had no live path at
-        all.** `StageAdvanced` and `WorkflowSelected` are appended here and the
+        all.** `ProjectStageAdvanced` and `ProjectWorkflowSelected` are appended here and the
         rail is what they moved, so a stage that advanced while a tab was open
         reached the browser through nothing and the page only moved on a
         reload. It is the same shape as `Topic`, the graph and `Corpus` before
         it -- the fourth time -- which is why `FEED_AGGREGATE_TYPES` and
         `UNROUTED_AGGREGATE_TYPES` now exist instead of a literal here.
 
-        One admission covers the whole aggregate rather than `StageAdvanced`
-        alone, and that is deliberate: `WorkflowSelected` is what turns the
+        One admission covers the whole aggregate rather than `ProjectStageAdvanced`
+        alone, and that is deliberate: `ProjectWorkflowSelected` is what turns the
         course page from a 409 into a rail, and the lifecycle events
-        (`SessionJoinedProject`, `ProjectTipAdvanced`, `ProjectDeleted`) move
+        (`ProjectSessionJoined`, `ProjectTipAdvanced`, `ProjectDeleted`) move
         the holding-session link and the project list. Filtering to one event
         class would have fixed the reported symptom and left its siblings
         invisible until the next report.

@@ -25,13 +25,13 @@ attempt is a pedagogical call, not a domain rule.
 
 **No creation event.** Progress has no attributes of its own, so
 `LearnerProgressCreated` would be an empty payload whose only effect is to make
-the first attempt fail if a caller forgot it. The first `ItemAnswered` (or
-`ChecklistProgressRecorded`) creates it. The house `status: "new" | "created"`
+the first attempt fail if a caller forgot it. The first `LearnerItemAnswered` (or
+`LearnerChecklistRecorded`) creates it. The house `status: "new" | "created"`
 vocabulary is kept because it is what a reader of `project.py` and `corpus.py`
 expects.
 
 **The state holds no response text.** `ItemRecord` carries counts, scores and
-flags; what the learner actually typed lives only in the `ItemAnswered` payload.
+flags; what the learner actually typed lives only in the `LearnerItemAnswered` payload.
 Snapshots fold the state, and a growing list of every answer ever given would go
 into each one. The sequence of attempts is a projection over the stream, which
 is the same trade `corpus.py` makes for document text and for the same reason.
@@ -52,7 +52,7 @@ from pydantic import BaseModel, Field
 
 
 @register_event
-class ItemAnswered(DomainEvent):
+class LearnerItemAnswered(DomainEvent):
     """A learner submitted an answer to a graded item, and how it was marked.
 
     Also this aggregate's creation event.
@@ -80,10 +80,10 @@ class ItemAnswered(DomainEvent):
 
 
 @register_event
-class ItemCompleted(DomainEvent):
+class LearnerItemCompleted(DomainEvent):
     """The first time an item was answered correctly.
 
-    Derived from `ItemAnswered` rather than reported by the caller, and emitted
+    Derived from `LearnerItemAnswered` rather than reported by the caller, and emitted
     only once: "when did this land" is a different question from "how many times
     was it tried", and a completion re-emitted on every later correct answer
     would answer the first question with the last date.
@@ -97,7 +97,7 @@ class ItemCompleted(DomainEvent):
 
 
 @register_event
-class ChecklistProgressRecorded(DomainEvent):
+class LearnerChecklistRecorded(DomainEvent):
     """Which boxes are ticked on a checklist that asked to be remembered.
 
     Not an attempt: a checklist has no answer key, so there is no verdict and
@@ -209,7 +209,7 @@ def decide(command: LearnerProgressCommand, state: LearnerProgressState) -> list
         case RecordAttempt():
             if not command.path or not command.component_id:
                 raise CommandRejectedError("an attempt needs a path and a component id")
-            answered = ItemAnswered(
+            answered = LearnerItemAnswered(
                 # From the command, not the state: this may be the creation
                 # command, in which case `state.progress_id` is still None.
                 aggregate_id=command.progress_id,
@@ -230,7 +230,7 @@ def decide(command: LearnerProgressCommand, state: LearnerProgressState) -> list
             # correct attempt rather than a completion of nothing.
             return [
                 answered,
-                ItemCompleted(
+                LearnerItemCompleted(
                     aggregate_id=command.progress_id,
                     path=command.path,
                     component_id=command.component_id,
@@ -244,7 +244,7 @@ def decide(command: LearnerProgressCommand, state: LearnerProgressState) -> list
             if any(index < 0 for index in command.checked):
                 raise CommandRejectedError("a checked box cannot have a negative index")
             return [
-                ChecklistProgressRecorded(
+                LearnerChecklistRecorded(
                     aggregate_id=command.progress_id or progress_id,
                     path=command.path,
                     component_id=command.component_id,
@@ -266,7 +266,7 @@ def evolve(state: LearnerProgressState, event: DomainEvent) -> LearnerProgressSt
     replays instead of failing halfway through.
     """
     match event:
-        case ItemAnswered():
+        case LearnerItemAnswered():
             slot = key(event.path, event.component_id)
             record = state.items.get(slot) or ItemRecord(
                 path=event.path,
@@ -293,7 +293,7 @@ def evolve(state: LearnerProgressState, event: DomainEvent) -> LearnerProgressSt
                 }
             )
 
-        case ChecklistProgressRecorded():
+        case LearnerChecklistRecorded():
             slot = key(event.path, event.component_id)
             record = state.items.get(slot) or ItemRecord(
                 path=event.path,
@@ -311,8 +311,8 @@ def evolve(state: LearnerProgressState, event: DomainEvent) -> LearnerProgressSt
                 }
             )
 
-        case ItemCompleted():
-            # Nothing to fold. `correct` is already set by the `ItemAnswered`
+        case LearnerItemCompleted():
+            # Nothing to fold. `correct` is already set by the `LearnerItemAnswered`
             # this was derived from, and duplicating it here would give the
             # state two sources for one fact. The event earns its place in the
             # *log* -- it is when the item landed and how many tries it took --

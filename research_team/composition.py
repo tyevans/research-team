@@ -28,7 +28,6 @@ from research_team.application import (
     DEFAULT_SYSTEM_PROMPT,
     ApprovalPort,
     AutonomyPolicy,
-    AutoResearchDriver,
     ContextStrategy,
     DispatchesInFlight,
     ElideToolResults,
@@ -37,6 +36,7 @@ from research_team.application import (
     KnowledgeAttachment,
     LiveFeed,
     ProjectGraphs,
+    ResearchRunDriver,
     ResearchSupervisor,
     SessionService,
     SummaryProjects,
@@ -68,9 +68,9 @@ from research_team.application.topic_dispatch import TopicDispatcher
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
-from research_team.domain import CodingSession, ProjectState, current_stage_of
-from research_team.domain.auto_research import Budget
+from research_team.domain import ProjectState, Session, current_stage_of
 from research_team.domain.commands import RecordStageReview, WriteFile
+from research_team.domain.research_run import Budget
 from research_team.domain.topic import Topic
 from research_team.domain.workflow import Preset
 from research_team.infrastructure import config
@@ -130,9 +130,9 @@ from research_team.infrastructure.persistence import (
     EventStoreSessionRepository,
     SessionSummaryRunner,
     TopicRunner,
-    build_auto_research_repository,
     build_corpus_repository,
     build_learner_progress_repository,
+    build_research_run_repository,
     build_topic_repository,
 )
 from research_team.infrastructure.persistence.check_telemetry import CheckTelemetryRunner
@@ -620,7 +620,7 @@ def build_application(
     )
 
     async def running_workflow(
-        session: CodingSession,
+        session: Session,
     ) -> tuple[UUID, ProjectState, Preset] | None:
         """The workflow this session's run is under, or None if there is none.
 
@@ -673,7 +673,7 @@ def build_application(
             )
         return project_id, state, preset
 
-    async def workflow_tools(session: CodingSession) -> tuple[BaseTool, ...]:
+    async def workflow_tools(session: Session) -> tuple[BaseTool, ...]:
         """`advance_stage`, for a run that has a workflow to advance through.
 
         Registered per turn rather than with the project's other tools, which
@@ -697,7 +697,7 @@ def build_application(
             ProjectWorkflow(repository.projects, project_id), preset=preset
         )
 
-    async def granted_tools(session: CodingSession) -> tuple[BaseTool, ...]:
+    async def granted_tools(session: Session) -> tuple[BaseTool, ...]:
         """A grant-bound `fetch`, for a session `resolved_grants` holds one for.
 
         Resolved per turn, from the one `GrantRegistry` this build shares
@@ -737,7 +737,7 @@ def build_application(
         reader = ProjectCorpusReader(corpus, running[0]) if running is not None else None
         return (build_fetch_tool(recall=recall, corpus=reader, pages=pages, grant=grant),)
 
-    async def turn_tools(session: CodingSession) -> tuple[BaseTool, ...]:
+    async def turn_tools(session: Session) -> tuple[BaseTool, ...]:
         """Everything this turn adds on top of the registered set.
 
         `granted_tools` last, so a grant-bound `fetch` shadows whatever
@@ -748,7 +748,7 @@ def build_application(
         """
         return (*await workflow_tools(session), *await granted_tools(session))
 
-    async def turn_middleware(session: CodingSession) -> tuple[AgentMiddleware, ...]:
+    async def turn_middleware(session: Session) -> tuple[AgentMiddleware, ...]:
         """This turn's middleware: component feedback always, the stage gate if any.
 
         `ComponentFeedback` is unconditional because a component can appear in
@@ -883,9 +883,7 @@ def build_application(
             ),
         )
 
-    async def gate_review(
-        session: CodingSession, tool_name: str, args: dict
-    ) -> GateReview | None:
+    async def gate_review(session: Session, tool_name: str, args: dict) -> GateReview | None:
         """Run the stage's checks before anyone is asked to let it go.
 
         Only for `advance_stage`. Every other gated tool is gated because it
@@ -1067,7 +1065,7 @@ def build_application(
             # `repository.publisher`, like every other repository built here,
             # and it was the one that did not have it. The corpus read model
             # follows the log through this bus, so without it a `remember`
-            # appended `SourceDocumentStored` and woke nothing: the event was
+            # appended `CorpusDocumentStored` and woke nothing: the event was
             # in the log, `topic_corpus_facts` had it (that repository
             # publishes), and `corpus_documents` stayed empty for the life of
             # the process -- which is "Documents" listing nothing while
@@ -1200,7 +1198,7 @@ def build_application(
         graphs=graphs,
     )
     turns = TurnSupervisor(service)
-    runs = build_auto_research_repository(
+    runs = build_research_run_repository(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store
     )
     topic_repository = build_topic_repository(
@@ -1263,7 +1261,7 @@ def build_application(
         thing that turns them into a `FetchGrant` and registers it --
         `resolved_grants` is threaded to the driver below for exactly that.
         """
-        return await AutoResearchDriver(
+        return await ResearchRunDriver(
             runs,
             topic_repository,
             topics.queue,
@@ -1294,7 +1292,7 @@ def build_application(
     research_supervisor = ResearchSupervisor(start_run, runs)
     # Built over the same `service` and `turns` a person's own turns run
     # through -- a seeding turn is a turn like any other, and `TopicSeeder`
-    # joins and releases the project the same way `start_auto_research` does.
+    # joins and releases the project the same way `start_research_run` does.
     topic_seeder = TopicSeeder(service, turns)
     # Same `service` and `turns` again: a dispatch turn is a turn like any
     # other. `topic_reader` is the same factory the read routes close over, so

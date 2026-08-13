@@ -13,13 +13,13 @@ from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 
 from research_team.application import summarize_sessions
 from research_team.domain import (
-    CodingSession,
     CompleteTurn,
     DeleteFile,
     EditFile,
     FailTurn,
     RecordForkSource,
     SendUserMessage,
+    Session,
     StartSession,
     WriteFile,
 )
@@ -42,14 +42,14 @@ def projection(rows) -> SessionSummaryProjection:
     return SessionSummaryProjection(rows)
 
 
-async def _project(projection, session: CodingSession) -> None:
+async def _project(projection, session: Session) -> None:
     """Feed a session's uncommitted events through the projection, in order."""
     for event in session.uncommitted_events:
         await projection.handle(event)
 
 
-def _new_session(session_id=None) -> CodingSession:
-    session = CodingSession(session_id or uuid4())
+def _new_session(session_id=None) -> Session:
+    session = Session(session_id or uuid4())
     session.execute(
         StartSession(
             session_id=session.aggregate_id,

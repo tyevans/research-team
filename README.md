@@ -153,7 +153,7 @@ topic and one turn.
 ```
 
 Ctrl-C stops it after the round it is in, rather than leaving a turn
-half-written. The same is available over HTTP only when `AGENT_AUTO_RESEARCH=1`
+half-written. The same is available over HTTP only when `AGENT_RESEARCH_RUN=1`
 is set; without it those routes are absent and answer 404 — not 403, which would
 tell an unauthenticated caller there is a research loop here.
 

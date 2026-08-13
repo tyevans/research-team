@@ -47,7 +47,7 @@ def _domain_aggregate_types() -> set[str]:
     Every module in the package is imported first. `DomainEvent.__subclasses__`
     only knows about classes that have actually been imported, and the domain
     package's `__init__` does not re-export all of them -- `learner` and
-    `auto_research` in particular are reached only through their own modules.
+    `research_run` in particular are reached only through their own modules.
     Without this walk the guard would pass by not looking, which is the same
     shape as the bug.
     """

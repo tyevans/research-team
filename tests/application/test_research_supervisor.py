@@ -10,12 +10,12 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.auto_research import RunReport
+from research_team.application.research_run import RunReport
 from research_team.application.research_supervisor import (
     ResearchSupervisor,
     RunAlreadyActive,
 )
-from research_team.domain.auto_research import AutoRunState, Budget
+from research_team.domain.research_run import Budget, ResearchRunState
 
 
 class FakeRuns:
@@ -151,7 +151,7 @@ async def test_cancelling_nothing_is_not_an_error():
 async def test_status_is_folded_from_the_log_not_from_the_task():
     """So a run that ended last week answers the same way as one in flight."""
     run_id = uuid4()
-    state = AutoRunState(run_id=run_id, status="stopped", rounds=4, findings=2)
+    state = ResearchRunState(run_id=run_id, status="stopped", rounds=4, findings=2)
     supervisor = ResearchSupervisor(controllable()[0], FakeRuns(**{str(run_id): state}))
 
     assert (await supervisor.state(run_id)).rounds == 4

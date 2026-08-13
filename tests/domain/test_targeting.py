@@ -22,11 +22,11 @@ from uuid import uuid4
 import pytest
 from eventsource import AggregateIdMismatchError
 
-from research_team.domain.auto_research import AutoResearchRun, StartRun
 from research_team.domain.commands import StartSession
 from research_team.domain.corpus import Corpus, StoreSourceDocument
 from research_team.domain.project import CreateProject, Project
-from research_team.domain.session import CodingSession
+from research_team.domain.research_run import ResearchRun, StartRun
+from research_team.domain.session import Session
 from research_team.domain.topic import OpenTopic, Topic
 
 
@@ -45,7 +45,7 @@ def test_a_project_refuses_a_command_naming_another_project() -> None:
 def test_a_session_refuses_a_command_naming_another_session() -> None:
     """`StartSession.session_id` reaches `SessionStarted.aggregate_id` (session.py:138)."""
     theirs = uuid4()
-    session = CodingSession(uuid4())
+    session = Session(uuid4())
 
     with pytest.raises(AggregateIdMismatchError) as caught:
         session.execute(
@@ -61,10 +61,10 @@ def test_a_session_refuses_a_command_naming_another_session() -> None:
     assert "StartSession" in str(caught.value)
 
 
-def test_an_auto_research_run_refuses_a_command_naming_another_run() -> None:
-    """`StartRun.run_id` reaches `AutoRunStarted.aggregate_id` (auto_research.py:331)."""
+def test_a_research_run_refuses_a_command_naming_another_run() -> None:
+    """`StartRun.run_id` reaches `ResearchRunStarted.aggregate_id` (research_run.py:331)."""
     theirs = uuid4()
-    run = AutoResearchRun(uuid4())
+    run = ResearchRun(uuid4())
 
     with pytest.raises(AggregateIdMismatchError) as caught:
         run.execute(StartRun(run_id=theirs, project_id=uuid4(), session_id=uuid4()))
@@ -74,7 +74,7 @@ def test_an_auto_research_run_refuses_a_command_naming_another_run() -> None:
 
 
 def test_a_corpus_refuses_a_command_naming_another_corpus() -> None:
-    """`StoreSourceDocument.corpus_id` reaches `SourceDocumentStored` (corpus.py:168)."""
+    """`StoreSourceDocument.corpus_id` reaches `CorpusDocumentStored` (corpus.py:168)."""
     theirs = uuid4()
     corpus = Corpus(uuid4())
 

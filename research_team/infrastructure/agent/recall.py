@@ -249,7 +249,7 @@ def _utc_now() -> str:
     """The wall-clock moment a page was read, as text.
 
     Text rather than a `datetime` because that is what it becomes:
-    `SourceDocumentStored.fetched_at` is a `str | None`, matching
+    `CorpusDocumentStored.fetched_at` is a `str | None`, matching
     `published_at`, which is text because sources report dates in whatever
     shape they please. Converting here and back would buy nothing.
     """

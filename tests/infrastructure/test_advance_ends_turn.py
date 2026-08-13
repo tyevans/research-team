@@ -19,12 +19,12 @@ from langchain_core.messages import AIMessage
 
 from research_team.application import ApprovalDecision, AutonomyPolicy
 from research_team.application.ports import GateReview
-from research_team.domain import CodingSession, StartSession
+from research_team.domain import Session, StartSession
 from research_team.domain.project import (
     AdvanceStage,
     ProjectCreated,
     ProjectState,
-    WorkflowSelected,
+    ProjectWorkflowSelected,
     decide,
     evolve,
     initial_state,
@@ -65,15 +65,15 @@ def _project(preset=hybrid_default) -> FakeWorkflow:
     state = evolve(initial_state(), ProjectCreated(aggregate_id=project_id, name="research"))
     state = evolve(
         state,
-        WorkflowSelected(
+        ProjectWorkflowSelected(
             aggregate_id=project_id, preset_id=preset.id, preset_version=preset.version
         ),
     )
     return FakeWorkflow(state)
 
 
-def _session() -> CodingSession:
-    session = CodingSession(uuid4())
+def _session() -> Session:
+    session = Session(uuid4())
     session.execute(
         StartSession(
             session_id=session.aggregate_id,
