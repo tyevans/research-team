@@ -65,6 +65,47 @@
   overflow: auto;
 }
 
+/* An `overflow: auto` on the surface is not enough on its own, and for two
+   turns this mode was `overflow: auto` on its own. Everything below the
+   surface is still sized to fit it -- the split takes the leftover height,
+   each pane fills its grid row, and `.lay-pane-body` is `flex: 1 1 auto` with
+   `overflow: auto` -- so the innermost scroller absorbs the content and the
+   surface never has anything to scroll. Measured at 1440px before this, on
+   `layout-shell--page-scrolling`: `.lay-pane-body` 1333/735, the surface flat
+   at 766/766, which is the same element scrolling as in
+   `layout-shell--viewport-scrolling`. The prop chose between two identical
+   pages. After: the surface 1372/766 and every body flat, with a `Split` of
+   two panes stretching to the taller one.
+
+   So the mode releases the chain it needs to and no more: the split stops
+   claiming the leftover height, and a body stops being a scroll container and
+   takes the height of its content instead.
+
+   `[data-scroll='regions']` bodies are deliberately untouched. That pane has
+   declared that its children scroll on their own, which is the box-inside-a-
+   box this file warns about two rules down; page mode has no answer for it
+   beyond "do not use both", and quietly unwrapping those scrollers here would
+   be a second guess at what the pane meant.
+
+   Not extended to `auto` below `narrow`, which reaches the same overflow by
+   the media query below and keeps `max-height: 60vh` on its bodies. That cap
+   is deliberate -- one long event log otherwise pushes every other stacked
+   pane off the screen, and the rule says so where it is written. The two
+   modes therefore differ in kind and not only in trigger, which `Shell.tsx`
+   now says rather than calling `auto` "`page` below the breakpoint". */
+.lay-shell[data-scroll='page'] .lay-split {
+  flex: 0 0 auto;
+}
+.lay-shell[data-scroll='page'] .lay-pane-body:not([data-scroll='regions']) {
+  flex: 0 0 auto;
+  overflow: visible;
+  /* The cap below narrow has to go with the scroller that enforced it. Without
+     this line, page mode at 375px measured a 456px box holding 1333px of
+     content with `overflow: visible` -- 877px of rows drawn straight over
+     whatever came after the pane. `max-height` alone is not a clip. */
+  max-height: none;
+}
+
 /* `not all and (min-width: …)` rather than `max-width: 1180px`, so the number
    in this file is the same number `layout-tokens.ts` hands to `matchMedia`.
    One boundary, one literal -- the current pair is `1180` in a stylesheet and

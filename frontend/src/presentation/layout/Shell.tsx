@@ -46,9 +46,13 @@ export const Shell = ({
   chrome?: ReactNode
   children: ReactNode
   /** `viewport` — the surface fills the screen and never scrolls; its regions
-   *  scroll. `page` — the surface is one scrolling column, which is the only
-   *  thing that works when there is not room for regions side by side.
-   *  `auto` — `page` below `--bp-narrow`, `viewport` above. */
+   *  scroll. `page` — the surface is the scroller and nothing inside it is, so
+   *  a pane's body takes the height of its content; the only thing that works
+   *  when there is not room for regions side by side. `auto` — `viewport`
+   *  above `--bp-narrow`, and below it the surface scrolls while each stacked
+   *  body keeps a 60vh cap, so it is page scrolling with a floor under how much
+   *  of the page one long log may take. Close to `page` rather than equal to
+   *  it, and the difference is deliberate — `layout.css` argues both. */
   scroll?: 'viewport' | 'page' | 'auto'
 }) => (
   <OverlayHost>
