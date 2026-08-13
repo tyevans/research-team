@@ -72,6 +72,31 @@ describe('expand', () => {
     expect(view.links).toHaveLength(2)
   })
 
+  it('keeps an asserted and an inferred edge between the same pair', () => {
+    // Same two ends and the same type -- the case the old key collapsed. They
+    // are different claims: one is what a document said, the other is
+    // arithmetic over two dates that changes on re-extraction. Dropping either
+    // silently is the failure; which one survived depended on arrival order.
+    //
+    // Merged across two `expand` calls, like the reverse-edge test above --
+    // a single batch never exercises the dedup at all, since the filter only
+    // checks incoming links against what is *already on the view*.
+    const asserted: Neighborhood = {
+      root: { id: 'a', name: 'a', entityType: 'concept' },
+      entities: [{ id: 'b', name: 'b', entityType: 'concept' }],
+      relationships: [{ source: 'a', target: 'b', relationshipType: 'contains' }],
+    }
+    const inferred: Neighborhood = {
+      root: { id: 'a', name: 'a', entityType: 'concept' },
+      entities: [{ id: 'b', name: 'b', entityType: 'concept' }],
+      relationships: [{ source: 'a', target: 'b', relationshipType: 'contains', inferred: true }],
+    }
+
+    const view = expand(expand(emptyGraph, asserted), inferred)
+
+    expect(view.links).toHaveLength(2)
+  })
+
   it('draws the root, which the server sends beside `entities` rather than in it', () => {
     const view = expand(emptyGraph, hoodWith('prandtl', 'karman'))
 
