@@ -95,6 +95,15 @@ added columns, and
 `test_a_database_written_before_a_field_existed_gains_its_column` fails if
 anyone removes it. Both exist because this shipped once.
 
+It reconciles two ways, and the split is the part to know before editing it.
+The `ALTER`s come from the library's `generate_additive_migration`, which is
+pure and refuses the whole set up front if any column is required with no
+default -- so the table is never left half-widened. But it refuses that
+*categorically*, where SQLite only refuses it on a table that has rows, and the
+incident above is a required column added to a table that is usually empty. So
+an empty table is dropped and recreated instead, and a populated one re-raises;
+`/rebuild` is the answer there and a loud error is how anyone finds out.
+
 The general rule outlives that fix: **when you change a projection or a read
 model, run it against a database that predates the change.** A copy of a real
 one is best. "It works on my fresh database" is the sound of this bug.

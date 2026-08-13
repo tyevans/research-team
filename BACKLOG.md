@@ -429,6 +429,30 @@ it did not belong in a task scoped to the read surface. It belongs beside
 `tests/integration/test_advance_stage_gate.py`, which already drives the tool
 path through a real application.
 
+### B47. The only branch of `apply_schema` that drops a table has no test naming it
+
+`research_team/infrastructure/persistence/read_models.py`. When
+`generate_additive_migration` refuses -- a required column with no default --
+`apply_schema` checks for a row, re-raises if it finds one, and otherwise
+`DROP TABLE`s and recreates. The re-raise is pinned by
+`test_a_refused_reconcile_leaves_the_table_untouched`. The drop is not pinned by
+anything: it is reached only incidentally, by
+`test_a_database_written_before_a_field_existed_gains_its_column`, which is
+about `project_id` arriving in an old database and passes for that reason rather
+than for this one.
+
+That asymmetry is the reason this is filed rather than shrugged at. Every other
+path here widens; this is the one that destroys a table, and it is guarded by a
+single `SELECT 1 ... LIMIT 1` whose sense could invert in an edit with no test
+turning red. A test that named the recreate would also record the argument for
+it -- an empty read-model table holds nothing that is not re-derivable from the
+log -- which is currently only in a docstring.
+
+Worth writing when someone next touches that function, and it needs two cases,
+not one: an empty table taking the recreate, and the same model against a table
+with one row taking the raise. Flagged by the task that introduced the branch
+(`docs/reports/adopt-0140-task2.md`) rather than found later.
+
 ## Topics and autonomous research
 
 Added alongside the topic tracker and auto-research mode

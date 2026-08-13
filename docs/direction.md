@@ -109,27 +109,64 @@ in the one format the reader has been told to believe.
 
 Ordered by confidence, not by size.
 
-### 1. Two upstream contributions to `eventsource-py`
+### 1. Two upstream contributions to `eventsource-py` — both landed
 
-Both are small, both close holes that every consumer of that library has, and
-both have their case already made by the library's own code and notes.
+Both holes are closed in the library, both local versions are gone or reduced,
+and this is kept rather than deleted for the reason the defects section keeps
+its closed items: what this entry *predicted* is more useful than what it
+proposed, because it was wrong three times and each way of being wrong
+generalises.
 
-- **Aggregate-id targeting.** A command can name a different aggregate than the
-  one it executes against, and the resulting event is appended to a stream that
-  disowns it — the exact failure event sourcing is supposed to preclude.
-  `domain/targeting.py` closes this locally via a mixin. The library can close
-  it better at `_stamp`, which sees the event's own `aggregate_id` and so needs
-  no per-aggregate declaration; it already rejects a divergent `aggregate_type`
-  one field over. Keep the mixin afterwards or not, on ergonomics alone — it
-  fails earlier and names the command type, which is the better message.
-- **Additive column reconciliation for read models.** Adding a field to a
-  `ReadModel` does not add a column to a database that already exists;
-  `CREATE TABLE IF NOT EXISTS` does nothing to a table that is already there,
-  and every test passes because tests build from nothing. `apply_schema` in
-  `infrastructure/persistence/read_models.py` reconciles added columns. The
-  library already does exactly this for its own tables and offers consumers
-  nothing. Pitch it opt-in — a function the consumer calls — so it does not
-  compete with Alembic.
+**Aggregate-id targeting.** The library rejects a mistargeted creation event at
+`_stamp`, where it sees the event's own `aggregate_id` and needs no
+per-aggregate declaration. `domain/targeting.py` and its `ChecksCommandTarget`
+mixin are deleted; all five aggregates stamp their creation event from the
+command, which is what made the mixin redundant rather than merely duplicative,
+and `tests/domain/test_targeting.py` asserts the library's refusal once per
+aggregate.
+
+**The prediction above said the ergonomics question would be close, and it was
+not.** It said to keep the mixin or not "on ergonomics alone — it fails earlier
+and names the command type, which is the better message." Both halves are false
+against the actual release. The library's message names the command *and* the
+event class *and* both ids *and* the remedy, where the mixin's named the command
+and one id. And "earlier" was before `decide` rather than after it, with no
+I/O, no persistence and no applied event in between — a distinction with nothing
+observable inside it. **The bias worth naming is the direction: the prediction
+overvalued the local version**, which is the one whose message and timing were
+known in detail. A guess about a library that does not exist yet is a guess, and
+it is not evenly distributed.
+
+**Additive column reconciliation for read models.** `apply_schema` in
+`infrastructure/persistence/read_models.py` now generates its `ALTER`s with the
+library's `generate_additive_migration` instead of reading column definitions
+back out of generated DDL with a regex, and `CorpusStore.open` goes through it
+rather than its own `executescript`.
+
+**It adopted the *other* function.** The library offers
+`reconcile_read_model_schema`, which does the whole of what `apply_schema` does
+— and takes a SQLAlchemy `AsyncConnection`, which nothing here owns; every store
+holds a raw aiosqlite one. The pure generator, which was the smaller half of the
+capability, slotted in unchanged. **An upstream capability arriving is not the
+same as the shape you imagined arriving**, and the useful part of an upstream
+release is often not the part that matches the pitch.
+
+**The upstream function is stricter than the code it replaced, and that is a
+loss as well as a gain.** `generate_additive_migration` refuses a required
+column with no default *categorically*, before returning any statement; SQLite
+refuses it only on a table that has rows. The spec called that difference pure
+gain. It is gain on a populated table — the refusal is now atomic, where the old
+loop landed the addable columns and then failed on the impossible one — and a
+straight loss on an empty one, where SQLite would simply have added the column.
+An empty table is exactly the `SessionSummaryRow.project_id` case the whole
+mechanism exists to repair, so applying the plan verbatim broke the regression
+test `CLAUDE.md` names. `apply_schema` now recreates an empty table and re-raises
+on a populated one.
+
+**A stricter upstream is not automatically a better one**, and the only reason
+that showed up before it shipped is that a regression test held the old
+behaviour in place. Strictness is a trade against the cases the stricter rule
+also forbids, and those are invisible unless something is asserting them.
 
 ### 2. Generation as a replay
 
