@@ -8,9 +8,16 @@ dependencies = [
     "deepagents>=0.7.5,<0.8",
     # Capped below the next minor, as redstring caps it. Both libraries are
     # pre-1.0 with a stated no-shim policy, so a minor is where the breaking
-    # renames land -- 0.12.0 alone carried four. An uncapped floor means a
-    # resolver is free to pick the release that breaks us.
-    "eventsource-py[sqlite]>=0.13.0,<0.14",
+    # renames land -- 0.12.0 carried four and 0.14.0 carried seventeen. An
+    # uncapped floor means a resolver is free to pick the release that breaks
+    # us.
+    #
+    # redstring pins this to one minor exactly rather than a range, on the
+    # reasoning that a two-version window is a test matrix nobody runs. So
+    # there is no version of eventsource-py that satisfies both the current
+    # redstring and the previous one, and the two cannot be bumped in separate
+    # commits even if someone wanted to.
+    "eventsource-py[sqlite]>=0.14.0,<0.15",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "langchain-openai>=1.4.2",
@@ -24,10 +31,20 @@ dependencies = [
     # `asyncpg`, which `build_vector_store` imports lazily for
     # `AGENT_VECTOR_STORE=pgvector`; without the extra that import worked only
     # because something else in the tree happened to pull asyncpg in, and a
-    # dependency nobody declared is one a resolver is free to drop. The window
-    # is unchanged, so `eventsource-py` and the `tracing` extra do not move
-    # with it -- an extra adds packages, it does not renegotiate the minor.
-    "redstring[llm,neo4j,pgvector]>=0.5.0,<0.6",
+    # dependency nobody declared is one a resolver is free to drop. Adding that
+    # extra did not move the window -- an extra adds packages, it does not
+    # renegotiate the minor -- which is why it landed on its own. This bump is
+    # the other case: 0.7.0 narrows its own `eventsource-py` pin, so the two
+    # move together here and in the `tracing` extra below.
+    #
+    # 0.6.0 is the release to read before assuming this was only a version
+    # bump. 0.7.0 is indeed nothing but the eventsource adoption, but 0.6.0
+    # widened `ConsolidationService.__init__`'s `graph_store` from
+    # `RelationshipStore` to `ConsolidationGraph`, which is a silent runtime
+    # break for a narrow duck-typed double -- it type-checks nowhere and fails
+    # at the first `resolve`. Nothing here passes one; every store handed to a
+    # `Consolidator` is redstring's own.
+    "redstring[llm,neo4j,pgvector]>=0.7.0,<0.8",
     "trafilatura>=2.2.0",
     "uvicorn[standard]>=0.52.1",
 ]
@@ -37,7 +54,7 @@ dependencies = [
 # a default install stays light and a developer with no collector pays nothing.
 # `uv sync --extra tracing`, then AGENT_TRACING=1.
 tracing = [
-    "eventsource-py[telemetry]>=0.13.0,<0.14",
+    "eventsource-py[telemetry]>=0.14.0,<0.15",
     "opentelemetry-exporter-otlp-proto-http>=1.0,<2.0",
 ]
 
