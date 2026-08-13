@@ -53,10 +53,34 @@ export const Running: Story = {
 
 /** A fallback classification, not a confident one. `0` and `null` mean
  *  different things here and the pane has to keep them apart — a fallback
- *  presented as a decision is the misreading the field exists to prevent. */
+ *  presented as a decision is the misreading the field exists to prevent.
+ *
+ *  Consolidating rather than extracting like `Running`, and that is what makes
+ *  it a story: the counts line is gated on `extracted` having *arrived*
+ *  (`ExtractionPane.tsx`), and the shared fixture stops at `extracting`. So
+ *  this story rendered byte-identical to `Running` — same six lines, no
+ *  confidence anywhere on it — and the distinction it exists for was never on
+ *  screen. Measured with `innerText` of `.extraction` on both.
+ *
+ *  The stage list is extended rather than the current stage moved back,
+ *  because a list showing a step past the marked-current one is its own
+ *  defect. */
 export const RunningWithoutADomain: Story = {
   render: () => (
-    <ExtractionView current={extraction({ domain: null, domainConfidence: 0 })} last={null} />
+    <ExtractionView
+      current={extraction({
+        domain: null,
+        domainConfidence: 0,
+        stage: 'consolidating',
+        stages: [
+          { stage: 'storing', detail: 'stored syllabus.pdf' },
+          { stage: 'extracting', detail: '24 of 24' },
+          { stage: 'extracted', detail: '31 entities' },
+          { stage: 'consolidating', detail: '9 of 24 considered' },
+        ],
+      })}
+      last={null}
+    />
   ),
 }
 

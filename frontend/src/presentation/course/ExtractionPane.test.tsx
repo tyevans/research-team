@@ -149,6 +149,36 @@ it('lists the consolidation pass under its position', async () => {
   expect(screen.getByText('kelp — kept, no match')).toBeInTheDocument()
 })
 
+it('still has the merge verdicts after the extraction finishes', async () => {
+  // The consolidation verdicts are the only record there is: nothing durable
+  // stores them, which is the stated reason this disclosure exists at all. They
+  // used to be rendered by the running section alone, so the moment a frame
+  // arrived with a terminal stage the store moved the extraction to `last` and
+  // every verdict left the screen -- a reader who looked away for the minute
+  // the ingest took saw none of them, and the pane that calls itself "the only
+  // account of what just happened" accounted for nothing.
+  //
+  // Fails with `MergeList` removed from `Last`: the disclosure opens on the
+  // counts line and neither verdict is in the document.
+  const extractions = emptyRepo()
+  const { stream, push } = fakeStream()
+
+  renderWithContainer(<ExtractionPane projectId={PROJECT} />, { extractions, stream })
+  await screen.findByText(/No extraction has run/)
+
+  push(frame({ stage: 'consolidating', detail: 'otter — merged into Lutra', index: 1, total: 2 }))
+  push(frame({ stage: 'consolidating', detail: 'kelp — kept, no match', index: 2, total: 2 }))
+  push(frame({ stage: 'consolidated', detail: 'stored' }))
+
+  // Gone from the screen entirely first, because the disclosure is collapsed:
+  // history should not compete with a run in flight on a page they share.
+  expect(screen.queryByText('otter — merged into Lutra')).not.toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole('button', { expanded: false }))
+  expect(screen.getByText('otter — merged into Lutra')).toBeInTheDocument()
+  expect(screen.getByText('kelp — kept, no match')).toBeInTheDocument()
+})
+
 it('keeps a failed extraction on screen with a failed tone', async () => {
   const extractions = emptyRepo()
   const { stream, push } = fakeStream()

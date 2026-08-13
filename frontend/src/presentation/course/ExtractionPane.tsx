@@ -141,20 +141,33 @@ const Running = ({ extraction }: { extraction: Extraction }) => {
           <p className="extraction-line">
             consolidating {extraction.index ?? 0}/{extraction.total}
           </p>
-          <ul className="extraction-merge-list">
-            {extraction.merges.map((line, at) => (
-              // Indexed because the same verdict can legitimately repeat and
-              // the line is all there is; the list only ever grows at the end.
-              <li key={`${at}-${line}`} className="extraction-merge">
-                {line}
-              </li>
-            ))}
-          </ul>
+          <MergeList merges={extraction.merges} />
         </div>
       ) : null}
     </div>
   )
 }
+
+/** What consolidation decided, entity by entity.
+ *
+ * Shared by the running section and the finished one, which is the whole
+ * change: it used to live inline in `Running`, so every verdict vanished at the
+ * moment the run finished and the disclosure that calls itself "the only
+ * account of what just happened" accounted for none of it. A reader who looked
+ * away for the minute the ingest took saw nothing at all.
+ */
+const MergeList = ({ merges }: { merges: readonly string[] }) =>
+  merges.length === 0 ? null : (
+    <ul className="extraction-merge-list">
+      {merges.map((line, at) => (
+        // Indexed because the same verdict can legitimately repeat and the line
+        // is all there is; the list only ever grows at the end.
+        <li key={`${at}-${line}`} className="extraction-merge">
+          {line}
+        </li>
+      ))}
+    </ul>
+  )
 
 /** The last finished extraction, collapsed.
  *
@@ -195,6 +208,12 @@ const Last = ({ extraction }: { extraction: Extraction }) => {
       {extraction.failed ? (
         <p className="extraction-line extraction-failed-detail">{failureDetail(extraction)}</p>
       ) : null}
+      {/* Behind the disclosure rather than beside the counts, so history still
+          loses to a run in flight on a page they share -- the reason this
+          section is collapsed at all. Rendered on a failed extraction too: a
+          run that fell over after consolidating some of its entities decided
+          those, and the failure detail says nothing about them. */}
+      <MergeList merges={extraction.merges} />
     </Disclosure>
   )
 }
