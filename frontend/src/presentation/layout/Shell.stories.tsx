@@ -88,7 +88,14 @@ export const ViewportScrolling: Story = {
  *  turned into a property of the shell. The behaviour is the same; what
  *  changes is that a reader of `Shell` can see that it happens. A global
  *  overridden by a media query in a different file is a mode nobody knows
- *  about until they are debugging it. */
+ *  about until they are debugging it.
+ *
+ *  **The one to open beside `ViewportScrolling`**, at any width. Both stories
+ *  rendered the same page until this was fixed — the same element scrolled in
+ *  each, `.lay-pane-body`, because the surface's `overflow: auto` had nothing
+ *  to scroll while everything under it was still sized to fit. What tells them
+ *  apart is which box the scrollbar is on and whether the chrome leaves with
+ *  the content. */
 export const PageScrolling: Story = {
   render: () => (
     <div style={{ height: '90vh' }}>
@@ -96,6 +103,34 @@ export const PageScrolling: Story = {
         <Pane id="stack" label="Everything">
           <Long what="row" />
         </Pane>
+      </Shell>
+    </div>
+  ),
+}
+
+/** Page scrolling with two panes still side by side, which is the case the
+ *  single-pane story above cannot show: the panes stretch to the taller of
+ *  them and the whole row scrolls as one, rather than each column scrolling
+ *  where it stands. Scroll it and both move together — that is the property,
+ *  and it is the one `ViewportScrolling` deliberately does not have. */
+export const PageScrollingWithColumns: Story = {
+  render: () => (
+    <div style={{ height: '90vh' }}>
+      <Shell chrome={<Chrome />} scroll="page">
+        <Split
+          id="research"
+          label="Research"
+          tracks={TRACKS}
+          collapsed={new Set()}
+          onCollapsedChange={() => {}}
+        >
+          <Pane id="rail" label="Topics" meta="18 open" minContent={240}>
+            <Long what="topic" />
+          </Pane>
+          <Pane id="stage" label="Graph">
+            <Long what="entity" />
+          </Pane>
+        </Split>
       </Shell>
     </div>
   ),
