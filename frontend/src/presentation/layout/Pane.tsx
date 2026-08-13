@@ -61,6 +61,10 @@ export const Pane = ({
    *  leaves the screen as the conversation grows. */
   footer?: ReactNode
   scroll?: PaneScroll
+  /** What this pane leaves behind when it collapses — **outside a `Split`**.
+   *
+   *  Inside one, the split's axis decides and this is not read. See the note
+   *  on `form` below for why that is not the prop being ignored. */
   collapseTo?: CollapseTo
   /** The height, in pixels, below which this pane's content stops being worth
    *  showing.
@@ -95,11 +99,31 @@ export const Pane = ({
 
   const collapsed = collapsedProp ?? split?.collapsed.has(id) ?? false
   const onToggle = onToggleProp ?? (split ? () => split.toggle(id) : undefined)
-  // Once the panes stack, a pane is a row rather than a column, so a rotated
-  // title would be lying about which way the layout runs. `stacked` rather
-  // than `!wide`: between the two breakpoints these are still columns and a
-  // collapsed one is still a rail. A standalone pane keeps what it was told.
-  const form: CollapseTo = split?.stacked ? 'strip' : collapseTo
+  // Inside a `Split` the form follows the axis, both ways, and the caller's
+  // `collapseTo` is not consulted at all. Once the panes stack a pane is a row,
+  // so a rotated title would be lying about which way the layout runs;
+  // `stacked` rather than `!wide` because between the two breakpoints these are
+  // still columns and a collapsed one is still a rail.
+  //
+  // The other half of that used to be `: collapseTo`, and it drew the
+  // Workbench's `conversation` as a 34px rail with a *level* title -- "▸ C" --
+  // because `splitTemplate` gives every collapsed pane `RAIL_TRACK` while the
+  // rotation lives only under `[data-collapse-to='rail']`. Two independent
+  // decisions about one pane, which is the shape this whole primitive exists to
+  // stop.
+  //
+  // Rejected: teaching `splitTemplate` a strip track, so `collapseTo` stayed
+  // meaningful in a wide split. It would have to read a prop declared on the
+  // *child* from the `tracks` array declared by the *view*, so the same fact
+  // would be stated in two places that can disagree -- the disagreement this
+  // module's header comment was written about. And a collapsed column wide
+  // enough to read a level title gives back a fraction of the space that
+  // collapsing is for.
+  //
+  // A standalone pane keeps what it was told: the research rail is three panes
+  // in a flex column with no `Split` above them, and `strip` there is the only
+  // thing that decides.
+  const form: CollapseTo = split ? (split.stacked ? 'strip' : 'rail') : collapseTo
 
   return (
     <section

@@ -151,3 +151,43 @@ it('keeps a collapsed pane a rail between the breakpoints, and makes it a strip 
   window_.resizeTo(1440)
   expect(pane('Event log')).toHaveAttribute('data-collapse-to', 'rail')
 })
+
+/** A pane that asks for the form the split cannot give it in columns. The
+ *  session Workbench asks exactly this of `conversation`. */
+const AsksForAStrip = () => (
+  <Split
+    id="session"
+    label="Session panes"
+    tracks={TRACKS}
+    collapsed={new Set(['conversation'])}
+    onCollapsedChange={() => {}}
+  >
+    <Pane id="timeline" label="Event log">
+      rows
+    </Pane>
+    <Pane id="workspace" label="Workspace">
+      files
+    </Pane>
+    <Pane id="conversation" label="Conversation" collapseTo="strip">
+      messages
+    </Pane>
+  </Split>
+)
+
+it('overrides a pane that asks for a strip while the split is still columns', () => {
+  const window_ = viewport(1440)
+  render(<AsksForAStrip />)
+
+  // `splitTemplate` gives every collapsed pane `RAIL_TRACK` and cannot see
+  // `collapseTo` at all, so honouring the prop here drew a 34px column with an
+  // unrotated title in it: "▸ C". Reachable in the session view, not only in
+  // the workbench.
+  expect(pane('Conversation')).toHaveAttribute('data-collapse-to', 'rail')
+
+  // The assertion above is the one that fails with the change reverted. This
+  // one passes either way and is here to say what the override is not: stacked,
+  // the pane really is a row, and the split's answer agrees with what the pane
+  // asked for rather than contradicting it.
+  window_.resizeTo(375)
+  expect(pane('Conversation')).toHaveAttribute('data-collapse-to', 'strip')
+})

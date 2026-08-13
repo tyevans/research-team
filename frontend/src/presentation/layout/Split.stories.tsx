@@ -70,18 +70,19 @@ const Workbench = ({
         }}
         onRefuse={() => setRefused(true)}
       >
-        <Pane id="timeline" label="Timeline" meta="128 events" collapseTo="rail" minContent={240}>
+        {/* No `collapseTo` on any of the three. Inside a `Split` the axis
+            decides -- rails while these are columns, strips once they stack --
+            and the prop is not read. It was here, and `conversation` asked for
+            a strip, which is how a 34px column came to hold a level title
+            reading "▸ C". A prop passed where it does nothing is a reader being
+            told the opposite of what happens. */}
+        <Pane id="timeline" label="Timeline" meta="128 events" minContent={240}>
           <p style={{ padding: 'var(--space-3)' }}>the event log</p>
         </Pane>
-        <Pane id="workspace" label="Workspace" meta="6 files" collapseTo="rail" minContent={240}>
+        <Pane id="workspace" label="Workspace" meta="6 files" minContent={240}>
           <p style={{ padding: 'var(--space-3)' }}>files and diffs</p>
         </Pane>
-        <Pane
-          id="conversation"
-          label="Conversation"
-          collapseTo="strip"
-          unmountWhenCollapsed={unmountConversation}
-        >
+        <Pane id="conversation" label="Conversation" unmountWhenCollapsed={unmountConversation}>
           <p style={{ padding: 'var(--space-3)' }}>the transcript</p>
         </Pane>
       </Split>
@@ -111,8 +112,11 @@ export const LastOpenRefuses: Story = {
   render: () => <Workbench initial={['timeline', 'workspace']} />,
 }
 
-/** The conversation set to drop its body rather than hide it. Visually
- *  identical to `OneCollapsed`; the difference is in the DOM, and it is the
+/** The conversation set to drop its body rather than hide it. The same rail
+ *  `OneCollapsed` shows, at the other end of the row — it claimed to be
+ *  "visually identical" and was not, because this pane asked for a strip and
+ *  got a rail-width column with a level title. The difference the story is for
+ *  is in the DOM, and it is the
  *  difference between a virtualizer that comes back with rows and one that
  *  measured a zero-height container while it was hidden and came back
  *  empty. */
