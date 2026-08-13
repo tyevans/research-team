@@ -1414,3 +1414,72 @@ flagged in place rather than guessed at: whether `StageWorkflow` exposes a
 `project_id` (Task 3 Step 4), and whether `check` needs quoting as a column name
 in the index DDL (Task 4 Step 4). Both have a stated fallback.
 </content>
+
+---
+
+## Corrections found in execution
+
+Appended rather than repaired in place, so the record shows what the plan
+actually said when it was handed over. Each entry is a place a worker was right
+and the plan was wrong.
+
+### The test sketches name helpers that do not exist
+
+The single recurring defect, hit by Tasks 1 and 2 independently. Every task's
+Step 1 sketches test code, and those sketches invent helper names —
+`_preset_with_checks`, `_files_that_satisfy_orphan_only`,
+`_files_that_make_coverage_raise` — that read as if they were real functions in
+the file. They are not, and nothing close to them exists.
+
+The real helpers in `tests/application/test_stage_exit.py` are
+`specify(stage_id, *checks)`, `preset_of(*stages)`, `artifact_file(**frontmatter)`,
+`file(content)` and `break_check(monkeypatch, name)`. The plan flagged the `...`
+bodies as the worker's to fill but did not flag the *names* as guesses, which is
+the half that misleads: a placeholder announces itself and an invented identifier
+does not.
+
+**The general form: a plan that sketches test code is making claims about the
+test file's API, and those claims are as checkable as any other.** Either verify
+them or mark them as guesses. This plan did neither.
+
+### Two assertions in Task 1's sketch could not fail
+
+```python
+assert event.aggregate_id == session_id or event.aggregate_id is not None
+assert evolve(state, event) is state or evolve(state, event) == state
+```
+
+The first also references a `session_id` the sketch never binds. Both were
+written as belt-and-braces and are the opposite: an `or` between a strict claim
+and a weak one asserts only the weak one. The real claims are
+`event.aggregate_id == state.session_id` and `evolve(state, event) == state`,
+and Task 1 substituted them.
+
+Worth noticing that these would have passed. A test that cannot fail is not
+caught by running it, which is why "prove it red first" is a repository rule and
+why it caught this.
+
+### Task 1's tests belong in `test_decider.py`
+
+The plan says `tests/domain/test_session.py`. That file's docstring reserves
+itself for tests needing an aggregate or a store and sends everything else next
+door. All three new tests are pure `decide` calls. Task 1 followed the file.
+
+The plan also sketched `decide(..., initial_state())`, which produces an event
+with `aggregate_id=None`; `test_decider.py` has a `started()` helper that every
+neighbouring supervision test uses.
+
+### `EvaluatedCheck.severity` and `Check.severity` are different types
+
+`EvaluatedCheck.severity` is `FindingSeverity` (five values) and must be, since
+it holds an `invariant` resolved from a spec's `fixed_severity`.
+`Check.severity` is `Severity` (two values). The narrowing direction is safe, so
+the `binding.severity` fallback type-checks — but the plan used both in adjacent
+code without noting they differ.
+
+### A convention the plan contradicted
+
+The plan's unimplemented-binding test used `shared.no_such_check`. The existing
+test for that behaviour uses `addie.no_such_check` and carries a comment
+explaining the choice. Task 2 followed the existing spelling. One repository, one
+name for the same fictional check.
