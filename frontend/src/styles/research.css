@@ -367,10 +367,9 @@
   margin-bottom: 10px;
 }
 
-.topic-status-choice-active {
-  border-color: var(--accent);
-  color: var(--accent);
-}
+/* `.topic-status-choice-active` was here and is gone: these buttons already
+   carry `aria-pressed`, and `.btn[aria-pressed='true']` in `shell.css` now
+   draws exactly the two declarations this rule did. One state, one source. */
 
 .topic-status-justification {
   display: block;

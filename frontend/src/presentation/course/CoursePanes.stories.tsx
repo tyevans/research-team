@@ -1,6 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useState } from 'react'
 
+import { allArtifacts, writtenCount } from '@domain/project/course.ts'
+
 import { Pane } from '../layout/Pane.tsx'
 import { Split } from '../layout/Split.tsx'
 import { ArtifactList } from './ArtifactList.tsx'
@@ -29,6 +31,7 @@ type Story = StoryObj
 const Panes = ({ data = course() }: { data?: ReturnType<typeof course> }) => {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const [openStage, setOpenStage] = useState<string | null>(null)
+  const slots = allArtifacts(data)
 
   return (
     <section className="view view-course">
@@ -52,7 +55,16 @@ const Panes = ({ data = course() }: { data?: ReturnType<typeof course> }) => {
             }}
           />
         </Pane>
-        <Pane id="artifacts" label="Artifacts" meta="2 of 4 written">
+        {/* Computed, from the same two calls `CourseView` makes. It was the
+            literal "2 of 4 written" on all three stories, which read over a
+            pane whose body said the workflow declares no artifacts at all, and
+            over another whose rail beside it counted 3 of 3. A story that
+            contradicts itself teaches the reader to distrust the render. */}
+        <Pane
+          id="artifacts"
+          label="Artifacts"
+          meta={`${String(writtenCount(slots))} of ${String(slots.length)} written`}
+        >
           <ArtifactList course={data} />
         </Pane>
       </Split>

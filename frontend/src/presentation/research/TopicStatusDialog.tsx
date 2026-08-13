@@ -106,11 +106,10 @@ export const TopicStatusDialog = ({
           <button
             key={status}
             type="button"
-            className={
-              chosen === status
-                ? 'btn btn-sm topic-status-choice topic-status-choice-active'
-                : 'btn btn-sm topic-status-choice'
-            }
+            className="btn btn-sm topic-status-choice"
+            // The only mark of the choice, class and attribute both: the
+            // stylesheet keys the pressed look off `aria-pressed` now, so a
+            // second class saying the same thing is a second place to forget.
             aria-pressed={chosen === status}
             onClick={() => setChosen(status)}
           >
