@@ -51,6 +51,24 @@ UNREADABLE = (
     "browser, login walls, and pure-navigation pages all look like this. The "
     "page may exist and still not be readable this way."
 )
+"""The ceiling on what this tool can read, and a decision rather than a default.
+
+A headless browser would lift it, and was refused. The cost is not the install:
+it is a browser binary, a download step in CI, and a resource profile unlike
+anything else in this process. What it buys is a *new class of failure* on the
+path to a citation -- render timeouts, anti-bot challenges, and pages that
+succeed slowly enough to change what a turn costs -- where today an app shell
+fails one way, immediately, and says so.
+
+The sentence above is already the honest answer. A model that reads it can
+`record_gap`, which is what the coverage machinery wants from a source nobody
+could reach; a rendered page that times out half the time produces something
+worse than a gap, which is an intermittent one.
+
+Revisit when a corpus this project actually wants is behind an app shell. That
+is the fact that would change the answer, and until it exists the argument
+above holds. See BACKLOG.md.
+"""
 
 _TRUNCATED = "\n\n[truncated -- the page continues beyond what was read]"
 

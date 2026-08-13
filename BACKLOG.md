@@ -615,6 +615,38 @@ attempts at one mechanism, and adding an unrelated pre-existing fix to it was
 the obvious way to produce a fourth. It is three lines: parse once, guard the
 `ValueError`, return the same refusal string the scheme check already returns.
 
+### B43. A page that renders in the browser cannot be read, and that is decided
+
+`fetch.py`'s `UNREADABLE` path is a dead end for any JS-rendered page: an app
+shell extracts to nothing, and asking again produces the same nothing.
+`FETCH_PROMPT` already tells the model so. A headless browser is the only thing
+that would lift the ceiling, and it is **refused** rather than deferred.
+
+The reasoning, so that nobody has to reconstruct it from a frustrating
+afternoon:
+
+- The dependency is not a package. It is a browser binary, a download step in
+  CI, and a resource profile unlike anything else this process runs.
+- It buys a new class of failure on the path to a citation — render timeouts,
+  anti-bot challenges, and pages slow enough to change what a turn costs.
+  Today an app shell fails one way, immediately, and says which way. A
+  rendered fetch that works most of the time produces something worse than a
+  gap, which is an intermittent one, and the coverage machinery has no way to
+  represent that.
+- The honest answer already exists and is already wired: the model can
+  `record_gap`, which is exactly what the coverage layer wants from a source
+  nobody could reach.
+
+**The trigger to revisit is a corpus this project actually wants being behind
+an app shell.** Not a page; a body of sources. Until that exists the argument
+above holds, and the entry is a decision. Without the trigger it would be a
+rationalisation, which is the failure mode this entry is written to avoid — a
+default and a decision look identical in a diff and fail very differently in
+a year.
+
+Recorded during the defects round that closed B41, because the two sit one
+constant apart in the same file and only one of them was ever chosen.
+
 ### B41. One `SearchAttempts` is shared by every concurrent turn
 
 `build_application` constructs a single `SearchAttempts` for the one
