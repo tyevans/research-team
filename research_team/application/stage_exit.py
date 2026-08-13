@@ -47,11 +47,12 @@ from research_team.application.checks import (
     run_check,
 )
 from research_team.application.coverage import ArtifactAxis, CoverageMatrix, matrix_from_links
-from research_team.application.findings import Finding
+from research_team.application.findings import Finding, FindingSeverity
 from research_team.domain.workflow import ArtifactType, Preset, StageBase
 
 __all__ = [
     "FINDINGS_ARTIFACT",
+    "EvaluatedCheck",
     "StageReview",
     "course_matrices",
     "findings_path",
@@ -73,6 +74,21 @@ like it owes one more file than the preset declares.
 
 
 @dataclass(frozen=True)
+class EvaluatedCheck:
+    """One binding, and how much it had to say.
+
+    `findings` is a count and not the findings themselves: this record exists
+    so that a rate can be computed over many reviews, and the prose is in the
+    findings file. `findings == 0` means the check ran and passed, which is the
+    observation the findings file structurally cannot make.
+    """
+
+    check: str
+    severity: FindingSeverity
+    findings: int
+
+
+@dataclass(frozen=True)
 class StageReview:
     """Everything the harness learned about a stage as it was being left."""
 
@@ -90,6 +106,19 @@ class StageReview:
     not exist. Neither is checkable, and both are invisible if dropped."""
     artifact_count: int = 0
     link_count: int = 0
+    evaluated: tuple[EvaluatedCheck, ...] = ()
+    """Every binding that ran, whether or not it found anything.
+
+    The denominator. `findings` and `unimplemented` between them say what went
+    wrong; only this says what was asked, and without it "never fires" and
+    "never runs" are the same observation."""
+    unimplemented_bindings: tuple[EvaluatedCheck, ...] = ()
+    """`unimplemented`, with the severity each binding declared.
+
+    A second field rather than a wider `unimplemented`, because that one is
+    read by `render_review` and `gate_context` and reaches a browser as a list
+    of names. Widening it would rewrite the findings file's rendering to carry
+    a severity nobody reading it needs."""
 
     @property
     def invariant_failures(self) -> tuple[Finding, ...]:
@@ -298,22 +327,32 @@ def review_stage(
     )
     findings: list[Finding] = []
     unimplemented: list[str] = []
+    evaluated: list[EvaluatedCheck] = []
+    unimplemented_bindings: list[EvaluatedCheck] = []
+    # Each branch binds `produced` rather than extending `findings` inline,
+    # because the count per binding is the denominator this review now carries
+    # and it is not recoverable from the flat list afterwards -- two bindings of
+    # the same check would be indistinguishable in it.
     for binding in stage.checks:
         try:
-            findings.extend(run_check(binding, context))
+            produced = run_check(binding, context)
         except UnknownCheck:
             unimplemented.append(binding.check)
+            unimplemented_bindings.append(
+                EvaluatedCheck(check=binding.check, severity=binding.severity, findings=0)
+            )
+            continue
         except MalformedCheck as error:
-            findings.append(
+            produced = [
                 Finding(
                     check=binding.check,
                     severity="blocking",
                     message=f"{error}",
                     suggested_edit="correct the parameters this check is bound with",
                 )
-            )
+            ]
         except Exception as error:  # noqa: BLE001 -- see the module docstring
-            findings.append(
+            produced = [
                 Finding(
                     check=binding.check,
                     severity="blocking",
@@ -323,7 +362,21 @@ def review_stage(
                     ),
                     suggested_edit="report this: the check itself is broken",
                 )
+            ]
+        findings.extend(produced)
+        # Severity read off the findings rather than recomputed: `run_check`
+        # owns the `fixed_severity or binding.severity` rule and this would be
+        # the second copy of it, to drift the first time that rule changes. A
+        # check that produced nothing has no finding to read it from, and the
+        # binding's own word is the only one there is -- a check that passed
+        # carried a severity nowhere.
+        evaluated.append(
+            EvaluatedCheck(
+                check=binding.check,
+                severity=produced[0].severity if produced else binding.severity,
+                findings=len(produced),
             )
+        )
     return StageReview(
         stage_id=stage.id,
         findings=tuple(findings),
@@ -331,6 +384,8 @@ def review_stage(
         unreadable=unreadable,
         artifact_count=len(artifacts),
         link_count=len(links),
+        evaluated=tuple(evaluated),
+        unimplemented_bindings=tuple(unimplemented_bindings),
     )
 
 
