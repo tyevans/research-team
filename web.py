@@ -95,10 +95,10 @@ def main() -> None:
             policy=application.policy,
             # Withheld unless this instance was configured for it, so the
             # routes are absent rather than present-and-refusing. See
-            # `config.auto_research_over_http`: there is no authentication in
+            # `config.research_run_over_http`: there is no authentication in
             # front of this port, and this is the one route that would spend
             # an hour of model time for whoever calls it.
-            research=application.research if config.auto_research_over_http() else None,
+            research=application.research if config.research_run_over_http() else None,
         ),
         host=config.web_host(),
         port=config.web_port(),

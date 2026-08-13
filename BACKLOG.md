@@ -11,7 +11,7 @@ if tracked code cites one by name, say where its reasoning went before deleting.
 ### B1. `Project`'s class docstring says little that its module does not
 
 `research_team/domain/project.py`. The class docstring is near-verbatim from
-`CodingSession`'s — "the imperative shell, holds no rules, delegates all
+`Session`'s — "the imperative shell, holds no rules, delegates all
 three" — and the `Project`-specific reasoning it might add is already in the
 module docstring above it. Not wrong, just thin: a reader who came for the
 difference between the two aggregates does not find it here.
@@ -547,7 +547,7 @@ oversight:
   mid-turn save that *loses* its lock has no retry story at all.
 - It needs a new seam. The commit would have to happen inside
   `DeepAgentTurnExecutor._decide`, which is infrastructure and deliberately
-  holds a `CodingSession` rather than a repository.
+  holds a `Session` rather than a repository.
 
 Worth noting what a denied approval would then mean, since it is not obviously
 wrong: the artifacts would be committed and the stage not advanced, which is an
@@ -574,7 +574,7 @@ makes the floors advisory for everything else too.
 and `POST /api/projects/{id}/auto-research` (plus its status and cancel
 routes) over HTTP. The authentication objection that held the endpoint back is
 answered the way `web_search` answers it -- the routes are wired only when
-`AGENT_AUTO_RESEARCH` is set, so an install that has not opted in has no route
+`AGENT_RESEARCH_RUN` is set, so an install that has not opted in has no route
 rather than a route that refuses.
 
 **What is left is narration, and it is the same gap `/turns` already has.** A
