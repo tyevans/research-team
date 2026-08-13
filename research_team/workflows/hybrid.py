@@ -277,10 +277,16 @@ _PHILOSOPHY = ScreenStage(
         ),
         Check(
             check="tyler.criterion_doc_authored",
+            # `documents` is stated rather than defaulted: the check has no
+            # business knowing that Tyler keeps criteria in a
+            # CriterionDocument, so the preset that chose that says so. The
+            # default matches, and naming it here is what makes the default
+            # unreachable from the one live binding.
             params={
                 "doc": "tyler.philosophy_statement",
                 "require_human_signature": True,
                 "forbid_derivation_from": "SourceClaim",
+                "documents": "CriterionDocument",
             },
         ),
         Check(

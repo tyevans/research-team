@@ -615,30 +615,37 @@ attempts at one mechanism, and adding an unrelated pre-existing fix to it was
 the obvious way to produce a fourth. It is three lines: parse once, guard the
 `ValueError`, return the same refusal string the scheme check already returns.
 
-### B41. One `SearchAttempts` is shared by every concurrent turn
+### B43. A page that renders in the browser cannot be read, and that is decided
 
-`build_application` constructs a single `SearchAttempts` for the one
-`web_search` tool instance, and the tool tuple is process-wide
-(`composition.py`). Two turns running concurrently -- different sessions, or
-an auto-research run alongside a web turn -- share one counter: session A's
-three empty searches can bound session B's first search, and B's turn-boundary
-reset can clear A's streak mid-turn. `SearchAttempts`' whole contract is "this
-turn" (`search.py`), and that is not true once more than one turn is live.
+`fetch.py`'s `UNREADABLE` path is a dead end for any JS-rendered page: an app
+shell extracts to nothing, and asking again produces the same nothing.
+`FETCH_PROMPT` already tells the model so. A headless browser is the only thing
+that would lift the ceiling, and it is **refused** rather than deferred.
 
-Not fixed here because scoping it properly is a larger change than the bug
-warrants: the tool would need to be rebuilt per turn rather than shared, which
-means threading a fresh `SearchAttempts` (and whatever holds the SearXNG
-client) through wherever turns are dispatched, not just adding a lock around
-the counter -- a lock would serialise unrelated turns' searches against each
-other, trading a rare wrong count for a real latency cost on every turn.
+The reasoning, so that nobody has to reconstruct it from a frustrating
+afternoon:
 
-Accepted for now because the blast radius is small: a spurious in-band notice
-telling a model to stop searching before it has really tried three times, or a
-bound that fails to fire when it should. Nothing durable depends on the count
-and nothing is corrupted by it being wrong. Worth fixing properly once turns
-run concurrently often enough for the wrong-bound case to actually bite --
-today, a single-user REPL and mostly-sequential web sessions rarely overlap
-two live turns at all.
+- The dependency is not a package. It is a browser binary, a download step in
+  CI, and a resource profile unlike anything else this process runs.
+- It buys a new class of failure on the path to a citation — render timeouts,
+  anti-bot challenges, and pages slow enough to change what a turn costs.
+  Today an app shell fails one way, immediately, and says which way. A
+  rendered fetch that works most of the time produces something worse than a
+  gap, which is an intermittent one, and the coverage machinery has no way to
+  represent that.
+- The honest answer already exists and is already wired: the model can
+  `record_gap`, which is exactly what the coverage layer wants from a source
+  nobody could reach.
+
+**The trigger to revisit is a corpus this project actually wants being behind
+an app shell.** Not a page; a body of sources. Until that exists the argument
+above holds, and the entry is a decision. Without the trigger it would be a
+rationalisation, which is the failure mode this entry is written to avoid — a
+default and a decision look identical in a diff and fail very differently in
+a year.
+
+Recorded during the defects round that closed B41, because the two sit one
+constant apart in the same file and only one of them was ever chosen.
 
 ## Interactive components
 

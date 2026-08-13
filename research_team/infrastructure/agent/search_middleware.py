@@ -6,8 +6,10 @@ this, a `DeepAgentTurnExecutor` that reused one `SearchAttempts` across turns
 (the natural thing to do, since it also reuses the tool instance) would let a
 run of empty searches near the end of one turn carry into the next and bound
 a turn that has not actually tried anything yet. `StageMiddleware` resets per
-turn by being rebuilt per turn; this counter is not, so the reset has to
-happen explicitly.
+turn by being rebuilt per turn; the `SearchAttempts` instance is not, so the
+turn's counter has to be installed explicitly -- and installing it here is also
+what scopes it to the turn at all, since `SearchAttempts` keeps the count in a
+context variable this hook is the only writer of.
 """
 
 from typing import Any
@@ -33,6 +35,12 @@ class SearchAttemptsMiddleware(AgentMiddleware):
 
     def before_agent(self, state: Any) -> None:
         """Sync, unlike `StageMiddleware.awrap_model_call` -- this hook only
-        clears a counter before the model is ever called, so there is no
-        streamed response to be sync-only-implemented ahead of."""
-        self._attempts.reset()
+        installs a counter before the model is ever called, so there is no
+        streamed response to be sync-only-implemented ahead of.
+
+        `begin_turn` rather than `reset`: reset clears the counter this context
+        can already see, which under concurrency is another live turn's. This
+        hook is also what puts the turn's counter in the context at all, so the
+        tool's mutations are visible here and to nothing else.
+        """
+        self._attempts.begin_turn()

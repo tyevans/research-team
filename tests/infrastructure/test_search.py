@@ -4,6 +4,8 @@ No test here reaches the network. The live test lives behind the `live`
 marker, like the model tests do.
 """
 
+import asyncio
+
 import httpx
 import pytest
 from hypothesis import given
@@ -300,6 +302,181 @@ async def test_without_a_recall_every_search_reaches_the_instance():
     assert len(calls) == 2
 
 
+# ---------------- engines, categories, time_range ----------------
+
+
+def _recording_handler(seen: list[httpx.QueryParams]):
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.params)
+        return httpx.Response(200, json=PAYLOAD)
+
+    return handler
+
+
+async def test_a_search_with_no_parameters_sends_exactly_what_it_always_sent():
+    """The unparameterised call is the overwhelming majority of searches and
+    is the one path a real instance is known to work against. This fails if
+    an unset parameter is sent empty rather than omitted -- which is not a
+    cosmetic difference: SearXNG reads an empty `time_range` and an absent one
+    differently.
+    """
+    seen: list[httpx.QueryParams] = []
+    tool = build_search_tool("http://searx.local", client=_client(_recording_handler(seen)))
+    await tool.ainvoke({"query": "event sourcing"})
+
+    assert dict(seen[0]) == {"q": "event sourcing", "format": "json"}
+
+
+async def test_the_parameters_reach_the_instance_when_a_call_supplies_them():
+    seen: list[httpx.QueryParams] = []
+    tool = build_search_tool("http://searx.local", client=_client(_recording_handler(seen)))
+    await tool.ainvoke(
+        {
+            "query": "q",
+            "engines": "arxiv",
+            "categories": "science",
+            "time_range": "year",
+        }
+    )
+
+    assert dict(seen[0]) == {
+        "q": "q",
+        "format": "json",
+        "engines": "arxiv",
+        "categories": "science",
+        "time_range": "year",
+    }
+
+
+async def test_an_instance_default_applies_to_a_call_that_names_nothing():
+    seen: list[httpx.QueryParams] = []
+    tool = build_search_tool(
+        "http://searx.local",
+        client=_client(_recording_handler(seen)),
+        categories="science",
+    )
+    await tool.ainvoke({"query": "q"})
+
+    assert seen[0]["categories"] == "science"
+
+
+async def test_a_call_overrides_the_instance_default():
+    """The default is a starting point, not a policy: a deployment aimed at
+    scholarly work still has to let one question reach the news."""
+    seen: list[httpx.QueryParams] = []
+    tool = build_search_tool(
+        "http://searx.local",
+        client=_client(_recording_handler(seen)),
+        categories="science",
+        time_range="year",
+    )
+    await tool.ainvoke({"query": "q", "categories": "news"})
+
+    assert seen[0]["categories"] == "news"
+    # The parameter the call said nothing about keeps the default rather than
+    # being cleared by the override of its neighbour.
+    assert seen[0]["time_range"] == "year"
+
+
+def _distinguishing_handler(calls: list[str]):
+    """Answers differently depending on `time_range`, as a real instance does.
+
+    The whole point of the parameter is that the answer changes; a stub that
+    returned the same payload either way could not tell a correct memo from a
+    colliding one.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        window = request.url.params.get("time_range", "all")
+        calls.append(window)
+        return httpx.Response(
+            200,
+            json={"results": [{"title": f"result-{window}", "url": "u", "content": "c"}]},
+        )
+
+    return handler
+
+
+async def test_a_time_range_does_not_hit_the_unrestricted_memo():
+    """The failure this test exists for is not a wasted request; it is a wrong
+    answer wearing a right one's label. Against a key of the query alone the
+    second call never leaves the process and comes back with `result-all`,
+    marked as recalled and therefore trusted, for a question that asked for
+    the last year.
+    """
+    calls: list[str] = []
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_distinguishing_handler(calls)), recall=Recall()
+    )
+    await tool.ainvoke({"query": "backward design"})
+    second = await tool.ainvoke({"query": "backward design", "time_range": "year"})
+
+    # Asserted before the call log on purpose: the defect is the answer, not
+    # the saved request, and this is the line that names it.
+    assert "result-all" not in second
+    assert "result-year" in second
+    assert calls == ["all", "year"]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"time_range": "year"},
+        {"engines": "arxiv"},
+        {"categories": "science"},
+    ],
+)
+async def test_each_parameter_keeps_its_search_apart_from_the_unrestricted_one(params):
+    calls: list[int] = []
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_counting_handler(calls)), recall=Recall()
+    )
+    await tool.ainvoke({"query": "backward design"})
+    await tool.ainvoke({"query": "backward design", **params})
+
+    assert len(calls) == 2
+
+
+async def test_the_same_parameterised_search_twice_still_reaches_the_instance_once():
+    """Extending the key must not disable recall for parameterised searches --
+    that would be a memo that only works for the case it was already working
+    for.
+    """
+    calls: list[int] = []
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_counting_handler(calls)), recall=Recall()
+    )
+    await tool.ainvoke({"query": "q", "time_range": "year"})
+    await tool.ainvoke({"query": "q", "time_range": "year"})
+
+    assert len(calls) == 1
+
+
+async def test_an_instance_default_is_part_of_the_key_a_call_is_stored_under():
+    """The default reaches the instance, so it must reach the key too. Two
+    tools with different defaults are two different searches for the same
+    words -- and a per-call argument matching the default must find the memo
+    the defaulted call left.
+    """
+    calls: list[str] = []
+    recall = Recall()
+    defaulted = build_search_tool(
+        "http://searx.local",
+        client=_client(_distinguishing_handler(calls)),
+        recall=recall,
+        time_range="year",
+    )
+    plain = build_search_tool(
+        "http://searx.local", client=_client(_distinguishing_handler(calls)), recall=recall
+    )
+
+    await defaulted.ainvoke({"query": "q"})
+    await plain.ainvoke({"query": "q"})
+    await plain.ainvoke({"query": "q", "time_range": "year"})
+
+    assert calls == ["year", "all"]
+
+
 # ---------------- bounding empty searches ----------------
 
 
@@ -377,6 +554,100 @@ def test_the_bound_does_not_touch_the_autonomy_policy() -> None:
     from research_team.application.autonomy import TOOL_FLOORS
 
     assert TOOL_FLOORS == {"fetch": "ask", "advance_stage": "ask"}
+
+
+async def test_two_concurrent_turns_do_not_bound_each_other() -> None:
+    """The claim the whole per-turn contract rests on.
+
+    One `SearchAttempts`, one tool and one middleware -- exactly the
+    process-wide wiring `build_application` produces -- driven by two asyncio
+    tasks. The events pin the interleaving so the failure is deterministic
+    rather than a race: both turns start, then turn A exhausts its streak,
+    then turn B searches for the first time in its own turn.
+
+    Against a counter held on the instance this fails on B's assertion: A's
+    three empty searches bound B, and B is handed the notice instead of a
+    result. It passes only if each turn's count lives in its own context.
+    """
+    attempts = SearchAttempts()
+    middleware = SearchAttemptsMiddleware(attempts)
+    calls: list[int] = []
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_empty_handler(calls)), attempts=attempts
+    )
+
+    a_started = asyncio.Event()
+    b_started = asyncio.Event()
+    a_exhausted = asyncio.Event()
+
+    async def turn_a() -> str:
+        middleware.before_agent({})
+        a_started.set()
+        await b_started.wait()
+        for _ in range(MAX_EMPTY_SEARCHES):
+            await tool.ainvoke({"query": "a"})
+        a_exhausted.set()
+        return await tool.ainvoke({"query": "a"})
+
+    async def turn_b() -> str:
+        await a_started.wait()
+        middleware.before_agent({})
+        b_started.set()
+        await a_exhausted.wait()
+        return await tool.ainvoke({"query": "b"})
+
+    a_result, b_result = await asyncio.gather(turn_a(), turn_b())
+
+    # A tried three times and nothing was there, so A is told to stop.
+    assert "record_gap" in a_result
+    # B has tried nothing. Its first search must reach the instance.
+    assert b_result == "No results."
+
+
+async def test_a_turn_starts_at_zero_however_the_last_one_ended() -> None:
+    """`before_agent` installs a fresh count rather than decrementing or
+    trusting whatever the previous turn left behind. Reverting the middleware
+    to a no-op fails this on the second turn's first search."""
+    attempts = SearchAttempts()
+    middleware = SearchAttemptsMiddleware(attempts)
+    calls: list[int] = []
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_empty_handler(calls)), attempts=attempts
+    )
+
+    middleware.before_agent({})
+    for _ in range(MAX_EMPTY_SEARCHES):
+        await tool.ainvoke({"query": "q"})
+    assert "record_gap" in await tool.ainvoke({"query": "q"})
+
+    middleware.before_agent({})
+    assert await tool.ainvoke({"query": "q"}) == "No results."
+
+
+def test_exhausted_turns_true_exactly_at_the_bound() -> None:
+    """Off-by-one guard: the notice must not fire one search early, which
+    would tell a model to give up while a phrasing it has not tried remains."""
+    attempts = SearchAttempts()
+    for _ in range(MAX_EMPTY_SEARCHES - 1):
+        attempts.record_empty()
+    assert not attempts.exhausted()
+    attempts.record_empty()
+    assert attempts.exhausted()
+
+
+async def test_a_tool_built_without_middleware_still_counts() -> None:
+    """`build_search_tool` is reachable without the agent around it -- tests,
+    and any caller wiring the tool alone. That path never calls `before_agent`,
+    so it depends on the var's default existing. It is unbounded-per-process
+    rather than raising, which is what it was before the count moved."""
+    attempts = SearchAttempts()
+    calls: list[int] = []
+    tool = build_search_tool(
+        "http://searx.local", client=_client(_empty_handler(calls)), attempts=attempts
+    )
+    for _ in range(MAX_EMPTY_SEARCHES):
+        assert await tool.ainvoke({"query": "q"}) == "No results."
+    assert "record_gap" in await tool.ainvoke({"query": "q"})
 
 
 async def test_errors_are_not_counted() -> None:
