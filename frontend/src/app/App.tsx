@@ -5,6 +5,7 @@ import { notify } from '@application/notifications/toast-store.ts'
 import { queryKeys } from '@application/queries/keys.ts'
 import { createSessionStore, type SessionStore } from '@application/session/session-store.ts'
 import type { Course } from '@domain/project/course.ts'
+import { AskView } from '@presentation/ask/AskView.tsx'
 import { CourseView } from '@presentation/course/CourseView.tsx'
 import { Shell } from '@presentation/layout/Shell.tsx'
 import {
@@ -157,6 +158,10 @@ const CurrentView = ({
       />
     )
   }
+
+  // Before the course fallthrough, and not in `RESEARCH_FACETS`: ask is its
+  // own view, not a facet the research page answers.
+  if (selection?.facet === 'ask') return <AskView key={id} projectId={id} />
 
   const openStage = selection?.facet === 'stage' ? (selection.id ?? null) : null
 

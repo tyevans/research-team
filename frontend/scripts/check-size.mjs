@@ -26,7 +26,12 @@ const ASSETS = fileURLToPath(
   new URL('../../research_team/interfaces/web/static/assets', import.meta.url),
 )
 
-/** Gzipped kilobytes. Keyed by the chunk-name prefix Rollup emits. */
+/** Gzipped kilobytes. Keyed by the exact chunk name Rollup emits, which since
+ *  the build stopped hashing filenames is also the name on disk minus its
+ *  extension -- see `entryFileNames` in `vite.config.ts` for why there is no
+ *  hash. These keys and that config are two halves of one fact: rename a chunk
+ *  there and this gate reports it as unbudgeted rather than silently stopping
+ *  measuring it, which is the failure this arrangement is chosen to produce. */
 const BUDGET_KB = {
   // 57, from 55: the landing page, rewritten around projects rather than
   // around the fork tree. Measured at 55.2 kB. What the 3.7 kB bought: each
@@ -59,16 +64,16 @@ const BUDGET_KB = {
   // hearing about. And the per-chunk history records what each earlier
   // increase measured and bought, which stays useful reading even while nobody
   // is designing against the numbers.
-  'app-': 80, // our code: every component, store, mapper and stylesheet rule
-  'react-': 66, // react + react-dom + scheduler
-  'text-': 34, // marked, dompurify, jsdiff — markdown and diff rendering
+  app: 80, // our code: every component, store, mapper and stylesheet rule
+  react: 66, // react + react-dom + scheduler
+  text: 34, // marked, dompurify, jsdiff — markdown and diff rendering
   // 48, from 38, on the same instruction and the same reasoning as `app-`.
   // Measured at 36.8 kB, which is 1.2 kB of slack -- close enough that one
   // ordinary dependency bump would trip it. This is the bucket a *new library*
   // lands in, so it is the one where the gate still has real work to do; 48
   // leaves it able to do that work without stopping exploratory changes that
   // add no dependency at all.
-  'vendor-': 48, // query, zustand, wouter, zod, date-fns, clsx, @tanstack/react-virtual
+  vendor: 48, // query, zustand, wouter, zod, date-fns, clsx, @tanstack/react-virtual
   // The component system: `@radix-ui/*` and `class-variance-authority`. Its own
   // bucket rather than a raise to `vendor-`, so the one place a surprise
   // dependency still shows up keeps its 11 kB of slack and keeps biting.
@@ -98,8 +103,8 @@ const BUDGET_KB = {
   // downloads today, spent entirely on interaction behaviour a user never sees
   // *added* -- no feature, no pixel. It is paid in instalments and it is
   // separately gated, which is what this line is for.
-  'ui-': 56,
-  'rolldown-runtime-': 2, // the bundler's own module loader, emitted once
+  ui: 56,
+  'rolldown-runtime': 2, // the bundler's own module loader, emitted once
   // react-force-graph-2d, force-graph, d3-force and the rest of what draws
   // the research page's graph pane -- see `GRAPH_DEPENDENCIES` in
   // `vite.config.ts` for the full list. Measured at 61.4 kB; `GraphCanvas-`
@@ -111,7 +116,7 @@ const BUDGET_KB = {
   // Like `vendor-`, this is a dependency bucket rather than a first-party one,
   // so the raise is sized to stop it firing on pane changes while still
   // noticing a new graphing library.
-  'graph-': 74,
+  graph: 74,
   // Was 1 kB while this chunk was a bare `React.lazy` wrapper handing the
   // library a `graphData` prop. It now measures the container it is drawn in
   // and paints its own nodes -- a `ResizeObserver` that gives the canvas a
@@ -120,7 +125,7 @@ const BUDGET_KB = {
   // canvas previously defaulted to `window.innerWidth` and drew itself off to
   // the side of the pane, and an unlabelled node gave a reader nothing to aim
   // at. Measured at 1.1 kB.
-  'GraphCanvas-': 2,
+  GraphCanvas: 2,
   // 227 covered the research page's four panes; 228 added the links between
   // that page and the course page, and the breadcrumb that says which of the
   // two you are on. The last 2 kB is the research page's layout: a rail and a
@@ -159,8 +164,15 @@ const BUDGET_KB = {
 
 const kb = (bytes) => Math.round((bytes / 1024) * 10) / 10
 
-const bucketFor = (name) =>
-  Object.keys(BUDGET_KB).find((prefix) => prefix !== 'total' && name.startsWith(prefix))
+// Exact, on the basename, now that the emitted names carry no hash to skip
+// past. `startsWith` was what a hashed `app-Bjl3iwJ5.js` required, and it is
+// strictly worse here: it would let a future `append.js` be silently charged to
+// `app`'s budget and so escape the "no chunk goes unbudgeted" check below,
+// which is the one thing this file cannot afford to get wrong quietly.
+const bucketFor = (name) => {
+  const stem = name.replace(/\.(js|css)$/, '')
+  return Object.keys(BUDGET_KB).find((bucket) => bucket !== 'total' && bucket === stem)
+}
 
 const files = await readdir(ASSETS).catch(() => {
   console.error(`No build found at ${ASSETS}. Run \`npm run build\` first.`)
@@ -180,7 +192,7 @@ const measured = await Promise.all(
 // code, it changes when our code changes, and it is fetched on the same paint.
 const charged = measured.map((file) => ({
   ...file,
-  bucket: file.name.endsWith('.css') ? 'app-' : bucketFor(file.name),
+  bucket: file.name.endsWith('.css') ? 'app' : bucketFor(file.name),
 }))
 
 const spent = new Map()

@@ -93,6 +93,7 @@ def main() -> None:
             seeding=seeding,
             dispatcher=application.dispatcher,
             dispatch=dispatch,
+            ask=application.ask,
             # The same object the executor's gating predicate reads, which is
             # the only reason the routes over it can change anything: a copy
             # would answer reads correctly and change nothing. Instance-wide,

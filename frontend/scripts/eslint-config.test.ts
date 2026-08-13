@@ -223,3 +223,120 @@ describe('the class-name guard', () => {
     ).not.toContain('no-restricted-syntax')
   })
 })
+
+/** The layering guard over presentation's imports.
+ *
+ * Two violations were found by a human audit rather than by CI — `RunPanel`
+ * branching on `ResearchDisabledError` from `http/project-repository.ts`, and
+ * `SessionTree` importing `summariesAsForest` from `http/mappers.ts`. Both are
+ * fixed, which means the repository now has no instance of the mistake, which
+ * means `npm run lint` is green whether or not this rule exists. That is
+ * exactly the situation the a11y tests above were written for: a gate with
+ * nothing to catch is indistinguishable from a gate that is switched off. So
+ * the positive case here is a synthetic import, not a real file.
+ *
+ * The negative cases are the load-bearing half. `@infrastructure/rendering/*`
+ * and `@infrastructure/storage/*` are imported by presentation today and are
+ * meant to be, so a rule that grew to `@infrastructure/*` would fail the build
+ * on `common/content.tsx` — and these assertions are what turn that widening
+ * into a deliberate edit with two exceptions written down, rather than a
+ * surprise.
+ *
+ * Proved red by deleting the `src/presentation/**` block from
+ * `eslint.config.js`: the first test then reported no `no-restricted-imports`
+ * and failed on the severity check in `lint` below. */
+describe('the presentation-layer import guard', () => {
+  /** The real rule's options, run without a type-aware program — the same
+   *  technique and the same reason as the class-name guard above: building a
+   *  TypeScript program over `src/` costs seconds on the first call and this
+   *  rule is purely syntactic. */
+  const options = async (path: string) => {
+    const resolver = new ESLint({ overrideConfigFile: true, baseConfig: eslintConfig })
+    const config = await resolver.calculateConfigForFile(path)
+    return config.rules?.['no-restricted-imports'] as [number, ...unknown[]] | undefined
+  }
+
+  const lint = async (source: string) => {
+    const [severity, ...restrictions] =
+      (await options('src/presentation/course/RunPanel.tsx')) ?? []
+    // A missing rule must not read as a clean lint — without this, every
+    // negative assertion below passes against a config that lost the rule.
+    expect(severity).toBe(2)
+
+    const eslint = new ESLint({
+      overrideConfigFile: true,
+      baseConfig: [
+        {
+          files: ['**/*.tsx'],
+          languageOptions: {
+            parserOptions: {
+              ecmaFeatures: { jsx: true },
+              ecmaVersion: 'latest',
+              sourceType: 'module',
+            },
+          },
+          rules: { 'no-restricted-imports': ['error', ...restrictions] },
+        },
+      ],
+    })
+    const [result] = await eslint.lintText(source, { filePath: 'probe.tsx' })
+    const messages = result?.messages ?? []
+
+    const fatal = messages.find((message) => message.fatal)
+    if (fatal) throw new Error(`probe did not parse: ${fatal.message}`)
+
+    return messages
+  }
+
+  it('rejects a presentation file naming the HTTP adapter', async () => {
+    // The shape `RunPanel.tsx` actually had before this change.
+    const messages = await lint(
+      "import { ResearchDisabledError } from '@infrastructure/http/project-repository.ts'\nexport const B = () => null\n",
+    )
+
+    expect(messages.map((message) => message.ruleId)).toContain('no-restricted-imports')
+    // The message is asserted, not just the rule id, because a guard whose
+    // text does not say where the thing belongs instead gets satisfied by
+    // deleting the import and inlining the concept.
+    expect(messages[0]?.message).toContain('@application/ports/errors.ts')
+  })
+
+  it('rejects the relative spelling of the same import', async () => {
+    // `@infrastructure/*` is an alias, and a path alias is a convention rather
+    // than a boundary — nothing stops `../../infrastructure/http/mappers.ts`.
+    // The domain block above already guards both spellings; so does this one.
+    expect(
+      (
+        await lint(
+          "import { summariesAsForest } from '../../infrastructure/http/mappers.ts'\nexport const B = () => null\n",
+        )
+      ).map((message) => message.ruleId),
+    ).toContain('no-restricted-imports')
+  })
+
+  it('allows the infrastructure presentation is meant to use', async () => {
+    // Neither of these is a store. `rendering/` is pure functions over strings
+    // -- the markdown and diff engines behind `common/content.tsx` -- and
+    // `storage/` supplies a test double. Both are imported by presentation
+    // today, so this assertion fails the moment someone widens the group to
+    // `@infrastructure/*` without writing the exceptions down.
+    const allowed = [
+      "import { renderMarkdown } from '@infrastructure/rendering/markdown.ts'",
+      "import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'",
+    ]
+    for (const source of allowed) {
+      expect(
+        (await lint(`${source}\nexport const B = () => null\n`)).map((m) => m.ruleId),
+      ).not.toContain('no-restricted-imports')
+    }
+  })
+
+  it('is not applied outside the presentation layer', async () => {
+    // The composition root names adapters on purpose; that is its whole job.
+    const config = await options('src/app/container.ts')
+    const patterns =
+      (config?.[1] as { patterns?: { group: string[] }[] } | undefined)?.patterns ?? []
+
+    expect(patterns.some((p) => p.group.includes('@infrastructure/http/*'))).toBe(false)
+  })
+})
