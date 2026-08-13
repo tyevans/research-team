@@ -63,6 +63,24 @@ def _imported_roots(module: Path) -> set[str]:
     return roots
 
 
+def _imported_paths(module: Path) -> set[str]:
+    """Every absolute import, at full dotted length.
+
+    `_imported_roots` truncates to the root package, which is right for the
+    framework rule and blind to the one below: `redstring.domain.x` and
+    `redstring` are the same string to it, and the whole point here is that
+    they are not the same import.
+    """
+    tree = ast.parse(module.read_text())
+    paths: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            paths.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            paths.add(node.module)
+    return paths
+
+
 def _imported_layers(module: Path) -> set[str]:
     tree = ast.parse(module.read_text())
     layers: set[str] = set()
@@ -126,6 +144,61 @@ def test_inner_layers_name_no_framework(layer: str, module: Path) -> None:
     assert not forbidden, (
         f"{module.relative_to(PACKAGE)} depends on {forbidden}; "
         "keep frameworks in infrastructure"
+    )
+
+
+@pytest.mark.parametrize(
+    ("layer", "module"),
+    ALL_MODULES,
+    ids=[f"{layer}/{module.name}" for layer, module in ALL_MODULES],
+)
+def test_redstring_is_named_only_through_its_public_surface(layer: str, module: Path) -> None:
+    """`redstring.domain`, never `redstring.domain.something`.
+
+    redstring's contract is that anything reached by a dotted path is internal
+    and may change in a patch release -- so a dotted import into `domain` is a
+    dependency on a private API that a *patch* bump can break, silently, in a
+    package this repository pins below the next minor precisely because it
+    moves.
+
+    The concrete near-miss: `render_temporal` lives at
+    `redstring.domain.temporal_parsing` and is not exported. It is the
+    obvious-looking way to render a temporal extent and the wrong one
+    (`temporal_rendering.py` says why), and without this rule reaching for it
+    passes every other test in this file.
+
+    Scoped to `redstring.domain.` rather than all of `redstring.` -- the
+    broader rule was tried first and failed on three modules that were never
+    the target: `infrastructure/agent/deep_agent.py`,
+    `infrastructure/knowledge/stores.py` and
+    `infrastructure/persistence/event_store.py` all reach into optional
+    backend adapters (`redstring.llm.adapters.langchain`,
+    `redstring.graph.adapters.neo4j`, `redstring.vector.adapters.pgvector`,
+    `redstring.events.streams`) that redstring does not, and cannot, re-export
+    from its top level -- doing so would pull neo4j, pgvector and langchain
+    into every install regardless of which backend a project actually uses.
+    The dotted path is the *only* way to reach them, by design, so forbidding
+    it forbids something the package requires rather than something it
+    exposes by mistake. `domain` carries no such excuse: everything public in
+    it is already in `redstring.__all__`.
+
+    This means a dotted import of some other internal outside `domain` --
+    `redstring.temporal.query`, say -- passes unflagged. That is a known gap
+    in this rule's reach, not an oversight: closing it would mean re-deriving,
+    module by module, which parts of redstring are genuinely unreachable any
+    other way, and nothing today needs that. `domain` is where the actual
+    near-miss lives, and that is what this rule closes.
+
+    Scoped to `research_team/` deliberately, on top of that. `tests/` builds
+    redstring fixtures through dotted paths and stays free to: a test
+    constructing an `Entity` is not shipping against a private API.
+    """
+    offenders = {
+        path for path in _imported_paths(module) if path.startswith("redstring.domain.")
+    }
+    assert not offenders, (
+        f"{module.relative_to(PACKAGE)} imports redstring internals: {offenders}; "
+        "use the package's public surface"
     )
 
 
