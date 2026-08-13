@@ -27,6 +27,7 @@ from eventsource.observability.attributes import (
 from research_team.application.context import ContextStrategy, FullHistory
 from research_team.application.knowledge_attachment import KnowledgeAttachment
 from research_team.application.ports import (
+    ActivityRemark,
     ActivityReporter,
     SessionRepository,
     SessionSummaries,
@@ -906,7 +907,7 @@ class SessionService:
             )
         if on_activity is not None:
             for note in prepared.notes:
-                on_activity(f"· {note}")
+                on_activity(ActivityRemark(text=note))
 
         try:
             result = await self._executor.execute(

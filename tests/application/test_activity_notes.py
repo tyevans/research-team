@@ -3,6 +3,7 @@
 from research_team.application.ports import (
     ActivityDelta,
     ActivityMessage,
+    ActivityRemark,
     ActivityReporter,
 )
 
@@ -41,9 +42,20 @@ def test_notes_are_frozen():
         note.text = "changed"
 
 
-def test_reporter_accepts_either_note():
+def test_a_remark_has_no_message_to_belong_to():
+    """Asserting an absence, because the absence is the design.
+
+    A `message_id` here would be one the application layer invented, and the
+    buffer that stores these reconciles a delta against the whole message on
+    exactly that key. Whoever renders a remark names it instead.
+    """
+    assert not hasattr(ActivityRemark(text="cleared 4"), "message_id")
+
+
+def test_reporter_accepts_any_note():
     seen: list = []
     reporter: ActivityReporter = seen.append
     reporter(ActivityMessage(message_id="a1", kind="assistant", payload={}))
     reporter(ActivityDelta(message_id="a1", text="x"))
-    assert len(seen) == 2
+    reporter(ActivityRemark(text="cleared 4"))
+    assert len(seen) == 3

@@ -12,7 +12,7 @@ from research_team.application import (
     TurnOutcome,
 )
 from research_team.application.check_telemetry_read import CheckStat
-from research_team.application.ports import ActivityDelta, ActivityNote
+from research_team.application.ports import ActivityDelta, ActivityNote, ActivityRemark
 from research_team.domain import (
     CodingSession,
     ConversationCompacted,
@@ -42,6 +42,11 @@ def format_activity(note: ActivityNote) -> str | None:
     """
     if isinstance(note, ActivityDelta):
         return None
+    if isinstance(note, ActivityRemark):
+        # The "· " that used to be applied by session_service before it handed
+        # the line over. It belongs here: which glyph a line starts with is a
+        # property of this terminal, and the web UI wants none of it.
+        return f"· {note.text}"
 
     # Payloads from deep_agent have a nested structure with 'data' key
     # (from langchain's message_to_dict).
