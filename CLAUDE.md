@@ -62,6 +62,21 @@ a separate file from `vitest.setup.ts` on purpose, because the jsdom setup
 pins `offsetWidth`/`offsetHeight` to constants and would blind the one suite
 whose job is measuring.
 
+**A single-side border utility does nothing, or draws three unwanted sides,
+depending on which half you forget.** This build imports no Tailwind
+preflight and nothing in `src/styles/` sets `border-style`, so the browser's
+own defaults are what's left. `border-solid` sets `border-style: solid` on
+all four sides at once; pair it with a directional width like `border-t`
+and no `border-0`, and the three sides that get a style but no explicit
+width fall back to the browser's `medium` (~3px) rather than 0 — a rule
+meant for one edge draws a box. The case that bites in the other direction:
+`border-t` *with* a width but *without* `border-solid` draws nothing at
+all, because every side's style is still `none`. The fix is always both
+halves together: `border-0` to zero the three sides you don't want, then
+the directional width-and-style utility (e.g. `border-t border-solid`) for
+the one you do. Caught by eye in Storybook, twice, in both directions — no
+gate catches either half.
+
 **Do not run two `vitest` processes at once.** Concurrent runs fail
 spuriously, usually with a coverage temp-file error that names nothing about
 the real cause. If a frontend test fails, re-run it alone before investigating

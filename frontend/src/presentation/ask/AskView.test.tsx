@@ -71,7 +71,7 @@ it('says the page keeps nothing', () => {
   // match. Narrowing the query keeps the claim and drops the accident.
   renderAsk({ ask: answering('x') })
 
-  expect(screen.getByText(/not saved/i, { selector: '.sub' })).toBeInTheDocument()
+  expect(screen.getByText(/not saved/i, { selector: '.ask-sub' })).toBeInTheDocument()
 })
 
 it('surfaces a refusal to the reader', async () => {
@@ -113,7 +113,7 @@ it('keeps tool activity out of the way until asked for', async () => {
         type: 'message',
         messageId: 'm1',
         kind: 'tool',
-        payload: { name: 'read_source' },
+        payload: { type: 'tool', data: { name: 'read_source' } },
         isError: false,
       })
       onEvent({ type: 'answer', text: 'two papers', citations: [] })
