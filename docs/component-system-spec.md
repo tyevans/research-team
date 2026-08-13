@@ -1038,10 +1038,27 @@ it claims.
 invalidates combinators.** A child (`>`) or adjacent-sibling (`+`) selector is
 a claim about the shape of the DOM, and rewriting a surface's markup to
 utilities while leaving its stylesheet in place breaks that claim with no test
-failure and no error — the rule simply stops matching. Measured by counting
-combinators per file: `research.css` 10, `responsive.css` 9,
-`conversation.css` 8, `course.css` 6, `tree.css` 3, single digits elsewhere;
-`+` is nearly absent, one each in `states.css` and `agents.css`.
+failure and no error — the rule simply stops matching.
+
+**The counts first published here were wrong, high, and are corrected in
+place** — `research.css` 7, `conversation.css` 7, `responsive.css` 6,
+`course.css` 4, single digits elsewhere. The original figures came from
+counting occurrences of the character rather than combinators in a selector,
+so they swept in `>` inside comment prose and, worse, `@media (width >= 821px)`
+range syntax, which is not a combinator at all. **There is not a single
+adjacent-sibling (`+`) combinator in the directory**; the two occurrences
+previously cited in `states.css` and `agents.css` are both arithmetic inside
+`calc()`. So a reader following the instruction below and grepping for `+`
+finds two `calc()` expressions and has to work out for themselves that neither
+is what they were sent to look for.
+
+The hazard is unchanged by this and so is the instruction. What changes is the
+lesson about the measurement: a count taken with a grep that cannot tell a
+selector from a comment or an arithmetic operator is a number with the *shape*
+of evidence and none of its content, and this document's whole standard is that
+it says which of its facts it checked. This one was not, until the increment C
+plan re-derived it.
+
 `responsive.css` is the worst of them by nature rather than by count, because
 its combinators sit inside media queries — they are markup claims that only
 apply at some viewports, so they cannot fail visibly in a default-width test
