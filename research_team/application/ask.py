@@ -10,11 +10,14 @@ holds the application layer to `eventsource` alone, so the LangChain side of
 this feature lives behind `AskExecutor` in `infrastructure/agent/ask_agent.py`.
 """
 
+import asyncio
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import Literal, Protocol
 from uuid import UUID
+
+from research_team.application.ports import ActivityNote, ActivityReporter
 
 Role = Literal["user", "assistant"]
 
@@ -102,3 +105,106 @@ class ConversationRegistry:
 
     def drop(self, chat_id: str) -> None:
         self._held.pop(chat_id, None)
+
+
+class AskInFlight(RuntimeError):
+    """Raised when a chat already has a question running.
+
+    One answer at a time per conversation. Two streams interleaving into one
+    transcript is a worse outcome for the reader than a refusal they can act
+    on.
+    """
+
+
+class AskExecutor(Protocol):
+    """Answers one question against a project's gathered material.
+
+    Implemented in `infrastructure/agent/ask_agent.py`; the port exists so
+    this layer never names LangChain.
+    """
+
+    async def run(
+        self,
+        *,
+        project_id: UUID,
+        history: Sequence[AskMessage],
+        question: str,
+        on_activity: ActivityReporter,
+    ) -> AskAnswer: ...
+
+
+AskNote = ActivityNote | AskAnswer
+"""What `AskService.ask` yields: activity as it happens, then one answer last."""
+
+
+class AskService:
+    def __init__(
+        self,
+        *,
+        executor: AskExecutor,
+        conversations: ConversationRegistry,
+        now: Callable[[], float],
+    ) -> None:
+        self._executor = executor
+        self._conversations = conversations
+        self._now = now
+        self._running: set[str] = set()
+
+    def forget(self, chat_id: str) -> None:
+        self._conversations.drop(chat_id)
+
+    async def ask(
+        self, *, project_id: UUID, chat_id: str, question: str
+    ) -> AsyncIterator[AskNote]:
+        if chat_id in self._running:
+            raise AskInFlight(f"chat {chat_id} already has a question running")
+        self._running.add(chat_id)
+        try:
+            conversation = self._conversations.get(chat_id, project_id)
+            # The queue is what turns a callback-shaped reporter into an
+            # iterator: the executor pushes notes from whatever task it runs
+            # on, and the loop below drains them while awaiting the answer.
+            notes: asyncio.Queue[ActivityNote] = asyncio.Queue()
+            running = asyncio.create_task(
+                self._executor.run(
+                    project_id=project_id,
+                    history=conversation.messages,
+                    question=question,
+                    on_activity=notes.put_nowait,
+                )
+            )
+            async for note in self._drain(notes, running):
+                yield note
+            answer = await running
+        finally:
+            self._running.discard(chat_id)
+
+        # Recorded only on success. A stored question with no reply would make
+        # the next answer refer to an exchange the reader never saw.
+        self._conversations.put(
+            conversation.appended(
+                AskMessage(role="user", text=question),
+                AskMessage(role="assistant", text=answer.text),
+                at=self._now(),
+            )
+        )
+        yield answer
+
+    @staticmethod
+    async def _drain(
+        notes: "asyncio.Queue[ActivityNote]", running: "asyncio.Task[AskAnswer]"
+    ) -> AsyncIterator[ActivityNote]:
+        while True:
+            getter = asyncio.ensure_future(notes.get())
+            done, _ = await asyncio.wait(
+                {getter, running}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if getter in done:
+                yield getter.result()
+                continue
+            getter.cancel()
+            # The executor finished; anything it queued just before returning
+            # is still owed to the reader.
+            while not notes.empty():
+                yield notes.get_nowait()
+            return
