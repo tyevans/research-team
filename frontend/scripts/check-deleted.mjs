@@ -267,6 +267,19 @@ const RULES = [
     forbid: [/^\.approvals\b/m, /^\.approval\b/m, /^\.approval-/m],
   },
   {
+    phase: '5',
+    what: "the decision bar's allow-all was dressed from the course view's stylesheet",
+    why: "Same replacement as the approval card, for a sharper reason. `AutonomyAllowAll` moved into the shell's `DecisionBar`, which is already utilities, and left its layout behind in `course.css` -- a file on the die-with-its-screen list. So the policy's own deletion path had a trap in it: rebuilding the course view deletes the stylesheet, and a control that is *not* the course view and is still on screen loses its column, its gap and its indent, with nothing failing. That is `.extraction-failed > .extraction-summary` again -- no test, no error, a rule that quietly stopped applying -- except the rule does not stop matching, it stops existing. `.autonomy-warn` and `.autonomy-error` are deliberately absent from this list: they are shared with `AutonomyPanel`, which is a real course-page surface, and forbidding them would be demanding the port this policy exists to avoid. `course.css` carries the note about that at the rules themselves.",
+    where: 'styles',
+    forbid: [
+      /^\.autonomy-allow\b/m,
+      /^\.autonomy-allow-head\b/m,
+      /^\.autonomy-allow-actions\b/m,
+      /^\.autonomy-result\b/m,
+      /^\.autonomy-off\b/m,
+    ],
+  },
+  {
     phase: 'B',
     what: 'stylesheets each carried their own stacking numbers',
     why: 'Eight literal `z-index` declarations across five values, two of which produced a popover painting over an `aria-modal` dialog. Every one now names a role from `tokens.css`. `scripts/stacking.test.ts` is the real enforcement and is more precise than this -- it also rejects an undeclared token and a fourth role. This entry is here so the *count* is recorded where the other phase deletions are; if it ever fires, read that test first.',
