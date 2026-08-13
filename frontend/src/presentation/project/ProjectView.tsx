@@ -7,13 +7,9 @@ import type { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 import { EmptyState, Loading } from '../common/primitives.tsx'
 import { TabList, TabPanel, Tabs } from '../common/Tabs.tsx'
 import { ArtifactList } from '../course/ArtifactList.tsx'
-import { AutonomyPanel } from '../course/AutonomyPanel.tsx'
-import { ExtractionPane } from '../course/ExtractionPane.tsx'
 import { Findings } from '../course/Findings.tsx'
-import { RunPanel } from '../course/RunPanel.tsx'
 import { StageList, stagesLeftBehind } from '../course/StageList.tsx'
 import { useCourse } from '../course/use-course.ts'
-import { Workers } from '../course/Workers.tsx'
 import { Pane } from '../layout/Pane.tsx'
 import { Split } from '../layout/Split.tsx'
 import { DocumentList } from '../research/DocumentList.tsx'
@@ -22,6 +18,7 @@ import { TopicList } from '../research/TopicList.tsx'
 import { projectHref, sessionSelection, type Facet, type Selection } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
 import { SessionView } from '../session/SessionView.tsx'
+import { QueueHeader } from './queue/QueueHeader.tsx'
 import { PROJECT_TRACKS, useProjectPanes } from './use-project-panes.ts'
 
 /** The three regions a project page has.
@@ -173,33 +170,17 @@ export const ProjectView = ({
             : undefined
         }
       >
-        {/* The roster, the run panel and the autonomy panel come along, and
-            that is a deliberate departure from the plan. §2.0 names only the
-            stage rail and the topic queue as QUEUE's initial tenants; taken
-            literally that would leave these three with no renderer anywhere for
-            the length of the slice — a project would lose the only control that
-            starts a run, and the only place that says an extraction is working
-            — which is a functional regression rather than an ugly page. Slice 1
-            re-parents them into a real `QueueHeader`; until then they sit here
-            in the order the course page had them. */}
-        <section className="worker-panel" aria-label="Working now">
-          <Workers
-            projectId={projectId}
-            watching={watching}
-            // Pushed rather than replaced: opening a worker's transcript is a
-            // destination, and the back button should come back out of it.
-            onWatch={(sessionId) => select(sessionSelection(sessionId), false)}
-          />
-          <ExtractionPane projectId={projectId} />
-        </section>
-
-        <section className="run-panel" aria-label="Autonomous research">
-          <RunPanel projectId={projectId} />
-        </section>
-
-        <section className="autonomy-panel" aria-label="Autonomy">
-          <AutonomyPanel sessionId={course.data?.holdingSessionId ?? null} />
-        </section>
+        {/* The four panels slice 0 parked loose here, now one band of chrome.
+            That slice's comment named this as the change that would make it
+            true, and `QueueHeader` carries the argument. */}
+        <QueueHeader
+          projectId={projectId}
+          watching={watching}
+          // Pushed rather than replaced: opening a worker's transcript is a
+          // destination, and the back button should come back out of it.
+          onWatch={(sessionId) => select(sessionSelection(sessionId), false)}
+          holdingSessionId={course.data?.holdingSessionId ?? null}
+        />
 
         {course.isError ? (
           // The two 409s — no workflow, or one this build does not ship — are

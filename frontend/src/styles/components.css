@@ -459,17 +459,6 @@
  * they share the neutral treatment: not alarming, and not congratulatory
  * either, because a panel that looks satisfied is the one people believe. */
 
-.run-panel {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
-  padding: 10px 12px;
-  margin: 0 0 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .run-head {
   display: flex;
   align-items: center;

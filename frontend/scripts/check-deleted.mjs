@@ -333,6 +333,34 @@ const RULES = [
     only: /^(?!presentation\/layout\/).*\.stories\.tsx$/,
     forbid: [/\bOverlayHost\b/],
   },
+  {
+    phase: 'C1',
+    what: 'two whole-page views the project page replaced',
+    why: "The route merge's QUEUE slice. `CourseView` and `ResearchView` were the two arms `App.tsx` dispatched a project route between, and slice 0 left both unreferenced rather than deleting them -- a frame with no tenants had nothing to compare against yet. They are gone now, with `use-research-panes.ts` and its `research` preference group, `COURSE_TRACKS` and `COURSE_GROUP`. The `CoursePanes` story and test deliberately survive and declare their two tracks locally: they are the only place `StageList` and `ArtifactList` render real content with no `QueryClientProvider`, so they are a workbench for that pair rather than a fixture of the page that is gone, and deleting five assertions to remove one import would have been a bad trade. What replaces them is one page with three regions and a `QueueHeader`. A file coming back under either name is the merge being undone by somebody who has not read why.",
+    where: 'presentation',
+    forbid: [/\bCourseView\b/, /\bResearchView\b/, /\buseResearchPanes\b/, /\bCOURSE_TRACKS\b/],
+  },
+  {
+    phase: 'C1',
+    what: 'the two deleted views left combinators claiming markup that is gone',
+    why: "The §5.1 hazard, and the reason these are patterns over `styles` rather than a note in a report. Every selector here named an ancestor only `CourseView` or `ResearchView` wrote -- `.lay-split[data-split='course'] > .lay-pane`, `.research-rail > [data-pane='topics']`, eleven more -- so the day that markup went they became rules that match nothing, silently, with no test failure and no error. `check-deleted.mjs` already cites `.extraction-failed > .extraction-summary` as this having happened once. They were deleted in the same commit as the views, from `course.css`, `research.css` and `responsive.css`, and this is what stops one being reintroduced by a copy-paste from a stylesheet that still remembers the old shape. **`course.css` and `research.css` themselves are still alive** and are not in this rule: five component families in the first and three in the second are still on screen, which is why neither file left `STYLESHEETS` in this commit.",
+    where: 'styles',
+    forbid: [
+      /\[data-split='course'\]/,
+      /^\.view-course\b/m,
+      /^\.course-findings\b/m,
+      /\.research-rail\b/,
+      /\.research-workbench\b/,
+      /^\.view-research\b/m,
+    ],
+  },
+  {
+    phase: 'C1',
+    what: 'one card was declared three times, in two files, for three sibling panels',
+    why: "`.worker-panel` and `.autonomy-panel` in `course.css` and `.run-panel` in `components.css` were the same six declarations -- border, radius, panel background, padding, margin, flex column, gap -- and `course.css`'s own comment described the duplication as deliberate, so that three bands would read as one. `QueueHeader` makes them one band for real, spelled once in utilities around all four panels, so the three rules are dead and deleted. Forbidden rather than merely removed because the failure mode is a reviewer adding one back to fix a panel that looks undressed, which would restore the duplication and not the missing dressing.",
+    where: 'styles',
+    forbid: [/^\.run-panel\b/m, /^\.worker-panel\b/m, /^\.autonomy-panel\b/m],
+  },
 ]
 
 /** Every stylesheet under `src/styles/` that exists today, frozen.
