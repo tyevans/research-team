@@ -125,14 +125,6 @@ export const toForkNode = (raw: dto.ForkNodeDto): ForkNode => ({
   children: raw.children.map(toForkNode),
 })
 
-/** A flat session list rendered as a tree of roots.
- *
- * Used when `/api/tree` answers empty but sessions exist — the projection has
- * drifted, and a flat list is a truthful degradation where "no sessions" is a
- * lie. */
-export const summariesAsForest = (summaries: readonly SessionSummary[]): readonly ForkNode[] =>
-  summaries.map((summary) => ({ ...summary, children: [] }))
-
 export const toFileRevision = (raw: Dto<typeof dto.fileRevisionDto>): FileRevision => ({
   index: EventIndex(raw.index),
   type: raw.type,
