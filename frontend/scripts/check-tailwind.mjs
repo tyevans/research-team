@@ -32,7 +32,7 @@
  * declares none, so `md:` generates nothing today -- and they are covered here
  * only when they prefix a family below.
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 
@@ -112,15 +112,25 @@ for (const file of sources) {
   })
 }
 
-const built = readdirSync(ASSETS).filter((name) => /^index-.*\.css$/.test(name))
-if (built.length !== 1) {
+/* `index.css`, exactly, rather than the `index-*.css` glob this arrived with.
+   The glob was written against hashed filenames and this commit's own change
+   removes the hash, so it now matches nothing and the check exits 1 before it
+   has read anything -- which is what it did on the first merge of main into
+   this branch.
+
+   Naming the file outright is also the stronger check. The glob existed to
+   fail on a *second* stylesheet, because a stale one left beside the fresh one
+   would make this answer about the wrong build; with a stable name there is
+   only ever one, and a stale build overwrites rather than accumulates. */
+const stylesheet = join(ASSETS, 'index.css')
+if (!existsSync(stylesheet)) {
   console.error(
-    `Expected exactly one index-*.css in ${ASSETS}, found ${String(built.length)}. ` +
-      'Run `npm run build` first; a stale second stylesheet would make this check answer about the wrong one.',
+    `No ${stylesheet}. Run \`npm run build\` first -- this check reads the built stylesheet, ` +
+      'and has nothing to say about a tree that has not been built.',
   )
   process.exit(1)
 }
-const css = readFileSync(join(ASSETS, built[0]), 'utf8')
+const css = readFileSync(stylesheet, 'utf8')
 
 /** CSS escapes every character that cannot appear bare in an identifier, which
  *  is why `.m-[0px]` is written `.m-\[0px\]` and `.py-1.5` is `.py-1\.5`. A

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 
 import * as dto from './dto.ts'
 import {
-  summariesAsForest,
   toApproval,
   toCourse,
   toForkNode,
@@ -134,26 +133,6 @@ describe('toForkNode', () => {
       }),
     )
     expect(node.children[0]?.children[0]?.id).toBe('c')
-  })
-})
-
-describe('summariesAsForest', () => {
-  it('renders a flat list as roots, for when the tree projection has drifted', () => {
-    // A truthful degradation; "no sessions yet" would be a lie.
-    const forest = summariesAsForest([
-      {
-        id: 'a',
-        projectId: 'p1',
-        startedAt: null,
-        turns: null,
-        files: null,
-        firstMessage: null,
-        forkedFrom: null,
-        forkedAt: null,
-        failedTurns: null,
-      },
-    ] as never)
-    expect(forest[0]?.children).toEqual([])
   })
 })
 

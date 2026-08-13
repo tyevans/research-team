@@ -187,6 +187,54 @@ export default tseslint.config(
     },
   },
 
+  /** The presentation layer talks to the HTTP adapter through a port, never by
+   *  naming it.
+   *
+   *  Two instances were found by an audit rather than by the build, and both
+   *  had the same shape: a component reaching past the port for something the
+   *  adapter happened to export. `RunPanel` imported `ResearchDisabledError`
+   *  from `http/project-repository.ts` and branched on it with `instanceof`,
+   *  which handed a component a second reason to change — the repository's
+   *  error taxonomy. `SessionTree` imported `summariesAsForest` from
+   *  `http/mappers.ts`, a function that never touched a wire type and was
+   *  simply filed in the wrong layer. Both are fixed; this rule is what stops
+   *  the third, because an audit runs when somebody remembers and CI runs
+   *  always.
+   *
+   *  Scoped to `@infrastructure/http/*` rather than to `@infrastructure/*`, and
+   *  that narrowness is deliberate rather than a concession. It is the *store*
+   *  presentation must not know about — how a thing is fetched, and in what
+   *  shape it arrived. The other two infrastructure folders are not stores:
+   *  `rendering/` is `common/content.tsx`'s markdown and diff engines, which
+   *  are pure functions over strings with no transport and no state, and
+   *  `storage/` supplies `InMemoryPreferenceStore` to tests as a test double.
+   *  Banning those would produce two exceptions carrying no architectural
+   *  meaning, and a rule mostly made of exceptions is one people stop reading.
+   *  Widening this group is the right move on the day either of those grows a
+   *  fetch.
+   *
+   *  No exception is needed today: with the two fixes in place, nothing under
+   *  `src/presentation/` imports `@infrastructure/http/*` at all, so the rule
+   *  ships green with an empty allow-list. `eslint-config.test.ts` proves it
+   *  fires rather than trusting that. */
+  {
+    files: ['src/presentation/**/*.ts', 'src/presentation/**/*.tsx'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@infrastructure/http/*', '../../infrastructure/http/*'],
+              message:
+                'The presentation layer must reach the HTTP adapter through a port, not by naming it. Put the type or function on the abstraction instead: an error the UI branches on belongs in @application/ports/errors.ts, and a fold over domain types belongs in domain/.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   {
     files: ['**/*.test.ts', '**/*.test.tsx'],
     rules: {
