@@ -855,9 +855,56 @@ inaccessible content in the console. The floating-layer cost is paid once here
 and everything after is cheap.
 
 ### Phase 4 — the grid, the listbox, the toasts. **`ui-` 46.3 kB.**
-**Prerequisite: the six session tests in §10.**
+**Prerequisite: the six session tests in §10 — met before the phase began.**
 
-`Select`, `DataGrid` and `ListBox`.
+**All four of this phase's proposed components were declined, and the phase
+still closed real defects.** That is not a reversal of §3.1's argument for
+Radix; it is what happens when a plan written in one sitting meets four
+increments of intervening work. What each was wanted for had either already
+shipped by another route, or turned out not to need a component at all. The
+audit that established this is recorded per item below, because the decision is
+only worth as much as the evidence under it.
+
+**`Select` is declined.** Both call sites are already native `<select>` with
+proper labels — the workflow picker at `NewProjectForm.tsx` and the entity-type
+filter at `GraphPane.tsx`. Native selects are keyboard-operable and
+screen-reader-correct for free, and the likely original complaint was
+appearance: a light UA popup in a dark console. That was fixed by
+`color-scheme: dark` in `tokens.css`, which has its own browser test. Paying
++5.6 kB gzipped — the most expensive remaining primitive, and the one whose
+marginal §3.1a actually measured — to replace two correct controls with
+something that gives up the OS picker is the worst value in this document.
+
+**`DataGrid` is declined as a one-caller abstraction.** `role="grid"` appears
+exactly once in the codebase, in `Timeline.tsx`. The deliverable that justified
+it — "a **visible** column cursor, which is the fix for S-D7" — had already
+shipped inline there, with `aria-colindex`, an `aria-activedescendant` naming
+the current cell, a rendered cursor class and a rule in `timeline.css` that
+draws it. Extracting the pattern now would put working, argued, tested code
+behind an interface with one consumer, and #26 is scheduled to restructure that
+component's keyboard model anyway.
+
+**`ListBox` is declined for the same reason, and its real defect was CSS.**
+`FileList.tsx` is the only listbox, and its `aria-activedescendant` half was
+already correct. What was actually broken was the other half of the spec's own
+one-line description — "and a real focus ring". There was one, from the global
+`:focus-visible` rule, and **none of it was visible**: `outline-offset: 1px`
+draws outside the border box, and the listbox fills a scroll container that
+clips exactly there. Measured in Chromium, the ring extended to `-3..423 x
+-3..523` against a clip box of `0..420 x 0..176`. Zero pixels. Fixed with an
+inward ring on the scroller, and a focus-dependent treatment on the selected
+row, since in an `aria-activedescendant` listbox the selected row *is* the
+keyboard cursor and a box ring alone does not say where you are.
+
+That finding generalised, which is the most valuable thing this phase produced.
+A sweep found the same shape wherever a scroller has no padding and its child is
+`width: 100%`: the agent roster and the document list, both with rings entirely
+clipped in their ordinary state, plus two scroll containers that Chromium makes
+focusable with no `tabIndex` at all — a trap that reasoning gets wrong and only
+measurement catches. Scrollers with ≥4px of padding have room for the ring and
+were fine. The browser suite is where all of this lives, for the reason
+`CLAUDE.md` gives: jsdom computes no layout, so every one of these bugs was
+invisible to a fully green jsdom run.
 
 **`Toast` is declined, and the two features it was wanted for were built by
 hand instead.** L-F37 was already closed in `Toasts.tsx` — a real `<button>`
@@ -874,15 +921,39 @@ next toast, then the previous, then back to wherever the reader came in from.
 **Left undone:** F6 does not cycle *out* of the region (ARIA practices cycles
 landmarks; this is one-way), and neither it nor the tree's `/` is documented
 anywhere a reader would find it — `KeyboardHelp` is the surface for that and
-§13 defers it to phase 7 on purpose. The fork column gets visible state and `aria-colindex`, closing
-S-D7. `VirtualList` unifies L-F8's and R-F5.1's configurations and becomes
-available to the timeline, which needs it (S-§14.3).
+§13 defers it to phase 7 on purpose.
 
-**Why it ships alone:** it is the phase that fixes the most dangerous defect in
-the console — an invisible mode where an arrow key silently turns Enter from
-"scrub" into "create a session irreversibly". **It is also the phase most
-likely to break something**, which is exactly why its prerequisite is not
-negotiable.
+**The two remaining items had already shipped.** The fork column's visible state
+and `aria-colindex` closed S-D7 in an earlier increment, and `VirtualList`
+already unifies L-F8's and R-F5.1's configurations — one wrapper, used by
+`DocumentBrowser` and `ProjectList`. What has *not* shipped is the third thing
+that sentence claims: the timeline is not virtualized. That is #26, and it is
+not a follow-up to this phase but a redesign — a virtualizer unmounts
+off-screen rows, and the timeline's tab stop lives *on* a row, so the moment the
+selected row scrolls out the tab stop leaves the DOM, focus falls to `<body>`,
+the grid's key handler stops receiving anything and `aria-activedescendant`
+points at an id that no longer exists. Every one of those failures is silent.
+The fix is to move the tab stop to the container with a two-level cursor, which
+`2026-08-10-final-path-design.md` sequences after increment C on purpose.
+
+It is also, on the evidence here, unmeasured: nothing in this repository
+establishes how long a real session log gets, and the code's own prose assumes
+"a hundred" rows — an order of magnitude below where virtualization pays for
+itself. **It should be gated behind a measurement of a real log rather than
+built on the assumption that a list wants virtualizing.**
+
+**Why it shipped alone:** the reasoning below was written when this phase was
+believed to be four new primitives and a keyboard-model change. It shipped alone
+for a better reason than the one predicted — every increment in it was a defect
+fix landing in a stylesheet or a component that already existed, verifiable in
+isolation, with nothing downstream waiting on it.
+
+**What the plan got wrong, kept because it is the useful part:** the most
+dangerous defect named here — the invisible mode where an arrow key turns Enter
+from "scrub" into "fork irreversibly" — was real, and was fixed before the phase
+meant to fix it ever started. A phase defined by the components it adds will
+mis-describe itself the moment the defects it was aimed at get closed another
+way. The defects were the durable part of this plan; the component list was not.
 
 ### Phase 5 — the stylesheet migration completes.
 
