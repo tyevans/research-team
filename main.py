@@ -16,7 +16,12 @@ async def _run() -> None:
     application = build_application(approvals=TerminalApprovals())
     await application.start()
     try:
-        await run(application.service, application.policy, application.research)
+        await run(
+            application.service,
+            application.policy,
+            application.research,
+            application.check_telemetry_readers,
+        )
     finally:
         await application.close()
 
