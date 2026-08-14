@@ -1,4 +1,3 @@
-import clsx from 'clsx'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Tooltip } from './Tooltip.tsx'
@@ -115,17 +114,27 @@ export const TruncatedText = ({
   const body = (
     <span
       ref={attach}
-      // The focus ring is on the element only while it is focusable, and it is
-      // spelled as utilities rather than a class in a stylesheet because the
-      // stylesheet that would own it depends on the caller -- this component
-      // is used from `entity.css`'s components today and is not theirs. The
-      // values are the ones `components.css` already uses for every focusable
-      // thing in the console; a focus stop nobody can see is not a focus stop.
-      className={clsx(
-        className,
-        clipped &&
-          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
-      )}
+      // No focus-ring classes here, and their absence is the decision rather
+      // than an omission. This carried
+      // `focus-visible:outline-2 focus-visible:outline-offset-2
+      // focus-visible:outline-accent`, on the reasoning that a focus stop
+      // nobody can see is not a focus stop -- which is right, and was already
+      // true without them. **All three were inert**: they sit in
+      // `@layer utilities` and `tokens.css`'s `:focus-visible` is unlayered, so
+      // it wins regardless of specificity (see `CLAUDE.md`), and the global
+      // rule already draws `2px solid var(--accent)`. Measured in Chromium on
+      // 2026-08-14 with the utilities still present: `2px solid` at **1px**
+      // offset, the global's number and not the utility's 2px.
+      //
+      // Deleted rather than made to work with a named class in `layout.css`
+      // (`.lay-ring-inward` is the house precedent for a real override). What
+      // such a class would buy is one pixel more offset on every truncated
+      // label and detail in the console -- a visual change to a shared
+      // primitive, made blind, to satisfy a declaration nobody wrote for a
+      // reason. B56 asked for that choice to be made by someone looking at it;
+      // it has been, and the ring the console gives every other focus stop is
+      // the right ring for this one.
+      className={className}
       // The rule is right in general and wrong here, which is the only reason
       // to silence one. It exists because a focus stop that does nothing when
       // you press it is a trap for a keyboard user. This one does something:

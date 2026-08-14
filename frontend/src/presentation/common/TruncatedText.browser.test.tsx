@@ -84,6 +84,42 @@ it('makes clipped text reachable and readable', async () => {
   await expect.element(page.getByRole('tooltip')).toHaveTextContent(LONG)
 })
 
+/** B56, settled: the focus ring a clipped label draws is the console's global
+ *  one, and the three utilities that claimed to set it have been removed.
+ *
+ * The measurement, taken in Chromium on 2026-08-14 with
+ * `focus-visible:outline-2 focus-visible:outline-offset-2
+ * focus-visible:outline-accent` still on the span, is that all three read
+ * **identically with the utilities and without them** — `2px solid` at `1px`
+ * offset, from `tokens.css`'s unlayered `:focus-visible`. The offset is the
+ * tell: the utility asks for 2px and the element draws 1px, because an
+ * unlayered normal declaration beats anything in `@layer utilities` whatever
+ * its specificity. `CLAUDE.md` carries the general rule.
+ *
+ * So this asserts the ring is *there and visible*, which is the property that
+ * matters for a focus stop, and not any number the deleted utilities named. It
+ * would have passed before the deletion too — that is the point, and it is why
+ * the deletion is safe rather than why this test is weak.
+ */
+it('draws the console’s focus ring on a clipped label', async () => {
+  await render(
+    <Rail>
+      <EntityRef head={head} />
+    </Rail>,
+  )
+
+  const trigger = page.getByText(LONG, { exact: true }).element() as HTMLElement
+  trigger.focus()
+
+  const ring = getComputedStyle(trigger)
+  expect(ring.outlineStyle).toBe('solid')
+  expect(ring.outlineWidth).toBe('2px')
+  expect(ring.outlineOffset).toBe('1px')
+  // The colour is the accent token rather than the UA's, which is the half a
+  // `outline: none` regression would take without touching the width.
+  expect(ring.outlineColor).not.toBe('rgb(0, 0, 0)')
+})
+
 it('leaves text that fits alone', async () => {
   await render(
     <OverlayHost>

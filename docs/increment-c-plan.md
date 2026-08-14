@@ -1179,6 +1179,38 @@ one that lists them.
    HOLDER now has real content; that is the right slice, so it is named here as
    slice-3 scope rather than left as a standing uncertainty. Deferred a third
    time, it will be deferred a fourth.**
+
+   **ANSWERED 2026-08-14, on the sixth attempt — and the answer arrived with a
+   defect attached.** The deferrals above are kept rather than tidied away,
+   because the shape of this one is the argument for measuring anything: five
+   slices each judged the measurement worth doing later, and what it found was
+   not a number that could have gone either way.
+
+   At **1181px** — the narrowest viewport where a `Split` writes a template at
+   all — the fr shares were 337 / 506 / 337. MATERIAL's 337 had to hold a
+   five-tab strip that is **351px wide and neither wraps nor scrolls**, so the
+   Graph tab was painted past the pane's right edge: **present and
+   unclickable**. QUEUE's 317px seeding form went the same way 14px later. The
+   page had only ever been looked at at 1440, and 1440 was never the width that
+   was wrong — which is why five deferrals cost nothing visible and the sixth
+   found a shipped defect.
+
+   `PROJECT_TRACKS` is now **`queue 344 / holder 342 / material 352`**, measured
+   in Chromium on 2026-08-14, replacing 280 / 320 / 280 — the session view's
+   floors, adopted here without measurement. **1440 is pixel-identical before
+   and after**; only the bottom of the wide band moves. Reweighting was rejected
+   as buying the same clearance by reshaping every width above 1181 to fix its
+   narrowest 60px. HOLDER's 342 does not bind today and is recorded anyway.
+
+   So this question's own framing — "three peer columns, or not" — is answered
+   sideways: the weights were never what was wrong, and they are **still
+   reasoned rather than observed**. The floors say where a region breaks; they
+   say nothing about where it is good. `use-project-panes.ts`'s docstring now
+   states which half is which, in the shape `SESSION_TRACKS` uses. What remains
+   open is in `BACKLOG.md` B57, which is kept rather than closed for that
+   reason. Reports: `docs/reports/measured-task-b.md` (widths) and
+   `docs/reports/measured-task-a.md` (the 821–1180 band, which turned out to
+   have no layout at all).
 4. **Whether `SessionView` can serve two layout owners cleanly.** §2.2 assumed it
    could — that the `Split` lifts out and the component renders into whatever
    region it is given. I did not prototype it. If it could not, slice 2 would
@@ -1221,3 +1253,71 @@ one that lists them.
 - **`/api/projects`'s O(projects) fold.** Still the standing cost, still not
   fixed here. §2.0's invalidation fix makes it survivable on a long-lived page;
   it does not make it cheap.
+
+---
+
+## 8. There is no increment D — what follows C, and who owns it (2026-08-14)
+
+Increment C is complete: slices 0, 1, 2, 3, 3a, 3b and 4 have all shipped and
+merged. **A reader arriving here looking for the next increment will not find
+one, and that is a fact about the corpus rather than a gap in this document.**
+The overhaul defines increments only to C — A is the decision bar
+(`unified-ui-proposal.md` §9), B is the floating layer (the component-system
+spec's phase 3), C is the route merge, which is this plan. Nothing anywhere
+defines a D.
+
+Recorded here rather than in the proposal because the proposal is the design
+argument, frozen at its own date and already annotated by §1 above; this is the
+plan a reader finishes, and the question "what now?" is asked at the end of it.
+
+**Do not invent an increment D to hold the list below.** Naming the residue is
+the point. It is ungrouped on purpose: these items do not share a theme, a
+surface or a budget, and grouping them would manufacture a plan that no survey
+supports. Each is a slice-sized decision for whoever picks it up.
+
+**A decoy, flagged because an audit already lost time to it.**
+`ui-foundations.md:1014` and `:1021` say "Phase D — the course surface" and
+"Phase E — the session surface". Those belong to the *foundations* phase scheme,
+not to the increment scheme. One letter, two vocabularies.
+
+The residue, as surveyed on 2026-08-14 — verified against the code on that
+date, so re-check citations before building:
+
+- ~~**`BACKLOG.md` B57 — the project page's three region widths.**~~ **Measured
+  on 2026-08-14** by the slice
+  `docs/superpowers/plans/2026-08-14-the-page-nobody-measured.md`, which also
+  answered §6 question 3 above and found a shipped defect doing it. **Partly
+  residue still:** nothing below 821px was measured, the wrapped row's 46vh cap
+  is inherited rather than derived, and the weights remain reasoned. B57 is kept
+  open for those three.
+- ~~**B56 — `TruncatedText`'s three inert `focus-visible:` utilities.**~~
+  **Settled on 2026-08-14 by that slice's task B: deleted, not repaired**, after
+  measuring the ring with and without them and finding it byte-identical.
+- **New, filed by that slice and unowned: `BACKLOG.md` B60 and B61.** B60 is the
+  session view's copy of a both-flanks-collapsed bug the project view had fixed —
+  the reason the two `responsive.css` blocks are not the duplication they look
+  like. B61 is the graph canvas's stale frame after a resize, filed as an
+  observation and as the reason a test on this page must poll.
+- **B58, B59 and §4's `GET /api/capabilities` all want the same backend
+  budget.** They are three entries and one decision; whoever takes any of them
+  should read all three before spending it.
+- **`Workers.tsx`'s unconditional 2s poll (audit 5).** *Audit 5's framing is
+  superseded.* Slice 4 established the poll is **correct** and must stay until a
+  server frame reports roster changes — a turn's events append atomically at
+  commit, so a frame-driven refresh would see a `turn` worker only after it was
+  gone. The reasoning and its measurement are in `Workers.tsx:11-42` and B59.
+  What remains is the cost, not a defect.
+- **The selection-reading defect.** Topic and artifact ids are linkable in the
+  URL grammar only; the shipped symptom is `CitationList.tsx:44`, which links
+  a citation id to the `doc` facet.
+- **`Breadcrumbs.tsx:90,92` — two dead names for one destination.** "course" and
+  "research" are still offered as separate crumbs; both resolve to the project
+  page, differing only in facet.
+- **HOLDER has no region-level error state.**
+- **`course.css`'s death.** Unowned. It survives until QUEUE's rail, the roster,
+  the extraction pane and the autonomy panel are rewritten; nothing schedules
+  that.
+- **§6's open questions 1, 5 and 6.** QUEUE's ranking (1) is unstarted rather
+  than merely unresolved; whether the picker deserves a page (5) was declined by
+  slice 4 as a redesign; and whether the dated feature surveys still describe the
+  code (6) is the one that silently invalidates the others.
