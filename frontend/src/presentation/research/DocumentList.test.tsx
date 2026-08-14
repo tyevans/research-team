@@ -252,7 +252,15 @@ it('opens the document the route names, with no click at all', async () => {
   renderWithContainer(<Routed initial={SourceId('s1')} />, { documents })
 
   const dialog = await screen.findByRole('dialog')
-  expect(within(dialog).getByText(/analytical engine/i)).toBeInTheDocument()
+  // `findByText`, not `getByText`, and the difference is the whole reason this
+  // test failed in CI while its clicking sibling above passed. The drawer's
+  // *header* comes from the list, so the dialog exists as soon as the route is
+  // read; the body is a second request (`documents.read`) and is still
+  // `loading document…` at that moment. The sibling gets away with `getByText`
+  // because `user.click` flushes the microtask queue on its way out, which is a
+  // property of user-event rather than of the component — so a test with no
+  // click has to wait for the read itself.
+  expect(await within(dialog).findByText(/analytical engine/i)).toBeInTheDocument()
 })
 
 it('closes the open document on Escape, leaving the list behind it', async () => {
