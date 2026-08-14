@@ -53,6 +53,7 @@ from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
 from research_team.application.check_telemetry_read import CheckTelemetryReadPort
 from research_team.application.components import component_guidance
 from research_team.application.grants import GrantRegistry
+from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.application.ports import GateReview
 from research_team.application.prompts import (
     DEFAULT_PROMPT_ROOT,
@@ -760,7 +761,81 @@ def build_application(
             return ()
         running = await running_workflow(session)
         reader = ProjectCorpusReader(corpus, running[0]) if running is not None else None
-        return (build_fetch_tool(recall=recall, corpus=reader, pages=pages, grant=grant),)
+        return (
+            build_fetch_tool(
+                recall=recall,
+                corpus=reader,
+                pages=pages,
+                grant=grant,
+                keep=_keeper(running[0]) if running is not None else None,
+            ),
+        )
+
+    def _keeper(project_id: UUID):
+        """Save a fetched page to `project_id`'s corpus, without extracting it.
+
+        Built here and nowhere else, which is what makes automatic saving a
+        property of the *unattended run* rather than of fetching. This closure
+        is only reached past `granted_tools`' `grant is None` check, and a
+        registered grant is already this codebase's definition of a session
+        nobody is watching (`GrantRegistry.is_unattended`). A person's own
+        fetches keep the existing arrangement, where saving is a judgement the
+        model makes with `remember_page` and `KNOWLEDGE_PROMPT` tells it not to
+        save everything it happened to look at. Nobody is there to make that
+        judgement in a run, and a page not saved before the round ends is gone.
+
+        **`store_source`, not `ingest`.** An ingest is store-extract-
+        consolidate and runs for minutes; calling it here would put that
+        inside every `fetch`, and multiply extraction load by every page read
+        rather than every page kept. The text is what cannot be recovered
+        later -- the graph can always be built from it, by a `remember_page`
+        on a page that proves to matter or by `/rebuild` -- so this saves the
+        irrecoverable half at seconds rather than minutes and leaves the rest
+        to a decision made with more information than "the page loaded".
+
+        The url is the `source_id`. There is no model-supplied id at fetch
+        time and inventing a prettier one would invent identity; the url is
+        already the thing the page is, it is stable, and `link_source` can
+        cite it immediately. A later `remember_page` under the model's own id
+        stores a second record of the same bytes, which `_store_document`
+        allows deliberately -- worth knowing, since here it is one URI under
+        two ids rather than the two-URIs case that rule was written for.
+        """
+
+        async def keep(url: str) -> None:
+            retained = pages.get(url)
+            # The attachment is process-wide and last-join-wins (see the web
+            # layer's join), so `current` may belong to a project that is not
+            # this run's. Without the guard a run's pages would land in
+            # whichever project joined most recently -- silently, and visible
+            # only as documents in the wrong corpus.
+            knowledge = attachment.current
+            if retained is None or knowledge is None:
+                return
+            if attachment.attached_project_id != project_id:
+                return
+            try:
+                await knowledge.store_source(
+                    SourceRef(
+                        source_id=url,
+                        text=retained.text,
+                        uri=retained.uri,
+                        title=retained.title,
+                        published_at=retained.published_at,
+                        fetched_at=retained.fetched_at,
+                    )
+                )
+            except KnowledgeError:
+                # Logged, not raised, and not reported to the model either.
+                # The read succeeded and is about to be shown; a failed corpus
+                # copy is worth less than the read, and a note about it in the
+                # tool result would spend the model's attention on something it
+                # did not ask for and cannot fix.
+                logger.warning(
+                    "could not keep %s for project %s", url, project_id, exc_info=True
+                )
+
+        return keep
 
     async def turn_tools(session: Session) -> tuple[BaseTool, ...]:
         """Everything this turn adds on top of the registered set.

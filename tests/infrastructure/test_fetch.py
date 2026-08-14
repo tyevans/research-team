@@ -978,3 +978,65 @@ async def test_ten_gathered_covered_fetches_on_a_budget_of_one_hit_the_transport
 
     assert calls == 1
     assert grant.remaining == 0
+
+
+async def test_a_read_page_is_handed_to_keep():
+    """The hook an unattended run stops depending on the model with.
+
+    Asserts the url rather than the page: `keep` is given a key into `pages`,
+    not the page itself, so that `fetch` stays ignorant of `SourceRef` and the
+    corpus. Fails with the `keep` call removed from the success path.
+    """
+    kept: list[str] = []
+
+    async def keep(url: str) -> None:
+        kept.append(url)
+
+    body = "<html><body><p>Real prose here, at length.</p></body></html>"
+    pages = PageMemo(stamp=lambda: "t")
+    tool = build_fetch_tool(client=_body_client(body), pages=pages, keep=keep)
+
+    await _invoke(tool, {"url": "https://example.com/a"})
+
+    assert kept == ["https://example.com/a"]
+
+
+async def test_keep_sees_a_page_the_memo_already_holds():
+    """Ordering, which is the whole of what could be wrong here.
+
+    `keep` reads the page back out of `PageMemo` by url, so a `keep` call
+    placed before `pages.put` would find nothing and save nothing -- while
+    every assertion about `keep` *being called* still passed. This is the test
+    that fails if the two are ever reordered.
+    """
+    seen: list[object] = []
+    body = "<html><body><p>Real prose here, at length.</p></body></html>"
+    pages = PageMemo(stamp=lambda: "t")
+
+    async def keep(url: str) -> None:
+        seen.append(pages.get(url))
+
+    tool = build_fetch_tool(client=_body_client(body), pages=pages, keep=keep)
+
+    await _invoke(tool, {"url": "https://example.com/a"})
+
+    assert seen and seen[0] is not None
+
+
+async def test_a_page_that_did_not_read_is_not_kept():
+    """An unreadable page has nothing worth saving, and saving the failure
+    would put a document in the corpus that no citation could survive."""
+    kept: list[str] = []
+
+    async def keep(url: str) -> None:
+        kept.append(url)
+
+    tool = build_fetch_tool(
+        client=_body_client("<html><body></body></html>"),
+        pages=PageMemo(stamp=lambda: "t"),
+        keep=keep,
+    )
+
+    await _invoke(tool, {"url": "https://example.com/empty"})
+
+    assert kept == []

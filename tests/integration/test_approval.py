@@ -114,17 +114,22 @@ def fetches(monkeypatch) -> Fetches:
         corpus=None,
         pages=None,
         grant=None,
+        keep=None,
     ):
         # Mirrors `build_fetch_tool`'s signature and forwards every argument
         # rather than dropping it -- `grant` especially, since that is the
         # one this task adds and the one a silently-dropped stub would stop
-        # testing.
+        # testing. `keep` is forwarded on the same reasoning: it is only ever
+        # non-None on the granted path this fixture exists to exercise, so a
+        # stub that dropped it would leave the autonomous run's automatic
+        # corpus save untested by exactly the tests that reach it.
         kwargs = {
             "client": recorder.client(),
             "recall": recall,
             "corpus": corpus,
             "pages": pages,
             "grant": grant,
+            "keep": keep,
         }
         if max_chars is not None:
             kwargs["max_chars"] = max_chars

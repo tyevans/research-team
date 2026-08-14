@@ -129,7 +129,7 @@ def test_extraction_thinking_can_be_turned_back_on(monkeypatch):
 
 
 def test_the_extraction_throughput_defaults_are_the_documented_pair(monkeypatch):
-    """8 and 2000 appear in the README, and they were chosen together.
+    """8 and 2000 appear in `docs/configuration.md`, and were chosen together.
 
     Either alone is close to pointless: 8 in flight over 3000-character chunks
     is fewer chunks than slots on most documents, and 2000-character chunks

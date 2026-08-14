@@ -499,6 +499,39 @@ class RedstringKnowledge:
             return False
         return True
 
+    async def store_source(self, source: SourceRef) -> None:
+        """Keep the text, and do not extract it. Seconds, not minutes.
+
+        `ingest` is store-extract-consolidate and runs for minutes; this is its
+        first step alone. It exists because "the source is not lost" and "the
+        graph knows about it" are separable goods, and an autonomous run wants
+        the first for every page it reads while paying for the second only on
+        the pages that turn out to matter.
+
+        The state it leaves behind -- a corpus document with no graph -- is one
+        `_store_document` already treats as ordinary and repairable rather than
+        broken: see its docstring, which chooses exactly this as the failure to
+        leave possible when extraction dies mid-ingest. `reconsolidate`, a
+        later `remember_page`, and `/rebuild` all work against it, and
+        `link_source` can cite it immediately, which is what a topic round
+        actually needs from a page it read.
+
+        It keeps `ingest`'s two refusals rather than relaxing them. Blank ids
+        are refused because the id *is* the identity. The length cap is kept
+        even though nothing here would chunk the text: a document over it can
+        never be extracted later, so storing one would quietly create a corpus
+        entry that no `remember_page` could ever complete.
+        """
+        if not source.source_id.strip():
+            raise KnowledgeError("source_id must not be blank; it identifies the document")
+        if len(source.text) > MAX_DOCUMENT_CHARS:
+            raise KnowledgeError(
+                f"that is {len(source.text)} characters; the limit is "
+                f"{MAX_DOCUMENT_CHARS}. Record it in parts, each with its own "
+                f"source_id."
+            )
+        await self._store_document(source)
+
     async def _store_document(self, source: SourceRef) -> None:
         """Keep the text before extracting it, and only if it is new bytes.
 
