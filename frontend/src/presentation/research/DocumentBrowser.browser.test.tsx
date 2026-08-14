@@ -11,8 +11,8 @@ import { DocumentBrowser } from './DocumentBrowser.tsx'
  *  measurement and so cannot be asked in `DocumentBrowser.test.tsx`.
  *
  * The same shape `FileList.browser.test.tsx` was written for, found by
- * sweeping the rest of the console for it. `.document-row-open` is a
- * `<button>` at `width: 100%` and `.document-list-scroll` has no padding, so
+ * sweeping the rest of the console for it. The row is a `<button>` at
+ * `w-full` and the scroller has no padding, so
  * the row's border box *is* the scroller's padding box horizontally — and the
  * global `:focus-visible` in `tokens.css` draws 2px at `outline-offset: 1px`,
  * three pixels outside it. `overflow` clips at the padding box, so those three
@@ -34,9 +34,20 @@ import { DocumentBrowser } from './DocumentBrowser.tsx'
  * and `getComputedStyle` returns the initial `outline: none` regardless.
  *
  * What breaks these again, said plainly so a future edit is recognisable:
- * removing `.document-row-open:focus-visible` or `.document-list-scroll:
- * focus-visible` from `research.css`, or turning either one's `outline-offset`
- * back to a positive value.
+ * dropping `RING_INWARD` from either the scroller or the row in
+ * `DocumentBrowser.tsx`, or turning its `outline-offset-[-2px]` back to a
+ * positive value.
+ *
+ * **Rewritten for increment C slice 3, and not re-proved red.** The rules moved
+ * from `research.css` to `RING_INWARD` in `DocumentBrowser.tsx` and the two
+ * selectors here moved with them — `[data-document-scroll]` for the scroller
+ * and `role=button` for the rows, because the class names they used to query
+ * are gone. The measurements in the table above are the original ones and were
+ * taken against the stylesheet; the assertions are unchanged. No gate and no
+ * suite was run locally on that slice (a benchmark had the machine), so what is
+ * verified here is that the assertions still name real elements — CI is the
+ * first thing to actually run them. `BACKLOG.md` B54 is the precedent for
+ * recording an unverified claim rather than implying one.
  */
 
 /** Enough rows that the scroller really scrolls. An unclipped list is not the
@@ -96,8 +107,8 @@ const clipBox = (element: HTMLElement) => {
 
 const mount = async () => {
   await render(<Browser />)
-  const scroller = document.querySelector('.document-list-scroll') as HTMLElement
-  const rows = Array.from(document.querySelectorAll<HTMLElement>('.document-row-open'))
+  const scroller = document.querySelector('[data-document-scroll]') as HTMLElement
+  const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-document-row] > button'))
   // The precondition, asserted rather than assumed: with no overflow there is
   // no clip, and every assertion below would pass against the defect.
   expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight)
@@ -142,7 +153,7 @@ it('keeps a row further down the list from losing its sides', async () => {
 
 it('gives the scroller itself a ring it can keep, because it can be focused', async () => {
   // The trap `FileList.browser.test.tsx` documents, met a second time:
-  // `.document-list-scroll` carries no `tabIndex` and reads as an inert
+  // the scroller carries no `tabIndex` and reads as an inert
   // wrapper, and Chromium focuses a scroll container anyway. It is a real tab
   // stop as soon as the corpus is longer than the pane.
   const { scroller } = await mount()
