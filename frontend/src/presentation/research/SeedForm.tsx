@@ -1,4 +1,5 @@
 import { useId } from 'react'
+import clsx from 'clsx'
 
 import type { SeedingRun } from '@domain/research/seeding.ts'
 
@@ -38,23 +39,34 @@ export const SeedForm = ({
 }) => {
   const inputId = useId()
   // Trimmed before the check, not just before the request -- three spaces are
-  // not a subject, the same rule `TopicStatusDialog`'s justification enforces
+  // not a subject, the same rule `TopicManagePane`'s justification enforces
   // for the identical reason.
   const canSubmit = subject.trim().length > 0 && !active
 
   return (
-    <div className="seed-panel">
+    <div className="flex flex-col gap-[8px]">
       <form
-        className="seed-form"
+        className="flex items-center gap-[8px]"
         onSubmit={(event) => {
           event.preventDefault()
           if (canSubmit) onSubmit()
         }}
       >
-        <label htmlFor={inputId}>Subject</label>
+        {/* The label's dressing was a descendant rule (`.seed-form label`) and
+            is written on the element now. That is the only kind of rule this
+            rewrite cannot preserve as-is: a descendant selector dresses
+            whatever is put inside it later, a utility dresses this label. */}
+        <label htmlFor={inputId} className="text-xs text-fg-dim">
+          Subject
+        </label>
+        {/* `input` stays a class: it is the shared field style, declared in
+            `composer.css` for every text field in the console, and it is not
+            this slice's to dissolve. `flex-1` is what `.seed-input` set — the
+            box takes the row's slack so the label and the button keep their
+            content widths. */}
         <input
           id={inputId}
-          className="input seed-input"
+          className="input flex-1"
           value={subject}
           onChange={(event) => onSubjectChange(event.target.value)}
           placeholder="spaced repetition and memory consolidation"
@@ -66,7 +78,7 @@ export const SeedForm = ({
       </form>
 
       {current?.status === 'running' ? (
-        <p className="seed-status" role="status">
+        <p className={STATUS_LINE} role="status">
           {(current.subject ?? askedSubject)
             ? `Naming topics for “${current.subject ?? askedSubject}”…`
             : 'Naming topics…'}
@@ -78,8 +90,25 @@ export const SeedForm = ({
   )
 }
 
+/** What `.seed-status` set. `m-0` because this build imports no preflight and
+ *  a bare `<p>` keeps the user agent's block margins, which is the gap the
+ *  8px column gap is supposed to be. */
+const STATUS_LINE = 'm-0 text-xs text-fg-dim'
+
+/** `text-k-failure` and not `text-fg-dim`: `.seed-failed` overrode the dim
+ *  grey with `--k-failure`, and the failure tone is the only thing telling a
+ *  failed run apart from a finished one at a glance. `--fg-faint` is not an
+ *  option in either place — it fails contrast against every surface (task 45).
+ *
+ * `data-failed` carries the state rather than the colour class doing double
+ * duty: `SeedPanel.test.tsx` used to assert `seed-failed`, and a test that
+ * asserts a dressing class breaks every time the dressing is restyled.
+ */
 const LastRun = ({ last }: { last: SeedingRun }) => (
-  <p className={last.status === 'failed' ? 'seed-status seed-failed' : 'seed-status'}>
+  <p
+    data-failed={last.status === 'failed'}
+    className={clsx(STATUS_LINE, last.status === 'failed' && 'text-k-failure')}
+  >
     {last.status === 'failed'
       ? `The last seed failed${last.detail ? `: ${last.detail}` : ''}`
       : `Last seed opened topics for “${last.subject ?? 'an earlier subject'}”`}

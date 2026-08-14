@@ -22,13 +22,30 @@ import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
  * eventually, and then it can only be rendered where a `QueryClientProvider`
  * and a real container exist.
  */
-export const useTopicQueue = (projectId: ProjectId) => {
+export const useTopicQueue = (
+  projectId: ProjectId,
+  /** Which topic is open, owned by the route.
+   *
+   * The id of the topic being managed, not its detail: the detail is fetched
+   * fresh (below) rather than reused from the list row, because the row's
+   * `TopicView` leaves out the rationale, scope and sub-questions the manage
+   * pane needs and `TopicDetail` is what that pane was built to take.
+   *
+   * It was `useState` here, which is the same defect `useDocuments` records
+   * against itself and for the same reason: `#/p/<id>/topic/<tid>` parsed,
+   * routed to QUEUE, and then nothing read the id — a linkable URL that
+   * rendered the default page. State cannot be linked to, and a topic is the
+   * unit of work a person is asked to look at, so it is the thing most worth
+   * sending to somebody.
+   *
+   * The `null` defaults are a real caller and not a convenience: the queue
+   * outside a routed page has no address to write to, and then opens nothing,
+   * which is honest — a pane that opens and cannot be linked back to is the
+   * state this replaces. */
+  managing: TopicId | null = null,
+  onManage: (topicId: TopicId | null) => void = () => {},
+) => {
   const { topics } = useContainer()
-  // The id of the topic being managed, not its detail: the detail is fetched
-  // fresh (below) rather than reused from the list row, because the row's
-  // `TopicView` leaves out the rationale, scope and sub-questions the dialog
-  // needs and `TopicDetail` is what `TopicStatusDialog` was built to take.
-  const [managing, setManaging] = useState<TopicId | null>(null)
   // Defaults to the whole queue rather than to `attention`: opening a page
   // already filtered would misreport how much work the project holds, and a
   // reader who has not chosen a filter should be looking at everything.
@@ -66,8 +83,8 @@ export const useTopicQueue = (projectId: ProjectId) => {
     query,
     detail,
     managing,
-    onManage: setManaging,
-    onCloseManage: () => setManaging(null),
+    onManage,
+    onCloseManage: () => onManage(null),
     queue: {
       topics: shown,
       counts,
@@ -84,7 +101,7 @@ export const useTopicQueue = (projectId: ProjectId) => {
       stopping: cancelling.isPending,
       onFocusChange: setFocus,
       onSearchChange: setSearch,
-      onManage: setManaging,
+      onManage,
       onStop: () => {
         cancelling.mutate()
       },

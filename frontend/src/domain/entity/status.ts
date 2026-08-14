@@ -1,10 +1,12 @@
 /** How a status is spelled for a person, in one place.
  *
- * The rule "underscores are not shown to people" is currently written three
- * times as `status.replace('_', ' ')` — `TopicList.tsx:321`,
- * `TopicStatusDialog.tsx:156` and `:173` — in two files, and a grep of
- * `frontend/src` finds those three and nothing else. One domain vocabulary
- * rule, three copies.
+ * The rule "underscores are not shown to people" was written three times as
+ * `status.replace('_', ' ')`, in two files: the topic list's row and two
+ * places in the topic manage panel (now `TopicManagePane`, which calls
+ * `statusLabel` twice instead). One domain vocabulary rule, three copies.
+ * Stated in the past tense on purpose — this module is what removed them, so
+ * a grep of `frontend/src` for that spelling finds none of the three today,
+ * and the line numbers this comment used to cite were stale within a slice.
  *
  * All three are also subtly wrong in the same way, which is the argument for
  * moving them rather than merely sharing them: `String.replace` with a string

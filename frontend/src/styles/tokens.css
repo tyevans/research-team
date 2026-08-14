@@ -192,6 +192,19 @@
      legend. All of them are region-local and stay region-local, which is why
      there is no fourth "escape" level.
 
+     **Two of the three names above have changed, and the inventory is now two
+     selectors rather than four.** `workspace.css`'s `.file-view-head` still
+     names the token itself. The graph's three floats no longer do: increment
+     C's slice 3b rewrote them onto utilities and they share
+     `.lay-region-float` in `layout.css`, whose only declaration is this token.
+     That is deliberate rather than incidental. A `z-[var(--z-sticky)]` in a
+     `className` would have satisfied this comment's intent and escaped
+     `scripts/stacking.test.ts` entirely, because that test sweeps
+     `src/styles/*.css` and a utility is generated somewhere it does not read --
+     so the next `z-[9999]` would land with nothing to catch it. Keeping the
+     declaration in a stylesheet keeps it swept. `graph-dressing.browser.test.tsx`
+     asserts all three floats still compute to this token's value.
+
      **The row menu used to be on this list and is not any more**, and the
      reason it was here is the reason it left. It joined `--z-sticky` because
      it was anchored to its own row and the host offered no anchoring -- an
@@ -277,9 +290,12 @@ select {
 /* Fields carry the page's background as well as its text colour.
    `color: inherit` above was only half the job: it gave every field the
    theme's light-grey text and left the browser's own white background
-   underneath. Any field without a class of its own -- `.seed-input` sets only
-   `flex`, and a bare `<input>` sets nothing -- rendered light grey on white
-   and could not be read while being typed into.
+   underneath. Any field without a class of its own -- the seed input carries
+   only `input flex-1`, and a bare `<input>` sets nothing -- rendered light grey
+   on white and could not be read while being typed into. (The example named
+   `.seed-input` until slice 3b deleted `research.css`; the field is the same
+   one and the point is unchanged, because `flex-1` is no more a colour than
+   `flex` was.)
    `composer.css`'s `.input` had already met this for `<select>` and said so in
    a comment; this is the same fact applied where a field does not have to opt
    in. Anything setting its own background still wins on specificity.

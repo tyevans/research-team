@@ -5,7 +5,7 @@ import type { SessionStore } from '@application/session/session-store.ts'
 import type { Course } from '@domain/project/course.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
-import { SourceId, type ProjectId, type SessionId } from '@domain/shared/identifier.ts'
+import { SourceId, TopicId, type ProjectId, type SessionId } from '@domain/shared/identifier.ts'
 
 import { Confirm } from '../common/Confirm.tsx'
 import { EmptyState, Loading } from '../common/primitives.tsx'
@@ -245,6 +245,17 @@ export const ProjectView = ({
   const openFinding = selection?.facet === 'finding' ? selection.id : null
   const openDoc =
     selection?.facet === 'doc' && selection.id !== null ? SourceId(selection.id) : null
+  /** QUEUE's, not MATERIAL's, and the fourth of the four that parsed an id and
+   *  dropped it. `#/p/<id>/topic/<tid>` reached this region and rendered the
+   *  default queue, because `TopicList` took `projectId` alone and the open
+   *  topic was `useState` inside `useTopicQueue` — so a link to a topic was a
+   *  link to the project page, and the reader found the question by hand.
+   *
+   * Branded through `TopicId(...)` exactly as `openDoc` is through
+   * `SourceId(...)`: the route's ids are strings, the repository ports take
+   * brands, and the constructor is where a string becomes one. */
+  const openTopic =
+    selection?.facet === 'topic' && selection.id !== null ? TopicId(selection.id) : null
 
   const materialTab: Facet =
     selection?.facet === 'session' && selection.path !== null
@@ -308,7 +319,28 @@ export const ProjectView = ({
           />
         )}
 
-        <TopicList projectId={projectId} />
+        {/* Replaced rather than pushed, like the stage toggle above it and
+            every MATERIAL selection below: a topic is a **glance**, not a
+            destination. The queue is a list a reader scans — open a question,
+            read what it is blocked on, go back to the list, open the next —
+            and the honest test is what the back button should do after
+            forty of those. Pushed, it walks back out through thirty-nine
+            topics before it leaves the project page; replaced, it leaves.
+            Watching a worker is the one selection on this page that is a
+            destination, and it is the one that passes `false`.
+
+            Closing writes `null` rather than `{ facet: 'topic', id: null }`,
+            which is where this differs from the document list. A doc's close
+            keeps its facet because MATERIAL has *tabs* and dropping the facet
+            would close the Documents tab under the reader; QUEUE is always
+            rendered whatever the facet is, so there is nothing for a bare
+            `topic` selection to hold open and it would only be a URL that
+            means the same as no selection at all. */}
+        <TopicList
+          projectId={projectId}
+          open={openTopic}
+          onOpen={(topicId) => select(topicId === null ? null : { facet: 'topic', id: topicId })}
+        />
       </Pane>
 
       {/* `regions` rather than the default, and it is load-bearing: the body is

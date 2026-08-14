@@ -343,7 +343,7 @@ const RULES = [
   {
     phase: 'C1',
     what: 'the two deleted views left combinators claiming markup that is gone',
-    why: "The §5.1 hazard, and the reason these are patterns over `styles` rather than a note in a report. Every selector here named an ancestor only `CourseView` or `ResearchView` wrote -- `.lay-split[data-split='course'] > .lay-pane`, `.research-rail > [data-pane='topics']`, eleven more -- so the day that markup went they became rules that match nothing, silently, with no test failure and no error. `check-deleted.mjs` already cites `.extraction-failed > .extraction-summary` as this having happened once. They were deleted in the same commit as the views, from `course.css`, `research.css` and `responsive.css`, and this is what stops one being reintroduced by a copy-paste from a stylesheet that still remembers the old shape. **`course.css` and `research.css` themselves are still alive** and are not in this rule: five component families in the first and three in the second are still on screen, which is why neither file left `STYLESHEETS` in this commit.",
+    why: "The §5.1 hazard, and the reason these are patterns over `styles` rather than a note in a report. Every selector here named an ancestor only `CourseView` or `ResearchView` wrote -- `.lay-split[data-split='course'] > .lay-pane`, `.research-rail > [data-pane='topics']`, eleven more -- so the day that markup went they became rules that match nothing, silently, with no test failure and no error. `check-deleted.mjs` already cites `.extraction-failed > .extraction-summary` as this having happened once. They were deleted in the same commit as the views, from `course.css`, `research.css` and `responsive.css`, and this is what stops one being reintroduced by a copy-paste from a stylesheet that still remembers the old shape. **`course.css` and `research.css` themselves are still alive** and are not in this rule: five component families in the first and three in the second are still on screen, which is why neither file left `STYLESHEETS` in this commit. *(Superseded for the second file: slice 3b rewrote all three of those families and `research.css` is deleted. The `.research-rail` and `.research-workbench` patterns here still bind, and now forbid reintroducing them into any stylesheet rather than into that one. `course.css` is still alive and this half stands.)*",
     where: 'styles',
     forbid: [
       /\[data-split='course'\]/,
@@ -364,7 +364,7 @@ const RULES = [
   {
     phase: 'C3',
     what: "MATERIAL's artifact, finding and document shelves are utilities now",
-    why: "The route merge's slice 3, narrowed to the three MATERIAL facets whose markup it actually rewrites. `Artifacts`, `ArtifactList`, `Findings`, `DocumentBrowser` and `DocumentReader` carry their own dressing, and 22 rules left `course.css` with 13 leaving `research.css`. **Neither file dies, and the reason is structural rather than incidental**: what is left in the first is four families that are all QUEUE's (rail, roster, extraction, autonomy) and what is left in the second is the topic list, which is also QUEUE's, plus the graph and the seed form. A MATERIAL-only slice cannot kill either, which is why neither left `STYLESHEETS`. Forbidden rather than merely removed because two of the three carried something a reviewer would not miss: the four artifact chip tones and the five finding edges are `PRESENT_DRESS`/`SEVERITY_EDGE` in the components now, and a re-added `.chip-present` or `.finding-invariant` would win over the utilities outright -- an unlayered rule beats `@layer utilities` -- restoring the split this deletion closed.",
+    why: "The route merge's slice 3, narrowed to the three MATERIAL facets whose markup it actually rewrites. `Artifacts`, `ArtifactList`, `Findings`, `DocumentBrowser` and `DocumentReader` carry their own dressing, and 22 rules left `course.css` with 13 leaving `research.css`. **Neither file dies, and the reason is structural rather than incidental**: what is left in the first is four families that are all QUEUE's (rail, roster, extraction, autonomy) and what is left in the second is the topic list, which is also QUEUE's, plus the graph and the seed form. A MATERIAL-only slice cannot kill either, which is why neither left `STYLESHEETS`. *(Still true of `course.css`. `research.css` died in slice 3b, which was not a MATERIAL-only slice: it took the topic list and the seed form -- QUEUE's -- along with the graph, and those three were the whole of what this paragraph lists as remaining.)* Forbidden rather than merely removed because two of the three carried something a reviewer would not miss: the four artifact chip tones and the five finding edges are `PRESENT_DRESS`/`SEVERITY_EDGE` in the components now, and a re-added `.chip-present` or `.finding-invariant` would win over the utilities outright -- an unlayered rule beats `@layer utilities` -- restoring the split this deletion closed.",
     where: 'styles',
     forbid: [
       /^\.artifacts?\b/m,
@@ -375,6 +375,13 @@ const RULES = [
       /^\.finding-/m,
       /^\.document-/m,
     ],
+  },
+  {
+    phase: 'C3b',
+    what: 'the graph, the topic list and the seed form are utilities, and `research.css` is gone',
+    why: "The other half of the route merge's slice 3, and the first stylesheet to leave `STYLESHEETS` since the array was frozen. All 734 lines of `research.css` belonged to exactly three families -- the topic cluster, the graph, and the seed form -- so rewriting those three left nothing behind and the file was deleted rather than emptied. Forbidden rather than merely removed for the reason C3 gives one rule up, which this slice proved twice over: an unlayered rule beats `@layer utilities`, so a re-added `.topic-list` or `.graph-result` would win outright over the utilities that replaced it. That is not hypothetical here -- slice 3a's inward focus ring was written as a utility against exactly such an unlayered rule and did nothing at all for a whole slice, on every document row, with a green suite. The fix that replaced it is `.lay-ring-inward` in `layout.css`, which is a rule and not a utility for the same reason. One name is deliberately narrower than its family: `.graph-` would also match nothing else today, but `^\\.seed-` and `^\\.sub-question` are spelt as anchored prefixes so a future `.seeded-` or `.sub-questionnaire` is not caught by accident.",
+    where: 'styles',
+    forbid: [/^\.topic-/m, /^\.sub-question/m, /^\.graph-/m, /^\.seed-/m],
   },
 ]
 
@@ -424,7 +431,6 @@ const STYLESHEETS = [
   'index.css',
   'layout.css',
   'markdown.css',
-  'research.css',
   'responsive.css',
   'scrub-bar.css',
   'shell.css',

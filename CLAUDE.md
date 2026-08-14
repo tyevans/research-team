@@ -93,6 +93,33 @@ the current build. The other observation has not been re-taken.
 `frontend/src/styles/border-style-default.browser.test.tsx` exists to settle
 it and has not been run.
 
+**An unlayered rule in `tokens.css` beats any utility, so a utility meant to
+override one is inert — and looks exactly like a utility that worked.** The
+global `:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px }`
+(`tokens.css`, near the end) is written outside any `@layer`. Tailwind emits its
+utilities into `@layer utilities`, and **an unlayered normal declaration beats a
+layered one regardless of specificity** — so `focus-visible:outline-offset-[-2px]`
+at (0,2,0) still loses to a bare `:focus-visible` at (0,1,0). The class is in the
+attribute and the rule is in the bundle; only the computed value disagrees.
+
+This is how the inward focus ring shipped broken. Slice 3a moved three working
+stylesheet rules onto a `RING_INWARD` utility constant, reported the geometry as
+carried across unchanged, and clipped the document row's ring on every row for a
+whole slice; two agents rediscovered it independently a slice later, each by
+measuring. Measured in Chromium at 1440×900: with the constant absent and with
+the constant present, the ring's reach is **byte-identical**.
+
+The fix is a named class in a stylesheet — `.lay-ring-inward` in `layout.css`,
+(0,2,0) against the global's (0,1,0), both unlayered, so the comparison is one
+the cascade will actually make. A trailing `!` also works, and was rejected: it
+leaves every future inward ring one forgotten character from the same silent
+failure, and there is nowhere for the measurement to live.
+
+The general rule outlives the ring: **before overriding anything declared in
+`tokens.css` with a utility, check whether the rule is layered.** If it is not,
+the utility will not win, and no gate will tell you — jsdom returns only what an
+inline style said, so the assertion has to be a browser measurement.
+
 **Do not run two `vitest` processes at once.** Concurrent runs fail
 spuriously, usually with a coverage temp-file error that names nothing about
 the real cause. If a frontend test fails, re-run it alone before investigating

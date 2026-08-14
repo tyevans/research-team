@@ -454,10 +454,12 @@ ul.tree ul > li:last-child::after {
 
    The comment that stood here said `.drawer-body` deliberately has no padding
    because each caller pads its own. That was true and was the problem: three
-   of four callers did it, in three different insets, and the fourth was
-   `TopicStatusDialog`, which had the identical defect this rule was written to
+   of four callers did it, in three different insets, and the fourth was the
+   topic manage panel, which had the identical defect this rule was written to
    fix. One local fix is a fix; the second one is the signal that the default
-   was wrong.
+   was wrong. (That panel is `TopicManagePane` now and is not a `Drawer` at
+   all, so it is no longer one of the four -- the count is the state of the
+   world when the default changed, which is what makes the argument.)
 
    `Confirm` takes the drawer's inset now, which is 12px rather than 14px
    horizontally -- deliberately, because it lines up with `.drawer-head`'s

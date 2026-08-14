@@ -22,11 +22,19 @@ const ROW_HEIGHT = 52
  * `0..340 x 0..200`. `DocumentBrowser.browser.test.tsx` is the measurement and
  * still is; only the spelling moved from a stylesheet to a utility.
  *
- * `outline-offset-[-2px]` in brackets rather than `-outline-offset-2`: the
- * negative-prefix form exists in Tailwind and the arbitrary one cannot be
- * misread, which matters for a value whose sign is the whole point. */
-const RING_INWARD =
-  'focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-[-2px]'
+ * **It was three utilities and it never applied.** This constant shipped as
+ * `focus-visible:outline-2 focus-visible:outline-accent
+ * focus-visible:outline-offset-[-2px]`, and `tokens.css`'s global
+ * `:focus-visible` is *unlayered* -- which beats a declaration in `@layer
+ * utilities` regardless of specificity. So `outline-offset` computed as `1px`
+ * on every row this dressed, the ring stayed three pixels outside the border
+ * box exactly as before the fix, and the browser test below went red the first
+ * time anybody ran it -- which was slice 3b, because 3a's report records that
+ * no suite was run locally and CI would be first. Found there and fixed here.
+ *
+ * `.lay-ring-inward` in `layout.css` is the same declarations somewhere they
+ * can win, and carries the measurement and the argument against `!`. */
+const RING_INWARD = 'lay-ring-inward'
 
 /** Every source this project has stored, virtualized so a corpus of hundreds
  *  of papers costs the same to render as one of ten.

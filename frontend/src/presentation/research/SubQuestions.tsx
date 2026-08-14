@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useId, useState } from 'react'
+import clsx from 'clsx'
 
 import { notify } from '@application/notifications/toast-store.ts'
 import { errorMessage } from '@application/ports/errors.ts'
@@ -10,10 +11,22 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Button } from '../common/primitives.tsx'
 
+/** A label, a field and a button on one wrapping line.
+ *
+ * `.sub-question-resolve` and `.sub-question-add` were one grouped rule and are
+ * one constant, which is the same saving in the same place. **The slice plan
+ * lists `sub-question-resolve` as one of the four names that "have no rule and
+ * never did"; it is wrong about that one.** It is the first selector of the
+ * pair at `research.css:306`, so it was fully dressed, and translating it as
+ * bare would have flattened both rows. Worth saying rather than fixing
+ * silently: the four-item list was built by grepping for `^\.name {`, and a
+ * grouped selector's second-and-later members do not match that shape. */
+const FIELD_ROW = 'mt-[4px] flex flex-wrap items-center gap-[6px] text-xs text-fg-dim'
+
 /** A topic's own breakdown: the sub-questions it has been split into, and the
  *  means to add one or settle one.
  *
- * Lives inside `TopicStatusDialog` rather than the topic list, because a
+ * Lives inside `TopicManagePane` rather than the topic list, because a
  * sub-question is detail a reader only wants once they have already opened a
  * topic to manage it -- the queue row already carries the count.
  */
@@ -71,8 +84,12 @@ export const SubQuestions = ({
   const questionId = useId()
 
   return (
-    <div className="sub-questions">
-      <ul className="sub-question-list">
+    // `border-0` and then one edge, both halves: `border-solid` styles all four
+    // sides at once, and this build imports no preflight, so a directional
+    // width with no zero leaves the other three at the browser's `medium`
+    // (~3px) and draws a box where a rule was written.
+    <div className="border-0 border-t border-solid border-line pt-[12px]">
+      <ul className="m-0 mb-[10px] flex list-none flex-col gap-[8px] p-0">
         {topic.subQuestions.map((sub) => (
           <SubQuestionRow
             key={sub.key}
@@ -83,7 +100,7 @@ export const SubQuestions = ({
         ))}
       </ul>
 
-      <div className="sub-question-add">
+      <div className={FIELD_ROW}>
         <label htmlFor={keyId}>Key</label>
         <input
           id={keyId}
@@ -133,12 +150,21 @@ const SubQuestionRow = ({
   const answerId = useId()
 
   return (
-    <li className={sub.resolved ? 'sub-question sub-question-resolved' : 'sub-question'}>
-      <div className="sub-question-text">{sub.question}</div>
+    <li
+      // The left edge again, and the same two halves. `sub-question-resolved`
+      // dimmed the whole row and is a `text-fg-dim` on the branch instead —
+      // there is nothing here for a descendant selector to reach that the two
+      // children below do not already set for themselves.
+      className={clsx(
+        'border-0 border-l-2 border-solid border-l-line bg-bg-panel-2 px-[8px] py-[6px]',
+        sub.resolved && 'text-fg-dim',
+      )}
+    >
+      <div className="text-sm">{sub.question}</div>
       {sub.resolved ? (
-        <div className="sub-question-answer">{sub.answer}</div>
+        <div className="mt-[3px] text-xs text-fg-dim">{sub.answer}</div>
       ) : (
-        <div className="sub-question-resolve">
+        <div className={FIELD_ROW}>
           <label htmlFor={answerId}>Answer</label>
           <input
             id={answerId}

@@ -31,6 +31,64 @@ const GraphCanvas = lazy(() =>
 // this is how many keystrokes of silence the pane waits for before asking.
 const SEARCH_DEBOUNCE_MS = 300
 
+/** The stage's faint graph-paper field, so an empty stage reads as somewhere a
+ *  graph goes rather than as a panel that failed to load, and a sparse graph
+ *  has something to sit against.
+ *
+ * **An inline style rather than a utility, and the reason is legibility rather
+ * than impossibility.** `bg-[image:…]` would take it: two `linear-gradient`s at
+ * a `color-mix` of the token line colour, with every space written as an
+ * underscore and the pair separated by a comma inside the same bracket. That
+ * string is unreadable, and — unlike the spacing families — `check-tailwind.mjs`
+ * does not cover `bg-`, so a typo in it emits no rule, no warning and no visual
+ * tell on a stage that is *supposed* to be nearly blank. An inline style is the
+ * same declarations in the spelling CSS uses, and it carries no `z-index`, so
+ * it is outside what `scripts/stacking.test.ts` exists to stop.
+ *
+ * Module-level so it is one object rather than one per render; the drawing
+ * above it reheats on identity changes and this sits under the same subtree. */
+const STAGE_FIELD = {
+  backgroundImage: [
+    'linear-gradient(color-mix(in srgb, var(--line-soft) 55%, transparent) 1px, transparent 1px)',
+    'linear-gradient(90deg, color-mix(in srgb, var(--line-soft) 55%, transparent) 1px, transparent 1px)',
+  ].join(', '),
+  backgroundSize: '40px 40px',
+  backgroundPosition: 'center',
+} as const
+
+/** The floating command bar's panels, which are three different elements
+ *  saying the same thing: a bordered, raised card lifted off the canvas — the
+ *  only thing on this page that can scroll underneath a control. */
+const PANEL = 'rounded-md border border-solid border-line bg-bg-panel shadow-1'
+
+/** A search result: a full-width bare button, the same row vocabulary
+ *  `GraphDetail`'s edges use, and inward-ringed for the same measured reason —
+ *  the results panel's padding is 4px against a ring that reaches 3px outward,
+ *  which is slack rather than clearance. See `ROW` in `GraphDetail.tsx`; the
+ *  two are deliberately not shared, because these rows are a baseline-aligned
+ *  name/type pair and those are a stacked two-line label, and folding them into
+ *  one constant with a variant flag would be an abstraction over a coincidence. */
+const RESULT_ROW = [
+  'flex w-full cursor-pointer items-baseline justify-between gap-2',
+  'border-0 border-l-2 border-solid border-l-transparent rounded-md',
+  'bg-transparent px-[8px] py-[5px] text-left text-sm text-inherit [font:inherit]',
+  'hover:bg-bg-hover hover:border-l-accent',
+  'focus-visible:bg-bg-hover focus-visible:border-l-accent',
+  'lay-ring-inward',
+].join(' ')
+
+/** The two capped-graph notices and the "first N matches" line, all three of
+ *  which were `.graph-truncated`.
+ *
+ * The bottom rule is kept on all three even though only the one inside the
+ * results panel has anything below it to be separated from — that is what the
+ * class did, and this rewrite is rule-for-rule rather than a redesign. The two
+ * that float bare over the canvas therefore still draw a hairline under
+ * themselves with no panel behind it; it is odd, it was odd before, and
+ * changing it here would hide a design question inside a migration. */
+const NOTICE =
+  'm-0 border-0 border-b border-solid border-b-line-soft px-[6px] pb-[6px] pt-[4px] text-xs text-fg-dim'
+
 export const GraphPane = ({
   projectId,
   entity,
@@ -193,7 +251,8 @@ export const GraphPane = ({
  * fetch failed (which must *not* say the graph is empty), capped, searching,
  * searched-and-matched-nothing, and a result list over a drawing.
  *
- * Named `GraphBrowser` after `.graph-browser`, the element it owns.
+ * Named `GraphBrowser` after the element it owns: the stage, the floats on it,
+ * and nothing above them.
  */
 export const GraphBrowser = ({
   view,
@@ -243,12 +302,19 @@ export const GraphBrowser = ({
   onRemove: (id: string) => void
 }) => {
   return (
-    <div className="graph-browser">
+    // `relative` is load-bearing rather than decorative: it is the containing
+    // block every float below positions against, and `GraphCanvas`'s
+    // `absolute inset-0` resolves to it too.
+    <div className="relative flex min-h-0 flex-1">
       {/* The canvas is the layer, and the controls sit on top of it rather
           than in a column above it. Stacked, every search pushed the drawing
           down and a long result list pushed it off screen entirely -- the one
-          element that wants the whole box was the one that kept losing it. */}
-      <div className="graph-stage">
+          element that wants the whole box was the one that kept losing it.
+
+          Deliberately *not* `relative`: the canvas positions against the
+          browser box rather than this one, so it fills the whole stage rather
+          than being confined to whatever the centred flex line is tall. */}
+      <div className="flex min-h-0 flex-1 items-center justify-center" style={STAGE_FIELD}>
         {loading && view.nodes.length === 0 ? (
           <Loading what="the knowledge graph" />
         ) : view.nodes.length === 0 ? (
@@ -272,19 +338,34 @@ export const GraphBrowser = ({
         <GraphLegend view={view} />
       </div>
 
-      <div className="graph-command">
-        <div className="graph-controls">
+      {/* Bounded rather than stretched: a bar running the full width of the
+          stage would read as a header and cover the drawing it is meant to sit
+          on. */}
+      <div className="lay-region-float absolute top-3 left-3 flex w-[min(320px,calc(100%_-_20px))] flex-col gap-2">
+        <div className={`flex gap-2 p-2 ${PANEL}`}>
           <input
             type="search"
             role="searchbox"
-            className="input graph-search"
+            className="input min-w-0 flex-1"
             placeholder="Search the graph"
             aria-label="Search the graph"
             value={term}
             onChange={(event) => onTerm(event.target.value)}
           />
+          {/* `maxWidth` inline, and it has to be. The rule this replaces was
+              `select.graph-entity-type` rather than `.graph-entity-type`
+              precisely because the shared field style caps a `<select>` at
+              22rem for the workflow menu, and `select.input` outranks a bare
+              class. A Tailwind `max-w-[40%]` loses that contest twice over --
+              lower specificity *and* `@layer utilities` against an unlayered
+              rule -- so the type menu would render wider than the command bar
+              it sits in, with `shrink-0` refusing to take it back. An inline
+              style is the only spelling that beats an unlayered `select.input`
+              without an `!important` this codebase uses nowhere else. It goes
+              when `.input` does. */}
           <select
-            className="input graph-entity-type"
+            className="input shrink-0"
+            style={{ maxWidth: '40%' }}
             aria-label="Filter by entity type"
             value={entityType}
             onChange={(event) => onEntityType(event.target.value)}
@@ -302,20 +383,27 @@ export const GraphBrowser = ({
               they actually want back after pruning and expanding is
               everything, which is what this restores. */}
           {view.nodes.length > 0 ? (
-            <button type="button" className="btn btn-sm graph-clear" onClick={onReset}>
+            <button type="button" className="btn btn-sm shrink-0" onClick={onReset}>
               Reset view
             </button>
           ) : null}
         </div>
 
-        {error ? <p className="graph-error">{error}</p> : null}
+        {/* Bordered in the failure colour rather than merely coloured text:
+            this floats over a drawing, so it needs its own box to be legible
+            against whatever the simulation put behind it. */}
+        {error ? (
+          <p className="m-0 rounded-md border border-solid border-k-failure bg-bg-panel px-[8px] py-[5px] text-xs text-k-failure">
+            {error}
+          </p>
+        ) : null}
 
         {/* A capped graph draws exactly like a complete one, and is missing
             the edges to what was cut as well as the nodes themselves. Saying
             so is also what points a reader at the search box, which is the
             way through a graph too big to take in whole. */}
         {partial ? (
-          <p className="graph-truncated">
+          <p className={NOTICE}>
             Showing part of a larger graph -- search to find what is not drawn.
           </p>
         ) : null}
@@ -325,11 +413,11 @@ export const GraphBrowser = ({
             can fire even when `partial` is false, since the edge cap and the
             node cap are independent. */}
         {edgesPartial ? (
-          <p className="graph-truncated">Some inferred date relationships are not drawn.</p>
+          <p className={NOTICE}>Some inferred date relationships are not drawn.</p>
         ) : null}
 
         {searching ? (
-          <div className="graph-searching">
+          <div className={`px-[8px] py-2 ${PANEL}`}>
             <Loading what="entities" />
           </div>
         ) : null}
@@ -341,24 +429,45 @@ export const GraphBrowser = ({
             type has actually been asked for: an empty box has nothing to
             report. */}
         {!searching && !error && (term.trim() || entityType) && results.length === 0 ? (
-          <p className="graph-no-results">
+          // Styled like the results panel it stands in for, because that is
+          // what it is: the answer to the same search, in the case where the
+          // answer is none.
+          <p className={`m-0 px-[8px] py-2 text-xs text-fg-dim ${PANEL}`}>
             Nothing matched. Try a shorter term, or widen the type filter.
           </p>
         ) : null}
 
         {results.length > 0 ? (
-          <div className="graph-results-panel">
+          // The list scrolls inside the floating panel instead of growing
+          // down the page, so the number of matches cannot change how much
+          // graph you can see.
+          <div
+            data-result-scroll
+            className={`max-h-[min(340px,calc(100vh_-_260px))] overflow-y-auto p-[4px] ${PANEL}`}
+          >
             {truncated ? (
-              <p className="graph-truncated">
+              <p className={NOTICE}>
                 First {results.length} matches -- narrow the search to see more.
               </p>
             ) : null}
-            <ul className="graph-results" aria-label="Search results">
+            {/* Rows, not wrapped chips: this is a list you read down looking
+                for one name, and chips of varying width made that a scan in two
+                dimensions. */}
+            <ul className="m-0 flex list-none flex-col gap-[1px] p-0" aria-label="Search results">
               {results.map((result) => (
                 <li key={result.id}>
-                  <button type="button" className="graph-result" onClick={() => onPick(result.id)}>
-                    <span className="graph-result-name">{result.name}</span>
-                    <span className="graph-result-type">{result.entityType}</span>
+                  <button
+                    type="button"
+                    data-result-row
+                    className={RESULT_ROW}
+                    onClick={() => onPick(result.id)}
+                  >
+                    <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                      {result.name}
+                    </span>
+                    <span className="shrink-0 font-mono text-xs text-fg-dim">
+                      {result.entityType}
+                    </span>
                   </button>
                 </li>
               ))}

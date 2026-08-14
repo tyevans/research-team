@@ -184,7 +184,12 @@ export const GraphCanvas = memo(function GraphCanvas({
   }, [])
 
   return (
-    <div ref={container} className="graph-canvas">
+    // `absolute inset-0` against `GraphBrowser`'s `relative`, which is what
+    // gives this element a real box for the `ResizeObserver` above to measure.
+    // The canvas keeps reading its palette through `getComputedStyle` on the
+    // document element (see `entity-colors.ts`): a `<canvas>` inherits no class,
+    // so utilities can dress its container and nothing else.
+    <div ref={container} data-graph-canvas className="absolute inset-0">
       {/* Withheld until the container has been measured: handing the library
           no width at all lets it fall back to the window for one frame, which
           is the very layout this is avoiding. */}

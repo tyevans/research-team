@@ -98,6 +98,27 @@ it('disables the one verb for a topic with nothing gathered, and says why', asyn
   expect(onDispatch).not.toHaveBeenCalled()
 })
 
+/** The hook the ring measurement finds the scroller by.
+ *
+ * jsdom can say nothing about the ring itself — no layout, no stylesheet — and
+ * `topic-list-ring.browser.test.tsx` is where the geometry is asserted. What it
+ * *can* do is guard the one thing that would make that file fail as a broken
+ * test rather than as a caught defect: a rename that takes `data-topic-scroll`
+ * off the list leaves the browser test dereferencing `null` and reporting
+ * nothing about rings at all.
+ *
+ * **This fails with the change reverted** — the attribute did not exist before
+ * this slice, because the browser test found the list by `.topic-list`. */
+it('marks the list the queue scrolls, so the ring can be measured against it', async () => {
+  const { container } = render(<Queue />)
+  await screen.findByText('Who funded the study, and did they see it before publication?')
+
+  const list = container.querySelector('[data-topic-scroll]')
+  expect(list).not.toBeNull()
+  expect(list!.tagName).toBe('UL')
+  expect(list!.querySelectorAll('li').length).toBeGreaterThan(0)
+})
+
 /** Props-only, which is the claim the whole split rests on: every test in this
  *  file renders bare, with no container, no `QueryClientProvider` and no
  *  router. If any of them ever needs a wrapper, something in `TopicQueue` has

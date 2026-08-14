@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { ReactElement, ReactNode } from 'react'
+import { useState, type ReactElement, type ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
@@ -9,7 +9,7 @@ import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { TopicRepository } from '@application/ports/repositories.ts'
 import type { Dispatch } from '@domain/research/dispatch.ts'
-import type { TopicView } from '@domain/research/topic.ts'
+import type { TopicDetail, TopicView } from '@domain/research/topic.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { ProjectId, SessionId, TopicId } from '@domain/shared/identifier.ts'
@@ -42,7 +42,7 @@ const emptyBoard = { running: null, queued: [], finished: [] }
 
 /** `TopicList` calls `list`, `dispatchStatus`, and on Manage `read` -- it
  *  never sets a status or touches a sub-question itself, that is
- *  `TopicStatusDialog`'s job once it is open. Those stay stubs that fail
+ *  `TopicManagePane`'s job once it is open. Those stay stubs that fail
  *  loudly if that assumption ever stops holding.
  *
  * `dispatchStatus` defaults to an empty board rather than throwing, because
@@ -60,7 +60,7 @@ const fakeTopics = (
   cancelDispatch: vi.fn(() => {
     throw new Error('cancelDispatch was not stubbed for this test')
   }),
-  // Resolves rather than throwing: opening Manage renders the dialog, which
+  // Resolves rather than throwing: opening Manage renders the pane, which
   // renders `TopicDocuments`, which reads this.
   documents: vi.fn().mockResolvedValue({
     directory: '/topics/00-a-topic',
@@ -150,14 +150,19 @@ const fakeStream = () => {
  *  decoration -- `TopicList` subscribes to the feed, and a harness without
  *  one would be testing a component the application never renders.
  *
- *  `OverlayHost` joined it when `TopicStatusDialog` became a `Drawer`. Nothing
- *  about this file's subject changed; the dialog it opens is an `Overlay` now,
- *  and an `Overlay` with no host renders `null` on purpose, so
- *  `findByRole('dialog')` went from passing to timing out. That is the
- *  contract doing its job rather than a wrinkle in it: the alternative design,
- *  where a hostless layer falls back to `document.body`, would have kept this
- *  green while putting the dialog outside every stacking and `inert`
- *  guarantee the host exists to provide. */
+ *  `OverlayHost` joined it when the manage panel was a `Drawer`, and that
+ *  reason is gone -- `TopicManagePane` is a plain region of this column now
+ *  and renders perfectly well with no host in scope. The host stays because a
+ *  *different* precondition was underneath it all along: `TopicRow` renders
+ *  the Manage verb inside a `Menu` and `TopicQueue` renders `Tooltip`s, both
+ *  of which portal into the host's container and render `null` without one.
+ *  So every test here that opens Manage would still fail without it, and the
+ *  failure would name neither the menu nor the host.
+ *
+ *  That a hostless layer renders `null` rather than falling back to
+ *  `document.body` is the contract doing its job: the fallback design would
+ *  keep this file green while putting the menu outside every stacking and
+ *  `inert` guarantee the host exists to provide. */
 const renderWithContainer = (ui: ReactElement, parts: Partial<AppContainer>) => {
   const container = { stream: fakeStream().stream, ...parts } as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
@@ -196,8 +201,17 @@ it('renders every topic’s question', async () => {
  * own triggers and not its neighbour's — and the reversal is deliberate rather
  * than a casualty. A trigger is prose of unbounded length, and a row whose
  * height depends on its content breaks the contract a virtualizer estimates
- * against: L-F8 records that as a 122px hole at three projects. `TopicDetail`,
- * which the Manage dialog shows, renders them.
+ * against: L-F8 records that as a 122px hole at three projects. `TopicDetail`
+ * renders them.
+ *
+ * **That was already not the whole truth, and the rename is only what made it
+ * worth checking.** It said `TopicDetail` was what "the Manage dialog shows",
+ * and nothing mounts `TopicDetail` at all: `entity/topic/TopicDetail.tsx` is
+ * imported by its own test and by `Topic.stories.tsx`, and by no component.
+ * `TopicManagePane` renders the question, the status form, `SubQuestions` and
+ * `TopicDocuments`, and no triggers. So a reader of this console cannot read a
+ * trigger's wording anywhere today. The component that would fix that exists
+ * and is unwired; the wording is genuinely lost until something renders it.
  *
  * The row still *marks* the topic — `needs-attention` is asserted below — so
  * what is lost is the wording, not the signal. And `matchesTopic` still
@@ -259,40 +273,80 @@ it('says no topics exist yet rather than showing an empty box', async () => {
   expect(await screen.findByText(/no topics/i)).toBeInTheDocument()
 })
 
-it('opens the status dialog for a topic on manage, reading its detail first', async () => {
+/** A page that owns the open topic the way the route does, so a click on
+ *  Manage has somewhere to write. Every other test here renders `TopicList`
+ *  bare, which is the unrouted caller `useTopicQueue` documents: it opens
+ *  nothing, deliberately. */
+const Routed = ({ initial = null }: { initial?: TopicId | null }) => {
+  const [open, setOpen] = useState<TopicId | null>(initial)
+  return <TopicList projectId={PROJECT} open={open} onOpen={setOpen} />
+}
+
+const aDetail = (): TopicDetail => ({
+  topicId: TopicId('22222222-2222-2222-2222-222222222222'),
+  question: 'Who funded the study?',
+  status: 'open',
+  sources: 0,
+  findings: 0,
+  openSubQuestions: 0,
+  triggers: [],
+  needsAttention: false,
+  isBlocked: false,
+  rationale: 'because it matters',
+  scope: 'the whole project',
+  subQuestions: [],
+  sourceIds: [],
+  findingNotes: [],
+  contested: false,
+})
+
+/** The defect this threading exists to fix, and the only test here that
+ *  touches no control at all: `#/p/<id>/topic/<tid>` parsed, routed to QUEUE
+ *  and then rendered the plain queue, because the open topic was `useState`
+ *  inside `useTopicQueue`.
+ *
+ * Reverting `open` to that state fails this, because nothing here ever clicks.
+ * `findByRole` rather than `getByRole` for the reason `DocumentList`'s
+ * equivalent records: the detail is a second request, and a test with no click
+ * in it does not get the microtask flush `user.click` hands out for free. */
+it('opens the topic the route names, with no click at all', async () => {
   const list = vi
     .fn<TopicRepository['list']>()
     .mockResolvedValue([topic({ question: 'Who funded the study?' })])
-  const read = vi.fn<TopicRepository['read']>().mockResolvedValue({
-    topicId: TopicId('22222222-2222-2222-2222-222222222222'),
-    question: 'Who funded the study?',
-    status: 'open',
-    sources: 0,
-    findings: 0,
-    openSubQuestions: 0,
-    triggers: [],
-    needsAttention: false,
-    isBlocked: false,
-    rationale: 'because it matters',
-    scope: 'the whole project',
-    subQuestions: [],
-    sourceIds: [],
-    findingNotes: [],
-    contested: false,
+  const read = vi.fn<TopicRepository['read']>().mockResolvedValue(aDetail())
+
+  renderWithContainer(<Routed initial={TopicId('22222222-2222-2222-2222-222222222222')} />, {
+    topics: { ...fakeTopics(list), read },
   })
+
+  expect(
+    await screen.findByRole('region', { name: /manage who funded the study/i }),
+  ).toBeInTheDocument()
+  expect(read).toHaveBeenCalledWith(PROJECT, TopicId('22222222-2222-2222-2222-222222222222'))
+})
+
+it('opens the status panel for a topic on manage, reading its detail first', async () => {
+  const list = vi
+    .fn<TopicRepository['list']>()
+    .mockResolvedValue([topic({ question: 'Who funded the study?' })])
+  const read = vi.fn<TopicRepository['read']>().mockResolvedValue(aDetail())
 
   const topics = { ...fakeTopics(list), read }
 
-  renderWithContainer(<TopicList projectId={PROJECT} />, { topics })
+  renderWithContainer(<Routed />, { topics })
 
   // Two clicks rather than one since #40: `Manage` is a `MenuItem` behind the
-  // row's `⋯`, which is what freed the 34px the dispatch chip needed. The
-  // dialog it opens is unchanged, which is the point of asserting it below.
+  // row's `⋯`, which is what freed the 34px the dispatch chip needed.
   await userEvent.click(await screen.findByRole('button', { name: /more actions/i }))
   await userEvent.click(await screen.findByRole('menuitem', { name: /manage/i }))
 
   expect(read).toHaveBeenCalledWith(PROJECT, TopicId('22222222-2222-2222-2222-222222222222'))
-  expect(await screen.findByRole('dialog')).toBeInTheDocument()
+  // A region rather than a dialog since the panel stopped being modal: it is
+  // a section of QUEUE with the queue still live above it, so `role=dialog`
+  // would now be a lie about what a screen-reader user can leave.
+  expect(
+    await screen.findByRole('region', { name: /manage who funded the study/i }),
+  ).toBeInTheDocument()
 })
 
 it('narrows the queue to what needs a person, counting blocked and flagged alike', async () => {
