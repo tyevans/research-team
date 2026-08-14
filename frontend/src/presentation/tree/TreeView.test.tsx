@@ -76,7 +76,10 @@ const containerWith = ({
       delete: vi.fn().mockResolvedValue(undefined),
     },
     research: { current: vi.fn().mockResolvedValue(null) },
-    workers: { on: vi.fn().mockResolvedValue({ workers: [], idleSessionIds: [] }) },
+    // `everywhere` rather than `on`: the row's liveness chip reads the global
+    // roster now. Empty means no chip, which is what every test in this file
+    // wants — the chip's own behaviour is `ProjectActivity.test.tsx`'s subject.
+    workers: { everywhere: vi.fn().mockResolvedValue([]) },
     health: {
       summaries: vi.fn().mockResolvedValue({ healthy: true, following: true, failedEvents: 0 }),
       rebuildSummaries: vi.fn(),
@@ -280,24 +283,44 @@ it('falls back to the session list when the tree projection has drifted empty', 
   expect(screen.getByText('1 session')).toBeInTheDocument()
 })
 
+/** **This used to assert `run · round 3`**, fed by a `research.current` fake
+ *  that answered `progress: { status: 'running', rounds: 3 }`.
+ *
+ * The chip reads the global roster now, which carries no round count, so the
+ * label is `run running` — a deliberate degradation recorded in
+ * `ProjectActivity.tsx` and filed in `BACKLOG.md`. Rewritten rather than
+ * deleted: this is the only assertion that the chip reaches the *card*, which
+ * is a different claim from `ProjectActivity.test.tsx`'s about the hook, and a
+ * slot wired to nothing would pass every test in that file.
+ */
 it('marks a project something is running in', async () => {
   renderPage(
     <TreeView />,
     containerWith({
       projects: [project(ATLAS, 'atlas')],
       sessions: [session('a', { projectId: ATLAS })],
-      research: {
-        current: vi.fn().mockResolvedValue({
-          runId: 'r1',
-          projectId: ATLAS,
-          sessionId: SessionId('a'),
-          progress: { status: 'running', rounds: 3 },
-        }),
+      workers: {
+        everywhere: vi.fn().mockResolvedValue([
+          {
+            projectId: ATLAS,
+            workers: [
+              {
+                kind: 'run',
+                ref: 'r1',
+                detail: 'autonomous run',
+                sessionId: SessionId('a'),
+                parent: null,
+                startedAt: null,
+              },
+            ],
+            idleSessionIds: [],
+          },
+        ]),
       },
     }),
   )
 
-  expect(await screen.findByText(/run · round 3/)).toBeInTheDocument()
+  expect(await screen.findByText(/run running/)).toBeInTheDocument()
 })
 
 it('does not degrade a row when its liveness read fails', async () => {

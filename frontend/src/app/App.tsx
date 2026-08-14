@@ -166,8 +166,16 @@ const useTreeRefresh = (active: boolean) => {
       // The landing page's live markers, refreshed off the same frames
       // rather than off a timer of their own. A run's rounds *are* turns on
       // a session, so the frames that move the counts are the frames that
-      // move the marker -- and a poll would be N more requests per interval
-      // on a page that already asks two per drawn row.
+      // move the marker -- and a poll would be a request per interval on a
+      // page a reader leaves open.
+      //
+      // `allWorkers()` is what keeps the markers fresh now that they read the
+      // *global* roster: `queryKeys.runningAgents()` is `['workers','all']`,
+      // under this prefix. That is the landing page owning its own freshness
+      // rather than borrowing the dock's, and it costs no second subscription
+      // because this one is already here and already gated on the route.
+      // `ProjectActivity.test.tsx` fails if that nesting is broken.
+      // `allRuns()` survives for `RunPanel`, not for this page.
       void queryClient.invalidateQueries({ queryKey: queryKeys.allRuns() })
       void queryClient.invalidateQueries({ queryKey: queryKeys.allWorkers() })
     },
