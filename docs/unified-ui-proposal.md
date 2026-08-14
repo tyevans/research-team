@@ -4,6 +4,24 @@ Read out of a clean worktree at `origin/main` = `4a86e89` ("Give this project an
 embedding provider and a vector store, switched off", #88), against the four
 feature indexes written at `5a5a7cf`. Line numbers are pointers, not contracts.
 
+> **Corrected in place on 2026-08-13, against the code at `9fa6c7b`.** This
+> document was written at `4a86e89`; increment C's slices 0, 1 and 2 have since
+> shipped, and several of them decided things this proposal decided differently.
+> Corrections are marked **[corrected]** and always say what the paragraph used
+> to claim, because this document's value is that it records the reasoning —
+> including the reasoning that turned out to be wrong. The evidence is in
+> `docs/reviews/increment-c-audit-{1..5}-*.md`; `docs/increment-c-plan.md` is
+> where the *forward* decisions live, and where the two disagree, the plan and
+> the code win. Nothing was run to take any of this: no gate, no build, no
+> browser suite.
+>
+> The four corrections that change what gets built next:
+> **§4.1's `DROPPED` verdict on L-F17/L-F18 is withdrawn** — acting on it would
+> re-open a regression #176/#177 closed. **§3.3's `topic` facet is QUEUE, not
+> MATERIAL** — decided, not open. **§3.3's default facet is `artifact`, not
+> `workspace`.** **§6.2's "required rather than optional" prerequisite landed as
+> a deletion rather than the narrowing prescribed here.**
+
 **The four indexes are two commits behind and it does not matter.** `git log
 5a5a7cf..HEAD` is `65569e2` (redstring 0.5.0) and `4a86e89` (an embedding
 provider, switched off). Neither touches `frontend/`. Every UI claim the four
@@ -207,8 +225,11 @@ Four routes become three, and the grammar becomes uniform.
 | `#/s/<sid>[/at/<n>][/file/<path>]` | one session's transcript, standalone |
 
 `<facet>` is one of `session`, `topic`, `stage`, `entity`, `doc`, `file`,
-`artifact`, `finding`. That is one grammar covering every linkable state the
-console has today plus several it does not:
+`artifact`, `finding`. **[corrected] There are nine as shipped — `ask` was added
+after this was written (`routes.ts:67-80`), selects nothing, and is a facet
+anyway because it is a place on the project. `App.tsx:138` intercepts it above
+`ProjectView`.** That is one grammar covering every linkable state the console
+has today plus several it does not:
 
 ```
 #/p/x/research/entity/abc   →  #/p/x/entity/abc
@@ -291,7 +312,21 @@ degradations that today explain themselves only in a `title`.
 | `corpus` | stored sources | R-F5.1–F5.7 |
 | `graph` | the knowledge graph | R-F6.1–F6.9 |
 | `findings` | this stage's checks, and any gate's context | C-F46, C-F47 |
-| `topic` | a selected topic's detail | R-F3.10, R-F4.1–F4.4 |
+| ~~`topic`~~ | ~~a selected topic's detail~~ | **withdrawn — see below** |
+
+**[corrected] These names are tab labels, not URL segments.** The segments are
+`file`, `artifact`, `doc`, `entity`, `finding` (`routes.ts:67-80`);
+`MATERIAL_TABS` (`ProjectView.tsx:119-125`) is where the two vocabularies meet.
+Wherever this document and the code differ, the segment wins.
+
+**[corrected] `topic` is a QUEUE facet, and that is decided rather than open.**
+`regionOf('topic')` returns `'queue'` (`ProjectView.tsx:69-73`), asserted by
+`ProjectView.test.tsx:57`. The reason is the one `regionOf` gives and this table
+did not: a stage and a topic are both work items the project owes somebody,
+which is what the regions are named for. This table was conflating a topic
+**row** with a topic **detail**; what §5.2 below actually wants is the topic
+*dialog* demodalised, which is a change to the dialog, opened from a QUEUE row.
+See `increment-c-plan.md` §2.3.
 
 One reader, one selection model, one filter. The renderers do not change:
 `Markdown`, `CodeBlock`, `DiffView`, `LessonDocument` and the four widget
@@ -302,6 +337,15 @@ two places (`FileView.tsx:196`, `TopicDocuments.tsx:170`).
 rather than a taste one. `GraphCanvas` is `React.lazy` over ~60kB of
 `react-force-graph-2d`, deliberately, so a session transcript never pays for it
 (R-F6.1). Defaulting to `graph` would hand that cost to every project page load.
+
+**[corrected] Slice 2 shipped `artifact` as the default, not `workspace`**
+(`DEFAULT_MATERIAL`, `ProjectView.tsx:127`; `MATERIAL_TABS` puts it first at
+`:120`). **The bundle argument above is unaffected and still the reason** — it
+rules out `entity`, and both `artifact` and `file` satisfy it, since
+`FileList`/`FileView` are already in the main chunk. The taste argument for the
+shipped choice: artifacts are what a stage declared it produced and the
+workspace is the tree those declarations are made of, so artifacts-then-workspace
+reads in that order.
 
 ### 3.4 Decisions leave the page
 
@@ -327,11 +371,34 @@ autonomy control on the surface that asks most (S-D19), and the duplication
 between `AutonomyPanel` and `AutonomyAllowAll` (C-F30–F38, C-F41), which already
 share one unparameterised query key precisely so they cannot disagree (C-F38).
 
+**[corrected] Half of this shipped, and it is the half about approvals.**
+`DecisionBar` is mounted in `Console` above `CurrentView` (`App.tsx:112`), on
+every route, with the argument above carried verbatim in the comment at
+`:107-111`. **Autonomy did not move.** Only `AutonomyAllowAll` reached the shell
+(`DecisionBar.tsx:69`) — that is the per-approval button. `AutonomyPanel`, the
+instance-wide policy control this section is arguing about, is a QUEUE card on
+one project's page (`QueueHeader.tsx:123-124`), which is exactly the scope claim
+the paragraph above says placement contradicts. So the third seam did **not**
+close: the two halves are now in two regions of two components, which is the
+same duplication at a longer distance. This is an open owner's decision, not a
+shipped one — either move the panel to the shell or strike the autonomy
+paragraph above; `increment-c-plan.md` §3.3 records it as owed before slice 3.
+
 ### 3.5 The picker gets thinner
 
 `#/` keeps its purpose line, first-run page, search, recency headings,
 virtualizer, drift banner and creation form. It loses the two destination
 buttons (L-F17, L-F18), because there is one destination.
+
+**[corrected] The premise is true of those two buttons and false of the row, and
+acting on it now would re-open a shipped regression.** #177 (`162dff5`)
+re-pointed the two slots rather than deleting them: the row offers **Project** →
+`#/p/<id>` (`ProjectList.tsx:371-379`) and **Ask** → `#/p/<id>/ask`
+(`ProjectList.tsx:387-398`). Ask is *not* a MATERIAL facet — `App.tsx:138`
+intercepts it above `ProjectView` — so a reader who opens the project and clicks
+through the tabs never reaches it. **The overflow slot is the only
+non-typed-URL door to the ask page**, which is the defect #176 and #177 were
+written to repair (`8fe734c`, `162dff5`). See §4.1.
 
 It also stops being where liveness is computed. Today the row's `⟳` chip costs
 two requests per drawn row (L-F13), and the landing design's §8 answer 1 records
@@ -377,8 +444,8 @@ BAR**, **DROPPED**.
 | L-F14 stat line | PICKER | `N files` relabelled "file writes" — L-R7 is a labelling bug, not a fold |
 | L-F15 Resume / New / Open | PICKER | all become anchors; `join` moves to HOLDER as well |
 | L-F16 take-over confirm | PICKER | **wording verbatim** |
-| L-F17 Course button | DROPPED | one destination |
-| L-F18 Research button | DROPPED | one destination |
+| L-F17 Course button | **PICKER, re-pointed** | was `DROPPED — one destination`. Became **Project** → `projectHref(id)` in #177; the `aria-disabled`-without-a-workflow guard is deliberately gone — QUEUE renders `get_course`'s 409 as an empty state |
+| L-F18 Research button | **PICKER, re-pointed** | was `DROPPED — one destination`. Became **Ask** → `projectHref(id, {facet:'ask'})`, and is **not** droppable: `App.tsx:138` intercepts `ask` above `ProjectView`, so this row is the only door |
 | L-F19 overflow → Delete | PICKER | the menu grows and finally earns itself — §8.3 |
 | L-F20 current-session preview | PICKER | unchanged |
 | L-F21 session fold / forest | PICKER + QUEUE | open set goes into the URL, closing the rest of L-R10 |
@@ -402,7 +469,10 @@ proposal does not fix it; §6.1 says what it does instead.
 **L-R2, R3, R5, R6, R9, R10, R11, R12, R13, R14, R15, R16, R17** close as above.
 **L-R4** (controls that 409 with no remedy) closes for the two turn-running
 cases, because HOLDER has the cancel control; the "course button on an unshipped
-preset" case closes because there is no course button.
+preset" case closes because there is no course button. **[corrected] There is
+still a button — it is labelled Project (§4.1). The case closes for a different
+reason: the button no longer guards on the workflow at all, so an unshipped
+preset lands on a project page whose QUEUE region is empty and says why.**
 **L-R7** becomes honest labelling. **L-R8** (`lastActivity` is session *start*)
 needs a server fold and stays open; the row should say so in its `title`, which
 is free.
@@ -427,22 +497,22 @@ time*: both need server folds; flagged, not proposed.
 | R-F0.1 four entry points | PICKER | collapse to one |
 | R-F0.2 the `Course` link out | DROPPED | nowhere to go |
 | R-F0.3 URL selection, `replace: true` | — | **kept with its reasoning**: browsing a graph grows it, so back cannot un-draw |
-| R-F1.1 rail folding | HOLDER/MATERIAL panes | replaced by `use-panes.ts`; stored group is a break (§5.3) |
+| R-F1.1 rail folding | HOLDER/MATERIAL panes | replaced by `Split`/`Pane` (not `use-panes.ts` — §6.5); stored group is a break (§5.3). **Verified kept:** Radix unmounts the closed tab panel (`Tabs.tsx:96`), which was the specific reason `RailPane` unmounted rather than hid, so `DocumentList`'s virtualizer still never measures a zero-height scroller |
 | R-F2.1 seed topics | QUEUE header | gains a `max_topics` control (R-§9.6) |
-| R-F2.2 `SeedingRun.reply` | QUEUE | **surfaced** — the model's account of what it did |
+| R-F2.2 `SeedingRun.reply` | QUEUE | **still unrendered** — `domain/research/seeding.ts:18` carries it and no component reads it. Slice 1 moved `SeedPanel` without taking it, so this cheap unlock is counted here and unbuilt |
 | R-F3.1 ranked queue | QUEUE | one row source of five |
 | R-F3.2 filter | QUEUE | filters all row kinds |
 | R-F3.3 focus slices | QUEUE | `Needs you` widens to gates and approvals |
 | R-F3.4 dispatch | QUEUE | the one disabled control and its reason kept exactly |
 | R-F3.5 dispatch chips | QUEUE | finished chips still kept, not cleared |
 | R-F3.6 dispatch bar + Stop | QUEUE header | now reports `{cancelled: N}` (R-§9.7) |
-| R-F3.7 Manage dialog | MATERIAL `topic` | **dropped as a dialog**; the dead-button-on-a-slow-read state disappears with it |
+| R-F3.7 Manage dialog | **QUEUE row + dialog** | was `MATERIAL topic — dropped as a dialog`. `topic` is QUEUE (§3.3), and the dialog is still a modal (`TopicList.tsx:42`); what is wanted is demodalising it in place, opened from the row |
 | R-F3.8 live refresh | QUEUE | unchanged; the un-addressed topic frame stays a known cost |
 | R-F3.9 state model | QUEUE | unchanged |
-| R-F3.10 unrendered detail | MATERIAL `topic` | `rationale`, `scope`, `sourceIds`, `findingNotes`, `contested` all rendered — the single largest unlock in the research report |
-| R-F4.1 status change | MATERIAL `topic` | mandatory justification kept |
+| R-F3.10 unrendered detail | QUEUE topic detail | `rationale`, `scope`, `sourceIds`, `findingNotes`, `contested` all rendered — the single largest unlock in the research report |
+| R-F4.1 status change | QUEUE topic detail | mandatory justification kept |
 | R-F4.2 dialog keyboard contract | — | partially lost; §5.2 prices it |
-| R-F4.3 sub-questions | MATERIAL `topic` | unchanged, including the hand-invented `key` |
+| R-F4.3 sub-questions | QUEUE topic detail | unchanged, including the hand-invented `key` |
 | R-F4.4 topic documents | MATERIAL `doc` | merged with the corpus facet's reader, closing R-§8.5 |
 | R-F5.1 corpus list | MATERIAL `corpus` | virtualizer kept |
 | R-F5.2 filter | MATERIAL | shared across facets |
@@ -481,7 +551,7 @@ the UI should at least link the two topics, which needs no new command.
 
 | Id | Goes to | Note |
 |---|---|---|
-| C-F1, C-F2 | project page header, QUEUE header | `position === null` sentence kept |
+| C-F1, C-F2 | project page header, QUEUE header | **neither arrived — regression.** `preset.name` is read only by `NewProjectForm.tsx:122` now, so a reader cannot see which workflow the project runs; `course.position` is read nowhere in `presentation/`, taking with it the `position === null` sentence this row says was kept — the only surface that told a reader their stage is not part of the installed preset |
 | C-F3 Research link | DROPPED | |
 | C-F4 Open holding session | DROPPED as a link | HOLDER *is* the holding session |
 | C-F5–F9 worker roster | SHELL dock + QUEUE | the 2000ms poll dies; C-D6's two rosters become one. Nesting (C-F7) survives |
@@ -491,7 +561,7 @@ the UI should at least link the two topics, which needs no new command.
 | C-F39–F45 worker drawer | dissolved, partially kept | HOLDER replaces it for this project; the drawer survives for the dock's *foreign-project* rows, which have nowhere else to go. §5.2 |
 | C-F46, C-F47 findings | MATERIAL `findings` **and** DECISION BAR | the same renderer serves both — the highest-leverage reuse in this proposal. C-D7's vanishing-when-empty fixed |
 | C-F48–F55 stage rail | QUEUE | C-F51's one-at-a-time becomes many (C-P9); C-F54's findings link lands in MATERIAL |
-| C-F56–F62 artifacts | MATERIAL `artifacts` | four states (C-F57) and provenance chips (C-F61) unchanged; gains facets (C-P7); C-F62's degradation gains a `Join` button |
+| C-F56–F62 artifacts | MATERIAL `artifacts` | four states (C-F57) and provenance chips (C-F61) unchanged; gains facets (C-P7); C-F62's degradation gains a `Join` button. **C-F56's `N of M written` count is gone** — a `Tabs` label cannot carry what a `Pane` header could, which is the honest reason and an argument in the §6 open question about `Tabs` |
 | C-F63 live refresh | SHELL | must stop invalidating `queryKeys.projects()` wholesale (C-D9) — §6.2 |
 | C-F64–C-F66 file viewer, lessons, source reader | MATERIAL | renderers unchanged |
 
@@ -608,7 +678,18 @@ conversation pane) closes with the timeline merge, deferred.
 
 ### 4.5 The count
 
-Nothing is unplaced. Explicitly dropped, with reasons above: L-F17, L-F18, the
+**[corrected] Four things are unplaced — placed in this document and absent from
+the page.** C-F1 (the preset's name), C-F2 (the position subtitle, including the
+`position === null` sentence §4.3 explicitly says is kept), C-F56's artifact
+count, and R-F2.2 (`SeedingRun.reply`, marked *surfaced* and still unrendered).
+They are itemised in `increment-c-plan.md` §3.3b, which is where a fix would be
+scheduled. Recorded here because "nothing is unplaced" is the sentence a reader
+would otherwise trust.
+
+Also no longer dropped: **L-F17 and L-F18 were re-pointed rather than deleted**
+(§4.1), and **R-F3.7 is not a MATERIAL facet** (§3.3).
+
+As originally written: nothing is unplaced. Explicitly dropped, with reasons above: L-F17, L-F18, the
 duplicate research entry points in R-F0.1, R-F0.2, R-F3.7-as-a-dialog, C-F3,
 C-F4, bulk operations, archive, session download/export, raw event payloads, and
 the stale pre-project-sessions copy. Explicitly left impossible because no
@@ -626,6 +707,14 @@ delete or unresolve a sub-question, go back a stage.
 land on* changes: a `course` link opens the project page with the current stage
 selected, not a page whose entire content is stages.
 
+**[corrected] It does not map them, deliberately, and it did not even when this
+was written.** `course` and `research` are not in `FACETS`, so `parseSelection`
+returns `null` and `parseRoute` returns `home` (`routes.ts:130-133`), asserted at
+`routes.test.ts:133`. Both URLs have landed on the picker since `cebc89a`
+(#127). `increment-c-plan.md` §1 caught this and its correction stands: the old
+URLs were *already* broken, so the merge does not break them further and the
+"links survive" clause here was never true.
+
 **What it buys:** one grammar, and three things that are not linkable today
 becoming linkable (a topic, an artifact, a stage). §3.1.
 
@@ -635,7 +724,12 @@ document you send someone.
 
 ### 5.2 Behaviour
 
-**The topic dialog stops being a modal.** R-F4.2 is a well-built focus trap that
+**The topic dialog stops being a modal.** **[corrected] Still wanted, but not by
+becoming a MATERIAL facet — `topic` is QUEUE (§3.3), and the dialog is still a
+modal, now mounted inside QUEUE (`TopicList.tsx:42`, `ProjectView.tsx:283`). It
+moved onto the merged page unchanged rather than dissolving into it. What is owed
+is demodalising it in place, opened from a QUEUE row; the mandatory-justification
+form stays a `Confirm` inside it.** R-F4.2 is a well-built focus trap that
 re-queries `FOCUSABLE_SELECTOR` on every keypress because adding a sub-question
 grows the dialog. A pane cannot make a modal's guarantee. What it buys is that
 `Manage` stops being a button with no feedback until a request lands (R-F3.7),
@@ -723,10 +817,36 @@ once the dock has ever been opened, plus **two per drawn row** —
 `/api/projects/{id}/auto-research` and `/api/projects/{id}/workers`. At `D = 8`
 that is **21 requests**.
 
+**[corrected] Three ways this arithmetic is wrong, two of them making today's
+cost larger and one making the saving bigger.** (1) "Drawn" is wider than
+"visible": `ProjectRows.tsx:112` passes `overscan={4}` and the virtualized array
+interleaves recency headings with rows, so 8 visible rows can mean ~16 mounted
+and ~32 per-row requests. `D = 8 → 21` is a floor, not a figure. (2) The `2N` is
+re-paid on **every debounced log burst**, not once per load: `useTreeRefresh`
+invalidates the `allWorkers()` and `allRuns()` *prefixes* (`App.tsx:172-173`) and
+the per-row keys sit under them (`keys.ts:29-30, 38-39`). While anything is
+running that is `2N` every 400ms window, forever, on a page left open — the
+strongest argument for §3.5 and one neither document made. (3) `/api/workers` is
+**not** gated on "once the dock has ever been opened": `use-running-agents.ts:58-62`
+runs the roster query unconditionally and `AgentWidget` is in the shell on every
+route (`App.tsx:94`); only the project-*names* read is `enabled: expanded`. So the
+five fixed requests are five in both worlds and re-sourcing the chip adds **zero**
+requests rather than trading `2N` for one.
+
 Proposed: the same five, and **zero per row**, because every worker kind the
 chip reports is already in the single `GET /api/workers` roster the dock
 fetches, which "folds only projects its supervisors named" (`app.py:1239`).
 **5 requests.**
+
+**[corrected] Verified, and by construction** — `WorkerRoster.everywhere()` is
+literally the same fold as the per-project route (`workers.py:420`), so the two
+responses are identical in shape. **But the roster does not carry what the chip's
+first branch draws.** Its `run` worker has `detail="autonomous run"` and
+`started_at=None` (`workers.py:296-303`) — no rounds, no start time — so
+`run · round N` (`ProjectActivity.tsx:50-54`) degrades to `run running`. That is
+a product regression hidden inside a cost saving. `increment-c-plan.md` §2.4
+records the three honest answers and recommends accepting it, with widening
+`Worker` filed as a follow-up.
 
 Two caveats, both real. `/api/workers` 404s when the roster is not wired, where
 `/auto-research` today distinguishes "disabled" from "nothing running" by
@@ -743,6 +863,14 @@ pressing on the project page, which is open for longer.
 
 ### 6.2 Requests and re-renders, on the project page
 
+**[corrected] The "about 11" below is unverified and is no longer derivable from
+this list.** Slices 0–2 changed the page's composition substantially, and a count
+taken by reading imports will disagree with one taken from the network panel
+because react-query dedupes shared keys (`queryKeys.projects()` has three callers
+and is one request). The honest form is "the union of what the two pages cost,
+minus what they shared"; the number wants a `npm run dev` and a Network panel,
+and nobody has taken it.
+
 First paint costs the union of what the course and research pages cost today:
 `/course`, `/workers`, `/extraction`, `/auto-research`, `/autonomy`, `/topics`,
 `/sources`, `/graph`, `/topics/seed`, `/dispatch` — about **11**, against 6 and
@@ -750,7 +878,14 @@ First paint costs the union of what the course and research pages cost today:
 plus a second `/api/projects`. So: **more per project visit, less per session of
 work**, and I would not claim more than that.
 
-Two polls die. `Workers.tsx` polls every 2000ms and `RunPanel` polls every
+**[corrected] One poll dies and one has not, and the one that has not moved onto
+the page this section calls "a page you leave open".** `Workers.tsx:9, 36` still
+sets an unconditional 2000ms `refetchInterval` — not gated on liveness the way
+`RunPanel`'s is (`RunPanel.tsx:55`) — and #170 carried it onto the merged page via
+`QueueHeader.tsx:6-7`. Replacing it with a `useFrameRefresh` on
+`queryKeys.workers(projectId)` is cheap, unowned, and in no slice.
+
+As originally written: two polls die. `Workers.tsx` polls every 2000ms and `RunPanel` polls every
 2000ms while a run is live (C-F5, C-F28). The roster's poll is replaced by the
 dock's frame-driven refresh, which already exists. The run's poll **stays**,
 because a run's counters are folded from its own aggregate and are not on the
@@ -763,10 +898,31 @@ server-side, per frame. That is survivable on a page you visit; it is not
 survivable on a page you leave open. It must become a single-row invalidation
 before this merge, and that is a prerequisite, not a follow-up.
 
+**[corrected] It landed in `980ebfd` (#170), and the prescription above was
+wrong: the invalidation was *removed*, not narrowed.** `use-course.ts:82-101`
+states why in the code — a single-row invalidation is not expressible against a
+listing that answers as one response under one cache entry, so it would need a
+per-project route, which is backend work. What the removal costs is stated there
+too: nothing now refreshes the picker's workflow and stage columns while somebody
+else advances a stage. The answer is a subscription on the *picker*, not one on
+the project page — which makes §4.1's "L-F9 gains `queryKeys.projects()` on
+`project` frames, closing L-R6" load-bearing rather than a nicety. It is the only
+thing that replaces what #170 removed.
+
 ### 6.3 The one backend change
 
 **`GET /api/capabilities`** — a static map of what this build wired, answered
 from the same `None`-means-unwired parameters `create_app` already takes.
+
+**[corrected] The inventory is missing the ask route, which is the one #177 just
+put a button on.** `asking is not configured` is a 503 at `app.py:1451` and
+`:1523`; the route landed in `e212efb`, after this document. Because #177 gave
+**every project row** a button to the ask page, a build with `ask=None` now opens
+a page that draws fine and fails only *after* the reader types and submits a
+question (`AskPage.tsx:47-50` renders it in a generic `role="alert"` at the
+bottom of the thread). That is this section's own argument with a better example
+than any it lists. Also missing from both documents: `app.py:1858` (approvals not
+wired) and `:1886` (the autonomy policy not wired).
 
 It replaces: seven routes whose 503 reads as a server fault rather than a build
 without the feature (R-§7.1); a regex over a 404 message as the only way to tell
@@ -805,7 +961,23 @@ is the one that must not be.
 
 ### 6.5 Bundle and design language
 
-The bundle budget is `app-` 57 and `total` 512 (`landing-page.md` §8), and
+**[corrected] Three things in this section are stale.** The budget is `app-`
+**80** and `total` 512, with a separate `ui-` 48 (`check-size.mjs`), and the
+raise carries its own reasoning in that file. `panes.css` **does not exist** —
+`check-deleted.mjs:113-127` records the rename, "`panes.css` is `scrub-bar.css`
+now and holds no pane rule"; the debt it names survives at `scrub-bar.css:16-17,
+32, 53` (`gap: 12px; padding: 7px 14px`, and two `gap: 7px`), while the `34px` is
+genuinely paid — it is `--rail-w` (`tokens.css:147`) and the literal is forbidden
+by `check-deleted.mjs:72`. And `use-panes.ts` was never "promoted to the whole
+app": it was replaced by `Split` + `use-split-panes.ts`, with `usePanes`
+forbidden under `presentation/session` (`check-deleted.mjs:46`). The two
+remaining ad-hoc values die with the scrub bar whenever slice 2 rebuilds it, and
+nothing schedules them separately. **The load-bearing claim in this section is
+VERIFIED and unchanged:** `graph.js` measures 60.9 kB gzipped on disk against a
+74 kB budget, with `GraphCanvas.js` a separate 1.3 kB wrapper, so a reader who
+came for a transcript still does not pay for the force graph.
+
+As originally written: the bundle budget is `app-` 57 and `total` 512 (`landing-page.md` §8), and
 `npm run verify` fails on it — one of the two checks that only exist in the
 chain. A merged page grows `app-`. `GraphCanvas` stays lazy and the default
 facet is `workspace` (§3.3), so the ~60kB force-graph chunk is still not paid by
