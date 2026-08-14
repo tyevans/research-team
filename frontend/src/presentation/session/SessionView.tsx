@@ -1,16 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useCallback } from 'react'
 
-import { notify } from '@application/notifications/toast-store.ts'
-import { errorMessage } from '@application/ports/errors.ts'
-import { queryKeys } from '@application/queries/keys.ts'
-import { currentView, type SessionStore } from '@application/session/session-store.ts'
-import { useContainer } from '@app/container-context.tsx'
+import type { SessionStore } from '@application/session/session-store.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
-import { compactedThrough } from '@domain/session/session.ts'
-import { findFile } from '@domain/workspace/workspace-file.ts'
-import type { EventIndex } from '@domain/session/event-index.ts'
-import { shortId, type SessionId } from '@domain/shared/identifier.ts'
+import type { SessionId } from '@domain/shared/identifier.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
 
 import { Pane } from '../layout/Pane.tsx'
@@ -18,19 +10,37 @@ import { Split } from '../layout/Split.tsx'
 
 import { Confirm } from '../common/Confirm.tsx'
 import { ErrorBox } from '../common/primitives.tsx'
-import { plural } from '../formatting/format.ts'
-import { sessionHref, homeHref } from '../routing/routes.ts'
-import { navigate } from '../routing/use-route.ts'
-import { ActivityFeed } from './ActivityFeed.tsx'
-import { Composer } from './Composer.tsx'
-import { Conversation } from './Conversation.tsx'
-import { FileList } from './FileList.tsx'
-import { FileView } from './FileView.tsx'
+import { sessionHref } from '../routing/routes.ts'
+import {
+  ComposerPanel,
+  ConversationPanel,
+  conversationMeta,
+  TimelineFeed,
+  TimelinePanel,
+  timelineMeta,
+  WorkspacePanel,
+  workspaceMeta,
+} from './panels.tsx'
 import { ScrubBar } from './ScrubBar.tsx'
-import { Timeline } from './Timeline.tsx'
 import { SESSION_TRACKS, useSessionPanes } from './use-session-panes.ts'
-import { useSessionStream } from './use-session-stream.ts'
+import { useSessionScreen } from './use-session-screen.ts'
 
+/** One session, read on its own: three panes and nothing else on the page.
+ *
+ * **This keeps its `Split`, and the project page no longer does.** A transcript
+ * read at `#/s/<id>` is still three peer columns whose widths a reader trades
+ * against each other, which is exactly what `Split` is; `routes.ts:29-34`
+ * argues that route stays top-level and this is what it stays as. What moved out
+ * is everything that was not the arrangement — `useSessionScreen` holds the
+ * effects and the callbacks, `panels.tsx` holds the contents — because HOLDER
+ * needs both of those in a shape with no `Split` in it.
+ *
+ * Two renderings of one session with different layout ownership is a real
+ * complexity cost and the plan's §3.3 says so plainly. The alternative was a
+ * `Split` inside a `Pane`, which slice 0 shipped and this slice removes: it puts
+ * a pane header inside a pane header, and the reader pays for a nesting that
+ * exists only because two files could not share a hook.
+ */
 export const SessionView = ({
   store,
   sessionId,
@@ -38,116 +48,26 @@ export const SessionView = ({
   path: openPath,
 }: {
   /** Owned by the shell, which needs the same session's head for the
-   *  breadcrumb. `open()` resets it wholesale, so switching sessions through it
-   *  leaves nothing of the previous one behind. */
+   *  breadcrumb. */
   store: SessionStore
   sessionId: SessionId
   at: ScrubPoint
-  /** The open file, read from the route. Not mirrored into state: the address
-   *  bar owns it, so a scrub cannot silently drop it and a link always
-   *  reproduces the screen. */
+  /** The open file, read from the route. */
   path: FilePath | null
 }) => {
-  const container = useContainer()
-  const queryClient = useQueryClient()
-  const state = store()
   const panes = useSessionPanes()
 
-  useEffect(() => {
-    void store.getState().open(sessionId, at)
-    return () => store.getState().close()
-    // `at` is deliberately not a dependency: opening is per session, and a
-    // scrub within one is handled below without refetching the log.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, store])
-
-  // A hand-edited hash or the browser's back button changes the position
-  // without remounting, and the fold has to follow.
-  useEffect(() => {
-    if (!ScrubPoint.equals(store.getState().scrub, at)) void store.getState().scrubTo(at)
-  }, [at, store])
-
-  useSessionStream(store)
-
-  // Expired highlights are swept on a timer so a flash does not linger until
-  // some unrelated render happens to clear it.
-  useEffect(() => {
-    if (state.fresh.size === 0) return
-    const timer = setTimeout(() => store.getState().sweepFresh(), 1_600)
-    return () => clearTimeout(timer)
-  }, [state.fresh, store])
-
-  // Both of these rewrite the address bar rather than component state, and both
-  // replace rather than push: dragging through forty events, or clicking down a
-  // file list, should not bury the page you arrived from under forty entries.
-  const selectEvent = useCallback(
-    (point: ScrubPoint) => {
-      navigate(sessionHref(sessionId, point, openPath), { replace: true })
-    },
-    [openPath, sessionId],
+  // Memoised because `useSessionScreen` lists it as a dependency of the two
+  // navigation callbacks, and one of those is a `document` listener's
+  // dependency in turn: a fresh function every render would re-subscribe the
+  // Escape handler on every render rather than on every file change.
+  const href = useCallback(
+    (point: ScrubPoint, path: FilePath | null) => sessionHref(sessionId, point, path),
+    [sessionId],
   )
 
-  const openFile = useCallback(
-    (path: FilePath) => {
-      navigate(sessionHref(sessionId, state.scrub, path), { replace: true })
-    },
-    [sessionId, state.scrub],
-  )
-
-  /** Global "back to live". The timeline handles Escape itself and stops the
-   *  event, so a keypress with it focused never folds twice.
-   *
-   *  `selectEvent` is a real dependency, and used to be suppressed as one. It
-   *  closes over the open file, so the listener registered on the first render
-   *  kept navigating with whatever file was open then — pressing Escape after
-   *  opening a file dropped it, which is exactly the case the path is in the
-   *  URL to survive. Re-subscribing costs one listener swap. */
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      if (!ScrubPoint.isHistorical(store.getState().scrub)) return
-      if (document.activeElement instanceof HTMLTextAreaElement) return
-      selectEvent(ScrubPoint.head())
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [selectEvent, store])
-
-  /** Whether the end-session confirmation is up. Boolean rather than
-   *  `ProjectList`'s discriminated union because there is one question here,
-   *  not two.
-   *
-   *  Declared up here with the other hooks rather than beside the JSX that
-   *  reads it: there is an early return for `state.error` below, and a
-   *  `useState` after it is a conditional hook. */
-  const [endPending, setEndPending] = useState(false)
-
-  const forkAt = (index: EventIndex) => {
-    void store
-      .getState()
-      .fork(index)
-      .then((forked) => {
-        if (forked) {
-          void queryClient.invalidateQueries({ queryKey: queryKeys.tree() })
-          navigate(sessionHref(forked))
-        }
-      })
-  }
-
-  const endSession = () => {
-    void container.sessions
-      .release(sessionId)
-      .then((released) => {
-        if (!released) {
-          notify('This session is not in a project.', 'bad')
-          return
-        }
-        notify(`Session ended. ${shortId(state.head?.projectId)} is free.`, 'good')
-        void queryClient.invalidateQueries({ queryKey: queryKeys.projects() })
-        navigate(homeHref())
-      })
-      .catch((error: unknown) => notify(`Could not end session: ${errorMessage(error)}`, 'bad'))
-  }
+  const screen = useSessionScreen({ store, sessionId, at, path: openPath, href })
+  const { state } = screen
 
   if (state.error) {
     return (
@@ -161,12 +81,6 @@ export const SessionView = ({
     )
   }
 
-  const view = currentView(state)
-  const historicalAt = ScrubPoint.toNullable(state.scrub)
-  const files = view?.files ?? []
-  const messages = view?.messages ?? []
-  const compacted = compactedThrough(view?.compactedThrough, messages.length)
-
   return (
     <section className="view view-session">
       <ScrubBar
@@ -174,11 +88,11 @@ export const SessionView = ({
         log={state.log}
         scrub={state.scrub}
         loading={state.loadingSnapshot}
-        onSelect={selectEvent}
+        onSelect={screen.selectEvent}
         onFork={() => {
-          if (state.scrub.kind === 'historical') forkAt(state.scrub.at)
+          if (state.scrub.kind === 'historical') screen.forkAt(state.scrub.at)
         }}
-        onEndSession={() => setEndPending(true)}
+        onEndSession={() => screen.setEndPending(true)}
       />
 
       {/* The last `window.confirm` in the console, S-D1, and the one place a
@@ -189,7 +103,7 @@ export const SessionView = ({
           the part that matters, because "end this session" sounds
           destructive and these sentences are what say it is not. Only the box
           changed. */}
-      {endPending ? (
+      {screen.endPending ? (
         <Confirm
           heading="End this session and hand its files back to the project?"
           lines={[
@@ -197,10 +111,10 @@ export const SessionView = ({
             "The project becomes free, and the next session in it starts from this one's files.",
           ]}
           confirmLabel="End the session"
-          onCancel={() => setEndPending(false)}
+          onCancel={() => screen.setEndPending(false)}
           onConfirm={() => {
-            setEndPending(false)
-            endSession()
+            screen.setEndPending(false)
+            screen.endSession()
           }}
         />
       ) : null}
@@ -216,77 +130,27 @@ export const SessionView = ({
         <Pane
           id="timeline"
           label="Event log"
-          meta={state.log.length > 0 ? plural(state.log.length, 'event') : undefined}
-          footer={<ActivityFeed store={store} />}
+          meta={timelineMeta(state.log.length)}
+          footer={<TimelineFeed store={store} />}
         >
-          <Timeline
-            log={state.log}
-            scrub={state.scrub}
-            fresh={state.fresh}
-            discarded={state.discarded}
-            onSelect={selectEvent}
-            onFork={forkAt}
-          />
+          <TimelinePanel screen={screen} />
         </Pane>
 
         <Pane
           id="workspace"
           label="Workspace"
-          meta={historicalAt !== null ? `@ event ${historicalAt}` : 'head'}
+          meta={workspaceMeta(screen.historicalAt)}
           // The file list and the file viewer scroll independently, so the
           // body must be a column that does not scroll around them.
           scroll="regions"
         >
-          {state.snapshotError ? (
-            <ErrorBox
-              heading={`Could not fold to event ${historicalAt}`}
-              message={state.snapshotError}
-              onRetry={() => void store.getState().scrubTo(state.scrub)}
-            />
-          ) : (
-            <>
-              <div className="files">
-                <FileList
-                  files={files}
-                  open={openPath}
-                  historicalAt={historicalAt}
-                  onOpen={openFile}
-                  onReopen={() => {
-                    if (openPath) {
-                      void queryClient.invalidateQueries({
-                        queryKey: queryKeys.file(sessionId, openPath, state.scrub),
-                      })
-                    }
-                  }}
-                />
-              </div>
-              <div className="file-view">
-                {/* Keep the open file honest: if it does not exist at this
-                    point, say so rather than showing another point's bytes. */}
-                {openPath && files.length > 0 && !findFile(files, openPath) ? (
-                  <MissingHere path={openPath} at={historicalAt} />
-                ) : (
-                  <FileView sessionId={sessionId} path={openPath} scrub={state.scrub} />
-                )}
-              </div>
-            </>
-          )}
+          <WorkspacePanel screen={screen} sessionId={sessionId} openPath={openPath} />
         </Pane>
 
         <Pane
           id="conversation"
           label="Conversation"
-          meta={
-            messages.length > 0
-              ? [
-                  plural(messages.length, 'message'),
-                  compacted ? `${compacted} compacted` : null,
-                  historicalAt !== null ? `@ ${historicalAt}` : null,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')
-              : undefined
-          }
+          meta={conversationMeta(screen.messages.length, screen.compacted, screen.historicalAt)}
           // `Conversation` renders its own scroll container because it holds a
           // ref on it to stick to the bottom, so this body is a column around
           // it rather than a second scroller.
@@ -297,29 +161,13 @@ export const SessionView = ({
                   the shell's `DecisionBar`, for the reason that component
                   states: a gated call parked in this footer was invisible from
                   every other page in the console. */}
-              <Composer
-                turn={state.turn}
-                note={state.note}
-                scrub={state.scrub}
-                onSend={(input) => void store.getState().send(input)}
-                onCancel={() => void store.getState().cancel()}
-                onRecheck={() => void store.getState().refreshRunning(true)}
-                onJumpTo={(index) => selectEvent(ScrubPoint.at(index))}
-                onTyping={() => store.getState().dismissNote()}
-              />
+              <ComposerPanel screen={screen} store={store} />
             </>
           }
         >
-          <Conversation view={view} error={state.snapshotError} historicalAt={historicalAt} />
+          <ConversationPanel screen={screen} />
         </Pane>
       </Split>
     </section>
   )
 }
-
-const MissingHere = ({ path, at }: { path: FilePath; at: number | null }) => (
-  <div className="empty">
-    <strong>Not in the workspace here.</strong>
-    {`${path.value} does not exist as of event ${at ?? 'HEAD'}.`}
-  </div>
-)
