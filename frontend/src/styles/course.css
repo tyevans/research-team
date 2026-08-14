@@ -1,5 +1,5 @@
-/* What the course view left behind: stage rail, artifacts, provenance,
-   findings, the worker roster, the extraction pane and the autonomy panel.
+/* What the course view left behind: the stage rail, the worker roster, the
+   extraction pane and the autonomy panel — all four of them in QUEUE.
 
    **There is no course view any more, and this file did not die with it.**
    That is a departure from the policy — stylesheets die with the screen they
@@ -7,26 +7,25 @@
    and every rule that was a claim about *its* markup went with it in the same
    commit: `.view-course`, the four `.lay-split[data-split='course']`
    combinators, `.course-findings`, and their four counterparts in
-   `responsive.css`. What is left dresses six component families, five of which
-   are still on screen after the merge:
+   `responsive.css`. Slice 3 then took the two families that had landed in
+   MATERIAL — `Artifacts` (7 rules + `.prov-src` + four chip tones) and
+   `Findings` (4 + `finding-${severity}`) — and rewrote them in utilities; the
+   note where they stood says what moved where. What is left dresses four
+   families, every one of them in QUEUE:
 
-     - `AutonomyPanel`   (16 rules)  -> QUEUE, and the policy is instance-wide
-     - `ExtractionPane`  (12)        -> QUEUE
-     - `WorkerList`      (9 + `worker-dot-${kind}`) -> QUEUE
-     - `Artifacts`       (7 + `.prov-src`)          -> MATERIAL
-     - `Findings`        (4 + `finding-${severity}`) -> MATERIAL
-     - `StageRail`       (13 + `rail-${status}`)     -> QUEUE, until the row
-                                                        union replaces it
-     - the `Chip` severity tones (`chip-${tone}`, from `common/primitives.tsx`,
-       reached by `Artifacts` and `StageRail`)
+     - `AutonomyPanel`   (16 rules), and the policy is instance-wide
+     - `ExtractionPane`  (12)
+     - `WorkerList`      (9 + `worker-dot-${kind}`)
+     - `StageRail`       (13 + `rail-${status}` + `chip-${tone}`), until the
+                         row union replaces it
 
    The plan for the route merge expected this file to die in the QUEUE slice
-   and named two passengers to rescue first. There are six, three of the seven
+   and named two passengers to rescue first. There were six. Three of the four
    families above are written from template literals and so are invisible to a
    grep for a class name, and deleting the file today would silently strip the
-   autonomy panel, the extraction pane, the roster, every artifact row and every
-   finding — the `AutonomyAllowAll` trap at five times the size. So the file
-   stays until the components do.
+   autonomy panel, the extraction pane, the roster and the whole rail — the
+   `AutonomyAllowAll` trap at four times the size. So the file stays until the
+   components do, and the components are QUEUE's, not MATERIAL's.
 
    One correction to the note further down, since a stale comment about a
    deletion trap is itself a trap: `.autonomy-warn` and `.autonomy-error` are
@@ -39,11 +38,7 @@
  * The rail's whole job is to make three states distinguishable at a glance --
  * left behind, standing here, not yet reached -- so status is carried by the
  * dot's fill as well as its colour. Colour alone would collapse for a
- * red/green reader on exactly the axis the pane exists to show.
- *
- * Missing artifacts are dimmed rather than hidden or reddened. Hidden loses
- * the gap the view exists to surface; red calls it a failure, which is a
- * verdict, and verdicts here belong to the check library. */
+ * red/green reader on exactly the axis the pane exists to show. */
 
 .rail {
   list-style: none;
@@ -173,161 +168,33 @@
   padding: 0;
 }
 
-.artifacts {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
+/* The artifacts and findings shelves were here, and are gone: `Artifacts.tsx`,
+   `ArtifactList.tsx` and `Findings.tsx` are dressed in utilities now. Twenty-two
+   class names -- `.artifacts`, `.artifact`, `.artifact-top/name/type/card`,
+   `.artifact-note`, `.artifact-prov`, `.prov-src`, the four
+   `.chip-present/missing/inferred/bad` tones, `.findings-head`, `.findings`,
+   `.finding`, the five `.finding-${severity}` edges, `.finding-check`,
+   `.finding-msg` and `.finding-fix`.
 
-.artifact {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--line-soft);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.artifact:last-child {
-  border-bottom: none;
-}
-/* `.artifact-missing` styles nothing and has no rule here any more.
-   `Artifacts.tsx` still sets the class, deliberately: it is what its comment
-   about `prettier-plugin-tailwindcss` mangling the class name is about, and
-   it is the hook anything later would hang off.
+   Three things left this file that a diff does not show, and each is a defect
+   if it is lost rather than moved:
 
-   It was `opacity: 0.62`, applied to a row whose quietest element is a
-   `.chip-missing` in `--fg-faint`: 5.46:1 on `--bg-panel` became 3.55:1, and
-   with the old token it was 1.97:1 -- the worst pair in the console. No
-   foreground value survives being composited, so the property had to go.
+   - The four artifact chip tones are `PRESENT_/MISSING_/INFERRED_/BAD_DRESS` in
+     `Artifacts.tsx`, with the hexes unchanged and named as tokens where a token
+     exists. A `Chip` whose `tone` names a class nobody declares is a silent
+     collapse into one grey.
+   - The five finding edges are `SEVERITY_EDGE` in `Findings.tsx`, as
+     `border-l-*` utilities over a `border-0` base -- the single-side rule
+     `CLAUDE.md` records, in the direction where forgetting the zero draws three
+     unwanted sides.
+   - `.artifact-missing` had already been emptied of declarations and kept as a
+     hook; it is `data-missing` on the row now, because a class with no rule
+     sitting in a file of classes with rules cannot be told from one whose rule
+     was lost.
 
-   What the dimming communicated is said twice over in the row already, which
-   is why nothing replaces it: the name renders as plain text instead of a
-   link because there is no file to open, and a `not written` chip sits at the
-   end of the line with a tooltip naming the path that is absent. Reading
-   "missing" out of a 38% opacity drop was the least of the three signals and
-   the only one a screen reader never had. */
-.artifact-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.artifact-name {
-  font-family: var(--mono);
-  font-size: var(--t-sm);
-}
-.artifact-type {
-  font-size: var(--t-sm);
-  color: var(--fg-dim);
-}
-.artifact-card {
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-}
-
-.chip-present {
-  color: var(--k-file);
-  border-color: #24402c;
-  background: #131f17;
-}
-.chip-missing {
-  color: var(--fg-faint);
-}
-/* Claimed inference is not a defect: it is the honest half of the provenance
- * contract, and it must not wear the colour that "claims nothing" wears. */
-.chip-inferred {
-  color: var(--k-message);
-  border-color: #24365a;
-  background: #111a2a;
-}
-.chip-bad {
-  color: var(--k-failure);
-  border-color: #45272a;
-  background: #241417;
-}
-
-.artifact-note {
-  font-size: var(--t-sm);
-  color: var(--fg-dim);
-}
-.artifact-note.bad {
-  color: var(--k-failure);
-}
-
-.artifact-prov {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  font-size: var(--t-sm);
-}
-.prov-src {
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  color: var(--k-message);
-}
-
-.findings-head {
-  font-size: var(--t-sm);
-  color: var(--fg-dim);
-  margin: 0 0 4px;
-  font-weight: 500;
-}
-.findings {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.finding {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 5px 8px;
-  border-left: 2px solid var(--line);
-  background: var(--bg-panel-2);
-  font-size: var(--t-sm);
-}
-/* An invariant fails invisibly -- there is nothing for a human to look at and
- * no judgement to make -- so it is the one that gets the loud edge. */
-.finding-invariant {
-  border-left-color: var(--k-failure);
-}
-.finding-blocking {
-  border-left-color: var(--accent);
-}
-.finding-advisory {
-  border-left-color: var(--line);
-}
-/* Not defects, and styled so they cannot be mistaken for any: these mark work
- * no run can clear by itself, waiting on a person or on a critic pass. */
-.finding-human_gate {
-  border-left-color: var(--k-session);
-}
-.finding-critic_gate {
-  border-left-color: var(--k-compaction);
-}
-.finding-check {
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  color: var(--fg-dim);
-}
-.finding-msg {
-  flex: 1 1 340px;
-}
-.finding-fix {
-  color: var(--fg-dim);
-}
-
-/* The five gate severities were here — `.chip-invariant`, `.chip-blocking`,
-   `.chip-advisory`, `.chip-human_gate`, `.chip-critic_gate` — and are
-   `SEVERITY_DRESS` in `presentation/session/GateReview.tsx` now, with the hexes
-   unchanged and named as tokens where a token exists. `GateReview` renders from
-   the shell's decision bar on every route, so this file dressing it was the
-   same deletion trap `.autonomy-allow*` and `.drawer*` left by. */
+   **What did not leave, and why the file is still alive:** the rail, the
+   workers, the extraction pane, the drawer and the autonomy panel -- five
+   families, all of them in QUEUE, none of them this slice's. */
 
 /* ---------------------------------------------------------------- workers
  *

@@ -14,8 +14,21 @@ import { Artifact } from './Artifacts.tsx'
  * `allArtifacts` is called once here rather than three times as it was at the
  * old call site -- twice for the heading's counts and once for the rows, on
  * every render, each rebuilding the same array.
+ *
+ * **`open` is the route's `artifact` id, and it was not reaching here.**
+ * `#/p/<id>/artifact/<path>` has parsed, landed on `selection` and reached
+ * MATERIAL since slice 0, and the tab then rendered `<ArtifactList course=…/>`
+ * with the id dropped on the floor -- a linkable state that opens the right tab
+ * and forgets which row the link was about. The plan's §1 called this "a
+ * precondition that is met"; it was met for `stage` only. Defaulted to `null`
+ * because `StageRail` renders `Artifact` rows too and has no selection of its
+ * own to pass.
+ *
+ * Matched on `slot.path`, which is what `routes.test.ts` has always encoded
+ * (`/artifact/plan.md`) and is the only id an artifact has -- `ArtifactSlot`
+ * carries no key of its own.
  */
-export const ArtifactList = ({ course }: { course: Course }) => {
+export const ArtifactList = ({ course, open = null }: { course: Course; open?: string | null }) => {
   const slots = allArtifacts(course)
 
   if (slots.length === 0) {
@@ -28,9 +41,13 @@ export const ArtifactList = ({ course }: { course: Course }) => {
   }
 
   return (
-    <ul className="artifacts">
+    // `m-0` and `p-0` explicitly, not as tidiness: this build imports no
+    // Tailwind preflight, so a `<ul>` keeps the user agent's 16px block margin
+    // and 40px inline padding unless something says otherwise. `.artifacts`
+    // said so; these say so now.
+    <ul className="m-0 list-none p-0">
       {slots.map((slot) => (
-        <Artifact key={slot.path} slot={slot} course={course} />
+        <Artifact key={slot.path} slot={slot} course={course} open={slot.path === open} />
       ))}
     </ul>
   )

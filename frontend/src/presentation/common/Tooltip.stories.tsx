@@ -52,11 +52,17 @@ export const Keyboard: Story = {
   render: () => (
     <Shell chrome={<strong>research-team</strong>}>
       <div style={{ display: 'flex', gap: 'var(--space-4)', padding: 'var(--space-6)' }}>
+        {/* The two dressings this pair actually ships with, copied from
+            `Artifacts.tsx` rather than referenced: a story that imported the
+            component's private constants would stop being a *sample* of the
+            markup and start being a second renderer of it. `tone="inferred"`
+            and `.prov-src` were what stood here, and both stopped resolving
+            when those rules left `course.css`. */}
         <Tooltip explanation="Some of this was reasoned rather than drawn from a source, and says so.">
-          <Chip tone="inferred">inferred</Chip>
+          <Chip dress="text-k-message border-[#24365a] bg-[#111a2a]">inferred</Chip>
         </Tooltip>
         <Tooltip asChild explanation="Open this source at the offsets this artifact cites">
-          <a className="prov-src" href="#nowhere">
+          <a className="font-mono text-xs text-k-message" href="#nowhere">
             report.md 40–92
           </a>
         </Tooltip>
