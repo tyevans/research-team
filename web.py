@@ -14,6 +14,7 @@ from research_team.interfaces.web import (
     create_app,
 )
 from research_team.interfaces.web.dispatch import DispatchQueue
+from research_team.interfaces.web.extraction_queue import ExtractionQueue
 from research_team.interfaces.web.seeding import SeedingActivity
 
 
@@ -46,6 +47,11 @@ def main() -> None:
     # show a roster that disagreed with the topic rows beside it, and nothing
     # in either signature would catch it.
     dispatch = DispatchQueue()
+    # Web-layer state again, and the thinnest of these channels: it serialises
+    # extractions and answers one catch-up route, and publishes nothing --
+    # `extraction` above already carries the running one's progress. See
+    # `extraction_queue.py`.
+    extract_queue = ExtractionQueue()
     application = build_application(
         approvals=approvals,
         extractions=extraction,
@@ -94,6 +100,8 @@ def main() -> None:
             dispatcher=application.dispatcher,
             dispatch=dispatch,
             ask=application.ask,
+            extractor=application.document_extractor,
+            extract_queue=extract_queue,
             # The same object the executor's gating predicate reads, which is
             # the only reason the routes over it can change anything: a copy
             # would answer reads correctly and change nothing. Instance-wide,

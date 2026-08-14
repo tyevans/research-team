@@ -40,6 +40,7 @@ from research_team.application.ask import AskAnswer, AskInFlight, AskService
 from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
+from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.grading import GradingError, grade
 from research_team.application.graph_read import (
     MAX_GRAPH_NODES,
@@ -73,6 +74,7 @@ from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.extraction import ExtractionActivity
+from research_team.interfaces.web.extraction_queue import ExtractionQueue
 from research_team.interfaces.web.presenters import (
     autonomy_view,
     corpus_change,
@@ -448,6 +450,8 @@ def create_app(
     dispatcher: TopicDispatcher | None = None,
     dispatch: DispatchQueue | None = None,
     ask: AskService | None = None,
+    extractor: DocumentExtractor | None = None,
+    extract_queue: ExtractionQueue | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -705,6 +709,135 @@ def create_app(
         if corpus is None:
             raise HTTPException(status_code=503, detail="no corpus read model is configured")
         return ProjectCorpusReader(corpus, project_id)
+
+    @app.post("/api/projects/{project_id}/sources/extract")
+    async def extract_all_sources(project_id: UUID):
+        """Queue every stored document that has no graph. 202, none of it has run.
+
+        **This whole block is registered ahead of the `/sources` reads, and has
+        to stay there.** FastAPI matches in declaration order, so a literal
+        segment that could also be a `{source_id}` must be declared first --
+        the reason `dispatch_topic` gives. Two collisions are live here, and
+        the second was found by a test rather than by reading: `extract` would
+        be read as a `source_id` by `/sources/{source_id}/extract`, and
+        `extraction-queue` would be read as one by `GET
+        /sources/{source_id}`, which answered 404 "no such source" for the
+        catch-up route until these moved above it.
+
+        `queued` counts what this press actually took on, not what was asked
+        for -- the queue refuses a document it already holds, so pressing this
+        twice while the first pass drains answers 0 the second time rather
+        than claiming to have started the same work again.
+
+        The set is computed here rather than inside the queue because it is a
+        corpus question, and the queue deliberately knows nothing about
+        corpora. It is computed once, at press time: a document extracted by
+        something else while this queue drains is still in the deque and will
+        be extracted again. Harmless -- extraction is idempotent in effect --
+        and cheaper than re-asking the projection before every item.
+        """
+        if extractor is None or extract_queue is None:
+            raise HTTPException(
+                status_code=503, detail="document extraction is not configured"
+            )
+        await _require_project(project_id)
+        pending = await extractor.unextracted(project_id)
+        queued = [
+            source_id
+            for source_id in pending
+            if extract_queue.start(
+                project_id, source_id, _extraction_of(project_id, source_id)
+            )
+        ]
+        return JSONResponse(
+            status_code=202,
+            content={"queued": len(queued), "source_ids": queued},
+        )
+
+    @app.post("/api/projects/{project_id}/sources/{source_id}/extract")
+    async def extract_source(project_id: UUID, source_id: str):
+        """Queue one stored document for extraction. 202, because it has not run.
+
+        202 with `queued` rather than 409 when the project is busy, for
+        `dispatch_topic`'s reason: this backs a control on every document row,
+        and a control that usually refuses is a control people stop pressing.
+
+        The document is read here -- not left for the queue -- so an unknown
+        `source_id` is a 404 the caller can see. Deferred, it would fail
+        asynchronously against a row that does not exist.
+
+        `queued: false` is a 202 rather than a 409: the document *is* going to
+        be extracted, because it is already in the queue or already running,
+        which is what the caller wanted. Saying so plainly lets the client
+        avoid claiming it started something it did not.
+        """
+        if extractor is None or extract_queue is None:
+            raise HTTPException(
+                status_code=503, detail="document extraction is not configured"
+            )
+        await _require_project(project_id)
+        if await _reader(project_id).read_document(source_id) is None:
+            raise HTTPException(
+                status_code=404, detail=f"no source {source_id!r} in project {project_id}"
+            )
+        queued = extract_queue.start(
+            project_id, source_id, _extraction_of(project_id, source_id)
+        )
+        return JSONResponse(
+            status_code=202, content={"queued": queued, "source_id": source_id}
+        )
+
+    def _extraction_of(project_id: UUID, source_id: str):
+        """A factory the queue can await later, closing over nothing mutable.
+
+        Deliberately not the coroutine itself: an item that waits in the deque
+        for a minute would otherwise be a live coroutine nobody has awaited,
+        and one dropped by `cancel` would be one nobody ever will.
+        """
+        assert extractor is not None  # both call sites guard above
+
+        async def run():
+            return await extractor.extract(project_id, source_id)
+
+        return run
+
+    @app.get("/api/projects/{project_id}/sources/extraction-queue")
+    async def get_extraction_queue(project_id: UUID):
+        """What is extracting, what is waiting, and how each document's last one went.
+
+        The catch-up read the queue cannot do without, and -- unlike
+        `/dispatch` -- the *only* read: this queue publishes no frames, because
+        `ExtractionActivity` already carries the running item's progress over
+        the live feed. See `extraction_queue.py` on what that leaves stale.
+
+        Three empty answers rather than a 503 when unwired, matching
+        `get_dispatch`: a build with no queue has nothing extracting, which is
+        a state and not an error. The POSTs above are where a client learns the
+        feature is absent.
+        """
+        await _require_project(project_id)
+        if extract_queue is None:
+            return {"running": None, "queued": [], "finished": []}
+        return {
+            "running": extract_queue.current(project_id),
+            "queued": list(extract_queue.queued(project_id)),
+            "finished": extract_queue.finished(project_id),
+        }
+
+    @app.post("/api/projects/{project_id}/sources/extraction-queue/cancel")
+    async def cancel_extraction_queue(project_id: UUID):
+        """Stop the running extraction and drop everything waiting, for this project.
+
+        Answers how many went, matching `cancel_dispatch`, so the caller can
+        say "stopped 12" rather than guessing from a queue it re-reads a moment
+        later.
+        """
+        await _require_project(project_id)
+        if extract_queue is None:
+            raise HTTPException(
+                status_code=503, detail="document extraction is not configured"
+            )
+        return {"cancelled": extract_queue.cancel(project_id)}
 
     @app.get("/api/projects/{project_id}/sources")
     async def list_sources(project_id: UUID, include_dropped: bool = False):
