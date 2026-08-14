@@ -48,7 +48,14 @@ ROUND_INSTRUCTIONS = (
     "correct outcome when there is nothing left to find, and a padded finding "
     "is what stops that from working.\n\n"
     "If the reasons below are already addressed, say so plainly and record "
-    "nothing."
+    "nothing.\n\n"
+    "A page you fetch in this round is kept in the corpus for you -- you do "
+    "not have to call `remember_page` to stop it being lost, and "
+    "`link_source` can cite it as soon as you have read it. What that does "
+    "not do is extract it into the graph; `remember_page` is still how a page "
+    "whose contents should be searchable as entities and relationships gets "
+    "there. Use it for the pages that turn out to matter, not for everything "
+    "you opened."
 )
 """What every round's turn is told, before the topic itself.
 

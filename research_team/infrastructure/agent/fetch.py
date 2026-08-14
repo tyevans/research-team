@@ -15,6 +15,7 @@ the session log either way -- so the extraction happens here, before the text
 is anything the rest of the system has to carry.
 """
 
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 from urllib.parse import urlsplit
 
@@ -220,6 +221,7 @@ def build_fetch_tool(
     corpus: CorpusReadPort | None = None,
     pages: PageMemo | None = None,
     grant: FetchGrant | None = None,
+    keep: Callable[[str], Awaitable[None]] | None = None,
 ) -> BaseTool:
     """A `fetch` tool for reading one web page.
 
@@ -228,6 +230,12 @@ def build_fetch_tool(
     (rather than the `max_chars` excerpt the model is shown) so a later
     `remember_page` can store more of a page than the model ever had to
     retype.
+
+    `keep` is called with the url after a successful read, and is how an
+    unattended run stops depending on the model choosing to save what it read.
+    A callable taking a url rather than the page itself, deliberately: it
+    keeps this module ignorant of `SourceRef` and the corpus, and the page it
+    would be handed is already in `pages` under exactly that key.
 
     `grant` is the pre-authorization an unattended run was given (see
     `application/grants.py`). It changes two things, both load-bearing:
@@ -432,6 +440,19 @@ def build_fetch_tool(
                     # was only ever that because a document could not reach
                     # the corpus except through the model's own output.
                     pages.put(url, text=full, uri=url, title=title, published_at=date)
+                if keep is not None:
+                    # After `pages.put`, never before: `keep` reads the page
+                    # back out of the memo by url, so the memo has to hold it
+                    # first. Ordered rather than combined because the memo is
+                    # process-local and always wanted, while `keep` reaches a
+                    # project's corpus and exists only for an unattended run.
+                    #
+                    # Failure here does not fail the fetch. The page was read
+                    # and the model is about to be shown it; losing the corpus
+                    # copy is worth strictly less than losing the read, and
+                    # `keep`'s own implementation is what decides how loudly to
+                    # complain. See `composition.py`'s `granted_tools`.
+                    await keep(url)
                 shown = full
                 if len(shown) > max_chars:
                     shown = shown[:max_chars].rstrip() + _TRUNCATED
