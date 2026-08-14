@@ -3,7 +3,7 @@ import { severityLabel } from '@domain/project/course.ts'
 import { FilePath } from '@domain/shared/file-path.ts'
 import type { SessionId } from '@domain/shared/identifier.ts'
 
-import { unimplementedChecksWarning } from '../common/findings-copy.ts'
+import { SEVERITY_DRESS, unimplementedChecksWarning } from '../common/findings-copy.ts'
 import { Chip } from '../common/primitives.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
 import { sessionHref } from '../routing/routes.ts'
@@ -106,44 +106,10 @@ export const GateReview = ({
  * rendering nothing would make it indistinguishable from a gate whose findings
  * failed to load.
  */
-/** The severity tones, as utility dressing carried by the component that
- *  renders them.
- *
- * They were `.chip-invariant`, `.chip-blocking`, `.chip-advisory`,
- * `.chip-human_gate` and `.chip-critic_gate` in `course.css` — a *view*
- * stylesheet holding the tones of a chip the decision bar renders on every
- * route. The route merge deletes that file, and a chip whose tone class
- * resolves to nothing raises no error and fails no test, so five severities
- * would quietly have collapsed into one grey. Found by
- * `docs/reports/stylesheet-orphan-sweep.md`.
- *
- * **Why a map here rather than a `tone` that still names a class.** The tones
- * had to leave `course.css`, and the standing policy forbids moving them into
- * another stylesheet — a rule relocated is still a rule that dies with a file.
- * That leaves utilities, and utilities have to reach the element from *some*
- * call site. This is the only one: `severity` is the reviewer prompts' own
- * string, so the mapping from it to a look is knowledge this component already
- * owns. `Chip` keeps `tone?: string` untouched for the view tones whose
- * stylesheets are still alive.
- *
- * **Why `dress` replaces the default trio rather than overriding it.** Both
- * would be `@layer utilities`, where the winner between two colour utilities is
- * Tailwind's sort order rather than the class attribute's. Replacement has one
- * answer.
- *
- * The values are `course.css`'s own. Where a hex had a token it is named —
- * `#241417` is `--color-tint-fail`, `#45272a` is `--color-tint-fail-line`,
- * `#241d10` is `--color-tint-held`, `#1a1630`/`#3a3060` are the session tints.
- * `critic_gate`'s two have no token and stay arbitrary rather than being
- * rounded to a neighbour. `advisory` set only a colour, so it keeps the base
- * hairline and no fill, which is what it looked like. */
-const SEVERITY_DRESS: Record<string, string> = {
-  invariant: 'text-k-failure border-tint-fail-line bg-tint-fail',
-  blocking: 'text-accent border-accent-dim bg-tint-held',
-  advisory: 'text-fg-dim border-line',
-  human_gate: 'text-k-session border-tint-session-line bg-tint-session',
-  critic_gate: 'text-k-compaction border-[#2b3a42] bg-[#121b20]',
-}
+/** `SEVERITY_DRESS` was declared here and is `common/findings-copy.ts` now.
+ *  It moved because it had a second caller all along — `course/Findings.tsx`,
+ *  which was still passing `tone={severity}` at classes that no longer exist.
+ *  The reasoning that justified the map lives with it at its new home. */
 
 const Findings = ({ findings }: { findings: readonly GateFinding[] }) => {
   if (findings.length === 0) {
