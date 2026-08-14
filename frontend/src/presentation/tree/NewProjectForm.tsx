@@ -13,7 +13,13 @@ import { Button } from '../common/primitives.tsx'
  * `no workflow` is a legal and sometimes right answer, and it is permanent —
  * so the cost belongs beside the option rather than in a 409 three screens
  * later. */
-const NO_WORKFLOW_COST = 'No course view for this project. Research and sessions still work.'
+/* Named in terms of what is lost rather than which view is gone: increment C
+   merged the course and research pages into one project view, so "no course
+   view" and "research still works" both name screens a reader can no longer
+   go to. What is actually forfeited is narrower than either sentence implied
+   — one region of a three-region page stays empty forever. */
+const NO_WORKFLOW_COST =
+  'This project’s queue stays empty — no stages, no artifacts owed. Everything else works: sessions, documents, the graph and ask.'
 
 /** Creating a project, with its workflow chosen in the same form.
  *

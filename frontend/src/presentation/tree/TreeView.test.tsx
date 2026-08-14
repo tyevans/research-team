@@ -173,15 +173,16 @@ it('reaches all four of a project’s destinations from its row', async () => {
   await user.click(await screen.findByRole('button', { name: /Resume/ }))
   expect(window.location.hash).toBe(`#/s/${HOLDER}`)
 
-  // The project page, twice: plainly, and with the graph facet open. Both are
-  // the same route now -- there is no course page and no research page, only
-  // a project with a selection -- which is why the second asserts a facet
-  // segment rather than a second page's name.
-  await user.click(screen.getByRole('button', { name: 'Course' }))
+  // The project page and the ask page: two buttons for two pages, where
+  // "Course" and "Research" were two buttons for one. There is no course page
+  // and no research page, so the second destination asserted here is the one
+  // route the project view does *not* contain -- `App.tsx` intercepts `ask`
+  // above `ProjectView` and renders a page of its own.
+  await user.click(screen.getByRole('button', { name: 'Project' }))
   expect(window.location.hash).toBe(`#/p/${ATLAS}`)
 
-  await user.click(screen.getByRole('button', { name: 'Research' }))
-  expect(window.location.hash).toBe(`#/p/${ATLAS}/entity`)
+  await user.click(screen.getByRole('button', { name: 'Ask' }))
+  expect(window.location.hash).toBe(`#/p/${ATLAS}/ask`)
 
   // A new session *in it*, which ends the holder and so asks first. Scoped to
   // the row: the action bar's quiet "New session" is the bare-session one, and
@@ -192,10 +193,26 @@ it('reaches all four of a project’s destinations from its row', async () => {
   expect(within(dialog).getByText(/Its files carry over to the new session/)).toBeInTheDocument()
 })
 
-it('disables Course with the server’s own reason rather than relabelling it', async () => {
-  // A project chooses its workflow once, at creation, and `get_course` 409s
-  // with this sentence forever after for one that chose none. The button used
-  // to read "Research" in that case and navigate to the course page anyway.
+/** A project with no workflow still has a project page, and this is the
+ *  assertion that replaced its opposite.
+ *
+ * What was here before: "disables Course with the server's own reason rather
+ * than relabelling it". It was right about the reason and right about
+ * `aria-disabled` over `disabled`, and both stopped mattering when the
+ * destination changed. `get_course` still 409s forever for a project that
+ * chose no workflow, but the button no longer goes to the course page — it
+ * goes to the project view, where the course is one region of three and
+ * `ProjectView`'s `course.isError` branch renders that same 409 as an empty
+ * state. Refusing the whole page over one empty region is a worse answer than
+ * showing it, so the disabling is gone and this test now fails if it returns.
+ *
+ * **Not proved red**, and deliberately: a benchmark had this machine and no
+ * test was run locally for this change. CI is the first execution. `BACKLOG.md`
+ * B54 is the precedent for recording an unverified claim as unverified rather
+ * than writing "proved red by" for a run that did not happen.
+ */
+it('offers the project page for a project that chose no workflow', async () => {
+  const user = userEvent.setup()
   renderPage(
     <TreeView />,
     containerWith({
@@ -204,18 +221,41 @@ it('disables Course with the server’s own reason rather than relabelling it', 
     }),
   )
 
-  // `aria-disabled`, not `disabled`. The reason is the sentence beside it: a
-  // `disabled` button is focusable by nothing, so the explanation of why it is
-  // off could not be reached from the keyboard at all -- and this reason is
-  // permanent, not a spinner. It was a `title` before, which is the same
-  // failure wearing a different attribute.
-  const course = await screen.findByRole('button', { name: 'Course' })
-  expect(course).toHaveAttribute('aria-disabled', 'true')
+  const toProject = await screen.findByRole('button', { name: 'Project' })
+  expect(toProject).not.toHaveAttribute('aria-disabled')
 
-  course.focus()
-  expect(await screen.findByText('this project runs no workflow')).toBeInTheDocument()
+  await user.click(toProject)
+  expect(window.location.hash).toBe(`#/p/${SANDBOX}`)
+})
 
-  expect(screen.getByRole('button', { name: 'Research' })).not.toHaveAttribute('aria-disabled')
+/** The gap that let two buttons point at one page for a whole increment:
+ *  nothing asserted that a route was *reachable*.
+ *
+ * Every other test of a destination renders the destination. That cannot
+ * notice a missing door — the ask page has routed and worked throughout, and
+ * for one increment the picker offered no way to it at all. So this asserts an
+ * inbound affordance from the landing page and nothing about what it lands on.
+ * It is the landing-page half of the same check `App.test.tsx` makes for the
+ * project page's link to ask.
+ *
+ * **Not proved red** — see the note above; no test was run locally.
+ */
+it('offers a way into both project pages from the picker', async () => {
+  renderPage(
+    <TreeView />,
+    containerWith({
+      projects: [project(ATLAS, 'atlas')],
+      sessions: [session('a', { projectId: ATLAS })],
+    }),
+  )
+
+  expect(await screen.findByRole('button', { name: 'Project' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Ask' })).toBeInTheDocument()
+
+  // The names that used to be here are two addresses of one page. If either
+  // comes back, the picker is describing a console that no longer exists.
+  expect(screen.queryByRole('button', { name: 'Course' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Research' })).toBeNull()
 })
 
 it('falls back to the session list when the tree projection has drifted empty', async () => {
@@ -261,8 +301,8 @@ it('marks a project something is running in', async () => {
 })
 
 it('does not degrade a row when its liveness read fails', async () => {
-  // A row with no marker is still a working link to four places. An error
-  // where a chip would go says nothing anybody can act on.
+  // A row with no marker is still a working link to every page it offers. An
+  // error where a chip would go says nothing anybody can act on.
   renderPage(
     <TreeView />,
     containerWith({
@@ -274,7 +314,7 @@ it('does not degrade a row when its liveness read fails', async () => {
   )
 
   expect(await screen.findByText('atlas')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Research' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Project' })).toBeEnabled()
   expect(screen.queryByText(/not wired up/)).not.toBeInTheDocument()
 })
 
