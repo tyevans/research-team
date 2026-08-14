@@ -8,6 +8,7 @@ import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
+import { projectHref } from '@presentation/routing/routes.ts'
 
 import { App } from './App.tsx'
 
@@ -66,13 +67,37 @@ const COURSE = {
       spine: 0,
       scopeLevel: 'course',
       status: 'current',
-      outputs: [],
+      // One artifact and one finding, so that the three route ids MATERIAL
+      // carries have something to land on. Every test above asserts on rail
+      // rows, tabs and regions and none of them can see these two.
+      outputs: [
+        {
+          path: 'course/framing/objectives.md',
+          artifactType: 'objectives',
+          subtype: null,
+          cardinality: 'one',
+          stageId: 'step1.framing',
+          present: true,
+          hasFrontmatter: true,
+          missingFields: [],
+          bodyChars: 100,
+          provenance: null,
+        },
+      ],
       gateDecisions: [],
       reviewerRole: null,
       findingsReport: null,
     },
   ],
-  findings: [],
+  findings: [
+    {
+      check: 'objectives.count',
+      severity: 'advisory',
+      message: 'Three objectives is thin for a course this long.',
+      suggestedEdit: null,
+      cites: [],
+    },
+  ],
   unimplementedChecks: [],
 }
 
@@ -312,6 +337,53 @@ it('hands the selected entity to the graph, not just the view', async () => {
   )
 
   await waitFor(() => expect(neighborhood).toHaveBeenCalledWith(ATLAS, 'e1'))
+})
+
+/** The three MATERIAL facets that parsed an id, reached the right tab, and then
+ *  dropped it.
+ *
+ * `App.test.tsx` already asserted that `#/p/<id>/artifact/<path>` opens the
+ * Artifacts tab, and that assertion is satisfied by a page that mounts MATERIAL
+ * and ignores the facet entirely — which is exactly what shipped. `topic`,
+ * `doc`, `artifact` and `finding` each held their open item in a component's
+ * own `useState`, so the id reached the tab and stopped there. The `doc` half
+ * was a live broken link: `CitationList` writes `#/p/<id>/doc/<sourceId>` and
+ * following it produced an unfiltered corpus.
+ *
+ * Asserted through `aria-current` on the row, for the reason the stage test
+ * above asserts through `aria-expanded`: the prop cannot see a route that
+ * reached the page and not the list.
+ *
+ * `topic` is deliberately not here — it is QUEUE's, slice 3 did not rewrite it,
+ * and it is still `useState` in `use-topic-queue.ts`. */
+it('marks the artifact the route names, not merely the tab it lives in', async () => {
+  // Built rather than hand-typed: an artifact id is a path, and the grammar
+  // keeps it in one segment by percent-encoding the slashes. A literal
+  // `/artifact/course/framing/...` parses the id as `course`.
+  window.location.hash = projectHref(ATLAS, {
+    facet: 'artifact',
+    id: 'course/framing/objectives.md',
+  })
+  renderApp()
+
+  // `closest('[aria-current]')` rather than `getByRole('listitem', {current})`:
+  // the row is found through the text a reader sees, and the marking is then
+  // asserted on the element that carries it. The role query would work too and
+  // would depend on a testing-library option version rather than on the DOM.
+  const name = await screen.findByText('objectives.md')
+  expect(name.closest('li')).toHaveAttribute('aria-current', 'true')
+})
+
+it('marks the finding the route names', async () => {
+  // Matched on the check name, which is the only stable id a finding has: the
+  // array index is not, because the list is recomputed against a growing
+  // course.
+  window.location.hash = projectHref(ATLAS, { facet: 'finding', id: 'objectives.count' })
+  renderApp()
+
+  await screen.findByRole('tab', { name: 'Findings', selected: true })
+  const message = await screen.findByText(/thin for a course/)
+  expect(message.closest('li')).toHaveAttribute('aria-current', 'true')
 })
 
 it('puts a watched worker in the address bar under the session facet', async () => {

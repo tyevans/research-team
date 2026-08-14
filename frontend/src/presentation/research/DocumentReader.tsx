@@ -43,11 +43,22 @@ export const DocumentReader = ({
     // each other is chrome, not information. The title-or-id fallback moved to
     // the drawer with it, where it is taken from the list row so the heading is
     // right while this component's own fetch is still in flight.
-    <article className="document-reader">
+    // Its own padding rather than the drawer's, because this is rendered
+    // outside a drawer too. `pb-5` is larger than the top on purpose: prose
+    // wants room under its last line where a panel does not.
+    //
+    // The text gets a measure. Full-width lines across a 640px drawer are the
+    // same reason this was hard to read in the old 340px rail, at the other
+    // extreme.
+    <article className="px-4 pt-[12px] pb-5">
       {document.droppedReason ? (
-        <p className="document-reader-dropped">Dropped: {document.droppedReason}</p>
+        <p className="m-0 mb-[8px] text-xs text-k-failure">Dropped: {document.droppedReason}</p>
       ) : null}
-      <p className="document-reader-text">{document.text}</p>
+      {/* No `m-0`, deliberately: `.document-reader-text` never reset the user
+          agent's 1em block margin either, and this build imports no preflight,
+          so the paragraph has always had it. Adding the reset here would be an
+          undeclared spacing change riding along on a dressing change. */}
+      <p className="max-w-[68ch] text-sm leading-[1.65] whitespace-pre-wrap">{document.text}</p>
     </article>
   )
 }

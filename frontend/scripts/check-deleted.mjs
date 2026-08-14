@@ -361,6 +361,21 @@ const RULES = [
     where: 'styles',
     forbid: [/^\.run-panel\b/m, /^\.worker-panel\b/m, /^\.autonomy-panel\b/m],
   },
+  {
+    phase: 'C3',
+    what: "MATERIAL's artifact, finding and document shelves are utilities now",
+    why: "The route merge's slice 3, narrowed to the three MATERIAL facets whose markup it actually rewrites. `Artifacts`, `ArtifactList`, `Findings`, `DocumentBrowser` and `DocumentReader` carry their own dressing, and 22 rules left `course.css` with 13 leaving `research.css`. **Neither file dies, and the reason is structural rather than incidental**: what is left in the first is four families that are all QUEUE's (rail, roster, extraction, autonomy) and what is left in the second is the topic list, which is also QUEUE's, plus the graph and the seed form. A MATERIAL-only slice cannot kill either, which is why neither left `STYLESHEETS`. Forbidden rather than merely removed because two of the three carried something a reviewer would not miss: the four artifact chip tones and the five finding edges are `PRESENT_DRESS`/`SEVERITY_EDGE` in the components now, and a re-added `.chip-present` or `.finding-invariant` would win over the utilities outright -- an unlayered rule beats `@layer utilities` -- restoring the split this deletion closed.",
+    where: 'styles',
+    forbid: [
+      /^\.artifacts?\b/m,
+      /^\.artifact-/m,
+      /^\.prov-src\b/m,
+      /^\.chip-(present|missing|inferred|bad)\b/m,
+      /^\.findings?\b/m,
+      /^\.finding-/m,
+      /^\.document-/m,
+    ],
+  },
 ]
 
 /** Every stylesheet under `src/styles/` that exists today, frozen.

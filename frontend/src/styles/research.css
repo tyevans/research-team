@@ -1,4 +1,6 @@
-/* What the research view left behind: topics, documents and the graph.
+/* What the research view left behind: topics, the graph and the seed form.
+   Not documents — slice 3 rewrote those three components in utilities and the
+   section is a note now.
 
    **There is no research view any more.** `ResearchView` is deleted and its
    three regions are tenants of the project page -- topics in QUEUE, documents
@@ -11,9 +13,15 @@
    `component-system-spec.md` §11 describes: a rule that quietly stops applying,
    with no test failure and no error.
 
-   What is left dresses three components that outlive the page, and it dies
-   with them rather than with the view -- slice 3 of the route merge, which
-   rewrites the reader those three become. Until then this file is live and the
+   What is left dresses two families that outlive the page, and it dies with
+   them rather than with the view. **Neither is MATERIAL's**, which is why
+   slice 3 did not kill this file and why saying so is worth a paragraph: the
+   topic list is QUEUE's — `TopicList`, `TopicQueue`, `TopicStatusDialog`,
+   `SubQuestions`, `TopicDocuments`, about forty class names — and the seed form
+   is in the queue header. The graph is MATERIAL's and is the one facet slice 3
+   deliberately left, because `GraphCanvas` is a lazy 60 kB canvas whose
+   correctness is a measurement. So this file outlives a MATERIAL-only slice by
+   construction, not by oversight. Until then it is live and the
    `check-deleted.mjs` freeze keeps it honest.
 
    The one thing worth knowing before editing: this is now a file named after a
@@ -306,144 +314,22 @@
   color: var(--fg-dim);
 }
 
-/* ------------------------------------------------------------- documents
- *
- * The list is virtualized: rows are absolutely positioned inside a tall,
- * fixed-height scroll container rather than laid out by the browser, so a
- * corpus of hundreds of sources costs the same to render as one of ten. */
+/* The documents section was here, and is gone: `DocumentBrowser`,
+   `DocumentRow` and `DocumentReader` are dressed in utilities now. Thirteen
+   class names -- `.document-browser`, `.document-filter`,
+   `.document-list-scroll`, `.document-list`, `.document-row`,
+   `.document-row-open`, `.document-row-title`, `.document-row-meta`,
+   `.document-dropped`, `.document-row-dropped-reason`, `.document-reader`,
+   `.document-reader-dropped`, `.document-reader-text` -- and the two
+   `:focus-visible` rules that went with them.
 
-.document-browser {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  height: 100%;
-}
-
-.document-filter {
-  width: 100%;
-}
-
-/* Was a hard 260px. The pane it sits in now has a real height of its own, so
-   the list takes what the rail gives it -- a tall window shows more documents
-   instead of showing 260px of them above empty pane. */
-.document-list-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-/* A tab stop, though nothing here says so: Chromium makes a scroll container
-   focusable even with no `tabIndex`, and a virtualized corpus always scrolls.
-   The same trap `workspace.css` records for `.files`, met a third time.
-   Inward, because an outward ring would be drawn on the far side of this
-   element's own 1px border and then clipped by whatever the rail does with
-   overflow -- measured at 1440x900, `-3..343 x -3..203` against a border box
-   of `0..340 x 0..200`. `DocumentBrowser.browser.test.tsx` is the measurement. */
-.document-list-scroll:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.document-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.document-row {
-  border-bottom: 1px solid var(--line-soft);
-}
-
-.document-row-open {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  width: 100%;
-  /* No `height: 100%`: the row's height now comes from this button's content
-     and is measured off it, so a fixed height here would be the same lie the
-     virtualizer's fixed row estimate was. */
-  padding: 7px 10px 8px;
-  background: none;
-  border: none;
-  text-align: left;
-  cursor: pointer;
-  color: inherit;
-  font: inherit;
-}
-
-.document-row-open:hover {
-  background: var(--bg-panel-2);
-}
-
-/* Drawn inside the row, for the reason `workspace.css` sets out for the file
-   list: the global `:focus-visible` in `tokens.css` is 2px at
-   `outline-offset: 1px` -- three pixels *outside* the border box -- and this
-   button is `width: 100%` inside a scroller with no padding, so its border box
-   is the scroller's padding box horizontally. `overflow` clips at the padding
-   box, so both sides went.
-
-   Measured at 1440x900 with the scroller 340x200 and its clip at
-   `1..339 x 1..199`: the first row's ring wanted `-2..342 x -2..55` (left,
-   right and top outside) and a middle row's `-2..342 x 136..193` (left and
-   right). Every row in the list lost its sides; the first, which is the one a
-   reader meets, kept only a 2px line along its bottom. Rows further down were
-   the weaker case and are fixed by the same declaration rather than separately.
-
-   Hover already paints the whole row, so the ring is what distinguishes
-   "focused" from "pointed at" -- it cannot be traded for a background change
-   here the way `.graph-result` trades it for a left border. */
-.document-row-open:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.document-row-title {
-  font-size: var(--t-sm);
-}
-
-.document-row-meta {
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  color: var(--fg-dim);
-}
-
-/* Same loud edge `.topic-blocked` uses: a dropped document cannot be read
- * back, and that fact should be visible without opening the row. */
-.document-dropped {
-  border-left: 2px solid var(--k-failure);
-}
-
-.document-row-dropped-reason {
-  font-size: var(--t-xs);
-  color: var(--k-failure);
-}
-
-/* The reader lives in a drawer now, so it no longer needs the rule and the
-   top margin that separated it from the list it used to sit under. The drawer
-   body owns the scrolling, which is why the text below is not bounded any
-   more either. */
-.document-reader {
-  padding: 12px 14px 20px;
-}
-
-.document-reader-dropped {
-  color: var(--k-failure);
-  font-size: var(--t-xs);
-  margin: 0 0 8px;
-}
-
-.document-reader-text {
-  font-size: var(--t-sm);
-  white-space: pre-wrap;
-  /* Prose, so it gets a measure. Full-width lines across a 640px drawer are
-     the same reason this was hard to read in the rail, just at the other
-     extreme. */
-  max-width: 68ch;
-  line-height: 1.65;
-}
+   The two focus rules are the part worth knowing about. They were the measured
+   inward-ring fix `component-system-spec.md` §5.2 describes, and they moved as
+   `RING_INWARD` in `DocumentBrowser.tsx` rather than being dropped;
+   `DocumentBrowser.browser.test.tsx` is still the measurement and still fails
+   if the offset goes positive. A ring deleted with its stylesheet is invisible
+   to every gate, which is exactly why this note exists rather than a silent
+   diff. */
 
 /* ----------------------------------------------------------------- graph
  *

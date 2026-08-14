@@ -1,4 +1,4 @@
-import type { ProjectId } from '@domain/shared/identifier.ts'
+import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
 import { Drawer } from '../common/Drawer.tsx'
 import { ErrorBox, Loading } from '../common/primitives.tsx'
@@ -12,8 +12,18 @@ import { useDocuments } from './use-documents.ts'
  * `projectId` to fetch the document's text and therefore cannot live in a
  * presentational component.
  */
-export const DocumentList = ({ projectId }: { projectId: ProjectId }) => {
-  const { query, reading, onClose, readingLabel, browser } = useDocuments(projectId)
+export const DocumentList = ({
+  projectId,
+  open = null,
+  onOpen,
+}: {
+  projectId: ProjectId
+  /** The route's `doc` id. See `useDocuments`, which says what this being
+   *  `useState` cost. */
+  open?: SourceId | null
+  onOpen?: (sourceId: SourceId | null) => void
+}) => {
+  const { query, reading, onClose, readingLabel, browser } = useDocuments(projectId, open, onOpen)
 
   if (query.isPending) return <Loading what="documents" />
 
@@ -42,9 +52,9 @@ export const DocumentList = ({ projectId }: { projectId: ProjectId }) => {
           heading={readingLabel(reading)}
           label={`Reading ${readingLabel(reading)}`}
           onClose={onClose}
-          // `.document-reader` carries its own 12/14/20 and its own measure,
-          // and it is rendered outside a drawer too -- so its padding cannot
-          // move here without following it everywhere else.
+          // `DocumentReader` carries its own 12/14/20 and its own measure, and
+          // it is rendered outside a drawer too -- so its padding cannot move
+          // here without following it everywhere else.
           flush
         >
           <DocumentReader projectId={projectId} sourceId={reading} />
