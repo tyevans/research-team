@@ -192,7 +192,11 @@ async def stored_page(corpus: CorpusReadPort, url: str, max_chars: int) -> str |
     except CorpusReadError:
         return None
     match = next(
-        (record for record in records if record.uri and normalize_url(record.uri) == target),
+        (
+            listing.record
+            for listing in records
+            if listing.record.uri and normalize_url(listing.record.uri) == target
+        ),
         None,
     )
     if match is None:

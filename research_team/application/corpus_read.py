@@ -48,6 +48,26 @@ class StoredDocument:
     text: str
 
 
+@dataclass(frozen=True)
+class DocumentListing:
+    """One source's record, plus whether the graph has it.
+
+    Composed rather than a widened `DocumentRecord`, and for the same reason
+    `StoredDocument` above is composed: the record is the shape the fold, the
+    read model and the tools all share, and everything hung beside it here is
+    something the fold cannot say. Extraction happens on redstring's
+    `Document` stream; a `DocumentRecord` carrying `extracted` would be a
+    domain type claiming knowledge of another aggregate's log.
+
+    `extracted` is a bool where the row stores a timestamp. What a caller does
+    with this is decide whether to offer extraction, and "when" is a question
+    nobody has asked yet -- the column keeps the answer for when they do.
+    """
+
+    record: DocumentRecord
+    extracted: bool
+
+
 class CorpusReadPort(Protocol):
     """The project's stored sources, listed and read.
 
@@ -67,7 +87,7 @@ class CorpusReadPort(Protocol):
     corpus and nothing else.
     """
 
-    async def list_documents(self, *, include_dropped: bool = False) -> list[DocumentRecord]:
+    async def list_documents(self, *, include_dropped: bool = False) -> list[DocumentListing]:
         """Every source in the corpus. Dropped documents are absent by default.
 
         `include_dropped` is opt-in and defaults to False, so a caller that

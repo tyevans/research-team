@@ -42,7 +42,11 @@ async def test_a_stored_document_appears_in_the_corpus_read_model(build_applicat
     await application.knowledge._corpus.save(corpus)
 
     await application.corpus_caught_up()
-    assert [record.source_id for record in await application.corpus.list(project)] == ["s1"]
+    listings = await application.corpus.list(project)
+    assert [listing.record.source_id for listing in listings] == ["s1"]
+    # Stored but never extracted, which is now a state the listing can express
+    # -- and the one every `store_source` from an unattended run leaves behind.
+    assert [listing.extracted for listing in listings] == [False]
 
 
 async def test_every_repository_composition_builds_announces_its_writes(build_application):

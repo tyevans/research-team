@@ -1559,6 +1559,32 @@ def create_app(
         health = await service.summaries_health()
         return {"healthy": health.healthy, "failed_events": health.failed_events}
 
+    @app.post("/api/corpus/rebuild")
+    async def rebuild_corpus():
+        """Derive the corpus table from the log again, and say what it holds.
+
+        A sibling of `/api/summaries/rebuild` rather than part of it, for the
+        reason `CorpusRunner` is a second runner: rebuilding is a manual repair
+        that stops a manager, truncates a table and resets a checkpoint, and
+        two tables that can fail independently have to be repairable
+        independently. Repairing `/sessions` must not truncate the corpus.
+
+        Goes through the runner rather than a `SessionService` method, unlike
+        its sibling. `SessionSummaries` is a port the service already owns and
+        answers for; the corpus runner reaches this layer directly, and adding
+        a passthrough to the service would be a use case with nothing in it.
+
+        Safe at any time, and the same argument as its sibling: every byte it
+        discards is derivable from the event that put it there, so the worst
+        case is wasted work. It is also the only way to correct `extracted` on
+        a database written before that column existed -- see
+        `CorpusDocumentRow.extracted_at`, where the measurement is recorded.
+        """
+        if corpus is None:
+            raise HTTPException(status_code=503, detail="no corpus read model is configured")
+        await corpus.rebuild()
+        return {"rebuilt": True}
+
     @app.get("/api/tree")
     async def fork_tree():
         return tree_view(build_fork_tree(await service.list_sessions()))

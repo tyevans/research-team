@@ -1304,6 +1304,50 @@ async def test_rebuild_endpoint_rederives_the_session_list(client, service):
     assert [row["id"] for row in listed] == [str(session_id)]
 
 
+async def test_rebuilding_the_corpus_rederives_its_table(app_and_client):
+    """The corpus's own repair, separate from the session list's.
+
+    Separate because the two runners are: rebuilding stops a manager,
+    truncates a table and resets a checkpoint, and repairing `/sessions` must
+    not truncate the corpus. Asserting the sources survive is what says this
+    rebuilt rather than merely emptied.
+    """
+    application, client = app_and_client
+    project_id = await _project_with_sources(
+        application, client, {"source_id": "s1", "text": "a body"}
+    )
+
+    response = await client.post("/api/corpus/rebuild")
+
+    assert response.status_code == 200
+    assert response.json()["rebuilt"] is True
+    listed = (await client.get(f"/api/projects/{project_id}/sources")).json()
+    assert [row["source_id"] for row in listed] == ["s1"]
+
+
+async def test_rebuilding_the_corpus_without_one_configured_is_a_503(app_and_client):
+    """Mirrors `_reader`: an unwired read model is a configuration fault, and
+    503 is what every other corpus route says about it.
+
+    Built unwired here rather than taking the `client` fixture, which supplies
+    a corpus -- the same shape `test_graph_routes_503_when_no_graph_reader_is_configured`
+    uses, and for the same reason: a build without the read model is a valid
+    thing to serve, so the absence has to be constructed rather than assumed.
+    """
+    application, _ = app_and_client
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=None,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as unwired:
+        response = await unwired.post("/api/corpus/rebuild")
+
+    assert response.status_code == 503
+
+
 # ---------------- projects ----------------
 
 

@@ -16,7 +16,11 @@ import pytest
 
 from research_team.application import AutonomyPolicy
 from research_team.application.autonomy import FETCH_TOOL, GATED_TOOLS
-from research_team.application.corpus_read import CorpusReadError, StoredDocument
+from research_team.application.corpus_read import (
+    CorpusReadError,
+    DocumentListing,
+    StoredDocument,
+)
 from research_team.application.grants import FetchGrant, GrantRegistry
 from research_team.domain import DocumentRecord
 from research_team.infrastructure.agent import fetch as fetch_module
@@ -507,7 +511,13 @@ class _StubCorpus:
     async def list_documents(self):
         if self._error:
             raise self._error
-        return [document.record for document in self._documents]
+        # `extracted=False` throughout: nothing on the `fetch` path reads it,
+        # and a double that varied it would imply this port's caller cares
+        # which documents have graphs. It does not -- it is matching URLs.
+        return [
+            DocumentListing(record=document.record, extracted=False)
+            for document in self._documents
+        ]
 
     async def read_document(self, source_id):
         if self._error:
