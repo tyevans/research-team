@@ -29,6 +29,8 @@ variable:
 | `AGENT_GRAPH_STORE` | `memory` | what backs the knowledge graph: `memory` or `neo4j` |
 | `AGENT_KNOWLEDGE_DOMAIN` | `auto` | a redstring schema id, or `auto` to have a classifier choose |
 | `AGENT_EXTRACTION_THINKING` | *(unset)* | set to `1` to let the extraction model reason before answering; off by default because extraction is measurably worse for it (slower, more false positives, same recall). Turn it on for a backend with no chat template — OpenAI's hosted API rejects the field with a 400 on the first extraction call |
+| `AGENT_EXTRACTION_CONCURRENCY` | `8` | how many extraction calls may be in flight **per document**. Two documents ingested at once are two ceilings, so the real bound against the server is this times the number of overlapping ingests. Matches the slot count of the local server `AGENT_BASE_URL` points at; lower it for a hosted endpoint with a per-minute quota |
+| `AGENT_EXTRACTION_CHUNK_SIZE` | `2000` | characters per extraction chunk, against redstring's own default of 3000. Smaller chunks extract more and are only affordable because the calls overlap — set both back to `1` and `3000` together to get the pre-0.8.0 pipeline exactly. Below roughly this size, extraction starts manufacturing duplicate identities rather than finding more. Raising extraction's yield also raises what consolidation pays: more mentions is more candidate pairs, and each cross-document duplicate costs an adjudicator call |
 | `AGENT_NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI, when `AGENT_GRAPH_STORE=neo4j` |
 | `AGENT_NEO4J_USER` | `neo4j` | Neo4j username |
 | `AGENT_NEO4J_PASSWORD` | *(unset)* | Neo4j password; required when `AGENT_GRAPH_STORE=neo4j`, no default |

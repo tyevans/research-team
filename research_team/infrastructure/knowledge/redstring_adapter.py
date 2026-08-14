@@ -32,6 +32,7 @@ from eventsource.ports.store import AggregateStore
 from redstring import (
     AUTO,
     Adjudicator,
+    Chunker,
     Consolidator,
     EmbeddingProvider,
     GraphStore,
@@ -206,11 +207,19 @@ class RedstringKnowledge:
         adjudicate: bool = True,
         embeddings: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
+        concurrency: int = 1,
+        chunker: Chunker | None = None,
     ) -> None:
         self._project_id = project_id
         self._store = store
         self._event_store = event_store
         self._provider = provider
+        # Both default to redstring's own serial behaviour rather than to the
+        # configured values, so a test constructing this directly gets the
+        # deterministic pipeline unless it asks otherwise. The composition
+        # root is the one place that reads `config`, and it passes both.
+        self._concurrency = concurrency
+        self._chunker = chunker
         # Required rather than optional. "After `remember`, the text still
         # exists" is a guarantee, and an optional collaborator that silently
         # no-ops when a composition root forgets it is a guarantee only until
@@ -334,6 +343,15 @@ class RedstringKnowledge:
                     domain=self._domain,
                     embedding_provider=embeddings,
                     vector_store=vectors,
+                    # Chunks go out in batches of `concurrency` and carryover
+                    # folds back in *chunk* order rather than completion
+                    # order, so this stays reproducible: the same document
+                    # twice gives the same graph regardless of which call
+                    # returned first. That is redstring's guarantee, not one
+                    # this adapter arranges, and it is the reason the knob is
+                    # passed here rather than kept behind a flag.
+                    concurrency=self._concurrency,
+                    chunker=self._chunker,
                 )
                 if built.event is None:
                     # `Document.record_extraction` found nothing new to record
@@ -480,6 +498,39 @@ class RedstringKnowledge:
             )
             return False
         return True
+
+    async def store_source(self, source: SourceRef) -> None:
+        """Keep the text, and do not extract it. Seconds, not minutes.
+
+        `ingest` is store-extract-consolidate and runs for minutes; this is its
+        first step alone. It exists because "the source is not lost" and "the
+        graph knows about it" are separable goods, and an autonomous run wants
+        the first for every page it reads while paying for the second only on
+        the pages that turn out to matter.
+
+        The state it leaves behind -- a corpus document with no graph -- is one
+        `_store_document` already treats as ordinary and repairable rather than
+        broken: see its docstring, which chooses exactly this as the failure to
+        leave possible when extraction dies mid-ingest. `reconsolidate`, a
+        later `remember_page`, and `/rebuild` all work against it, and
+        `link_source` can cite it immediately, which is what a topic round
+        actually needs from a page it read.
+
+        It keeps `ingest`'s two refusals rather than relaxing them. Blank ids
+        are refused because the id *is* the identity. The length cap is kept
+        even though nothing here would chunk the text: a document over it can
+        never be extracted later, so storing one would quietly create a corpus
+        entry that no `remember_page` could ever complete.
+        """
+        if not source.source_id.strip():
+            raise KnowledgeError("source_id must not be blank; it identifies the document")
+        if len(source.text) > MAX_DOCUMENT_CHARS:
+            raise KnowledgeError(
+                f"that is {len(source.text)} characters; the limit is "
+                f"{MAX_DOCUMENT_CHARS}. Record it in parts, each with its own "
+                f"source_id."
+            )
+        await self._store_document(source)
 
     async def _store_document(self, source: SourceRef) -> None:
         """Keep the text before extracting it, and only if it is new bytes.

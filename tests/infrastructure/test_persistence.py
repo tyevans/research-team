@@ -5,8 +5,7 @@ from uuid import uuid4
 from eventsource import StreamId
 from eventsource.ports.positions import ExpectedVersion
 from langchain_core.messages import AIMessage
-from redstring.events.document import DocumentExtracted
-from redstring.events.streams import document_stream
+from redstring import DocumentExtracted, document_stream
 
 from research_team.application.session_service import NO_SEARCH_CLAUSE, project_context
 from research_team.application.topics import TOPICS_PROMPT

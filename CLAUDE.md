@@ -62,20 +62,36 @@ a separate file from `vitest.setup.ts` on purpose, because the jsdom setup
 pins `offsetWidth`/`offsetHeight` to constants and would blind the one suite
 whose job is measuring.
 
-**A single-side border utility does nothing, or draws three unwanted sides,
-depending on which half you forget.** This build imports no Tailwind
-preflight and nothing in `src/styles/` sets `border-style`, so the browser's
-own defaults are what's left. `border-solid` sets `border-style: solid` on
-all four sides at once; pair it with a directional width like `border-t`
-and no `border-0`, and the three sides that get a style but no explicit
-width fall back to the browser's `medium` (~3px) rather than 0 — a rule
-meant for one edge draws a box. The case that bites in the other direction:
-`border-t` *with* a width but *without* `border-solid` draws nothing at
-all, because every side's style is still `none`. The fix is always both
-halves together: `border-0` to zero the three sides you don't want, then
-the directional width-and-style utility (e.g. `border-t border-solid`) for
-the one you do. Caught by eye in Storybook, twice, in both directions — no
-gate catches either half.
+**`border-solid` beside one directional width draws three unwanted sides.**
+This build imports no Tailwind preflight, so the browser's own defaults are
+what's left where Tailwind sets nothing. `.border-solid` is the shorthand —
+`border-style: solid` on all four sides at once. Pair it with a directional
+width like `border-t` and no `border-0`, and the three sides that get a
+style but no explicit width fall back to the browser's `medium` (~3px)
+rather than 0: a rule meant for one edge draws a box. The fix is both halves
+together — `border-0` to zero the three sides you don't want, then the
+directional width for the one you do. No gate catches it.
+
+**A directional width *alone* is fine, and this entry used to say the
+opposite.** It said `border-t` without `border-solid` "draws nothing at all,
+because every side's style is still `none`". That is not true of this build,
+and it is the half the repository had been acting on — `BACKLOG.md` B55 was
+filed entirely on it and is now withdrawn. Tailwind v4 emits the style
+longhand *with* the width (`border-b` → `border-bottom-style:
+var(--tw-border-style); border-bottom-width: 1px`) and registers
+`--tw-border-style` with `initial-value: solid`, so a directional width alone
+resolves to solid and draws. `border-style:none` appears zero times in the
+built `index.css`. **Verified against the built stylesheet on 2026-08-13, not
+reasoned** — and the repository already held the measurement: `Drawer.tsx:162`
+writes `border-l border-line` with no `border-solid`, and
+`shell-reached-dressing.browser.test.tsx:157-158` asserts that element's
+`borderLeftStyle === 'solid'`.
+
+The remaining honesty: this entry said the defect was caught by eye in
+Storybook "twice, in both directions", and only one direction is explained by
+the current build. The other observation has not been re-taken.
+`frontend/src/styles/border-style-default.browser.test.tsx` exists to settle
+it and has not been run.
 
 **An unlayered rule in `tokens.css` beats any utility, so a utility meant to
 override one is inert — and looks exactly like a utility that worked.** The

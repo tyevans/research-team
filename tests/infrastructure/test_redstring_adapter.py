@@ -7,6 +7,7 @@ from eventsource.adapters.sqlite import SQLiteEventStore
 from redstring import (
     FakeLlmProvider,
     LlmProviderError,
+    SlidingWindowChunker,
     document_stream,
 )
 
@@ -901,3 +902,135 @@ async def test_a_source_without_a_fetch_time_leaves_it_unset(tmp_path, build_ada
     envelopes = await _corpus_events(store, project_id)
     stored = envelopes[0].event
     assert stored.fetched_at is None
+
+
+@pytest.fixture
+def captured_build_kwargs(monkeypatch):
+    """Records the keyword arguments the adapter hands to `build_graph`.
+
+    Deliberately not the `IngestReport`: nothing on the report reflects
+    `concurrency` or `chunker`, so an assertion made there would pass whether
+    or not either value ever left this adapter. The call is the only place the
+    fact is observable without a real model and a stopwatch.
+    """
+    calls = []
+    real_build_graph = redstring_adapter.build_graph
+
+    async def recording_build_graph(document, **kwargs):
+        calls.append(kwargs)
+        return await real_build_graph(document, **kwargs)
+
+    monkeypatch.setattr(redstring_adapter, "build_graph", recording_build_graph)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_the_extraction_knobs_reach_build_graph(
+    tmp_path, build_adapter, captured_build_kwargs
+) -> None:
+    """Both are plumbing, and plumbing is exactly what silently goes missing.
+
+    This fails with the change reverted -- `concurrency` would be absent from
+    the call rather than merely different, since the adapter did not pass it
+    at all.
+    """
+    chunker = SlidingWindowChunker(default_chunk_size=2_000)
+    adapter, _, _ = build_adapter(tmp_path, uuid4(), concurrency=8, chunker=chunker)
+
+    await adapter.ingest(SourceRef(source_id="s1", text="body"))
+
+    assert captured_build_kwargs[0]["concurrency"] == 8
+    assert captured_build_kwargs[0]["chunker"] is chunker
+
+
+@pytest.mark.asyncio
+async def test_an_adapter_built_without_the_knobs_extracts_serially(
+    tmp_path, build_adapter, captured_build_kwargs
+) -> None:
+    """The default is redstring's serial pipeline, not the configured value.
+
+    `config` is read in the composition root and nowhere else, so a
+    `RedstringKnowledge` built directly -- which is every test here, and any
+    future caller that is not `build_container` -- gets `concurrency=1`, which
+    upstream states is byte-identical to the pre-0.8.0 pipeline. The point is
+    that turning concurrency on is a decision made in one visible place rather
+    than a default that arrives everywhere at once.
+    """
+    adapter, _, _ = build_adapter(tmp_path, uuid4())
+
+    await adapter.ingest(SourceRef(source_id="s1", text="body"))
+
+    assert captured_build_kwargs[0]["concurrency"] == 1
+    assert captured_build_kwargs[0]["chunker"] is None
+
+
+@pytest.mark.asyncio
+async def test_store_source_keeps_the_text_without_extracting_it(
+    tmp_path, build_adapter, captured_build_kwargs
+) -> None:
+    """The whole point of the method: the document, and no model calls.
+
+    `captured_build_kwargs` staying empty is the load-bearing assertion. Were
+    this to call `ingest`, the corpus check would pass identically and the
+    only visible difference would be minutes of wall clock and a model call
+    per chunk -- which is exactly the mistake the method exists to prevent.
+    """
+    project_id = uuid4()
+    adapter, store, _ = build_adapter(tmp_path, project_id)
+
+    await adapter.store_source(
+        SourceRef(
+            source_id="https://example.test/ada",
+            text="Ada Lovelace worked with Charles Babbage.",
+            uri="https://example.test/ada",
+            title="Ada Lovelace",
+        )
+    )
+
+    envelopes = await _corpus_events(store, project_id)
+    assert [envelope.event.source_id for envelope in envelopes] == ["https://example.test/ada"]
+    assert captured_build_kwargs == []
+
+
+@pytest.mark.asyncio
+async def test_store_source_refuses_what_ingest_refuses(tmp_path, build_adapter) -> None:
+    """Both refusals are kept, and the length one is the non-obvious half.
+
+    Nothing here chunks the text, so the cap looks like it could be relaxed.
+    It is not: a document over it can never be extracted later, so storing one
+    would create a corpus entry no `remember_page` could ever complete.
+    """
+    project_id = uuid4()
+    adapter, store, _ = build_adapter(tmp_path, project_id)
+
+    with pytest.raises(KnowledgeError):
+        await adapter.store_source(SourceRef(source_id="  ", text="body"))
+    with pytest.raises(KnowledgeError):
+        await adapter.store_source(
+            SourceRef(source_id="huge", text="x" * (redstring_adapter.MAX_DOCUMENT_CHARS + 1))
+        )
+
+    assert await _corpus_events(store, project_id) == []
+
+
+@pytest.mark.asyncio
+async def test_storing_the_same_page_twice_records_it_once(tmp_path, build_adapter) -> None:
+    """A run re-reading a page must not grow the corpus each time.
+
+    Automatic saving makes this ordinary rather than exceptional: the model
+    does not choose when this runs, so the same url arriving twice in one run
+    is expected. The digest check in `_store_document` is what absorbs it, and
+    this is the caller that depends on it.
+    """
+    project_id = uuid4()
+    adapter, store, _ = build_adapter(tmp_path, project_id)
+    source = SourceRef(
+        source_id="https://example.test/a",
+        text="Ada Lovelace worked with Charles Babbage.",
+        uri="https://example.test/a",
+    )
+
+    await adapter.store_source(source)
+    await adapter.store_source(source)
+
+    assert len(await _corpus_events(store, project_id)) == 1

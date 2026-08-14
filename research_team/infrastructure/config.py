@@ -28,6 +28,13 @@ DEFAULT_SEARXNG_RESULTS = 5
 DEFAULT_GRAPH_STORE = "memory"
 DEFAULT_KNOWLEDGE_DOMAIN = "auto"
 
+#: Chosen together, and neither means much alone -- see `extraction_chunk_size`
+#: for why the pair is the unit. 8 matches the slot count of the local server
+#: `DEFAULT_BASE_URL` points at; 2000 is below redstring's own 3000 default,
+#: which is affordable only because the calls now overlap.
+DEFAULT_EXTRACTION_CONCURRENCY = 8
+DEFAULT_EXTRACTION_CHUNK_SIZE = 2_000
+
 VECTOR_STORES = ("none", "memory", "pgvector")
 #: On, since the third scoring feature is what lets consolidation merge a
 #: cross-document duplicate on evidence rather than on an overridden threshold.
@@ -189,6 +196,74 @@ def graph_store() -> str:
 def knowledge_domain() -> str:
     """A redstring schema id, or `auto` to have a classifier choose."""
     return os.getenv("AGENT_KNOWLEDGE_DOMAIN", DEFAULT_KNOWLEDGE_DOMAIN)
+
+
+def extraction_concurrency() -> int:
+    """How many extraction calls may be in flight per document. 8 by default.
+
+    redstring builds one `CallLimiter` per `build_graph` from this, shared
+    across classification, extraction, gleaning and embedding, so the ceiling
+    is per *document* and not per process. **Two documents ingested at once
+    are two ceilings**, and `_store_document` says two `remember` calls in one
+    assistant message do run concurrently -- so the real bound against the
+    server is this times the number of overlapping ingests. `build_graph`
+    constructs its own limiter and accepts no injected one, so a single
+    process-wide ceiling is not reachable without dropping to
+    `ExtractionPipeline` and reimplementing what `build_graph` does around it.
+    Not judged worth it; the number to raise if the server starts queueing is
+    this one, downward.
+
+    8 because `DEFAULT_BASE_URL` is a local server with 8 slots -- the same
+    server redstring's own measurement was taken against, this being the same
+    author's library on the same hardware. Against a hosted endpoint with a
+    request-per-minute quota this is the wrong shape of limit entirely and
+    wants lowering.
+
+    Raising it past a document's chunk count does nothing: what runs at once
+    is `min(concurrency, chunks in the batch)`, and the chunk count is not
+    `len(text) / chunk_size` -- overlap makes it larger.
+    """
+    return int(os.getenv("AGENT_EXTRACTION_CONCURRENCY", str(DEFAULT_EXTRACTION_CONCURRENCY)))
+
+
+def extraction_chunk_size() -> int:
+    """Characters per extraction chunk. 2000 by default, against redstring's 3000.
+
+    This is the half of the concurrency change that actually buys something,
+    and it only became affordable because of the other half. Upstream measured
+    332.7s to 166.4s on a 33k-character document, and reports the gain is
+    mostly *not* the overlapping calls -- it is that overlapping calls make
+    smaller chunks cheap, and smaller chunks extract more (329 entities and
+    384 relationships against 209 and 276). Serially, halving the chunk size
+    roughly doubles the wall clock; concurrently it is close to free.
+
+    Those numbers transfer further than a third party's would: redstring is
+    this project's own library, measured on this hardware against comparable
+    content. What does not transfer is the *pipeline they were taken through*.
+    `build_graph` is where that measurement stops, and this adapter runs a
+    consolidation pass after it that redstring's benchmark never paid for --
+    with `adjudicate` defaulting to True and embeddings on, every
+    cross-document duplicate costs one adjudicator call (see the note above
+    `_CountingProvider` in `redstring_adapter.py`, which pins that at 0.8
+    against `HIGH_SIMILARITY` 0.92).
+
+    That is the direction to watch, because smaller chunks push on it: an
+    entity named once per chunk across more chunks is more mentions, more
+    candidate pairs, and more adjudicator calls. Extraction gets faster and
+    finds more while consolidation gets more expensive, and only the first
+    half of that is in the 332.7s-to-166.4s figure. Upstream warns separately
+    that below some size extraction stops finding more and starts
+    manufacturing duplicate identities outright; 2000 is above where that was
+    seen. **What has not been measured is the whole-ingest cost through this
+    adapter** -- `docs/how-to/tune-ingestion-throughput.md` in redstring is
+    the method, and the number to watch here is adjudicator calls per
+    document, not wall clock alone.
+
+    Overlap is left at redstring's 200 deliberately: it is what keeps an
+    entity spanning a chunk boundary from being lost, and it does not scale
+    with chunk size on its own.
+    """
+    return int(os.getenv("AGENT_EXTRACTION_CHUNK_SIZE", str(DEFAULT_EXTRACTION_CHUNK_SIZE)))
 
 
 def extraction_thinking() -> bool:

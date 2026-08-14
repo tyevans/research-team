@@ -1207,41 +1207,79 @@ change made blind, in a shared primitive, in a slice that owns neither. Do it
 when someone can look at it, and decide then whether the intent was 2px or
 whether the utilities should simply go.
 
-### B55. Shipped single-side borders draw nothing — two left
+### B55. Premise withdrawn — a directional width alone draws, and the two remaining entries are not defects
 
-Found by increment C slice 2's mandated combinator grep, not by a gate, and
-filed rather than fixed because each one changes pixels in a region that slice
-did not own.
+**Withdrawn on 2026-08-13, by reading the built stylesheet this repository
+commits.** This entry was filed on the second half of `CLAUDE.md`'s single-side
+border rule: that a directional width with no `border-style` anywhere leaves
+every side's style at the browser default `none` and so draws nothing. **That
+half of the rule is wrong for this build, and `CLAUDE.md` has been corrected in
+the same commit.** Tailwind v4 does not emit a bare width longhand. From
+`research_team/interfaces/web/static/assets/index.css`:
 
-`CLAUDE.md`'s single-side-border rule has two halves and these write only one of
-them — a directional width with no `border-style` anywhere, so every side's
-style is still the browser default `none` and the rule draws nothing at all:
+```
+.border-b{border-bottom-style:var(--tw-border-style);border-bottom-width:1px}
+.border{border-style:var(--tw-border-style);border-width:1px}
+@property --tw-border-style{syntax:"*";inherits:false;initial-value:solid}
+```
 
-- ~~`presentation/project/queue/QueueHeader.tsx:75`~~ — **fixed** in the commit
-  that made the ask page reachable again, because that commit added a bordered
-  link directly above the band and the inconsistency was the tell.
-- ~~`QueueHeader.tsx`'s `CARD`~~ — **fixed** in the same commit, and it was not
-  in this entry's original list: `border border-line` with no `border-solid`, so
-  all four cards in the queue header have been drawing no border since slice 1.
-  A fourth instance found by fixing the third, which is the argument for the
-  `check-tailwind.mjs` rule below rather than for finding them by eye.
-- `presentation/common/Drawer.tsx:163` — `border-b border-line` under a drawer
-  header.
-- `presentation/shell/DecisionBar.tsx:44` — `border-b border-k-tool`, which is
-  the one that matters most: the decision bar is a gated call waiting on a
-  human, and `--k-tool` is the colour saying so.
+The registered property's `initial-value` is `solid`, Tailwind emits a second
+`--tw-border-style:solid` on `*,::before,::after` inside its Safari `@supports`
+block, and **`border-style:none` occurs zero times in the whole built sheet**. So
+`border-b` alone resolves to `border-bottom-style: solid; border-bottom-width:
+1px` and draws. No `border-solid` is required.
 
-The fix is `border-0 border-b border-solid border-line` in each, which is what
-`AskHead.tsx:27`, `AskComposer.tsx:43` and `AskTurn.tsx:36` already write and
-comment. Worth doing as one commit with one Storybook check, since the failure
-is invisible to every gate and to jsdom — a selector that applies perfectly and
-paints nothing.
+The repository already contained the measurement and nobody read it:
+`Drawer.tsx:162` writes `border-l border-line` with no `border-solid`, `.drawer`
+gets no border rule from any stylesheet (`responsive.css:95-99` sets only
+widths), and `shell-reached-dressing.browser.test.tsx:157-158` asserts
+`borderLeftWidth === '1px'` **and** `borderLeftStyle === 'solid'` on that same
+element. If this entry's premise held, that assertion would be red.
 
-The cheaper half of the fix is a `check-tailwind.mjs` rule: a directional
-`border-{t,r,b,l}` in a class list with no `border-solid` (or other style) is
-always this bug. That would have caught all three at the commit that wrote them
-— and the plain `border` case above, which no amount of grepping for
-directional utilities finds.
+**So `Drawer.tsx:163` and `DecisionBar.tsx:44` are not defects and no sweep is
+owed.** The `border-0 border-b border-solid border-line` form in `AskHead.tsx:27`,
+`AskComposer.tsx:43` and `AskTurn.tsx:36` is correct but redundant under v4;
+`border-b` alone is equivalent. Nothing needs changing either way.
+
+**One recorded reason was wrong and is corrected here rather than quietly
+dropped.** This entry, and commit `162dff5`'s message, both claimed the four
+`QueueHeader` cards "have been drawing no border at all since slice 1". **They
+were drawing.** The edit that commit made was a no-op in pixels, so nothing
+regressed and nothing needs reverting — but the reason given for making it was
+false, and the two `QueueHeader` entries struck through above were struck for a
+defect that did not exist.
+
+**The inverse rule is the real one, and it is what survives into
+`check-tailwind.mjs`.** `.border-solid{--tw-border-style:solid;border-style:solid}`
+is the shorthand, all four sides — so `border-solid` paired with one directional
+width and *no* `border-0` leaves three sides styled with no explicit width,
+falling back to the UA's `medium` (~3px), and a rule meant for one edge draws a
+box. That is `CLAUDE.md`'s *first* half, it is correct, and it is the one this
+repository has actually drawn. A sweep of every string literal in
+`frontend/src/**/*.{ts,tsx}` with comments stripped finds **zero live
+instances**, so a check for it is a ratchet rather than a fix.
+
+**And it cannot be an emission check, which this entry also got wrong.**
+`findSilentUtilities` (`check-tailwind.mjs:143-156`) asks one question — does a
+selector for this class name appear in the built `index.css`? `border-b` **does**
+emit a rule, so the check as built would never have caught any instance here,
+including under this entry's own premise. The defect described was a *missing
+companion class*, not a missing rule. What is cheap is a **co-occurrence pass**
+over the token set `check-tailwind.mjs:93-113` already builds (every string
+literal, comments stripped, line numbers preserved) — about fifteen lines, and it
+could also catch two hazards nothing enforces today: two utilities setting the
+same property in one class string (the coin-toss `primitives.tsx:44-48`
+documents), and a variant prefix that is not a declared breakpoint or known state
+(`theme.css:49-54` declares no `--breakpoint-*`, so every `sm:`/`md:`/`lg:`
+compiles to nothing — zero uses in `presentation/` today, so latent, one
+`md:flex` away from live).
+
+**What is still owed, and it is the honest gap.** `CLAUDE.md` says the border
+defect was "caught by eye in Storybook, twice, in both directions", and only one
+direction is explained by the current build. The other observation has not been
+re-taken. `frontend/src/styles/border-style-default.browser.test.tsx` is written
+to settle it and **has not been run** — a benchmark held the machine. If it
+fails, the reading above is wrong and this entry should be reinstated.
 
 ## The ask page
 
