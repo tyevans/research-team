@@ -42,19 +42,51 @@ findable," and it is cheap to change if the guess is wrong; nothing else
 depends on the exact value.
 """
 
+MAX_SEARCHES_PER_TURN = 3
+"""Searches of any kind this turn before `web_search` stops asking.
+
+A budget, where `MAX_EMPTY_SEARCHES` is a streak, and the two bound different
+failures. The streak catches a question the web cannot answer: three empties
+and there is nothing there. This catches the opposite and more expensive case,
+which is what it was added for -- a topic where every search *returns*
+something, none of it settles the question, and the model keeps rephrasing.
+Nothing in the streak counter fires on that, because any result at all resets
+it, so before this a productive-but-inconclusive topic could search without
+limit.
+
+Three because a round is one topic (`research_round.py`'s "You are working one
+topic in an autonomous research round", and `TopicRoundRunner` runs one round
+as one turn), so a per-turn budget is a per-topic budget, and two or three
+angles on one question is where looking harder stops paying. An interactive
+turn is one user message, where the same number is tighter but still more than
+most questions need.
+
+It is deliberately not a floor: like the streak it changes what the tool
+*returns*, and the model may respond by recording a gap, by answering from
+what it already has, or by ignoring the notice and calling something else.
+"""
+
 
 @dataclass
 class _Counter:
-    """One turn's streak of empty searches.
+    """One turn's search counts: the empty streak, and the total spend.
 
-    A class and not an `int` on purpose -- see `SearchAttempts`.
+    A class and not two `int`s on purpose -- see `SearchAttempts`.
     """
 
     empty: int = 0
+    total: int = 0
 
 
 class SearchAttempts:
-    """How many consecutive searches this turn came back with nothing.
+    """One turn's search counts: the empty streak, and the total spend.
+
+    Two bounds over one counter, because they catch different failures and
+    neither subsumes the other. `exhausted()` is a streak -- three consecutive
+    `"No results."` and the web does not have it. `budget_spent()` is a total
+    -- three searches of any outcome and this turn has looked enough. A topic
+    where every search returns something inconclusive trips only the second;
+    a question nothing indexes trips only the first, and sooner.
 
     Deliberately not a permission mechanism: it does not withhold `web_search`
     from the tool list the way `TOOL_FLOORS` withholds `fetch`, and nothing
@@ -62,12 +94,18 @@ class SearchAttempts:
     the bound, which the model is free to act on or ignore -- the same shape
     `fetch`'s `UNREADABLE` notice uses for a page that will never render.
 
-    Only `"No results."` counts. An unreachable instance, a non-JSON payload,
-    or a malformed one is not an absent answer -- it is search failing to
-    happen at all, and counting it would tell the model to record a gap
-    (a claim that the search was tried and nothing was there) it has no
-    evidence for. `build_search_tool` enforces this by comparing the result
-    string, not by catching exceptions here.
+    Only `"No results."` counts *toward the streak*. An unreachable instance,
+    a non-JSON payload, or a malformed one is not an absent answer -- it is
+    search failing to happen at all, and counting it would tell the model to
+    record a gap (a claim that the search was tried and nothing was there) it
+    has no evidence for. `build_search_tool` enforces this by comparing the
+    result string, not by catching exceptions here.
+
+    The budget counts all three, and the asymmetry is deliberate rather than
+    an oversight. A turn whose instance is down should stop asking it: the
+    streak's reasoning does not apply, since nothing is being claimed about
+    what is out there, and three failed round trips is enough to establish
+    that a fourth will fail too.
 
     The instance is process-wide -- `build_application` constructs one for the
     one `web_search` tool the whole process shares -- but the *count* is not:
@@ -124,11 +162,34 @@ class SearchAttempts:
         return counter.empty
 
     def reset(self) -> None:
-        """Any non-empty result clears this turn's streak."""
+        """Any non-empty result clears this turn's streak.
+
+        The *streak* only. `total` is a budget and survives a productive
+        search -- clearing it here would make the budget unreachable on
+        exactly the topic it exists for, where every search returns something
+        and none of it settles the question.
+        """
         self._current().empty = 0
+
+    def record_search(self) -> int:
+        """One more search this turn, of any outcome; returns the new total.
+
+        Counted before the answer is known, and counted for a recalled answer
+        too. Both follow from what the budget is for: the streak counter
+        measures whether the web has an answer, and this one measures how long
+        the model has been asking. A repeat query served from `Recall` costs no
+        request, but it is the model going round again on a question it has
+        already put -- which is the behaviour being bounded, not the traffic.
+        """
+        counter = self._current()
+        counter.total += 1
+        return counter.total
 
     def exhausted(self) -> bool:
         return self._current().empty >= MAX_EMPTY_SEARCHES
+
+    def budget_spent(self) -> bool:
+        return self._current().total >= MAX_SEARCHES_PER_TURN
 
 
 def format_results(payload: object, limit: int) -> str:
@@ -197,6 +258,24 @@ def _exhausted_notice(count: int) -> str:
         "Searching again is unlikely to find something the last "
         f"{count} attempts did not. If you looked and did not find it, call "
         "`record_gap` to say so rather than searching again."
+    )
+
+
+def _budget_notice(count: int) -> str:
+    """What `web_search` says instead of searching, past the turn's budget.
+
+    Says "move on" in the two forms the model can act on, because the notice
+    the streak sends -- `record_gap` and nothing else -- is the wrong advice
+    here. Past the streak bound nothing was found; past this one, three
+    searches' worth of results are already in the turn, and answering from
+    them is usually the right move rather than declaring a gap.
+    """
+    return (
+        f"web_search has been called {count} times this turn, which is the "
+        "budget for one topic. Work with what those searches returned: record "
+        "what they support, and if the question is still open, call "
+        "`record_gap` saying what you tried and move on to the next topic. "
+        "Another phrasing of the same question is not what is missing."
     )
 
 
@@ -274,6 +353,15 @@ def build_search_tool(
             # that another search would not help, so there is nothing to gain
             # by spending the round trip to confirm it.
             return _exhausted_notice(MAX_EMPTY_SEARCHES)
+        if attempts is not None and attempts.budget_spent():
+            # Checked before `Recall`, and so is the increment below: the
+            # budget counts questions asked rather than requests made, and a
+            # recalled answer is the model asking again. Checking after would
+            # let a turn spin indefinitely on queries it has already put, which
+            # is the shape this bounds.
+            return _budget_notice(MAX_SEARCHES_PER_TURN)
+        if attempts is not None:
+            attempts.record_search()
         # Keyed explicitly rather than through `Recall`'s default, which would
         # key on the bare normalized query and collide with `fetch`'s URL keys.
         # The parameters are part of it because the instance answers

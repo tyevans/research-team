@@ -14,6 +14,7 @@ from hypothesis import strategies as st
 from research_team.infrastructure.agent.recall import Recall
 from research_team.infrastructure.agent.search import (
     MAX_EMPTY_SEARCHES,
+    MAX_SEARCHES_PER_TURN,
     SearchAttempts,
     build_search_tool,
     format_results,
@@ -509,14 +510,23 @@ async def test_search_stops_after_repeated_empty_results() -> None:
     assert "record_gap" in result
 
 
-async def test_the_counter_resets_on_any_result() -> None:
-    """An intermittently productive search is never bounded."""
+async def test_a_productive_search_clears_the_streak_but_not_the_budget() -> None:
+    """An intermittently productive search never trips the *streak*.
+
+    This asserted "is never bounded" until `MAX_SEARCHES_PER_TURN` existed,
+    and that claim was the gap the budget was added to close: three empties
+    stop a turn, but alternating hit-and-miss could search forever, which is
+    what an autonomous run doing it looks like from the outside.
+
+    Both halves are asserted here rather than split, because the interesting
+    fact is that the two counters disagree about this sequence -- the streak
+    resets at the third call and the budget does not.
+    """
     responses = iter(
         [
             httpx.Response(200, json={"results": []}),
             httpx.Response(200, json={"results": []}),
             httpx.Response(200, json=PAYLOAD),
-            httpx.Response(200, json={"results": []}),
             httpx.Response(200, json={"results": []}),
         ]
     )
@@ -526,12 +536,15 @@ async def test_the_counter_resets_on_any_result() -> None:
 
     attempts = SearchAttempts()
     tool = build_search_tool("http://searx.local", client=_client(handler), attempts=attempts)
-    for _ in range(5):
-        result = await tool.ainvoke({"query": "q"})
+    for _ in range(3):
+        await tool.ainvoke({"query": "q"})
 
-    # Never crossed MAX_EMPTY_SEARCHES consecutive misses, so the last call
-    # still reached the instance rather than returning the bound notice.
-    assert result == "No results."
+    # The streak is clear -- the third call returned results -- so nothing
+    # about `MAX_EMPTY_SEARCHES` is in play at the fourth.
+    assert attempts.exhausted() is False
+    result = await tool.ainvoke({"query": "q"})
+    assert "record_gap" in result
+    assert "budget" in result
 
 
 def test_the_counter_resets_at_the_turn_boundary() -> None:
@@ -653,7 +666,14 @@ async def test_a_tool_built_without_middleware_still_counts() -> None:
 async def test_errors_are_not_counted() -> None:
     """An unreachable instance or a malformed payload is not an absent
     answer -- counting it would tell the model to record a gap it has no
-    evidence for."""
+    evidence for.
+
+    Only the first `MAX_SEARCHES_PER_TURN` of these calls now reach the
+    handler; past that the budget answers without a request. The assertion is
+    unaffected -- a call that never happened cannot have counted -- and the
+    loop is left over-long deliberately, since it also shows the budget
+    notice does not touch the streak either.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
@@ -664,3 +684,104 @@ async def test_errors_are_not_counted() -> None:
         await tool.ainvoke({"query": "q"})
 
     assert not attempts.exhausted()
+
+
+async def test_a_turn_gets_three_searches_however_well_they_go() -> None:
+    """The budget is what bounds a topic where every search finds something.
+
+    `MAX_EMPTY_SEARCHES` cannot: every one of these calls returns results, so
+    the streak is zero throughout. Fails with the budget removed -- the fourth
+    call reaches the instance, and `len(calls)` is what catches it.
+    """
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(200, json=PAYLOAD)
+
+    attempts = SearchAttempts()
+    tool = build_search_tool("http://searx.local", client=_client(handler), attempts=attempts)
+    for index in range(MAX_SEARCHES_PER_TURN):
+        # A different query each time: the point is a model rephrasing its way
+        # around one topic, not one query repeated into `Recall`.
+        await tool.ainvoke({"query": f"q{index}"})
+
+    result = await tool.ainvoke({"query": "one more angle"})
+    assert len(calls) == MAX_SEARCHES_PER_TURN
+    assert str(MAX_SEARCHES_PER_TURN) in result
+    assert "record_gap" in result
+
+
+async def test_the_budget_counts_a_recalled_search_too() -> None:
+    """A repeat query costs no request and still spends budget.
+
+    The budget counts questions asked rather than requests made -- a turn
+    re-asking what it already asked is the spinning being bounded, and serving
+    it free from `Recall` would make the bound unreachable by repeating one
+    query. Fails if the budget check or its increment moves below the `Recall`
+    lookup.
+    """
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(200, json=PAYLOAD)
+
+    attempts = SearchAttempts()
+    tool = build_search_tool(
+        "http://searx.local",
+        client=_client(handler),
+        recall=Recall(),
+        attempts=attempts,
+    )
+    for _ in range(MAX_SEARCHES_PER_TURN):
+        await tool.ainvoke({"query": "the same question"})
+
+    # One request; the rest were served from `Recall` -- and still spent.
+    assert len(calls) == 1
+    assert "record_gap" in await tool.ainvoke({"query": "the same question"})
+
+
+async def test_a_dead_instance_spends_the_budget_but_not_the_streak() -> None:
+    """The asymmetry in `SearchAttempts`, asserted rather than only described.
+
+    A transport error is not evidence about what is out there, so it must not
+    push the model toward `record_gap` via the streak. It is evidence that the
+    instance is down, so a fourth round trip is still waste.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("instance down")
+
+    attempts = SearchAttempts()
+    tool = build_search_tool("http://searx.local", client=_client(handler), attempts=attempts)
+    for _ in range(MAX_SEARCHES_PER_TURN):
+        await tool.ainvoke({"query": "q"})
+
+    assert attempts.exhausted() is False
+    assert attempts.budget_spent() is True
+
+
+def test_budget_spent_turns_true_exactly_at_the_bound() -> None:
+    """Off-by-one, stated. One short is still allowed to search."""
+    attempts = SearchAttempts()
+    for _ in range(MAX_SEARCHES_PER_TURN - 1):
+        attempts.record_search()
+    assert attempts.budget_spent() is False
+    attempts.record_search()
+    assert attempts.budget_spent() is True
+
+
+def test_a_turn_boundary_restores_the_budget() -> None:
+    """A budget that outlived its turn would stop the run after one topic.
+
+    One round is one topic, so the per-turn scoping is what makes this a
+    per-topic budget -- the next topic must start with three searches again.
+    """
+    attempts = SearchAttempts()
+    for _ in range(MAX_SEARCHES_PER_TURN):
+        attempts.record_search()
+    assert attempts.budget_spent() is True
+
+    attempts.begin_turn()
+    assert attempts.budget_spent() is False
