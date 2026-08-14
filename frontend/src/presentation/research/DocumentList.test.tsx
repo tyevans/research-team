@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { ReactElement, ReactNode } from 'react'
+import { useState, type ReactElement, type ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
@@ -18,6 +18,22 @@ import { FRAME_DEBOUNCE_MS } from '../shell/use-frame-refresh.ts'
 import { DocumentList } from './DocumentList.tsx'
 
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
+
+/** `DocumentList` with the route's job done by `useState`.
+ *
+ * Which document is open belongs to the address bar now -- `CitationList`
+ * writes `#/p/<id>/doc/<sourceId>` and that link was opening the tab with
+ * nothing read, because the pane held the open document in its own state. The
+ * two tests below are about the drawer rather than about routing, so they need
+ * *something* to close the loop `ProjectView` closes with `navigate`; this is
+ * the smallest honest stand-in. A test that rendered `DocumentList` bare would
+ * now assert that clicking a row does nothing, which is true and is not what it
+ * was written to say.
+ */
+const Routed = ({ initial = null }: { initial?: SourceId | null }) => {
+  const [open, setOpen] = useState<SourceId | null>(initial)
+  return <DocumentList projectId={PROJECT} open={open} onOpen={setOpen} />
+}
 
 const doc = (over: Partial<DocumentSummary> = {}): DocumentSummary => ({
   sourceId: SourceId('s1'),
@@ -150,9 +166,13 @@ it('renders a dropped document’s reason and marks it, without hiding it', asyn
   const droppedTitle = await screen.findByText('Superseded paper')
   expect(screen.getByText('Live one')).toBeInTheDocument()
   expect(screen.getByText(/superseded by a later edition/)).toBeInTheDocument()
-  const row = droppedTitle.closest('.document-row')
+  // `data-*` rather than the class names this row used to carry. The dressing
+  // is utilities now, and a test that asserted on a utility string would fail
+  // on a colour change that broke nothing; the state is the thing this test is
+  // about and the attribute is where the state lives.
+  const row = droppedTitle.closest('[data-document-row]')
   expect(row).not.toBeNull()
-  expect(row!.className).toContain('document-dropped')
+  expect(row).toHaveAttribute('data-dropped', 'true')
 })
 
 it('lets a row be as tall as its title instead of pinning it to one row height', async () => {
@@ -174,7 +194,7 @@ it('lets a row be as tall as its title instead of pinning it to one row height',
 
   renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
 
-  const row = (await screen.findByText('Ada Lovelace')).closest('.document-row')
+  const row = (await screen.findByText('Ada Lovelace')).closest('[data-document-row]')
   expect(row).not.toBeNull()
   expect(row).toHaveAttribute('data-index', '0')
   expect((row as HTMLElement).style.transform).toBe('translateY(0px)')
@@ -199,12 +219,39 @@ it('opens a document over the page rather than below the list', async () => {
   } as Awaited<ReturnType<DocumentRepository['read']>>)
   const user = userEvent.setup()
 
-  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+  renderWithContainer(<Routed />, { documents })
 
   await user.click(await screen.findByRole('button', { name: /ada lovelace/i }))
 
   const dialog = await screen.findByRole('dialog')
   expect(dialog).toHaveAttribute('aria-modal', 'true')
+  expect(within(dialog).getByText(/analytical engine/i)).toBeInTheDocument()
+})
+
+it('opens the document the route names, with no click at all', async () => {
+  // The regression `CitationList` has been shipping into: `#/p/<id>/doc/<id>`
+  // parsed, reached MATERIAL and opened the Documents tab, and the id was then
+  // dropped because `DocumentList` took `projectId` alone and held the open
+  // document in `useState`. A reader following a citation got an unfiltered
+  // corpus and had to find the source by hand.
+  //
+  // Reverting the `open` prop -- back to `useState` inside `useDocuments` --
+  // fails here, because nothing in this test ever clicks a row.
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace' })]),
+  )
+  documents.read = vi.fn<DocumentRepository['read']>().mockResolvedValue({
+    sourceId: SourceId('s1'),
+    title: 'Ada Lovelace',
+    text: 'Notes on the Analytical Engine.',
+    droppedReason: null,
+  } as Awaited<ReturnType<DocumentRepository['read']>>)
+
+  renderWithContainer(<Routed initial={SourceId('s1')} />, { documents })
+
+  const dialog = await screen.findByRole('dialog')
   expect(within(dialog).getByText(/analytical engine/i)).toBeInTheDocument()
 })
 
@@ -222,7 +269,7 @@ it('closes the open document on Escape, leaving the list behind it', async () =>
   } as Awaited<ReturnType<DocumentRepository['read']>>)
   const user = userEvent.setup()
 
-  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+  renderWithContainer(<Routed />, { documents })
 
   await user.click(await screen.findByRole('button', { name: /ada lovelace/i }))
   await screen.findByRole('dialog')

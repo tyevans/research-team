@@ -8,7 +8,12 @@ import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
 import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
 
-/** The corpus, the filter over it, and which document is open.
+/** The corpus, the filter over it, and which document the route says is open.
+ *
+ * The filter stays local state and the open document does not, which is the
+ * same line `ProjectView` draws for its tabs: a filter is how you are looking,
+ * an open document is what you are looking at, and only the second is worth
+ * sending to somebody.
  *
  * Refreshed off the live feed, like the topic queue and for the same reason: a
  * document being stored *is* a log entry, so the frames that change this list
@@ -17,9 +22,24 @@ import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
  * `useDocumentRefresh` below, this pane changed only on a reload -- which is
  * what a reader watching a session fetch three papers actually saw.
  */
-export const useDocuments = (projectId: ProjectId) => {
+export const useDocuments = (
+  projectId: ProjectId,
+  /** Which document is open, owned by the route.
+   *
+   * It was `useState` here, and that was the whole of a shipped broken link:
+   * `CitationList` writes `#/p/<id>/doc/<sourceId>`, its comment says the point
+   * is to keep the reader on the project page, and following it opened the
+   * Documents tab with nothing read -- the reader had to find the source by
+   * hand in an unfiltered list. State cannot be linked to, and this pane's one
+   * inbound link is the reason the address bar has to own it.
+   *
+   * `null` for both is a real caller: `DocumentList` outside a routed page has
+   * no address to write to. It then opens nothing, which is honest -- a drawer
+   * that opens and cannot be linked back to is the state this replaces. */
+  open: SourceId | null = null,
+  onOpen: (sourceId: SourceId | null) => void = () => {},
+) => {
   const { documents } = useContainer()
-  const [reading, setReading] = useState<SourceId | null>(null)
   const [filter, setFilter] = useState('')
 
   const query = useQuery({
@@ -37,8 +57,10 @@ export const useDocuments = (projectId: ProjectId) => {
 
   return {
     query,
-    reading,
-    onClose: () => setReading(null),
+    reading: open,
+    onClose: () => {
+      onOpen(null)
+    },
     /** The open document's title, for the drawer's heading.
      *
      * Taken from the row that opened it rather than waited for from the
@@ -53,7 +75,7 @@ export const useDocuments = (projectId: ProjectId) => {
       total: query.data?.length ?? 0,
       filter,
       onFilterChange: setFilter,
-      onOpen: setReading,
+      onOpen,
     },
   }
 }

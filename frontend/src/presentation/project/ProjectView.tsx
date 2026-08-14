@@ -5,7 +5,7 @@ import type { SessionStore } from '@application/session/session-store.ts'
 import type { Course } from '@domain/project/course.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
-import type { ProjectId, SessionId } from '@domain/shared/identifier.ts'
+import { SourceId, type ProjectId, type SessionId } from '@domain/shared/identifier.ts'
 
 import { Confirm } from '../common/Confirm.tsx'
 import { EmptyState, Loading } from '../common/primitives.tsx'
@@ -132,9 +132,12 @@ const DEFAULT_MATERIAL: Facet = 'artifact'
  * holding the components the two old pages happened to have, unrestyled, on
  * purpose: the container and the regions are two changes and shipping them
  * together leaves no way to tell which half broke. Slice 1 gave QUEUE its header
- * band; this slice takes the nesting out of HOLDER and gives MATERIAL the
- * workspace. The stage list is still the course page's rail, and slice 3 owns
- * that.
+ * band; slice 2 took the nesting out of HOLDER and gave MATERIAL the workspace;
+ * slice 3 rewrote three of MATERIAL's five tabs in utilities and threaded their
+ * route ids in. The stage list is still the course page's rail and the topic
+ * list is still the research page's, both in QUEUE, and neither is MATERIAL's
+ * to rewrite — which is also why neither `course.css` nor `research.css` has
+ * died yet.
  *
  * A `Split` rather than three divs because the regions are peers whose widths a
  * reader trades against each other, and `Split` already owns that — the sizing,
@@ -218,6 +221,31 @@ export const ProjectView = ({
   // second arm would fall through to `artifact` and close the Workspace tab
   // under them on the first click. `#/p/<id>/file/<path>` still arrives through
   // the second arm, which is what makes that URL a linkable entry point.
+  /** The id the route carries for a MATERIAL facet, or `null`.
+   *
+   * **This is the half of "already linkable" that was not true.** `topic`,
+   * `doc`, `artifact` and `finding` all parse an id, land on `selection` and
+   * reach the right region — and were then mounted with `projectId` or `course`
+   * alone, each component holding its open item in its own `useState`. Four
+   * linkable states that opened the right tab and forgot what the link was
+   * about, and one of them was a shipped broken link: `CitationList` writes
+   * `#/p/<id>/doc/<sourceId>` and following it produced an unfiltered corpus.
+   *
+   * The plan's §1 says "a topic, a stage and an artifact are already linkable
+   * states … a precondition that is met". Only the stage half was true, which
+   * is why no slice had budgeted this.
+   *
+   * Two literal comparisons rather than one helper taking a facet: comparing
+   * against a *variable* narrows nothing, so `selection.id` would still be the
+   * union of every facet's id type — including `FilePath`, which is an object
+   * and would reach a row as `[object Object]` through any `String()` that
+   * silenced the type error.
+   */
+  const openArtifact = selection?.facet === 'artifact' ? selection.id : null
+  const openFinding = selection?.facet === 'finding' ? selection.id : null
+  const openDoc =
+    selection?.facet === 'doc' && selection.id !== null ? SourceId(selection.id) : null
+
   const materialTab: Facet =
     selection?.facet === 'session' && selection.path !== null
       ? 'file'
@@ -399,7 +427,11 @@ export const ProjectView = ({
           <TabList label="Material" options={MATERIAL_TABS} />
 
           <TabPanel value="artifact" className="min-h-0 flex-1 overflow-auto">
-            {course.data ? <ArtifactList course={course.data} /> : <Loading what="artifacts" />}
+            {course.data ? (
+              <ArtifactList course={course.data} open={openArtifact} />
+            ) : (
+              <Loading what="artifacts" />
+            )}
           </TabPanel>
 
           {/* No `overflow-auto`, for the same reason the document list has
@@ -425,14 +457,27 @@ export const ProjectView = ({
           </TabPanel>
 
           <TabPanel value="finding" className="min-h-0 flex-1 overflow-auto">
-            {course.data ? <ProjectFindings course={course.data} /> : <Loading what="findings" />}
+            {course.data ? (
+              <ProjectFindings course={course.data} open={openFinding} />
+            ) : (
+              <Loading what="findings" />
+            )}
           </TabPanel>
 
           {/* No `overflow-auto`: the document list owns a virtualizer, which
               owns a scroll container, and a scroller around it is the outer box
               absorbing the wheel from the inner one. */}
           <TabPanel value="doc" className="flex min-h-0 flex-1 flex-col">
-            <DocumentList projectId={projectId} />
+            {/* Replaced rather than pushed, like every other selection here:
+                opening a source is a glance down a list, and the drawer's own
+                close writes `{ facet: 'doc', id: null }` so that closing it
+                leaves the reader on the Documents tab rather than back at the
+                default one. */}
+            <DocumentList
+              projectId={projectId}
+              open={openDoc}
+              onOpen={(sourceId) => select({ facet: 'doc', id: sourceId })}
+            />
           </TabPanel>
 
           <TabPanel value="entity" className="flex min-h-0 flex-1 flex-col">
@@ -474,12 +519,12 @@ const SectionHead = ({ label, meta }: { label: string; meta: string | undefined 
 /** `Findings` renders `null` when a stage has nothing to report, which is right
  *  inside a page with other content on it and wrong as the whole of a tab: an
  *  empty panel reads as a load that failed. */
-const ProjectFindings = ({ course }: { course: Course }) =>
+const ProjectFindings = ({ course, open }: { course: Course; open: string | null }) =>
   course.findings.length === 0 && course.unimplementedChecks.length === 0 ? (
     <EmptyState
       heading="No checks have reported on this stage."
       detail="Findings appear here when a gate or a critic runs against the current stage."
     />
   ) : (
-    <Findings course={course} />
+    <Findings course={course} open={open} />
   )
