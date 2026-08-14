@@ -19,12 +19,17 @@ const base = {
   onReset: () => {},
 }
 
-it('marks Ask as the current facet and the other two as elsewhere', () => {
+/** Two entries, not the three this asserted before increment C merged the
+ *  course and research pages into one. `Course` and `Research` were two names
+ *  for two routes; both now resolve to the project page, so offering both was
+ *  offering one destination twice under names the console no longer uses. */
+it('marks Ask as the current facet and the project as elsewhere', () => {
   render(<AskPage {...base} />)
 
   expect(screen.getByRole('link', { name: 'Ask' })).toHaveAttribute('aria-current', 'page')
-  expect(screen.getByRole('link', { name: 'Course' })).not.toHaveAttribute('aria-current')
-  expect(screen.getByRole('link', { name: 'Research' })).not.toHaveAttribute('aria-current')
+  expect(screen.getByRole('link', { name: 'Project' })).not.toHaveAttribute('aria-current')
+  expect(screen.queryByRole('link', { name: 'Course' })).toBeNull()
+  expect(screen.queryByRole('link', { name: 'Research' })).toBeNull()
 })
 
 it('asks for a new chat without knowing what one is', async () => {
