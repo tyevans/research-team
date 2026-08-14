@@ -222,14 +222,12 @@ const confirmCopy = ({ kind, project }: Confirmation) => {
  * verb a held project offers (a branch over what taking over *means*), and the
  * menu's open state.
  *
- * **Why the hook is still per row, and what that did and did not buy.** A hook
- * cannot be called in a loop, and `VirtualList`'s children argument is a
- * render callback rather than a component, so "one `useProjectActivity` per
- * drawn row" has to be a component per drawn row — this one. The request count
- * is therefore **unchanged**: still two per drawn row, still only for rows the
- * virtualizer has actually drawn. What changed is where the cost is visible.
- * It is now one call in one container, so §2.7(c)'s `activity` on
- * `/api/projects` becomes a prop swap here rather than a rewrite of the card.
+ * **Why the hook is still per row.** A hook cannot be called in a loop, and
+ * `VirtualList`'s children argument is a render callback rather than a
+ * component, so "one `useProjectActivity` per drawn row" has to be a component
+ * per drawn row — this one. It no longer costs a request per row: every call
+ * reads the one `queryKeys.runningAgents()` entry, so N mounts are N
+ * subscribers to one fetch. `ProjectActivity.test.tsx` pins the request count.
  */
 const ProjectListRow = ({
   rollup,
@@ -251,7 +249,7 @@ const ProjectListRow = ({
   const { project, sessions, sessionCount, lastActivity } = rollup
   const current = currentSession(rollup)
   const [menuOpen, setMenuOpen] = useState(false)
-  const activity = useProjectActivity(project.id, true)
+  const activity = useProjectActivity(project.id)
 
   return (
     <ProjectCard

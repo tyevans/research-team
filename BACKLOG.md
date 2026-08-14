@@ -1281,6 +1281,81 @@ re-taken. `frontend/src/styles/border-style-default.browser.test.tsx` is written
 to settle it and **has not been run** — a benchmark held the machine. If it
 fails, the reading above is wrong and this entry should be reinstated.
 
+### B58. The roster's run worker carries no rounds and no start time, so the picker chip says less than it used to
+
+`research_team/application/workers.py:296-303` builds the roster's `run` worker
+with `detail="autonomous run"` and `started_at=None`. Neither is wrong for the
+agent dock, which lists what is working; both are why increment C slice 4's
+landing-page chip draws `run running` where it used to draw `run · round N`,
+and appends no `· elapsed` either. The rounds and the start time exist — the
+project page reads them from the run's own aggregate — they simply do not reach
+`Worker`.
+
+**This is a backend change, and that is the whole reason it is here rather
+than done.** Increment C's §4 is titled "the one backend change"; taking this
+spends that title on buying a number back. Slice 4's §2 weighed it and answered
+(a) — accept the degradation — deliberately, before any code was written, so
+that nobody later reads the chip as a bug that slipped through. The plan asked
+for the entry rather than a silent drop.
+
+What a reader loses in the meantime: the round count, which is still one click
+away on the project page, and an elapsed time the chip never promised anywhere
+else. What they keep is the chip's actual job — "something is happening here" —
+unchanged, and now sourced from one request instead of `2N`.
+
+**Not simply "add a `rounds` field".** `Worker.detail` documents itself as
+already composed, precisely so two front ends cannot disagree about how to say
+the same thing, so the honest shape is to compose `round N` into `detail` where
+the roster is folded and to pass the run's real start time through as
+`started_at`. A `rounds` integer beside a composed `detail` would give the
+front end a second way to say it, which is the arrangement that docstring
+exists to prevent.
+
+### B59. A running turn is invisible to every roster a frame refreshes, and there are now three of them
+
+`run_turn`'s contract (`application/session_service.py:859`) is that all events
+of a turn "append atomically at the end, or not at all". So a turn emits **no
+feed entry for its entire duration**, and the browser's `log` frame is a session
+event (`sse/event-stream.ts:222-236`) — there are none until the turn commits.
+
+A `turn` worker is in the roster for exactly that interval:
+`turn_supervisor.py:140-142` records it at task creation and the `finally` at
+`:157-159` removes it. The two intervals are complementary, so anything that
+re-reads the roster only on frames sees it **only at moments when the turn is
+already gone**. The worker is not late; it is never visible.
+
+Extraction has the same hole by a different route: `Extraction` frames "carry no
+feed position" and are routed to `kind: 'extraction'`
+(`event-stream.ts:167-174`), never `log`, and `remember` runs *inside* a turn —
+so an extraction lasting minutes produces no `log` frame either.
+
+**Three consumers, two of them affected.**
+
+| Consumer | Refresh | State |
+|---|---|---|
+| `useRunningAgents` (the dock, every route) | `log`/`dispatch` frames, no poll | understates turn and extraction liveness |
+| `useProjectActivity` (the picker chip) | `useTreeRefresh`, `log` frames only | same blindness — **pre-existing, not introduced by slice 4** |
+| `Workers.tsx` (the course/queue roster) | 2000ms poll | correct, and this is why the poll survived slice 4 |
+
+Slice 4 re-sourced the picker chip from the per-project roster to the global
+one. Both keys sit under the `allWorkers()` prefix `App.tsx:173` invalidates on
+a `log` frame, so the refresh path is byte-identical before and after: **the
+swap is neutral on freshness and this entry is not a regression it caused.** It
+is recorded here because the swap gave the defect a third consumer's worth of
+visibility and nobody had written it down.
+
+**The fix is not a wider frame filter on the client.** There is no frame to
+filter for — the information does not leave the server. It is a frame emitted
+when the roster changes (turn begin/end, extraction begin/end), which is backend
+work. That is the same budget [[B58]] wants and the same one increment C's §4
+titles "the one backend change", so whoever takes either should look at both: a
+roster-changed frame would make `Workers.tsx`'s poll deletable as well, which is
+the third thing this buys.
+
+Until then the honest summary is that a turn shows up in the roster **only where
+something polls**, and the two places a reader is most likely to be looking are
+the two that do not.
+
 ## The ask page
 
 Everything here was named in

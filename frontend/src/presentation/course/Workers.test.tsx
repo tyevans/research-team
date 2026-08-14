@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import type { ReactElement, ReactNode } from 'react'
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
@@ -38,6 +38,39 @@ const renderWithContainer = (ui: ReactElement, parts: Partial<AppContainer>) => 
 const triggerRefetch = async (client: QueryClient) => {
   await client.invalidateQueries()
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+it('re-reads the roster with no frame of any kind arriving', async () => {
+  // The one this panel cannot lose, and the reason slice 4 did *not* swap the
+  // interval for a `useFrameRefresh` on `log`/`dispatch`. A turn's events
+  // append atomically when the turn commits (`session_service.run_turn`, and
+  // `test_a_turns_events_all_become_visible_at_once` measures it), so a `turn`
+  // worker occupies the roster for exactly the interval in which the feed
+  // carries nothing. This renders with no `StreamProvider` at all -- a
+  // frame-driven refresh could not even be constructed here -- and asserts the
+  // roster is read again regardless.
+  //
+  // What it fails on: deleting `refetchInterval`, whatever replaces it. It
+  // asserts a second call, not the constant, so raising `POLL_MS` is a
+  // deliberate edit to this test's `advanceTimersByTimeAsync` rather than a
+  // silent pass.
+  vi.useFakeTimers()
+  const workers = {
+    everywhere: vi.fn<WorkerRepository['everywhere']>().mockResolvedValue([]),
+    on: vi.fn<WorkerRepository['on']>().mockResolvedValue(empty),
+  }
+
+  renderWithContainer(<Workers projectId={PROJECT} watching={null} onWatch={() => {}} />, {
+    workers,
+  })
+
+  await vi.waitFor(() => expect(workers.on).toHaveBeenCalledTimes(1))
+  await vi.advanceTimersByTimeAsync(2_100)
+  expect(workers.on.mock.calls.length).toBeGreaterThan(1)
+})
 
 it('names the work in flight and offers it as a button', async () => {
   const workers = {
