@@ -126,3 +126,26 @@ def test_extraction_thinking_can_be_turned_back_on(monkeypatch):
     for value in ("0", "false", "no", ""):
         monkeypatch.setenv("AGENT_EXTRACTION_THINKING", value)
         assert config.extraction_thinking() is False, value
+
+
+def test_the_extraction_throughput_defaults_are_the_documented_pair(monkeypatch):
+    """8 and 2000 appear in the README, and they were chosen together.
+
+    Either alone is close to pointless: 8 in flight over 3000-character chunks
+    is fewer chunks than slots on most documents, and 2000-character chunks
+    run serially is roughly double the wall clock for the same result. The
+    pair is the change.
+    """
+    monkeypatch.delenv("AGENT_EXTRACTION_CONCURRENCY", raising=False)
+    monkeypatch.delenv("AGENT_EXTRACTION_CHUNK_SIZE", raising=False)
+    assert config.extraction_concurrency() == 8
+    assert config.extraction_chunk_size() == 2_000
+
+
+def test_the_extraction_throughput_knobs_are_overridable(monkeypatch):
+    """The way down for a hosted endpoint with a per-minute quota, where a
+    per-document ceiling of 8 is the wrong shape of limit entirely."""
+    monkeypatch.setenv("AGENT_EXTRACTION_CONCURRENCY", "1")
+    monkeypatch.setenv("AGENT_EXTRACTION_CHUNK_SIZE", "3000")
+    assert config.extraction_concurrency() == 1
+    assert config.extraction_chunk_size() == 3_000

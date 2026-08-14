@@ -32,6 +32,7 @@ from eventsource.ports.store import AggregateStore
 from redstring import (
     AUTO,
     Adjudicator,
+    Chunker,
     Consolidator,
     EmbeddingProvider,
     GraphStore,
@@ -206,11 +207,19 @@ class RedstringKnowledge:
         adjudicate: bool = True,
         embeddings: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
+        concurrency: int = 1,
+        chunker: Chunker | None = None,
     ) -> None:
         self._project_id = project_id
         self._store = store
         self._event_store = event_store
         self._provider = provider
+        # Both default to redstring's own serial behaviour rather than to the
+        # configured values, so a test constructing this directly gets the
+        # deterministic pipeline unless it asks otherwise. The composition
+        # root is the one place that reads `config`, and it passes both.
+        self._concurrency = concurrency
+        self._chunker = chunker
         # Required rather than optional. "After `remember`, the text still
         # exists" is a guarantee, and an optional collaborator that silently
         # no-ops when a composition root forgets it is a guarantee only until
@@ -334,6 +343,15 @@ class RedstringKnowledge:
                     domain=self._domain,
                     embedding_provider=embeddings,
                     vector_store=vectors,
+                    # Chunks go out in batches of `concurrency` and carryover
+                    # folds back in *chunk* order rather than completion
+                    # order, so this stays reproducible: the same document
+                    # twice gives the same graph regardless of which call
+                    # returned first. That is redstring's guarantee, not one
+                    # this adapter arranges, and it is the reason the knob is
+                    # passed here rather than kept behind a flag.
+                    concurrency=self._concurrency,
+                    chunker=self._chunker,
                 )
                 if built.event is None:
                     # `Document.record_extraction` found nothing new to record

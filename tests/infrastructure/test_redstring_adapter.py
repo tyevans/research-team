@@ -7,6 +7,7 @@ from eventsource.adapters.sqlite import SQLiteEventStore
 from redstring import (
     FakeLlmProvider,
     LlmProviderError,
+    SlidingWindowChunker,
     document_stream,
 )
 
@@ -901,3 +902,63 @@ async def test_a_source_without_a_fetch_time_leaves_it_unset(tmp_path, build_ada
     envelopes = await _corpus_events(store, project_id)
     stored = envelopes[0].event
     assert stored.fetched_at is None
+
+
+@pytest.fixture
+def captured_build_kwargs(monkeypatch):
+    """Records the keyword arguments the adapter hands to `build_graph`.
+
+    Deliberately not the `IngestReport`: nothing on the report reflects
+    `concurrency` or `chunker`, so an assertion made there would pass whether
+    or not either value ever left this adapter. The call is the only place the
+    fact is observable without a real model and a stopwatch.
+    """
+    calls = []
+    real_build_graph = redstring_adapter.build_graph
+
+    async def recording_build_graph(document, **kwargs):
+        calls.append(kwargs)
+        return await real_build_graph(document, **kwargs)
+
+    monkeypatch.setattr(redstring_adapter, "build_graph", recording_build_graph)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_the_extraction_knobs_reach_build_graph(
+    tmp_path, build_adapter, captured_build_kwargs
+) -> None:
+    """Both are plumbing, and plumbing is exactly what silently goes missing.
+
+    This fails with the change reverted -- `concurrency` would be absent from
+    the call rather than merely different, since the adapter did not pass it
+    at all.
+    """
+    chunker = SlidingWindowChunker(default_chunk_size=2_000)
+    adapter, _, _ = build_adapter(tmp_path, uuid4(), concurrency=8, chunker=chunker)
+
+    await adapter.ingest(SourceRef(source_id="s1", text="body"))
+
+    assert captured_build_kwargs[0]["concurrency"] == 8
+    assert captured_build_kwargs[0]["chunker"] is chunker
+
+
+@pytest.mark.asyncio
+async def test_an_adapter_built_without_the_knobs_extracts_serially(
+    tmp_path, build_adapter, captured_build_kwargs
+) -> None:
+    """The default is redstring's serial pipeline, not the configured value.
+
+    `config` is read in the composition root and nowhere else, so a
+    `RedstringKnowledge` built directly -- which is every test here, and any
+    future caller that is not `build_container` -- gets `concurrency=1`, which
+    upstream states is byte-identical to the pre-0.8.0 pipeline. The point is
+    that turning concurrency on is a decision made in one visible place rather
+    than a default that arrives everywhere at once.
+    """
+    adapter, _, _ = build_adapter(tmp_path, uuid4())
+
+    await adapter.ingest(SourceRef(source_id="s1", text="body"))
+
+    assert captured_build_kwargs[0]["concurrency"] == 1
+    assert captured_build_kwargs[0]["chunker"] is None
