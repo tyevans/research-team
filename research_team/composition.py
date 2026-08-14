@@ -23,6 +23,7 @@ from eventsource.observability import Tracer
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
+from redstring import SlidingWindowChunker
 from redstring.llm.adapters.langchain import LangChainLlmProvider
 
 from research_team.application import (
@@ -1110,6 +1111,17 @@ def build_application(
             # whose schema was ensured" and "the store this adapter writes to"
             # the same object.
             vector_store=await graphs.vectors(),
+            concurrency=config.extraction_concurrency(),
+            # One chunker per project adapter rather than one for the process.
+            # `SlidingWindowChunker` holds only its three numbers -- no buffer,
+            # no state carried between `chunk` calls -- so sharing one would
+            # save an object and buy nothing, while making the size look like
+            # a process-wide fact when it is a per-adapter argument.
+            #
+            # Overlap and the boundary flags are left at redstring's defaults:
+            # only the size is ours to choose, and passing the others would
+            # freeze values we have no reason to hold against upstream's.
+            chunker=SlidingWindowChunker(default_chunk_size=config.extraction_chunk_size()),
         )
         # Both tool sets travel back through the one channel `KnowledgeAttachment`
         # already has. A second callable for the corpus would need its own copy of

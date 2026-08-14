@@ -50,6 +50,7 @@ async def build_adapter():
         adjudicate=False,
         embeddings=None,
         vector_store=None,
+        **knowledge_kwargs,
     ):
         db_path = str(tmp_path / "sessions.db")
         store = SQLiteEventStore(db_path)
@@ -74,6 +75,12 @@ async def build_adapter():
                 adjudicate=adjudicate,
                 embeddings=embeddings,
                 vector_store=vector_store,
+                # `concurrency` and `chunker` reach `RedstringKnowledge`
+                # through here rather than as named parameters. Both default
+                # to redstring's serial behaviour, so every test that does not
+                # name one is unaffected by their existence -- which is the
+                # property worth keeping as more knobs arrive.
+                **knowledge_kwargs,
             ),
             store,
             snapshot_store,
