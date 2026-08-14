@@ -121,11 +121,6 @@
   border: 1px solid #3a2022;
   border-radius: 999px;
 }
-/* An explicit `display` beats the `hidden` attribute's UA `display: none`, so
-   without this the badge stays on screen with an empty label. */
-.drift[hidden] {
-  display: none;
-}
 .drift .conn-dot {
   background: var(--k-failure);
   animation: pulse 1.4s infinite;
