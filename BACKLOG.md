@@ -20,7 +20,33 @@ Found in the Task 1 review of the projects/redstring work and deferred as
 Minor, because the docstring convention is satisfied and nothing is
 misleading.
 
-### B54. Three components set a border width with no `border-solid`, so it draws nothing
+### B54. Premise withdrawn — the three components below draw their borders
+
+**Withdrawn on 2026-08-14, on the same evidence that withdrew [[B55]] a day
+earlier.** This entry and B55 were filed independently on one premise — that a
+directional width with no `border-style` leaves the side's style at the browser
+default `none` and so draws nothing. B55 was retracted on 2026-08-13 by reading
+the built stylesheet this repository commits: Tailwind v4 emits the style
+longhand *with* the width and registers `--tw-border-style` with
+`initial-value: solid`, `border-style:none` occurs zero times in the whole
+sheet, and `frontend/src/styles/border-style-default.browser.test.tsx:53-71`
+asserts that `border-b border-line` alone computes to `solid` / `1px`. B54 was
+never updated in that commit, so it outlived its own premise by a day. **All
+three call sites below draw. Nothing is owed.**
+
+**The inverse trap is real and is not withdrawn here.** `border-solid` *without*
+`border-0` is the shorthand for all four sides, so three sides get a style and
+no explicit width and fall back to the UA's `medium` (~3px) — a rule meant for
+one edge draws a box. That is `CLAUDE.md`'s first half, it is correct, and
+`border-style-default.browser.test.tsx:73` measures it. None of the three sites
+below is an instance of it.
+
+The original entry follows unedited except for its line citations, which had
+gone stale independently of the premise and are corrected in place
+(`GateReview.tsx:135`→`:143`, `AutonomyAllowAll.tsx:78,95`→`:101,:118`;
+`DecisionBar.tsx:44` was already right). A wrong belief that two entries were
+filed on is worth keeping legible, and it is the reason this is marked rather
+than deleted.
 
 This build imports no Tailwind preflight, so an element's border style
 defaults to `none` unless a utility sets it. A width alone on a side whose
@@ -30,11 +56,11 @@ with no `border-solid`, each sitting beside a padding utility (`pl-2`/`pl-3`)
 that only makes sense next to a visible rule, which is the tell that a line
 was intended:
 
-- `frontend/src/presentation/session/GateReview.tsx:135` —
+- `frontend/src/presentation/session/GateReview.tsx:143` —
   `border-l-2 border-line-strong pl-2`
 - `frontend/src/presentation/shell/DecisionBar.tsx:44` —
   `border-b border-k-tool`
-- `frontend/src/presentation/course/AutonomyAllowAll.tsx:78` and `:95` —
+- `frontend/src/presentation/course/AutonomyAllowAll.tsx:101` and `:118` —
   `border-l border-line-soft pl-3`
 
 Found while reviewing the ask-page redesign branch, which fixed the same
@@ -1161,7 +1187,59 @@ it is cheap — scroll the list before inserting the headings, then assert.
 Worth doing because the alternative is a defect that shipped once, has a fix
 nobody can break loudly, and a docstring that will read as folklore in a year.
 
-### B57. The project page's three region widths are chosen, not measured
+### B57. Measured on 2026-08-14 — the widths were a shipped defect, and two bands of this entry remain open
+
+**Answered, not fully discharged.** Kept rather than deleted because the part of
+it that was never done is the part nobody would think to re-file.
+
+**What the measurement found, which is worse than this entry claimed.** The
+numbers were not merely unmeasured — they were wrong at the one width that
+matters. At **1181px**, the narrowest viewport where `Split` writes a template at
+all, the fr shares were 337 / 506 / 337. MATERIAL's 337px had to hold a five-tab
+strip that is **351px wide and neither wraps nor scrolls**, so the Graph tab was
+painted past the pane's right edge: present, and unclickable. QUEUE's 317px
+seeding form went the same way 14px later. It survived four slices for exactly
+the reason this entry guessed — the page had only ever been looked at at 1440,
+and 1440 was never the width that was wrong.
+
+**`PROJECT_TRACKS` floors are now 344 / 342 / 352**, measured in Chromium on
+2026-08-14, replacing 280 / 320 / 280 — which were the session view's floors,
+adopted without measurement. 1440 is **pixel-identical** before and after; only
+the bottom of the wide band moves. Reweighting was considered and rejected: it
+buys the same clearance by reshaping every width above 1181 in order to fix its
+narrowest 60px. HOLDER's 342 never binds today and is written down anyway, and
+the docstring says which of the two it is.
+
+**The 821–1180 band had no layout at all.** `Split` writes no inline template
+below `--bp-wide` and the only middle-band rule was scoped to
+`[data-split='session']`, so the three regions resolved to a single grid column —
+and because the split is still `display: grid` there, `layout.css`'s stacked
+`max-height: 60vh` never applied and **nothing scrolled**: MATERIAL measured
+**148px** with no scroller to recover it from. Folding a pane gave a full-width
+1000×182px block wearing a rotated rail title. The project view now declares its
+own middle arrangement in `responsive.css` — two columns with MATERIAL wrapped
+onto its own row.
+
+**What was NOT done, and is what keeps this entry open:**
+
+- **Nothing below 821px was measured.** This entry's own "nothing on this page
+  has been rendered below `--bp-wide`" is only half answered. The narrow stack
+  (`layout.css:144-159`) is still unmeasured with real content.
+- **The 46vh cap on the wrapped MATERIAL row is inherited from the session
+  view's rule, not derived.** The assertion guarding it is vacuous against a
+  fixture whose MATERIAL is empty, and says so in its own comment.
+- **The weights (`1 / 1.5 / 1`) remain reasoned rather than observed.** The
+  floors say where a region *breaks*; they say nothing about where it is good,
+  and no test written here can tell the difference. That is a smaller gap than
+  the one it replaces, and it is still a gap.
+
+Measured by the slice
+`docs/superpowers/plans/2026-08-14-the-page-nobody-measured.md`; the numbers and
+their red proofs are in `docs/reports/measured-task-a.md` and
+`docs/reports/measured-task-b.md`, and the answer is also recorded against
+`increment-c-plan.md` §6 question 3, where the five deferrals are.
+
+The original entry follows.
 
 `PROJECT_TRACKS` sets the QUEUE / HOLDER / MATERIAL widths, and the numbers have
 never been measured against a rendered page. Increment C slice 1 chose them,
@@ -1184,7 +1262,42 @@ jsdom lays nothing out.
 Related and equally unmeasured: **nothing on this page has been rendered below
 `--bp-wide` in any of the four slices.**
 
-### B56. `TruncatedText`'s focus ring asks for 2px of offset and gets 1px
+### B56. Settled 2026-08-14 — the three utilities are deleted, not repaired
+
+**Closed.** Left in place rather than deleted, against this file's "closed
+entries are deleted" convention, because two pieces of tracked code cite B56 by
+name — `TruncatedText.tsx:134` and `TruncatedText.browser.test.tsx:87` — and
+deleting the entry would point both at nothing. This heading is where their
+reasoning went.
+
+**Measured in Chromium on 2026-08-14**, on a genuinely clipped `EntityRef` label
+at 200px, with the three utilities still on the span:
+
+```
+outlineStyle  'solid'
+outlineWidth  '2px'
+outlineOffset '1px'     <- the utility asks for 2px
+```
+
+and with them deleted: **identical**. The offset is the tell — the width and
+colour agree only because the global rule already gives what the utilities asked
+for.
+
+**Deleted rather than made to work.** The house fix for a real override is a
+named class in a stylesheet (`.lay-ring-inward` is the precedent), and here that
+would buy one pixel more offset on every truncated label and detail in the
+console — a visual change to a shared primitive, made to honour a declaration
+nobody wrote deliberately. This entry asked for that call to be made by someone
+looking at it; the ring the console gives every other focus stop is the right
+ring for this one. `clsx` went with them, having no other use in the file. The
+argument is preserved as a comment where the utilities were, so the absence reads
+as a decision rather than an omission.
+
+The test holding the measurement **would have passed before the deletion too.**
+That is the point of it — it is why the deletion is safe, not why the test is
+weak — and its docstring says so.
+
+The original entry follows.
 
 `presentation/common/TruncatedText.tsx:127` writes
 `focus-visible:outline-offset-2` (with `outline-2` and `outline-accent`). All
@@ -1355,6 +1468,57 @@ the third thing this buys.
 Until then the honest summary is that a turn shows up in the roster **only where
 something polls**, and the two places a reader is most likely to be looking are
 the two that do not.
+
+### B60. Collapsing both session flanks at once leaves one of them a full-width rail
+
+`responsive.css:40-45`. In the 821–1180px band the session split declares its own
+arrangement, and two of its rules —
+`:has([data-pane='timeline'].is-collapsed)` and the `workspace` equivalent — have
+**identical specificity and each write the whole `grid-template-columns`**. So
+when both match, the later one wins outright: the earlier pane keeps a full-width
+track while `Pane.tsx:126` still draws it in its rail form, rotated title and
+all. A 34px affordance stretched across two thirds of the viewport.
+
+**It is reachable in two clicks.** `toggleCollapsed` (`split-tracks.ts:98`)
+refuses only when *every* pane would close, so with three tracks the second fold
+is allowed.
+
+**Pre-existing — not introduced by the 2026-08-14 slice.** That slice hit the
+identical bug in the new `[data-split='project']` block, fixed it there with a
+combined `:has(...):has(...)` rule placed after the two single rules so it wins
+on source order, and **deliberately did not touch the session one**, because
+editing it would have meant changing the session view inside a slice that owned
+only the project view. The fix is written out one block away and its red proof is
+in `docs/reports/measured-task-a.md` (fix round 1) — a folded QUEUE measured
+966px where a rail is 34.
+
+**The reason this is worth a number rather than a comment:** the two blocks in
+`responsive.css` now look like duplication and are not. They carry a real
+difference, and whoever merges them into one primitive owes the session view this
+rule. A merge done on the assumption that the blocks are the same shape would
+silently keep the bug.
+
+### B61. The graph canvas keeps its old width for a few frames after a resize
+
+**An observation, filed rather than fixed, and deliberately not called a
+defect.** `GraphCanvas` sizes its `<canvas>` from a `ResizeObserver`, and an
+observer fires *after* the layout it observed. Measured on 2026-08-14:
+immediately after narrowing to 1181, the graph container's border box is already
+352 while the canvas inside it is still the **411** it was handed at 1440 — seven
+boxes reporting `411 in 352`, all of them the canvas or an ancestor. It settles
+within a few frames. What a reader sees is a stale canvas for a frame or two
+while dragging a window edge, which is what every observer-sized canvas does.
+
+**The part worth having written down is what it does to tests.** It is why
+`project-tracks.browser.test.tsx`'s overflow claim **polls** rather than reading
+once. A single read immediately after a viewport change fails there **against
+correct code** — which is precisely the failure `CLAUDE.md` warns ends up filed
+as flakiness, and it would fail in a direction load cannot explain. Anyone
+measuring this page after a resize needs `expect.poll`, not a bare read.
+
+If it is ever picked up as a defect rather than an observation, the fix is on the
+observer side (size from the container's own measurement synchronously on the
+frame the layout changes), not on the test side.
 
 ## The ask page
 
