@@ -223,9 +223,12 @@ it('pads its body unless the caller says it brings its own', () => {
   // browser. `Drawer.browser.test.tsx` measures them; this holds the branch.
   //
   // What this holds is the *default*, which is the decision. Padding used to be
-  // every caller's job; three of four did it and `TopicStatusDialog` did not,
-  // so its text ran to the drawer's border. This fails if the default flips
-  // back, which is the only way that defect returns.
+  // every caller's job; three of four did it and the topic manage panel did
+  // not, so its text ran to the drawer's border. That panel is a region rather
+  // than a `Drawer` now (`TopicManagePane`), so it can no longer be the caller
+  // that forgets -- which is exactly why the default and not the anecdote is
+  // what this holds. Fails if the default flips back, which is the only way
+  // that defect returns.
   const { container, rerender } = render(
     <Drawer heading="Worker" label="Worker detail" onClose={() => {}}>
       body

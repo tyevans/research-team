@@ -60,8 +60,10 @@ export const Drawer = ({
    * caller's job, stated in a comment beside `.confirm` in `tree.css`, and
    * `.confirm` has that comment because it shipped without any: the paragraphs
    * sat against the drawer's border and the confirm button landed on the last
-   * pixel column. `TopicStatusDialog` is the same omission still live, and
-   * every `Drawer` in the workbench is a third. A convention nobody can see
+   * pixel column. The topic manage panel was the same omission a second time,
+   * back when it was a `Drawer` -- it is `TopicManagePane`, a plain region
+   * with its own utilities, and no caller of this component since slice 3b --
+   * and every `Drawer` in the workbench is a third. A convention nobody can see
    * they have broken gets broken; forgetting `flush` now costs a double inset,
    * which is visible and mild, rather than text against a border.
    *

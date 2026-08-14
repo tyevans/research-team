@@ -200,7 +200,10 @@ it('shows the last run failing rather than staying silent about it', async () =>
   renderWithContainer(<SeedPanel projectId={PROJECT} />, { topics, stream })
 
   const failed = await screen.findByText(/The last seed failed: the model refused/)
-  expect(failed).toHaveClass('seed-failed')
+  // `data-failed` and not the colour class: the tone moved from `.seed-failed`
+  // to a utility, and what this test is about is that the line is *marked* as
+  // a failure at all, not which utility draws it.
+  expect(failed).toHaveAttribute('data-failed', 'true')
 })
 
 it('updates from a live frame without waiting for a refetch', async () => {
@@ -219,7 +222,7 @@ it('updates from a live frame without waiting for a refetch', async () => {
   push(run({ status: 'failed', subject: 'memory consolidation', detail: 'the model refused' }))
 
   const failed = await screen.findByText(/The last seed failed: the model refused/)
-  expect(failed).toHaveClass('seed-failed')
+  expect(failed).toHaveAttribute('data-failed', 'true')
   expect(topics.seedStatus).toHaveBeenCalledTimes(1)
 })
 

@@ -11,7 +11,7 @@ it('refuses a subject that is only whitespace', async () => {
   render(<Fresh subject="   " />)
 
   // Trimmed before the check, not just before the request. The same rule
-  // `TopicStatusDialog`'s justification enforces, for the identical reason.
+  // `TopicManagePane`'s justification enforces, for the identical reason.
   expect(screen.getByRole('button', { name: 'Seed topics' })).toBeDisabled()
 })
 

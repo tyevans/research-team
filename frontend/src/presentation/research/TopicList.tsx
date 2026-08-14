@@ -1,8 +1,8 @@
-import type { ProjectId } from '@domain/shared/identifier.ts'
+import type { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
 import { ErrorBox, Loading } from '../common/primitives.tsx'
 import { TopicQueue } from './TopicQueue.tsx'
-import { TopicStatusDialog } from './TopicStatusDialog.tsx'
+import { TopicManagePane } from './TopicManagePane.tsx'
 import { useTopicQueue } from './use-topic-queue.ts'
 
 /** The project's topic queue, ranked by `byUrgency`: blocked topics first,
@@ -16,8 +16,18 @@ import { useTopicQueue } from './use-topic-queue.ts'
  * project that the queue's own markup renders, which is what lets a story show
  * it.
  */
-export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
-  const { query, detail, managing, onCloseManage, queue } = useTopicQueue(projectId)
+export const TopicList = ({
+  projectId,
+  open = null,
+  onOpen,
+}: {
+  projectId: ProjectId
+  /** Which topic is open, owned by the route. Defaulted so the queue can still
+   *  be rendered outside a routed page -- see `useTopicQueue`. */
+  open?: TopicId | null
+  onOpen?: (topicId: TopicId | null) => void
+}) => {
+  const { query, detail, managing, onCloseManage, queue } = useTopicQueue(projectId, open, onOpen)
 
   if (query.isPending) return <Loading what="topics" />
 
@@ -34,13 +44,24 @@ export const TopicList = ({ projectId }: { projectId: ProjectId }) => {
   return (
     <>
       <TopicQueue {...queue} />
-      {/* Rendered only once the detail has actually loaded -- opening on the
-          click and closing the moment `read` resolves would flash a dialog
-          with nothing in it, and `TopicStatusDialog` requires a `TopicDetail`
-          to render at all. */}
-      {managing && detail.data ? (
-        <TopicStatusDialog projectId={projectId} topic={detail.data} onClose={onCloseManage} />
-      ) : null}
+      {/* The wait is the same one the drawer needed and the reason has
+          changed: `TopicManagePane` requires a `TopicDetail` to render at
+          all, and while it was an overlay, opening on the click would have
+          flashed an empty panel over the page. It is a region in the column
+          now, so what a premature mount would cost is the queue jumping down
+          the page and back -- a different symptom of the same missing read.
+
+          `Loading` rather than nothing, which the drawer did not need and this
+          does: a route-opened topic arrives with no click behind it, so with
+          nothing rendered a reader following a link would see the plain queue
+          for the length of a request and conclude the link had failed. That
+          is exactly the defect this threading exists to fix, reintroduced one
+          request later. */}
+      {managing === null ? null : detail.data ? (
+        <TopicManagePane projectId={projectId} topic={detail.data} onClose={onCloseManage} />
+      ) : (
+        <Loading what="topic" />
+      )}
     </>
   )
 }

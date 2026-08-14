@@ -10,19 +10,27 @@ import { EntityStatus } from '../EntityStatus.tsx'
  * render fields no list shows. That last clause is the whole reason this
  * component exists, and it closes a specific, documented gap.
  *
- * **`TopicList.tsx:41` says the detail is fetched fresh because the dialog
- * needs the rationale and the scope. The dialog renders neither.** R-F3.10
- * counts five fields fetched by `TopicStatusDialog` and rendered nowhere in
+ * **`TopicList.tsx` fetches the detail fresh because the manage panel needs
+ * the rationale and the scope. That panel renders neither.** R-F3.10 counts
+ * five fields fetched by what is now `TopicManagePane` and rendered nowhere in
  * `presentation/`: `rationale`, `scope`, `sourceIds`, `findingNotes` and
  * `contested` — the largest unrendered field set the research report found. A
  * comment describing behaviour the code does not have is worse than no
  * comment, because it is believed. All five are rendered here.
  *
- * The dialog also renders the question as `<h3 className="drawer-title">` —
- * the `Drawer` component's own heading class, in a file that does not use
- * `Drawer` — while the queue renders the same field as
- * `<div className="topic-question">`. Two markups for one entity sharing no
- * class name at all. This is the one they should have shared.
+ * **Still true of the pane today, and this component is still the only place
+ * any of the five is rendered — nothing mounts it yet.** `TopicDetail` is
+ * imported by its own test and by `Topic.stories.tsx` and by no component, so
+ * the gap R-F3.10 named is closed in the workbench and open in the console.
+ *
+ * The panel also once rendered the question as `<h3 className="drawer-title">`
+ * — the `Drawer` component's own heading class, in a file that did not use
+ * `Drawer` — while the queue rendered the same field as
+ * `<div className="topic-question">`: two markups for one entity sharing no
+ * class name at all. Both halves have since moved (the pane's heading is
+ * utilities, the row's class is `.ent-topic-question`), so the specific
+ * mismatch is gone; the reason it argued for — one entity, one markup, owned
+ * here — is why this component looks the way it does.
  *
  * Not a dialog. `Detail` is a density, not a container: the same component
  * belongs in a region on the research page and inside an overlay, and a
@@ -67,7 +75,7 @@ export const TopicDetail = ({
       {slots.actions}
     </header>
 
-    {/* The two fields the comment promised and the dialog never showed. Each
+    {/* The two fields the comment promised and the manage pane never shows. Each
         renders only when present: an empty `rationale` is a topic somebody
         opened in a hurry, and a heading over nothing is worse than silence. */}
     {topic.rationale.trim().length > 0 ? (

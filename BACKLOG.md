@@ -1161,6 +1161,52 @@ it is cheap — scroll the list before inserting the headings, then assert.
 Worth doing because the alternative is a defect that shipped once, has a fix
 nobody can break loudly, and a docstring that will read as folklore in a year.
 
+### B57. The project page's three region widths are chosen, not measured
+
+`PROJECT_TRACKS` sets the QUEUE / HOLDER / MATERIAL widths, and the numbers have
+never been measured against a rendered page. Increment C slice 1 chose them,
+slice 2 said slice 3 was "the honest place" for the measurement because it
+wanted a page with the graph on it, slice 3a said the same of 3b, and **slice 3b
+built the graph and still did not do it.**
+
+Filed here rather than deferred a fifth time. Four slices of "the next one will
+measure it" is a prediction the record no longer supports, and the reason is
+visible in each report: the measurement is nobody's acceptance criterion, so it
+loses to whatever else the slice owes. An entry here at least makes it findable.
+
+What it needs: the three regions rendered at each of the three responsive
+layouts with real content in all of them — the graph is the widest thing the
+page has and is the reason the wait was justified — and the widths chosen
+against what is actually legible rather than against a guess. `npm run
+test:browser` is where the assertion belongs, since a width is a measurement and
+jsdom lays nothing out.
+
+Related and equally unmeasured: **nothing on this page has been rendered below
+`--bp-wide` in any of the four slices.**
+
+### B56. `TruncatedText`'s focus ring asks for 2px of offset and gets 1px
+
+`presentation/common/TruncatedText.tsx:127` writes
+`focus-visible:outline-offset-2` (with `outline-2` and `outline-accent`). All
+three utilities are in `@layer utilities` and lose to `tokens.css`'s unlayered
+`:focus-visible`, so the declaration does nothing and the element draws the
+global ring — see the entry `CLAUDE.md` now carries.
+
+**Cosmetic, not a defect, and that is why it is here rather than fixed.** The
+offset it asks for is *positive*, so nothing is clipped and there is no visible
+symptom; the width and colour it asks for are what the global rule already
+gives. What is wrong is that three utilities claim to be doing something and are
+not, which is exactly the state that made the inward-ring bug invisible for a
+slice.
+
+Found by increment C slice 3b's sweep of every `focus-visible:outline-offset`
+site in `src/`, and deliberately not swept up with the other three: the other
+three were broken, this one is inert, and "fixing" it changes the ring from 1px
+to 2px of offset on every truncated label and detail in the console — a visual
+change made blind, in a shared primitive, in a slice that owns neither. Do it
+when someone can look at it, and decide then whether the intent was 2px or
+whether the utilities should simply go.
+
 ### B55. Shipped single-side borders draw nothing — two left
 
 Found by increment C slice 2's mandated combinator grep, not by a gate, and

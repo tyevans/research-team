@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import clsx from 'clsx'
 
 import { useAttempts } from '@application/lesson/use-attempts.ts'
 import { useLesson } from '@application/lesson/use-lesson.ts'
@@ -15,6 +16,15 @@ import { Markdown } from '../common/content.tsx'
 import { EmptyState, ErrorBox, Loading } from '../common/primitives.tsx'
 import { LessonDocument } from '../lesson/LessonDocument.tsx'
 import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
+
+/** One document's tab, without the border and text colour that say whether it
+ *  is the open one.
+ *
+ * `aria-pressed` carries that fact for a screen reader and the two colours draw
+ * it; both are set from the same condition, which is what `.is-on` did before
+ * the class names went. */
+const DOCUMENT_TAB =
+  'cursor-pointer rounded-md border border-solid bg-transparent px-[8px] py-[2px] font-mono text-xs'
 
 /** What a dispatch wrote about this topic, readable from the research view.
  *
@@ -101,16 +111,28 @@ export const TopicDocuments = ({
   const selected = board.documents.find((document) => document.path.value === open)
 
   return (
-    <div className="topic-documents">
-      <ul className="topic-document-list">
+    // `.topic-documents` was the outer name here and declared nothing — a fifth
+    // undressed class beyond the four the slice plan enumerated. It is dropped
+    // rather than dressed: the list below carries its own bottom margin, the
+    // pane around it supplies the padding, and a wrapper with no declarations
+    // was doing nothing but occupying a name.
+    <div>
+      <ul className="m-0 mb-[10px] flex list-none flex-wrap gap-[6px] p-0">
         {board.documents.map((document) => (
           <li key={document.path.value}>
             <button
               type="button"
               aria-pressed={document.path.value === open}
-              className={
-                document.path.value === open ? 'topic-document-tab is-on' : 'topic-document-tab'
-              }
+              // The tone is per branch rather than a base colour plus an
+              // override: two `text-*` (or two `border-*`) utilities on one
+              // element resolve in Tailwind's emission order, not the
+              // attribute's.
+              className={clsx(
+                DOCUMENT_TAB,
+                document.path.value === open
+                  ? 'border-accent text-accent'
+                  : 'border-line text-fg-dim',
+              )}
               onClick={() => setOpen(document.path.value === open ? null : document.path.value)}
             >
               {document.name}

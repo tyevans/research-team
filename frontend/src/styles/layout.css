@@ -332,6 +332,71 @@
   position: relative;
 }
 
+/* A panel that floats *within* its region rather than over the page, and the
+   one property a utility may not say.
+
+   `--z-sticky`'s own definition in `tokens.css` is "things that float within a
+   region and must not escape it", and the graph's command bar, detail panel
+   and legend are three of them: each is absolutely positioned inside
+   `GraphBrowser`, over a canvas, and none of them is a layer `OverlayHost`
+   should be given -- they are not dismissable, not modal, and must stay
+   clipped to the pane.
+
+   **Why this class exists at all, given those three components are otherwise
+   utilities now.** `scripts/stacking.test.ts` fails the build on a `z-index`
+   that is not a `var(--z-*)` declared in `tokens.css`, and it enforces that by
+   sweeping `src/styles/*.css`. A `z-[var(--z-sticky)]` in a `className`
+   satisfies the rule's *intent* and escapes its *sweep* entirely, because the
+   utility is generated into an asset the test does not read -- so the next
+   `z-[9999]` would land unpoliced, which is precisely the inversion that test
+   was written about. An inline `style={{ zIndex }}` is the same hole with less
+   disguise. Rewriting the components onto utilities therefore stops one
+   declaration short of the whole, and stopping here is the point: this is
+   `layout.css` because a stacking role is layout's to own, and the class
+   declares nothing else, so it cannot quietly grow into a second dressing for
+   these panels.
+
+   Positioning, size, border, background and shadow all stay on the elements as
+   utilities -- three floats in three corners want three different geometries,
+   and only the layer they share belongs here. */
+.lay-region-float {
+  z-index: var(--z-sticky);
+}
+
+/* A focus ring drawn *inside* the border box, for a full-width row in a
+   scroller that clips it.
+
+   **This is a class rather than the three utilities it replaces, and that is a
+   bug fix rather than a preference.** `DocumentBrowser.tsx` carries a
+   `RING_INWARD` constant spelling exactly this as
+   `focus-visible:outline-offset-[-2px]` and friends, and it has never worked:
+   `tokens.css` declares a global `:focus-visible { outline-offset: 1px }`
+   *unlayered*, and an unlayered declaration beats one in `@layer utilities`
+   whatever their specificities are. So the utility was overridden on every row
+   it was written on, the ring stayed three pixels outside the border box, and
+   `DocumentBrowser.browser.test.tsx` -- which asserts the containment and not
+   the offset -- went red the moment anyone ran it. Nobody had: that slice's
+   report records that no gate and no suite was run locally and CI would be
+   first. Measured here on 2026-08-14 in Chromium at the 1440x900 viewport
+   `vite.config.ts` sets: `outline-offset` computed as `1px`, ring left edge at
+   `-2` against a clip starting at `1`.
+
+   `.lay-ring-inward:focus-visible` is 0,2,0 against the global's 0,1,0 and is
+   unlayered like it, so it wins on specificity in the only comparison that is
+   allowed to happen. The alternative was Tailwind's `!` modifier, which does
+   win (important reverses layer order) and which this codebase uses nowhere --
+   a first `!` to paper over a layering hazard would be the wrong thing to
+   establish, and it would still leave every future inward ring one forgotten
+   `!` away from the same silent failure.
+
+   Declared whole rather than as an offset alone: a rule that only corrected the
+   offset would still depend on the global for its width and colour, which is
+   the same coupling one step shorter. */
+.lay-ring-inward:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 /* ======================================================================= */
 /* shared                                                                  */
 /* ======================================================================= */

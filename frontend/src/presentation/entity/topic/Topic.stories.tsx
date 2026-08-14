@@ -9,16 +9,21 @@ import { TopicRow } from './TopicRow.tsx'
 /** One entity, two densities, on one page — which is the comparison the
  *  console cannot currently make.
  *
- * A topic's question is rendered as `<div className="topic-question">` in the
- * queue and as `<h3 className="drawer-title">` in the status dialog: the
- * `Drawer` component's own heading class, in a file that does not use
- * `Drawer`. The two markups share **no class name at all**. Putting `Row` and
- * `Detail` beside each other is what makes "these are the same entity at two
- * densities" a thing you can see rather than a thing you assert.
+ * A topic's question was rendered as `<div className="topic-question">` in the
+ * queue and as `<h3 className="drawer-title">` in the manage panel: the
+ * `Drawer` component's own heading class, in a file that did not use `Drawer`.
+ * The two markups shared **no class name at all**. Both have since moved —
+ * the row's class is `.ent-topic-question` and `TopicManagePane`'s heading is
+ * utilities — so the specific mismatch is gone and the reason it argued for is
+ * not: putting `Row` and `Detail` beside each other is what makes "these are
+ * the same entity at two densities" a thing you can see rather than a thing
+ * you assert.
  *
  * `Detail` is also where the gap R-F3.10 found is closed: `rationale`,
- * `scope`, `sourceIds`, `findingNotes` and `contested` are all fetched by the
- * dialog today and rendered nowhere.
+ * `scope`, `sourceIds`, `findingNotes` and `contested` are all fetched by
+ * `TopicManagePane` today and rendered nowhere in the console — this workbench
+ * is the only place they are drawn at all, because nothing mounts `Detail`
+ * yet.
  */
 const meta: Meta = {
   title: 'entity/Topic',
@@ -93,8 +98,18 @@ export const Rows: Story = {
         topic={topic({ question: 'What does the 2019 replication actually replicate?' })}
         href="#d"
         slots={{
+          // The utility strings `TopicQueue`'s `DispatchChip` writes, copied
+          // rather than imported — `CHIP` is that component's private dressing,
+          // and a story that imported it would stop being a *sample* of the
+          // markup and start being a second renderer of it. The same call
+          // `Tooltip.stories.tsx` made in slice 3a, and the reason it is made
+          // again here: this line held `.topic-dispatch`, and `research.css`
+          // is deleted later in this slice, so leaving it would put an
+          // undressed chip in the workbench with nothing failing.
           note: (
-            <span className="topic-dispatch topic-dispatch-running">⟳ understanding · running</span>
+            <span className="inline-block max-w-[18ch] flex-none overflow-hidden align-middle font-mono text-xs text-ellipsis whitespace-nowrap text-accent">
+              ⟳ understanding · running
+            </span>
           ),
           primary: <button type="button">Synthesise</button>,
           overflow: [{ key: 'manage', label: 'Manage', onSelect: () => {} }],
@@ -133,7 +148,7 @@ export const RowWithNoAffordances: Story = {
   ),
 }
 
-/** The detail, with everything the dialog fetches and does not show. */
+/** The detail, with everything `TopicManagePane` fetches and does not show. */
 export const Detail: Story = {
   render: () => (
     <div style={{ maxWidth: '640px' }}>

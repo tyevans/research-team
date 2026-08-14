@@ -43,7 +43,7 @@ const aRevision = (over: Partial<FileRevision> = {}): FileRevision => ({
 /** `readFile` is never reached on this path — the history list renders its own
  *  diffs from the revisions it already holds — so it throws rather than
  *  returning a plausible-looking empty string, which is the convention
- *  `TopicStatusDialog.test.tsx` uses. */
+ *  `TopicManagePane.test.tsx` uses. */
 const container = (history: readonly FileRevision[]) =>
   ({
     workspace: {

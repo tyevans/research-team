@@ -9,12 +9,12 @@ import { TopicDetail } from './TopicDetail.tsx'
 /** The `Detail` density exists to render what no list shows, so that is what
  *  this file asserts.
  *
- * R-F3.10 counts five fields fetched by `TopicStatusDialog` and rendered
- * nowhere in `presentation/`: `rationale`, `scope`, `sourceIds`,
- * `findingNotes` and `contested`. `TopicList.tsx:41` carries a comment saying
- * the detail is fetched fresh *because* the dialog needs the rationale and the
- * scope, and the dialog renders neither. Each of the five has an assertion
- * here, and those five are the reason the component exists.
+ * R-F3.10 counts five fields fetched by what is now `TopicManagePane` and
+ * rendered nowhere in `presentation/`: `rationale`, `scope`, `sourceIds`,
+ * `findingNotes` and `contested`. `TopicList.tsx` fetches the detail fresh
+ * *because* the manage panel needs the rationale and the scope, and the panel
+ * renders neither. Each of the five has an assertion here, and those five are
+ * the reason the component exists.
  */
 
 const aDetail = (over: Partial<TopicDetailView> = {}): TopicDetailView => ({
@@ -36,12 +36,12 @@ const aDetail = (over: Partial<TopicDetailView> = {}): TopicDetailView => ({
   ...over,
 })
 
-it('renders the rationale the dialog fetches and never shows', () => {
+it('renders the rationale the manage pane fetches and never shows', () => {
   render(<TopicDetail topic={aDetail()} />)
   expect(screen.getByText('The funding decides how much the conclusion is worth.')).toBeVisible()
 })
 
-it('renders the scope the dialog fetches and never shows', () => {
+it('renders the scope the manage pane fetches and never shows', () => {
   render(<TopicDetail topic={aDetail()} />)
   expect(screen.getByText('A named funder with a citation.')).toBeVisible()
 })
@@ -120,10 +120,13 @@ it('omits a heading rather than heading an empty section', () => {
 it('leads with a heading, not a borrowed drawer title', () => {
   render(<TopicDetail topic={aDetail()} />)
 
-  // The dialog renders this field as `<h3 className="drawer-title">` — the
-  // `Drawer` component's own class, in a file that does not use `Drawer` —
-  // while the queue renders it as `<div className="topic-question">`. Two
-  // markups for one entity, sharing no class name at all.
+  // The manage panel once rendered this field as `<h3 className="drawer-title">`
+  // — the `Drawer` component's own class, in a file that did not use `Drawer` —
+  // while the queue rendered it as `<div className="topic-question">`: two
+  // markups for one entity, sharing no class name at all. Both have since
+  // moved on, so what this holds is the heading *level* and the role, which is
+  // what the test name has always been about and is what a borrowed title
+  // class cost.
   expect(screen.getByRole('heading', { name: 'Who funded the study?', level: 2 })).toBeVisible()
 })
 
