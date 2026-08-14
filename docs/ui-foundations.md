@@ -749,6 +749,18 @@ Three z-values rather than five, for the reason in §3.4. `panes.css`'s ad-hoc
 because a layout foundation built on unscaled literals inherits them and then
 they are load-bearing.
 
+**[corrected, 2026-08-13] This recommendation sits in a shipped phase and was
+never actioned, and the file it names is gone.** `panes.css` was renamed when the
+session panes moved to `Split`/`Pane` — `check-deleted.mjs:113-127` records it,
+"`panes.css` is `scrub-bar.css` now and holds no pane rule", and the phase-C rule
+forbids `^\.pane\b` and seven siblings anywhere under `styles`. The debt itself
+survives and is re-pointed: `scrub-bar.css:16-17` (`gap: 12px; padding: 7px
+14px`), `:32` and `:53` (`gap: 7px`). The `34px` third of it **is** paid — it is
+`--rail-w` (`tokens.css:147`) and `check-deleted.mjs:72` forbids the literal. The
+two survivors die with the scrub bar whenever it is rebuilt; nothing schedules
+them separately, and the argument above for doing it early no longer has a
+foundation phase to be early in.
+
 *(surveyed)* Other layout literals that want tokens once the system exists:
 `340px` (research rail width, `research.css:39`), the drawer's
 `42vw / 640px / 360px` (`course.css:528-530`), and the toast's

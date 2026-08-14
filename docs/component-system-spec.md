@@ -355,7 +355,7 @@ nothing to fight.
 | Option | Verdict |
 |---|---|
 | **Tailwind CSS v4** | **Chosen.** Measured 4.8 kB gzipped for a utility-heavy surface. `@theme` makes the token file the source of both variables and utilities. §4. |
-| Keep 19 hand-written stylesheets | Rejected — it is the mechanism the instruction rejects, and it is where the drift documented in `tokens.css`'s own comments came from. |
+| Keep 19 hand-written stylesheets *(22 now; frozen by name in `check-deleted.mjs:400-423`)* | Rejected — it is the mechanism the instruction rejects, and it is where the drift documented in `tokens.css`'s own comments came from. |
 | CSS Modules | Rejected — scoping is not the problem. The problem is that a "chip" is spelled four different ways; modules make each spelling local and un-greppable, which is worse. |
 | Panda CSS / vanilla-extract | Rejected — tokens-first and genuinely good, but each is a smaller ecosystem with a build-time integration this project would be among the few to run. Standard-conformance was the brief. |
 
@@ -364,12 +364,29 @@ pane header with a sticky head, a hover/focus-within row, an empty state, an
 error box, a modal with backdrop blur, a divided list, a code block, a
 textarea, a three-breakpoint responsive grid and explicit focus rings compiled
 to **21.8 kB raw / 4.8 kB gzipped**, with this project's tokens in `@theme`.
-Today's nineteen stylesheets are 61.5 kB raw / 11.5 kB gzipped.
+Today's twenty-two stylesheets are 193.5 kB raw / 56.8 kB gzipped as source;
+the whole `index.css` chain as built and minified measures 13.9 kB gzipped,
+Tailwind's utilities included.
+
+**[corrected] This line used to read "Today's nineteen stylesheets are 61.5 kB
+raw / 11.5 kB gzipped", and the bytes were wrong by roughly a factor of two in
+both columns.** The file count was right when it was written — `git ls-tree
+a010974 frontend/src/styles/` returns exactly 19 — but at that same commit the
+nineteen measured **112.7 kB raw / 27.3 kB gzipped**, and no subset of them sums
+to 61.5 kB (the four largest alone are 65.1 kB), so it was not a scoping choice.
+It was never re-derived and it has been quoted onward.
 
 I will not claim Tailwind ends at 4.8 kB for the whole console. Utility output
 grows sub-linearly because utilities are shared between components, so a
 reasonable estimate for full coverage is 8–12 kB — at or slightly below where
 the hand-written CSS already is. That is an estimate and it is labelled as one.
+
+**[corrected] Against the real 27.3 kB, 8–12 kB is not "at or slightly below"
+the hand-written CSS; it is less than half of it. The argument gets stronger,
+not weaker** — worth saying, because a wrong number that flatters a conclusion
+and one that understates it deserve the same correction. Nothing here re-derives
+the 8–12 kB itself; the estimate was never more than an estimate, and the
+correction only changes what it is compared against.
 The number that matters for the migration is the *coexistence peak*, and it is
 small: during any phase both stylesheets are loaded, so `app-` peaks near
 58.8 + 5 ≈ 64 kB against its 80 kB limit. **The strangler fits inside the
@@ -434,12 +451,56 @@ them as custom properties, so that code is untouched.
 
 **`--topbar-h`, and the panes' `34px` rail, are layout constants rather than
 theme tokens.** They stay as CSS variables outside `@theme`. `panes.css`'s
-ad-hoc `7px`/`12px` (S-§13.3) become `--spacing-*` during phase 5. Those values
+ad-hoc `7px`/`12px` (S-§13.3) become `--spacing-*` during phase 5. **[corrected]
+`panes.css` does not exist** — `check-deleted.mjs:113-127` records the rename,
+"`panes.css` is `scrub-bar.css` now and holds no pane rule". The debt survives
+and is re-pointed: `scrub-bar.css:16-17` (`gap: 12px; padding: 7px 14px`), `:32`
+and `:53` (`gap: 7px`). The `34px` is genuinely paid — it is `--rail-w`
+(`tokens.css:147`) and `check-deleted.mjs:72` forbids the literal. The remaining
+two values die with the scrub bar whenever it is rebuilt; nothing schedules them
+separately. Those values
 sit outside the `--space-*` scale because that part of the console was written
 before the scale existed; it is accumulated inconsistency rather than a
 decision anyone made, and phase 5 is the first work whose scope includes it.
 *(Phase 5 was dissolved — §11. `panes.css` is now paid down whenever the panes
 are rebuilt, or not at all; nothing schedules it.)*
+
+**What else this build assumes preflight provides, checked one by one.** The
+build imports no Tailwind preflight (`theme.css:26` records that as deliberate),
+so every default it would have set is either written locally or absent. Covered:
+`box-sizing` (`tokens.css:247-249`), body `margin` (`:251-255`), `font: inherit`
+on form controls (`:269-274`), control background/colour and `a { color: inherit }`
+(`:304-322`), `[hidden] { display: none }` (`base.css:57-59`, with `!important`
+and `:where()`). **Not needed: `border-style: solid` on `*`**, because Tailwind
+v4 registers `@property --tw-border-style` with `initial-value: solid` — see
+`BACKLOG.md` B55, where the opposite was believed. **Still open, and one of them
+is the `[hidden]` shape exactly:** nothing sets `list-style: none; padding: 0` on
+`ul`/`ol` globally, and it is written locally **twenty times** across five
+stylesheets (`course.css` ×9, `research.css` ×7, `tree.css` ×2, `components.css`,
+`entity.css`). That is a bug diagnosed and repaired locally twenty times, where
+the next caller — a QUEUE row list or a MATERIAL facet list built in utilities —
+gets no help from any of the twenty and silently inherits discs and 40px of
+`padding-inline-start`. The `[hidden]` fix retired three local patches; this
+would retire twenty. Heading and paragraph margins are the same shape one step
+down, and `m-0` does emit correctly (`.m-0{margin:var(--spacing-0)}` with
+`--spacing-0: 0px`, `theme.css:196`), so the utility route works when someone
+remembers it. **Not acted on here, because `markdown.css` renders authored lists
+(`.md-list`) that *want* markers, so a global rule would have to exempt or be
+scoped away from `.md` content — that is a design question, and settling it needs
+a Storybook look that was not taken.**
+
+**Two phase numbering schemes are in use and nothing reconciles them.**
+`check-deleted.mjs` carries 33 rules under eleven phase labels: `1, 2, 3, 4, 5`
+(this document's phases) and `A, B, C, C1, D, E` (`ui-foundations.md`'s). The
+task list adds a third vocabulary — "Increment A/B/C" — so this document's phase
+3, task "Increment B" and check-deleted phase `3` are one body of work under
+three names, while check-deleted `C` is *foundations* phase C and `C1` is
+*increment* C slice 1: two different things one character apart in one array.
+This costs nothing today because every rule carries a `what`/`why` sentence. It
+costs something the first time somebody greps for "phase C". **The fix is one
+sentence above `RULES` mapping the three schemes, not a renumbering** — §11
+argues correctly that a plan edited to match its outcome stops being evidence
+about planning, and the same holds for the rules.
 
 **What I did not do: invent new tokens.** `landing-page.md` §6 lists tokens as
 genuinely missing and every one it named has since landed *(checked —
@@ -524,7 +585,9 @@ chain. This is what makes stories *complement* rather than replace the vitest
 tests: the story is the fixture, the assertion stays in the test file, and
 there is exactly one place a component's states are written down.
 
-*Phase 6 (optional): `@storybook/addon-vitest`.* It runs every story as a test
+*Phase 6 (optional): `@storybook/addon-vitest`.* **[corrected] Phase 6 shipped
+by a different mechanism: neither `@storybook/addon-vitest` nor
+`@storybook/addon-a11y` is installed. See §11's phase 6.** As proposed, it runs every story as a test
 automatically, but its peer dependencies are `@vitest/browser` and
 `@vitest/browser-playwright` *(checked)*, meaning vitest browser mode and a
 downloaded Chromium in CI. That is a real cost and it buys one real thing:
@@ -559,10 +622,12 @@ it was written to measure.
 | `uv run pytest` | None. |
 | `npm run verify` | Four changes, all inside the existing chain — see below. |
 
-The chain is `format:check && lint && typecheck && test:coverage && build &&
-size`. Every addition lands inside it; **no new CI job is created**, which is
-deliberate, because a check that lives outside the chain is a check that CI
-does not run.
+The chain is now eight steps: `format:check && lint && typecheck &&
+test:coverage && build && size && deleted && check:tailwind`
+(`package.json:24`) — this line listed the first six. Every addition lands
+inside it; **no new CI job is created**, which is deliberate, because a check
+that lives outside the chain is a check that CI does not run. That stronger
+claim is VERIFIED: both later additions are inside the chain.
 
 - `format:check` — Prettier must be told about Tailwind class ordering, via
   `prettier-plugin-tailwindcss`. Without it, class order is a matter of
@@ -653,6 +718,18 @@ The phases ran out of order, `dialog` and `collapsible` were never adopted, and
 built: `ui-` is 33.0 of 56 with five primitives in it, `app-` is 67.6 of 80,
 and the whole console is 280.7 of 512. The projected end state is ~43.8 kB of
 `ui-`, so the budget does not move again.
+
+**[corrected] Re-gzipped from the committed build in
+`research_team/interfaces/web/static/assets/`: `ui-` ~32.7, `app-` ~71.6
+(`app.js` 57.7 + `index.css` 13.9), total ~283.7.** The direction is the part
+worth recording: `app-` has moved from 58.8 at baseline through 67.6 to ~71.6
+against a limit of 80, while `ui-` is static. **The head-room §14.1 calls 23 kB
+is now about 8 kB, and it is being spent for ordinary reasons.** Caveat stated
+because it changes what the numbers are worth: `app.js` on disk is timestamped
+22 minutes after every sibling artifact, so this may be a partial rebuild and is
+not guaranteed to correspond to `9fa6c7b`. These are indicative, not a `npm run
+size` result — `npm run build && npm run size` is what settles it, and it was
+not run.
 
 The per-phase budget was the part worth abandoning and it is worth saying why
 rather than leaving it as drift. A limit that is raised on the same commit that
@@ -767,6 +844,15 @@ has no tests at all**, and it holds `Drawer`, `Confirm`, `primitives.tsx` and
 the four with the least coverage in the codebase. `unified-ui-proposal.md` §6.4
 lists session tests as a prerequisite and does not mention `common/`; that is a
 gap in it, and it matters more, because `common/` is upstream of everything.
+
+**[corrected] This table is retired by events, and the sentence it supports with
+it.** `presentation/common/` now holds **12 modules with 8 jsdom test files, 3
+browser tests and 7 story files**. "The four files every phase touches first are
+the four with the least coverage" is no longer true of anything, and
+`increment-c-plan.md` §1 records the same reversal for `presentation/session/`
+(one test file then, twelve now). **The rule below survives the correction and is
+the part to keep** — a test proved red before an implementation is swapped is a
+discipline, not a response to a coverage number.
 
 **The rule.** A component must have a test asserting its current behaviour
 *before* its implementation is swapped, and that test must be proved red
@@ -1007,7 +1093,8 @@ rewritten surfaces use Tailwind utilities, and existing stylesheets are
 deleted, never ported.**
 
 The reason is arithmetic rather than taste. Roughly 6430 lines across the 22
-stylesheets dress markup that increment C — the QUEUE / HOLDER / MATERIAL
+stylesheets *(6,298 as measured at `9fa6c7b`; the count of 22 is right and is
+frozen by name in `check-deleted.mjs:400-423`)* dress markup that increment C — the QUEUE / HOLDER / MATERIAL
 route merge that §11's phase 7 anticipates — rebuilds anyway. Porting them is
 work written once and deleted once, and the deletion was already scheduled
 before the port would have finished. No amount of care in the porting changes
@@ -1073,7 +1160,17 @@ dresses.**
 
 ### Phase 6 — real-browser accessibility.
 
-`@storybook/addon-vitest` with browser mode, so axe's colour-contrast rules
+**Shipped, by a different mechanism than the one proposed.** Rather than
+`@storybook/addon-vitest` running every story, `vitest`'s browser project runs a
+hand-written `src/**/*.browser.test.tsx` suite — fifteen files today, plus
+`src/a11y.browser.test.tsx` — with `axe-core` imported directly as a
+devDependency so its version is pinned rather than chosen by a lint plugin's
+resolution (`package.json:29` carries the reasoning). Neither
+`@storybook/addon-vitest` nor `@storybook/addon-a11y` is installed. The trade is
+that the suite is written rather than generated, and that it stays outside
+`verify` and outside CI, which the proposed version would not have been.
+
+As proposed: `@storybook/addon-vitest` with browser mode, so axe's colour-contrast rules
 have layout to run against. Optional, and last, because it is the only piece
 that adds CI infrastructure.
 
@@ -1193,8 +1290,9 @@ states "the bundle budget is `app-` 57 and `total` 512". The current limits are
 `app-` **80** and `total` 512 *(checked — `check-size.mjs`)*, raised on the
 owner's instruction with the reasoning recorded in the file itself. This is not
 a nitpick: 23 kB of `app-` head-room is what makes phase 5's coexistence period
-affordable *(phase 5 was dissolved — §11; the head-room is now ordinary slack
-rather than a budget earmarked for two stylesheet languages at once)*, and a
+affordable *(phase 5 was dissolved — §11. The head-room is now ordinary slack
+rather than a budget earmarked for two stylesheet languages at once, and most of
+it has since been spent: `app-` measures about 71.6 kB of 80 — §8.2)*, and a
 document arguing that a merged page "grows `app-`" against a
 57 kB ceiling reaches a more pessimistic conclusion than the facts support.
 
@@ -1263,7 +1361,7 @@ below is argued from the structure of the plan, not from this project's record.
 > was wrong.
 >
 > The underlying code observation survives the correction and is used
-> accordingly: `panes.css`'s `7px`/`12px`/`34px` sit outside the `--space-*`
+> accordingly *(`panes.css` is `scrub-bar.css` now — §4)*: `panes.css`'s `7px`/`12px`/`34px` sit outside the `--space-*`
 > scale (S-§13.3), and that is real accumulated inconsistency worth paying down
 > — §4 and phase 5 both schedule it. It is a description of the code, not a
 > verdict on anyone's follow-through.
@@ -1321,7 +1419,7 @@ will look like the wrong trade, and by then it will be four phases deep.
    away globally for externally-owned state. It could be kept for `Discarded`
    alone by leaving that one as `<details>` — at the cost of the inconsistency
    S-D14 complains about.
-4. **How aggressive should phase 5 be?** Deleting nineteen stylesheets file by
+4. **How aggressive should phase 5 be?** *(Twenty-two, not nineteen.)* Deleting nineteen stylesheets file by
    file is a long tail of small risky changes. An alternative is to stop after
    phase 4 with Tailwind used only for *new* components and the old stylesheets
    frozen — which is a coherent, permanent, two-language end state, and is
