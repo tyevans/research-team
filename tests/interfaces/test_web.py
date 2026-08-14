@@ -10,9 +10,7 @@ import pytest
 from eventsource.ports.positions import ExpectedVersion
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
-from redstring import DatePrecision, TemporalExtent
-from redstring.events.document import DocumentExtracted
-from redstring.events.streams import document_stream
+from redstring import DatePrecision, DocumentExtracted, TemporalExtent, document_stream
 
 from research_team.application import GATED_TOOLS, SummaryProjects, WorkerRoster
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL
@@ -3357,7 +3355,7 @@ def _graph_entity(
     *,
     temporal: TemporalExtent | None = None,
 ):
-    from redstring.domain.entity import Entity, ExtractionMethod
+    from redstring import Entity, ExtractionMethod, Provenance
 
     return Entity(
         id=entity_id,
@@ -3365,8 +3363,14 @@ def _graph_entity(
         name=name,
         normalized_name=name.lower(),
         entity_type=entity_type,
-        extraction_method=ExtractionMethod.MANUAL,
-        confidence=1.0,
+        # Fixed rather than `datetime.now`: no route under test reads
+        # `observed_at`, and a moving value in a fixture is a difference that
+        # shows up in a failure diff without meaning anything.
+        provenance=Provenance(
+            observed_at=datetime(2026, 1, 1, tzinfo=UTC),
+            extraction_method=ExtractionMethod.MANUAL,
+            confidence=1.0,
+        ),
         temporal=temporal,
     )
 
@@ -3389,7 +3393,7 @@ def _month(year: int, month: int) -> TemporalExtent:
 def _graph_relationship(
     relationship_id, tenant_id, source_id, target_id, relationship_type: str
 ):
-    from redstring.domain.relationship import Relationship
+    from redstring import Relationship
 
     return Relationship(
         id=relationship_id,

@@ -9,9 +9,15 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from redstring import DatePrecision, InMemoryGraphStore, TemporalExtent
-from redstring.domain.entity import Entity, ExtractionMethod
-from redstring.domain.relationship import Relationship
+from redstring import (
+    DatePrecision,
+    Entity,
+    ExtractionMethod,
+    InMemoryGraphStore,
+    Provenance,
+    Relationship,
+    TemporalExtent,
+)
 
 from research_team.application.graph_read import (
     MAX_GRAPH_NODES,
@@ -39,8 +45,14 @@ def _entity(
         name=name,
         normalized_name=name.lower(),
         entity_type=entity_type,
-        extraction_method=ExtractionMethod.MANUAL,
-        confidence=1.0,
+        # Fixed rather than `datetime.now`: nothing under test reads
+        # `observed_at`, and a moving value in a fixture is a difference that
+        # shows up in a failure diff without meaning anything.
+        provenance=Provenance(
+            observed_at=datetime(2026, 1, 1, tzinfo=UTC),
+            extraction_method=ExtractionMethod.MANUAL,
+            confidence=1.0,
+        ),
         temporal=temporal,
     )
 
@@ -261,7 +273,7 @@ async def _merge_away(store, *, alias_id, canonical_id):
     """
     from datetime import UTC, datetime
 
-    from redstring.domain.alias import Alias
+    from redstring import Alias
 
     await store.upsert_alias(
         Alias(

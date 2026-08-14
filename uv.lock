@@ -1665,7 +1665,7 @@ wheels = [
 
 [[package]]
 name = "redstring"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dateparser" },
@@ -1675,9 +1675,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f2/57/0f7a4fa876ddd6b9cd08d3faf99b69e779fbcbc96fd502179619c7458cf9/redstring-0.7.0.tar.gz", hash = "sha256:6a42bf1514d87a337bdd74657ea727e670f17ab7ba90d842ce13c433693426ea", size = 1616590, upload-time = "2026-08-13T01:22:21.147Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9b/e1/424a6b84fadb011a9d115b16cc1a69f05453f4e827d2b3a17d622fa55ef7/redstring-0.8.0.tar.gz", hash = "sha256:dcdc36251e8f08002b466263163ad07ce1667fdea3498d987921c96ff631ffc1", size = 1890917, upload-time = "2026-08-14T02:59:54.499Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ba/31/af58ba00a88fe0136e129f06485d0fece3ee57872b98f2488ec43d693e72/redstring-0.7.0-py3-none-any.whl", hash = "sha256:fc2edbb6c920bd35801533d9da144a91ab8df7ac65791326060d6efc62b7c1e3", size = 386307, upload-time = "2026-08-13T01:22:19.455Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/57/e953f004f9d4ef606193d4f292342874c1ad3263d6efef27d7a48a2f6c41/redstring-0.8.0-py3-none-any.whl", hash = "sha256:874b38b7cfac1475dfaa81f33cb7a91052eef680015ac5b21d36e6ead30bd5ef", size = 419176, upload-time = "2026-08-14T02:59:52.881Z" },
 ]
 
 [package.optional-dependencies]
@@ -1832,7 +1832,7 @@ requires-dist = [
     { name = "langchain-openai", specifier = ">=1.4.2" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'tracing'", specifier = ">=1.0,<2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "redstring", extras = ["llm", "neo4j", "pgvector"], specifier = ">=0.7.0,<0.8" },
+    { name = "redstring", extras = ["llm", "neo4j", "pgvector"], specifier = ">=0.8.0,<0.9" },
     { name = "trafilatura", specifier = ">=2.2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.1" },
 ]

@@ -33,18 +33,26 @@ dependencies = [
     # because something else in the tree happened to pull asyncpg in, and a
     # dependency nobody declared is one a resolver is free to drop. Adding that
     # extra did not move the window -- an extra adds packages, it does not
-    # renegotiate the minor -- which is why it landed on its own. This bump is
-    # the other case: 0.7.0 narrows its own `eventsource-py` pin, so the two
-    # move together here and in the `tracing` extra below.
+    # renegotiate the minor -- which is why it landed on its own. 0.7.0 was
+    # the other case: it narrowed its own `eventsource-py` pin, so the two had
+    # to move together, here and in the `tracing` extra below.
     #
-    # 0.6.0 is the release to read before assuming this was only a version
-    # bump. 0.7.0 is indeed nothing but the eventsource adoption, but 0.6.0
-    # widened `ConsolidationService.__init__`'s `graph_store` from
-    # `RelationshipStore` to `ConsolidationGraph`, which is a silent runtime
-    # break for a narrow duck-typed double -- it type-checks nowhere and fails
-    # at the first `resolve`. Nothing here passes one; every store handed to a
-    # `Consolidator` is redstring's own.
-    "redstring[llm,neo4j,pgvector]>=0.7.0,<0.8",
+    # 0.8.0 is neither, and is the rare minor here that is a one-line bump. It
+    # leaves `eventsource-py>=0.14.0,<0.15` exactly where 0.7.0 put it, so that
+    # window does not move; and it adds `concurrency` and `CallLimiter` to the
+    # public surface without renaming or removing anything. `concurrency`
+    # defaults to 1, which upstream states is byte-identical to the serial
+    # pipeline -- same calls, same prompts, same order -- so the bump alone
+    # cannot have changed what extraction produces. `ingest` passes the knob
+    # deliberately; see `AGENT_EXTRACTION_CONCURRENCY`.
+    #
+    # 0.6.0 is still the release to read before assuming any of these were only
+    # version bumps: it widened `ConsolidationService.__init__`'s `graph_store`
+    # from `RelationshipStore` to `ConsolidationGraph`, which is a silent
+    # runtime break for a narrow duck-typed double -- it type-checks nowhere
+    # and fails at the first `resolve`. Nothing here passes one; every store
+    # handed to a `Consolidator` is redstring's own.
+    "redstring[llm,neo4j,pgvector]>=0.8.0,<0.9",
     "trafilatura>=2.2.0",
     "uvicorn[standard]>=0.52.1",
 ]
