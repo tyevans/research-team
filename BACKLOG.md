@@ -95,13 +95,13 @@ on an isolated re-run, on a machine running several other projects' containers:
   slept 0.3s and assumed the turn had reached the model call, and the cancel's
   answer depends entirely on where the turn is when it arrives --
 
-  | Turn's position | Result |
-  |---|---|
-  | not yet registered | `cancelled=False, settled=True` |
-  | registered, not yet in the model call | `cancelled=True, settled=True` |
-  | wedged in `StubbornModel` | `cancelled=True, settled=False` |
+  | Turn's position                       | Result                          |
+  | ------------------------------------- | ------------------------------- |
+  | not yet registered                    | `cancelled=False, settled=True` |
+  | registered, not yet in the model call | `cancelled=True, settled=True`  |
+  | wedged in `StubbornModel`             | `cancelled=True, settled=False` |
 
-  Only the third is under test. Under CI load the turn was slower to *start*,
+  Only the third is under test. Under CI load the turn was slower to _start_,
   so 0.3s left it in the second row and the cancel settled promptly -- correct
   behaviour, failing as `assert True is False`. Note the direction, which is
   what kept this misfiled: load makes things slower, so a "will not settle"
@@ -122,7 +122,7 @@ are the point. The fix is not a longer sleep: it is making the wait
 condition-driven, or making the timeout injectable so the test names its own.
 
 Neither is urgent on its failure rate. Both are urgent on their
-*diagnosability*: a hardcoded port and a 0.1s deadline each fail in a way
+_diagnosability_: a hardcoded port and a 0.1s deadline each fail in a way
 that names nothing about the real cause, so each one costs an investigation
 every time somebody new meets it. Make the port ephemeral and the timeout
 injectable, and both become tests that either pass or say why.
@@ -160,8 +160,8 @@ fails. It was first reported as "the same class as B4"; it is not. B4 is a socke
 test and a timing test racing the scheduler. This is threads outliving their test
 and contending, which is a different and more tractable problem: close the stores.
 
-*(Original title, for anyone following a link: "`SQLiteSnapshotStore` cannot be
-closed, and its thread outlives the process".)*
+_(Original title, for anyone following a link: "`SQLiteSnapshotStore` cannot be
+closed, and its thread outlives the process".)_
 
 **Update, eventsource 0.12: the original title became true, and the correction
 became wrong.** ADR 0053 gave `SQLiteSnapshotStore` one connection for its
@@ -179,7 +179,7 @@ thread survived `stop()`. That one predates 0.12 and was never anything to do
 with snapshots.
 
 The suite went from 14 thread-exception warnings to 2. What remains of this
-entry is the *diagnosis* problem, not any known leak: the symptom still names
+entry is the _diagnosis_ problem, not any known leak: the symptom still names
 no store, which is why finding these took a hand audit of every construction
 site. That half is now filed upstream (eventsource-py BACKLOG, "An unclosed
 connection-owning adapter is undiagnosable"), which is the only place it can
@@ -267,7 +267,7 @@ should be nothing rather than an error, and it is what keeps the REPL's `finally
 from raising and skipping `service.close()`.
 
 The cost is that two situations look identical — a session that correctly is not
-the holder, and a session that *should* be the holder but lost `active_session_id`
+the holder, and a session that _should_ be the holder but lost `active_session_id`
 through some logic error. Both no-op silently. A real bug of the second kind would
 surface only as a later "held by nobody in particular", not as a loud failure.
 
@@ -362,7 +362,7 @@ Two of the four are ordinary and one is not:
   values, not artifact types, and `course_matrices` deliberately does not build
   one: a grid whose rows are the behaviours somebody happened to write has no
   empty rows by construction, which is the exact way `coverage.py` says the
-  diagnostic goes vacuous. It needs *declared* axes from somewhere -- most
+  diagnostic goes vacuous. It needs _declared_ axes from somewhere -- most
   likely the preset -- and that is a design decision, not a wiring one.
 
 Not fixed here because each needs a course written the way its methodology's
@@ -483,18 +483,18 @@ with one row taking the raise. Flagged by the task that introduced the branch
 
 Added alongside the topic tracker and auto-research mode
 (`docs/superpowers/specs/2026-08-06-topic-tracker-and-auto-research-design.md`).
-Each is a thing that feature deliberately did *not* build, recorded so the
+Each is a thing that feature deliberately did _not_ build, recorded so the
 reasoning does not have to be rediscovered.
 
 ### B23. Contradiction detection is a human gate, not a check
 
 `topic.contested` tracks contradictions somebody already recorded. Nothing
-*detects* them: deciding that two sources disagree on substance is semantic, and
+_detects_ them: deciding that two sources disagree on substance is semantic, and
 a model asked "does my corpus contradict itself?" as a boolean answers no
 fluently.
 
 The shape when it is picked up: a critic prompt behind a gate whose output is a
-*proposed* `TopicContested` entry -- a candidate for a human, not a verdict. The
+_proposed_ `TopicContested` entry -- a candidate for a human, not a verdict. The
 registry already has the slot for it (`Trigger(run=None)` reports a standing
 human gate rather than a silent pass), so the work is the prompt and the gate,
 not the plumbing.
@@ -503,7 +503,7 @@ not the plumbing.
 
 **Closed for the runner path; still open, unchanged, for the tool path.**
 
-`StageRunner` poses the gate *between* turns, after `_save_turn` has committed.
+`StageRunner` poses the gate _between_ turns, after `_save_turn` has committed.
 On that path both halves of this item evaporate structurally rather than being
 worked around: the artifacts and the `check-findings` report are in the store
 while the reviewer decides, so `GET /api/sessions/{id}/files` answers, and
@@ -512,7 +512,7 @@ the_gate_is_posed` is what fails if that stops being true.
 
 The visibility half that was genuinely worth having landed too, in the smaller
 form the diagnosis implies once durability is not the problem: `gate_context`
-carries `artifact_paths` -- the *list* of files this stage produced, so a
+carries `artifact_paths` -- the _list_ of files this stage produced, so a
 reviewer does not have to know where a stage writes -- and not their contents,
 because the viewer can already open them.
 
@@ -532,7 +532,7 @@ shaped as it is:
 
 `EndTurnOnStageAdvance` made a successful `advance_stage` end its turn, so a
 crossed boundary is durable before anything is built on it. It did **not**
-change the other half: the approval is still posed *before* the tool runs, and
+change the other half: the approval is still posed _before_ the tool runs, and
 at that instant nothing the turn produced has reached the store.
 
 The ordering, verified rather than assumed:
@@ -551,14 +551,14 @@ and a comment in `gate_review` asserted the opposite for some time.
 
 **Two different fixes, and the cheap one is probably the right one.**
 
-*Visibility* is what the gate actually needs, and it does not require touching
+_Visibility_ is what the gate actually needs, and it does not require touching
 durability. `ApprovalRequest.context` already carries the findings inline over
 SSE -- that is why the gate is not blind today. Extending `gate_context` to
 carry the stage's artifact paths and contents would put the evidence in front
 of the reviewer with no change to when anything is written. Bounded work, no
 new invariant.
 
-*Durability* -- committing pending events before raising the interrupt -- is
+_Durability_ -- committing pending events before raising the interrupt -- is
 the larger and riskier change, and was rejected here rather than deferred by
 oversight:
 
@@ -570,7 +570,7 @@ oversight:
 - It interacts with the retry added in #69. `_save_turn` computes
   `base_version` from the aggregate and `_refuse_unrebasable` allows a rebase
   only over `AutonomyChanged`; a mid-turn save moves that baseline, and a
-  mid-turn save that *loses* its lock has no retry story at all.
+  mid-turn save that _loses_ its lock has no retry story at all.
 - It needs a new seam. The commit would have to happen inside
   `DeepAgentTurnExecutor._decide`, which is infrastructure and deliberately
   holds a `Session` rather than a repository.
@@ -605,7 +605,7 @@ rather than a route that refuses.
 
 **What is left is narration, and it is the same gap `/turns` already has.** A
 run's events reach the live feed like any others, so a browser watching the
-project sees each round land -- but a round *is* a turn, and a turn is atomic,
+project sees each round land -- but a round _is_ a turn, and a turn is atomic,
 so nothing arrives while one is running. The web UI can therefore show a run's
 history and its counters and cannot show the round in flight. Closing that
 needs the second channel `on_activity` already gives the REPL, which is the
@@ -643,14 +643,14 @@ before, since today there is exactly one caller and it takes the defaults.
 
 ### B27. Staleness is per-corpus, not global
 
-Every position in the topic feature is one project's *corpus version*
+Every position in the topic feature is one project's _corpus version_
 (`corpus_position`), because a projection handler is given an event rather than
 its envelope, so the global feed position is not in reach where these are
 written. That is the right scale for the questions being asked -- "did anything
 arrive in this corpus since I last looked" -- but it means a topic cannot be
 stale with respect to anything outside its own project's corpus.
 
-If topics ever need to notice work in *another* project, this is the thing that
+If topics ever need to notice work in _another_ project, this is the thing that
 has to change first, and it is a wider change than it looks: the positions are
 persisted in `TopicInvestigated.at_position` and in every acknowledgement's
 expiry, so redefining the scale invalidates both.
@@ -665,7 +665,7 @@ there only as `application.dispatcher`.
 That is a choice, not an oversight. `DispatchQueue` is the whole point of the
 feature -- one at a time per project, the rest waiting -- and a REPL has no
 way to show a queue draining, no place to put a per-topic status chip, and one
-operator who is already sitting in a session that *holds the project*, which a
+operator who is already sitting in a session that _holds the project_, which a
 dispatch would then be refused from joining. `/research` works in the REPL
 because a run is a single thing with a single status line; a queue over forty
 topics is not.
@@ -685,8 +685,8 @@ docstring states the trade and accepts it: it is the same trade every
 supervisor here makes, and `workers.py` already argues that "a restart shows an
 empty roster, which is the truth".
 
-The reason it is recorded anyway is that a queued dispatch is a *user
-intention* rather than a running process, and losing an intention silently is
+The reason it is recorded anyway is that a queued dispatch is a _user
+intention_ rather than a running process, and losing an intention silently is
 worse than losing a process. The UI does not currently say "these were
 dropped" -- the chips simply stop being there on reload, which is
 indistinguishable from never having pressed the button.
@@ -697,7 +697,7 @@ rejecting it is the thing to re-read before building it: four events in the
 permanent vocabulary, and a decision about what a `DispatchStarted` with no
 terminal event means when the process died. **Do not build it until someone has
 actually lost work to this.** The trigger to watch for is the first request for
-dispatch *history* -- "what have we ever asked about this topic" -- which the
+dispatch _history_ -- "what have we ever asked about this topic" -- which the
 log genuinely cannot answer today.
 
 ### B39. Topics already stored with an implicit subject cannot be restated
@@ -705,7 +705,7 @@ log genuinely cannot answer today.
 A question opened before self-containment was required reads "typical physical
 traits" -- correct only against the project it was opened in. The prompt fix
 stops new ones being written that way and the dispatch briefing names the
-project so a *dispatched agent* can still act on an old one, but the stored
+project so a _dispatched agent_ can still act on an old one, but the stored
 text is unchanged and shows up unrepaired everywhere else: `list_topics` output,
 the topic list in the browser, and the `/topics/<nn>-<slug>/` directory names,
 which are derived from the question at dispatch time.
@@ -802,7 +802,7 @@ defect of this subsystem at all -- see its entry.
 Closing B28 surfaced the question B28 said was the hard part, in a smaller and
 more answerable form. `LearnerProgress` keys an item by `(path, component_id)`
 and stamps every attempt with the sha256 of the body it was answered against.
-That means a rewrite is *visible* -- the digest changes under a learner -- and
+That means a rewrite is _visible_ -- the digest changes under a learner -- and
 nothing acts on it.
 
 Deliberate, and the reason is that the right action is not a domain rule. A
@@ -810,7 +810,7 @@ fixed typo should not reset anyone; a reworded distractor probably should; a
 question rewritten to ask something else definitely should. Only the first is
 mechanically detectable, and the aggregate has no basis for the other two.
 
-What it wants is not a rule but a *report*: an author-facing view of which
+What it wants is not a rule but a _report_: an author-facing view of which
 items changed under which learners, with the two digests, so the call is made
 by someone who can read both versions. That belongs beside `alignment_map` in
 `widget-horizons.md` -- both are reports that make an authoring decision
@@ -826,7 +826,7 @@ all afterwards.
 identity in this codebase that means "one person working through this
 material". That is correct today and is exactly what breaks first when B18 is
 picked up: two learners cannot share a course without sharing a session, and a
-session is also the thing the *author* takes turns in.
+session is also the thing the _author_ takes turns in.
 
 Recorded separately from B18 so the coupling is not rediscovered. The shape
 when it is picked up: progress keys on a principal, and the session id becomes
@@ -887,7 +887,7 @@ Took the second of the two options this entry laid out: the stage prompt tells
 the model to put the component requirement in the task it writes. The entry
 called that one "probably right" and said nobody should make the change without
 watching a real delegated authoring turn first. That caveat was aimed at the
-*first* option; what settled it without a live turn is that `delegation.py`
+_first_ option; what settled it without a live turn is that `delegation.py`
 already steers subagents toward investigation and away from constructive work,
 and already tells the caller "give it everything it needs; it cannot see this
 conversation". Deriving guidance into the delegation prompt would have argued
@@ -899,7 +899,7 @@ with no component-bearing output is still told nothing.
 ### ~~B29. The parse is not cached, though the cache key is exact~~ (done, differently)
 
 Measured, as this entry asked, and the measurement found something better than
-a cache. `yaml.safe_load` binds PyYAML's *pure-Python* scanner even when the
+a cache. `yaml.safe_load` binds PyYAML's _pure-Python_ scanner even when the
 libyaml extension is installed -- which it is here -- and the C loader parses
 the same component body about nine times faster. A 24-component lesson went
 from 83ms to 16ms on a loaded machine.
@@ -919,7 +919,7 @@ because that is the note whoever measures next will want.
 Found while researching course-design workflows
 (`docs/research/course-design/research-intake.md`). Five entries originally,
 all the same shape: the graph path is well built and correctly bounded, and
-the gap was *beneath* it — there was no corpus layer under the graph.
+the gap was _beneath_ it — there was no corpus layer under the graph.
 
 Three of them (retained source text, span-addressable offsets, and the unset
 citation fields) are closed by the corpus layer: documents are now stored on
@@ -938,7 +938,7 @@ surfacing.
 
 `unmerge` exists and reverses it, but only if the agent notices, and the whole
 failure mode is that nothing looks wrong. In procedural domains an apparent
-contradiction is usually an *unstated conditional* — the two experts are each
+contradiction is usually an _unstated conditional_ — the two experts are each
 right under conditions neither stated — so the interesting output is not "which
 is correct" but "what were the two of them each assuming".
 
@@ -961,7 +961,7 @@ node will reach for the same design.
 the entity it concerns blocks with that entity on both the `p:` prefix key and
 the `s:` soundex key (`redstring/domain/blocking.py:115-124`), scores name
 similarity 1.0, and lands in the middle band, so it reaches the adjudicator.
-The adjudicator is shown only the *subject's* `entity_type`
+The adjudicator is shown only the _subject's_ `entity_type`
 (`redstring/consolidation/policy.py:188-196`) and asked whether two mentions
 "refer to the same real-world thing". `entity_type` is neither a scoring
 feature nor a filter (`redstring/consolidation/candidates.py:126-153`), and
@@ -981,7 +981,7 @@ there is no shape, border, or node-state notion. Open-versus-answered would be
 new surface across `GraphEntity`, `GraphReadPort`, the presenter and the
 canvas.
 
-What is *not* a barrier, and is worth knowing: `entity_type` is an unvalidated
+What is _not_ a barrier, and is worth knowing: `entity_type` is an unvalidated
 free string end to end, domain schemas prompt but do not constrain (ADR 0011),
 `ExtractionMethod.MANUAL` already exists, and
 `Document.record_extraction(entities=...)` accepts caller-supplied entities and
@@ -1033,7 +1033,7 @@ fixed.
 `GraphPane` redraws by calling `loadAll` when a graph frame arrives, and
 `loadWhole` replaces the view -- so an extraction that lands while a reader has
 pruned their way down to six interesting nodes puts the whole graph back. Their
-*selection* survives; their work does not. It is the same effect "Reset view"
+_selection_ survives; their work does not. It is the same effect "Reset view"
 has, applied by something they did not do.
 
 Not fixed with the streaming change because the merge that would preserve
@@ -1089,7 +1089,7 @@ follows this rule rather than bending it.
 **B33 is the other half, and it is the one that will bite first.**
 `LearnerProgress` is keyed by session, because a session is the only identity
 this codebase has. So there is not merely no boundary between author and
-learner -- there is no way for two learners to be *distinct* without being two
+learner -- there is no way for two learners to be _distinct_ without being two
 sessions, and a session is also the thing the author takes turns in. Whoever
 picks this up should read B33 before designing the principal, because progress
 is the first thing that needs one.
@@ -1110,7 +1110,7 @@ Of the four standard remedies, none is free here:
   every later revision of that path undefined. Time travel breaks, not just the
   shredded event.
 - **Forgettable payloads** (log holds a reference, bytes live in a deletable
-  store) are right for *corpus* documents and wrong for *authored files*,
+  store) are right for _corpus_ documents and wrong for _authored files_,
   because applying them to files would replace the log-as-sole-truth property
   the whole system rests on.
 - **Stream rewriting** is the only coherent remedy and must rewrite in place,
@@ -1161,21 +1161,24 @@ it is cheap — scroll the list before inserting the headings, then assert.
 Worth doing because the alternative is a defect that shipped once, has a fix
 nobody can break loudly, and a docstring that will read as folklore in a year.
 
-### B55. Three shipped single-side borders draw nothing
+### B55. Shipped single-side borders draw nothing — two left
 
 Found by increment C slice 2's mandated combinator grep, not by a gate, and
 filed rather than fixed because each one changes pixels in a region that slice
 did not own.
 
-`CLAUDE.md`'s single-side-border rule has two halves and these three write only
-one of them — a directional width with no `border-style` anywhere, so every
-side's style is still the browser default `none` and the rule draws nothing at
-all:
+`CLAUDE.md`'s single-side-border rule has two halves and these write only one of
+them — a directional width with no `border-style` anywhere, so every side's
+style is still the browser default `none` and the rule draws nothing at all:
 
-- `presentation/project/queue/QueueHeader.tsx:75` — `border-b border-line`, the
-  line meant to separate the queue's header band from the stage list under it.
-  Shipped in slice 1, whose whole argument for the component is that the band
-  reads as one thing separate from the list.
+- ~~`presentation/project/queue/QueueHeader.tsx:75`~~ — **fixed** in the commit
+  that made the ask page reachable again, because that commit added a bordered
+  link directly above the band and the inconsistency was the tell.
+- ~~`QueueHeader.tsx`'s `CARD`~~ — **fixed** in the same commit, and it was not
+  in this entry's original list: `border border-line` with no `border-solid`, so
+  all four cards in the queue header have been drawing no border since slice 1.
+  A fourth instance found by fixing the third, which is the argument for the
+  `check-tailwind.mjs` rule below rather than for finding them by eye.
 - `presentation/common/Drawer.tsx:163` — `border-b border-line` under a drawer
   header.
 - `presentation/shell/DecisionBar.tsx:44` — `border-b border-k-tool`, which is
@@ -1190,7 +1193,9 @@ paints nothing.
 
 The cheaper half of the fix is a `check-tailwind.mjs` rule: a directional
 `border-{t,r,b,l}` in a class list with no `border-solid` (or other style) is
-always this bug. That would have caught all three at the commit that wrote them.
+always this bug. That would have caught all three at the commit that wrote them
+— and the plain `border` case above, which no amount of grepping for
+directional utilities finds.
 
 ## The ask page
 
@@ -1256,7 +1261,7 @@ per-subagent activity frames on the stream, citations merged across children).
 
 ### B52. No admitted tool reads one identified topic, so topics are not citable
 
-`open_topic` was in the read-only tool set until review found that it *creates*
+`open_topic` was in the read-only tool set until review found that it _creates_
 topics — `RepositoryTopics.open_topic` executes an `OpenTopic` command, so
 naming a topic that does not exist brings it into being, and the page would
 have written to the project by asking about it. Removing it was correct.
@@ -1318,19 +1323,19 @@ favour of `eventsource.replay`, so `rebuild.py` imports from eventsource now.
 R2 (identifying unconsolidated entities) is still open, which is why the repair
 path is still keyed by `source_id`.
 
-*(Entries below are kept for the reasoning; the asks themselves are closed.)*
+_(Entries below are kept for the reasoning; the asks themselves are closed.)_
 
 ### B48. Nothing notices if `infer_relations` starts emitting a new relation
 
 `_DRAWN_RELATIONS` in `graph_reader.py` is `{CONTAINS, OVERLAPS, EQUALS}`, and
-its comment calls that *complete* rather than a subset: `infer_relations`
+its comment calls that _complete_ rather than a subset: `infer_relations`
 canonicalises every dated pair to one edge, folding `AFTER` into its target's
 `BEFORE` and `DURING` into its target's `CONTAINS`, so only four of
 `TemporalRelation`'s six members can ever arrive. That is true of redstring
 0.2.0 and it is the reason the set needs no `AFTER`/`DURING` entry.
 
-It is also the one claim in that comment which is a *promise by another
-package* rather than arithmetic this repository can check. If redstring ever
+It is also the one claim in that comment which is a _promise by another
+package_ rather than arithmetic this repository can check. If redstring ever
 stopped canonicalising — or added a seventh relation — `_DRAWN_RELATIONS`
 would silently exclude it, and the drawing would quietly lose a kind of edge
 with nothing failing anywhere. Every other quantity in that comment is
@@ -1361,7 +1366,7 @@ retroactively tell us which sentence produced a given edge.
 both commented in place, both recorded as R3 and R4 in
 `docs/superpowers/specs/2026-08-04-projects-and-redstring-knowledge-design.md`:
 
-- **R3** — `redstring.projections.project` folds the *global* feed with no
+- **R3** — `redstring.projections.project` folds the _global_ feed with no
   stream or category argument, so rebuilding one project's graph reads every
   session event in the store too. Scoping is by `tenant_filter` on the
   projection instead. Correct, but the scan is O(whole log) per project open,
@@ -1392,6 +1397,6 @@ provider) and R5 (understated eventsource floor) are closed in 0.2.0**. R2
 is keyed by `source_id` here rather than asking the library what is
 unconsolidated.
 
-R1 closing means vector search is now *possible*, not present: there is still
+R1 closing means vector search is now _possible_, not present: there is still
 no `AGENT_VECTOR_STORE` and no recall path. That is a feature to spec, not a
 workaround to delete, and it does not belong in this section.

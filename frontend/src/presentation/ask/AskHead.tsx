@@ -37,30 +37,31 @@ export const AskHead = ({ projectId, onReset }: { projectId: ProjectId; onReset:
     </div>
 
     <div className="flex flex-wrap items-center gap-3">
-      {/* One control in three states rather than three buttons: the border
-          belongs to the group, and the links divide it. */}
+      {/* One control in two states rather than two buttons: the border belongs
+          to the group, and the link divides it.
+
+          **Two, where there were three.** "Course" and "Research" were two
+          entries pointing at two pages; increment C merged those pages, so both
+          were addresses of the same project view differing only in which
+          MATERIAL tab opened. Two entries that land on one page, named after
+          routes that no longer exist, describe a console this is no longer. The
+          graph is one tab away from where "Project" lands, which is the click
+          this costs and it is the honest price of the merge. */}
       <nav
         className="flex items-stretch overflow-hidden rounded-md border border-solid border-line"
         aria-label="Project views"
       >
-        {/* The project page with no selection, which is the course today. */}
         <a
           className="border-0 px-4 py-2 text-sm whitespace-nowrap text-fg-dim no-underline hover:bg-bg-hover hover:text-fg aria-[current=page]:bg-bg-raise aria-[current=page]:text-fg"
           href={projectHref(projectId)}
         >
-          Course
-        </a>
-        <a
-          className="border-0 border-l border-solid border-line px-4 py-2 text-sm whitespace-nowrap text-fg-dim no-underline hover:bg-bg-hover hover:text-fg aria-[current=page]:bg-bg-raise aria-[current=page]:text-fg"
-          href={projectHref(projectId, { facet: 'entity', id: null })}
-        >
-          Research
+          Project
         </a>
         {/* A link to where you already are, rather than a disabled span: it
-            keeps the three the same kind of thing, and `aria-current` is what
+            keeps the two the same kind of thing, and `aria-current` is what
             says the difference -- kept off a parallel `.is-current` class so
             the two facts cannot drift, per the `aria-[current=page]:` variant
-            above and below. */}
+            above. */}
         <a
           className="border-0 border-l border-solid border-line px-4 py-2 text-sm whitespace-nowrap text-fg-dim no-underline hover:bg-bg-hover hover:text-fg aria-[current=page]:bg-bg-raise aria-[current=page]:text-fg"
           aria-current="page"

@@ -1,5 +1,6 @@
 import type { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
+import { projectHref } from '../../routing/routes.ts'
 import { AutonomyPanel } from '../../course/AutonomyPanel.tsx'
 import { ExtractionPane } from '../../course/ExtractionPane.tsx'
 import { RunPanel } from '../../course/RunPanel.tsx'
@@ -72,7 +73,37 @@ export const QueueHeader = ({
    *  unchanged by the move. */
   holdingSessionId: SessionId | null
 }) => (
-  <div className="flex flex-col gap-3 border-b border-line pb-3" data-region-header="queue">
+  <div
+    className="flex flex-col gap-3 border-0 border-b border-solid border-line pb-3"
+    data-region-header="queue"
+  >
+    {/* The way in to the ask page, and it is here because slice 1 deleted the
+        only two there were.
+
+        `CourseView` and `ResearchView` each carried an "Ask" link in their
+        `view-head-actions`, and the commit that deleted both views deleted the
+        last inbound link to a page that still exists, still routes and still
+        works -- `App.tsx` renders it for `#/p/<id>/ask` today. The page even
+        links *back* here, so the door was one-way for a whole slice. Nothing
+        caught it: no test asserts that a route is reachable, and the two
+        deletions were correct in themselves.
+
+        In QUEUE because `regionOf` already answers `queue` for `ask`, and the
+        reason there is the reason here -- a question you are putting to the
+        project is a thing you want *done*, which is what this region collects.
+        It is not a card: the four below are panels you read and act inside,
+        this is a link that leaves the page, and dressing it as one of them
+        would be the wrong promise. */}
+    <a
+      className="flex items-center justify-between rounded-md border border-solid border-line px-[12px] py-3 text-sm text-fg-dim no-underline hover:bg-bg-hover hover:text-fg"
+      href={projectHref(projectId, { facet: 'ask', id: null })}
+    >
+      Ask this project
+      {/* Decorative: the sentence already says it goes somewhere, and a screen
+          reader announcing "right arrow" after it adds nothing. */}
+      <span aria-hidden="true">-&gt;</span>
+    </a>
+
     <section className={CARD} aria-label="Working now">
       <Workers projectId={projectId} watching={watching} onWatch={onWatch} />
       {/* Inside the same card rather than beside it: the roster row is the
@@ -102,5 +133,13 @@ export const QueueHeader = ({
  * `px-3` would move every band's left edge by 2px for tidiness, which is a
  * visual change smuggled into a re-parenting. `gap-[8px]` is the same case, and
  * `AutonomyAllowAll` records the same reasoning for the same two numbers.
+ *
+ * `border-solid` is not decoration and was missing until now: `border` sets
+ * four widths and no style, and with no preflight imported every side's style
+ * stays the browser's `none`. All four cards have been drawing no border at all
+ * since slice 1 -- the same half-a-rule `BACKLOG.md` B55 records for the band's
+ * bottom line, which is fixed in the same commit. Found by writing the link
+ * above it and noticing the link had an edge and the cards did not.
  */
-const CARD = 'flex flex-col gap-[8px] rounded-md border border-line bg-bg-panel px-[12px] py-3'
+const CARD =
+  'flex flex-col gap-[8px] rounded-md border border-solid border-line bg-bg-panel px-[12px] py-3'

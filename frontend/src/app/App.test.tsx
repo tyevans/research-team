@@ -269,6 +269,32 @@ it('keeps ask a view of its own rather than a region', async () => {
   )
 })
 
+/** A route with no way in is a deleted feature, and this one was deleted for a
+ *  slice without anybody noticing.
+ *
+ * `#/p/<id>/ask` has routed, rendered and worked throughout — the test above
+ * proves it, and it passed on every commit. What went missing was the *door*:
+ * the only two links to it lived in `CourseView` and `ResearchView`'s heading
+ * rows, and slice 1 deleted both views. The ask page even links back to the
+ * project, so for one slice a reader could leave it and never return.
+ *
+ * That is why this asserts an inbound link from the project page rather than
+ * another render of the ask route. Every test in this file navigates by
+ * assigning `window.location.hash`, which is exactly the ability a reader does
+ * not have — a suite that only ever teleports cannot notice that the stairs are
+ * gone.
+ *
+ * **Proved red** by removing the link from `QueueHeader`: `Unable to find an
+ * accessible element with the role "link" and name /ask this project/i`.
+ */
+it('offers a way into the ask page from the project page', async () => {
+  window.location.hash = `#/p/${ATLAS}`
+  renderApp()
+
+  const link = await screen.findByRole('link', { name: /ask this project/i })
+  expect(link).toHaveAttribute('href', `#/p/${ATLAS}/ask`)
+})
+
 it('hands the selected entity to the graph, not just the view', async () => {
   // The id has to survive the facet, not only the route: a dispatch that
   // reached `ResearchView` with `entity` hard-null would satisfy the test
