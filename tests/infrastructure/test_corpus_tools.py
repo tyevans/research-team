@@ -19,6 +19,7 @@ from research_team.application.corpus_read import (
     LIST_SOURCES_TOOL,
     READ_SOURCE_TOOL,
     CorpusReadError,
+    DocumentListing,
     StoredDocument,
 )
 from research_team.domain import DocumentRecord
@@ -52,10 +53,15 @@ class FakeCorpus:
         self._documents = {document.record.source_id: document for document in documents}
         self._fails = fails
 
-    async def list_documents(self) -> list[DocumentRecord]:
+    async def list_documents(self) -> list[DocumentListing]:
         if self._fails:
             raise CorpusReadError("the read model is unavailable")
-        return [document.record for document in self._documents.values()]
+        # `extracted=False` throughout: `format_listing` deliberately does not
+        # render it, and a double that varied it would suggest it should.
+        return [
+            DocumentListing(record=document.record, extracted=False)
+            for document in self._documents.values()
+        ]
 
     async def read_document(self, source_id: str) -> StoredDocument | None:
         if self._fails:

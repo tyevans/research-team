@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
+from redstring import DocumentExtracted
 
 from research_team.domain.corpus import (
     Corpus,
@@ -268,8 +269,10 @@ async def test_documents_outlive_the_process(db_path):
 async def test_listing_carries_metadata_and_never_text(db_path):
     """A listing must not drag whole corpora through memory.
 
-    `list` returns `DocumentRecord`, the aggregate's own no-text shape, so the
-    guarantee is structural: there is no field for the text to arrive in.
+    `list` returns `DocumentListing`, whose `record` is the aggregate's own
+    no-text shape, so the guarantee is structural: there is no field for the
+    text to arrive in. The listing wraps the record rather than widening it
+    precisely so that stays true as read-side facts are added beside it.
     """
     project_id = uuid4()
     store = await CorpusStore.open(db_path)
@@ -292,10 +295,14 @@ async def test_listing_carries_metadata_and_never_text(db_path):
         listed = await store.list(project_id)
 
         assert "text" not in DocumentRecord.model_fields
-        assert [record.source_id for record in listed] == ["s1", "s2"]
-        assert listed[0].title == "One"
-        assert listed[0].char_count == len("a body")
-        assert listed[1].note == "skim only"
+        assert [listing.record.source_id for listing in listed] == ["s1", "s2"]
+        assert listed[0].record.title == "One"
+        assert listed[0].record.char_count == len("a body")
+        assert listed[1].record.note == "skim only"
+        # Stored is not extracted. Both are False here because no
+        # `DocumentExtracted` has been handled, which is the state every
+        # document sits in between being kept and being queued.
+        assert [listing.extracted for listing in listed] == [False, False]
     finally:
         await store.close()
 
@@ -318,7 +325,8 @@ async def test_get_and_list_both_refuse_a_dropped_document(db_path):
             await store.projection.handle(event)
 
         assert await store.get(project_id, "s2") is None
-        assert [record.source_id for record in await store.list(project_id)] == ["s1"]
+        listed = await store.list(project_id)
+        assert [listing.record.source_id for listing in listed] == ["s1"]
     finally:
         await store.close()
 
@@ -370,7 +378,7 @@ async def test_the_runner_follows_the_log(db_path, store, publisher):
 
         await runner.caught_up()
         assert (await runner.get(project_id, "s1")).text == "followed"
-        assert [record.title for record in await runner.list(project_id)] == ["One"]
+        assert [listing.record.title for listing in await runner.list(project_id)] == ["One"]
     finally:
         await runner.stop()
 
@@ -448,3 +456,105 @@ async def test_a_corpus_database_written_before_a_field_existed_gains_its_column
         assert await reopened.list(uuid4()) == []
     finally:
         await reopened.close()
+
+
+def _extracted(project_id, source_id: str) -> DocumentExtracted:
+    """The event redstring appends when a document's graph is written.
+
+    Hand-built rather than driven through redstring, unlike `_events` above.
+    The reason the aggregate is driven there is that the projection must agree
+    with the fold and the digest is computed inside it; nothing here folds
+    anything, and standing up an extraction to obtain one event would put a
+    model provider in the way of a test about a column.
+    """
+    return DocumentExtracted(
+        aggregate_id=uuid4(),
+        tenant_id=project_id,
+        source_id=source_id,
+        entities=[],
+        relationships=[],
+        model_version="test",
+    )
+
+
+async def test_a_document_reads_as_extracted_once_its_graph_is_written(projection, rows):
+    """The whole point of the column, over the two streams that decide it.
+
+    `CorpusDocumentStored` and `DocumentExtracted` come from different
+    aggregates and different categories; this passes only because the corpus
+    subscription is unfiltered and dispatch is by event type.
+    """
+    project_id = uuid4()
+    for event in _events(
+        project_id, StoreSourceDocument(corpus_id=project_id, source_id="s1", text="a body")
+    ):
+        await projection.handle(event)
+    assert (await rows.get(CorpusDocumentRow.row_id(project_id, "s1"))).extracted_at is None
+
+    await projection.handle(_extracted(project_id, "s1"))
+
+    assert (
+        await rows.get(CorpusDocumentRow.row_id(project_id, "s1"))
+    ).extracted_at is not None
+
+
+async def test_extracting_a_document_this_corpus_never_stored_is_ignored(projection, rows):
+    """Not drift, and so not an error.
+
+    `_on_dropped` raises on a missing row because the aggregate refuses to drop
+    what it does not hold, so the event could not legitimately exist. Nothing
+    makes that true of extraction: it is another aggregate entirely, and every
+    `DocumentExtracted` written before this table existed names a row that is
+    not here. Raising would fill the DLQ with ordinary history and report drift
+    that is not there.
+    """
+    project_id = uuid4()
+
+    await projection.handle(_extracted(project_id, "never-stored"))
+
+    assert await rows.get(CorpusDocumentRow.row_id(project_id, "never-stored")) is None
+
+
+async def test_restoring_a_document_with_new_bytes_clears_its_extraction(projection, rows):
+    """A graph about text the document no longer has is not a graph of it.
+
+    Reading as unextracted puts the document back in front of the person who
+    can requeue it. Identical bytes never reach here -- `_store_document`
+    swallows those without appending -- so a store event always means the text
+    changed.
+    """
+    project_id = uuid4()
+    row_id = CorpusDocumentRow.row_id(project_id, "s1")
+    for event in _events(
+        project_id, StoreSourceDocument(corpus_id=project_id, source_id="s1", text="first")
+    ):
+        await projection.handle(event)
+    await projection.handle(_extracted(project_id, "s1"))
+    assert (await rows.get(row_id)).extracted_at is not None
+
+    for event in _events(
+        project_id, StoreSourceDocument(corpus_id=project_id, source_id="s1", text="revised")
+    ):
+        await projection.handle(event)
+
+    assert (await rows.get(row_id)).extracted_at is None
+
+
+async def test_one_projects_extraction_does_not_mark_anothers_document(projection, rows):
+    """`tenant_id` is the project, and the row id is keyed on the pair.
+
+    Source ids are chosen per project and collide across them -- `"s1"` is the
+    obvious one -- so an extraction addressed by source id alone would mark
+    whichever project's row it found first.
+    """
+    mine, theirs = uuid4(), uuid4()
+    for project_id in (mine, theirs):
+        for event in _events(
+            project_id, StoreSourceDocument(corpus_id=project_id, source_id="s1", text="body")
+        ):
+            await projection.handle(event)
+
+    await projection.handle(_extracted(mine, "s1"))
+
+    assert (await rows.get(CorpusDocumentRow.row_id(mine, "s1"))).extracted_at is not None
+    assert (await rows.get(CorpusDocumentRow.row_id(theirs, "s1"))).extracted_at is None

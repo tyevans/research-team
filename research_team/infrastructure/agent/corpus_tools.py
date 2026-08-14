@@ -24,10 +24,10 @@ from research_team.application.corpus_read import (
     READ_SOURCE_TOOL,
     CorpusReadError,
     CorpusReadPort,
+    DocumentListing,
     StoredDocument,
 )
 from research_team.application.corpus_spans import Span, chunk, quote
-from research_team.domain import DocumentRecord
 
 MAX_CHARS = 20_000
 """How much of a document reaches the model in one call.
@@ -42,20 +42,26 @@ MAX_LISTED = 30
 them buries the sentence that says what went wrong."""
 
 
-def format_listing(summaries: list[DocumentRecord]) -> str:
+def format_listing(listings: list[DocumentListing]) -> str:
     """One line per source: what it is, how big, and where it came from.
 
     Metadata only, by contract. Inlining even a snippet of each document would
     make listing a large corpus cost more context than reading the one document
     the agent actually wanted.
+
+    `extracted` is deliberately *not* shown. It is a fact about the graph, and
+    a model reading this list is choosing what to read, not what to requeue --
+    the one caller that can act on it is the Documents page. Adding it here
+    would put a word on every line of a large listing to no end.
     """
-    if not summaries:
+    if not listings:
         return (
             "This project's corpus is empty -- nothing has been stored yet. "
             "Use `remember` to store a document before trying to read one."
         )
-    lines = [f"{len(summaries)} source(s) in this project's corpus:"]
-    for summary in summaries:
+    lines = [f"{len(listings)} source(s) in this project's corpus:"]
+    for listing in listings:
+        summary = listing.record
         parts = [f"{summary.source_id} -- {summary.char_count} chars"]
         if summary.title:
             parts.append(summary.title)
@@ -137,7 +143,7 @@ def build_corpus_tools(
             return f"Use `{LIST_SOURCES_TOOL}` to see what is available."
         if not summaries:
             return "This project's corpus is empty; nothing has been stored yet."
-        ids = [summary.source_id for summary in summaries[:MAX_LISTED]]
+        ids = [listing.record.source_id for listing in summaries[:MAX_LISTED]]
         listed = ", ".join(ids)
         if len(summaries) > MAX_LISTED:
             listed += f", and {len(summaries) - MAX_LISTED} more"

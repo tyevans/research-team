@@ -13,8 +13,11 @@ the only place the two names appear together.
 
 from uuid import UUID
 
-from research_team.application.corpus_read import CorpusReadError, StoredDocument
-from research_team.domain import DocumentRecord
+from research_team.application.corpus_read import (
+    CorpusReadError,
+    DocumentListing,
+    StoredDocument,
+)
 from research_team.infrastructure.persistence.read_models import (
     CorpusDocumentRow,
     CorpusRunner,
@@ -29,7 +32,7 @@ class ProjectCorpusReader:
         self._runner = runner
         self._project_id = project_id
 
-    async def list_documents(self, *, include_dropped: bool = False) -> list[DocumentRecord]:
+    async def list_documents(self, *, include_dropped: bool = False) -> list[DocumentListing]:
         try:
             return await self._runner.list(self._project_id, include_dropped=include_dropped)
         except RuntimeError as error:

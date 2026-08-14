@@ -20,7 +20,7 @@ from research_team.application import (
     SessionSummary,
     Worker,
 )
-from research_team.application.corpus_read import StoredDocument
+from research_team.application.corpus_read import DocumentListing, StoredDocument
 from research_team.application.corpus_spans import Span
 from research_team.application.course import (
     ArtifactSlot,
@@ -668,13 +668,15 @@ def project_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
     }
 
 
-def source_view(summary: DocumentRecord) -> dict[str, Any]:
-    """One row of `/api/projects/{id}/sources`: what a source is, not what it says.
+def _record_view(summary: DocumentRecord) -> dict[str, Any]:
+    """The fields both source views share: everything the record itself knows.
 
-    No `text` key, and that absence is the contract rather than an oversight.
-    A corpus can hold hundreds of papers; a listing that inlined even a
-    snippet of each would cost more to render than reading the one document
-    the caller actually wanted.
+    Split from `source_view` when `extracted` arrived, rather than letting
+    `source_text_view` inherit it. Reading one document answers from the row
+    and does not carry extraction state, so building on the full view would
+    have meant `source_text_view` inventing a value for a field it cannot
+    know -- and `False` there would read as "this has no graph" on a document
+    that has one.
     """
     return {
         "source_id": summary.source_id,
@@ -692,6 +694,27 @@ def source_view(summary: DocumentRecord) -> dict[str, Any]:
     }
 
 
+def source_view(listing: DocumentListing) -> dict[str, Any]:
+    """One row of `/api/projects/{id}/sources`: what a source is, not what it says.
+
+    No `text` key, and that absence is the contract rather than an oversight.
+    A corpus can hold hundreds of papers; a listing that inlined even a
+    snippet of each would cost more to render than reading the one document
+    the caller actually wanted.
+
+    Takes the listing rather than the record because `extracted` is not on the
+    record and deliberately cannot be: extraction lives on another aggregate's
+    stream. See `DocumentListing`.
+    """
+    return {
+        **_record_view(listing.record),
+        # Whether this document's text has been folded into the graph. False
+        # on every row of a database that predates the column until the corpus
+        # projection is rebuilt -- see `CorpusDocumentRow.extracted_at`.
+        "extracted": listing.extracted,
+    }
+
+
 def source_text_view(document: StoredDocument, span: Span) -> dict[str, Any]:
     """One source's text, with the offsets that make a quote from it checkable.
 
@@ -703,7 +726,7 @@ def source_text_view(document: StoredDocument, span: Span) -> dict[str, Any]:
     partial read from a complete one without a second request.
     """
     return {
-        **source_view(document.record),
+        **_record_view(document.record),
         "text": span.text,
         "start": span.start,
         "end": span.end,

@@ -54,9 +54,15 @@ from eventsource.ports.readmodels import (
     ReadModelSchemaMismatchError,
 )
 from pydantic import Field, field_validator
+
+# The public name, not `redstring.events.document`: reaching through a dotted
+# path opts out of the only compatibility promise the library makes, which is
+# how 0.8.0 broke six imports here. See PR #180.
+from redstring import DocumentExtracted
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.application import SessionSummary, SummaryHealth
+from research_team.application.corpus_read import DocumentListing
 from research_team.domain import (
     CorpusDocumentDropped,
     CorpusDocumentStored,
@@ -613,6 +619,31 @@ class CorpusDocumentRow(ReadModel):
     note: str | None = None
     fetched_at: str | None = None
     dropped_reason: str | None = None
+    extracted_at: str | None = None
+    """When this document's text was last folded into the graph, or None.
+
+    The one field here the corpus aggregate cannot supply: extraction happens
+    on redstring's `Document` stream, not the `Corpus` one, so this is written
+    by `_on_extracted` from an event the fold never sees. That is also why it
+    is not on `DocumentRecord` -- a domain record that claimed to know this
+    would be claiming knowledge of another aggregate's stream.
+
+    A timestamp rather than a flag, because "when" is free here (the event
+    carries it) and answers the question a flag cannot: whether the graph
+    predates a revision of the text.
+
+    **A database written before this column reads every document as
+    unextracted, and a rebuild is the only thing that fixes it.** `apply_schema`
+    adds the column as NULL and the projection resumes from its checkpoint, so
+    the `DocumentExtracted` events that would fill it have already gone by.
+    Measured on a copy of a real database on 2026-08-14, not reasoned: three
+    documents with graphs, all three reading `extracted=False` on the resume
+    path and all three correct after `CorpusRunner.rebuild()`.
+
+    Not migrated, deliberately -- this project is pre-release with no users to
+    break, so the rebuild is the answer rather than a backfill nobody will need
+    twice.
+    """
 
     @staticmethod
     def row_id(project_id: UUID, source_id: str) -> UUID:
@@ -692,6 +723,15 @@ class CorpusProjection(DeclarativeProjection):
             "note": event.note,
             "fetched_at": event.fetched_at,
             "dropped_reason": None,
+            # Cleared, deliberately. A store event means *new bytes* -- the
+            # digest check in `_store_document` swallows a re-store of
+            # identical text without appending anything -- so any graph that
+            # exists describes text this document no longer has. Reading as
+            # unextracted is the honest answer and puts it back in front of
+            # the person who can requeue it. Ordering makes this safe rather
+            # than lucky: `ingest` stores before it extracts, so the
+            # `DocumentExtracted` that follows sets the field again.
+            "extracted_at": None,
         }
         existing = await self._rows.get(row_id)
         if existing is None:
@@ -700,6 +740,32 @@ class CorpusProjection(DeclarativeProjection):
         for name, value in fields.items():
             setattr(existing, name, value)
         await self._rows.save(existing)
+
+    @handles(DocumentExtracted)
+    async def _on_extracted(self, event: DocumentExtracted) -> None:
+        """Note that this source now has a graph.
+
+        The one handler here fed by a stream the corpus does not own.
+        `CorpusRunner` subscribes to the whole store rather than one category,
+        and dispatch is by event type, so redstring's own event arrives here
+        without any new wiring -- `tenant_id` is the project, which is what
+        makes the row addressable.
+
+        **A missing row is skipped rather than raised**, which is the opposite
+        of `_on_dropped`'s rule and deliberately so. `_require` treats a
+        missing row as drift because the corpus aggregate refuses to drop what
+        it does not hold, so the event could not legitimately exist. Nothing
+        makes that true here: extraction is a different aggregate, redstring
+        will happily extract a document this corpus never stored, and every
+        `DocumentExtracted` written before the corpus table existed is exactly
+        that. Raising would put ordinary history in the DLQ and report drift
+        that is not there.
+        """
+        row = await self._rows.get(CorpusDocumentRow.row_id(event.tenant_id, event.source_id))
+        if row is None:
+            return
+        row.extracted_at = event.occurred_at.isoformat()
+        await self._rows.save(row)
 
     @handles(CorpusDocumentDropped)
     async def _on_dropped(self, event: CorpusDocumentDropped) -> None:
@@ -778,7 +844,7 @@ class CorpusStore:
 
     async def list(
         self, project_id: UUID, *, include_dropped: bool = False
-    ) -> list[DocumentRecord]:
+    ) -> list[DocumentListing]:
         """Every document in a project, by source id, without their text.
 
         Selects columns explicitly instead of going through the repository,
@@ -802,16 +868,29 @@ class CorpusStore:
             "note",
             "dropped_reason",
         )
+        # Selected beside `columns` rather than in it: everything in that tuple
+        # is a `DocumentRecord` field and is splatted into one, and this is the
+        # one column that is deliberately not.
         drop_filter = "" if include_dropped else "AND dropped_reason IS NULL "
         cursor = await self._connection.execute(
-            f"SELECT {', '.join(columns)} FROM {CorpusDocumentRow.table_name()} "
+            f"SELECT {', '.join((*columns, 'extracted_at'))} "
+            f"FROM {CorpusDocumentRow.table_name()} "
             f"WHERE project_id = ? {drop_filter}AND deleted_at IS NULL "
             "ORDER BY source_id",
             (str(project_id),),
         )
         try:
             return [
-                DocumentRecord(**dict(zip(columns, row, strict=True)))
+                DocumentListing(
+                    # Sliced rather than `strict=False`: the strictness is what
+                    # catches `columns` and the SELECT drifting apart, and
+                    # relaxing it to accommodate one trailing column would
+                    # silently accept any number of them.
+                    record=DocumentRecord(
+                        **dict(zip(columns, row[: len(columns)], strict=True))
+                    ),
+                    extracted=row[len(columns)] is not None,
+                )
                 for row in await cursor.fetchall()
             ]
         finally:
@@ -934,7 +1013,7 @@ class CorpusRunner:
 
     async def list(
         self, project_id: UUID, *, include_dropped: bool = False
-    ) -> list[DocumentRecord]:
+    ) -> list[DocumentListing]:
         if self._corpus is None:
             raise RuntimeError("the corpus projection has not been started")
         return await self._corpus.list(project_id, include_dropped=include_dropped)
