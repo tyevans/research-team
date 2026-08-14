@@ -171,11 +171,11 @@ export const AsTheLandingPageDrawsIt: Story = {
               New session
             </Button>,
             <span className="node-actions-gap" key="gap" />,
-            <Button small key="course">
-              Course
+            <Button small key="project">
+              Project
             </Button>,
-            <Button small key="research">
-              Research
+            <Button small key="ask">
+              Ask
             </Button>,
           ],
           preview: <p style={{ margin: 0 }}>the current session sits here</p>,

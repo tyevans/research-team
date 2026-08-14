@@ -199,10 +199,21 @@ const confirmCopy = ({ kind, project }: Confirmation) => {
 /** One drawn row: everything that has to be fetched or decided, and nothing
  *  that is drawn.
  *
- * All four of the console's routes are one click from here. That is the point
- * of the row — the research view previously had no entry point on the landing
- * page at all, because the one button that said "Research" navigated to the
- * course page.
+ * Every page of the console is one click from here, and keeping that true is
+ * the point of the row. It has been wrong twice, in opposite directions. It
+ * was wrong by *omission* first: the research view had no entry at all,
+ * because the one button that said "Research" navigated to the course page.
+ * Increment C then merged those two pages into one project view and made it
+ * wrong by *duplication* — "Course" and "Research" became two buttons for one
+ * page, differing only in which MATERIAL tab opened, named after routes that
+ * no longer resolve. Both mistakes are the same mistake: nothing here is
+ * derived from the route table, so a button's label and its destination can
+ * disagree indefinitely and no gate notices.
+ *
+ * What the row offers now is one button per *page*: "Project" for the merged
+ * view, "Ask" for the one facet `App.tsx` intercepts above it, and the session
+ * affordances for `#/s/<id>`, which increment C deliberately keeps standalone
+ * because a transcript read on its own is still its own page.
  *
  * **This is a container, not a card.** It renders no markup of its own: the
  * drawing is `ProjectCard`, which is props-only and therefore has a story and
@@ -344,47 +355,45 @@ const ProjectListRow = ({
              adjacent choices. */
           <span className="node-actions-gap" key="gap" />,
 
-          /* Disabled with the server's own reason rather than relabelled and
-             sent elsewhere. A project chooses its workflow once, at creation,
-             and `get_course` 409s with exactly this sentence for one that
-             chose none — so a button that said "Research" and went to the
-             course page was hiding a permanent fact behind a wrong word.
-
-             `aria-disabled`, not `disabled`, and for the same reason as the
-             dispatch button in `TopicQueue`: the sentence this carries when it
-             is off is the *permanent* reason it is off, and a `disabled`
-             element cannot be focused, so the tooltip holding it would open
-             for nobody. The click is guarded instead. */
+          /* **Not disabled without a workflow any more, and that is the
+             substantive change here.** This button used to be "Course", it
+             used to carry `get_course`'s own 409 sentence, and it used to be
+             `aria-disabled` for a project that chose no workflow — all correct
+             while it went to the *course page*, which such a project genuinely
+             does not have. It goes to the project view now, where the course
+             is one region of three: a workflow-less project still has a
+             holding session, a workspace, documents and a graph, and QUEUE
+             renders the 409 as an empty state rather than an error
+             (`ProjectView.tsx`, the `course.isError` branch). Keeping the
+             button off would deny a reader four fifths of a page over the one
+             fifth that is genuinely absent, and would do it silently, since
+             the empty state says the same sentence the tooltip used to. */
           <Tooltip
             asChild
-            key="course"
-            explanation={
-              project.workflow
-                ? 'Every stage of this workflow, and every artifact it owes'
-                : 'this project runs no workflow'
-            }
+            key="project"
+            explanation="Its queue, whoever is holding it, and everything it has produced"
           >
-            <Button
-              small
-              aria-disabled={!project.workflow}
-              onClick={() => {
-                if (!project.workflow) return
-                navigate(projectHref(project.id))
-              }}
-            >
-              Course
+            <Button small onClick={() => navigate(projectHref(project.id))}>
+              Project
             </Button>
           </Tooltip>,
+
+          /* Ask is a page rather than a tab, so it needs its own door.
+             `App.tsx` intercepts the `ask` facet above `ProjectView` and
+             renders `AskPage` instead — which means it cannot be reached by
+             opening the project and clicking a MATERIAL tab, the way the graph
+             and the documents can. An entrance here is the difference between
+             a page a reader can find and one only a typed URL reaches. */
           <Tooltip
             asChild
-            key="research"
-            explanation="Topics, documents and the knowledge graph for this project"
+            key="ask"
+            explanation="Put a question to this project's sources and findings"
           >
             <Button
               small
-              onClick={() => navigate(projectHref(project.id, { facet: 'entity', id: null }))}
+              onClick={() => navigate(projectHref(project.id, { facet: 'ask', id: null }))}
             >
-              Research
+              Ask
             </Button>
           </Tooltip>,
 
