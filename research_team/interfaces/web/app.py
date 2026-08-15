@@ -38,9 +38,10 @@ from research_team.application import (
 )
 from research_team.application.ask import AskAnswer, AskInFlight, AskService
 from research_team.application.components import View, parse_document, project
+from research_team.application.corpus_editing import CorpusEditor, DocumentExists, NotDropped
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
-from research_team.application.document_extraction import DocumentExtractor
+from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grading import GradingError, grade
 from research_team.application.graph_read import (
@@ -49,6 +50,7 @@ from research_team.application.graph_read import (
     MAX_USAGES,
     GraphReadPort,
 )
+from research_team.application.knowledge import KnowledgeError
 from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.timeline_read import (
@@ -479,6 +481,7 @@ def create_app(
     extractor: DocumentExtractor | None = None,
     extract_queue: ExtractionQueue | None = None,
     definitions: DefinitionReaders | None = None,
+    editor: CorpusEditor | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -736,6 +739,122 @@ def create_app(
         if corpus is None:
             raise HTTPException(status_code=503, detail="no corpus read model is configured")
         return ProjectCorpusReader(corpus, project_id)
+
+    def _editor() -> CorpusEditor:
+        """The corpus's write side, or the same 503 `_reader` answers.
+
+        A project without a corpus read model is a valid thing to serve, so
+        this is a refusal rather than a construction failure -- see `_reader`,
+        which draws the same line for reading.
+        """
+        if editor is None:
+            raise HTTPException(status_code=503, detail="no corpus is configured")
+        return editor
+
+    class NewSource(BaseModel):
+        source_id: str
+        text: str
+        uri: str | None = None
+        title: str | None = None
+        note: str | None = None
+        published_at: str | None = None
+
+    class SourceEdit(BaseModel):
+        """Every field optional, and `None` means "leave it alone".
+
+        There is deliberately no way to clear a field back to null through
+        this: distinguishing "unset" from "set to null" needs a sentinel, and
+        the console has no control that asks for it. A caller that wants an
+        empty title sends "".
+        """
+
+        text: str | None = None
+        uri: str | None = None
+        title: str | None = None
+        note: str | None = None
+        published_at: str | None = None
+
+    class DropReason(BaseModel):
+        reason: str
+
+    @app.post("/api/projects/{project_id}/sources", status_code=201)
+    async def upload_source(project_id: UUID, body: NewSource):
+        """Store a document a person is holding, rather than one an agent found.
+
+        Every other way into this corpus is an agent path -- `remember`,
+        `remember_page`, the automatic keep on `fetch` -- and this is the
+        first that is not.
+        """
+        await _require_project(project_id)
+        try:
+            await _editor().store(
+                project_id,
+                body.source_id,
+                body.text,
+                uri=body.uri,
+                title=body.title,
+                note=body.note,
+                published_at=body.published_at,
+            )
+        except DocumentExists as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except KnowledgeError as error:
+            # The blank-id refusal and the length cap, both `store_source`'s.
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return await _source_row(project_id, body.source_id)
+
+    @app.post("/api/projects/{project_id}/sources/{source_id}/drop")
+    async def drop_source(project_id: UUID, source_id: str, body: DropReason):
+        await _require_project(project_id)
+        try:
+            await _editor().drop(project_id, source_id, body.reason)
+        except UnknownDocument as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except CommandRejectedError as error:
+            # The blank reason and the double drop, both the aggregate's.
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return await _source_row(project_id, source_id)
+
+    @app.post("/api/projects/{project_id}/sources/{source_id}/restore")
+    async def restore_source(project_id: UUID, source_id: str):
+        await _require_project(project_id)
+        try:
+            await _editor().restore(project_id, source_id)
+        except UnknownDocument as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except NotDropped as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return await _source_row(project_id, source_id)
+
+    @app.patch("/api/projects/{project_id}/sources/{source_id}")
+    async def revise_source(project_id: UUID, source_id: str, body: SourceEdit):
+        await _require_project(project_id)
+        try:
+            await _editor().revise(
+                project_id,
+                source_id,
+                text=body.text,
+                uri=body.uri,
+                title=body.title,
+                note=body.note,
+                published_at=body.published_at,
+            )
+        except UnknownDocument as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return await _source_row(project_id, source_id)
+
+    async def _source_row(project_id: UUID, source_id: str) -> dict[str, Any]:
+        """The written document, read back through the listing.
+
+        Read back rather than composed from the request, so the answer is what
+        the corpus holds rather than what the caller sent -- `sha256` and
+        `char_count` are computed in the fold and a client that trusted its own
+        echo would render a digest nothing verified.
+        """
+        for listing in await _reader(project_id).list_documents(include_dropped=True):
+            if listing.record.source_id == source_id:
+                return source_view(listing)
+        raise HTTPException(status_code=404, detail=f"no document {source_id!r}")
 
     @app.post("/api/projects/{project_id}/sources/extract")
     async def extract_all_sources(project_id: UUID):
