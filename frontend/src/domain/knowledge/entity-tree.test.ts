@@ -17,14 +17,23 @@ describe('groupByType', () => {
       node('3', 'LeCun', 'person'),
     ])
 
-    expect(groups.map((group) => group.entityType)).toEqual(['concept', 'person'])
-    expect(groups[1].entities.map((entity) => entity.name)).toEqual(['Hinton', 'LeCun'])
+    expect(
+      groups.map((group) => ({
+        entityType: group.entityType,
+        names: group.entities.map((entity) => entity.name),
+      })),
+    ).toEqual([
+      { entityType: 'concept', names: ['Backprop'] },
+      { entityType: 'person', names: ['Hinton', 'LeCun'] },
+    ])
   })
 
   it('sorts entities by name rather than by arrival', () => {
     const groups = groupByType([node('1', 'Zeta', 'concept'), node('2', 'Alpha', 'concept')])
 
-    expect(groups[0].entities.map((entity) => entity.name)).toEqual(['Alpha', 'Zeta'])
+    expect(groups.map((group) => group.entities.map((entity) => entity.name))).toEqual([
+      ['Alpha', 'Zeta'],
+    ])
   })
 
   /** Not a code-point sort: `Ångström` before `Zeta` is what a reader expects,
@@ -33,7 +42,9 @@ describe('groupByType', () => {
   it('orders accented names the way a reader reads them', () => {
     const groups = groupByType([node('1', 'Zeta', 'concept'), node('2', 'Ångström', 'concept')])
 
-    expect(groups[0].entities.map((entity) => entity.name)).toEqual(['Ångström', 'Zeta'])
+    expect(groups.map((group) => group.entities.map((entity) => entity.name))).toEqual([
+      ['Ångström', 'Zeta'],
+    ])
   })
 
   it('filters on the name, case-insensitively, before grouping', () => {
@@ -46,9 +57,12 @@ describe('groupByType', () => {
       'hint',
     )
 
-    expect(groups).toHaveLength(1)
-    expect(groups[0].entityType).toBe('person')
-    expect(groups[0].entities.map((entity) => entity.name)).toEqual(['Hinton'])
+    expect(
+      groups.map((group) => ({
+        entityType: group.entityType,
+        names: group.entities.map((entity) => entity.name),
+      })),
+    ).toEqual([{ entityType: 'person', names: ['Hinton'] }])
   })
 
   /** The whole reason filtering happens before grouping: a filter that matched
