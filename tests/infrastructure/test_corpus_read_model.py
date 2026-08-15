@@ -284,7 +284,7 @@ async def test_the_table_is_created_on_open(db_path):
     """No migration step to forget: opening the store is enough."""
     store = await CorpusStore.open(db_path)
     try:
-        assert await store.list(uuid4()) == []
+        assert await store.list_all(uuid4()) == []
     finally:
         await store.close()
 
@@ -309,12 +309,22 @@ async def test_documents_outlive_the_process(db_path):
 
 
 async def test_listing_carries_metadata_and_never_text(db_path):
-    """A listing must not drag whole corpora through memory.
+    """A listing must not carry document text past `to_record`.
 
-    `list` returns `SourceListing`, whose `record` is the aggregate's own
-    no-text shape, so the guarantee is structural: there is no field for the
-    text to arrive in. The listing wraps the record rather than widening it
-    precisely so that stays true as read-side facts are added beside it.
+    Narrower than it used to be, and the narrowing is honest rather than a
+    weakening of the assertion. This test read `CorpusStore.list`, which
+    selected nine columns and never touched `text`, so it could claim a
+    listing "must not drag whole corpora through memory" and mean it. `list`
+    is gone (it queried the documents table alone, which is the half-corpus
+    hazard `list_documents` was deleted over) and `list_all` loads whole
+    rows, `text` included -- see its docstring for why that cost was accepted.
+
+    What survives is structural and is the part callers depend on: `to_record`
+    yields a `TextRecord`, which has no field for text to arrive in, so
+    nothing above the read model can see a document's body through a listing.
+    Fails if a listing type is ever widened to carry the text alongside the
+    metadata. It would *not* fail on the memory cost, which no test here
+    measures.
     """
     project_id = uuid4()
     store = await CorpusStore.open(db_path)
@@ -334,17 +344,17 @@ async def test_listing_carries_metadata_and_never_text(db_path):
         ):
             await store.projection.handle(event)
 
-        listed = await store.list(project_id)
+        listed = [to_record(row) for row in await store.list_all(project_id)]
 
         assert "text" not in TextRecord.model_fields
-        assert [listing.record.source_id for listing in listed] == ["s1", "s2"]
-        assert listed[0].record.title == "One"
-        assert listed[0].record.char_count == len("a body")
-        assert listed[1].record.note == "skim only"
+        assert [record.source_id for record in listed] == ["s1", "s2"]
+        assert listed[0].title == "One"
+        assert listed[0].char_count == len("a body")
+        assert listed[1].note == "skim only"
         # Stored is not extracted. Both are False here because no
         # `DocumentExtracted` has been handled, which is the state every
         # document sits in between being kept and being queued.
-        assert [listing.extracted for listing in listed] == [False, False]
+        assert [row.extracted_at for row in await store.list_all(project_id)] == [None, None]
     finally:
         await store.close()
 
@@ -367,8 +377,8 @@ async def test_get_and_list_both_refuse_a_dropped_document(db_path):
             await store.projection.handle(event)
 
         assert await store.get(project_id, "s2") is None
-        listed = await store.list(project_id)
-        assert [listing.record.source_id for listing in listed] == ["s1"]
+        listed = await store.list_all(project_id)
+        assert [row.source_id for row in listed] == ["s1"]
     finally:
         await store.close()
 
@@ -408,7 +418,7 @@ async def test_one_project_cannot_read_another_projects_documents(db_path):
             await store.projection.handle(event)
 
         assert await store.get(other, "s1") is None
-        assert await store.list(other) == []
+        assert await store.list_all(other) == []
     finally:
         await store.close()
 
@@ -445,7 +455,8 @@ async def test_the_runner_follows_the_log(db_path, store, publisher):
 
         await runner.caught_up()
         assert (await runner.get(project_id, "s1")).text == "followed"
-        assert [listing.record.title for listing in await runner.list(project_id)] == ["One"]
+        listed = await runner.list_all(project_id)
+        assert [to_record(row).title for row in listed] == ["One"]
     finally:
         await runner.stop()
 
@@ -455,6 +466,11 @@ async def test_a_rebuild_reproduces_the_table_from_the_log(db_path, store, publi
 
     A rebuild that quietly left the checkpoint in place would resume over an
     empty table and look like success until someone read from it.
+
+    The `s1` assertion is the one that makes the listing comparison mean
+    something: two revisions folded to one row, so a rebuild that replayed
+    them as two would change the listing, and a rebuild that replayed neither
+    would empty it.
     """
     project_id = uuid4()
     runner = CorpusRunner(store, db_path, publisher)
@@ -477,11 +493,17 @@ async def test_a_rebuild_reproduces_the_table_from_the_log(db_path, store, publi
         corpus.execute(DropSourceDocument(source_id="s2", reason="duplicate"))
         await build_corpus_repository(store, publisher).save(corpus)
         await runner.caught_up()
-        before = await runner.list(project_id)
+        # Records rather than rows. `list_all` returns whole rows, and a row
+        # carries `created_at`/`updated_at` stamped when the projection wrote
+        # it -- a rebuild writes new ones, so raw-row equality fails on the
+        # clock rather than on the content. `to_record` is the shape every
+        # caller above the read model sees, and reproducing *that* is what
+        # "reproduces the table from the log" means.
+        before = [to_record(row) for row in await runner.list_all(project_id)]
 
         await runner.rebuild()
 
-        assert await runner.list(project_id) == before
+        assert [to_record(row) for row in await runner.list_all(project_id)] == before
         assert (await runner.get(project_id, "s1")).text == "v2 revised"
         assert await runner.get(project_id, "s2") is None
     finally:
@@ -563,7 +585,7 @@ async def test_a_corpus_database_written_before_a_field_existed_gains_its_column
         )
         assert "uri" in {row[1] for row in await columns.fetchall()}
         # And it still answers, which is the failure a schema check alone misses.
-        assert await reopened.list(uuid4()) == []
+        assert await reopened.list_all(uuid4()) == []
     finally:
         await reopened.close()
 

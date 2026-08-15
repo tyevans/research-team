@@ -682,11 +682,17 @@ def _record_view(summary: SourceRecord) -> dict[str, Any]:
     that has one.
 
     `char_count` on a text record and `media_type`/`byte_count` on a media one
-    -- discriminated on `kind` rather than `getattr`, so a record that gained a
-    third shape without a case here fails the type checker instead of silently
-    rendering neither. A media row has no character count to report and a text
-    row has no mimetype; putting one number under a name the other kind cannot
-    give would read as data rather than as the absence it is.
+    -- discriminated on `kind` rather than `getattr(summary, "char_count",
+    None)`. There is no type checker in CI or `pyproject.toml`, so nothing
+    checks the cases are exhaustive at build time; what this form buys is the
+    *runtime* failure being loud. A third `kind` added without a case here
+    falls into the `else` and raises `AttributeError` on the first request
+    that touches one -- where `getattr` with a default would have rendered
+    `char_count: null` for it and shipped. A media row has no character count
+    to report and a text row has no mimetype; putting one number under a name
+    the other kind cannot give would read as data rather than as the absence
+    it is. Covered by the pair of tests in `test_presenters.py`, each of which
+    asserts the other kind's fields are *absent* rather than null.
     """
     fields: dict[str, Any] = {
         "source_id": summary.source_id,

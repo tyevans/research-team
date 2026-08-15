@@ -1357,6 +1357,42 @@ async def test_rebuilding_the_corpus_without_one_configured_is_a_503(app_and_cli
     assert response.status_code == 503
 
 
+async def test_a_corpus_wired_without_a_blob_store_still_refuses_the_source_routes(
+    app_and_client,
+):
+    """The half-wired build, which is the one worth constructing.
+
+    Every other 503 test here passes `corpus=None`, so the first disjunct in
+    `_reader` fires and the second is never reached -- deleting
+    `or blob_store is None` leaves all of them green. This passes a real
+    corpus and no blob store, which is the only arrangement that can tell the
+    two apart.
+
+    503 rather than serving text reads and failing only on a download: a build
+    that can list sources but cannot open one's bytes is not a working corpus
+    surface, and answering 200 here would move the discovery of the missing
+    wiring to the first person who pressed play.
+    """
+    application, client = app_and_client
+    # A project that exists, because `_require_project` runs before `_reader`:
+    # against a made-up id this route answers 404 and never reaches the
+    # disjunct under test.
+    project_id = (await client.post("/api/projects", json={"name": "half-wired"})).json()["id"]
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        blob_store=None,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as unwired:
+        response = await unwired.get(f"/api/projects/{project_id}/sources")
+
+    assert response.status_code == 503
+    assert "corpus read model" in response.json()["detail"]
+
+
 # ---------------- projects ----------------
 
 

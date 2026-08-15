@@ -105,6 +105,16 @@ class CorpusEditor:
         The existence check is this service's and not the aggregate's, because
         the aggregate is right to allow a repeat `source_id` -- that is what a
         revision is. Only *upload* means creation, and only upload can say so.
+
+        It checks `list_sources`, so it refuses an id already held by a *media*
+        source too, not only by a document. That widening came with the move
+        off `list_documents` and is deliberate: text and media share one
+        `source_id` namespace by design, and a check that saw only documents
+        would let an upload silently claim an id a video already answers to --
+        after which two records would disagree about what that id names, and a
+        citation could not say which one it meant. The cost is that "this id
+        is taken" no longer implies "by a document"; the error message says
+        `the corpus already holds`, which is true of both.
         """
         reader = self._readers(project_id)
         existing = await reader.list_sources(include_dropped=True)

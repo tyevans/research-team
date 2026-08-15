@@ -26,7 +26,6 @@ from research_team.application.corpus_read import (
     SourceListing,
     StoredDocument,
 )
-from research_team.domain import MediaRecord
 from research_team.infrastructure.persistence.read_models import (
     CorpusDocumentRow,
     CorpusMediaRow,
@@ -112,6 +111,13 @@ class ProjectCorpusReader:
         if row is None:
             return None
         stat = await self._blobs.stat(row.sha256)
-        record = to_record(row)
-        assert isinstance(record, MediaRecord)  # `to_record` on a media row always is.
-        return MediaHandle(record=record, stat=stat, open=lambda: self._blobs.open(row.sha256))
+        # No `isinstance` guard on `to_record`'s result: `get_media` queries
+        # the media table alone, so a `CorpusMediaRow` in and anything but a
+        # `MediaRecord` out would be a bug in `to_record` rather than a state
+        # this method can reach. An `assert` here was doing narrowing work for
+        # a type checker this repository does not run, and `python -O` strips
+        # asserts -- so it was a runtime cost in development buying nothing in
+        # production.
+        return MediaHandle(
+            record=to_record(row), stat=stat, open=lambda: self._blobs.open(row.sha256)
+        )

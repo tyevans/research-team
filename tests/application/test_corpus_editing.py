@@ -25,7 +25,7 @@ from research_team.application.corpus_editing import (
 from research_team.application.corpus_read import SourceListing, StoredDocument
 from research_team.application.document_extraction import UnknownDocument
 from research_team.application.knowledge import MAX_DOCUMENT_CHARS, KnowledgeError, SourceRef
-from research_team.domain.corpus import Corpus, StoreSourceDocument
+from research_team.domain.corpus import Corpus, StoreSourceDocument, StoreSourceMedia
 
 
 class FakeReader:
@@ -181,6 +181,41 @@ async def test_store_refuses_an_id_the_corpus_already_holds(editor, project_id):
 
     with pytest.raises(DocumentExists):
         await editor.store(project_id, "s1", "different")
+
+
+async def test_store_refuses_an_id_a_media_source_already_holds(
+    editor, corpus_repo, project_id
+):
+    """One `source_id` namespace, so an upload cannot claim an id a video
+    answers to.
+
+    The check widened from `list_documents` to `list_sources` as part of
+    removing the former, which made this refusal true without anyone asserting
+    it. Fails if the check is ever narrowed back to text -- and the failure
+    that would follow is not a crash: the upload would succeed, two records
+    would answer to `v1`, and a citation naming it could not say which bytes
+    it meant.
+
+    Stores the media by executing on `corpus_repo` directly, which is the
+    repository the editor and `FakeReader` share, because `store_media` does
+    not exist yet (task 5). `CorpusState.documents` is keyed by `source_id`
+    over `SourceRecord`, so the media record lands in the same dict the
+    existence check reads.
+    """
+    corpus = await corpus_repo.load_or_create(project_id)
+    corpus.execute(
+        StoreSourceMedia(
+            corpus_id=project_id,
+            source_id="v1",
+            sha256="0" * 64,
+            media_type="video/mp4",
+            byte_count=2048,
+        )
+    )
+    await corpus_repo.save(corpus)
+
+    with pytest.raises(DocumentExists):
+        await editor.store(project_id, "v1", "text under a taken id")
 
 
 async def test_drop_excludes_the_document_and_keeps_the_record(editor, reader, project_id):

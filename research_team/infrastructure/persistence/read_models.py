@@ -63,7 +63,6 @@ from redstring import DocumentExtracted, EntitiesMerged
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.application import SessionSummary, SummaryHealth
-from research_team.application.corpus_read import SourceListing
 from research_team.domain import (
     CorpusDocumentDropped,
     CorpusDocumentStored,
@@ -981,70 +980,6 @@ class CorpusStore:
             return None
         return row
 
-    async def list(
-        self, project_id: UUID, *, include_dropped: bool = False
-    ) -> list[SourceListing]:
-        """Every document in a project, by source id, without their text.
-
-        Text only, despite now returning `SourceListing` -- the name changed
-        with `DocumentListing`'s and the query did not. `list_all` is the one
-        that answers for both kinds, and it is what `ProjectCorpusReader`
-        (and therefore `CorpusReadPort.list_sources`) is built on. Nothing in
-        `research_team/` calls this; it survives because
-        `test_corpus_read_model.py` uses it to assert the documents table's
-        own behaviour, where reaching the media table would be noise. Do not
-        reach for it from an application-layer caller -- that is the "seeing
-        half a corpus and believing it whole" failure `list_documents` was
-        deleted to make impossible.
-
-        Selects columns explicitly instead of going through the repository,
-        which would load whole rows -- and a row here is an entire document.
-        Listing a corpus of a hundred papers would pull every one of them
-        through memory to render a table of titles.
-
-        `include_dropped` defaults to False so every existing caller -- the
-        agent's own `list_sources` tool among them -- keeps seeing exactly
-        the live corpus it always has. A caller that opts in gets dropped
-        rows back too, `dropped_reason` and all, because the corpus keeps
-        them on purpose and hiding them would misreport what it holds.
-        """
-        columns = (
-            "source_id",
-            "sha256",
-            "char_count",
-            "uri",
-            "title",
-            "published_at",
-            "note",
-            "fetched_at",
-            "dropped_reason",
-        )
-        # Selected beside `columns` rather than in it: everything in that tuple
-        # is a `TextRecord` field and is splatted into one, and this is the
-        # one column that is deliberately not.
-        drop_filter = "" if include_dropped else "AND dropped_reason IS NULL "
-        cursor = await self._connection.execute(
-            f"SELECT {', '.join((*columns, 'extracted_at'))} "
-            f"FROM {CorpusDocumentRow.table_name()} "
-            f"WHERE project_id = ? {drop_filter}AND deleted_at IS NULL "
-            "ORDER BY source_id",
-            (str(project_id),),
-        )
-        try:
-            return [
-                SourceListing(
-                    # Sliced rather than `strict=False`: the strictness is what
-                    # catches `columns` and the SELECT drifting apart, and
-                    # relaxing it to accommodate one trailing column would
-                    # silently accept any number of them.
-                    record=TextRecord(**dict(zip(columns, row[: len(columns)], strict=True))),
-                    extracted=row[len(columns)] is not None,
-                )
-                for row in await cursor.fetchall()
-            ]
-        finally:
-            await cursor.close()
-
     async def get_media(
         self, project_id: UUID, source_id: str, *, include_dropped: bool = False
     ) -> CorpusMediaRow | None:
@@ -1064,12 +999,27 @@ class CorpusStore:
     ) -> "list[CorpusDocumentRow | CorpusMediaRow]":
         """Every source in a project, text and media together, whole rows.
 
-        Unlike `list`, this loads full rows rather than selected columns --
-        it exists for Task 4's read port, which needs `to_record` to work on
-        whatever it returns, and `to_record` reads fields (`char_count`,
-        `media_type`) that a projected column tuple would not carry for both
-        kinds at once. Two tables, one query each, held to the same
-        `dropped_reason`/`deleted_at` filter as `list` and `get_media`.
+        The only listing method. There used to be a second one, `list`, which
+        selected columns explicitly and queried the documents table alone; it
+        was deleted with `CorpusReadPort.list_documents` and for the same
+        reason. A caller holding a `CorpusRunner` could reach it, its return
+        type said `SourceListing`, and what it returned was half a corpus --
+        which renders exactly like a whole one.
+
+        The cost of that deletion is real and is not paid back here: `list`
+        projected nine columns and this loads whole rows, `text` included, so
+        listing a corpus of a hundred papers now pulls every one of them
+        through memory to render a table of titles. Accepted rather than
+        fixed, because the fix is two column-projected queries that both have
+        to feed `to_record` -- which reads `char_count` on one kind and
+        `media_type`/`byte_count` on the other -- and no one has measured a
+        corpus large enough for it to matter. Nothing above this sees the
+        text: `SourceListing.record` is a `TextRecord`/`MediaRecord` and has
+        no field for it. If a corpus ever gets big enough that a listing is
+        slow, this is the line to come back to.
+
+        Two tables, one query each, held to the same
+        `dropped_reason`/`deleted_at` filter as `get` and `get_media`.
         """
         project_filter = [Filter.eq("project_id", str(project_id))]
         by_project = Query(filters=project_filter, order_by="source_id")
@@ -1204,13 +1154,6 @@ class CorpusRunner:
         if self._corpus is None:
             raise RuntimeError("the corpus projection has not been started")
         return await self._corpus.get(project_id, source_id, include_dropped=include_dropped)
-
-    async def list(
-        self, project_id: UUID, *, include_dropped: bool = False
-    ) -> list[SourceListing]:
-        if self._corpus is None:
-            raise RuntimeError("the corpus projection has not been started")
-        return await self._corpus.list(project_id, include_dropped=include_dropped)
 
     async def get_media(
         self, project_id: UUID, source_id: str, *, include_dropped: bool = False

@@ -6,16 +6,19 @@ from uuid import uuid4
 import pytest
 
 from research_team.application import SessionSummary
+from research_team.application.corpus_read import SourceListing
 from research_team.domain import (
     AssistantMessageAdded,
     AutonomyChanged,
     FileDeleted,
     FileEdited,
     FileWritten,
+    MediaRecord,
     ProjectStageAdvanced,
     ProjectWorkflowSelected,
     SessionForkedFrom,
     SessionStarted,
+    TextRecord,
     ToolResultRecorded,
     TurnCompleted,
     TurnFailed,
@@ -30,6 +33,7 @@ from research_team.interfaces.web.presenters import (
     message_view,
     preset_view,
     project_view,
+    source_view,
     stage_view,
     summary_view,
 )
@@ -458,3 +462,67 @@ def test_a_summary_cannot_be_built_without_a_project():
             files=0,
             first_message="",
         )
+
+
+def test_a_media_source_view_reports_its_mimetype_and_size_and_no_char_count():
+    """A pure function over a `SourceListing`, tested as one -- no route and no
+    fixture, the same way `format_listing` is tested in
+    `test_corpus_tools.py`.
+
+    Fails if the `kind == "media"` branch in `_record_view` is deleted: every
+    record would then be rendered through `char_count`, which a `MediaRecord`
+    does not have. It is worth an assertion rather than a deferral to the
+    task that routes media, because the branch is the API contract -- a client
+    reading `char_count` off a video would be reading a field the server
+    cannot honestly supply, and `0` there would read as an empty document
+    rather than as the absence it is.
+
+    The `kind` assertion is the other half: it is what lets a client
+    discriminate at all, and without it the two shapes would be told apart
+    only by which keys happen to be present.
+    """
+    view = source_view(
+        SourceListing(
+            record=MediaRecord(
+                source_id="v1",
+                sha256="0" * 64,
+                media_type="video/mp4",
+                byte_count=2048,
+                title="A talk",
+            ),
+            extracted=False,
+        )
+    )
+
+    assert view["kind"] == "media"
+    assert view["media_type"] == "video/mp4"
+    assert view["byte_count"] == 2048
+    assert "char_count" not in view
+    assert view["sha256"] == "0" * 64
+    assert view["title"] == "A talk"
+    # Nothing extracts media yet, so the honest answer is False rather than a
+    # missing key -- the Documents page decides whether to offer extraction
+    # from this, and an absent field would read as "unknown".
+    assert view["extracted"] is False
+
+
+def test_a_text_source_view_still_reports_a_character_count_and_no_mimetype():
+    """The other side of the same branch, and the reason it is a branch.
+
+    Fails if the discrimination is dropped in favour of emitting every field
+    for every kind, which would put `media_type: null` on a document -- a
+    client could not then tell a text source from a media one whose mimetype
+    went missing.
+    """
+    view = source_view(
+        SourceListing(
+            record=TextRecord(source_id="s1", sha256="1" * 64, char_count=5),
+            extracted=True,
+        )
+    )
+
+    assert view["kind"] == "text"
+    assert view["char_count"] == 5
+    assert "media_type" not in view
+    assert "byte_count" not in view
+    assert view["extracted"] is True
