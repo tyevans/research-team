@@ -43,7 +43,7 @@ from research_team.application.document_extraction import (
     UnknownDocument,
 )
 from research_team.application.knowledge import SourceRef
-from research_team.domain.corpus import Corpus, DropSourceDocument
+from research_team.domain.corpus import Corpus, DropSourceDocument, StoreSourceDocument
 
 
 class DocumentExists(Exception):
@@ -133,3 +133,110 @@ class CorpusEditor:
         corpus = await self._corpus.load_or_create(project_id)
         corpus.execute(DropSourceDocument(source_id=source_id, reason=reason))
         await self._corpus.save(corpus)
+
+    async def revise(
+        self,
+        project_id: UUID,
+        source_id: str,
+        *,
+        text: str | None = None,
+        uri: str | None = None,
+        title: str | None = None,
+        note: str | None = None,
+        published_at: str | None = None,
+    ) -> None:
+        """Change a stored document's metadata, its text, or both.
+
+        Not through `store_source` -- see the module docstring: that path
+        skips a store whose text hashes to what the id already holds, which
+        is most edits, and skips it silently.
+
+        `text=None` means "keep what is stored" and is read back from the
+        corpus rather than required from the caller. A browser correcting a
+        title should not have to round-trip a hundred kilobytes of prose to
+        do it, and a caller that had to send the text back is a caller that
+        can send back a stale copy of it.
+
+        `read_document(..., include_dropped=True)`: a revise on a dropped
+        document is not refused -- the aggregate has no rule against it, and
+        forbidding it here would mean choosing between "edit before restore"
+        and "restore before edit" for a caller who wants both, for no benefit
+        to anyone. Reading with the default `include_dropped=False` would
+        report every dropped document as unknown instead of letting that
+        stand.
+        """
+        reader = self._readers(project_id)
+        stored = await reader.read_document(source_id, include_dropped=True)
+        if stored is None:
+            raise UnknownDocument(f"no document {source_id!r} in this corpus")
+        await self._store(
+            project_id,
+            SourceRef(
+                source_id=source_id,
+                text=stored.text if text is None else text,
+                uri=stored.record.uri if uri is None else uri,
+                title=stored.record.title if title is None else title,
+                note=stored.record.note if note is None else note,
+                published_at=(
+                    stored.record.published_at if published_at is None else published_at
+                ),
+            ),
+        )
+
+    async def restore(self, project_id: UUID, source_id: str) -> None:
+        """Put a dropped document back, unchanged.
+
+        A re-store of the same bytes, which the fold turns into a restore for
+        free: `evolve` builds a fresh record on `CorpusDocumentStored` and does
+        not carry `dropped_reason` across
+        (`test_storing_over_a_dropped_source_id_brings_it_back`). Restore is
+        that property's only caller, so a change to `evolve` that started
+        preserving the field would silently remove this feature with no test
+        going red -- which is exactly why that test exists.
+
+        Reads with `include_dropped=True`: the document being restored is, by
+        definition, dropped, and the default read would report it as unknown
+        rather than letting `restore` see the text it needs to re-store.
+        """
+        reader = self._readers(project_id)
+        stored = await reader.read_document(source_id, include_dropped=True)
+        if stored is None:
+            raise UnknownDocument(f"no document {source_id!r} in this corpus")
+        if stored.record.dropped_reason is None:
+            raise NotDropped(f"{source_id!r} is not dropped")
+        await self._store(
+            project_id,
+            SourceRef(
+                source_id=source_id,
+                text=stored.text,
+                uri=stored.record.uri,
+                title=stored.record.title,
+                note=stored.record.note,
+                published_at=stored.record.published_at,
+            ),
+        )
+
+    async def _store(self, project_id: UUID, source: SourceRef) -> None:
+        """The direct path: command, then index.
+
+        Both halves are required and neither is optional for a caller. The
+        index call has no local evidence if it is skipped -- the corpus is
+        correct without it and the chunk store is not -- so it lives here
+        rather than at the two call sites, where one of them would eventually
+        be written without it.
+        """
+        corpus = await self._corpus.load_or_create(project_id)
+        corpus.execute(
+            StoreSourceDocument(
+                corpus_id=project_id,
+                source_id=source.source_id,
+                text=source.text,
+                uri=source.uri,
+                title=source.title,
+                published_at=source.published_at,
+                note=source.note,
+            )
+        )
+        await self._corpus.save(corpus)
+        knowledge = await self._open_knowledge(project_id)
+        await knowledge.index(source)

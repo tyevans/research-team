@@ -64,7 +64,7 @@ class Runner:
         }
         self._extracted = dict(documents)
 
-    async def get(self, project_id: UUID, source_id: str):
+    async def get(self, project_id: UUID, source_id: str, *, include_dropped: bool = False):
         return self._rows.get(source_id)
 
     async def list(self, project_id: UUID, *, include_dropped: bool = False):

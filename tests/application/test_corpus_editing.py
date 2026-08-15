@@ -9,6 +9,7 @@ they are *not* duplicated here. The event-sourced double proves the same rule
 the real adapter runs.
 """
 
+import hashlib
 from uuid import UUID, uuid4
 
 import pytest
@@ -19,9 +20,11 @@ from eventsource.testing import InMemoryTestHarness
 from research_team.application.corpus_editing import (
     CorpusEditor,
     DocumentExists,
+    NotDropped,
 )
 from research_team.application.corpus_read import DocumentListing, StoredDocument
 from research_team.application.document_extraction import UnknownDocument
+from research_team.application.knowledge import SourceRef
 from research_team.domain.corpus import Corpus, StoreSourceDocument
 
 
@@ -53,22 +56,37 @@ class FakeReader:
             if include_dropped or record.dropped_reason is None
         ]
 
-    async def read_document(self, source_id: str) -> StoredDocument | None:
+    async def read_document(
+        self, source_id: str, *, include_dropped: bool = False
+    ) -> StoredDocument | None:
         corpus = await self._corpus.load_or_create(self._project_id)
         record = corpus.state.documents.get(source_id)
         if record is None:
+            return None
+        if record.dropped_reason is not None and not include_dropped:
             return None
         return StoredDocument(record=record, text=self._texts[source_id])
 
 
 class FakeKnowledge:
-    """`KnowledgePort.store_source`, and nothing else -- `store` is all this task exercises.
+    """`KnowledgePort.store_source` and `.index`, reproducing the one check
+    that makes `store_source` unsafe for an edit.
 
     Executes `StoreSourceDocument` on the same repository `drop` uses, the way
     `RedstringKnowledge.store_source` executes it on the real one: the two
     paths this module's docstring describes reach one aggregate, and a fake
     that wrote text somewhere the aggregate never saw would not catch a
     `store` that forgot to keep the two in sync.
+
+    The digest short-circuit below mirrors `_store_document` in
+    `redstring_adapter.py`: a store whose text hashes to what `source_id`
+    already holds is skipped. Without it, `test_a_metadata_only_revise_
+    changes_the_title` would pass against a `revise` still routed through
+    `store_source` -- the exact bug `CorpusEditor.revise` exists to avoid --
+    and the test would be asserting nothing. Proved by temporarily reverting
+    `revise` to call `store_source` and watching this test fail (see task
+    report); it fails here because the digest matches and the title never
+    moves, the same way it fails against the real adapter.
     """
 
     def __init__(
@@ -80,9 +98,13 @@ class FakeKnowledge:
         self._corpus = corpus
         self._project_id = project_id
         self._texts = texts
+        self.indexed: list[SourceRef] = []
 
     async def store_source(self, source) -> None:
         corpus = await self._corpus.load_or_create(self._project_id)
+        digest = hashlib.sha256(source.text.encode("utf-8")).hexdigest()
+        if corpus.state.by_digest.get(digest) == source.source_id:
+            return
         corpus.execute(
             StoreSourceDocument(
                 corpus_id=self._project_id,
@@ -96,6 +118,9 @@ class FakeKnowledge:
         )
         await self._corpus.save(corpus)
         self._texts[source.source_id] = source.text
+
+    async def index(self, source) -> None:
+        self.indexed.append(source)
 
 
 @pytest.fixture
@@ -119,9 +144,18 @@ def reader(corpus_repo, project_id, texts) -> FakeReader:
 
 
 @pytest.fixture
-def editor(corpus_repo, project_id, texts) -> CorpusEditor:
+def knowledge(corpus_repo, project_id, texts) -> FakeKnowledge:
+    # One instance, reused by `open_knowledge` below, rather than a fresh one
+    # per call: `test_a_revise_reindexes` asserts against `.indexed`, and a
+    # closure that built a new `FakeKnowledge` each time would scatter that
+    # list across instances the test never sees.
+    return FakeKnowledge(corpus_repo, project_id, texts)
+
+
+@pytest.fixture
+def editor(corpus_repo, project_id, texts, knowledge) -> CorpusEditor:
     async def open_knowledge(target_project_id: UUID) -> FakeKnowledge:
-        return FakeKnowledge(corpus_repo, target_project_id, texts)
+        return knowledge
 
     return CorpusEditor(
         open_knowledge=open_knowledge,
@@ -181,3 +215,71 @@ async def test_drop_on_an_empty_corpus_is_unknown_not_rejected(editor, project_i
     a 409, so the editor turns that one case into `UnknownDocument`."""
     with pytest.raises(UnknownDocument):
         await editor.drop(project_id, "s1", "off topic")
+
+
+async def test_a_metadata_only_revise_changes_the_title(editor, reader, project_id):
+    """The test the design exists for.
+
+    Against an implementation that routed edits through
+    `KnowledgePort.store_source`, this fails: `_store_document` returns early
+    when the text hashes to what the id already holds, so the title never
+    moves and nothing raises. Reverting `revise` to `store_source` is the way
+    to see it go red -- and was, before this test was trusted (see the task
+    report for the observed failure).
+    """
+    await editor.store(project_id, "s1", "hello", title="Typo")
+
+    await editor.revise(project_id, "s1", title="Fixed")
+
+    listing = await reader.list_documents()
+    assert listing[0].record.title == "Fixed"
+    assert (await reader.read_document("s1")).text == "hello"
+
+
+async def test_a_revise_reindexes(editor, knowledge, project_id):
+    """Indexing rides on `_store_document`, which the direct command path
+    bypasses. Nothing else here would notice: the corpus is correct either
+    way, and the damage is the chunk store quoting text the document no
+    longer contains -- invisible until a citation is checked."""
+    await editor.store(project_id, "s1", "hello")
+    knowledge.indexed.clear()
+
+    await editor.revise(project_id, "s1", text="goodbye")
+
+    assert [source.source_id for source in knowledge.indexed] == ["s1"]
+
+
+async def test_a_revise_keeps_the_text_when_none_is_given(editor, reader, project_id):
+    await editor.store(project_id, "s1", "hello", title="Hello")
+
+    await editor.revise(project_id, "s1", note="checked")
+
+    stored = await reader.read_document("s1")
+    assert stored.text == "hello"
+    assert stored.record.note == "checked"
+
+
+async def test_revise_refuses_an_unknown_source(editor, project_id):
+    await editor.store(project_id, "s1", "hello")
+
+    with pytest.raises(UnknownDocument):
+        await editor.revise(project_id, "missing", title="x")
+
+
+async def test_restore_puts_a_dropped_document_back(editor, reader, project_id):
+    await editor.store(project_id, "s1", "hello", title="Hello")
+    await editor.drop(project_id, "s1", "off topic")
+
+    await editor.restore(project_id, "s1")
+
+    listing = await reader.list_documents()
+    assert [row.record.source_id for row in listing] == ["s1"]
+    assert listing[0].record.title == "Hello"
+    assert listing[0].record.dropped_reason is None
+
+
+async def test_restore_refuses_a_document_that_is_not_dropped(editor, project_id):
+    await editor.store(project_id, "s1", "hello")
+
+    with pytest.raises(NotDropped):
+        await editor.restore(project_id, "s1")
