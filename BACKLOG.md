@@ -1181,6 +1181,52 @@ needs a real collision to reproduce and the two paths' relative timing has
 not been measured -- retrying blind would be guessing at whether the race is
 worth the complexity it costs.
 
+### B84. Listing the corpus loads every document's text to render a table of titles
+
+`CorpusStore.list_all` is the only listing method, and it loads whole rows.
+A `CorpusDocumentRow` carries `text`, so every caller above it --
+`CorpusReadPort.list_sources`, and therefore `GET /api/projects/{id}/sources`
+and the agent's own `list_sources` tool -- materialises the full body of every
+document in the project in order to render source ids, titles and character
+counts. Nothing above the read model can *see* the text (`SourceListing.record`
+is a `TextRecord`/`MediaRecord`, which has no field for it), so this is cost,
+not a leak.
+
+**It arrived with `list_all` in the media-corpus work and was invisible for two
+tasks, which is the part worth knowing.** `CorpusStore.list` sat beside it the
+whole time with a nine-column `SELECT` that never touched `text`, and it was
+`list` that `test_listing_carries_metadata_and_never_text` read -- so the
+property was asserted, held, and described a method the application layer had
+already stopped calling. Deleting `list` in review (it queried the documents
+table alone, which is the half-corpus hazard `list_documents` was removed over)
+took away the last method with the property and the only test guarding it in
+one move. Not a regression that review introduced; one review made visible.
+
+The fix is two column-projected queries, one per table, both feeding
+`to_record` -- which reads `char_count` on a text row and
+`media_type`/`byte_count` on a media one, so the two projections cannot share a
+column tuple the way `list`'s single one did. That is the whole cost: it is not
+hard, it is just more machinery than an unmeasured cost justifies, and this
+repository does not optimise on reasoning alone.
+
+**What would make it worth doing.** The memory bound is honest and easy to
+state: one listing call transiently holds the sum of every live document's text
+in the project. At a research paper's ~40KB of extracted text, a hundred-paper
+corpus is ~4MB per call -- not worth machinery -- and a thousand-paper corpus is
+~40MB, which is, especially since `GET /sources` is a route several browser tabs
+can hit at once. The number that would actually settle it is one nobody has
+taken: the wall time of a `list_sources` call on the largest real corpus
+available, because the per-row pydantic model construction may well dominate the
+bytes, and if it does then column projection is the wrong fix and a narrower row
+model is the right one. **Measure before building either.**
+
+`test_listing_carries_metadata_and_never_text` now asserts only the structural
+half -- that `to_record` yields a record with no field for text, so nothing
+above the read model can see a body through a listing -- and its docstring says
+in as many words that it would **not** fail on the memory cost. There is no test
+anywhere that would. `list_all`'s own docstring names itself as the line to come
+back to.
+
 ## Entity definitions and usages
 
 Deferred during the 2026-08-14 entity-definitions-and-usages build

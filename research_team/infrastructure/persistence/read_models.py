@@ -1016,7 +1016,9 @@ class CorpusStore:
         corpus large enough for it to matter. Nothing above this sees the
         text: `SourceListing.record` is a `TextRecord`/`MediaRecord` and has
         no field for it. If a corpus ever gets big enough that a listing is
-        slow, this is the line to come back to.
+        slow, this is the line to come back to -- `BACKLOG.md` B84 carries the
+        measurement to take first, and why it might point at a narrower row
+        model rather than at column projection.
 
         Two tables, one query each, held to the same
         `dropped_reason`/`deleted_at` filter as `get` and `get_media`.
