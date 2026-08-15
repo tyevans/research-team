@@ -53,12 +53,7 @@ MAX_NEIGHBORHOOD_DEPTH = 2
 #: some way before a mature project's entity count does. Enforced inside the
 #: port, so no caller can ask for the whole of a graph that has outgrown one
 #: screen by skipping a layer above.
-#:
-#: `infer_relations` refuses above 500,000 pairs; at 500 entities that is at
-#: most 124,750, so the refusal is unreachable on this path today. Raising
-#: this cap past roughly 1,000 makes it reachable -- a note here rather than
-#: a runtime surprise a year later.
-MAX_GRAPH_NODES = 500
+MAX_GRAPH_NODES = 5_000
 
 #: How many inferred edges reach one drawing. Not a legibility bound -- a
 #: graph is unreadable long before this -- but the point past which a
