@@ -275,3 +275,33 @@ def test_a_refusal_names_the_conflicting_judgement_so_a_ui_can_offer_to_undo_it(
 
     with pytest.raises(CommandRejectedError, match=str(conflict.event_id)):
         decide(HoldSame(judgements_id=PROJECT, keys=[IRAN, IRAQ], reason="r"), state)
+
+
+def test_a_hold_distinct_refusal_also_names_the_conflicting_judgement():
+    """The mirror of the HoldSame case above: HoldDistinct against a group that
+    already holds both names same must name the same-judgement responsible, not
+    just say "withdraw that judgement" -- a caller cannot infer which one a
+    group is the union of arbitrarily many same-records.
+    """
+    conflict = EntitiesHeldSame(aggregate_id=PROJECT, keys=[JFK, JOHN], reason="r")
+    state = _fold(conflict)
+
+    with pytest.raises(CommandRejectedError, match=str(conflict.event_id)):
+        decide(HoldDistinct(judgements_id=PROJECT, left=JFK, right=JOHN, reason="r"), state)
+
+
+def test_a_hold_distinct_refusal_over_a_transitive_group_is_still_refused():
+    """A=B and B=C put A and C in one group via group_for's transitive closure;
+    HoldDistinct(A, C) must still be refused even though no single same-record
+    names both A and C directly. Pins the transitive direction that the
+    HoldSame side already has a test for (see
+    test_a_same_judgement_that_would_transitively_unite_a_distinct_pair_is_refused).
+    """
+    a, b, c = JFK, JOHN, KENNEDY
+    state = _fold(
+        EntitiesHeldSame(aggregate_id=PROJECT, keys=[a, b], reason="r"),
+        EntitiesHeldSame(aggregate_id=PROJECT, keys=[b, c], reason="r"),
+    )
+
+    with pytest.raises(CommandRejectedError, match="held same"):
+        decide(HoldDistinct(judgements_id=PROJECT, left=a, right=c, reason="r"), state)

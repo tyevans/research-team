@@ -276,10 +276,28 @@ def decide(command: JudgementCommand, state: JudgementsState) -> list[DomainEven
                 raise CommandRejectedError("a judgement requires a reason")
             if left == right:
                 raise CommandRejectedError("a name cannot be held distinct from itself")
-            if right in state.group_for(left):
-                raise CommandRejectedError(
-                    "those names are held same; withdraw that judgement first"
-                )
+            group = state.group_for(left)
+            if right in group:
+                # Name the same-record responsible, the way the HoldSame branch
+                # names the distinct-record it conflicts with -- otherwise the
+                # caller is told to withdraw a judgement without saying which
+                # one, and a group can be the union of arbitrarily many
+                # same-records so it cannot be inferred.
+                #
+                # A group can have more than one live same-record contributing
+                # to it (A=B, then B=C -- both are "responsible" for A and C
+                # sharing a group). Naming any one live record whose keys
+                # intersect the group is enough for a UI to offer "withdraw
+                # this one first"; which one is an arbitrary choice, not a
+                # meaningful one.
+                for judgement_id, record in state.judgements.items():
+                    if record.kind != "same" or record.withdrawn_reason is not None:
+                        continue
+                    if set(record.keys) & group:
+                        raise CommandRejectedError(
+                            f"those names are held same by judgement {judgement_id}; "
+                            f"withdraw it first"
+                        )
             return [
                 EntitiesHeldDistinct(
                     aggregate_id=judgements_id, left=left, right=right, reason=reason
