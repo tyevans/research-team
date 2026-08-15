@@ -35,6 +35,37 @@ export class HttpClient {
     return this.request('DELETE', path, undefined, schema)
   }
 
+  /** A multipart POST, for bytes rather than JSON.
+   *
+   * Its own method rather than `post` accepting a `FormData`, because the two
+   * differ in the header that must *not* be set: the browser writes
+   * `Content-Type: multipart/form-data; boundary=...` itself, and a
+   * hand-written one loses the boundary and the server parses nothing. Sharing
+   * `request` would mean a conditional in the one place that is deliberately
+   * unconditional, so the body handling is duplicated here and the response
+   * handling is not.
+   */
+  async postForm<S extends z.ZodTypeAny>(
+    path: string,
+    body: FormData,
+    schema: S,
+  ): Promise<z.output<S>> {
+    const response = await fetch(this.url(path), {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      body,
+    })
+    return this.decode('POST', path, response, schema)
+  }
+
+  /** The absolute URL for a path, for the cases where the browser does the
+   *  fetching: a `<video src>` or an `<img src>` is a request this class never
+   *  makes, and the base url it would have prefixed lives here. Public so a
+   *  repository can hand one out without a second copy of `baseUrl`. */
+  url(path: string): string {
+    return `${this.baseUrl}${path}`
+  }
+
   private async request<S extends z.ZodTypeAny>(
     method: string,
     path: string,
@@ -47,7 +78,20 @@ export class HttpClient {
       init.body = JSON.stringify(body)
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, init)
+    const response = await fetch(this.url(path), init)
+    return this.decode(method, path, response, schema)
+  }
+
+  /** Everything that happens to a response, whatever sent the request: the
+   *  non-2xx to `ApiError`, and the body to the schema. Shared by `request`
+   *  and `postForm` so a multipart upload reports a failure in exactly the
+   *  same words as every other call. */
+  private async decode<S extends z.ZodTypeAny>(
+    method: string,
+    path: string,
+    response: Response,
+    schema: S,
+  ): Promise<z.output<S>> {
     const raw = await response.text()
     const parsed = parseJson(raw)
 

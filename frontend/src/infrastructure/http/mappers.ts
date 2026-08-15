@@ -26,7 +26,7 @@ import type {
   Finding,
 } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
-import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
+import type { DocumentText, MediaSummary, SourceSummary } from '@domain/research/document.ts'
 import type { ExtractionOutcome, ExtractionQueueBoard } from '@domain/research/extraction-queue.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { Dispatch, DispatchStatus } from '@domain/research/dispatch.ts'
@@ -592,9 +592,11 @@ export const toTopicDetail = (raw: Dto<typeof dto.topicDetailDto>): TopicDetail 
   contested: raw.contested,
 })
 
-export const toDocumentSummary = (raw: Dto<typeof dto.documentDto>): DocumentSummary => ({
+/** The provenance half, shared by both kinds. Split out so the two branches
+ *  below differ only in the fields that actually differ -- the failure mode of
+ *  spelling all nine twice is one of them quietly drifting. */
+const toSourceProvenance = (raw: Dto<typeof dto.documentDto>) => ({
   sourceId: SourceId(raw.source_id),
-  charCount: raw.char_count,
   sha256: raw.sha256,
   uri: raw.uri,
   title: raw.title,
@@ -603,6 +605,26 @@ export const toDocumentSummary = (raw: Dto<typeof dto.documentDto>): DocumentSum
   fetchedAt: raw.fetched_at,
   droppedReason: raw.dropped_reason,
   extracted: raw.extracted,
+})
+
+/** Discriminated on `kind` rather than copying whatever fields happen to be
+ *  present, so the absence the wire encodes survives the crossing: a media row
+ *  gets no `charCount` at all here, not a zero. */
+export const toSourceSummary = (raw: Dto<typeof dto.documentDto>): SourceSummary =>
+  raw.kind === 'media'
+    ? {
+        ...toSourceProvenance(raw),
+        kind: 'media',
+        mediaType: raw.media_type,
+        byteCount: raw.byte_count,
+      }
+    : { ...toSourceProvenance(raw), kind: 'text', charCount: raw.char_count }
+
+export const toMediaSummary = (raw: Dto<typeof dto.mediaSourceDto>): MediaSummary => ({
+  ...toSourceProvenance(raw),
+  kind: 'media',
+  mediaType: raw.media_type,
+  byteCount: raw.byte_count,
 })
 
 export const toExtractionOutcome = (
@@ -624,7 +646,9 @@ export const toExtractionQueueBoard = (
 })
 
 export const toDocumentText = (raw: Dto<typeof dto.documentTextDto>): DocumentText => ({
-  ...toDocumentSummary(raw),
+  ...toSourceProvenance(raw),
+  kind: 'text',
+  charCount: raw.char_count,
   text: raw.text,
   start: raw.start,
   end: raw.end,

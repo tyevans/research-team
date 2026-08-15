@@ -8,7 +8,7 @@ import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream } from '@application/ports/event-stream.ts'
 import type { DocumentRepository } from '@application/ports/repositories.ts'
-import type { DocumentSummary } from '@domain/research/document.ts'
+import type { TextSummary } from '@domain/research/document.ts'
 import { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
@@ -17,8 +17,9 @@ import { DocumentEditForm } from './DocumentEditForm.tsx'
 
 const project = ProjectId('11111111-1111-1111-1111-111111111111')
 
-const doc = (over: Partial<DocumentSummary> = {}): DocumentSummary => ({
+const doc = (over: Partial<TextSummary> = {}): TextSummary => ({
   sourceId: SourceId('s1'),
+  kind: 'text',
   charCount: 100,
   sha256: 'deadbeef',
   uri: null,
@@ -61,6 +62,10 @@ const fakeDocuments = (over: Partial<DocumentRepository> = {}): DocumentReposito
   }),
   restore: vi.fn(() => {
     throw new Error('restore was not stubbed for this test')
+  }),
+  contentUrl: (projectId, sourceId) => `/api/projects/${projectId}/sources/${sourceId}/content`,
+  uploadMedia: vi.fn(() => {
+    throw new Error('uploadMedia was not stubbed for this test')
   }),
   ...over,
 })

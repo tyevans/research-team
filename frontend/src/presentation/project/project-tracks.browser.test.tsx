@@ -125,6 +125,7 @@ const TOPICS = [
 
 const DOCUMENTS = Array.from({ length: 6 }, (_, index) => ({
   sourceId: SourceId(`bbbbbbbb-0000-0000-0000-00000000000${String(index)}`),
+  kind: 'text',
   charCount: 40_000,
   sha256: 'f'.repeat(64),
   uri: `https://journals.example.org/vol12/issue3/article-${String(index)}`,

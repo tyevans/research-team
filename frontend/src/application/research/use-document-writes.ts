@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 import { useContainer } from '@app/container-context.tsx'
-import type { DocumentDraft, DocumentEdit } from '@application/ports/repositories.ts'
+import type { DocumentDraft, DocumentEdit, MediaDraft } from '@application/ports/repositories.ts'
 import { queryKeys } from '@application/queries/keys.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
@@ -31,6 +31,25 @@ export const useCreateDocument = (projectId: ProjectId) => {
 
   return useMutation({
     mutationFn: (draft: DocumentDraft) => documents.create(projectId, draft),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.documents(projectId) })
+    },
+  })
+}
+
+/** The media twin of `useCreateDocument`, and the same shape for the same
+ *  reason: the server computes the digest and the byte count as the bytes go
+ *  past, so nothing here could have predicted the row it answers with.
+ *
+ * Invalidates only the listing. A media upload under an existing id revises
+ * that source, but `queryKeys.document` holds *text* -- a key a media source
+ * never occupies -- so there is no reader to leave stale. */
+export const useUploadMedia = (projectId: ProjectId) => {
+  const { documents } = useContainer()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (draft: MediaDraft) => documents.uploadMedia(projectId, draft),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.documents(projectId) })
     },

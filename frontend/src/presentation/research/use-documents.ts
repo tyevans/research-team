@@ -11,7 +11,7 @@ import {
   useExtractionQueue,
 } from '@application/research/use-extraction-queue.ts'
 import { useContainer } from '@app/container-context.tsx'
-import { documentLabel, type DocumentSummary } from '@domain/research/document.ts'
+import { documentLabel, type SourceSummary } from '@domain/research/document.ts'
 import { unextractedCount } from '@domain/research/extraction-queue.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
@@ -151,7 +151,7 @@ export const useDocuments = (
   }
 }
 
-const label = (rows: readonly DocumentSummary[], sourceId: SourceId): string => {
+const label = (rows: readonly SourceSummary[], sourceId: SourceId): string => {
   const row = rows.find((candidate) => candidate.sourceId === sourceId)
   return row ? documentLabel(row) : String(sourceId)
 }

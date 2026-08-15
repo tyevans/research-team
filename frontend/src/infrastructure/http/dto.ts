@@ -596,12 +596,11 @@ export const topicDetailDto = topicDto.extend({
   contested: z.boolean(),
 })
 
-/** One row of `/api/projects/{id}/sources`: metadata only, never text. See
- *  `source_view` -- `dropped_reason` is always present, `null` for a live
- *  document. */
-export const documentDto = z.object({
+/** What every row of `/api/projects/{id}/sources` carries whatever its bytes
+ *  are. See `_record_view` -- `dropped_reason` is always present, `null` for a
+ *  live source. */
+const sourceCommon = z.object({
   source_id: z.string(),
-  char_count: z.number(),
   sha256: z.string(),
   uri: maybe(z.string()),
   title: maybe(z.string()),
@@ -619,6 +618,28 @@ export const documentDto = z.object({
   // down to report a missing annotation.
   extracted: z.boolean().default(false),
 })
+
+/** A source whose bytes are text. `kind` is required and literal rather than
+ *  defaulted, which is what makes the union below a *discriminated* one: a
+ *  default would let a media row missing its discriminator parse as text and
+ *  then fail on the `char_count` it does not have, reporting the wrong field
+ *  as the problem. */
+export const textSourceDto = sourceCommon.extend({
+  kind: z.literal('text'),
+  char_count: z.number(),
+})
+
+/** A source whose bytes are not text. `media_type` and `byte_count` are the
+ *  keys the text shape does not have, and `char_count` is the key this one
+ *  does not -- absent on the wire rather than null, deliberately, so nothing
+ *  downstream can render a zero under a name this kind cannot give. */
+export const mediaSourceDto = sourceCommon.extend({
+  kind: z.literal('media'),
+  media_type: z.string(),
+  byte_count: z.number(),
+})
+
+export const documentDto = z.discriminatedUnion('kind', [textSourceDto, mediaSourceDto])
 
 /** One row of `/sources/extraction-queue`'s `finished`: how a document's most
  *  recent extraction went.
@@ -648,8 +669,12 @@ export const extractionQueueDto = z.object({
 
 /** `/api/projects/{id}/sources/{source_id}`: the row plus the text and the
  *  offsets it was actually read at. `.extend` for the reason `topicDetailDto`
- *  gives -- `source_text_view` spreads `source_view` and adds these three. */
-export const documentTextDto = documentDto.extend({
+ *  gives -- `source_text_view` spreads `_record_view` and adds these three.
+ *
+ * Extends the *text* shape rather than the union: this route answers 404 for a
+ * media source, so a schema that accepted a media row here would be describing
+ * a response the server cannot send. */
+export const documentTextDto = textSourceDto.extend({
   text: z.string(),
   start: z.number(),
   end: z.number(),

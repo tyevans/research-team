@@ -2,20 +2,51 @@ import { useQuery } from '@tanstack/react-query'
 
 import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
+import {
+  documentLabel,
+  formatBytes,
+  type MediaSummary,
+  type SourceSummary,
+} from '@domain/research/document.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
 import { ErrorBox, Loading } from '../common/primitives.tsx'
 
-/** One document's text, read fresh rather than reused from the list row --
- *  `DocumentSummary` carries no `text`, on purpose, so this is the only
- *  place in the pane that ever asks the server for it. */
+/** Whichever way this source can be shown: its text fetched, or its bytes
+ *  handed to the browser.
+ *
+ * The kind comes in as a prop rather than being discovered by fetching,
+ * because the fetch is the thing being decided: `/sources/{id}` answers 404
+ * for a media source, so a reader that read first and switched afterwards
+ * would show an error where a video belongs. Splitting the two into separate
+ * components is what makes that structural rather than a promise -- `TextRead`
+ * holds the query, and it is not mounted for media, so there is no code path
+ * on which the request happens.
+ *
+ * `source` may be null: the list is the only thing that knows the kind, and it
+ * has no row for an id the corpus does not hold. Falling through to the text
+ * read there is deliberate -- its 404 is the honest report of "no such source"
+ * and the alternative is a pane that loads forever.
+ */
 export const DocumentReader = ({
   projectId,
   sourceId,
+  source,
 }: {
   projectId: ProjectId
   sourceId: SourceId
+  source: SourceSummary | null
 }) => {
+  if (source?.kind === 'media') {
+    return <MediaView projectId={projectId} source={source} />
+  }
+  return <TextRead projectId={projectId} sourceId={sourceId} />
+}
+
+/** One document's text, read fresh rather than reused from the list row --
+ *  `SourceSummary` carries no `text`, on purpose, so this is the only place in
+ *  the pane that ever asks the server for it. */
+const TextRead = ({ projectId, sourceId }: { projectId: ProjectId; sourceId: SourceId }) => {
   const { documents } = useContainer()
 
   const query = useQuery({
@@ -60,5 +91,87 @@ export const DocumentReader = ({
           undeclared spacing change riding along on a dressing change. */}
       <p className="max-w-[68ch] text-sm leading-[1.65] whitespace-pre-wrap">{document.text}</p>
     </article>
+  )
+}
+
+/** A media source, played by the browser.
+ *
+ * Nothing is fetched here: the element takes a URL and the browser does the
+ * rest, which is the only way seeking works -- a player asks for byte ranges
+ * as the reader scrubs, and a blob this component had downloaded whole would
+ * have made a two-hour recording unwatchable to answer one question about its
+ * first minute. The content route answers 206 for exactly that reason.
+ *
+ * Browser-native `controls` and no thumbnail: a thumbnail needs a frame, a
+ * frame needs `ffmpeg`, and that is a different sub-project. Deliberately not
+ * extracted into a shared player either -- rendering media inside markdown and
+ * inside Ask answers needs a reference syntax that does not exist yet, and a
+ * general component built now would be designing that syntax by accident.
+ */
+const MediaView = ({ projectId, source }: { projectId: ProjectId; source: MediaSummary }) => {
+  const { documents } = useContainer()
+  const url = documents.contentUrl(projectId, source.sourceId)
+  const label = documentLabel(source)
+
+  return (
+    <article className="flex flex-col gap-[8px] px-4 pt-[12px] pb-5">
+      {source.droppedReason ? (
+        <p className="m-0 text-xs text-k-failure">Dropped: {source.droppedReason}</p>
+      ) : null}
+      <Player url={url} label={label} mediaType={source.mediaType} />
+      {/* The digest beside the bytes rather than hidden behind an edit form:
+          it is what proves the recording being watched is the one on record,
+          and this is the one place a reader is looking at both. */}
+      <p className="m-0 font-mono text-xs break-all text-fg-dim">
+        {source.mediaType} · {formatBytes(source.byteCount)} · {source.sha256}
+      </p>
+    </article>
+  )
+}
+
+const Player = ({ url, label, mediaType }: { url: string; label: string; mediaType: string }) => {
+  // The stored mimetype's first segment and nothing cleverer. The server
+  // already sniffed the bytes once at upload (`_sniff_media_type`) and nothing
+  // re-sniffs a stored blob, so guessing again here could only disagree with
+  // the `Content-Type` the content route actually answers with.
+  if (mediaType.startsWith('video/')) {
+    return (
+      // `jsx-a11y/media-has-caption` off, and this is the cost being accepted
+      // rather than a rule being dodged: a caption track needs a transcript,
+      // and nothing in this build produces one -- transcription is the same
+      // sub-project as thumbnails, both of which need to decode the media.
+      // An empty `<track>` would satisfy the rule and help nobody, which is
+      // worse than the honest gap. Revisit when transcription lands.
+      // eslint-disable-next-line jsx-a11y/media-has-caption
+      <video
+        data-testid="media-player"
+        controls
+        src={url}
+        className="bg-black max-h-[60vh] w-full rounded-md"
+      />
+    )
+  }
+  if (mediaType.startsWith('audio/')) {
+    // Same trade as the video above, for the same missing transcript.
+    // eslint-disable-next-line jsx-a11y/media-has-caption
+    return <audio data-testid="media-player" controls src={url} className="w-full" />
+  }
+  if (mediaType.startsWith('image/')) {
+    return (
+      <img src={url} alt={label} className="max-h-[60vh] max-w-full rounded-md object-contain" />
+    )
+  }
+  // A `<video>` pointed at a zip renders an empty black box and reports
+  // nothing, so the pane would look broken rather than honest. Saying what is
+  // stored and offering the bytes is the whole of what this build can do for a
+  // type it cannot play.
+  return (
+    <p className="m-0 text-sm">
+      This build cannot play {mediaType} in the browser.{' '}
+      <a href={url} className="underline">
+        Open the stored bytes
+      </a>
+      .
+    </p>
   )
 }
