@@ -617,3 +617,73 @@ async def test_the_media_routes_answer_503_with_no_corpus_configured(app_without
 
     assert upload.status_code == 503
     assert content.status_code == 503
+
+
+async def test_a_dropped_media_source_restores(app_and_client):
+    """Restore reaches media, not only text.
+
+    Red before the media branch in `CorpusEditor.restore`: 404, because
+    `restore` resolved through `read_document`, which answers `None` for a
+    media source by design. The assertion is `dropped_reason` back to `None`
+    in the *listing* -- a 200 alone would pass against a restore that stored
+    nothing, since an event no projection handles still counts as applied.
+    """
+    _app, client = app_and_client
+    project = await _new_project(client)
+    await _upload_media(client, project, "v1", b"0123456789")
+    dropped = await client.post(
+        f"/api/projects/{project}/sources/v1/drop", json={"reason": "wrong take"}
+    )
+    assert dropped.status_code == 200
+
+    response = await client.post(f"/api/projects/{project}/sources/v1/restore", json={})
+
+    assert response.status_code == 200
+    assert response.json()["dropped_reason"] is None
+    listed = (await client.get(f"/api/projects/{project}/sources")).json()
+    assert [row["source_id"] for row in listed] == ["v1"]
+
+
+async def test_patching_a_media_source_changes_its_metadata(app_and_client):
+    """PATCH reaches media, and leaves the bytes alone.
+
+    Red before the media branch in `CorpusEditor.revise`: 404, same root cause
+    as the restore case above. `sha256` and `byte_count` are asserted
+    unchanged because the re-store carries them from the stored record -- a
+    branch that recomputed or defaulted either would answer 200 over a record
+    that no longer points at its own bytes.
+    """
+    _app, client = app_and_client
+    project = await _new_project(client)
+    stored = (await _upload_media(client, project, "v1", b"0123456789")).json()
+
+    response = await client.patch(
+        f"/api/projects/{project}/sources/v1",
+        json={"title": "Keynote, second cut"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "Keynote, second cut"
+    assert response.json()["sha256"] == stored["sha256"]
+    assert response.json()["byte_count"] == stored["byte_count"]
+    assert (await client.get(f"/api/projects/{project}/sources/v1/content")).status_code == 200
+
+
+async def test_patching_text_onto_a_media_source_is_refused(app_and_client):
+    """The one field a media revise cannot take.
+
+    `decide`'s `_kind_of` guard would refuse `StoreSourceDocument` over a
+    media id anyway, so nothing here could turn a recording into a document;
+    this refuses earlier and says why, rather than answering 409 with the
+    aggregate's wording or -- worse -- 200 having silently ignored the field.
+    Red against a branch that dropped `text` on the floor: 200.
+    """
+    _app, client = app_and_client
+    project = await _new_project(client)
+    await _upload_media(client, project, "v1", b"0123456789")
+
+    response = await client.patch(
+        f"/api/projects/{project}/sources/v1", json={"text": "a transcript"}
+    )
+
+    assert response.status_code == 400

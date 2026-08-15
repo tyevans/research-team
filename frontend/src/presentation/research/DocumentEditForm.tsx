@@ -118,11 +118,14 @@ export const DocumentEditForm = ({
         />
       </label>
 
-      {/* Metadata only for media. The corpus keys text and media in one
-          `source_id` namespace, so `revise` would happily take a `text` for a
-          media source -- and turn the recording into a document. Withheld
-          here rather than refused on submit, because a field that exists and
-          must not be used is an invitation. */}
+      {/* Metadata only for media. A media source has no text to revise, and
+          the server says so -- `CorpusEditor.revise` answers 400 for a `text`
+          against a media id, and `decide`'s `_kind_of` guard would refuse a
+          document store over that id even if it did not. So this is not the
+          only thing standing between a recording and being turned into a
+          document; it is what stops the console offering an edit the server
+          will refuse, because a field that exists and must not be used is an
+          invitation. */}
       {document.kind === 'media' ? null : (
         <label htmlFor={textId} className="flex flex-col gap-1 text-sm">
           Text
