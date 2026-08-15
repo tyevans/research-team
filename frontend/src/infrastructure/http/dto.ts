@@ -608,6 +608,37 @@ export const documentDto = z.object({
   published_at: maybe(z.string()),
   note: maybe(z.string()),
   dropped_reason: maybe(z.string()),
+  // Defaulted rather than required, for `graphRelationshipDto.inferred`'s
+  // reason: a server that predates the field answers rows without it, and
+  // refusing the whole listing over a flag would take the document browser
+  // down to report a missing annotation.
+  extracted: z.boolean().default(false),
+})
+
+/** One row of `/sources/extraction-queue`'s `finished`: how a document's most
+ *  recent extraction went.
+ *
+ * `detail` only on a failure and the counts only on a success, which is why
+ * all three are optional rather than nullable on the wire -- the server omits
+ * the keys that do not apply rather than sending nulls. See `_drain`. */
+export const extractionOutcomeDto = z.object({
+  source_id: z.string(),
+  status: z.enum(['done', 'failed']),
+  detail: maybe(z.string()),
+  entities: maybe(z.number()),
+  relationships: maybe(z.number()),
+})
+
+/** `/api/projects/{id}/sources/extraction-queue`: what is extracting, what is
+ *  waiting, and how each document's last one went.
+ *
+ * Every list defaults, because a build with no queue wired answers three empty
+ * lists rather than a 503 -- having nothing extracting is a state, not an
+ * error, and this schema should not be the thing that turns it into one. */
+export const extractionQueueDto = z.object({
+  running: maybe(z.string()),
+  queued: z.array(z.string()).default([]),
+  finished: z.array(extractionOutcomeDto).default([]),
 })
 
 /** `/api/projects/{id}/sources/{source_id}`: the row plus the text and the

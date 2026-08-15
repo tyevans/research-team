@@ -9,6 +9,7 @@ import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/atte
 import type { Course } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
+import type { ExtractionQueueBoard } from '@domain/research/extraction-queue.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { Dispatch } from '@domain/research/dispatch.ts'
 import type { TopicDocuments } from '@domain/research/topic-document.ts'
@@ -256,6 +257,27 @@ export interface DocumentRepository {
    *  rather than refusing it, and the offsets in the result are what it
    *  actually returned. */
   read(projectId: ProjectId, sourceId: SourceId, range?: DocumentRange): Promise<DocumentText>
+  /** Queue one stored document for extraction.
+   *
+   * Answers whether *this* press took the document on. `false` is not an
+   * error: it means the queue already holds it or is running it, which is what
+   * the caller wanted. The server says so plainly (202, not 409) precisely so
+   * a client can avoid claiming it started something it did not, and a
+   * `Promise<void>` here would throw that distinction away at the port. */
+  extract(projectId: ProjectId, sourceId: SourceId): Promise<boolean>
+  /** Queue every stored document with no graph yet, answering how many this
+   *  press actually took on -- which is not how many are unextracted, because
+   *  the queue refuses what it already holds. Dropped documents are excluded
+   *  by the server, not filtered here. */
+  extractAll(projectId: ProjectId): Promise<number>
+  /** What is extracting, what is waiting, and how each document's last one
+   *  went. The queue publishes no frames, so this read is the only way to
+   *  learn any of it -- see `ExtractionQueueBoard`. */
+  extractionQueue(projectId: ProjectId): Promise<ExtractionQueueBoard>
+  /** Stop the running extraction and drop everything waiting, for this
+   *  project. Answers how many went, so a caller can report the number rather
+   *  than guessing from a queue it re-reads a moment later. */
+  cancelExtraction(projectId: ProjectId): Promise<number>
 }
 
 export interface DocumentRange {

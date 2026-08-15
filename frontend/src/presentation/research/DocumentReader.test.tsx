@@ -23,17 +23,40 @@ const text = (over: Partial<DocumentText> = {}): DocumentText => ({
   publishedAt: null,
   note: null,
   droppedReason: null,
+  extracted: false,
   text: 'Ada Lovelace worked with Charles Babbage.',
   start: 0,
   end: 41,
   ...over,
 })
 
+/** The reader neither queues nor reads the extraction queue, so every one of
+ *  these throwing is the assertion: a reader that started calling them would
+ *  fail here rather than quietly widening what this component does. */
+const noExtraction = {
+  extract: vi.fn(() => {
+    throw new Error('DocumentReader should never queue an extraction')
+  }),
+  extractAll: vi.fn(() => {
+    throw new Error('DocumentReader should never queue an extraction')
+  }),
+  extractionQueue: vi.fn(() => {
+    throw new Error('DocumentReader should never read the extraction queue')
+  }),
+  cancelExtraction: vi.fn(() => {
+    throw new Error('DocumentReader should never cancel an extraction')
+  }),
+} as unknown as Pick<
+  DocumentRepository,
+  'extract' | 'extractAll' | 'extractionQueue' | 'cancelExtraction'
+>
+
 const fakeDocuments = (read: DocumentRepository['read']): DocumentRepository => ({
   list: vi.fn(() => {
     throw new Error('DocumentReader should never call list()')
   }),
   read,
+  ...noExtraction,
 })
 
 const renderWithContainer = (ui: ReactElement, parts: Partial<AppContainer>) => {

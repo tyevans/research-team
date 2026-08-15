@@ -37,7 +37,14 @@ export interface ExtractionState {
 
 export type ExtractionStore = ReturnType<typeof createExtractionStore>
 
-const TERMINAL: readonly string[] = ['consolidated', 'failed']
+/** The two stages that end an extraction.
+ *
+ * Exported because `use-extraction-queue.ts` has to recognise the same two to
+ * know when a document's row should be re-read, and spelling them a second
+ * time is how the two would come to disagree the next time a stage is added.
+ * The list is deliberately *not* every stage -- see `toStage`, which treats an
+ * unrecognised one as `extracting` rather than as terminal. */
+export const TERMINAL: readonly string[] = ['consolidated', 'failed']
 
 export const createExtractionStore = ({
   extractions,

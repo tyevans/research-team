@@ -18,6 +18,14 @@ export interface DocumentSummary {
   readonly publishedAt: string | null
   readonly note: string | null
   readonly droppedReason: string | null
+  /** Whether this document's text has been folded into the project's graph.
+   *
+   * Not a property of the source record and deliberately cannot be: extraction
+   * lives on another aggregate's stream, and the corpus projection joins the
+   * two. See `source_view`. False on every row of a database that predates the
+   * column until that projection is rebuilt, which is why the wire schema
+   * defaults it rather than requiring it. */
+  readonly extracted: boolean
 }
 
 /** One source's text, with the offsets that make a quote from it checkable.

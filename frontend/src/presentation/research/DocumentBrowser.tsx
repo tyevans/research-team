@@ -2,9 +2,16 @@ import { useRef } from 'react'
 import clsx from 'clsx'
 
 import { documentLabel, isDropped, type DocumentSummary } from '@domain/research/document.ts'
+import {
+  canExtract,
+  documentExtraction,
+  type DocumentExtraction,
+  type ExtractionQueueBoard,
+} from '@domain/research/extraction-queue.ts'
 import type { SourceId } from '@domain/shared/identifier.ts'
 
-import { EmptyState } from '../common/primitives.tsx'
+import { Button, EmptyState } from '../common/primitives.tsx'
+import { Tooltip } from '../common/Tooltip.tsx'
 import { VirtualList } from '../common/VirtualList.tsx'
 
 const ROW_HEIGHT = 52
@@ -56,6 +63,14 @@ export const DocumentBrowser = ({
   filter,
   onFilterChange,
   onOpen,
+  queue,
+  extractableCount,
+  queueSize,
+  busy,
+  cancelling,
+  onExtract,
+  onExtractAll,
+  onCancelExtraction,
 }: {
   /** Already filtered. Filtering is a `useMemo` in the hook rather than a
    *  table library: the whole point of trying `react-virtual` first is that a
@@ -68,6 +83,25 @@ export const DocumentBrowser = ({
   filter: string
   onFilterChange: (filter: string) => void
   onOpen: (sourceId: SourceId) => void
+  /** What the project is extracting right now. The rows read their own state
+   *  out of it via `documentExtraction`, rather than being handed a per-row
+   *  flag: the states are exclusive and deriving them in one place is what
+   *  stops a row drawing "queued" beside "extracted". */
+  queue: ExtractionQueueBoard
+  /** How many the "extract all" press would take on, over the whole corpus and
+   *  not the filtered view -- the server computes the set itself and does not
+   *  know what the reader has filtered to. */
+  extractableCount: number
+  /** Running plus waiting: what a stop control would actually stop. */
+  queueSize: number
+  /** A press is in flight. Both extract controls go quiet together, because
+   *  they queue into the same place and letting one run while the other is
+   *  pending invites two presses for one intention. */
+  busy: boolean
+  cancelling: boolean
+  onExtract: (sourceId: SourceId) => void
+  onExtractAll: () => void
+  onCancelExtraction: () => void
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -90,6 +124,55 @@ export const DocumentBrowser = ({
         onChange={(event) => onFilterChange(event.target.value)}
         aria-label="Filter documents"
       />
+      {/* One extract-all and one stop for the whole project, matching
+          `TopicQueue`'s bar: the queue is per project on the server, so a
+          per-row stop would offer an action it cannot honour. It sits after
+          the `total === 0` guard above, because a control that would extract
+          nothing over a corpus holding nothing is a control with nothing to
+          do. */}
+      <div className="flex items-center justify-between gap-[8px] font-mono text-xs text-fg-dim">
+        <span>
+          {queueSize > 0
+            ? `${String(queueSize)} extracting or queued`
+            : `${String(extractableCount)} not extracted`}
+        </span>
+        <span className="flex items-center gap-[6px]">
+          {queueSize > 0 ? (
+            <Tooltip asChild explanation="Stop the running extraction and drop everything queued">
+              <Button small tone="quiet" disabled={cancelling} onClick={onCancelExtraction}>
+                Stop
+              </Button>
+            </Tooltip>
+          ) : null}
+          {/* `aria-disabled` rather than `disabled`, for the reason
+              `TopicQueue` writes out at length: this button spends most of its
+              life off, the tooltip is the only answer to "why", and a
+              `disabled` element takes neither focus nor pointer events so the
+              tooltip could never open. The press is guarded in the handler
+              instead, which is the cost -- nothing but that guard stops the
+              click. */}
+          <Tooltip
+            asChild
+            explanation={
+              extractableCount === 0
+                ? 'Every document in this corpus is already extracted or queued'
+                : 'Queue every document that has not been folded into the graph yet'
+            }
+          >
+            <Button
+              small
+              tone="quiet"
+              aria-disabled={busy || extractableCount === 0}
+              onClick={() => {
+                if (busy || extractableCount === 0) return
+                onExtractAll()
+              }}
+            >
+              Extract all ({extractableCount})
+            </Button>
+          </Tooltip>
+        </span>
+      </div>
       {documents.length === 0 ? (
         <EmptyState
           heading="No documents match"
@@ -126,7 +209,10 @@ export const DocumentBrowser = ({
                 index={position.index}
                 top={position.top}
                 measure={position.measure}
+                extraction={documentExtraction(row, queue)}
+                busy={busy}
                 onOpen={() => onOpen(row.sourceId)}
+                onExtract={() => onExtract(row.sourceId)}
               />
             )}
           </VirtualList>
@@ -136,12 +222,32 @@ export const DocumentBrowser = ({
   )
 }
 
+/** What each extraction state says on the row, and what its control offers.
+ *
+ * A table rather than a chain of ternaries in the markup, because the states
+ * are exclusive and the failure mode of spelling them inline is drawing two.
+ * `null` for `note` where the button already says it: an "Extract" button
+ * beside the words "not extracted" is the same fact twice on a 340px row.
+ */
+const EXTRACTION_NOTE: Record<DocumentExtraction['kind'], string | null> = {
+  dropped: null,
+  running: 'Extracting…',
+  queued: 'Queued for extraction',
+  // The detail rides beside this rather than replacing it -- see the row.
+  failed: 'Extraction failed',
+  extracted: 'Extracted',
+  idle: null,
+}
+
 const DocumentRow = ({
   document,
   index,
   top,
   measure,
+  extraction,
+  busy,
   onOpen,
+  onExtract,
 }: {
   document: DocumentSummary
   /** The virtualizer reads this back off the DOM node to know which row it
@@ -149,7 +255,10 @@ const DocumentRow = ({
   index: number
   top: number
   measure: (element: HTMLElement | null) => void
+  extraction: DocumentExtraction
+  busy: boolean
   onOpen: () => void
+  onExtract: () => void
 }) => (
   <li
     ref={measure}
@@ -168,8 +277,14 @@ const DocumentRow = ({
     // element are both `@layer utilities` and their order is Tailwind's, not
     // the attribute's.
     data-dropped={isDropped(document)}
+    data-extraction={extraction.kind}
     className={clsx(
-      'border-0 border-b border-solid border-b-line-soft',
+      // `flex` and not the bare block it was: the row is the open button plus
+      // a sibling action now, because a button cannot nest inside a button and
+      // the open control fills the row. `items-stretch` so the action's hit
+      // area is the full height of a two-line title rather than a target that
+      // shrinks as the title grows.
+      'flex items-stretch border-0 border-b border-solid border-b-line-soft',
       isDropped(document) && 'border-l-2 border-l-k-failure',
     )}
     // Positioned by transform rather than `top`, and with no height at all:
@@ -200,11 +315,18 @@ const DocumentRow = ({
         first, which is the one a reader meets, kept only a 2px line along its
         bottom. Hover already paints the whole row, so the ring is what
         separates "focused" from "pointed at" and cannot be traded away. */}
+    {/* `data-document-open` because "the control that opens this document" is
+        now one of two buttons in the row, and both the browser test's ring
+        measurement and any future query need to name it rather than take the
+        first `<button>` they find. `min-w-0` so a long title wraps instead of
+        pushing the action off the 340px rail -- a flex item's default
+        `min-width: auto` refuses to shrink below its content. */}
     <button
       type="button"
+      data-document-open
       onClick={onOpen}
       className={clsx(
-        'flex w-full cursor-pointer flex-col items-start gap-[2px] border-0 bg-transparent px-3 pt-[7px] pb-[8px] text-left text-inherit [font:inherit] hover:bg-bg-panel-2',
+        'flex min-w-0 flex-auto cursor-pointer flex-col items-start gap-[2px] border-0 bg-transparent px-3 pt-[7px] pb-[8px] text-left text-inherit [font:inherit] hover:bg-bg-panel-2',
         RING_INWARD,
       )}
     >
@@ -213,6 +335,79 @@ const DocumentRow = ({
       {isDropped(document) ? (
         <span className="text-xs text-k-failure">Dropped: {document.droppedReason}</span>
       ) : null}
+      {EXTRACTION_NOTE[extraction.kind] ? (
+        <span
+          className={clsx(
+            'font-mono text-xs',
+            extraction.kind === 'failed' ? 'text-k-failure' : 'text-fg-dim',
+          )}
+        >
+          {EXTRACTION_NOTE[extraction.kind]}
+          {/* The failure's own account of itself. Nothing durable records that
+              an extraction was even requested, so this string exists only in
+              the queue's memory and is gone on a restart -- dropping it here
+              would leave the reader told that a document is not extracted and
+              never told why. */}
+          {extraction.kind === 'failed' && extraction.detail ? `: ${extraction.detail}` : ''}
+        </span>
+      ) : null}
     </button>
+    <ExtractAction document={document} extraction={extraction} busy={busy} onExtract={onExtract} />
   </li>
 )
+
+/** The per-row extract control, or nothing at all.
+ *
+ * Nothing at all for a dropped document, rather than an off button: the server
+ * excludes dropped documents from extract-all, so an off control here would be
+ * a promise that pressing it might one day work. The states that *can* still
+ * become extractable -- a failure, an untouched document -- keep a live button;
+ * the ones that cannot right now keep a focusable `aria-disabled` one, so the
+ * tooltip explaining why is reachable by something other than a mouse.
+ */
+const ExtractAction = ({
+  document,
+  extraction,
+  busy,
+  onExtract,
+}: {
+  document: DocumentSummary
+  extraction: DocumentExtraction
+  busy: boolean
+  onExtract: () => void
+}) => {
+  if (extraction.kind === 'dropped') return null
+  const off = busy || !canExtract(extraction)
+  return (
+    <span className="flex shrink-0 items-center pr-3 pl-[6px]">
+      <Tooltip asChild explanation={explain(extraction, documentLabel(document))}>
+        <Button
+          small
+          tone="quiet"
+          aria-disabled={off}
+          onClick={() => {
+            if (off) return
+            onExtract()
+          }}
+        >
+          {extraction.kind === 'failed' ? 'Retry' : 'Extract'}
+        </Button>
+      </Tooltip>
+    </span>
+  )
+}
+
+const explain = (extraction: DocumentExtraction, label: string): string => {
+  switch (extraction.kind) {
+    case 'running':
+      return `${label} is being extracted now`
+    case 'queued':
+      return `${label} is already waiting to be extracted`
+    case 'extracted':
+      return `${label} has already been folded into the graph`
+    case 'failed':
+      return `Try extracting ${label} again`
+    default:
+      return `Fold ${label} into this project's graph`
+  }
+}

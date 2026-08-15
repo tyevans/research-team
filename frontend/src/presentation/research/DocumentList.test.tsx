@@ -6,9 +6,11 @@ import { expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
+import { useToasts } from '@application/notifications/toast-store.ts'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { DocumentRepository } from '@application/ports/repositories.ts'
 import type { DocumentSummary } from '@domain/research/document.ts'
+import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
 import { ProjectId, SessionId, SourceId } from '@domain/shared/identifier.ts'
 
@@ -44,16 +46,32 @@ const doc = (over: Partial<DocumentSummary> = {}): DocumentSummary => ({
   publishedAt: null,
   note: null,
   droppedReason: null,
+  extracted: false,
   ...over,
 })
 
-/** `DocumentList` only calls `list` -- reading one document's text is
- *  `DocumentReader`'s job once a row is opened. */
-const fakeDocuments = (list: DocumentRepository['list']): DocumentRepository => ({
+/** `DocumentList` calls `list` and `extractionQueue` on mount -- reading one
+ *  document's text is `DocumentReader`'s job once a row is opened, and the
+ *  three extraction writes only happen on a press.
+ *
+ * The queue answers empty by default so the tests that predate extraction read
+ * exactly as they did: an empty board is what a project with nothing
+ * extracting has, not a stand-in for one. */
+const fakeDocuments = (
+  list: DocumentRepository['list'],
+  over: Partial<DocumentRepository> = {},
+): DocumentRepository => ({
   list,
   read: vi.fn(() => {
     throw new Error('read was not stubbed for this test')
   }),
+  extract: vi.fn<DocumentRepository['extract']>().mockResolvedValue(true),
+  extractAll: vi.fn<DocumentRepository['extractAll']>().mockResolvedValue(0),
+  extractionQueue: vi
+    .fn<DocumentRepository['extractionQueue']>()
+    .mockResolvedValue(emptyExtractionQueue),
+  cancelExtraction: vi.fn<DocumentRepository['cancelExtraction']>().mockResolvedValue(0),
+  ...over,
 })
 
 /** Mirrors `TopicList.test.tsx`'s fake stream, so a live-update assertion
@@ -77,6 +95,23 @@ const fakeStream = () => {
     pushGraph: () =>
       act(() => {
         listener?.onFrame({ kind: 'graph', projectId: PROJECT, change: 'DocumentExtracted' })
+      }),
+    /** An extraction frame arrives undecoded — `decodeFrame` routes the raw
+     *  payload on purpose — so this pushes the wire shape, not a domain
+     *  object. A test that pushed a decoded frame would exercise a path the
+     *  application does not have. */
+    pushExtraction: (stage: string, sourceId = 's1', projectId: string = PROJECT) =>
+      act(() => {
+        listener?.onFrame({
+          kind: 'extraction',
+          payload: {
+            type: 'Extraction',
+            project_id: projectId,
+            source_id: sourceId,
+            stage,
+            detail: '',
+          },
+        })
       }),
     pushLog: () =>
       act(() => {
@@ -392,5 +427,149 @@ it('ignores another project’s corpus frame', async () => {
   feed.pushCorpus('99999999-9999-9999-9999-999999999999')
 
   await new Promise((resolve) => setTimeout(resolve, FRAME_DEBOUNCE_MS * 2))
+  expect(list).toHaveBeenCalledTimes(1)
+})
+
+it('queues the document whose extract control was pressed', async () => {
+  // Held in a local rather than read back off the repository: `expect(obj.fn)`
+  // trips `@typescript-eslint/unbound-method`, which is a lint gate here.
+  const extract = vi.fn<DocumentRepository['extract']>().mockResolvedValue(true)
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace' })]),
+    { extract },
+  )
+  const user = userEvent.setup()
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+  await screen.findByText('Ada Lovelace')
+
+  await user.click(screen.getByRole('button', { name: 'Extract' }))
+
+  expect(extract).toHaveBeenCalledWith(PROJECT, 's1')
+  await waitFor(() =>
+    expect(useToasts.getState().toasts.at(-1)?.message).toBe('Queued for extraction'),
+  )
+})
+
+/** The one the server shaped its 202 around. `queued: false` means the queue
+ *  already holds this document -- not an error, and not a start -- and a
+ *  client that toasted "queued" either way would be claiming it started
+ *  something it did not. Reverting the `onSuccess` to a single unconditional
+ *  message fails here. */
+it('does not claim to have started an extraction the queue already held', async () => {
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace' })]),
+    { extract: vi.fn<DocumentRepository['extract']>().mockResolvedValue(false) },
+  )
+  const user = userEvent.setup()
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+  await screen.findByText('Ada Lovelace')
+
+  await user.click(screen.getByRole('button', { name: 'Extract' }))
+
+  await waitFor(() =>
+    expect(useToasts.getState().toasts.at(-1)?.message).toBe('Already queued for extraction'),
+  )
+})
+
+/** The count comes back from the press, not from the corpus this side counted.
+ *  The server recomputes the set at press time and refuses what the queue
+ *  already holds, so the two differ exactly when a previous press is still
+ *  draining -- reporting the local estimate would overstate it there. */
+it('reports how many extract-all actually took on', async () => {
+  const extractAll = vi.fn<DocumentRepository['extractAll']>().mockResolvedValue(1)
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([
+        doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace' }),
+        doc({ sourceId: SourceId('s2'), title: 'Grace Hopper' }),
+      ]),
+    { extractAll },
+  )
+  const user = userEvent.setup()
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+  await screen.findByText('Ada Lovelace')
+
+  // Two unextracted rows, and the press answers 1: the number on the button is
+  // this side's estimate, the number in the toast is what happened.
+  await user.click(screen.getByRole('button', { name: 'Extract all (2)' }))
+
+  expect(extractAll).toHaveBeenCalledWith(PROJECT)
+  await waitFor(() =>
+    expect(useToasts.getState().toasts.at(-1)?.message).toBe('Queued 1 document for extraction'),
+  )
+})
+
+/** The live half, and the design decision this slice turns on.
+ *
+ * The extraction queue publishes no frames of its own, so the only
+ * announcement a terminal extraction makes is the `Extraction` frame the
+ * ingest emits — and that frame has to invalidate *both* the queue and the
+ * corpus listing, because the row's `extracted` flag lives on the listing.
+ * Without the second invalidation the row kept offering "Extract" on a
+ * document that had just been extracted, until a reload.
+ *
+ * Reverting either invalidation fails here: the queue one leaves the row
+ * saying "Extracting…", the documents one leaves it offering "Extract".
+ */
+it('flips a row to extracted when its extraction finishes, without a reload', async () => {
+  const list = vi
+    .fn<DocumentRepository['list']>()
+    .mockResolvedValueOnce([doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace' })])
+    .mockResolvedValue([doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace', extracted: true })])
+  const extractionQueue = vi
+    .fn<DocumentRepository['extractionQueue']>()
+    .mockResolvedValueOnce({ running: SourceId('s1'), queued: [], finished: [] })
+    .mockResolvedValue(emptyExtractionQueue)
+  const feed = fakeStream()
+
+  renderWithContainer(
+    <DocumentList projectId={PROJECT} />,
+    { documents: fakeDocuments(list, { extractionQueue }) },
+    feed.stream,
+  )
+  expect(await screen.findByText('Extracting…')).toBeInTheDocument()
+
+  feed.pushExtraction('consolidated')
+
+  expect(await screen.findByText('Extracted', {}, { timeout: 2_000 })).toBeInTheDocument()
+})
+
+/** Only terminal stages, and only this project's.
+ *
+ * A refresh per progress note would be a read for a board that has not moved:
+ * the running document is still the running document until it stops being one.
+ *
+ * Stated plainly: this asserts an absence and so passes with the extraction
+ * subscription removed entirely. It pins the *scope* of the refresh, not the
+ * refresh -- the test above it is the red one. */
+it('ignores a mid-flight extraction note and another project’s frames', async () => {
+  const list = vi.fn<DocumentRepository['list']>().mockResolvedValue([doc()])
+  const extractionQueue = vi
+    .fn<DocumentRepository['extractionQueue']>()
+    .mockResolvedValue(emptyExtractionQueue)
+  const feed = fakeStream()
+
+  renderWithContainer(
+    <DocumentList projectId={PROJECT} />,
+    { documents: fakeDocuments(list, { extractionQueue }) },
+    feed.stream,
+  )
+  await screen.findByText('s1')
+  expect(extractionQueue).toHaveBeenCalledTimes(1)
+
+  feed.pushExtraction('extracting')
+  feed.pushExtraction('consolidating')
+  feed.pushExtraction('consolidated', 's1', '99999999-9999-9999-9999-999999999999')
+
+  await new Promise((resolve) => setTimeout(resolve, FRAME_DEBOUNCE_MS * 2))
+  expect(extractionQueue).toHaveBeenCalledTimes(1)
   expect(list).toHaveBeenCalledTimes(1)
 })
