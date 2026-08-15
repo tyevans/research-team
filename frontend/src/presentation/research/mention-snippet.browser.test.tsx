@@ -14,7 +14,7 @@ import { GraphDetail } from './GraphDetail.tsx'
 
 /** The two things about a rendered mention that only a browser can answer.
  *
- * **`.md-snippet` beating `.md`.** The snippet reuses the `Markdown` component,
+ * **`.md-bare` beating `.md`.** The snippet reuses the `Markdown` component,
  * whose `.md` carries `padding: 10px 14px 40px` -- page chrome for a document
  * filling a pane, and 40px of dead space under every row in a list. jsdom
  * returns only what an inline style said, so a `getComputedStyle` there reads
@@ -111,7 +111,7 @@ it('draws a snippet without the document padding `.md` carries', async () => {
   expect(block).not.toBeNull()
 
   const style = getComputedStyle(block)
-  // Would read 10px/14px/40px with `.md-snippet` absent, and the same with it
+  // Would read 10px/14px/40px with `.md-bare` absent, and the same with it
   // written as a `p-0` utility -- `.md` is unlayered, utilities are not.
   expect(style.paddingTop).toBe('0px')
   expect(style.paddingLeft).toBe('0px')
@@ -155,4 +155,31 @@ it('keeps a nested passage link inside the row rather than splitting the row', a
   // differently -- that is what this test is standing watch over -- but as of
   // 2026-08-15 in Chromium the observable cost of the nesting is nil.
   expect(outer).toHaveAccessibleName('22222222 Major prodigies were expiated by sacrifice.')
+})
+
+it('scrolls the drawer body so a long mention can be read to its end', async () => {
+  // Long enough to overrun a 520px drawer on its own, which is the shape of a
+  // real chunk: `SlidingWindowChunker` cuts on a character count, not on how
+  // much fits in a panel.
+  const long = Array.from(
+    { length: 12 },
+    (_, index) => `Paragraph ${String(index)} of a passage that runs well past the panel.`,
+  ).join('\n\n')
+  await mount([usage({ text: `cut mid-sentence and\n${long}\n\nTHE VERY LAST LINE.` })])
+  await openMentions()
+
+  const body = document.querySelector('[data-edge-scroll]') as HTMLElement
+  expect(body).not.toBeNull()
+  // The bug, as a precondition: the content is taller than the box. Before the
+  // body became a scroller this was equally true and there was nowhere to
+  // scroll to -- the overflow simply left the panel.
+  expect(body.scrollHeight).toBeGreaterThan(body.clientHeight)
+
+  const last = page.getByText('THE VERY LAST LINE.').element()
+  expect(last.getBoundingClientRect().bottom).toBeGreaterThan(body.getBoundingClientRect().bottom)
+
+  body.scrollTop = body.scrollHeight
+  await expect
+    .poll(() => last.getBoundingClientRect().bottom)
+    .toBeLessThanOrEqual(body.getBoundingClientRect().bottom + 1)
 })

@@ -121,24 +121,27 @@ h6.md-h {
   text-decoration: underline dotted;
 }
 
-/* A retrieved passage inside the graph drawer's mentions list.
+/* Rendered markdown whose container already owns the spacing.
  *
  * `.md`'s own padding is page chrome -- 10px in and 40px of scroll runway at
- * the bottom -- which is right for a document filling a pane and absurd around
- * a three-line quotation in a list. A named class rather than a `p-0` utility
- * because `.md` is unlayered and Tailwind's utilities are not: at equal
- * specificity the unlayered rule wins regardless, so the utility would be in
- * the attribute and absent from the computed style. `CLAUDE.md` carries the
- * measurement; `mention-snippet.browser.test.tsx` is what fails if this is
- * swapped back for one.
+ * the bottom -- which is right for a document filling a pane on its own and
+ * wrong twice over here: absurd around a three-line quotation in the graph
+ * drawer's mentions list, and doubled inside `DocumentReader`'s `<article>`,
+ * which already sets its own `px-4 pt-3 pb-5` and a `68ch` measure.
+ *
+ * A named class rather than a `p-0` utility because `.md` is unlayered and
+ * Tailwind's utilities are not: at equal specificity the unlayered rule wins
+ * regardless, so the utility would sit in the class attribute and be absent
+ * from the computed style. `CLAUDE.md` carries the measurement;
+ * `mention-snippet.browser.test.tsx` reads 10px with this rule removed.
  *
  * The trailing margin goes off the last block for the same reason: `.md-p`'s
- * 10px is paragraph rhythm inside prose, and on the last line of a list row it
- * is a gap the row did not ask for. */
-.md-snippet {
+ * 10px is paragraph rhythm inside prose, and on the last line of a list row --
+ * or above an `<article>`'s own `pb-5` -- it is a gap nobody asked for. */
+.md-bare {
   padding: 0;
 }
-.md-snippet > :last-child {
+.md-bare > :last-child {
   margin-bottom: 0;
 }
 
