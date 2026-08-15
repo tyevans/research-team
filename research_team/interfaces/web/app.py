@@ -1061,9 +1061,14 @@ def create_app(
                 detail=f"upload exceeds {MAX_UPLOAD_BYTES} bytes",
             ) from error
         except CommandRejectedError as error:
-            # The aggregate's own refusals -- a blank id, and a `source_id`
-            # that already holds *text*, which `_kind_of` will not let media
-            # take over.
+            # `decide`'s one refusal for this command: a `source_id` that
+            # already holds *text*, which `_kind_of` will not let media take
+            # over. There is no blank-id refusal on this path -- that check
+            # lives in `RedstringKnowledge.store_source`, which media
+            # deliberately does not go through (`corpus_editing.py`'s module
+            # docstring) -- so a form field of `"   "` is stored verbatim as a
+            # whitespace id. A literal `""` is unreachable: the fallback chain
+            # above takes the filename and then `"upload"`.
             raise HTTPException(status_code=409, detail=str(error)) from error
         return await _source_row(project_id, record.source_id)
 

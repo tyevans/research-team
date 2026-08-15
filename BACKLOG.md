@@ -1246,6 +1246,40 @@ in as many words that it would **not** fail on the memory cost. There is no test
 anywhere that would. `list_all`'s own docstring names itself as the line to come
 back to.
 
+### B85. Nothing sweeps a blob no record points at
+
+`CorpusEditor.store_media` writes the bytes before it executes the command, on
+purpose: a rejected store then leaves an unreferenced blob, which content
+addressing makes harmless -- the next store of the same bytes adopts it -- and
+the other order would commit a record pointing at bytes that are not there,
+the one failure this design promised to make loud rather than merely rare.
+The accepted cost is that nothing ever deletes the orphan. A second source is
+supersession: a media source re-stored under one `source_id` with *different*
+bytes leaves the first blob referenced by nothing, and so does a drop, since
+`by_digest` releases a dropped source's digest.
+
+The spec accepts this explicitly (no GC in that slice), so it is not a
+divergence -- it is here because the acceptance otherwise lives only in
+`store_media`'s docstring, and this is where this repository keeps work it
+decided not to do.
+
+**The sweep is cheap to write and is deliberately not written.** The
+`corpus_media` table carries `sha256` for exactly this: a mark-and-sweep is
+"every digest under the blob root that no `corpus_media` row names". What
+makes it more than a `for` loop is that the two writes are not in one
+transaction. A sweep running between `put` and the command's save would
+delete the bytes of a store in flight, so it needs either a grace period on
+mtime or a quiescent window -- and choosing between those needs a number
+nobody has: how much space this actually wastes on a real corpus. A rejected
+media store is rare (`decide` refuses only a kind flip), and re-store and drop
+are operator actions, so the honest guess is "very little", which is exactly
+the guess a measurement should replace before anyone builds a deleter.
+
+Until then the recovery is manual and safe in one direction only: a blob that
+no row names can be removed by hand, and a row whose blob is gone answers 410
+rather than lying. That asymmetry is what makes deferring this cost space
+rather than correctness.
+
 ## Entity definitions and usages
 
 Deferred during the 2026-08-14 entity-definitions-and-usages build
