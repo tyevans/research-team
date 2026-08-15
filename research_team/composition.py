@@ -1479,10 +1479,17 @@ def build_application(
         definition assembled from edges alone cites nothing and would be
         refused by `_verified` anyway.
         """
+        # `open` before `chunks`, and the order is the whole of a bug this
+        # had: `ProjectGraphs.chunks` answers `None` for a project whose
+        # store has not been opened yet -- it is built during `open`, in the
+        # same replay pass as the graph -- so asking first made the *first*
+        # request for any project 503 with "no chunk store is configured",
+        # and only that one. A reviewer's probe caught it; `_usage_reader` in
+        # `app.py` had the order right and this did not.
+        store = await graphs.open(target_project_id)
         chunk_store = graphs.chunks(target_project_id)
         if chunk_store is None:
             return None
-        store = await graphs.open(target_project_id)
         return DefinitionService(
             graph=ProjectGraphReader(project_id=target_project_id, store=store),
             usages=UsageReader(store, chunk_store, target_project_id),

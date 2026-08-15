@@ -281,6 +281,29 @@ async def test_an_entity_absent_from_this_project_is_undefinable_here(two_projec
     assert response.json()["text"] is None
 
 
+async def test_the_first_request_for_an_unopened_project_is_not_a_503(composed):
+    """A project nobody has opened a graph for still gets an answer.
+
+    `ProjectGraphs.chunks` returns `None` until `open` has run for that
+    project -- the chunk store is built during `open`, in the same replay
+    pass as the graph -- so a factory that asks for the chunk store *before*
+    opening 503s on the first request for every project and succeeds on the
+    second. Intermittent-looking, once per project, and invisible to every
+    other test here because they all seed through `graphs.open` first.
+
+    This shipped in the first commit of this task and was caught by a
+    reviewer's probe, not by me.
+    """
+    _application, client, _project_id, _entity_id = composed
+    created = await client.post("/api/projects", json={"name": f"fresh-{uuid4()}"})
+    fresh = created.json()["id"]
+
+    response = await client.get(f"/api/projects/{fresh}/graph/entities/{uuid4()}/definition")
+
+    assert response.status_code == 200
+    assert response.json()["text"] is None
+
+
 async def test_a_composed_app_defines_an_entity(composed):
     """The endpoint answers rather than 503ing -- the whole of Task 10b.
 
