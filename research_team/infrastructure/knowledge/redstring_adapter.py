@@ -32,6 +32,7 @@ from eventsource.ports.store import AggregateStore
 from redstring import (
     AUTO,
     Adjudicator,
+    CandidateFinder,
     Chunker,
     Consolidator,
     EmbeddingProvider,
@@ -43,7 +44,6 @@ from redstring import (
     build_graph,
     document_stream,
 )
-from redstring.consolidation.candidates import CandidateFinder
 
 from research_team.application.knowledge import (
     ExtractionNote,

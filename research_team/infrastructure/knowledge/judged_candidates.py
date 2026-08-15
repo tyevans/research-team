@@ -23,8 +23,7 @@ seam does not have to move later.
 from typing import Any
 from uuid import UUID
 
-from redstring.consolidation.candidates import ScoredCandidate
-from redstring.domain.similarity import SimilarityFeatures
+from redstring import ScoredCandidate, SimilarityFeatures
 
 from research_team.domain.judgements import EntityKey, JudgementsState
 

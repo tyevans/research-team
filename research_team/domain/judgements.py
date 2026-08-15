@@ -24,13 +24,43 @@ another. Accepted deliberately; per-id judgements remain addable later as a
 second kind without disturbing this one.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
 from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
 from pydantic import BaseModel, ConfigDict, Field
-from redstring.domain.similarity import normalize_name
+
+_WHITESPACE_RUN = re.compile(r"\s+")
+
+
+def normalize_name(name: str) -> str:
+    """Casefold, strip, and collapse internal whitespace runs to one space.
+
+    **A deliberate copy of redstring's own `normalize_name`, and the copy is
+    forced.** The key this module builds has to match what
+    `find_entities(name=...)` compares against, which is redstring's
+    `normalized_name` -- so the two functions agreeing is a correctness
+    requirement, not a convenience. But redstring does not export it: it lives
+    at `redstring.domain.normalization` and is absent from `redstring.__all__`,
+    and `tests/test_architecture.py` forbids `research_team/` from reaching
+    into `redstring.domain.` at all, because anything behind a dotted path
+    there is private and may change in a *patch* release. The domain layer is
+    additionally forbidden from naming redstring at any path.
+
+    So there is no import that is both available and allowed, and three lines
+    are copied instead. `test_normalisation_matches_redstrings` pins the
+    agreement by importing the private function -- `tests/` is exempt from that
+    rule precisely so a parity check like this one can exist -- and fails the
+    moment redstring's definition moves. That test is the whole safety of this
+    copy; deleting it turns a pinned duplication into an unpinned one.
+
+    Hyphens and underscores are left untouched. `casefold`, not `lower`: they
+    differ on non-ASCII (German ß casefolds to ss) and redstring uses casefold.
+    Never raises.
+    """
+    return _WHITESPACE_RUN.sub(" ", name.casefold().strip())
 
 
 class EntityKey(BaseModel):

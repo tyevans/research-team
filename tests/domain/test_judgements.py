@@ -19,6 +19,7 @@ from research_team.domain.judgements import (
     decide,
     evolve,
     initial_state,
+    normalize_name,
 )
 
 PROJECT = uuid4()
@@ -322,3 +323,41 @@ def test_the_aggregate_type_keeps_the_stream_apart_from_the_corpus():
     string is the whole separation.
     """
     assert EntityJudgements.aggregate_type == "EntityJudgements"
+
+
+def test_normalisation_matches_redstrings():
+    """The safety of the copied `normalize_name`, and the reason it may be copied.
+
+    `EntityKey`'s name has to match what `find_entities(name=...)` compares
+    against -- redstring's `normalized_name` -- so the two normalisations
+    agreeing is a correctness requirement. redstring does not export its
+    version (`redstring.domain.normalization`, absent from `__all__`), and
+    `test_architecture.py` forbids `research_team/` from importing anything
+    under `redstring.domain.`, the domain layer from naming redstring at all.
+    So it is copied, and this is what stops the copy drifting.
+
+    Imports the private function deliberately: `tests/` is exempt from that
+    architecture rule, and the docstring of the rule says so, precisely so a
+    parity check can exist. If redstring changes its definition -- or moves it
+    -- this fails, which is the whole point. Deleting this test turns a pinned
+    duplication into an unpinned one.
+
+    The cases are chosen where a plausible re-implementation would differ:
+    `casefold` against `lower` (German ß), internal whitespace runs, tabs and
+    newlines, and the leading/trailing strip.
+    """
+    from redstring.domain.normalization import normalize_name as theirs
+
+    for case in (
+        "JFK",
+        "  Dr. Grant  ",
+        "John   F.\tKennedy",
+        "STRASSE",
+        "Straße",
+        "line\nbreak",
+        "",
+        "   ",
+        "already normalised",
+        "Nova Scotia Duck Tolling Retriever",
+    ):
+        assert normalize_name(case) == theirs(case), case
