@@ -26,7 +26,12 @@ import type {
   Finding,
 } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
-import type { DocumentText, MediaSummary, SourceSummary } from '@domain/research/document.ts'
+import type {
+  DocumentText,
+  MediaSummary,
+  SourceSummary,
+  TextSummary,
+} from '@domain/research/document.ts'
 import type { ExtractionOutcome, ExtractionQueueBoard } from '@domain/research/extraction-queue.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { Dispatch, DispatchStatus } from '@domain/research/dispatch.ts'
@@ -620,6 +625,12 @@ export const toSourceSummary = (raw: Dto<typeof dto.documentDto>): SourceSummary
       }
     : { ...toSourceProvenance(raw), kind: 'text', charCount: raw.char_count }
 
+export const toTextSummary = (raw: Dto<typeof dto.textSourceDto>): TextSummary => ({
+  ...toSourceProvenance(raw),
+  kind: 'text',
+  charCount: raw.char_count,
+})
+
 export const toMediaSummary = (raw: Dto<typeof dto.mediaSourceDto>): MediaSummary => ({
   ...toSourceProvenance(raw),
   kind: 'media',
@@ -646,9 +657,7 @@ export const toExtractionQueueBoard = (
 })
 
 export const toDocumentText = (raw: Dto<typeof dto.documentTextDto>): DocumentText => ({
-  ...toSourceProvenance(raw),
-  kind: 'text',
-  charCount: raw.char_count,
+  ...toTextSummary(raw),
   text: raw.text,
   start: raw.start,
   end: raw.end,

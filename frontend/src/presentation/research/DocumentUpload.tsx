@@ -106,7 +106,16 @@ export const DocumentUpload = ({
     nameFrom(file)
   }
 
-  const handleMedia = (file: File) => {
+  const handleMedia = (file: File | null) => {
+    // Null is a real event, not a defensive branch: the native picker's own
+    // "clear" fires a change with an empty `files`, and a handler that ignored
+    // it left `media` set while the control showed nothing -- the Text field
+    // stayed hidden and the form still posted multipart with a file the reader
+    // believed they had removed.
+    if (!file) {
+      setMedia(null)
+      return
+    }
     // The text is cleared rather than left behind a hidden field: it is not
     // sent on this path, and a leftover value would be waiting to be stored
     // under the same id the moment somebody cleared the media picker.
@@ -198,10 +207,7 @@ export const DocumentUpload = ({
             id={mediaId}
             type="file"
             className="input w-full"
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-              if (file) handleMedia(file)
-            }}
+            onChange={(event) => handleMedia(event.target.files?.[0] ?? null)}
           />
         </label>
 

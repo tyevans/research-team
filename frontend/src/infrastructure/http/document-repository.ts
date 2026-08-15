@@ -16,6 +16,7 @@ import {
   toExtractionQueueBoard,
   toMediaSummary,
   toSourceSummary,
+  toTextSummary,
 } from './mappers.ts'
 
 export class HttpDocumentRepository implements DocumentRepository {
@@ -98,9 +99,13 @@ export class HttpDocumentRepository implements DocumentRepository {
         note: draft.note,
         published_at: draft.publishedAt,
       }),
-      dto.documentDto,
+      // The text shape, not the union, on `uploadMedia`'s argument: this route
+      // stores text and only text, so a caller does not have to re-narrow what
+      // it just created -- and a media row coming back would be the server
+      // having done something else entirely, which is worth a `ContractError`.
+      dto.textSourceDto,
     )
-    return toSourceSummary(body)
+    return toTextSummary(body)
   }
 
   async revise(projectId: ProjectId, sourceId: SourceId, edit: DocumentEdit) {

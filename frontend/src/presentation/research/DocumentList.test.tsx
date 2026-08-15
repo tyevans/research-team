@@ -711,9 +711,14 @@ it('does not offer extraction on a media row, which the server would refuse', as
   expect(screen.getByRole('button', { name: 'Extract all (1)' })).toBeInTheDocument()
 })
 
+/** Stated plainly: this passed before the media work and would pass with the
+ *  whole of it reverted. `DocumentManagePane` reads only `droppedReason` and
+ *  was already kind-agnostic, so nothing here is evidence that the media path
+ *  was built -- what it pins is the design decision underneath it: one
+ *  `source_id` namespace means one set of actions, and a media row that lost
+ *  them would make a dropped video unrecoverable through the console. Kept as
+ *  a guard against a future change that special-cases the pane by kind. */
 it('offers drop on a media row exactly as on a text one', async () => {
-  // One `source_id` namespace means one set of actions. A media row missing
-  // them would make a dropped video unrecoverable through the console.
   const documents = fakeDocuments(
     vi.fn<DocumentRepository['list']>().mockResolvedValue([media({ title: 'The keynote' })]),
   )
@@ -725,6 +730,9 @@ it('offers drop on a media row exactly as on a text one', async () => {
   expect(within(dialog).getByRole('button', { name: 'Edit' })).toBeInTheDocument()
 })
 
+/** The restore half of the pair above, and the same caveat: green before the
+ *  media work and green with it reverted. It pins that the undo for a drop is
+ *  offered whatever the bytes are, not that anything here is new. */
 it('offers restore on a dropped media row', async () => {
   const documents = fakeDocuments(
     vi

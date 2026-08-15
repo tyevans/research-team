@@ -161,6 +161,26 @@ it('does not ask for text once a media file is picked', async () => {
   })
 })
 
+it('lets a media file be un-picked through the picker that set it', async () => {
+  // The native picker's own "clear" fires a change event with no file. A
+  // handler that only acted on a present file left `media` set while the
+  // control showed nothing: the Text field stayed hidden and the form still
+  // posted multipart with a file the reader believed they had removed. Fails
+  // against `if (file) handleMedia(file)`.
+  const user = userEvent.setup()
+  render(<DocumentUpload projectId={project} onClose={vi.fn()} />, { wrapper })
+
+  const picker = screen.getByLabelText('Media file')
+  await user.upload(picker, new File(['x'], 'keynote.mp4', { type: 'video/mp4' }))
+  await waitFor(() => {
+    expect(screen.queryByLabelText('Text')).not.toBeInTheDocument()
+  })
+
+  await user.upload(picker, [])
+
+  expect(await screen.findByLabelText('Text')).toBeInTheDocument()
+})
+
 it('fills the text and the title from a picked file', async () => {
   const user = userEvent.setup()
   render(<DocumentUpload projectId={project} onClose={vi.fn()} />, { wrapper })
