@@ -2107,6 +2107,136 @@ for. None is a correctness bug on the happy path.
 
 ## Waiting on redstring
 
+### B58. `graph = 0.0` across a document boundary is absence of evidence read as disagreement
+
+Open as of redstring **0.9.1**. This is the ask that would let
+`redstring_adapter._WEIGHTS` go back to redstring's defaults, and it is worth
+preferring over any further retuning of those numbers.
+
+`CandidateFinder._graph_feature` scores the overlap between two entities'
+neighbour names. Two documents describing different facets of the same entity
+share no neighbours **because they are different documents**, not because the
+entities differ — and the feature reports `0.0`, which `combined_score` reads
+as a present feature scoring zero and keeps in its divisor. So the third
+feature actively drags every cross-document pair down, and caps one at 0.8000
+even with a perfect name and a perfect embedding.
+
+redstring already draws the distinction this asks for, one method away. A
+dangling entity returns the feature **absent** rather than `0.0`, on the stated
+reasoning that "an id nothing can be learned about is not evidence of
+disagreement" (`consolidation/candidates.py`). A cross-document neighbourhood
+deserves the same reading: nothing was learned about whether these two agree,
+so the honest report is `None` and a renormalized divisor.
+
+What it would change here: the adapter's `_WEIGHTS` exists only because the
+zero sits in the divisor. With the feature absent, a title-qualified name
+(`Dr. Grant`/`Grant`, 0.85 since 0.9.0's containment fix) clears
+`LOW_SIMILARITY` on redstring's own defaults, and the constant and its long
+note can be deleted.
+
+**Measured on 2026-08-14** against a real `nomic-embed-text` (llama.cpp,
+768-wide), over ten same-entity and ten different-entity pairs. Scored through
+redstring's own `combined_score`/`decide` at default weights. "Recall" is how
+many of the ten true duplicates reach the adjudicator at all:
+
+| configuration | recall | false pairs adjudicated | silent bad merges |
+|---|---|---|---|
+| **today** (`graph = 0.0` present) | **2/10** | 0/10 | 0/10 |
+| graph absent (this entry) | **7/10** | 9/10 | 0/10 |
+| graph absent + `clustering:` prefix | 7/10 | 6/10 | **3/10** |
+
+**Today's gate drops eight of ten genuine duplicates before the model is
+asked** -- `JFK`/`John F. Kennedy`, `IBM`/`International Business Machines`,
+`NASA`/…, `Einstein`/`Albert Einstein`, `Prof. Curie`/`Marie Curie` and both
+`Grant` pairs all reject. That is the cost of this entry, and it is much larger
+than the containment case that prompted it.
+
+The false-pair column is the price and it is the right kind: 9/10 reach the
+adjudicator, which costs model calls, not wrong merges. Nothing auto-merges.
+The third row is why the "correct" nomic prefix is **not** adopted -- see B59.
+
+Three further things were measured and none of them help, which is worth
+recording so they are not re-attempted:
+
+- **No prefix scheme separates the classes.** Margin between the weakest true
+  pair and the strongest false one: bare -0.235, `clustering:` -0.114,
+  `classification:` -0.120, asymmetric `search_query:`/`search_document:`
+  -0.192. All negative. The embedding feature ranks; it does not gate.
+- **Embedding a canonical description makes it worse.** Near-miss entities have
+  structurally near-identical descriptions ("A public research university in
+  …"), so false pairs rise faster than true ones.
+- **Embedding the source snippet makes it worse too** -- recall 7/10 → 5/10
+  (name + snippet) or 4/10 (snippet alone). Snippets were hand-written for the
+  test and so are *directional, not authoritative*; but the direction is the
+  same as the other two and has the same cause.
+
+That common cause is the point of this entry stated generally: **every signal
+derived from document context fails the same way.** Graph neighbours,
+descriptions and snippets all pull true cross-document pairs apart, because two
+documents about one entity describe *different facets* of it. The name is the
+only document-invariant signal available, which is why the gate must lean on it
+and the adjudicator -- which already receives descriptions, and can reason --
+must make the call.
+
+The reason it is an upstream ask and not a local fix: the two knobs that look
+like they would do it locally do not. `FeatureWeights(graph=0.0)` and
+`use_graph_signal=False` are the same scoring change as each other, neither can
+be scoped to the cross-document case (weights are fixed at construction and
+`resolve` takes no override), and both make the score a weighted mean of two
+near-1.0 features — which clears `HIGH_SIMILARITY` for any name/embedding
+split, auto-merging the `#84` duplicate with no model call, and auto-merging on
+a bare name in any deployment without embeddings.
+`test_zeroing_the_graph_weight_would_auto_merge_on_name_alone` pins both.
+
+### B60. Every extraction fixture omits `description`, so the suite tests an adjudicator production never runs
+
+`Adjudicator._one_batch` puts `left_description` and `right_description` into
+every question, and `_render` prints them under each name. `ExtractedEntity`
+declares `description: str | None` as "a one-sentence description drawn from
+the text", so a real extraction usually fills it and the model deciding
+`Dr. Grant` against `Grant` normally has a sentence about each.
+
+No fixture in this repository sets it. `_BREED_IN_CANADA`, `_BREED_AND_HUNTING`
+and the rest carry `name` and `entity_type` only, so every adjudication the
+suite exercises renders as two bare names with nothing under them. The tests
+are green about a prompt production does not send.
+
+This is not obviously a bug to fix by adding descriptions everywhere -- the
+bare-name path is the *harder* case and worth keeping deliberately. What is
+missing is one fixture that carries descriptions, so that the difference is
+covered at all and a regression in how they are rendered would be caught.
+Discovered while measuring B58; costs nothing today because the adjudicator's
+verdicts are faked in these tests, and would start mattering the moment
+anything asserts on prompt content.
+
+### B59. We send `nomic-embed-text` no task prefix, and adding the correct one is harmful
+
+Open as of redstring **0.9.1**. Filed as a *decision*, not a defect to fix:
+the off-spec call is currently the safer one, and that needs writing down
+before someone corrects it on the documentation alone.
+
+Nomic's models are trained with mandatory task prefixes -- `search_query:`,
+`search_document:`, `classification:`, `clustering:` -- and unprefixed input is
+undefined behaviour rather than a neutral default. redstring sends none:
+`build_graph._embed_entities` calls `provider.embed([entity.name for entity in
+entities])`, and nothing in this repository wraps it. For a dedup use the
+documented prefix is `clustering:`.
+
+Adding it measurably improves the raw embedding margin (-0.235 → -0.114; see
+B58) and **makes the system worse**, because redstring's thresholds are
+calibrated for an unprefixed score distribution. The prefix compresses every
+score upward, so with the graph feature absent three of ten *false* pairs cross
+`HIGH_SIMILARITY` and auto-merge with no model call:
+
+    University of York / University of Cork    0.936  MERGE
+    World War I        / World War II          0.940  MERGE
+    Mercury (planet)   / Mercury (element)     0.927  MERGE
+
+So the honest position is: we are off-spec, we know it, and the correct prefix
+cannot be adopted without moving `HIGH_SIMILARITY` in the same change. If B58
+lands, revisit both together -- the prefix plus a raised `high` may beat either
+alone, and that is a measurement nobody has taken.
+
 **Closed by redstring 0.3.0 and eventsource 0.12.0.** Every ask in this section
 landed upstream, and the workarounds they justified are deleted:
 
