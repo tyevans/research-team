@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 
 from eventsource import CommandRejectedError, OptimisticLockError
 from eventsource.application.aggregates.repository import AggregateRepository
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -51,6 +51,11 @@ from research_team.application.graph_read import (
 )
 from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.application.project_graphs import ProjectGraphs
+from research_team.application.timeline_read import (
+    MAX_TIMELINE_BANDS,
+    TimelineInterval,
+    TimelineReadPort,
+)
 from research_team.application.topic_dispatch import (
     DISPATCH_ACTIONS,
     TopicDispatcher,
@@ -69,6 +74,7 @@ from research_team.domain.topic import (
     TopicStatus,
 )
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
+from research_team.infrastructure.knowledge.timeline_reader import ProjectTimelineReader
 from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
@@ -104,6 +110,7 @@ from research_team.interfaces.web.presenters import (
     source_view,
     stage_view,
     summary_view,
+    timeline_view,
     topic_change,
     topic_detail_view,
     topic_documents_view,
@@ -1440,6 +1447,94 @@ def create_app(
             # usages route above answers for the same absence.
             raise HTTPException(status_code=503, detail="no chunk store is configured")
         return definition_view(await service.define(entity_id))
+
+    def _timeline_interval(from_: str | None, to: str | None) -> TimelineInterval | None:
+        """`from`/`to` as an interval, or `None` when neither was given.
+
+        `None` rather than `TimelineInterval(None, None)` for the empty case so
+        the adapter passes `interval=None` to redstring and takes its
+        no-window path, instead of an all-`None` `Bounds` whose behaviour is
+        the library's to decide rather than ours.
+        """
+        if from_ is None and to is None:
+            return None
+        return TimelineInterval(start=_instant("from", from_), end=_instant("to", to))
+
+    def _instant(name: str, raw: str | None) -> datetime | None:
+        """One ISO query parameter as a datetime, 422 if it will not parse.
+
+        `fromisoformat` and not `dateutil`: the client this serves is the
+        browser, which produces `toISOString()` output, and accepting looser
+        spellings would make the set of dates that work depend on which parser
+        happened to be installed.
+        """
+        if raw is None:
+            return None
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            raise HTTPException(
+                status_code=422, detail=f"{name}={raw!r} is not an ISO instant"
+            ) from None
+
+    async def _timeline_reader(project_id: UUID) -> TimelineReadPort:
+        """This project's `TimelineReadPort`, over the store `graphs` owns.
+
+        503 rather than 404 when `graphs` was not wired, matching
+        `_graph_reader`: a build with no graph read model is a valid thing to
+        serve, and the caller needs to know the server cannot answer rather
+        than that the project has no timeline.
+
+        Opens through `graphs` rather than holding its own store, so the
+        timeline and the graph read the *same* store rather than two folds of
+        one log that could drift apart between tabs.
+        """
+        if graphs is None:
+            raise HTTPException(status_code=503, detail="no graph read model is configured")
+        store = await graphs.open(project_id)
+        return ProjectTimelineReader(project_id=project_id, store=store)
+
+    @app.get("/api/projects/{project_id}/timeline")
+    async def read_timeline(
+        project_id: UUID,
+        entity_type: str | None = None,
+        # `from` is a Python keyword, so the parameter is named `from_` and
+        # aliased back. FastAPI's `Query` alias is the only way to spell a
+        # reserved word in a signature; renaming the *wire* parameter to
+        # something legal was rejected because the spec names `from`/`to` and a
+        # query string is a contract with anyone holding a bookmark.
+        from_: str | None = Query(default=None, alias="from"),
+        to: str | None = None,
+        limit: int = MAX_TIMELINE_BANDS,
+    ):
+        """This project's dated entities, ordered, for drawing on an axis.
+
+        `from`/`to` are ISO instants bounding a half-open `[from, to)` window;
+        either may be omitted for an open end, and omitting both is the whole
+        timeline. Strings rather than a `datetime` annotation so an
+        unparseable value is *this* route's 422 with a message naming which
+        parameter was wrong -- FastAPI would otherwise answer its own 422
+        naming a validation error the caller has to decode. It is a 422 and
+        not a silent fall-back to "no window", because a client that mistyped
+        a date and got the entire timeline back has been answered a different
+        question than it asked and has no way to tell.
+
+        Project-level rather than under `/graph/` because it is not a graph
+        shape: nothing in the response has a source, a target or an edge type,
+        and nesting it there would suggest a client could ask for one and be
+        given the other.
+
+        `limit` is clamped by the port rather than refused here, the same call
+        `read_graph` makes and for the same reason -- "as much as possible" is
+        precisely what the clamp returns, and `truncated` in the body already
+        says it did not all fit.
+        """
+        await _require_project(project_id)
+        interval = _timeline_interval(from_, to)
+        reader = await _timeline_reader(project_id)
+        return timeline_view(
+            await reader.timeline(entity_type=entity_type, interval=interval, limit=limit)
+        )
 
     @app.post("/api/sessions/{session_id}/release")
     async def release_session(session_id: UUID):

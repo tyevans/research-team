@@ -35,7 +35,16 @@ const GROUP = 'project'
  * | --- | --- | --- | --- |
  * | queue | 344 | the seeding form, 317px and unwrapping | 343 |
  * | holder | 342 | `.scrub-bar`, 341px | 342 |
- * | material | 352 | the five-tab strip, 351px and unwrapping | 352 |
+ * | material | 422 | the six-tab strip, 421px and unwrapping | 422 |
+ *
+ * **The material row was re-measured on 2026-08-14, same day, after Task 10
+ * added a sixth tab.** `project-tracks.browser.test.tsx`'s "keeps MATERIAL
+ * wide enough for the tab strip it always has" comment already named this as
+ * the assertion that would catch it, and it did: red at 352 against a strip
+ * that had grown to 421. The floor moves with the strip because nothing else
+ * can -- the row does not wrap and has no scroller, so a floor that lagged the
+ * label would clip the newest tab past the pane's edge exactly as the old
+ * 280/320/280 numbers clipped Graph before this table existed.
  *
  * Each floor is a pixel or two above what measured clean, deliberately: the
  * check carries `TruncatedText`'s 1px slack for fractional layout, and 343 of
@@ -70,7 +79,7 @@ const GROUP = 'project'
 export const PROJECT_TRACKS: readonly Track[] = [
   { id: 'queue', min: 344, weight: 1 },
   { id: 'holder', min: 342, weight: 1.5 },
-  { id: 'material', min: 352, weight: 1 },
+  { id: 'material', min: 422, weight: 1 },
 ]
 
 /** The project page's half of its pane layout, which is only the group it

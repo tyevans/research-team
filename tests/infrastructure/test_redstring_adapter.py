@@ -15,9 +15,13 @@ from redstring import (
 )
 
 from research_team.application.knowledge import KnowledgeError, SourceRef
+from research_team.domain.judgements import EntityKey, HoldSame
 from research_team.infrastructure.knowledge import redstring_adapter
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
-from research_team.infrastructure.persistence.event_store import build_corpus_repository
+from research_team.infrastructure.persistence.event_store import (
+    build_corpus_repository,
+    build_judgements_repository,
+)
 from tests.conftest import TWO_PEOPLE, fake_provider
 
 #: A second document's worth of people, sharing nothing with `TWO_PEOPLE` --
@@ -1133,3 +1137,115 @@ async def test_storing_the_same_page_twice_records_it_once(tmp_path, build_adapt
     await adapter.store_source(source)
 
     assert len(await _corpus_events(store, project_id)) == 1
+
+
+#: Two documents naming one person two ways, with no shared neighbour.
+#:
+#: `JFK` against `John F. Kennedy` scores 0.609 on name similarity and the two
+#: share no blocking prefix, so redstring's own finder never builds the pair as
+#: a candidate at all -- which is the case entity judgements exist for, and the
+#: reason these fixtures are not the `Nova Scotia` pair the rest of this module
+#: uses. An identical-name pair would merge on its own evidence and prove
+#: nothing about judgements.
+_KENNEDY_SHORT = {
+    "entities": [
+        {"name": "JFK", "entity_type": "concept"},
+        {"name": "PT-109", "entity_type": "concept"},
+    ],
+    "relationships": [
+        {
+            "source_name": "JFK",
+            "target_name": "PT-109",
+            "relationship_type": "COMMANDED",
+        }
+    ],
+}
+
+_KENNEDY_LONG = {
+    "entities": [
+        {"name": "John F. Kennedy", "entity_type": "concept"},
+        {"name": "Inauguration", "entity_type": "concept"},
+    ],
+    "relationships": [
+        {
+            "source_name": "John F. Kennedy",
+            "target_name": "Inauguration",
+            "relationship_type": "SPOKE_AT",
+        }
+    ],
+}
+
+
+@pytest.fixture
+def kennedy_provider():
+    """One person, two documents, two spellings, two distinct neighbours."""
+    return FakeLlmProvider(
+        by_substring={"inauguration": _KENNEDY_LONG},
+        default=_KENNEDY_SHORT,
+    )
+
+
+async def _record_same(store, snapshot_store, project_id, left, right, reason):
+    """Record one held-same judgement over the adapter's own log."""
+    repository = build_judgements_repository(store, snapshot_store=snapshot_store)
+    judgements = await repository.load_or_create(project_id)
+    judgements.execute(
+        HoldSame(
+            judgements_id=project_id,
+            keys=[EntityKey.of(left, "concept"), EntityKey.of(right, "concept")],
+            reason=reason,
+        )
+    )
+    await repository.save(judgements)
+
+
+@pytest.mark.asyncio
+async def test_a_held_same_judgement_merges_what_scoring_never_pairs(
+    tmp_path, build_adapter, kennedy_provider
+):
+    """The whole point of the feature, end to end.
+
+    `JFK` and `John F. Kennedy` score 0.609 on name and share no blocking
+    prefix, so no threshold or weight change reaches them -- redstring never
+    builds the pair as a candidate at all. The judgement is what puts the
+    counterpart in front of consolidation, injected at 1.0 so it merges
+    without a model call.
+
+    **Proved red before it was trusted green**: with `judgements=False` passed
+    to `build_adapter` and everything else identical, this finds two nodes.
+    The test below makes that permanent rather than leaving it as a claim.
+    """
+    project_id = uuid4()
+    adapter, store, snapshot_store = build_adapter(
+        tmp_path, project_id, provider=kennedy_provider, judgements=True
+    )
+    await _record_same(
+        store, snapshot_store, project_id, "JFK", "John F. Kennedy", "one president"
+    )
+
+    await adapter.ingest(SourceRef(source_id="a", text="JFK commanded PT-109."))
+    await adapter.ingest(SourceRef(source_id="b", text="The inauguration was cold."))
+
+    assert len(await adapter.search("JFK")) == 0, "the short spelling was absorbed"
+    assert len(await adapter.search("Kennedy")) == 1, "one person, one node"
+
+
+@pytest.mark.asyncio
+async def test_without_a_judgements_repository_the_same_pair_stays_two_nodes(
+    tmp_path, build_adapter, kennedy_provider
+):
+    """The other half, and what makes the test above evidence rather than hope.
+
+    Identical but for the repository. It is also the passthrough guarantee that
+    every existing construction site relies on: with no repository the adapter
+    builds no finder, `resolve` falls back to its own, and consolidation is
+    exactly what it was before judgements existed.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id, provider=kennedy_provider)
+
+    await adapter.ingest(SourceRef(source_id="a", text="JFK commanded PT-109."))
+    await adapter.ingest(SourceRef(source_id="b", text="The inauguration was cold."))
+
+    assert len(await adapter.search("JFK")) == 1, "still its own node"
+    assert len(await adapter.search("Kennedy")) == 1, "and so is the long spelling"

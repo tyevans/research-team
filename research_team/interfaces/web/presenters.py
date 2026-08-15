@@ -38,6 +38,7 @@ from research_team.application.graph_read import (
     Neighborhood,
 )
 from research_team.application.research_supervisor import ActiveRun
+from research_team.application.timeline_read import Timeline, TimelineBand
 from research_team.application.topic_read import TopicDetail, TopicView
 from research_team.application.usages import Usage
 from research_team.domain import (
@@ -869,6 +870,46 @@ def definition_view(definition: Definition | None) -> dict[str, Any]:
         "model": definition.model,
         "generated_at": definition.generated_at,
         "stale": definition.stale,
+    }
+
+
+def band_view(band: TimelineBand) -> dict[str, Any]:
+    """One bar: what to draw, where to put it, and what the document said.
+
+    `extent` and the `start`/`end` pair both travel, which looks redundant and
+    is not -- see `TimelineBand.extent`. A browser given only the interval
+    would label a bar "1815-01-01T00:00:00 - 1816-01-01T00:00:00" for a
+    document that said "1815".
+
+    `precision` and `uncertainty` travel on every band rather than only on
+    uncertain ones, the same choice `relationship_view` makes with `inferred`:
+    a client never has to read an absent field as a default it guessed at.
+    """
+    return {
+        "entity_id": band.entity_id,
+        "name": band.name,
+        "entity_type": band.entity_type,
+        "extent": band.extent,
+        "start": band.start,
+        "end": band.end,
+        "precision": band.precision,
+        "uncertainty": band.uncertainty,
+    }
+
+
+def timeline_view(timeline: Timeline) -> dict[str, Any]:
+    """A project's dated entities in time order, and what is not in the drawing.
+
+    `undated_count` is not decoration. Most entities in a real graph are not
+    events, so a timeline is a view of a minority of the corpus by nature, and
+    one showing forty bars with no denominator reads as "this project contains
+    forty things". Same guarantee `truncated` gives on `graph_view`: data
+    missing from a drawing is invisible precisely because it is missing.
+    """
+    return {
+        "bands": [band_view(band) for band in timeline.bands],
+        "undated_count": timeline.undated_count,
+        "truncated": timeline.truncated,
     }
 
 

@@ -15,6 +15,7 @@ import type {
   Usage,
   WholeGraph,
 } from '@domain/knowledge/graph.ts'
+import type { Timeline, TimelineBand } from '@domain/knowledge/timeline.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
   Course,
@@ -678,4 +679,21 @@ export const toNeighborhood = (raw: Dto<typeof dto.graphNeighborhoodDto>): Neigh
   root: toGraphNode(raw.root),
   entities: raw.entities.map(toGraphNode),
   relationships: raw.relationships.map(toGraphLink),
+})
+
+export const toTimelineBand = (raw: Dto<typeof dto.timelineBandDto>): TimelineBand => ({
+  id: raw.entity_id,
+  name: raw.name,
+  entityType: raw.entity_type,
+  extent: raw.extent,
+  start: raw.start,
+  end: raw.end,
+  precision: raw.precision,
+  uncertainty: raw.uncertainty,
+})
+
+export const toTimeline = (raw: Dto<typeof dto.timelineDto>): Timeline => ({
+  bands: raw.bands.map(toTimelineBand),
+  undatedCount: raw.undated_count,
+  truncated: raw.truncated,
 })

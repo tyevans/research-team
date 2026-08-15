@@ -24,14 +24,35 @@ near-identical names, which puts every one of those four near-misses at
 So the honest claim, and the only one these tests make: three-feature scoring
 lifts the exact cross-document duplicate over `LOW_SIMILARITY` **on its own
 evidence**, which is what lets the `low=` override go. It does not improve
-discrimination -- under a real model the exact duplicate and
-`University of York`/`University of Cork` land 0.011 apart.
+discrimination.
+
+**Measured on 2026-08-14** against a real `nomic-embed-text`, which the
+paragraph above could only estimate. The "0.011 apart" figure this docstring
+used to give was wrong -- that pair is 0.31 apart -- but the claim it was
+supporting is right, and more strongly than the number suggested. Over ten
+same-entity and ten different-entity pairs there is **no threshold that
+separates them**: the weakest true pair scores below the strongest false one
+in every prefixing scheme tried (bare -0.235, `clustering:` -0.114,
+`search_document:`/`search_query:` -0.192). The embedding feature ranks; it
+does not gate. See BACKLOG B58 for the table and what follows from it.
 """
 
 from uuid import uuid4
 
 import pytest
-from redstring import FakeEmbeddingProvider, FakeLlmProvider, InMemoryVectorStore
+from redstring import (
+    FakeEmbeddingProvider,
+    FakeLlmProvider,
+    FeatureWeights,
+    InMemoryVectorStore,
+)
+from redstring.consolidation.policy import MergeDecision, decide
+from redstring.domain.similarity import (
+    CONTAINMENT_CEILING,
+    SimilarityFeatures,
+    combined_score,
+    string_similarity,
+)
 
 from research_team.application.knowledge import SourceRef
 from tests.infrastructure.test_redstring_adapter import (
@@ -151,6 +172,119 @@ async def test_auto_merge_stays_out_of_reach_so_every_duplicate_costs_a_call(
 
     matches = await adapter.search("Nova Scotia Duck Tolling Retriever")
     assert len(matches) == 2, "0.8 is in the adjudication band, not the auto-merge one"
+
+
+def _score(name: float, embedding: float | None, graph: float | None) -> float:
+    """Scored the way the adapter scores: redstring's own default weights."""
+    return combined_score(
+        SimilarityFeatures(name=name, embedding=embedding, graph=graph), FeatureWeights()
+    )
+
+
+def test_containment_does_not_fire_for_a_cross_document_pair():
+    """0.9.0's containment fix is real and unreachable, and that is the finding.
+
+    `string_similarity` gained token containment in 0.9.0, so `Dr. Grant`
+    against `Grant` scores `CONTAINMENT_CEILING` (0.85) rather than the 0.437
+    an edit distance gives it. It buys nothing here. A cross-document pair
+    carries `graph = 0.0` as a *present* feature, `combined_score` keeps a
+    present zero in its divisor, and the pair lands below `LOW_SIMILARITY`:
+
+        0.5(0.85) + 0.3(1.00) + 0.2(0.00)  =  0.7250  <  0.75
+
+    Rejected before the adjudicator is ever offered it, and **at any embedding
+    value whatever** -- clearing 0.75 would need an embedding of 1.083, which
+    is why the first assertion below uses a perfect 1.0: `combined_score` is
+    monotonic in the embedding, so rejecting at the ceiling rejects everywhere.
+
+    **The reweighting sweep is the assertion that matters**, because it is the
+    one that rules out the fix this repository actually attempted and withdrew
+    (6c2ae4a). No split of the remaining budget across name and embedding
+    rescues a pair whose third feature is a present zero -- swept below against
+    the *measured* 0.8516 embedding rather than the assumed 1.0, because
+    assuming that number is precisely how the withdrawn reweight came to look
+    like it worked. Prose here would be the same mistake in a different place.
+
+    B58 is the fix: with the graph feature *absent* rather than zero, the same
+    pair scores 0.8506 against a real `nomic-embed-text` and is adjudicated.
+    """
+    assert string_similarity("Dr. Grant", "Grant") == CONTAINMENT_CEILING
+
+    score = _score(name=CONTAINMENT_CEILING, embedding=1.0, graph=0.0)
+
+    assert score == pytest.approx(0.7250)
+    assert decide(score) is MergeDecision.REJECT
+
+    # Every reweighting of name against embedding, graph left at its default.
+    # Measured embedding, not the assumed one: 0.8516 from a real
+    # `nomic-embed-text` on 2026-08-14 (BACKLOG B58 carries the table).
+    for tenth in range(9):
+        name_weight = tenth / 10
+        weights = FeatureWeights(name=name_weight, embedding=0.8 - name_weight, graph=0.2)
+        swept = combined_score(
+            SimilarityFeatures(name=CONTAINMENT_CEILING, embedding=0.8516, graph=0.0),
+            weights,
+        )
+        assert decide(swept) is MergeDecision.REJECT, (
+            f"name={name_weight} scored {swept:.4f}; if this ever passes, the "
+            f"reweight withdrawn in 6c2ae4a would have worked after all"
+        )
+
+    # Absent rather than zero -- the whole of B58, in one line.
+    assert decide(_score(CONTAINMENT_CEILING, 1.0, None)) is MergeDecision.ADJUDICATE
+
+
+def test_zeroing_the_graph_weight_would_auto_merge_on_name_alone():
+    """Why no `weights=` override is passed, and why the obvious one is a trap.
+
+    `FeatureWeights(graph=0.0)` and `use_graph_signal=False` are the same
+    scoring change -- a zero weight is exactly equivalent to an absent feature,
+    per `combined_score`'s own docstring -- and neither can be scoped to the
+    cross-document case, because weights are fixed when the `Consolidator` is
+    constructed and `resolve` takes no override.
+
+    Dropping graph from the divisor leaves a weighted mean of two features both
+    near 1.0 for a duplicate, so it clears `HIGH_SIMILARITY` (0.92) for *any*
+    name/embedding split: the `#84` duplicate would merge with no model call.
+    Worse, with no embeddings configured it leaves name as the only feature,
+    renormalized to weight 1.0, so an exact name match auto-merges on one
+    feature -- which is a silent merge in the cheap configuration this project
+    still supports.
+
+    Executable so that "just zero the graph weight" is refused by the suite and
+    not only by a comment. It was proposed, and these are the numbers that
+    rejected it.
+    """
+    zeroed = FeatureWeights(name=0.6, embedding=0.4, graph=0.0)
+
+    duplicate = combined_score(SimilarityFeatures(name=1.0, embedding=1.0, graph=0.0), zeroed)
+    assert decide(duplicate) is MergeDecision.MERGE, "the adjudicator is bypassed"
+
+    name_only = combined_score(SimilarityFeatures(name=1.0, embedding=None, graph=0.0), zeroed)
+    assert decide(name_only) is MergeDecision.MERGE, "merged on a name and nothing else"
+
+    # redstring's defaults, which is what the adapter uses: both stay in hand.
+    assert decide(_score(1.0, 1.0, 0.0)) is MergeDecision.ADJUDICATE
+    assert decide(_score(1.0, None, 0.0)) is MergeDecision.REJECT
+
+
+def test_a_cross_document_pair_cannot_auto_merge_however_good_the_evidence():
+    """The cap that keeps every duplicate costing one adjudicator call.
+
+    A perfect name and a perfect embedding against `graph = 0.0` reach exactly
+    0.8000, below `HIGH_SIMILARITY` (0.92). This is the arithmetic behind the
+    claim `test_auto_merge_stays_out_of_reach_so_every_duplicate_costs_a_call`
+    asserts through an ingest; kept beside it because that test proves the
+    behaviour and this one says why, and the two fail for different reasons.
+
+    The same present zero that causes B58's recall problem is what provides
+    this safety, which is why B58 is a judgement call and not a pure win: with
+    the feature absent, `Retriever`/`Retrievers` auto-merges at 0.968.
+    """
+    assert _score(1.0, 1.0, 0.0) == pytest.approx(0.8000)
+    assert decide(_score(1.0, 1.0, 0.0)) is MergeDecision.ADJUDICATE
+
+    assert decide(_score(1.0, 1.0, 1.0)) is MergeDecision.MERGE
 
 
 class _DeadEmbeddings:

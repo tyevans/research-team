@@ -33,9 +33,19 @@ from research_team.domain import (
     TurnFailed,
     current_stage_of,
 )
+from research_team.domain.judgements import (
+    EntitiesHeldDistinct,
+    EntitiesHeldSame,
+    EntityKey,
+    HoldDistinct,
+    HoldSame,
+    JudgementWithdrawn,
+    WithdrawJudgement,
+)
 from research_team.domain.research_run import ResearchRunStarted
 from research_team.domain.topic import OpenTopic, TopicInvestigated
 from research_team.infrastructure.persistence.event_store import (
+    build_judgements_repository,
     build_project_repository,
     build_research_run_repository,
     build_topic_repository,
@@ -758,3 +768,71 @@ async def test_a_session_stored_as_codingsession_reads_as_no_session_at_all(
 
     with pytest.raises(AggregateNotFoundError):
         await repository.load(session_id)
+
+
+async def test_a_judgement_survives_the_round_trip_with_its_entity_keys_intact(store):
+    """The genuine risk for these three events, and why the case differs from
+    every other one in this file.
+
+    Every other test here writes a payload in an *old* shape, because every
+    other event grew a field after it was first written. `EntitiesHeldSame`,
+    `EntitiesHeldDistinct` and `JudgementWithdrawn` are new -- there is no
+    earlier shape to reproduce, so an "old payload" case here would be
+    fiction.
+
+    What is genuinely untested elsewhere is that `EntityKey`, a nested
+    pydantic model, survives serialisation to JSON and back as a *model*
+    rather than degrading to a plain dict. Nothing else in this log nests a
+    model inside an event payload, so this is the one place that risk lives.
+    Written through the aggregate and read back the ordinary way, not
+    constructed and compared in memory -- which would prove nothing about the
+    JSON round trip.
+    """
+    judgements_id = uuid4()
+    left = EntityKey.of("JFK", "person")
+    right = EntityKey.of("John F. Kennedy", "person")
+    other_left = EntityKey.of("Iran", "place")
+    other_right = EntityKey.of("Iraq", "place")
+    repository = build_judgements_repository(store)
+
+    aggregate = repository.create_new(judgements_id)
+    aggregate.execute(
+        HoldSame(judgements_id=judgements_id, keys=[left, right], reason="same president")
+    )
+    aggregate.execute(
+        HoldDistinct(
+            judgements_id=judgements_id,
+            left=other_left,
+            right=other_right,
+            reason="different countries",
+        )
+    )
+    await repository.save(aggregate)
+
+    aggregate = await repository.load(judgements_id)
+    held_id = next(
+        judgement_id
+        for judgement_id, record in aggregate.state.judgements.items()
+        if record.kind == "same"
+    )
+    aggregate.execute(WithdrawJudgement(judgement_id=held_id, reason="mistake"))
+    await repository.save(aggregate)
+
+    stream = StreamId(judgements_id, "EntityJudgements")
+    events = [envelope.event for envelope in await collect(store.read_stream(stream))]
+
+    same_event = events[0]
+    assert isinstance(same_event, EntitiesHeldSame)
+    assert same_event.keys == [left, right]
+    assert isinstance(same_event.keys[0], EntityKey)
+    assert same_event.keys[0].normalized_name == left.normalized_name
+
+    distinct_event = events[1]
+    assert isinstance(distinct_event, EntitiesHeldDistinct)
+    assert distinct_event.left == other_left
+    assert distinct_event.right == other_right
+    assert isinstance(distinct_event.left, EntityKey)
+
+    withdrawn_event = events[-1]
+    assert isinstance(withdrawn_event, JudgementWithdrawn)
+    assert withdrawn_event.judgement_id == held_id

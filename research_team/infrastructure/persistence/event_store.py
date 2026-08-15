@@ -19,7 +19,7 @@ from eventsource.application.aggregates.repository import AggregateRepository
 from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 
 from research_team.application import FeedEntry
-from research_team.domain import Corpus, Project, Session
+from research_team.domain import Corpus, EntityJudgements, Project, Session
 from research_team.domain.learner import LearnerProgress
 from research_team.domain.research_run import ResearchRun
 from research_team.domain.topic import Topic
@@ -60,6 +60,7 @@ UNROUTED_AGGREGATE_TYPES = frozenset(
     {
         ResearchRun.aggregate_type,
         LearnerProgress.aggregate_type,
+        EntityJudgements.aggregate_type,
     }
 )
 """Aggregate types deliberately kept off the feed, and the other half of the guard.
@@ -79,7 +80,15 @@ emits -- its own frames would be a second signal for the same repaint. See
 opening a lesson and written by the reader who is already looking at it, so a
 frame would arrive at the one client that does not need telling.
 
-Neither is a *correctness* argument, and if either grows a pane the answer is
+`EntityJudgements` is off because nothing renders a judgement. The events a
+human's decision produces are consumed by consolidation, not by a view, and
+what a viewer would actually want to see repaint is the *merge* that follows --
+which is redstring's own event on the graph's stream, already routed. This is
+the entry to revisit when the aliases panel lands (piece 3 of the entity-
+judgements design): a panel listing what you have taught the project is a view
+of these events, and then it belongs on the feed.
+
+None is a *correctness* argument, and if any grows a pane the answer is
 to move it into `FEED_AGGREGATE_TYPES` and give `_sse` a branch -- not to
 widen this set.
 """
@@ -181,6 +190,30 @@ def build_corpus_repository(
     return AggregateRepository(
         store,
         Corpus,
+        event_publisher=publisher,
+        snapshot_store=snapshot_store,
+        snapshot_threshold=SNAPSHOT_THRESHOLD,
+        snapshot_mode="background",
+    )
+
+
+def build_judgements_repository(
+    store: SQLiteEventStore,
+    publisher: InMemoryEventBus | None = None,
+    snapshot_store: SQLiteSnapshotStore | None = None,
+) -> AggregateRepository[EntityJudgements]:
+    """A project's entity judgements, over the same log as its corpus.
+
+    Shares the project's UUID and is kept apart by `aggregate_type`, exactly as
+    the corpus is, so nothing has to invent or store a third id.
+
+    Snapshots are on at the house threshold. Affordable because the state holds
+    only human-authored judgements -- a set that grows with decisions a person
+    made, not with documents ingested.
+    """
+    return AggregateRepository(
+        store,
+        EntityJudgements,
         event_publisher=publisher,
         snapshot_store=snapshot_store,
         snapshot_threshold=SNAPSHOT_THRESHOLD,

@@ -10,6 +10,7 @@ import type {
   Usage,
   WholeGraph,
 } from '@domain/knowledge/graph.ts'
+import type { Timeline } from '@domain/knowledge/timeline.ts'
 import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
@@ -330,6 +331,16 @@ export interface DefinitionsRepository {
    *  `Definition`'s own docstring -- so a caller does not need a catch
    *  block to tell an undefinable entity from a network failure. */
   definition(projectId: ProjectId, entityId: string): Promise<Definition>
+}
+
+export interface TimelineRepository {
+  /** The project's dated entities in time order, up to the server's cap.
+   *
+   * `undatedCount` on the result is not optional dressing -- most entities in
+   * a real graph carry no dates, so a timeline is a view of a minority of the
+   * corpus and the caller must show the denominator. `truncated` says the cap
+   * bit, the same way `WholeGraph.truncated` does. */
+  timeline(projectId: ProjectId, entityType?: string): Promise<Timeline>
 }
 
 export interface WorkerRepository {

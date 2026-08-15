@@ -340,7 +340,7 @@ class DefinitionService:
         # here, before paying for the call -- not a policy choice this repo
         # is free to loosen, an absence in data this repo does not own.
         # Edge-only grounding is filed rather than built; see `BACKLOG.md`
-        # B77 for what it would need and why the obvious wider fix falls
+        # B78 for what it would need and why the obvious wider fix falls
         # short.
         if not passages:
             return None

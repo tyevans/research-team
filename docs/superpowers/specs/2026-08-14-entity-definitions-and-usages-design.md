@@ -15,7 +15,7 @@ Grounded in edges is not the same as citable from them: an edge shapes what
 the model may say but has no span for a citation to point at, so an entity
 known only through its edges is refused before the model is asked rather
 than defined without a source. See `entity_definitions.py`'s module
-docstring and BACKLOG B77.
+docstring and BACKLOG B78.
 
 ## What was verified before designing this
 

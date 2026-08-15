@@ -143,6 +143,7 @@ from research_team.infrastructure.persistence import (
     SessionSummaryRunner,
     TopicRunner,
     build_corpus_repository,
+    build_judgements_repository,
     build_learner_progress_repository,
     build_research_run_repository,
     build_topic_repository,
@@ -1243,6 +1244,14 @@ def build_application(
             # wiring is the quiet one. See
             # `tests/integration/test_corpus_publishing.py`.
             corpus=build_corpus_repository(
+                repository.store,
+                repository.publisher,
+                snapshot_store=repository.snapshot_store,
+            ),
+            # Same three arguments as the corpus, including the publisher, for
+            # the reason the comment above gives: `event_publisher` is optional
+            # and defaults to None, so the wrong wiring is the silent one.
+            judgements=build_judgements_repository(
                 repository.store,
                 repository.publisher,
                 snapshot_store=repository.snapshot_store,
