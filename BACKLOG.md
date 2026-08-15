@@ -1235,7 +1235,9 @@ one view. `workspace.css:130-133` is the whole change if it is ever wanted.
 
 **And what was never swept at all: the session view below 700.** Only 821, 1000
 and 700 were rendered there. Unmeasured rather than measured and fine. The
-research view below 821 is unmeasured too and is [[B63]].
+research view below 821 was written here as unmeasured too — that was [[B63]],
+and its premise was wrong: there is no research view left to render. What was
+actually open, and is now measured, is in that entry.
 
 What survives this closure and is re-filed rather than dropped: [[B65]] — the
 wrapped row's 46vh cap is still inherited rather than derived, and the 1/1.5/1
@@ -1557,11 +1559,21 @@ correct code** — which is precisely the failure `CLAUDE.md` warns ends up file
 as flakiness, and it would fail in a direction load cannot explain. Anyone
 measuring this page after a resize needs `expect.poll`, not a bare read.
 
+**The shared resize helper does not discharge this, and the pointer is
+re-aimed rather than removed** ([[B64]], closed 2026-08-14).
+`src/test/browser-viewport.ts` waits for React and for the browser's own
+re-layout of the split — which is *exactly* the moment a `ResizeObserver` has
+not yet run, because an observer fires after the layout it observed. So
+`resizeViewport` returning is not permission to read inside the graph. The
+helper's docstring says so, and `project-tracks`' claim 1 keeps its own
+`expect.poll` on top of it; anyone deleting that poll as redundant would be
+reintroducing this.
+
 If it is ever picked up as a defect rather than an observation, the fix is on the
 observer side (size from the container's own measurement synchronously on the
 frame the layout changes), not on the test side.
 
-### B62. Which width wins on the drawer below 820 has never been measured
+### B62. Which width wins on the drawer below 820 — CLOSED, measured 2026-08-14
 
 **A question, not a defect, and the distinction is the entry.** `Drawer.tsx:164`
 sets the panel's width three ways in Tailwind utilities — `w-[42vw]
@@ -1595,39 +1607,111 @@ whichever rule is actually in force. It needs `npm run test:browser` — open a
 drawer at 800×900 and read `getBoundingClientRect().width` against the
 viewport — or an eye on a real page.
 
-### B63. The research view below 821 is unmeasured, and a change already reaches it
+---
 
-**Unmeasured, not measured-and-fine, and the distinction is the whole entry.**
+**Measured in Chromium on 2026-08-14, and the prediction held.** The document
+reader opened on the project page at 800x900:
 
-The 2026-08-14 narrow-band slice fixed the below-821 surface with one declaration
-— `flex: 0 0 auto` on `.lay-split`, inside `layout.css`'s
-`@media not all and (min-width: 821px)` block. **That is on the shared layout
-primitive**, not on a view, so it applies to every view that mounts a `Split`.
+```
+drawer left 0, right 800, width 800        (viewport 800)
+computed  width 800px, max-width none, min-width 0px
+```
 
-Two of the three were then measured there:
+The stylesheet wins. The drawer is full width below 820 and
+`Drawer.tsx:155-163`'s comment is correct as written.
 
-- **Project** — `project-stacked.browser.test.tsx`, the file that found the
-  defect. Surface 856/856 before, 1128/856 after.
-- **Session** — `session-responsive.browser.test.tsx` claim 3, at 700x900.
-  The session view **had the same defect**, red-proved by removing the
-  declaration (`expected 856 to be greater than 856`), and the fix cures it here
-  too: surface 1063/856, panes 126/215/683, nothing clipping.
+**The losing outcome is not hypothetical, and that is why this closes with a
+test rather than with a sentence.** Rename `.drawer` to anything else in
+`responsive.css`'s below-820 block and the same probe reports
 
-**The research view was not.** Nothing in the browser suite renders it below 821.
-The whole suite is green, which establishes only that nothing that *is* asserted
-broke. Whether the research view stacks into a scrolling page, whether its panes
-take their content's height under the 60vh cap, and whether anything clips
-horizontally are all open.
+```
+AssertionError: expected 360 to be 800
+```
 
-What it needs is small, because the shape is now written twice: a browser file
-mounting the research view inside a **real `Shell`** (not the bare 900px flex
-column the older sibling files use — that reproduces the pinned height by
-accident and leaves no `.lay-surface` to ask) with a wrapper at `height: 100vh`
-rather than a fixed pixel height, since a fixed height detaches the shell from
-the viewport `60vh` is measured against. Both fixtures are worth copying whole.
-Note [[B64]] before writing the resize helper.
+— `min-w-[360px]` beating `w-[42vw]`'s 336, a 360px strip pinned to the right of
+an 800px screen. B62's second outcome, reproduced on demand. So the correct
+behaviour rests entirely on one unlayered rule keeping its selector, and nothing
+above the stylesheet says so.
 
-### B64. Three browser files, three resize helpers, three versions of the same bug
+**What is left behind:** `project-narrow-research.browser.test.tsx` claim 1,
+which asserts the box *and* the three computed longhands — moving `.drawer`
+into a `@layer`, deleting it, or adding a `!` to the utilities each turns one
+line red with the real number. It would pass against unfixed code, because there
+was nothing to fix; it is a regression guard, not a proof, and its docstring
+says so.
+
+**One thing this did not measure**, said rather than left implied: the boundary
+itself. 800 is inside the media query, not on its edge, so `max-width: 820px`
+being the right number for this rule is still unmeasured — a different question
+from which rule wins inside it.
+
+### B63. Research content below 821 — CLOSED, on a corrected premise, 2026-08-14
+
+**This entry was filed on a fact that was not true, and the correction is kept
+rather than the entry deleted, because a wrong premise that got corrected tells
+the next reader more than a missing entry does.**
+
+**What it said.** That the 2026-08-14 narrow-band slice fixed the below-821
+surface with one declaration on the shared primitive — `flex: 0 0 auto` on
+`.lay-split`, inside `layout.css`'s `@media not all and (min-width: 821px)`
+block — that this therefore reaches **three** views mounting a `Split`, and that
+two of the three were measured:
+
+- **Project** — `project-stacked.browser.test.tsx`. Surface 856/856 before,
+  1128/856 after.
+- **Session** — `session-responsive.browser.test.tsx` claim 3 at 700x900. Same
+  defect, red-proved by removing the declaration
+  (`expected 856 to be greater than 856`); after, surface 1063/856, panes
+  126/215/683.
+
+**— and that the research view was the unmeasured third.**
+
+**The correction.** There is no third view. Grepped on 2026-08-14 and verified
+again while closing this: `<Split` appears in exactly **two** view files,
+`ProjectView.tsx:277` and `SessionView.tsx:122`. Every other match is the
+primitive's own definition, a story, or a unit test. The route merge folded
+research into the project view's MATERIAL pane, where it is two tabs — `doc`
+(`DocumentList`) and `entity` (`GraphPane`) — inside the split
+`project-stacked` already measures. The entry outlived the change that made it
+false, which is the ordinary way this happens: it was written against a
+repository that had a research view, and the merge did not come back for it.
+
+**What was genuinely open, once the premise was fixed**, and it is narrower than
+what the entry claimed but not nothing. `project-stacked` measures this band
+with `selection={null}`, which leaves MATERIAL on the `artifact` tab — a plain
+`overflow-auto` panel. The `doc` tab is not that: `DocumentList` renders a
+**virtualizer**, which owns a scroll container of its own, and
+`ProjectView.tsx:499` deliberately gives that panel no `overflow-auto` for
+exactly that reason. An inner scroller that swallows the height it is offered is
+the same shape as the defect the below-821 rule was written for, one level
+further in — and nothing had looked.
+
+**Measured at 700x900 on 2026-08-14: it does not happen.** With the corpus in
+MATERIAL, surface **1558/856**, split 1558.36, panes **578.5 / 401.4 / 578.5**,
+all full width in one column, nothing clipping.
+
+**The number that moved, and why it is not a discrepancy.** The sibling records
+1128/856 with panes 578.5 / 401.4 / **148.0**. QUEUE and HOLDER are identical to
+the pixel; MATERIAL is 578.5 instead of 148, because the corpus takes its
+content's height where the empty artifact list took its head's, and that 430px
+*is* the whole 1558-vs-1128 gap. The behaviour is the same; the number is the
+fixture's. A claim asserting 1128 here would have been asserting the sibling's
+fixture rather than this one's.
+
+**What is left behind:** `project-narrow-research.browser.test.tsx` claim 2,
+proved red under the same `layout.css` mutation the sibling records, with a
+byte-identical failure (`expected 856 to be greater than 856`) — which is the
+point of keeping it beside a file that looks like its duplicate: it pins that
+research content is not a separate surface with a separate answer.
+
+**Still open, and deliberately not folded in here** — the `entity` tab. The
+graph is the other half of what "research content" means, it is `React.lazy`
+over a canvas, and `GraphCanvas` sizes from a `ResizeObserver` that fires after
+the layout it observed ([[B61]]). That makes it a slower and differently-shaped
+measurement than the corpus, and it belongs to whoever picks up B61 rather than
+being smuggled into this closure.
+
+### B64. Three resize helpers, three versions of one bug — DONE 2026-08-14
 
 **The finding is the repetition, not any one instance.** Every browser test file
 that changes viewport width has written its own resize helper, and each has
@@ -1672,6 +1756,65 @@ the session view, so the poll has to read
 `getComputedStyle(...).getPropertyValue('grid-template-columns')`. Task B hit
 that and spelled around it rather than loosening the rule; a shared helper should
 be written that way from the start.
+
+---
+
+**Done.** `frontend/src/test/browser-viewport.ts` — `resizeViewport`,
+`restoreViewport`, `DEFAULT_VIEWPORT`. All four local helpers are deleted and
+all five callers migrated; `grep -rn 'page.viewport' frontend/src` returns the
+module and two prose mentions. **No file keeps a private resize helper.** No
+assertion was edited and no number moved: `Test Files 25 passed / Tests 82
+passed`. The `check-deleted.mjs` rule was not loosened — the module reads
+`getPropertyValue('grid-template-columns')` throughout.
+
+**Four polls, and what each is decisive for.** Two React-written signals
+(`Split`'s inline template, present iff `width >= 1181`; `data-collapse-to`,
+`'strip'` iff `width < 821`), each *constant across the other's boundary* —
+which is precisely the hole in failed readings 1 and 2. Then the split's own box
+width, the only signal that moves for a resize **inside** a band. Then the
+resolved tracks fitting `clientWidth`, which is what refuses a stale template on
+a correctly-sized box.
+
+**Red-proved, with numbers.** A probe resized 1440 → 821 and polled a single
+signal at `{ interval: 1 }`. Attribute-only and geometry-only both returned with
+the page reading `grid-template-columns: 344px 342px 352px` — three tracks
+summing 1038 — and a MATERIAL pane **1038px wide inside an 821px viewport**.
+Failed reading 2, reproduced. The full poll set returns at `344px 476.984px`,
+MATERIAL 821.
+
+**The honest caveat, because it changes what this was worth.** The stale window
+is **one animation frame**. Run without `{ interval: 1 }`, both single-poll
+mutants read the correct numbers every time — `expect.poll`'s 50ms default lands
+after the frame. So a single poll is not *reliably* wrong today; it is
+unguarded, and what stands between it and the 1038 reading is scheduling. Both
+recorded historical failures were found by a person noticing a number, not by a
+test going red, which is what an unguarded window looks like from outside. A
+reader who tries to reproduce this and cannot should not conclude the helper is
+pointless.
+
+**What it cost, paid deliberately.** Poll 4 is the one poll a *broken*
+stylesheet can make permanently unsatisfiable rather than merely slow: an
+overflowing template never fits, so the helper times out and the caller's own
+assertion never runs. Measured — `session-responsive` claim 2's recorded
+`minmax(600px, 1fr)` mutation, whose proof used to read
+`expected 300 to be greater than or equal to 320`, became
+`expected 'pending' not to be 'pending'`. The claim still failed; the diagnosis
+did not survive. Fixed by making the give-up value carry the measurement:
+
+```
+Received: "at 821px the tracks overflow the split: "600px 300px" = 900px in a clientWidth of 821px"
+```
+
+Poll 4 was kept — refusing failed reading 2 is its whole job — and the timeout
+itself is still there. A file whose stylesheet overflows waits it out and fails
+at the helper rather than at its own line. Only the message improved.
+
+**The fixture question the entry called "not cheap" was measured, not
+performed**, and is [[B67]].
+
+**What this does not discharge:** [[B61]]. `resizeViewport` returns exactly when
+a `ResizeObserver` has not yet run, so anything measuring inside the graph still
+needs its own `expect.poll`.
 
 ### B65. What survives B57: the 46vh cap is inherited, and the weights are reasoned
 
@@ -1740,6 +1883,62 @@ is a description of the guard's coverage, not a request to change it: the
 existing rules forbid names specific enough that a re-add is always the mistake,
 and a rule anchored on a name this generic would make a legitimate future use a
 build failure.
+
+### B67. Two browser files measure a fixture's accident, and one number says so
+
+**Filed off a measurement rather than a suspicion**, taken while closing
+[[B64]] on 2026-08-14. Two of the five browser files that resize —
+`project-responsive` and `project-tracks` — wrap `ProjectView` in a **bare 900px
+flex column**. The other three mount a real `Shell` inside `height: 100vh`. The
+plan for that slice ruled the `Shell` fixture correct and the bare column not,
+but also ruled that **migrating a fixture changes what a test measures**, so the
+migration was measured and deliberately not performed.
+
+**What the measurement found: every *width* is byte-identical between the two
+fixtures**, at 1440, 1181, 1180, 1000 and 821, in both collapse states.
+
+| width | tracks | queue | holder | material |
+| --- | --- | --- | --- | --- |
+| 1440 | `411.422px 617.141px 411.422px` | 411.42 | 617.14 | 411.42 |
+| 1181 | `344px 485px 352px` | 344 | 485 | 352 |
+| 1180 | `491.656px 688.344px` | 491.66 | 688.34 | 1180 |
+| 1000 | `416.656px 583.344px` | 416.66 | 583.34 | 1000 |
+| 821 | `344px 476.984px` | 344 | 476.98 | 820.98 |
+
+`tabs.scrollWidth` inside MATERIAL matches too. **Only heights and tops move,
+and by exactly the chrome's 44px** — pane `top` 0 against 44, pane height 900
+against 856 above 1180 and 750.97 against 706.97 below it.
+
+**So `project-tracks` migrates for free**: every claim in it is a width or a
+`scrollWidth`.
+
+**`project-responsive` does not, and this is the entry.** Its claim 2 computes
+
+```ts
+const topRow = 900 - 0.46 * 900   // 486
+expect(box('queue').height).toBeGreaterThanOrEqual(topRow)
+```
+
+That `900` is the **viewport** height standing in for the **pane column's**
+height, and the two are equal only because the bare wrapper is itself 900px
+tall. Under a `Shell` the column is 856, so the honest floor is
+`856 - 0.46 * 856 = 462.24`. The measured height is 706.97, which clears both —
+**so migrating the fixture without rederiving that constant leaves a floor 44px
+too high, passing for the wrong reason, with nothing failing.** That is the
+plan's "a number that moves is a finding, not an edit", except that this number
+does not move: it goes on being asserted while its derivation stops being true.
+
+(MATERIAL's cap is `46vh`, which is the viewport either way, so `0.46 * 900` is
+correct *there* and would stay correct. The two uses of the same arithmetic
+differ, which is most of why this is easy to get wrong.)
+
+Claims 1, 3, 5 and 6 of that file assert relative geometry or widths only and
+are unaffected.
+
+**The follow-up, whole:** move `project-responsive` and `project-tracks` onto
+the `Shell`/`100vh` fixture, rederive claim 2's `topRow` from the split's own
+height rather than from a literal 900, and re-prove claim 2 red. Small, and
+worth doing before anyone reads 486 as a measured floor.
 
 ## The ask page
 
