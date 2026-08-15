@@ -49,6 +49,7 @@ from research_team.application.graph_read import (
 )
 from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.application.project_graphs import ProjectGraphs
+from research_team.application.timeline_read import MAX_TIMELINE_BANDS, TimelineReadPort
 from research_team.application.topic_dispatch import (
     DISPATCH_ACTIONS,
     TopicDispatcher,
@@ -67,6 +68,7 @@ from research_team.domain.topic import (
     TopicStatus,
 )
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
+from research_team.infrastructure.knowledge.timeline_reader import ProjectTimelineReader
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.event_store import KNOWLEDGE_CATEGORIES
@@ -100,6 +102,7 @@ from research_team.interfaces.web.presenters import (
     source_view,
     stage_view,
     summary_view,
+    timeline_view,
     topic_change,
     topic_detail_view,
     topic_documents_view,
@@ -1297,6 +1300,45 @@ def create_app(
                 status_code=404, detail=f"no such entity in project {project_id}"
             )
         return neighborhood_view(hood)
+
+    async def _timeline_reader(project_id: UUID) -> TimelineReadPort:
+        """This project's `TimelineReadPort`, over the store `graphs` owns.
+
+        503 rather than 404 when `graphs` was not wired, matching
+        `_graph_reader`: a build with no graph read model is a valid thing to
+        serve, and the caller needs to know the server cannot answer rather
+        than that the project has no timeline.
+
+        Opens through `graphs` rather than holding its own store, so the
+        timeline and the graph read the *same* store rather than two folds of
+        one log that could drift apart between tabs.
+        """
+        if graphs is None:
+            raise HTTPException(status_code=503, detail="no graph read model is configured")
+        store = await graphs.open(project_id)
+        return ProjectTimelineReader(project_id=project_id, store=store)
+
+    @app.get("/api/projects/{project_id}/timeline")
+    async def read_timeline(
+        project_id: UUID,
+        entity_type: str | None = None,
+        limit: int = MAX_TIMELINE_BANDS,
+    ):
+        """This project's dated entities, ordered, for drawing on an axis.
+
+        Project-level rather than under `/graph/` because it is not a graph
+        shape: nothing in the response has a source, a target or an edge type,
+        and nesting it there would suggest a client could ask for one and be
+        given the other.
+
+        `limit` is clamped by the port rather than refused here, the same call
+        `read_graph` makes and for the same reason -- "as much as possible" is
+        precisely what the clamp returns, and `truncated` in the body already
+        says it did not all fit.
+        """
+        await _require_project(project_id)
+        reader = await _timeline_reader(project_id)
+        return timeline_view(await reader.timeline(entity_type=entity_type, limit=limit))
 
     @app.post("/api/sessions/{session_id}/release")
     async def release_session(session_id: UUID):
