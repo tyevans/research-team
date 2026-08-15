@@ -1909,8 +1909,18 @@ async def test_an_unknown_project_is_a_404_on_both_routes(client):
     assert reading.status_code == 404
 
 
-async def test_a_dropped_source_is_gone_from_both_routes(app_and_client):
-    """Dropped means unreadable. The row survives for the audit, not for callers."""
+async def test_a_dropped_source_leaves_the_default_listing_but_stays_readable(
+    app_and_client,
+):
+    """Dropped means excluded from the default listing, not unreadable.
+
+    This test used to assert 404 on the read as well, under the name
+    `..._is_gone_from_both_routes`. That was right while nothing could drop a
+    document from the console; now the console lists dropped rows, opens them,
+    and offers Restore, so the read route is where someone looks at the text
+    they are deciding about. The listing default is unchanged -- it is what the
+    agent's own tool sees -- and only the read route opted in.
+    """
     application, client = app_and_client
     project_id = await _project_with_sources(
         application,
@@ -1923,7 +1933,8 @@ async def test_a_dropped_source_is_gone_from_both_routes(app_and_client):
     reading = await client.get(f"/api/projects/{project_id}/sources/s1")
 
     assert listing.json() == []
-    assert reading.status_code == 404
+    assert reading.status_code == 200
+    assert reading.json()["dropped_reason"] == "superseded by the 1843 notes"
 
 
 async def test_dropped_sources_can_be_listed_with_their_reason(app_and_client):

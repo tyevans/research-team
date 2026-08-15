@@ -12,7 +12,7 @@ import { ProjectId } from '@domain/shared/identifier.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { StreamProvider } from '../shell/StreamProvider.tsx'
-import { DocumentUpload } from './DocumentUpload.tsx'
+import { DocumentUpload, slugify } from './DocumentUpload.tsx'
 
 const project = ProjectId('11111111-1111-1111-1111-111111111111')
 
@@ -142,4 +142,34 @@ it('refuses an empty id before it calls the server', async () => {
   await user.click(screen.getByRole('button', { name: 'Add document' }))
 
   expect(create).not.toHaveBeenCalled()
+})
+
+it('refuses empty text before it calls the server', async () => {
+  // Red before the guard: the server caps length and sets no minimum, so a
+  // blank text area was stored and listed at `char_count: 0`.
+  const user = userEvent.setup()
+  render(<DocumentUpload projectId={project} onClose={vi.fn()} />, { wrapper })
+
+  await user.type(screen.getByLabelText('Title'), 'Hello')
+  await user.click(screen.getByRole('button', { name: 'Add document' }))
+
+  expect(create).not.toHaveBeenCalled()
+})
+
+// Directly rather than only through the form: `slugify` produces the
+// identifier a reader overtypes, the identifier is the citation key, and a
+// bad default orphans citations silently. The form test above only ever sees
+// it applied to one well-behaved title.
+it.each([
+  ['Hello', 'hello'],
+  ['Two Words', 'two-words'],
+  // Punctuation is not stripped, it is a separator: every run of
+  // non-alphanumerics collapses to a single `-`, and leading/trailing ones
+  // are trimmed off rather than left as an edge dash.
+  ["Gödel's Proof", 'g-del-s-proof'],
+  ['  spaced  out  ', 'spaced-out'],
+  ['--already--', 'already'],
+  ['???', ''],
+])('slugifies %j to %j', (input, expected) => {
+  expect(slugify(input)).toBe(expected)
 })

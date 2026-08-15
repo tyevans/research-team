@@ -111,10 +111,11 @@ class CorpusReadPort(Protocol):
         the two apart, which matters because only one of them is a bug.
 
         `include_dropped` defaults to False for the same reason `list_documents`
-        does: the agent's `read_source` tool and the web read route should keep
-        seeing exactly the live corpus they always have. It exists at all for
-        `CorpusEditor.restore`, which reads a dropped document's own text back
-        in order to re-store it unchanged -- the one caller whose job is to
-        un-exclude what this method otherwise hides.
+        does: the agent's `read_source` tool should keep seeing exactly the live
+        corpus it always has. The callers that opt in are the ones whose job is
+        to act on an excluded document -- `CorpusEditor.restore` and `revise`,
+        which read a dropped document's own text back in order to re-store it,
+        and the console's read route, which shows the text of the document
+        someone is deciding whether to restore.
         """
         ...

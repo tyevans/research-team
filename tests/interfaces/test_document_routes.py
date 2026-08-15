@@ -196,14 +196,49 @@ async def test_restore_refuses_a_document_that_is_not_dropped(app_and_client):
     assert response.status_code == 409
 
 
-async def test_the_routes_answer_503_with_no_corpus_configured(app_without_corpus):
-    """`_reader` already answers this for the read routes; the write routes
-    have to make the same check rather than failing further in."""
-    client, project = app_without_corpus
+async def test_a_dropped_document_can_still_be_read(app_and_client):
+    """The console lists dropped rows and lets you open one.
 
-    response = await client.post(
+    Red before `read_source` passed `include_dropped=True`: the GET answered
+    404 and the drawer someone had just dropped from rendered an error box,
+    with the Restore button above text it could no longer show.
+    """
+    _app, client = app_and_client
+    project = await _new_project(client)
+    await client.post(
         f"/api/projects/{project}/sources", json={"source_id": "s1", "text": "hello"}
     )
+    await client.post(f"/api/projects/{project}/sources/s1/drop", json={"reason": "off topic"})
+
+    response = await client.get(f"/api/projects/{project}/sources/s1")
+
+    assert response.status_code == 200
+    assert response.json()["text"] == "hello"
+    assert response.json()["dropped_reason"] == "off topic"
+
+
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        ("post", "/sources", {"source_id": "s1", "text": "hello"}),
+        ("patch", "/sources/s1", {"title": "x"}),
+        ("post", "/sources/s1/drop", {"reason": "off topic"}),
+        ("post", "/sources/s1/restore", {}),
+    ],
+)
+async def test_the_routes_answer_503_with_no_corpus_configured(
+    app_without_corpus, method, path, body
+):
+    """`_reader` already answers this for the read routes; the write routes
+    have to make the same check rather than failing further in.
+
+    All four rather than the create alone: they share one `_editor()`, so the
+    risk of a divergence is low, but a route added later that forgets the call
+    is exactly what a test named for "the routes" should catch.
+    """
+    client, project = app_without_corpus
+
+    response = await getattr(client, method)(f"/api/projects/{project}{path}", json=body)
 
     assert response.status_code == 503
 

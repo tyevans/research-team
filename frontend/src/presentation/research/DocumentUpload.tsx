@@ -99,6 +99,15 @@ export const DocumentUpload = ({
       notify('Identifier is required', 'bad')
       return
     }
+    if (!text.trim()) {
+      // The server has a length cap and no minimum, and `decide` has no
+      // opinion, so an empty text area is stored, indexed and listed at
+      // `char_count: 0` -- a document that exists and says nothing. Refused
+      // the same way as the identifier because it is the same kind of
+      // mistake: a form submitted before it was filled in.
+      notify('Text is required', 'bad')
+      return
+    }
 
     const draft: DocumentDraft = { sourceId: trimmedId, text }
     if (uri.trim()) draft.uri = uri.trim()

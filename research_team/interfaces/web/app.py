@@ -1047,10 +1047,18 @@ def create_app(
         ordinary case -- it is how you page through one -- so answering with
         the last characters and honest offsets is more useful than a 422 that
         makes the caller compute the bound it was asking the server for.
+
+        `include_dropped=True`, unlike `list_sources` above: the console lists
+        dropped rows and lets you open one, and the reader is where someone
+        decides whether to restore it -- refusing to show the text of the
+        document being judged is refusing at exactly the wrong moment. The
+        agent's own `read_source` tool goes through `ProjectCorpusReader` on a
+        different path and keeps the default, so its view of the corpus is
+        unchanged.
         """
         reader = _reader(project_id)
         await _require_project(project_id)
-        document = await reader.read_document(source_id)
+        document = await reader.read_document(source_id, include_dropped=True)
         if document is None:
             raise HTTPException(
                 status_code=404, detail=f"no source {source_id!r} in project {project_id}"

@@ -2651,10 +2651,19 @@ widen the invalidation to the whole key prefix before relying on ranges.
 
 ### B83. Route declaration order is protected by convention, not by a gate
 
-`app.py` documents that FastAPI matches routes in declaration order, and the
-corpus write routes' literal tails (`/drop`, `/restore`) are declared above
-`/sources/{source_id}` so they are not swallowed by its dynamic segment — but
-nothing tests this, and no gate would fail if a future edit moved either
-route below the dynamic one. Getting it wrong answers a 404 that reads like a
-missing route rather than a matching-order bug, which is a specific enough
-failure shape to be worth a regression test rather than trusting the comment.
+`app.py` documents that FastAPI matches routes in declaration order, and
+several literal paths under `/sources` are declared above a dynamic one so
+they are not swallowed by its parameter — but nothing tests this, and no gate
+would fail if a future edit moved one below. Getting it wrong answers a 404 or
+a 422 that reads like a missing route rather than a matching-order bug, which
+is a specific enough failure shape to be worth a regression test rather than
+trusting the comment.
+
+This entry used to name `/drop` and `/restore` as the routes at risk. They are
+not: both are four-segment `POST`s, and the dynamic route is the three-segment
+`GET /sources/{source_id}`, so the path never matches and declaration order is
+irrelevant to them. Checked against the route table on 2026-08-15. The live
+pair is `GET /sources/extraction-queue` above `GET /sources/{source_id}` —
+same method, same segment count — where a reordering really would parse
+`extraction-queue` as a source id and 404. The general constraint is still
+real for the file, which is why the entry stands.
