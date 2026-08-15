@@ -81,8 +81,17 @@ def blob_root() -> Path:
     reading it into memory to slice it; a file supports `seek`. The cost is
     that a backup now has two things to copy, which is written on the
     `/rebuild` page rather than being left for someone to discover.
+
+    `AGENT_BLOB_ROOT` overrides it for the reason `AGENT_DB` overrides the
+    database path, and it became load-bearing the moment a route could write
+    here: `tests/conftest.py`'s `isolate_database` points both at `tmp_path`,
+    and without this half every media upload in the suite would deposit real
+    bytes in the developer's own `~/.research-team/blobs` and never remove
+    them. Nothing in the suite would fail -- that is what makes it worth an
+    environment variable rather than a note.
     """
-    path = Path.home() / ".research-team" / "blobs"
+    configured = os.getenv("AGENT_BLOB_ROOT")
+    path = Path(configured) if configured else Path.home() / ".research-team" / "blobs"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
