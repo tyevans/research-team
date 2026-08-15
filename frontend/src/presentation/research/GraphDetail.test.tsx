@@ -178,6 +178,41 @@ it('shows the definition above the passages', async () => {
   ).toBeTruthy()
 })
 
+it("renders the definition's citations, linked to the source document", async () => {
+  const sourceId = '33333333-3333-3333-3333-333333333333'
+  renderDetail(
+    <GraphDetail
+      projectId={PROJECT}
+      view={VIEW}
+      selected="ada"
+      onSelect={noop}
+      onRemove={noop}
+      onClose={noop}
+    />,
+    {
+      definitions: fakeDefinitions({
+        definition: vi.fn().mockResolvedValue(
+          aDefinition({
+            citations: [{ sourceId, start: 5, end: 40 }],
+          }),
+        ),
+      }),
+    },
+  )
+
+  await screen.findByText(/Acme Corporation is a supplier/)
+  // The backend refuses to store a definition citing nothing -- a definition
+  // whose citations never reach the screen is indistinguishable from an
+  // unsourced gloss, which is the exact failure this feature exists to
+  // prevent. `getByText` alone would pass for a citation rendered with a
+  // wrong or missing href, so this pins the link too.
+  const citationLink = screen.getByText(sourceId.slice(0, 8))
+  expect(citationLink.closest('a')).toHaveAttribute(
+    'href',
+    projectHref(PROJECT, { facet: 'doc', id: sourceId }),
+  )
+})
+
 it('keeps old text visible and shows an updating indication for a stale definition', async () => {
   renderDetail(
     <GraphDetail

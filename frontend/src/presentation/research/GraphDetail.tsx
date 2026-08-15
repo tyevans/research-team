@@ -179,6 +179,32 @@ export const GraphDetail = ({
                 Updating — this definition may be out of date while a newer one generates.
               </p>
             ) : null}
+            {/* Rendered, not just carried on the object: the backend refuses
+                to store a definition that cites nothing (see
+                `entity_definitions.py`), on the premise that an ungrounded
+                definition is indistinguishable from a correct one at a
+                glance. Leaving the citations off this panel would throw that
+                guarantee away at the last step -- a reader would see prose
+                that reads as fact with no way to tell it was checked. Same
+                link pattern as the mentions list below (`doc` facet,
+                `shortId`), so the two halves of the panel cite the same
+                way; same known gap, too -- `Selection`'s `PlainFacet` arm
+                has no `start`/`end` to carry, so this opens the document
+                rather than the exact cited span. */}
+            {definitionQuery.data.citations.length > 0 ? (
+              <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
+                {definitionQuery.data.citations.map((citation) => (
+                  <li key={`${citation.sourceId}|${citation.start}|${citation.end}`}>
+                    <a
+                      className="font-mono text-xs text-fg-dim no-underline hover:underline"
+                      href={projectHref(projectId, { facet: 'doc', id: citation.sourceId })}
+                    >
+                      {shortId(citation.sourceId)}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
         )}
       </section>
