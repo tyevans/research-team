@@ -28,6 +28,7 @@ from research_team.application.course import (
     ProvenanceSummary,
     StageProgress,
 )
+from research_team.application.entity_definitions import Definition
 from research_team.application.findings import Finding
 from research_team.application.graph_read import (
     EntityPage,
@@ -39,6 +40,7 @@ from research_team.application.graph_read import (
 from research_team.application.research_supervisor import ActiveRun
 from research_team.application.timeline_read import Timeline, TimelineBand
 from research_team.application.topic_read import TopicDetail, TopicView
+from research_team.application.usages import Usage
 from research_team.domain import (
     AutonomyChanged,
     ConversationCompacted,
@@ -817,6 +819,57 @@ def neighborhood_view(neighborhood: Neighborhood) -> dict[str, Any]:
         "relationships": [
             relationship_view(relationship) for relationship in neighborhood.relationships
         ],
+    }
+
+
+def usages_view(usages: list[Usage]) -> dict[str, Any]:
+    """`GET .../usages`, best matches first -- already the order `UsageReader`
+    returns, so there is nothing to re-sort here.
+    """
+    return {
+        "usages": [
+            {
+                "source_id": usage.source_id,
+                "start": usage.start,
+                "end": usage.end,
+                "text": usage.text,
+                "score": usage.score,
+            }
+            for usage in usages
+        ]
+    }
+
+
+def definition_view(definition: Definition | None) -> dict[str, Any]:
+    """`GET .../definition`.
+
+    `definition is None` renders as `text: None` with no citations, rather
+    than the route raising a 404 -- see `read_graph_definition`'s docstring
+    for why an undefinable entity is not a missing one. `model` and
+    `generated_at` are `None` too in that case: there is no generation to
+    report on, and a placeholder value here would read as though one had run.
+    """
+    if definition is None:
+        return {
+            "text": None,
+            "citations": [],
+            "model": None,
+            "generated_at": None,
+            "stale": False,
+        }
+    return {
+        "text": definition.text,
+        "citations": [
+            {
+                "source_id": citation.source_id,
+                "start": citation.start,
+                "end": citation.end,
+            }
+            for citation in definition.citations
+        ],
+        "model": definition.model,
+        "generated_at": definition.generated_at,
+        "stale": definition.stale,
     }
 
 

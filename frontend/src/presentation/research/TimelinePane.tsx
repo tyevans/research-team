@@ -231,6 +231,11 @@ export const TimelineBrowser = ({
       </div>
       {detail !== null && selected !== null ? (
         <GraphDetail
+          // Required since the panel gained its mentions and definition
+          // sections: both are per-project queries, and the timeline reaches
+          // the same panel the graph does, so it has to supply the same
+          // context. Already in scope for `showInGraphHref` below.
+          projectId={projectId}
           view={expand(emptyGraph, detail)}
           selected={selected}
           onSelect={onSelect}

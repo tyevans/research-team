@@ -1153,6 +1153,237 @@ guessing at which half to fix. **Not measured against a real corpus** -- the
 figure to get first is the wall time of each pass on the largest project
 available, because if the `find_entities` pass is the cheap one there is
 nothing here worth doing.
+## Entity definitions and usages
+
+Deferred during the 2026-08-14 entity-definitions-and-usages build
+(`docs/superpowers/specs/2026-08-14-entity-definitions-and-usages-design.md`).
+The controller's ledger for that build,
+`.superpowers/sdd/2026-08-14-entity-definitions-and-usages/progress.md`, has
+the full context for anything below that reads thin.
+
+### B69. The semantic retrieval channel is off; usages are BM25-only
+
+`UsageReader`'s lexical path (`lexical_candidates`) is wired and tested;
+the semantic one is not called at all, even though `ChunkRetriever` — the
+redstring class that would combine BM25 with vector similarity — already
+exists and is imported nowhere in this feature's code.
+
+Turning it on is not a flag flip. Two things are missing, and both are real
+work: an **embedding backfill**, because `ChunkRetriever` scores against
+vectors that do not exist yet — every chunk already stored under
+`AGENT_CHUNK_STORE=memory` was written with no embedding, since chunking and
+embedding are separate pipelines here (chunks come from `DocumentChunked`,
+vectors come from the consolidation path gated by `AGENT_VECTOR_STORE`) — and
+a **dimension-checked `EmbeddingProvider`**, because `ChunkRetriever`'s
+constructor takes one and asserts its output width against the store's, the
+same check `ensure_schema` does for pgvector. Neither exists in this feature's
+composition wiring; `build_chunk_store` (`infrastructure/knowledge/stores.py`)
+builds a store with no embedding path attached.
+
+Until this lands, "usages" means "BM25 hits", which is honestly labelled
+lexical-only in `UsageReadPort`'s docstring but not visible anywhere in the
+UI — a reader has no way to know a usage panel that returns nothing might be
+missing a semantically-related passage that shares no vocabulary with the
+entity's name.
+
+### B70. `MergeUndone` is deliberately unsubscribed by definition invalidation
+
+`EntityDefinitionRunner`'s projection handles `DocumentExtracted` (mark stale)
+and `EntitiesMerged` (mark the canonical entity stale, delete the absorbed
+ones' rows), and does not handle `MergeUndone` at all — silently applied, not
+rejected, per the replay finding now in `CLAUDE.md`.
+
+**The argument for why this is safe today, not just unexamined:** an absorbed
+entity's definition row was deleted at merge time, so after undo that entity
+has no cached row and the next click regenerates one from scratch — correct,
+if slower than a cache hit would be. The canonical entity's row is left
+`stale=True` from the original merge and was never un-staled by the undo, so
+the next click there also regenerates. In both cases the reader gets a fresh
+definition rather than a wrong one; the cost is an avoidable regeneration, not
+an incorrect answer.
+
+**The condition that changes this:** if `unmerge` starts being used commonly
+rather than as an escape hatch, the avoidable-regeneration cost stops being
+free — every undo pays a full definition-generation call it didn't need to,
+for an entity whose grounding didn't actually change. At that point
+`MergeUndone` should restore the canonical entity's pre-merge cache entry
+(if `EntityDefinitionStore` starts keeping one) or at least clear `stale`
+when the merge that set it is the one being undone.
+
+### B71. Chunk-level provenance is not recoverable from a stored definition
+
+A `Citation` is `(source_id, start, end)` — a document and a byte range,
+deliberately not a `ChunkId`. This matches how `Usage` already cites (it
+carries the same triple), and it is enough to render a citation link (see
+B72) and to re-derive the cited text by slicing the document.
+
+What it does not answer is "which retrieval chunk did this claim actually
+come from" — useful for debugging a definition that cites a passage but
+seems to have synthesized something not in it, since the model only ever
+saw the chunk text, not the raw document. `(source_id, start, end)` cannot
+be mapped back to a chunk after the fact, because chunk boundaries are a
+retrieval-time decision (`AGENT_EXTRACTION_CHUNK_SIZE` and neighbours) and
+are not stored anywhere keyed by offset.
+
+If this is ever wanted, store the `ChunkId` **alongside** the offsets in
+`Citation`, not instead of them — the offsets are what render a citation
+link and slice the document; the chunk id would only ever be a debugging
+aid layered on top.
+
+### B72. Citation links cannot carry a span, so they open the top of the document
+
+Filed by Task 11's implementer after being told to invent nothing: linking a
+citation currently goes through `projectHref(projectId, {facet: 'doc', id:
+sourceId})`, which opens the document reader at the top rather than at the
+cited passage. `frontend/src/.../routes.ts`'s `Selection` union gives the
+`doc` facet only `{facet, id}` — no room for a start/end offset — so there is
+nowhere in the URL contract to put the span.
+
+The fix is extending `Selection`'s `doc` arm to carry an optional span (e.g.
+`{facet: 'doc', id, start?, end?}`), then having the document reader scroll to
+and highlight that range on load. Both the definition panel's citations
+(Task 12) and Task 11's usage citations link through the same helper, so one
+change fixes both call sites. Deferred because it is a reader-component change
+with its own test surface, not a one-line fix, and the fallback (link to the
+document, no span) is honestly labelled rather than broken.
+
+### B73. The postgres chunk-store branch is unwired
+
+`build_chunk_store` (`infrastructure/knowledge/stores.py`) accepts `"none"`
+and `"memory"` and raises `ValueError` naming `"postgres"` explicitly rather
+than attempting it — the function's own docstring cites the reason:
+`build_vector_store` once shipped a postgres branch written without a real
+deployment to exercise it, and it shipped an un-awaited coroutine to every
+caller. An untested postgres chunk branch risks repeating that exactly.
+
+redstring ships the adapter (it is a real, importable class); nobody has
+asked to run a chunk corpus that outlives the process, since the default's
+whole design point is that it doesn't need to — chunks are event-sourced from
+`DocumentChunked` and rebuilt by folding at project open, so `memory` never
+loses data, only pays a fold. Wiring `postgres` is a real task if a deployment
+ever wants a corpus that survives without a replay: build a `Postgres`-backed
+`ChunkStore` following whatever shape redstring's adapter takes, wire it
+through `build_chunk_store`'s `"postgres"` branch, and give it the same
+`ensure_schema`-style startup check pgvector has, rather than discovering a
+dimension mismatch mid-write.
+
+### B74. `mark_stale` is read-modify-write, not `UPDATE ... SET stale = 1`
+
+`EntityDefinitionStore.mark_stale` (`infrastructure/persistence/read_models.py`,
+Task 7) reads the row, flips the flag in Python, and writes it back — two
+round trips where one `UPDATE` would do. Deferred at review as irrelevant at
+one row, following `CorpusStore.get`'s existing precedent of the same shape.
+
+It stops being irrelevant when the invalidation projection's fan-out grows:
+`DocumentExtracted` marks every cached definition whose citations touch the
+document stale, and `EntitiesMerged` marks the canonical entity's row stale
+too, so a single event can trigger many calls in one projection dispatch.
+Revisit if invalidation ever shows up in a profile — not before, since
+guessing at the fix now would trade a working read-modify-write for an
+unverified `UPDATE` on evidence nobody has collected yet.
+
+### B75. A test-quality gap left from the entity-definitions review
+
+Minor, found in review and deferred rather than fixed on the spot. This item
+also carried a second bullet — two stale doc-comments in
+`tests/interfaces/test_web.py` naming a `_definition_service` helper in
+`app.py` that never existed — which is resolved: commit `9e1a1ac` removed both
+references while rewiring the route, so there is nothing left to fix.
+
+- The unknown-project-404 test for the usages route asserts a 404, but that
+  red is indistinguishable from the route simply not being registered — the
+  test does not isolate the "project doesn't exist" behaviour it claims to
+  cover from "route doesn't exist" (both 404). Tightening it means asserting
+  against a route that demonstrably *is* registered — e.g. a 200 for a real
+  project alongside the 404 for a fake one in the same test, so only the
+  project-lookup branch is what's left able to fail.
+
+### B76. No end-to-end test confirms the chunk store instance is shared
+
+The knowledge adapter's chunk store (`RedstringKnowledge._chunks`) and the one
+`ProjectGraphs.chunks(project_id)` hands out to callers like `UsageReader` are
+supposed to be the same object by identity — one project, one store, written
+by extraction and read by usages without a second copy drifting out of sync.
+This was verified twice during the build by reading `project_graphs.py` and
+`composition.py` and tracing the construction path by eye; there is no test
+that opens a real project through `composition.py`, indexes a chunk, and
+asserts the two handles are `is` the same store.
+
+Worth an integration test the next time chunk-store wiring changes — the
+inspection-only verification is exactly the kind of claim that silently stops
+being true after a refactor moves where the store gets built.
+
+### B77. The usages endpoint exposes a raw BM25 score with no caveat
+
+`usages_view` puts `score` straight into the payload, and the browser orders
+passages by it. But those scores come from **separate per-name queries** — one
+BM25 query per name the entity is known by — and BM25 scores each query
+against its own term statistics, so a score from the query for "Acme Corp"
+and a score from the query for "Acme" are not measuring the same thing. The
+adapter takes the max across names as a deliberate approximation;
+`usage_reader.py`'s own docstring says so and labels it "Reasoned, not
+measured." None of that caveat survives past the adapter — the view and the
+UI both present `score` as if it were one number on one scale.
+
+Not a bug today: the ordering is right far more often than not, because
+within a single name's query the comparison is valid, and cross-name
+collisions are the exception rather than the rule. The risk is a reader
+trusting a number that looks authoritative and isn't. Three options, in
+order of how much they cost:
+
+- Drop `score` from the payload entirely — the reader never needed the
+  figure, only the order it produces.
+- Keep it internally for sorting but never render it as a number in the UI.
+- Make the scores genuinely comparable, which means a single fused ranking
+  model scoring all candidate passages together rather than per-name
+  queries taking their own max — real machinery for a list that is usually
+  twenty passages long.
+
+Deferred as Minor in Task 6's review rather than fixed on the spot, because
+none of the three is obviously right without knowing whether anything
+downstream (today: nothing) ever wants to compare scores across entities
+rather than just within one entity's usage list.
+
+### B78. An entity known only by its edges cannot be defined at all
+
+`DefinitionService._generate` refuses any entity with no passages, because
+`_verified` can only check a citation against a passage the service itself
+supplied: with an empty passage list every reply is refused, so the model call
+was pure cost. The guard used to be `not passages and not
+neighborhood.relationships`, which let edge-only entities through to a call
+that could never succeed — one per panel open, forever, since nothing is
+cached when the answer is `None`. Fixed by refusing on `not passages` alone.
+
+What that gives up: an entity that appears in the graph only through its
+relationships now shows no definition, where before it showed no definition
+*and* charged for a model call. This is narrower than it first looked —
+`.superpowers/sdd/2026-08-14-entity-definitions-and-usages/edge-grounding-design.md`
+traced why an edge cannot carry a citation this system can verify, and it is
+not a gap in this repo's code: redstring's `Relationship`
+(`redstring/domain/relationship.py:13-34`) carries a document `source_id` but
+deliberately no span — its own docstring argues a reconstructed one "reads as
+evidence while being generation", the same failure mode this feature refuses
+for its own text. Inferred edges (`graph_reader.py:65-99`) have no document
+at all; they are arithmetic over two temporal extents, so there is nothing to
+cite even in principle.
+
+So this is blocked on redstring, not open to a local fix. It becomes buildable
+only if `ExtractedRelationship` gains a span field upstream (redstring's B76)
+— at that point `GraphRelationship` could carry a source id and offsets, and
+`_verified` would gain a second clause checking an edge citation the same way
+it checks a passage one.
+
+One wider variant was considered and rejected in the design, closer than it
+looks: carrying just the document `source_id` that already exists on
+`Relationship` today (`relationship.py:33`), so an edge-only entity could cite
+the whole document rather than a span within it. Buildable now, and it was the
+closest call — rejected because every other citation in this system points at
+a span (`GraphDetail.tsx:194-204`, `corpus_spans.quote`), and a citation list
+mixing "this sentence" with "somewhere in this document" degrades the ones
+that are precise rather than adding a genuinely comparable one.
+
+Worth doing if edge-only entities turn out to be common in real corpora and
+redstring gains the span; nobody has measured how common they are.
 
 ## Security and multi-tenancy
 

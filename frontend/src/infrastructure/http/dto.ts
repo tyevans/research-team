@@ -698,6 +698,41 @@ export const graphNeighborhoodDto = z.object({
   relationships: z.array(graphRelationshipDto).default([]),
 })
 
+/** One row of `/api/projects/{id}/graph/entities/{entity_id}/usages`. Best
+ *  matches first, already sorted server-side -- see `usages_view`'s own
+ *  docstring -- so nothing here re-sorts. */
+export const usageDto = z.object({
+  source_id: z.string(),
+  start: z.number(),
+  end: z.number(),
+  text: z.string(),
+  score: z.number(),
+})
+
+export const usagePageDto = z.object({
+  usages: z.array(usageDto).default([]),
+})
+
+/** One span from `/api/projects/{id}/graph/entities/{entity_id}/definition`'s
+ *  `citations` array -- a passage, not a whole document, unlike `Citation`
+ *  in `ask/conversation.ts`. */
+export const definitionCitationDto = z.object({
+  source_id: z.string(),
+  start: z.number(),
+  end: z.number(),
+})
+
+/** `text`/`model`/`generated_at` are nullable together -- `presenters.py`'s
+ *  `definition_view` sends all three `null` in the one case where there is
+ *  nothing to report, and not otherwise. */
+export const definitionDto = z.object({
+  text: z.string().nullable(),
+  citations: z.array(definitionCitationDto).default([]),
+  model: z.string().nullable(),
+  generated_at: z.string().nullable(),
+  stale: z.boolean(),
+})
+
 /** One bar of `/api/projects/{id}/timeline`.
  *
  * `start` and `end` are nullable rather than optional: `null` is an open

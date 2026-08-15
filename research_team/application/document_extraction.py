@@ -119,3 +119,58 @@ class DocumentExtractor:
         """
         listings = await self._corpus_readers(project_id).list_documents()
         return tuple(listing.record.source_id for listing in listings if not listing.extracted)
+
+    async def reindex(self, project_id: UUID) -> int:
+        """Put every stored document back through chunk indexing. No model call.
+
+        **Why this exists at all:** `index` is called from exactly one place,
+        the store-a-document path, and nothing backfills. A corpus written
+        before chunk indexing shipped has no `DocumentChunked` for the replay
+        to fold, so its chunk store comes up empty -- and an empty chunk store
+        is not an error anywhere: retrieval simply returns nothing and the
+        entity panel says "No mentions of this entity were found", which reads
+        exactly like the truthful answer for an entity nobody wrote about.
+        That is the wrong-answer-indistinguishable-from-a-right-one failure
+        this feature's design names by name, so it needs a remedy an operator
+        can reach rather than a note telling them to re-store every document.
+
+        **Why a plain loop and not a queue.** `index` makes no model call
+        (`RedstringKnowledge.index` passes no embeddings, and says so), so
+        there is no per-token cost to defer and nothing worth making durable;
+        the queue and progress channel that extraction needs would be
+        machinery bought for a pass whose only cost is chunking bytes already
+        in memory. The cost that is real: this is synchronous, so a very large
+        corpus holds its request open. Accepted -- it is a repair an operator
+        runs deliberately, not a control on a page.
+
+        Returns how many documents were indexed rather than how many chunks
+        were written: `index` is idempotent through the adapter's event store
+        (an unchanged document is skipped there), so a chunk count would read
+        as 0 on a healthy second run and look like a failure.
+
+        Dropped documents are excluded, for `unextracted`'s reason: a drop is
+        a judgement that the document should not inform the project, and its
+        passages would be quoted back to a reader if they were indexed.
+        """
+        knowledge = await self._open_knowledge(project_id)
+        reader = self._corpus_readers(project_id)
+        indexed = 0
+        for listing in await reader.list_documents():
+            stored = await reader.read_document(listing.record.source_id)
+            if stored is None:
+                # Dropped or removed between the listing and this read. Not an
+                # error: the listing is a read model and this is a repair.
+                continue
+            record = stored.record
+            await knowledge.index(
+                SourceRef(
+                    source_id=record.source_id,
+                    text=stored.text,
+                    note=record.note,
+                    uri=record.uri,
+                    title=record.title,
+                    published_at=record.published_at,
+                )
+            )
+            indexed += 1
+        return indexed

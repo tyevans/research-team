@@ -32,8 +32,10 @@ from eventsource.ports.store import AggregateStore
 from redstring import (
     AUTO,
     Adjudicator,
+    BoundaryPreferenceChunker,
     CandidateFinder,
     Chunker,
+    ChunkStore,
     Consolidator,
     EmbeddingProvider,
     GraphStore,
@@ -43,6 +45,7 @@ from redstring import (
     VectorStore,
     build_graph,
     document_stream,
+    index_documents,
 )
 
 from research_team.application.knowledge import (
@@ -211,12 +214,18 @@ class RedstringKnowledge:
         vector_store: VectorStore | None = None,
         concurrency: int = 1,
         chunker: Chunker | None = None,
+        chunks: ChunkStore | None = None,
         judgements: AggregateRepository[EntityJudgements] | None = None,
     ) -> None:
         self._project_id = project_id
         self._store = store
         self._event_store = event_store
         self._provider = provider
+        # None means chunking is off (`AGENT_CHUNK_STORE=none`), matching
+        # `ProjectGraphs.chunks`'s own None-when-off shape -- `index` degrades
+        # to a no-op rather than every call site having to know whether the
+        # feature is configured before it can store a document at all.
+        self._chunks = chunks
         # Both default to redstring's own serial behaviour rather than to the
         # configured values, so a test constructing this directly gets the
         # deterministic pipeline unless it asks otherwise. The composition
@@ -542,6 +551,49 @@ class RedstringKnowledge:
             )
         await self._store_document(source)
 
+    async def index(self, source: SourceRef) -> None:
+        """Split `source`'s text into the chunk corpus. No model call.
+
+        `index_documents` is passed no `embeddings`, which is what makes that
+        promise hold -- its own docstring is explicit that supplying one is
+        the single way it reaches a model. So this runs on the document-stored
+        path (`_store_document` calls it directly, below) rather than behind
+        `ExtractionQueue`: there is no per-token cost to defer and nothing
+        worth making durable.
+
+        `event_store` is not optional in practice. Omitted, `index_documents`
+        builds an `InMemoryEventStore` per call, which suppresses a repeat
+        only *within* that call -- so every re-index would rewrite every
+        passage while `documents_skipped` reported 0, doing the opposite of
+        what it says. This adapter's real event store is what makes the
+        second `index` of an unchanged document free.
+
+        `BoundaryPreferenceChunker` at its own defaults, not
+        `SlidingWindowChunker` (what `ingest` chunks extraction with):
+        redstring documents it as the chunker for passages that will be
+        quoted back to a reader, which is what this corpus is for and
+        extraction's chunking is not.
+
+        Reads `source.text` directly rather than re-reading it back out of
+        the corpus: every caller of `index` already has the text in hand (it
+        is a required field of `SourceRef`), and a round trip through the
+        corpus's read model would race the projection that fills it -- a
+        document `index`ed immediately after being stored could read back
+        nothing yet.
+
+        A no-op when no chunk store was configured for this project: see
+        `self._chunks`'s own comment.
+        """
+        if self._chunks is None:
+            return
+        await index_documents(
+            [SourceDocument(id=source.source_id, text=source.text)],
+            store=self._chunks,
+            tenant_id=self._project_id,
+            chunker=BoundaryPreferenceChunker(),
+            event_store=self._event_store,
+        )
+
     async def _store_document(self, source: SourceRef) -> None:
         """Keep the text before extracting it, and only if it is new bytes.
 
@@ -577,6 +629,16 @@ class RedstringKnowledge:
         that was nothing to do with the project. The load and the digest check
         are inside the retried body precisely so the second attempt decides
         against what the winner wrote.
+
+        **`index` runs unconditionally after, for every caller of this
+        method.** `_store_document` is the one place both `ingest` and
+        `store_source` funnel through, so hanging indexing here -- rather
+        than on each of them separately, or on `ExtractionQueue` -- is what
+        makes it impossible for a future third caller to store a document and
+        forget to index it. Called even when `store()` found identical bytes
+        and skipped the write: `index_documents`'s own signature check is
+        what makes that call free, and this method has no cheaper way to know
+        in advance whether this `source_id` was already chunked.
         """
 
         async def store() -> None:
@@ -599,6 +661,7 @@ class RedstringKnowledge:
             await self._corpus.save(corpus)
 
         await with_retry(store, what=f"storing {source.source_id!r}")
+        await self.index(source)
 
     async def _judged_finder(self):
         """The candidate source for one `_consolidate` run, or None for the default.

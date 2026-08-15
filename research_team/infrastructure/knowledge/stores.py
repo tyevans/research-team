@@ -18,9 +18,25 @@ at project open, so it costs a fold. A vector store lost with the process is
 a replay to fold, and consolidation silently drops to two features for every
 entity extracted before the restart. `pgvector` is currently the only setting
 under which an embedding outlives the process.
+
+The chunk store is the graph's shape, not the vector store's: `memory` here
+means *derived*, not *lost on restart*. Every stored chunk comes from a
+`DocumentChunked` event, so an in-memory store rebuilds by folding the log at
+project open, the same mechanism `build_graph_store`'s `memory` uses -- see
+`build_chunk_store`. `postgres` is a real redstring adapter but is refused
+here rather than wired: nobody has asked for a chunk corpus that outlives the
+process, and `build_vector_store`'s docstring records what writing a backend
+branch nobody exercises cost last time, so it is not written blind.
 """
 
-from redstring import GraphStore, InMemoryGraphStore, InMemoryVectorStore, VectorStore
+from redstring import (
+    ChunkStore,
+    GraphStore,
+    InMemoryChunkStore,
+    InMemoryGraphStore,
+    InMemoryVectorStore,
+    VectorStore,
+)
 from redstring.graph.adapters.neo4j import Neo4jGraphStore
 
 from research_team.infrastructure import config
@@ -100,4 +116,43 @@ async def build_vector_store(kind: str, *, dimension: int) -> VectorStore | None
         return await PgVectorStore.connect(config.pgvector_dsn(), dimension=dimension)
     raise ValueError(
         f"unknown AGENT_VECTOR_STORE {kind!r}; expected 'none', 'memory' or 'pgvector'"
+    )
+
+
+def build_chunk_store(kind: str, *, dimension: int) -> ChunkStore | None:
+    """The chunk store named by `kind`, or None when `kind` is `none`.
+
+    redstring ships two adapters -- memory and postgres -- so `memory` here is
+    the *graph's* `memory` rather than the vector store's: the corpus is
+    derived from `DocumentChunked`, so a store lost with the process is
+    rebuilt by folding the log at project open, not gone. That is the whole
+    reason chunks are event-sourced rather than written straight to a table,
+    and it is why this function, unlike `build_vector_store`, has no async
+    branch to disagree with a sync one -- there is no live connection here to
+    await.
+
+    `dimension` is inert under the lexical-only retrieval this system does --
+    nothing reads it but `semantic_candidates` and `ChunkRetriever`'s
+    constructor, and this system calls neither. It is taken from the caller's
+    configured embedding width anyway, because a corpus built under one width
+    cannot accept vectors of another without being rebuilt, and the day that
+    matters is the day the semantic channel is turned on.
+
+    `postgres` is refused rather than wired. It is a real redstring adapter,
+    which is why the error names it alongside `none` and `memory` instead of
+    only the two this deployment can reach -- an operator who sets it should
+    see a real setting that is not wired, not a typo. Nobody has asked for a
+    chunk corpus that outlives the process, and `build_vector_store`'s
+    docstring already records what a backend branch written without being
+    exercised costs: it shipped an un-awaited coroutine to every caller.
+    Writing an untested `postgres` branch here risks the same, so it is
+    refused by name instead, and this function stays synchronous because
+    there is no other branch left that would need `await`.
+    """
+    if kind == "none":
+        return None
+    if kind == "memory":
+        return InMemoryChunkStore(dimension=dimension)
+    raise ValueError(
+        f"unknown AGENT_CHUNK_STORE {kind!r}; expected 'none', 'memory' or 'postgres'"
     )

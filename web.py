@@ -102,6 +102,12 @@ def main() -> None:
             ask=application.ask,
             extractor=application.document_extractor,
             extract_queue=extract_queue,
+            # The factory, not a service: one per project, built on demand.
+            # This is the instance whose cache is the same table
+            # `application.definitions` marks stale, which is the only reason
+            # a definition invalidated by an extraction is regenerated rather
+            # than served from a second connection that never heard about it.
+            definitions=application.definition_readers,
             # The same object the executor's gating predicate reads, which is
             # the only reason the routes over it can change anything: a copy
             # would answer reads correctly and change nothing. Instance-wide,

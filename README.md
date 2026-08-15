@@ -95,9 +95,9 @@ Everything is an environment variable. The ones a first run actually needs:
 | `AGENT_SEARXNG_URL` | *(unset)* | SearXNG base URL; unset means no search tool exists |
 | `AGENT_CONTEXT` | `full` | `full`, `elide`, `compact` or `delegate` |
 
-**[`docs/configuration.md`](docs/configuration.md) has the rest** — the graph
-and vector stores, embeddings, Neo4j and pgvector, tracing, and the two places
-where the obvious setting is the wrong one.
+**[`docs/configuration.md`](docs/configuration.md) has the rest** — the graph,
+vector and chunk stores, embeddings, Neo4j and pgvector, tracing, and the two
+places where the obvious setting is the wrong one.
 
 Durable backends need nothing beyond `docker compose up -d`; the schema is
 created on first project open. Both defaults keep everything in-process.

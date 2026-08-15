@@ -1,6 +1,10 @@
 import { edgesOf, isExpanded, type GraphView } from '@domain/knowledge/graph.ts'
+import { shortId, type ProjectId } from '@domain/shared/identifier.ts'
 
 import { useEscape } from '../layout/OverlayHost.tsx'
+import { projectHref } from '../routing/routes.ts'
+import { useDefinition } from './use-definition.ts'
+import { useUsages } from './use-usages.ts'
 
 /** An edge row: a full-width bare button you walk the graph with.
  *
@@ -50,6 +54,7 @@ const ROW = [
  * worth reading.
  */
 export const GraphDetail = ({
+  projectId,
   view,
   selected,
   onSelect,
@@ -57,6 +62,7 @@ export const GraphDetail = ({
   showInGraphHref,
   onClose,
 }: {
+  projectId: ProjectId
   view: GraphView
   selected: string
   /** Selecting from here expands too, which is what makes this a way of
@@ -94,6 +100,18 @@ export const GraphDetail = ({
   // view, one Escape closed the dock *and* this panel behind it, which the
   // reader could not see was in play.
   useEscape(onClose)
+
+  // Fetched independently of the edge list below and of the definition
+  // section above it: three reads over the same `selected` id, none of which
+  // the others' latency should hold hostage. A reader who clicked a
+  // heavily-connected node should not wait on the corpus's BM25 lookup before
+  // seeing who it is wired to, and a slow edge fetch must not blank the
+  // passages that already came back.
+  const usagesQuery = useUsages(projectId, selected)
+  // Deliberately its own query rather than a field the usages fetch also
+  // carries -- see `use-definition.ts` for why a cache read and a BM25
+  // lookup do not belong on one request.
+  const definitionQuery = useDefinition(projectId, selected)
 
   const node = view.nodes.find((candidate) => candidate.id === selected)
   // The selection can outlive its node only if something removed it from the
@@ -149,6 +167,120 @@ export const GraphDetail = ({
           </button>
         </div>
       </header>
+
+      {/* Above the passages, per the brief: a generated definition is the
+          answer to "what is this" in one place, and the passages beneath it
+          are where a reader goes to check that answer against the corpus.
+          Renders off its own query (`useDefinition`), so a slow generation
+          never blocks the usages section below it, which is already
+          rendering off a query of its own. */}
+      <section className="border-0 border-b border-solid border-b-line px-3 py-[8px]">
+        <h4 className="tracking-wide m-0 mb-[4px] text-xs text-fg-faint uppercase">Definition</h4>
+        {definitionQuery.isPending ? (
+          <p className="m-0 text-xs text-fg-dim">Generating a definition…</p>
+        ) : definitionQuery.isError ? (
+          <p className="m-0 text-xs text-fg-dim">The definition could not be read.</p>
+        ) : definitionQuery.data.text === null ? (
+          // `text: null` is a 200, not an error: the corpus has nothing to
+          // ground a definition in for this entity, which is a fact worth
+          // stating plainly rather than as a failure the reader might retry.
+          <p className="m-0 text-xs text-fg-dim">
+            No grounded definition is available for this entity.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-[4px]">
+            <p className="m-0 text-sm [overflow-wrap:anywhere]">{definitionQuery.data.text}</p>
+            {definitionQuery.data.stale ? (
+              // The server served older text on purpose rather than
+              // withholding it -- see `Definition`'s own docstring -- so the
+              // reader is told it may be behind rather than left to assume
+              // it is current. Client-side only: this is the same cached
+              // `data` TanStack Query already keeps on screen through a
+              // refetch on this key: no second endpoint, no server round
+              // trip to ask "is this still being generated".
+              <p className="m-0 text-xs text-fg-dim" role="status">
+                Updating — this definition may be out of date while a newer one generates.
+              </p>
+            ) : null}
+            {/* Rendered, not just carried on the object: the backend refuses
+                to store a definition that cites nothing (see
+                `entity_definitions.py`), on the premise that an ungrounded
+                definition is indistinguishable from a correct one at a
+                glance. Leaving the citations off this panel would throw that
+                guarantee away at the last step -- a reader would see prose
+                that reads as fact with no way to tell it was checked. Same
+                link pattern as the mentions list below (`doc` facet,
+                `shortId`), so the two halves of the panel cite the same
+                way; same known gap, too -- `Selection`'s `PlainFacet` arm
+                has no `start`/`end` to carry, so this opens the document
+                rather than the exact cited span. */}
+            {definitionQuery.data.citations.length > 0 ? (
+              <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
+                {definitionQuery.data.citations.map((citation) => (
+                  <li key={`${citation.sourceId}|${citation.start}|${citation.end}`}>
+                    <a
+                      className="font-mono text-xs text-fg-dim no-underline hover:underline"
+                      href={projectHref(projectId, { facet: 'doc', id: citation.sourceId })}
+                    >
+                      {shortId(citation.sourceId)}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        )}
+      </section>
+
+      {/* Above the edge list, per the plan: a reader who came here to see
+          *what a node is* wants the passages that named it before the graph
+          it sits in -- the edges are how it relates to the rest of the
+          drawing, and the passages are where the reader learns what "it" is
+          at all. Renders off its own query, so a slow BM25 lookup here never
+          blanks the edge list below (`edgesOf` reads straight from `view`,
+          already resolved by the time this panel opens). */}
+      <section className="border-0 border-b border-solid border-b-line px-3 py-[8px]">
+        <h4 className="tracking-wide m-0 mb-[4px] text-xs text-fg-faint uppercase">Mentions</h4>
+        {usagesQuery.isPending ? (
+          <p className="m-0 text-xs text-fg-dim">Loading mentions…</p>
+        ) : usagesQuery.isError ? (
+          <p className="m-0 text-xs text-fg-dim">Mentions could not be read.</p>
+        ) : usagesQuery.data.length === 0 ? (
+          // Same distinction the edge list draws below, and the same reason:
+          // a fetch that came back empty is not the same fact as one that has
+          // not happened yet, and this branch only renders once it has.
+          <p className="m-0 text-xs text-fg-dim">No mentions of this entity were found.</p>
+        ) : (
+          <ul className="m-0 flex list-none flex-col gap-[6px] p-0">
+            {usagesQuery.data.map((usage) => (
+              <li key={`${usage.sourceId}|${usage.start}|${usage.end}`}>
+                {/* The `doc` facet `CitationList` already links through, not
+                    the API route Task 6 built -- that endpoint answers JSON,
+                    and a reader who followed it would get a page of raw text
+                    with no reader chrome around it, which is not "the passage
+                    in context" the citation decision promised. `Selection`'s
+                    `PlainFacet` arm carries only an id (`routes.ts`), so this
+                    cannot ask for `start`/`end` today -- it opens the right
+                    document rather than a scrolled-to span, and lands on the
+                    top of the reader rather than on this exact mention. That
+                    gap is real and is not this task's to close; see the
+                    commit message. */}
+                <a
+                  className="flex flex-col gap-[1px] text-inherit no-underline hover:underline"
+                  href={projectHref(projectId, { facet: 'doc', id: usage.sourceId })}
+                >
+                  <span className="font-mono text-xs text-fg-dim">{shortId(usage.sourceId)}</span>
+                  <span className="text-sm [overflow-wrap:anywhere]">{usage.text}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <h4 className="tracking-wide m-0 px-3 pt-[8px] text-xs text-fg-faint uppercase">
+        Relationships
+      </h4>
 
       {edges.length === 0 ? (
         // Two different facts, and telling them apart matters: an entity whose

@@ -6,7 +6,15 @@ import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Approval, ApprovalDecision, GateContext } from '@domain/approval/approval.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame, ExtractionStage } from '@domain/knowledge/extraction.ts'
-import type { GraphLink, GraphNode, Neighborhood, WholeGraph } from '@domain/knowledge/graph.ts'
+import type {
+  Definition,
+  DefinitionCitation,
+  GraphLink,
+  GraphNode,
+  Neighborhood,
+  Usage,
+  WholeGraph,
+} from '@domain/knowledge/graph.ts'
 import type { Timeline, TimelineBand } from '@domain/knowledge/timeline.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
@@ -641,6 +649,30 @@ export const toWholeGraph = (raw: Dto<typeof dto.graphWholeDto>): WholeGraph => 
   relationships: raw.relationships.map(toGraphLink),
   truncated: raw.truncated,
   inferredTruncated: raw.inferred_truncated,
+})
+
+export const toUsage = (raw: Dto<typeof dto.usageDto>): Usage => ({
+  sourceId: raw.source_id,
+  start: raw.start,
+  end: raw.end,
+  text: raw.text,
+  score: raw.score,
+})
+
+export const toDefinitionCitation = (
+  raw: Dto<typeof dto.definitionCitationDto>,
+): DefinitionCitation => ({
+  sourceId: raw.source_id,
+  start: raw.start,
+  end: raw.end,
+})
+
+export const toDefinition = (raw: Dto<typeof dto.definitionDto>): Definition => ({
+  text: raw.text,
+  citations: raw.citations.map(toDefinitionCitation),
+  model: raw.model,
+  generatedAt: raw.generated_at,
+  stale: raw.stale,
 })
 
 export const toNeighborhood = (raw: Dto<typeof dto.graphNeighborhoodDto>): Neighborhood => ({
