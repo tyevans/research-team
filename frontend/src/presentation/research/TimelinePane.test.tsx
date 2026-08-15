@@ -71,15 +71,23 @@ const node = (over: Partial<GraphNode> = {}): GraphNode => ({
 
 /** A `neighborhood` resolving to a root with no neighbours -- enough to open
  *  the detail panel without exercising `GraphDetail`'s edge rendering, which
- *  is `GraphPane.test.tsx`'s concern. */
-const fakeGraphsWithNeighborhood = (): GraphRepository => ({
-  whole: vi.fn().mockRejectedValue(new Error('whole was not stubbed for this test')),
-  search: vi.fn().mockRejectedValue(new Error('search was not stubbed for this test')),
-  neighborhood: vi.fn().mockResolvedValue({
+ *  is `GraphPane.test.tsx`'s concern.
+ *
+ * Takes the mock rather than building its own, so a caller that needs to
+ * assert against it (`expect(neighborhood).toHaveBeenCalled()`) holds the
+ * function directly instead of reaching through the returned object --
+ * `@typescript-eslint/unbound-method` flags the latter as an unbound method
+ * reference. */
+const fakeGraphsWithNeighborhood = (
+  neighborhood: GraphRepository['neighborhood'] = vi.fn().mockResolvedValue({
     root: node(),
     entities: [],
     relationships: [],
   } satisfies Neighborhood),
+): GraphRepository => ({
+  whole: vi.fn().mockRejectedValue(new Error('whole was not stubbed for this test')),
+  search: vi.fn().mockRejectedValue(new Error('search was not stubbed for this test')),
+  neighborhood,
 })
 
 /** `TimelinePane` with the route wired up, mirroring `GraphPane.test.tsx`'s
@@ -169,27 +177,33 @@ describe('TimelinePane', () => {
   })
 
   it('asks the route for one entity type when the filter is set', async () => {
-    const timelines = fakeTimelines()
-    renderPane({ timelines })
+    // Captured in its own variable rather than read through `timelines.timeline`:
+    // a mock method reference passed to `expect` unbound loses `this`, which
+    // `@typescript-eslint/unbound-method` flags even though vitest's mocks do
+    // not actually depend on it.
+    const fetchTimeline = vi.fn().mockResolvedValue(timeline())
+    renderPane({ timelines: fakeTimelines({ timeline: fetchTimeline }) })
 
     await screen.findByText('Waterloo')
     await userEvent.selectOptions(screen.getByLabelText(/type/i), 'event')
 
-    await waitFor(() =>
-      expect(timelines.timeline).toHaveBeenLastCalledWith(expect.anything(), 'event'),
-    )
+    await waitFor(() => expect(fetchTimeline).toHaveBeenLastCalledWith(expect.anything(), 'event'))
   })
 
   it('opens the detail panel for a clicked band, with no remove control', async () => {
     // The remove control belongs to the graph canvas. Offering it here would
     // be a button that either does nothing or silently prunes the tab next
     // door -- see `GraphDetail.onRemove`.
-    const graphs = fakeGraphsWithNeighborhood()
-    renderPane({ timelines: fakeTimelines(), graphs })
+    const neighborhood = vi.fn().mockResolvedValue({
+      root: node(),
+      entities: [],
+      relationships: [],
+    } satisfies Neighborhood)
+    renderPane({ timelines: fakeTimelines(), graphs: fakeGraphsWithNeighborhood(neighborhood) })
 
     await userEvent.click(await screen.findByText('Waterloo'))
 
-    await waitFor(() => expect(graphs.neighborhood).toHaveBeenCalled())
+    await waitFor(() => expect(neighborhood).toHaveBeenCalled())
     expect(screen.queryByRole('button', { name: /remove/i })).not.toBeInTheDocument()
   })
 })

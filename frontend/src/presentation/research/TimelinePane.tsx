@@ -50,7 +50,13 @@ export const TimelinePane = ({
   const store = useMemo(() => createTimelineStore({ timelines, projectId }), [timelines, projectId])
   const { timeline, loading, error, entityType } = store()
 
-  const [detail, setDetail] = useState<Neighborhood | null>(null)
+  // Keyed to the entity it was fetched for, rather than cleared on deselect:
+  // the render guard below (`detail?.id === entity`) means stale detail for a
+  // previous entity can never display, so there is nothing to clear
+  // synchronously in the effect -- which is what `react-hooks/set-state-in-effect`
+  // was catching in the version that called `setDetail(null)` from the branch
+  // that ran when `entity` became `null`.
+  const [detail, setDetail] = useState<{ id: string; hood: Neighborhood } | null>(null)
 
   useEffect(() => {
     void store.getState().load()
@@ -78,22 +84,19 @@ export const TimelinePane = ({
    * returning a subset of it would be a second thing to keep true.
    */
   useEffect(() => {
-    if (entity === null) {
-      setDetail(null)
-      return
-    }
+    if (entity === null) return
     let cancelled = false
     void graphs
       .neighborhood(projectId, entity)
-      .then((neighborhood) => {
-        if (!cancelled) setDetail(neighborhood)
+      .then((hood) => {
+        if (!cancelled) setDetail({ id: entity, hood })
       })
       // Swallowed deliberately: the bar is still drawn and still correct, and
       // a failed detail fetch should not replace a working timeline with an
-      // error. The panel simply does not open.
-      .catch(() => {
-        if (!cancelled) setDetail(null)
-      })
+      // error. The panel simply does not open -- `detail` is left as
+      // whatever it was, but the `detail?.id === entity` guard below means a
+      // stale detail from a previous entity is never shown for this one.
+      .catch(() => {})
     return () => {
       cancelled = true
     }
@@ -131,7 +134,7 @@ export const TimelinePane = ({
         error={error}
         selected={entity}
         onSelect={onEntity}
-        detail={detail}
+        detail={detail?.id === entity ? detail.hood : null}
       />
     </div>
   )
