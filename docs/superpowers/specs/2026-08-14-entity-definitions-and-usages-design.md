@@ -178,21 +178,38 @@ this design calls. Set it from the configured embedding dimension so that
 turning the semantic channel on later does not silently mismatch a corpus
 built under a different width.
 
-### The replay coupling, which is the sharp edge
+### The replay coupling, and how it actually fails
 
-`research_team/infrastructure/knowledge/rebuild.py:17` replays with
-`strict=True` and a single projection. An unhandled event type fails project
-open.
+An earlier draft of this document said an unhandled event type fails project
+open, and called that the sharp edge. **That is wrong**, and the correction
+inverts the risk rather than reducing it.
 
-Once a `DocumentChunked` event exists in a project's log, `ChunkProjection`
-must be registered at **every** site that opens that project — not only the
-rebuild path. Miss one and existing projects stop opening entirely.
+`eventsource/application/projections/replay.py` is explicit: "An event that
+every projection ignores still counts as applied -- it was delivered and
+nothing rejected it." `strict=True` raises only when a projection *rejects*
+an event — that is, when `projection.handle` raises. A type nobody handles
+is applied and forgotten.
 
-This fails loudly rather than silently, which is the good version of this
-bug, but it fails totally. A test asserts that a log containing
-`DocumentChunked` opens through every project-open path, and it must be
-proven red by removing the projection registration before it is trusted
-green.
+Two consequences, both load-bearing:
+
+- **Adding `DocumentChunked` to a log cannot break anything that exists
+  today.** An older build, or a path where `ChunkProjection` is absent,
+  replays straight past it. There is no migration hazard here and no reason
+  to stage the event's introduction carefully.
+- **Forgetting to register `ChunkProjection` fails silently.** The chunk
+  store comes up empty, `lexical_candidates` returns nothing, and the panel
+  says "no mentions found" — which is a sentence this feature also says
+  truthfully, about entities that genuinely have none. The wrong answer is
+  indistinguishable from a right one by looking at it.
+
+`rebuild.py`'s `rebuild_graph` is the single project-open path, and `replay`
+already takes a sequence of projections, so the change is
+`[projection, chunks]`. The test that matters is therefore not "does a log
+containing `DocumentChunked` still open" — it always will — but **"does a
+project opened from a log containing `DocumentChunked` come up with chunks
+in its store"**. Prove it red by dropping `ChunkProjection` from the
+sequence; the assertion has to be non-empty retrieval, because an assertion
+that the project merely opened would pass with the projection removed.
 
 Indexing is triggered where extraction is already triggered, on the
 document-stored signal. It makes no LLM call, so it does not go through
