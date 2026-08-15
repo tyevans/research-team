@@ -314,9 +314,24 @@ no projection handles counts as applied. That is the intended behaviour and
   unchanged and no event has to record an offset.
 - **Acquisition** (sub-project 3) — `fetch` meeting a non-HTML URL,
   `web_search` returning media results.
-- **Citation display** (sub-project 4) — a finding citing 4:12 rendering as a
-  player seeked there.
+- **Rendering media where prose is rendered** (sub-project 4) — wider than
+  "citation display", which is how it was first scoped. Media has to appear in
+  three places that currently only know how to draw text: a finding citing 4:12
+  rendering as a player seeked there; markdown emitted by the model embedding a
+  source it is talking about; and the Ask page's answers, which are the main
+  surface where a person meets what the corpus knows. The common problem is
+  that a model writing prose has to be able to *name* a source and a moment in
+  it — a reference syntax the renderer resolves against the corpus — without
+  being able to emit a URL that could point anywhere. That syntax is the design
+  question, and it is genuinely one design serving all three surfaces rather
+  than three features.
 
-Nothing in this slice presumes their designs. The one place it reaches ahead is
-range support on the content route, and that is argued for above on its own
-terms.
+Nothing in this slice presumes their designs, and this slice's Documents-page
+viewer is deliberately not that renderer: it is a browser for a corpus, reached
+by selecting a row, and it hard-codes the source it shows. The shared component
+underneath it may well be extracted when sub-project 4 needs one, which is a
+reason to keep it small rather than a reason to generalise it now.
+
+The one place this slice reaches ahead is range support on the content route,
+argued for above on its own terms — and it is also what makes a seeked player
+possible at all, so sub-project 4 inherits it rather than adding it.
