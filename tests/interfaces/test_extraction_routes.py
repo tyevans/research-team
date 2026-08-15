@@ -22,7 +22,7 @@ from httpx import ASGITransport, AsyncClient
 from research_team.application.corpus_read import DocumentListing
 from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.knowledge import IngestReport, SourceRef
-from research_team.domain import DocumentRecord
+from research_team.domain import TextRecord
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.read_models import CorpusDocumentRow
 from research_team.interfaces.web.app import create_app
@@ -70,7 +70,7 @@ class Runner:
     async def list(self, project_id: UUID, *, include_dropped: bool = False):
         return [
             DocumentListing(
-                record=DocumentRecord(source_id=source_id, sha256="0" * 64, char_count=3),
+                record=TextRecord(source_id=source_id, sha256="0" * 64, char_count=3),
                 extracted=self._extracted[source_id],
             )
             for source_id in self._rows

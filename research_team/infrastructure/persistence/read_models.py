@@ -66,13 +66,13 @@ from research_team.application.corpus_read import DocumentListing
 from research_team.domain import (
     CorpusDocumentDropped,
     CorpusDocumentStored,
-    DocumentRecord,
     FileDeleted,
     FileEdited,
     FileWritten,
     Session,
     SessionForkedFrom,
     SessionStarted,
+    TextRecord,
     TurnCompleted,
     TurnFailed,
     UserMessageSent,
@@ -625,7 +625,7 @@ class CorpusDocumentRow(ReadModel):
     The one field here the corpus aggregate cannot supply: extraction happens
     on redstring's `Document` stream, not the `Corpus` one, so this is written
     by `_on_extracted` from an event the fold never sees. That is also why it
-    is not on `DocumentRecord` -- a domain record that claimed to know this
+    is not on `TextRecord` -- a domain record that claimed to know this
     would be claiming knowledge of another aggregate's stream.
 
     A timestamp rather than a flag, because "when" is free here (the event
@@ -656,16 +656,16 @@ class CorpusDocumentRow(ReadModel):
         return uuid5(CORPUS_NAMESPACE, f"{project_id}:{source_id}")
 
 
-def to_record(row: CorpusDocumentRow) -> DocumentRecord:
+def to_record(row: CorpusDocumentRow) -> TextRecord:
     """Present a stored row as the aggregate's own no-text shape.
 
-    Reusing `DocumentRecord` rather than defining a listing type here makes the
+    Reusing `TextRecord` rather than defining a listing type here makes the
     no-text guarantee structural: there is no field for text to arrive in, so a
     listing cannot start carrying corpora by accident. It also keeps the table
     and the fold saying the same thing about a document, which is the property
     a rebuild depends on.
     """
-    return DocumentRecord(
+    return TextRecord(
         source_id=row.source_id,
         sha256=row.sha256,
         char_count=row.char_count,
@@ -881,7 +881,7 @@ class CorpusStore:
             "dropped_reason",
         )
         # Selected beside `columns` rather than in it: everything in that tuple
-        # is a `DocumentRecord` field and is splatted into one, and this is the
+        # is a `TextRecord` field and is splatted into one, and this is the
         # one column that is deliberately not.
         drop_filter = "" if include_dropped else "AND dropped_reason IS NULL "
         cursor = await self._connection.execute(
@@ -898,9 +898,7 @@ class CorpusStore:
                     # catches `columns` and the SELECT drifting apart, and
                     # relaxing it to accommodate one trailing column would
                     # silently accept any number of them.
-                    record=DocumentRecord(
-                        **dict(zip(columns, row[: len(columns)], strict=True))
-                    ),
+                    record=TextRecord(**dict(zip(columns, row[: len(columns)], strict=True))),
                     extracted=row[len(columns)] is not None,
                 )
                 for row in await cursor.fetchall()

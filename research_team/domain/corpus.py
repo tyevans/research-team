@@ -37,11 +37,29 @@ Identical bytes under a *different* `source_id` are detectable via `by_digest`
 but not refused. The same document legitimately arrives at two URIs, and the
 domain has no basis for choosing which one the caller meant; detection is what
 the ingest path needs to skip re-extraction, and prevention is not its call.
+
+**One `source_id` namespace holds both text and media.** A source is a source
+whichever kind its bytes are, `by_digest` and supersession-by-`source_id` mean
+the same thing for either, and a second namespace would need its own answer to
+every question this module already answers for text -- for no reader-visible
+gain, since nothing downstream cares which namespace an id came from. A
+`source_id` cannot change kind once claimed: `decide` refuses a store that
+would flip it, in both directions, because supersession is a revision of one
+source and a kind change is a different source wearing the old id.
+
+**For media the digest is supplied, and that is a deliberate weakening.** The
+bytes never reach the domain -- holding a video in memory to hand it to a pure
+function is not a thing to do -- so `CorpusMediaStored.sha256` is what the blob
+store computed while streaming, and `by_digest` is a claim for those entries
+rather than a fact. `application/blobs.py` carries the mitigation: `put`
+returns the digest and there is no parameter by which a caller could offer a
+different one, so a wrong digest requires a bug in the store rather than a
+mistake at a call site.
 """
 
 import hashlib
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
@@ -83,6 +101,31 @@ class CorpusDocumentDropped(DomainEvent):
     reason: str
 
 
+@register_event
+class CorpusMediaStored(DomainEvent):
+    """A media source was stored: the claim about it, never its bytes.
+
+    `sha256` is where the bytes are and what proves they are the ones this
+    event meant. Unlike `CorpusDocumentStored.sha256` it is *supplied* rather
+    than computed -- see this module's docstring, and `application/blobs.py`
+    for why that is a hazard rather than a trap.
+
+    `published_at` is text for the same reason it is on the document event:
+    sources report dates in whatever shape they please.
+    """
+
+    aggregate_type: str = "Corpus"
+    source_id: str
+    sha256: str
+    media_type: str
+    byte_count: int
+    uri: str | None = None
+    title: str | None = None
+    published_at: str | None = None
+    note: str | None = None
+    fetched_at: str | None = None
+
+
 @dataclass(frozen=True)
 class StoreSourceDocument:
     #: Which corpus to store into. Storing is what brings a corpus into
@@ -105,15 +148,35 @@ class DropSourceDocument:
     reason: str
 
 
-CorpusCommand = StoreSourceDocument | DropSourceDocument
+@dataclass(frozen=True)
+class StoreSourceMedia:
+    #: Carried for the same reason `StoreSourceDocument` carries it: storing is
+    #: what brings a corpus into existence, so there is no state to read it off.
+    corpus_id: UUID
+    source_id: str
+    sha256: str
+    media_type: str
+    byte_count: int
+    uri: str | None = None
+    title: str | None = None
+    published_at: str | None = None
+    note: str | None = None
+    fetched_at: str | None = None
 
 
-class DocumentRecord(BaseModel):
-    """What the fold keeps about one source. Deliberately not its text."""
+CorpusCommand = StoreSourceDocument | StoreSourceMedia | DropSourceDocument
+
+
+class SourceRecordBase(BaseModel):
+    """What every source has, whatever its bytes are.
+
+    Split out rather than repeated so a field added to provenance is added
+    once. The two subclasses differ by exactly the one measure the other
+    cannot give: characters against bytes.
+    """
 
     source_id: str
     sha256: str
-    char_count: int
     uri: str | None = None
     title: str | None = None
     published_at: str | None = None
@@ -128,6 +191,42 @@ class DocumentRecord(BaseModel):
     """Set means excluded. The record stays, so the exclusion stays auditable."""
 
 
+class TextRecord(SourceRecordBase):
+    """A source the corpus holds as prose. Deliberately not its text.
+
+    Was `DocumentRecord`, renamed when media arrived: `document` had quietly
+    come to mean both "a source" and "a source made of words", and the union
+    below needs those to be different words.
+    """
+
+    kind: Literal["text"] = "text"
+    char_count: int
+
+
+class MediaRecord(SourceRecordBase):
+    """A source whose bytes live in the blob store under `sha256`.
+
+    Carries no path or URL to those bytes. The digest *is* the address, and a
+    second locator stored here would be a thing that could disagree with it --
+    which is precisely the failure the digest exists to make impossible.
+    """
+
+    kind: Literal["media"] = "media"
+    media_type: str
+    """The mimetype, as the ingest path determined it. Not re-sniffed here:
+    the domain has no bytes to sniff."""
+    byte_count: int
+
+
+SourceRecord = Annotated[TextRecord | MediaRecord, Field(discriminator="kind")]
+"""One `source_id` namespace, two shapes.
+
+Discriminated on a literal rather than left as a bare union so pydantic
+round-trips it without guessing and so the type checker -- not a runtime
+`AttributeError` in a template -- finds the readers that assumed `.text`.
+"""
+
+
 class CorpusState(BaseModel):
     """Everything derivable from the corpus's event stream."""
 
@@ -140,7 +239,7 @@ class CorpusState(BaseModel):
     """
 
     status: Literal["new", "created"] = "new"
-    documents: dict[str, DocumentRecord] = Field(default_factory=dict)
+    documents: dict[str, SourceRecord] = Field(default_factory=dict)
     by_digest: dict[str, str] = Field(default_factory=dict)
     """sha256 -> source_id, for live documents only.
 
@@ -158,12 +257,35 @@ def decide(command: CorpusCommand, state: CorpusState) -> list[DomainEvent]:
 
     Reads as a transition table, the way `project.decide` does.
 
-    The digest is computed here rather than accepted from the caller. A
-    supplied sha256 makes `by_digest` a claim instead of a fact, and a wrong
-    one stays invisible until two unrelated documents collide in it.
+    The digest is computed here rather than accepted from the caller -- for
+    text. A supplied sha256 makes `by_digest` a claim instead of a fact, and a
+    wrong one stays invisible until two unrelated documents collide in it.
+
+    **For media the digest is supplied, and that is a deliberate weakening.**
+    The bytes never reach the domain -- holding a video in memory to hand it
+    to a pure function is not a thing to do -- so `CorpusMediaStored.sha256`
+    is what the blob store computed while streaming, and `by_digest` is a
+    claim for those entries rather than a fact. `application/blobs.py`
+    carries the mitigation: `put` returns the digest and there is no
+    parameter by which a caller could offer a different one, so a wrong
+    digest requires a bug in the store rather than a mistake at a call site.
     """
     corpus_id = state.corpus_id
     match command, state:
+        case StoreSourceDocument(source_id=source_id), _ if (
+            _kind_of(state, source_id) == "media"
+        ):
+            raise CommandRejectedError(
+                f"source {source_id!r} holds media; storing text under it would "
+                "change what the id means rather than revise it"
+            )
+
+        case StoreSourceMedia(source_id=source_id), _ if _kind_of(state, source_id) == "text":
+            raise CommandRejectedError(
+                f"source {source_id!r} holds text; storing media under it would "
+                "change what the id means rather than revise it"
+            )
+
         case StoreSourceDocument(), _:
             return [
                 CorpusDocumentStored(
@@ -173,6 +295,24 @@ def decide(command: CorpusCommand, state: CorpusState) -> list[DomainEvent]:
                     source_id=command.source_id,
                     text=command.text,
                     sha256=hashlib.sha256(command.text.encode("utf-8")).hexdigest(),
+                    uri=command.uri,
+                    title=command.title,
+                    published_at=command.published_at,
+                    note=command.note,
+                    fetched_at=command.fetched_at,
+                )
+            ]
+
+        case StoreSourceMedia(), _:
+            return [
+                CorpusMediaStored(
+                    # From the command, not the state: see the identical
+                    # comment on the `StoreSourceDocument` case above.
+                    aggregate_id=command.corpus_id,
+                    source_id=command.source_id,
+                    sha256=command.sha256,
+                    media_type=command.media_type,
+                    byte_count=command.byte_count,
                     uri=command.uri,
                     title=command.title,
                     published_at=command.published_at,
@@ -207,6 +347,17 @@ def decide(command: CorpusCommand, state: CorpusState) -> list[DomainEvent]:
     raise CommandRejectedError(f"unhandled command {type(command).__name__}")
 
 
+def _kind_of(state: CorpusState, source_id: str) -> str | None:
+    """Which shape a source id already holds, or None if it is free.
+
+    A dropped record still counts. Its id is taken -- restore reads it back --
+    and letting a drop free the id for the other kind would make restore
+    resurrect a record whose kind no longer matches its row.
+    """
+    record = state.documents.get(source_id)
+    return None if record is None else record.kind
+
+
 def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
     """What each fact does to the state.
 
@@ -224,7 +375,7 @@ def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
             # First claimant of a digest keeps it, so the map answers "which
             # document already carries these bytes" with a stable id.
             by_digest.setdefault(event.sha256, event.source_id)
-            record = DocumentRecord(
+            record = TextRecord(
                 source_id=event.source_id,
                 sha256=event.sha256,
                 char_count=len(event.text),
@@ -238,6 +389,32 @@ def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
                 update={
                     # The event is where the id enters the state: `decide` reads
                     # it back off `state` for every command but the first.
+                    "corpus_id": event.aggregate_id,
+                    "status": "created",
+                    "documents": {**state.documents, event.source_id: record},
+                    "by_digest": by_digest,
+                }
+            )
+
+        case CorpusMediaStored():
+            previous = state.documents.get(event.source_id)
+            by_digest = dict(state.by_digest)
+            if previous is not None and by_digest.get(previous.sha256) == event.source_id:
+                del by_digest[previous.sha256]
+            by_digest.setdefault(event.sha256, event.source_id)
+            record = MediaRecord(
+                source_id=event.source_id,
+                sha256=event.sha256,
+                media_type=event.media_type,
+                byte_count=event.byte_count,
+                uri=event.uri,
+                title=event.title,
+                published_at=event.published_at,
+                note=event.note,
+                fetched_at=event.fetched_at,
+            )
+            return state.model_copy(
+                update={
                     "corpus_id": event.aggregate_id,
                     "status": "created",
                     "documents": {**state.documents, event.source_id: record},

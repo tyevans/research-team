@@ -11,7 +11,7 @@ only thing the reading tools need is a list of what exists and the bytes of one
 document. A port that mirrored the projection would make every change to the
 projection a change to the application layer.
 
-`DocumentRecord` comes from the domain rather than being redefined here; see
+`TextRecord` comes from the domain rather than being redefined here; see
 `CorpusReadPort` for why that is the right way round.
 
 The project is not a parameter on either call, for the same reason it is not a
@@ -23,7 +23,7 @@ another project's sources.
 from dataclasses import dataclass
 from typing import Protocol
 
-from research_team.domain import DocumentRecord
+from research_team.domain import TextRecord
 
 #: Tool names, in one place so the prompt and the tools agree. Neither belongs
 #: in `GATED_TOOLS` -- see `autonomy.py` on why read tools stay ungated.
@@ -44,7 +44,7 @@ class StoredDocument:
     two calls is two chances for them to disagree.
     """
 
-    record: DocumentRecord
+    record: TextRecord
     text: str
 
 
@@ -52,11 +52,11 @@ class StoredDocument:
 class DocumentListing:
     """One source's record, plus whether the graph has it.
 
-    Composed rather than a widened `DocumentRecord`, and for the same reason
+    Composed rather than a widened `TextRecord`, and for the same reason
     `StoredDocument` above is composed: the record is the shape the fold, the
     read model and the tools all share, and everything hung beside it here is
     something the fold cannot say. Extraction happens on redstring's
-    `Document` stream; a `DocumentRecord` carrying `extracted` would be a
+    `Document` stream; a `TextRecord` carrying `extracted` would be a
     domain type claiming knowledge of another aggregate's log.
 
     `extracted` is a bool where the row stores a timestamp. What a caller does
@@ -64,14 +64,14 @@ class DocumentListing:
     nobody has asked yet -- the column keeps the answer for when they do.
     """
 
-    record: DocumentRecord
+    record: TextRecord
     extracted: bool
 
 
 class CorpusReadPort(Protocol):
     """The project's stored sources, listed and read.
 
-    Both methods speak in `DocumentRecord`, the aggregate's own no-text shape,
+    Both methods speak in `TextRecord`, the aggregate's own no-text shape,
     rather than a listing type of this port's own. Naming a domain type is
     ordinary here -- `session_service.py` does it throughout -- and it buys the
     property the rebuild guarantee rests on: the fold, the read model's `list`
@@ -80,7 +80,7 @@ class CorpusReadPort(Protocol):
     type will eventually disagree, and the disagreement would surface as a
     citation whose metadata does not match the corpus it came from.
 
-    `DocumentRecord` carries a field most callers have no use for: `sha256`
+    `TextRecord` carries a field most callers have no use for: `sha256`
     is harmless and occasionally wanted -- it is what proves a quote came
     from the bytes on record. `dropped_reason` is `None` unless a caller asks
     for dropped documents by name, because the default answer is the live

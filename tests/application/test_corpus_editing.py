@@ -32,7 +32,7 @@ class FakeReader:
     """`CorpusReadPort` over the same in-memory `Corpus` the fake knowledge writes to.
 
     Reads `corpus.state.documents` directly rather than keeping a projection
-    of its own: the state already carries every `DocumentRecord` the fold
+    of its own: the state already carries every `TextRecord` the fold
     produces, and a second copy of that bookkeeping is exactly the kind of
     duplicate `CorpusReadPort`'s docstring warns would disagree with the fold
     eventually. `extracted` is always False -- nothing here exercises it.

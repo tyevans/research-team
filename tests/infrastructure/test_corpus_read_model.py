@@ -15,9 +15,9 @@ from redstring import DocumentExtracted
 
 from research_team.domain.corpus import (
     Corpus,
-    DocumentRecord,
     DropSourceDocument,
     StoreSourceDocument,
+    TextRecord,
 )
 from research_team.infrastructure.persistence.event_store import build_corpus_repository
 from research_team.infrastructure.persistence.read_models import (
@@ -294,7 +294,7 @@ async def test_listing_carries_metadata_and_never_text(db_path):
 
         listed = await store.list(project_id)
 
-        assert "text" not in DocumentRecord.model_fields
+        assert "text" not in TextRecord.model_fields
         assert [listing.record.source_id for listing in listed] == ["s1", "s2"]
         assert listed[0].record.title == "One"
         assert listed[0].record.char_count == len("a body")

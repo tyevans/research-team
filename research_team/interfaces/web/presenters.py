@@ -44,7 +44,6 @@ from research_team.application.usages import Usage
 from research_team.domain import (
     AutonomyChanged,
     ConversationCompacted,
-    DocumentRecord,
     FileDeleted,
     FileEdited,
     FileWritten,
@@ -54,6 +53,7 @@ from research_team.domain import (
     Session,
     SessionForkedFrom,
     SessionStarted,
+    TextRecord,
     TurnFailed,
 )
 from research_team.domain.learner import LearnerProgressState
@@ -671,7 +671,7 @@ def project_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
     }
 
 
-def _record_view(summary: DocumentRecord) -> dict[str, Any]:
+def _record_view(summary: TextRecord) -> dict[str, Any]:
     """The fields both source views share: everything the record itself knows.
 
     Split from `source_view` when `extracted` arrived, rather than letting
@@ -692,7 +692,7 @@ def _record_view(summary: DocumentRecord) -> dict[str, Any]:
         "published_at": summary.published_at,
         "note": summary.note,
         # Provenance for by-reference content the corpus did not create, not
-        # a corpus fact -- see `DocumentRecord.fetched_at`. Exposed because
+        # a corpus fact -- see `TextRecord.fetched_at`. Exposed because
         # `revise` and `restore` both carry it through unconditionally, and a
         # console that could not read it back would have no way to show that
         # an edit had (or had not) disturbed it.

@@ -22,7 +22,7 @@ from research_team.application.corpus_read import (
     DocumentListing,
     StoredDocument,
 )
-from research_team.domain import DocumentRecord
+from research_team.domain import TextRecord
 from research_team.infrastructure.agent.corpus_tools import build_corpus_tools
 
 ALPHABET = "abcdefghijklmnopqrstuvwxyz "
@@ -31,12 +31,12 @@ ALPHABET = "abcdefghijklmnopqrstuvwxyz "
 def _document(source_id: str, text: str, **metadata) -> StoredDocument:
     """A stored document, digest and all.
 
-    `DocumentRecord` requires a `sha256` these tests do not care about, so it
+    `TextRecord` requires a `sha256` these tests do not care about, so it
     is computed rather than faked -- a stub digest here would be the one place
     in the system where a record's digest did not describe its bytes.
     """
     return StoredDocument(
-        record=DocumentRecord(
+        record=TextRecord(
             source_id=source_id,
             sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
             char_count=len(text),

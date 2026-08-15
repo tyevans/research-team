@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from eventsource import CommandRejectedError, DomainEvent
@@ -6,9 +6,12 @@ from eventsource import CommandRejectedError, DomainEvent
 from research_team.domain.corpus import (
     CorpusDocumentDropped,
     CorpusDocumentStored,
-    DocumentRecord,
+    CorpusMediaStored,
     DropSourceDocument,
+    MediaRecord,
     StoreSourceDocument,
+    StoreSourceMedia,
+    TextRecord,
     decide,
     evolve,
     initial_state,
@@ -67,12 +70,14 @@ def test_state_carries_metadata_but_never_text():
     put every document of every corpus into every snapshot. An invariant this
     cheap to violate has to fail a test the moment someone does.
     """
-    assert "text" not in DocumentRecord.model_fields
+    assert "text" not in TextRecord.model_fields
 
     corpus_id = uuid4()
     state = _with(corpus_id, _stored(corpus_id, text="a longer body"))
 
-    assert state.documents["s1"].char_count == len("a longer body")
+    record = state.documents["s1"]
+    assert isinstance(record, TextRecord)
+    assert record.char_count == len("a longer body")
     dumped = state.documents["s1"].model_dump()
     assert not any("a longer body" in str(value) for value in dumped.values())
 
@@ -120,7 +125,9 @@ def test_restoring_the_same_source_id_with_new_bytes_supersedes():
 
     state = evolve(state, _stored(corpus_id, source_id="s1", text="v2 is longer"))
 
-    assert state.documents["s1"].char_count == len("v2 is longer")
+    record = state.documents["s1"]
+    assert isinstance(record, TextRecord)
+    assert record.char_count == len("v2 is longer")
     assert state.documents["s1"].sha256 != old_digest
     assert old_digest not in state.by_digest
     assert state.by_digest[state.documents["s1"].sha256] == "s1"
@@ -219,3 +226,108 @@ def test_evolve_ignores_unknown_events():
     unknown = DomainEvent(aggregate_id=corpus_id, aggregate_type="Corpus")
 
     assert evolve(state, unknown) == state
+
+
+def test_storing_media_records_the_digest_it_was_given() -> None:
+    """The one place the corpus takes a digest on trust rather than computing it.
+
+    Asserted explicitly because it is a documented weakening of the guarantee
+    in this module's docstring: the bytes never reach the domain, so `decide`
+    cannot hash them. If a future change makes `decide` compute a digest for
+    media, this test is the one that should fail and force the docstring to be
+    reconciled with it.
+    """
+    corpus_id = uuid4()
+    events = decide(
+        StoreSourceMedia(
+            corpus_id=corpus_id,
+            source_id="v1",
+            sha256="a" * 64,
+            media_type="video/mp4",
+            byte_count=1234,
+            uri="https://example.test/talk.mp4",
+        ),
+        initial_state(),
+    )
+    assert len(events) == 1
+    stored = events[0]
+    assert isinstance(stored, CorpusMediaStored)
+    assert stored.sha256 == "a" * 64
+    assert stored.byte_count == 1234
+    assert stored.media_type == "video/mp4"
+
+
+def test_media_creates_a_corpus_the_way_a_document_does() -> None:
+    """Storing is what brings a corpus into existence, whichever kind is stored.
+
+    Fails if `StoreSourceMedia` falls through to the `status="new"` rejection
+    that guards every non-storing command.
+    """
+    corpus_id = uuid4()
+    state = evolve(
+        initial_state(),
+        decide(_store_media(corpus_id, "v1"), initial_state())[0],
+    )
+    assert state.status == "created"
+    assert state.corpus_id == corpus_id
+    record = state.documents["v1"]
+    assert isinstance(record, MediaRecord)
+    assert record.kind == "media"
+    assert record.byte_count == 1234
+
+
+def test_media_may_not_take_over_a_source_id_holding_text() -> None:
+    """A URI that returned prose yesterday and a video today is not a revision.
+
+    Supersession by `source_id` exists for re-fetches of one document. Letting
+    a kind change ride on it would make `read_document` start answering `None`
+    for a source that still exists, which is the silent half of this failure.
+    The refusal names both kinds because the next question is which one is
+    there now.
+    """
+    corpus_id = uuid4()
+    state = evolve(
+        initial_state(),
+        decide(
+            StoreSourceDocument(corpus_id=corpus_id, source_id="s1", text="prose"),
+            initial_state(),
+        )[0],
+    )
+    with pytest.raises(CommandRejectedError, match="text"):
+        decide(_store_media(corpus_id, "s1"), state)
+
+
+def test_text_may_not_take_over_a_source_id_holding_media() -> None:
+    """The same refusal in the other direction.
+
+    Written separately rather than parametrised: the two paths are two
+    branches, and a single test passing proves only one of them.
+    """
+    corpus_id = uuid4()
+    state = evolve(initial_state(), decide(_store_media(corpus_id, "v1"), initial_state())[0])
+    with pytest.raises(CommandRejectedError, match="media"):
+        decide(StoreSourceDocument(corpus_id=corpus_id, source_id="v1", text="prose"), state)
+
+
+def test_media_is_dropped_by_the_same_command_text_is() -> None:
+    """One drop command for one `source_id` namespace.
+
+    A second drop command for media would be a second way to say one thing, and
+    the citation path addresses an id without knowing its kind.
+    """
+    corpus_id = uuid4()
+    state = evolve(initial_state(), decide(_store_media(corpus_id, "v1"), initial_state())[0])
+    dropped = decide(DropSourceDocument(source_id="v1", reason="wrong talk"), state)
+    state = evolve(state, dropped[0])
+    assert state.documents["v1"].dropped_reason == "wrong talk"
+    assert state.by_digest == {}
+
+
+def _store_media(corpus_id: UUID, source_id: str) -> StoreSourceMedia:
+    return StoreSourceMedia(
+        corpus_id=corpus_id,
+        source_id=source_id,
+        sha256="a" * 64,
+        media_type="video/mp4",
+        byte_count=1234,
+    )
