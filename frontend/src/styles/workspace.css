@@ -131,6 +131,33 @@
   display: flex;
   gap: 2px;
 }
+/* A kept panel is hidden by *this*, not by Radix, and the difference is the
+   whole reason the rule exists. `TabPanel`'s `keepMounted` becomes Radix's
+   `forceMount`, and Radix writes `hidden: !present` where `present` is
+   `forceMount || isSelected` -- so a force-mounted panel is never `hidden` at
+   all. `forceMount` there means "I will handle hiding", which is right for its
+   intended use (exit animations) and is not what the name suggests.
+
+   What it cost: the project page's holding session is its one kept panel and
+   carries `flex flex-1`, so it painted on all eight tabs and, being a flex-1
+   sibling of whichever panel the reader chose, took half of MATERIAL's height.
+   Measured in Chromium at 1440x900 before the fix: 439.125px each out of
+   878.25. Reported as "the holding session shows on every tab and the tab I
+   picked is only the lower half".
+
+   `data-state` rather than `[hidden]`: `hidden` is the attribute that is
+   missing here, and `data-state="inactive"` is the one Radix always writes.
+   Scoped by `role='tabpanel'` because `data-state` is written by half a dozen
+   Radix primitives -- an unscoped rule would be the collision this repo has
+   already met once, where a `Tooltip` and a `RadioGroup` shared one element.
+
+   In a stylesheet rather than a `hidden:hidden`-style utility on the panel: the
+   utility would have to be repeated at every kept call site, and `display:none`
+   losing a cascade fight is invisible to every gate. `ProjectView.browser.test.tsx`
+   claim 8 is what fails if this is removed. */
+[role='tabpanel'][data-state='inactive'] {
+  display: none;
+}
 .tab {
   background: transparent;
   border: 1px solid transparent;
