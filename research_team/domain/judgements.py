@@ -24,10 +24,11 @@ another. Accepted deliberately; per-id judgements remain addable later as a
 second kind without disturbing this one.
 """
 
+from typing import Literal
 from uuid import UUID
 
 from eventsource import DomainEvent, register_event
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from redstring.domain.similarity import normalize_name
 
 
@@ -84,3 +85,115 @@ class JudgementWithdrawn(DomainEvent):
     aggregate_type: str = "EntityJudgements"
     judgement_id: UUID
     reason: str
+
+
+class JudgementRecord(BaseModel):
+    """One judgement as the fold keeps it, live or withdrawn."""
+
+    kind: Literal["same", "distinct"]
+    keys: list[EntityKey]
+    reason: str
+    withdrawn_reason: str | None = None
+    """Set means the fold no longer applies it. The record stays, so the
+    decision and its retraction both remain auditable."""
+
+
+class JudgementsState(BaseModel):
+    """Everything derivable from this project's judgement stream.
+
+    Holds the judgements and derives groups on demand rather than caching
+    them. Withdrawal makes a cache the harder half: removing one judgement can
+    split a group, leave it whole, or do nothing, depending on what else joined
+    those keys, so the honest incremental update is a recompute anyway. The set
+    is human-authored and small.
+    """
+
+    judgements_id: UUID | None = None
+    judgements: dict[UUID, JudgementRecord] = Field(default_factory=dict)
+
+    def _live(self, kind: str) -> list[JudgementRecord]:
+        return [
+            record
+            for record in self.judgements.values()
+            if record.kind == kind and record.withdrawn_reason is None
+        ]
+
+    def group_for(self, key: EntityKey) -> frozenset[EntityKey]:
+        """Every key held to denote the same thing as `key`, including itself.
+
+        A key nobody has judged comes back alone rather than empty, so callers
+        need no None branch and "no judgement" reads as "a group of one".
+        """
+        group = {key}
+        # Fixed point rather than one pass: A=B recorded after B=C still has to
+        # pull A into C's group, and the records are in event order, not
+        # dependency order.
+        changed = True
+        while changed:
+            changed = False
+            for record in self._live("same"):
+                members = set(record.keys)
+                if members & group and not members <= group:
+                    group |= members
+                    changed = True
+        return frozenset(group)
+
+    def are_held_distinct(self, left: EntityKey, right: EntityKey) -> bool:
+        """Whether a human has said these two are never the same thing.
+
+        Pairwise and symmetric, and deliberately **not** transitive: "A is not
+        B" and "B is not C" says nothing whatever about A and C.
+        """
+        pair = {left, right}
+        return any(set(record.keys) == pair for record in self._live("distinct"))
+
+
+def initial_state() -> JudgementsState:
+    return JudgementsState()
+
+
+def evolve(state: JudgementsState, event: DomainEvent) -> JudgementsState:
+    """What each fact does to the state.
+
+    Total on purpose: an unknown event leaves the state alone rather than
+    raising, so a stream carrying an event this build does not know about still
+    replays instead of failing halfway through.
+    """
+    match event:
+        case EntitiesHeldSame():
+            record = JudgementRecord(kind="same", keys=list(event.keys), reason=event.reason)
+            return state.model_copy(
+                update={
+                    "judgements_id": state.judgements_id or event.aggregate_id,
+                    "judgements": {**state.judgements, event.event_id: record},
+                }
+            )
+
+        case EntitiesHeldDistinct():
+            record = JudgementRecord(
+                kind="distinct", keys=[event.left, event.right], reason=event.reason
+            )
+            return state.model_copy(
+                update={
+                    "judgements_id": state.judgements_id or event.aggregate_id,
+                    "judgements": {**state.judgements, event.event_id: record},
+                }
+            )
+
+        case JudgementWithdrawn():
+            existing = state.judgements.get(event.judgement_id)
+            if existing is None:
+                return state
+            return state.model_copy(
+                update={
+                    "judgements": {
+                        **state.judgements,
+                        event.judgement_id: existing.model_copy(
+                            update={"withdrawn_reason": event.reason}
+                        ),
+                    }
+                }
+            )
+
+        case _:
+            return state
