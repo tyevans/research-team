@@ -297,3 +297,61 @@ needs nothing.
   files — clean.
 
 Still not run, per the brief: `npm run verify` and the Python gates.
+
+---
+
+# Item 6 — the two comments item 5 falsified
+
+Comments only; no behaviour, no markup, no stylesheet rules in these two files.
+
+## `AutonomyAllowAll.tsx` — the one that was false
+
+It said `.sub`'s "only definition anywhere under `src/styles/` **is**
+`tree.css`'s `.view-head .sub`". After item 5 there is no such definition, and
+none anywhere else either.
+
+Rewritten rather than deleted, because the paragraph's argument is the reason
+three elements in that file carry `text-fg-dim` instead of `.sub` and it
+survives the deletion intact — it is now *more* true. The correction: past tense
+for the definition, the deletion named and dated, the conclusion drawn out
+(`.sub` now has no definition anywhere at all), and one clause saying the
+paragraph was written while the rule still existed and could still have been
+mistaken for live. That last part is why the sentence read the way it did, and
+without it the correction looks like the original author was careless.
+
+## `AskHead.tsx` — the one that was stale
+
+It said the `.view-head` rule "lives unlayered in `tree.css` and caps itself at
+1100px". Tense corrected, and a short paragraph added saying the rule is deleted
+as of 2026-08-14 and why the note is kept anyway: it is the recorded reason this
+component owns its head outright rather than reaching for a shared one, and the
+next person to write a shared head will want the same cap for the same page. A
+deleted rule's cost is worth keeping where the decision it drove lives.
+
+## `AskView.browser.test.tsx:124` — read, and correctly left alone
+
+"the head **was** capped at 1100px by `.view-head` and overridden to
+`max-w-none!` … **Before it**, these two were equal." Entirely past tense, and
+about a state the redesign replaced rather than about a rule that exists. It
+needed nothing and got nothing.
+
+## One consequential edit back in `tree.css`
+
+The tombstone comment item 5 left said of these two files: "Both comments now
+describe a rule that is gone; they are correct about why their elements do not
+use it and stale about it existing." True for about an hour. Corrected to say
+both were fixed in the same change, and that the second one's argument gets
+stronger — a note about stale comments going stale is the exact failure it was
+written to prevent.
+
+## Verification
+
+- `npm run test:browser` — **24 files / 80 tests passed**, unchanged.
+- `npx vitest run --project app src/presentation/ask src/presentation/course` —
+  12 files / 81 tests passed.
+- `node scripts/check-deleted.mjs` — clean.
+- `npx tsc --noEmit`, `npx eslint` and `npx prettier --check` on both files (and
+  `tree.css` for the third edit) — clean.
+
+`.node-actions` left in place, as instructed. Still not run, per the brief:
+`npm run verify` and the Python gates.
