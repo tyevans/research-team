@@ -698,5 +698,29 @@ export const graphNeighborhoodDto = z.object({
   relationships: z.array(graphRelationshipDto).default([]),
 })
 
+/** One bar of `/api/projects/{id}/timeline`.
+ *
+ * `start` and `end` are nullable rather than optional: `null` is an open
+ * bound, a positive claim that the entity extends unboundedly in that
+ * direction, and a client reading it as "absent" would draw nothing where it
+ * should draw a bar running off the edge.
+ */
+export const timelineBandDto = z.object({
+  entity_id: z.string(),
+  name: z.string(),
+  entity_type: z.string(),
+  extent: z.string().default(''),
+  start: z.string().nullable(),
+  end: z.string().nullable(),
+  precision: z.string().default(''),
+  uncertainty: z.string().default(''),
+})
+
+export const timelineDto = z.object({
+  bands: z.array(timelineBandDto).default([]),
+  undated_count: z.number().default(0),
+  truncated: z.boolean().default(false),
+})
+
 export const idDto = z.object({ id: z.string() })
 export const okDto = z.unknown()

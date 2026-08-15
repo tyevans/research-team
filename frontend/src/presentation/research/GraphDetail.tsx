@@ -54,6 +54,7 @@ export const GraphDetail = ({
   selected,
   onSelect,
   onRemove,
+  showInGraphHref,
   onClose,
 }: {
   view: GraphView
@@ -61,7 +62,20 @@ export const GraphDetail = ({
   /** Selecting from here expands too, which is what makes this a way of
    *  walking the graph rather than a read-only card. */
   onSelect: (id: string) => void
-  onRemove: (id: string) => void
+  /** Take the entity off the drawing, or `undefined` where there is no drawing
+   *  to take it off. The timeline reuses this panel and has no canvas to
+   *  prune -- offering the control there would be a button that either does
+   *  nothing or silently changes a different tab. */
+  onRemove?: (id: string) => void
+  /** Where "Show in graph" goes, or `undefined` where this panel *is* the
+   *  graph. Optional for the reason `onRemove` is, in the other direction:
+   *  the timeline needs a route into the graph view and `GraphPane` would be
+   *  offering a link to the page the reader is already on.
+   *
+   *  An href rather than a callback, so it is a real link -- middle-click and
+   *  "open in new tab" work, which is most of what makes the two views peers
+   *  rather than one being a launcher for the other. */
+  showInGraphHref?: string
   onClose: () => void
 }) => {
   // Escape closes it, the way it closes the drawers this console already has.
@@ -105,17 +119,26 @@ export const GraphDetail = ({
           <p className="mx-0 mt-[2px] mb-0 font-mono text-xs text-fg-dim">{node.entityType}</p>
         </div>
         <div className="flex shrink-0 gap-2">
+          {showInGraphHref && (
+            <a className="btn btn-sm" href={showInGraphHref}>
+              Show in graph
+            </a>
+          )}
           {/* "Remove from view", not "Delete": this takes a dot off a drawing
               and nothing else. A reader who thought this deleted an entity
-              from the knowledge graph would never touch it. */}
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={() => onRemove(selected)}
-            aria-label={`Remove ${node.name} from the view`}
-          >
-            Remove
-          </button>
+              from the knowledge graph would never touch it. Rendered only
+              where there is a drawing to remove it from -- the timeline reuses
+              this panel with no `onRemove` at all. */}
+          {onRemove && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => onRemove(selected)}
+              aria-label={`Remove ${node.name} from the view`}
+            >
+              Remove
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-sm"

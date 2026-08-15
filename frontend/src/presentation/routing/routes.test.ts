@@ -67,6 +67,11 @@ describe('the facet grammar', () => {
     { facet: 'topic', selection: { facet: 'topic', id: 't1' }, hash: '#/p/abc/topic/t1' },
     { facet: 'stage', selection: { facet: 'stage', id: 'design' }, hash: '#/p/abc/stage/design' },
     { facet: 'entity', selection: { facet: 'entity', id: 'e1' }, hash: '#/p/abc/entity/e1' },
+    {
+      facet: 'timeline',
+      selection: { facet: 'timeline', id: 'e1' },
+      hash: '#/p/abc/timeline/e1',
+    },
     { facet: 'doc', selection: { facet: 'doc', id: 'd1' }, hash: '#/p/abc/doc/d1' },
     {
       facet: 'file',

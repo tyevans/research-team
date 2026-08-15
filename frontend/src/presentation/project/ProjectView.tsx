@@ -18,6 +18,7 @@ import { Pane } from '../layout/Pane.tsx'
 import { Split } from '../layout/Split.tsx'
 import { DocumentList } from '../research/DocumentList.tsx'
 import { GraphPane } from '../research/GraphPane.tsx'
+import { TimelinePane } from '../research/TimelinePane.tsx'
 import { TopicList } from '../research/TopicList.tsx'
 import { projectHref, sessionSelection, type Facet, type Selection } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
@@ -87,6 +88,7 @@ export const regionOf = (facet: Facet): Region => {
     case 'file':
       return 'material'
     case 'entity':
+    case 'timeline':
     case 'doc':
     case 'artifact':
     case 'finding':
@@ -114,7 +116,7 @@ export const regionOf = (facet: Facet): Region => {
  * moves one tab rather than three. Findings, documents and the graph are all
  * about material that arrived from outside the course, so they sit after.
  */
-type MaterialFacet = 'artifact' | 'file' | 'finding' | 'doc' | 'entity'
+type MaterialFacet = 'artifact' | 'file' | 'finding' | 'doc' | 'entity' | 'timeline'
 
 const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   { id: 'artifact', label: 'Artifacts' },
@@ -122,6 +124,12 @@ const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   { id: 'finding', label: 'Findings' },
   { id: 'doc', label: 'Documents' },
   { id: 'entity', label: 'Graph' },
+  // After Graph, not before: this list is ordered by what the reader is asking,
+  // and the timeline is a second reading of the graph's own material. Last also
+  // keeps it out of the default position, which matters for the same bundle
+  // reason `artifact` is default -- `TimelineCanvas` is lazy, and a default of
+  // `timeline` would pull it on every project page anybody opened.
+  { id: 'timeline', label: 'Timeline' },
 ]
 
 const DEFAULT_MATERIAL: Facet = 'artifact'
@@ -521,6 +529,14 @@ export const ProjectView = ({
               // button restoring the previous entity would return a URL
               // describing a smaller graph than the one on screen.
               onEntity={(entity) => select({ facet: 'entity', id: entity })}
+            />
+          </TabPanel>
+
+          <TabPanel value="timeline" className="flex min-h-0 flex-1 flex-col">
+            <TimelinePane
+              projectId={projectId}
+              entity={selection?.facet === 'timeline' ? (selection.id ?? null) : null}
+              onEntity={(entity) => select({ facet: 'timeline', id: entity })}
             />
           </TabPanel>
         </Tabs>

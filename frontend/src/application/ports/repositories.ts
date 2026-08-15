@@ -4,6 +4,7 @@ import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
 import type { EntitySearchResult, Neighborhood, WholeGraph } from '@domain/knowledge/graph.ts'
+import type { Timeline } from '@domain/knowledge/timeline.ts'
 import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
@@ -300,6 +301,16 @@ export interface GraphRepository {
    *  surface rather than clamp -- see the route's own docstring for why the
    *  server refuses instead of silently capping it. */
   neighborhood(projectId: ProjectId, entityId: string, depth?: number): Promise<Neighborhood>
+}
+
+export interface TimelineRepository {
+  /** The project's dated entities in time order, up to the server's cap.
+   *
+   * `undatedCount` on the result is not optional dressing -- most entities in
+   * a real graph carry no dates, so a timeline is a view of a minority of the
+   * corpus and the caller must show the denominator. `truncated` says the cap
+   * bit, the same way `WholeGraph.truncated` does. */
+  timeline(projectId: ProjectId, entityType?: string): Promise<Timeline>
 }
 
 export interface WorkerRepository {
