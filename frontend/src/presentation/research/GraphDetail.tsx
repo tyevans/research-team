@@ -1,6 +1,11 @@
+import { useState } from 'react'
+
 import { edgesOf, isExpanded, type GraphView } from '@domain/knowledge/graph.ts'
 import { shortId, type ProjectId } from '@domain/shared/identifier.ts'
+import { passageStart } from '@infrastructure/rendering/snippet.ts'
 
+import { Markdown } from '../common/content.tsx'
+import { Disclosure } from '../common/primitives.tsx'
 import { useEscape } from '../layout/OverlayHost.tsx'
 import { projectHref } from '../routing/routes.ts'
 import { useDefinition } from './use-definition.ts'
@@ -101,13 +106,20 @@ export const GraphDetail = ({
   // reader could not see was in play.
   useEscape(onClose)
 
-  // Fetched independently of the edge list below and of the definition
-  // section above it: three reads over the same `selected` id, none of which
-  // the others' latency should hold hostage. A reader who clicked a
-  // heavily-connected node should not wait on the corpus's BM25 lookup before
-  // seeing who it is wired to, and a slow edge fetch must not blank the
-  // passages that already came back.
-  const usagesQuery = useUsages(projectId, selected)
+  // Collapsed when the panel opens. The mentions are chunks, not quotations --
+  // several of them, each a paragraph or more of retrieved prose -- and they
+  // pushed the two things a reader clicked a node to see (what it is, what it
+  // is wired to) off the bottom of the drawer. Local state rather than
+  // persisted: the fold is a per-visit convenience, and a reader who opened it
+  // for one entity has said nothing about the next one.
+  const [mentionsOpen, setMentionsOpen] = useState(false)
+  // Fetched independently of the edge list below and of the definition section
+  // above it: reads over the same `selected` id, neither of which the other's
+  // latency should hold hostage. A reader who clicked a heavily-connected node
+  // should not wait on the corpus's BM25 lookup before seeing who it is wired
+  // to, and a slow edge fetch must not blank the passages that already came
+  // back.
+  const usagesQuery = useUsages(projectId, selected, { enabled: mentionsOpen })
   // Deliberately its own query rather than a field the usages fetch also
   // carries -- see `use-definition.ts` for why a cache read and a BM25
   // lookup do not belong on one request.
@@ -240,21 +252,25 @@ export const GraphDetail = ({
           blanks the edge list below (`edgesOf` reads straight from `view`,
           already resolved by the time this panel opens). */}
       <section className="border-0 border-b border-solid border-b-line px-3 py-[8px]">
-        <h4 className="tracking-wide m-0 mb-[4px] text-xs text-fg-faint uppercase">Mentions</h4>
-        {usagesQuery.isPending ? (
-          <p className="m-0 text-xs text-fg-dim">Loading mentions…</p>
-        ) : usagesQuery.isError ? (
-          <p className="m-0 text-xs text-fg-dim">Mentions could not be read.</p>
-        ) : usagesQuery.data.length === 0 ? (
-          // Same distinction the edge list draws below, and the same reason:
-          // a fetch that came back empty is not the same fact as one that has
-          // not happened yet, and this branch only renders once it has.
-          <p className="m-0 text-xs text-fg-dim">No mentions of this entity were found.</p>
-        ) : (
-          <ul className="m-0 flex list-none flex-col gap-[6px] p-0">
-            {usagesQuery.data.map((usage) => (
-              <li key={`${usage.sourceId}|${usage.start}|${usage.end}`}>
-                {/* The `doc` facet `CitationList` already links through, not
+        <Disclosure
+          label={<span className="tracking-wide text-xs text-fg-faint uppercase">Mentions</span>}
+          open={mentionsOpen}
+          onToggle={() => setMentionsOpen((open) => !open)}
+        >
+          {usagesQuery.isPending ? (
+            <p className="m-0 text-xs text-fg-dim">Loading mentions…</p>
+          ) : usagesQuery.isError ? (
+            <p className="m-0 text-xs text-fg-dim">Mentions could not be read.</p>
+          ) : usagesQuery.data.length === 0 ? (
+            // Same distinction the edge list draws below, and the same reason:
+            // a fetch that came back empty is not the same fact as one that has
+            // not happened yet, and this branch only renders once it has.
+            <p className="m-0 text-xs text-fg-dim">No mentions of this entity were found.</p>
+          ) : (
+            <ul className="m-0 flex list-none flex-col gap-[6px] p-0">
+              {usagesQuery.data.map((usage) => (
+                <li key={`${usage.sourceId}|${usage.start}|${usage.end}`}>
+                  {/* The `doc` facet `CitationList` already links through, not
                     the API route Task 6 built -- that endpoint answers JSON,
                     and a reader who followed it would get a page of raw text
                     with no reader chrome around it, which is not "the passage
@@ -265,17 +281,33 @@ export const GraphDetail = ({
                     top of the reader rather than on this exact mention. That
                     gap is real and is not this task's to close; see the
                     commit message. */}
-                <a
-                  className="flex flex-col gap-[1px] text-inherit no-underline hover:underline"
-                  href={projectHref(projectId, { facet: 'doc', id: usage.sourceId })}
-                >
-                  <span className="font-mono text-xs text-fg-dim">{shortId(usage.sourceId)}</span>
-                  <span className="text-sm [overflow-wrap:anywhere]">{usage.text}</span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
+                  <a
+                    className="flex flex-col gap-[1px] text-inherit no-underline hover:underline"
+                    href={projectHref(projectId, { facet: 'doc', id: usage.sourceId })}
+                  >
+                    <span className="font-mono text-xs text-fg-dim">{shortId(usage.sourceId)}</span>
+                    {/* Rendered, not shown raw: a chunk is markdown lifted out of
+                      a scraped page, and `## Prodigies` or `**religio**` on
+                      screen as literal characters is the source's formatting
+                      leaking through as noise.
+
+                      **This nests anchors when the passage contains a link,
+                      which is often.** `<a>`'s content model is transparent
+                      and forbids interactive descendants, so a browser splits
+                      the outer anchor around the inner one and the row stops
+                      being a single link -- part of it navigates to the
+                      document, part to wherever the corpus pointed. Chosen
+                      deliberately over stripping the passage's own links: see
+                      the commit message. `mention-snippet.browser.test.tsx`
+                      measures what the browser actually does with it, because
+                      jsdom does not reparent and so cannot see this at all. */}
+                    <Markdown className="md-snippet text-sm" source={passageStart(usage.text)} />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Disclosure>
       </section>
 
       <h4 className="tracking-wide m-0 px-3 pt-[8px] text-xs text-fg-faint uppercase">

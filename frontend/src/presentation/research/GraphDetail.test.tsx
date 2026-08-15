@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactElement, ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
@@ -79,6 +80,16 @@ const renderDetail = (ui: ReactElement, parts: Partial<AppContainer> = {}) => {
 
 const noop = () => {}
 
+/** Open the mentions fold, which is closed when the panel mounts.
+ *
+ * A helper rather than three lines repeated in every passage test: the fold is
+ * a property of the panel, not of any one of the things behind it, and a test
+ * about what a passage renders should not read as a test about a toggle. */
+const openMentions = async () => {
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: /mentions/i }))
+}
+
 it('lists a passage with the document it came from', async () => {
   const usage = aUsage()
   renderDetail(
@@ -92,6 +103,8 @@ it('lists a passage with the document it came from', async () => {
     />,
     { usages: fakeUsages({ usages: vi.fn().mockResolvedValue([usage]) }) },
   )
+
+  await openMentions()
 
   const passage = await screen.findByText(/Acme supplies/)
   expect(passage).toBeInTheDocument()
@@ -123,6 +136,8 @@ it('says nothing was found rather than showing an empty box', async () => {
     { usages: fakeUsages({ usages: vi.fn().mockResolvedValue([]) }) },
   )
 
+  await openMentions()
+
   expect(await screen.findByText(/no mentions/i)).toBeInTheDocument()
 })
 
@@ -142,6 +157,8 @@ it('keeps showing the edge list while usages are still loading', async () => {
     />,
     { usages },
   )
+
+  await openMentions()
 
   expect(screen.getByRole('heading', { name: /relationships/i })).toBeInTheDocument()
 })
@@ -166,6 +183,8 @@ it('shows the definition above the passages', async () => {
       usages: fakeUsages({ usages: vi.fn().mockResolvedValue([usage]) }),
     },
   )
+
+  await openMentions()
 
   const definition = await screen.findByText(/Acme Corporation is a supplier/)
   const passage = await screen.findByText(/Acme supplies/)
@@ -257,6 +276,87 @@ it('does not block the passages on the definition still loading', async () => {
     { definitions, usages: fakeUsages({ usages: vi.fn().mockResolvedValue([usage]) }) },
   )
 
+  await openMentions()
+
   expect(await screen.findByText(/Acme supplies/)).toBeInTheDocument()
   expect(screen.getByText(/generating a definition/i)).toBeInTheDocument()
+})
+
+it('keeps the mentions folded away until asked', async () => {
+  // Bound to a local rather than read back off the repository object, which is
+  // what `unbound-method` objects to: `usages.usages` detached from `usages` is
+  // a method reference the lint cannot prove is safe to call.
+  const usagesFn = vi.fn().mockResolvedValue([aUsage()])
+  const usages = fakeUsages({ usages: usagesFn })
+  renderDetail(
+    <GraphDetail
+      projectId={PROJECT}
+      view={VIEW}
+      selected="ada"
+      onSelect={noop}
+      onRemove={noop}
+      onClose={noop}
+    />,
+    { usages },
+  )
+
+  await screen.findByText(/Acme Corporation is a supplier/)
+  expect(screen.queryByText(/Acme supplies/)).not.toBeInTheDocument()
+  // Not merely hidden: the fetch is gated on the fold, so a passage list
+  // nobody asked for costs no BM25 query. This is the assertion that fails if
+  // `enabled` is dropped and the section is only visually collapsed.
+  expect(usagesFn).not.toHaveBeenCalled()
+
+  await openMentions()
+
+  expect(await screen.findByText(/Acme supplies/)).toBeInTheDocument()
+  expect(usagesFn).toHaveBeenCalledTimes(1)
+})
+
+it('renders a passage as markdown rather than as its source characters', async () => {
+  const usage = aUsage({
+    text: 'ontifices, which Livy treats as\nMajor **prodigies** were expiated.',
+  })
+  renderDetail(
+    <GraphDetail
+      projectId={PROJECT}
+      view={VIEW}
+      selected="ada"
+      onSelect={noop}
+      onRemove={noop}
+      onClose={noop}
+    />,
+    { usages: fakeUsages({ usages: vi.fn().mockResolvedValue([usage]) }) },
+  )
+
+  await openMentions()
+
+  // The emphasis as an element, not as asterisks. `findByText` on the whole
+  // sentence would pass either way, because it matches the concatenated text
+  // content -- so this asks for the tag.
+  const emphasis = await screen.findByText('prodigies')
+  expect(emphasis.tagName).toBe('STRONG')
+})
+
+it('starts a passage at a boundary rather than mid-sentence', async () => {
+  const usage = aUsage({
+    text: 'ontifices, which Livy treats as\nMajor prodigies were expiated.',
+  })
+  renderDetail(
+    <GraphDetail
+      projectId={PROJECT}
+      view={VIEW}
+      selected="ada"
+      onSelect={noop}
+      onRemove={noop}
+      onClose={noop}
+    />,
+    { usages: fakeUsages({ usages: vi.fn().mockResolvedValue([usage]) }) },
+  )
+
+  await openMentions()
+
+  expect(await screen.findByText(/Major prodigies were expiated/)).toBeInTheDocument()
+  // The half-sentence the chunker cut is gone, not merely pushed down.
+  expect(screen.queryByText(/ontifices/)).not.toBeInTheDocument()
 })

@@ -121,6 +121,27 @@ h6.md-h {
   text-decoration: underline dotted;
 }
 
+/* A retrieved passage inside the graph drawer's mentions list.
+ *
+ * `.md`'s own padding is page chrome -- 10px in and 40px of scroll runway at
+ * the bottom -- which is right for a document filling a pane and absurd around
+ * a three-line quotation in a list. A named class rather than a `p-0` utility
+ * because `.md` is unlayered and Tailwind's utilities are not: at equal
+ * specificity the unlayered rule wins regardless, so the utility would be in
+ * the attribute and absent from the computed style. `CLAUDE.md` carries the
+ * measurement; `mention-snippet.browser.test.tsx` is what fails if this is
+ * swapped back for one.
+ *
+ * The trailing margin goes off the last block for the same reason: `.md-p`'s
+ * 10px is paragraph rhythm inside prose, and on the last line of a list row it
+ * is a gap the row did not ask for. */
+.md-snippet {
+  padding: 0;
+}
+.md-snippet > :last-child {
+  margin-bottom: 0;
+}
+
 pre.code .ln {
   display: inline-block;
   width: 42px;

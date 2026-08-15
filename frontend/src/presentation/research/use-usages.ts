@@ -14,13 +14,24 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
  * `enabled: entityId !== null` rather than a caller-side conditional render:
  * `GraphDetail` already returns `null` before this hook would run when there
  * is no selection, but keeping the guard here too means a future caller that
- * mounts this hook earlier does not fire a request for `entityId=null`. */
-export const useUsages = (projectId: ProjectId, entityId: string | null) => {
+ * mounts this hook earlier does not fire a request for `entityId=null`.
+ *
+ * `enabled` on top of that is the mentions fold: the section is collapsed when
+ * the panel opens, and a passage list nobody has asked to see is a BM25 query
+ * per known name (see `UsageReader.usages`) spent on nothing. It is a separate
+ * parameter rather than the caller passing `null` for the id, because the id
+ * is part of the query key -- collapsing would otherwise move the result to a
+ * different cache entry and re-fetch on every expand. */
+export const useUsages = (
+  projectId: ProjectId,
+  entityId: string | null,
+  { enabled = true }: { enabled?: boolean } = {},
+) => {
   const { usages } = useContainer()
 
   return useQuery({
     queryKey: queryKeys.usages(projectId, entityId ?? ''),
     queryFn: () => usages.usages(projectId, entityId as string),
-    enabled: entityId !== null,
+    enabled: enabled && entityId !== null,
   })
 }
