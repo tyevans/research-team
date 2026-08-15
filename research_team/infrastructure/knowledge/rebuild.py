@@ -14,12 +14,14 @@ closed upstream. redstring 0.3.0 removed its own replay module in favour of
 from uuid import UUID
 
 from eventsource import ReplayFailedError, replay
-from redstring import GraphProjection, GraphStore
+from redstring import ChunkProjection, ChunkStore, GraphProjection, GraphStore
 
 from research_team.application.knowledge import KnowledgeError
 
 
-async def rebuild_graph(store: GraphStore, *, feed, project_id: UUID) -> int:
+async def rebuild_graph(
+    store: GraphStore, *, feed, project_id: UUID, chunks: ChunkStore | None = None
+) -> int:
     """Fold this project's knowledge events into `store`. Returns events applied.
 
     Takes no provider, and must not grow one: extraction happens once, when the
@@ -32,10 +34,28 @@ async def rebuild_graph(store: GraphStore, *, feed, project_id: UUID) -> int:
     alternative is reading every session event in the file and discarding it.
     research-team's own events carry no tenant and so are excluded by the same
     filter.
+
+    `chunks` is keyword-only with a `None` default so no existing caller
+    breaks. **A log holding `DocumentChunked` cannot fail to open just
+    because `chunks` is omitted** -- `eventsource.replay` applies an event no
+    projection handles rather than rejecting it (verified against
+    `eventsource.application.projections.replay`'s docstring: "An event that
+    every projection ignores still counts as applied -- it was delivered and
+    nothing rejected it"). The failure mode of omitting `ChunkProjection` is
+    therefore silent rather than loud: the corpus comes up empty, BM25
+    returns nothing, and the UI says "no mentions found" -- the same sentence
+    it truthfully says about an entity that has none. Nothing here can raise
+    to catch that; it is why the corresponding test asserts retrieval, not
+    that `rebuild_graph` merely returned.
     """
-    projection = GraphProjection(store)
+    projections: list[object] = [GraphProjection(store)]
+    if chunks is not None:
+        # Folded in the same pass rather than a second replay: the log is
+        # read once and both read models are derived from it, so a corpus can
+        # never be a different age than the graph its citations sit alongside.
+        projections.append(ChunkProjection(chunks))
     try:
-        report = await replay(feed, [projection], tenant_id=project_id, strict=True)
+        report = await replay(feed, projections, tenant_id=project_id, strict=True)
     except ReplayFailedError as error:
         # `strict` refuses at the first bad event rather than folding on and
         # reporting a count. The failure names the event, which is the whole

@@ -36,7 +36,20 @@ BuildStore = Callable[[], Any]
 #: Folds one project's knowledge events into a store that was just built.
 #: Takes the store and the project id; closes over whatever feed it reads
 #: from, the way `open_graph` used to close over `repository.store` directly.
-Rebuild = Callable[[Any, UUID], Awaitable[None]]
+#: `chunks` is keyword-only and only ever passed when a chunk store was
+#: actually built for this project -- matching `rebuild_graph`'s own
+#: keyword-only, default-`None` parameter, so a caller that never asked for
+#: chunking (no `build_chunk_store` given to `ProjectGraphs`) never has to
+#: accept a parameter it has nothing to pass.
+Rebuild = Callable[..., Awaitable[None]]
+
+#: Builds a fresh, unopened chunk store, or returns None when chunking is
+#: off (`AGENT_CHUNK_STORE=none`). Synchronous, matching
+#: `build_chunk_store` -- unlike `open_vector_store` below, there is no
+#: adapter here with a connection to await. Optional: most callers up to
+#: this point have never asked for a chunk corpus, and `None` here is the
+#: whole of that feature staying off.
+BuildChunkStore = Callable[[], Any | None]
 
 #: Opens the one vector store this process shares, or returns None when
 #: embeddings are off. A callable rather than a store because opening one is
@@ -64,9 +77,12 @@ class ProjectGraphs:
         build_store: BuildStore,
         rebuild: Rebuild,
         open_vector_store: OpenVectorStore | None = None,
+        build_chunk_store: BuildChunkStore | None = None,
     ) -> None:
         self._build_store = build_store
         self._rebuild = rebuild
+        self._build_chunk_store = build_chunk_store
+        self._chunk_stores: dict[UUID, Any] = {}
         # One vector store for the process, not one per project: it scopes by
         # tenant internally, and a second would buy isolation redstring already
         # provides and pay for it in sockets. It is opened *here* rather than
@@ -154,9 +170,33 @@ class ProjectGraphs:
             # Neo4j server; a no-op for the in-memory store, which has none.
             if hasattr(store, "ensure_schema"):
                 await store.ensure_schema()
-            await self._rebuild(store, project_id)
+            # Built here, one per project, the same way the graph store is --
+            # not shared like `_vector_store`, because a corpus is per-tenant
+            # data derived from *this* project's log, not a process-wide
+            # index. `None` when chunking is off, matching `build_chunk_store`.
+            chunk_store = self._build_chunk_store() if self._build_chunk_store else None
+            if chunk_store is not None:
+                # Passed as a keyword so a `rebuild` that never expects
+                # chunking (no `build_chunk_store` configured) is never
+                # called with a parameter it doesn't accept.
+                await self._rebuild(store, project_id, chunks=chunk_store)
+                self._chunk_stores[project_id] = chunk_store
+            else:
+                await self._rebuild(store, project_id)
             self._stores[project_id] = store
             return store
+
+    def chunks(self, project_id: UUID) -> Any | None:
+        """This project's chunk store, if `open` has built one.
+
+        Not async and not lazy: the store was already built and folded
+        during `open`, in the same replay pass as the graph -- see
+        `rebuild_graph`'s own docstring for why splitting that into a second
+        pass would let the corpus and the graph drift to different ages.
+        `None` before `open` has run for this project, or when
+        `build_chunk_store` was never given to this instance (chunking off).
+        """
+        return self._chunk_stores.get(project_id)
 
     async def close(self, project_id: UUID) -> None:
         """Evict this project's store, closing it if it has a close to run.
@@ -170,6 +210,9 @@ class ProjectGraphs:
         store = self._stores.pop(project_id, None)
         if store is not None and hasattr(store, "close"):
             await store.close()
+        chunk_store = self._chunk_stores.pop(project_id, None)
+        if chunk_store is not None and hasattr(chunk_store, "close"):
+            await chunk_store.close()
 
     async def close_all(self) -> None:
         """Close every cached store, and the shared vector store. For shutdown.

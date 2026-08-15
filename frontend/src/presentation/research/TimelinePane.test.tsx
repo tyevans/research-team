@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
@@ -115,17 +116,45 @@ const fakeStream = (): EventStream => ({
 /** `StreamProvider` is not decoration: the pane subscribes to the graph feed
  *  through `useFrameRefresh`, which throws outside one. `OverlayHost` is what
  *  `GraphDetail`'s Escape handling registers against -- without it in scope
- *  Escape does nothing, the same contract `GraphPane.test.tsx` documents. */
+ *  Escape does nothing, the same contract `GraphPane.test.tsx` documents.
+ *
+ *  `QueryClientProvider` and the two empty repositories below are here for a
+ *  reason worth stating: `GraphDetail` gained mentions and definition
+ *  sections, each a query of its own, so every route that opens that panel
+ *  now needs a client in scope. The timeline reaches the same panel the graph
+ *  does, which is the point of `showInGraphHref` -- so it inherits the
+ *  requirement. Without the provider the panel throws on render and the
+ *  failure names a hook, not the missing provider. */
 const renderPane = (parts: Partial<AppContainer>) => {
-  const container = { stream: fakeStream(), ...parts } as unknown as AppContainer
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  const container = {
+    stream: fakeStream(),
+    // Empty rather than omitted: these tests are about bands and the panel's
+    // shell, not about mentions, and a repository that resolves to nothing
+    // keeps those sections in their empty state instead of an error state
+    // that would compete with what is being asserted.
+    usages: { usages: async () => [] },
+    definitions: {
+      definition: async () => ({
+        text: null,
+        citations: [],
+        model: null,
+        generatedAt: null,
+        stale: false,
+      }),
+    },
+    ...parts,
+  } as unknown as AppContainer
   return render(
-    <ContainerProvider container={container}>
-      <StreamProvider>
-        <OverlayHost>
-          <RoutedTimelinePane />
-        </OverlayHost>
-      </StreamProvider>
-    </ContainerProvider>,
+    <QueryClientProvider client={client}>
+      <ContainerProvider container={container}>
+        <StreamProvider>
+          <OverlayHost>
+            <RoutedTimelinePane />
+          </OverlayHost>
+        </StreamProvider>
+      </ContainerProvider>
+    </QueryClientProvider>,
   )
 }
 

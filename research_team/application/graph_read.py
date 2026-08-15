@@ -68,6 +68,17 @@ MAX_GRAPH_NODES = 500
 #: nothing between `infer_relations` and the canvas bounds edges otherwise.
 MAX_INFERRED_EDGES = 2_000
 
+#: How many usages `GET .../usages` will hand back in one call. Not a
+#: legibility bound the way `MAX_GRAPH_NODES` is -- a list of passages
+#: renders fine at any length -- but `UsageReader.usages` runs one BM25
+#: query per known name and ranks every candidate it gets back, so a large
+#: `limit` is a large amount of work on top of `lexical_candidates` widening
+#: with it. The web route (not this module) refuses a `limit` above this
+#: cap with 422 rather than clamping it, unlike `MAX_GRAPH_NODES`: a caller
+#: asking for 10,000 passages has misunderstood what the endpoint returns,
+#: and silently handing back 100 would teach them the ask worked.
+MAX_USAGES = 100
+
 
 @dataclass(frozen=True)
 class GraphEntity:

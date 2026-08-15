@@ -58,7 +58,7 @@ from pydantic import Field, field_validator
 # The public name, not `redstring.events.document`: reaching through a dotted
 # path opts out of the only compatibility promise the library makes, which is
 # how 0.8.0 broke six imports here. See PR #180.
-from redstring import DocumentExtracted
+from redstring import DocumentExtracted, EntitiesMerged
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.application import SessionSummary, SummaryHealth
@@ -1069,6 +1069,373 @@ class CorpusRunner:
         if self._corpus is not None:
             await self._corpus.close()
             self._corpus = None
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None
+
+
+DEFINITION_NAMESPACE = UUID("8a2c1e6d-4b9f-5a71-9e3c-2d6f8b1a0c45")
+"""Distinct from `CORPUS_NAMESPACE` so a definition and a document that
+happened to share a `(project_id, entity_id)`-shaped key could never collide
+on `id` -- the two tables are keyed on unrelated things (an entity, a source)
+that are both just strings by the time `uuid5` sees them."""
+
+
+class EntityDefinitionRow(ReadModel):
+    """One generated definition, cached against the entity it describes.
+
+    A cache and not a projection's own state: the definition service's `put`
+    is the only writer of `text`/`citations`/`model`/`generated_at`, but the
+    row also has to be *invalidated* by graph events this table never reads
+    the payload of -- a merge or an edit changes what an entity is without
+    itself carrying new definition text. Splitting "what the definition says"
+    from "whether it's still trustworthy" into `mark_stale`/`delete` on the
+    store, rather than folding invalidation events here too, keeps the one
+    thing this table promises -- `stale=True` means *some* graph change
+    invalidated this text -- true regardless of which event caused it,
+    without this row's shape needing to grow a case per invalidating event.
+    """
+
+    __table_name__ = "entity_definitions"
+
+    project_id: UUID
+    entity_id: UUID
+    text: str
+    citations: str
+    """JSON array of `{source_id, start, end}`. A string column and not a
+    list, deliberately unlike `SessionSummaryRow.file_paths`: that field is
+    read back into application code that iterates it, where a citation is
+    only ever handed whole to the browser that renders spans against source
+    text it also holds. Decoding here would be work with no reader."""
+    model: str
+    generated_at: str
+    stale: bool = False
+
+    @staticmethod
+    def row_id(project_id: UUID, entity_id: UUID) -> UUID:
+        """The row id for a definition, matching `CorpusDocumentRow.row_id`'s
+        shape: keying on the pair means one project's entity ids -- which are
+        graph-local, not global -- cannot collide with another project's."""
+        return uuid5(DEFINITION_NAMESPACE, f"{project_id}:{entity_id}")
+
+
+class EntityDefinitionStore:
+    """The definition cache table and the connection it owns.
+
+    No projection here, unlike `CorpusStore` and `SessionSummaryStore` --
+    this store is written to directly by whatever generates a definition and
+    by Task 8's invalidation projection, both through `put`/`mark_stale`/
+    `delete`, rather than by this store reading events itself. A store with
+    no projection is still a store: `open()` still owns reconciling the
+    table's schema, which is the part every caller needs and none should
+    duplicate.
+    """
+
+    def __init__(self, connection: aiosqlite.Connection, rows: ReadModelRepository) -> None:
+        self._connection = connection
+        self._rows = rows
+
+    @classmethod
+    async def open(cls, db_path: str, tracer=None) -> "EntityDefinitionStore":
+        connection = await aiosqlite.connect(db_path)
+        await apply_schema(connection, EntityDefinitionRow)
+        # `apply_schema` reconciles columns, not indexes -- see the identical
+        # note on `CorpusStore.open`. Every read here is project-scoped
+        # (`get`, and `mark_stale`/`delete` before it), so an unindexed table
+        # would put every project's reads behind a scan of every other
+        # project's cached definitions.
+        await connection.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_entity_definitions_project "
+            f"ON {EntityDefinitionRow.table_name()}(project_id)"
+        )
+        await connection.commit()
+        rows = SQLiteReadModelRepository(connection, EntityDefinitionRow, tracer)
+        return cls(connection, rows)
+
+    async def get(self, project_id: UUID, entity_id: UUID) -> EntityDefinitionRow | None:
+        """The cached definition, or None if there is none yet.
+
+        `row.project_id != project_id` cannot happen through this class's own
+        `row_id` -- the pair is baked into the id -- but is checked anyway for
+        the same reason `CorpusStore.get` checks it: a row reached by id alone
+        makes no claim about which project asked, and a bug elsewhere that
+        looked one entity up under the wrong project should not read back
+        another project's definition as if it were an answer.
+        """
+        row = await self._rows.get(EntityDefinitionRow.row_id(project_id, entity_id))
+        if row is None or row.project_id != project_id:
+            return None
+        return row
+
+    async def put(self, row: EntityDefinitionRow) -> None:
+        """Store a definition, superseding whatever was cached before."""
+        await self._rows.save(row)
+
+    async def mark_stale(self, project_id: UUID, entity_id: UUID) -> None:
+        """Flag a cached definition as no longer trustworthy, without
+        discarding it -- Task 8 sets this from a graph event that changed the
+        entity, and the stale text stays visible (labelled) until something
+        regenerates it, rather than disappearing out from under a reader.
+
+        A missing row is a no-op, not an error: this is called from an
+        invalidation projection reacting to graph events, and "this entity
+        has never had a definition generated" is the ordinary case for most
+        entities, not drift the way a missing row is for `CorpusProjection`'s
+        drop handler. Raising here would put routine graph activity in the
+        DLQ for a store that was never asked to remember anything.
+        """
+        row = await self.get(project_id, entity_id)
+        if row is None:
+            return
+        row.stale = True
+        await self._rows.save(row)
+
+    async def delete(self, project_id: UUID, entity_id: UUID) -> None:
+        """Discard a cached definition outright -- for an entity that no
+        longer exists, where marking it stale would leave a permanent orphan
+        nothing will ever regenerate. A missing row is a no-op for the same
+        reason `mark_stale`'s is."""
+        await self._rows.delete(EntityDefinitionRow.row_id(project_id, entity_id))
+
+    async def close(self) -> None:
+        await self._connection.close()
+
+
+class EntityDefinitionProjection(DeclarativeProjection):
+    """Marks cached definitions untrustworthy in reaction to graph events.
+
+    Deliberately writes no definition text -- `put` is for whatever generates
+    one, elsewhere. This projection only calls `mark_stale`/`delete`, both of
+    which already tolerate a missing row, so the two handlers below never
+    need their own existence check the way `CorpusProjection._on_dropped`
+    does through `_require`: there is no aggregate invariant here that would
+    make a missing row drift rather than the ordinary case of an entity
+    nobody has read yet.
+
+    **Marks, never regenerates.** A bulk re-extraction touching two hundred
+    entities would otherwise fire two hundred LLM calls for definitions
+    nobody asked to read -- `stale=True` is a label the next click resolves,
+    not a queue this projection drains itself.
+
+    **Does not subscribe to `MergeUndone`, on purpose.** Undoing a merge
+    deletes-then-restores the absorbed entities' rows via redstring's own
+    projection, so on the next click they regenerate from scratch -- correct,
+    with no help needed here. The canonical entity is left stale from the
+    original `EntitiesMerged`, which is also correct: it is still the entity
+    whose properties the merge touched, undo or not. No case a `MergeUndone`
+    handler could catch actually yields a wrong answer today, so there is
+    nothing here for one to do. If undo becomes routine enough that leaving
+    the canonical stale (rather than restoring its pre-merge staleness) reads
+    as surprising, that is the point to revisit this, not before.
+    """
+
+    def __init__(
+        self,
+        definitions: EntityDefinitionStore,
+        checkpoint_repo=None,
+        dlq_repo=None,
+        tracer=None,
+    ) -> None:
+        self._definitions = definitions
+        super().__init__(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+            retry_policy=LOCAL_RETRY_POLICY,
+            tracer=tracer,
+        )
+
+    @handles(DocumentExtracted)
+    async def _on_extracted(self, event: DocumentExtracted) -> None:
+        """Stale every cached definition an extraction run touched.
+
+        Entities never gain properties incrementally -- a property change
+        arrives as a whole-entity payload inside `DocumentExtracted`, the way
+        a new mention or a corrected name would -- so this one subscription
+        is the entire "more properties were added" case; there is no second
+        event to also watch for that.
+
+        Keys on `event.tenant_id`, matching `CorpusProjection._on_extracted`:
+        this subscribes to the whole store rather than one category, so
+        redstring's own event arrives here without new wiring, and
+        `tenant_id` is the project.
+        """
+        for entity in event.entities:
+            await self._definitions.mark_stale(event.tenant_id, entity.id)
+
+    @handles(EntitiesMerged)
+    async def _on_merged(self, event: EntitiesMerged) -> None:
+        """Stale the survivor, delete the absorbed.
+
+        The canonical entity's definition may no longer describe it fully --
+        a merge can bring in properties the cached text never saw -- so it is
+        marked stale rather than left alone. An absorbed id, by contrast, is
+        no longer clickable anywhere in the UI once merged away, so its
+        cached definition is unreachable text; deleting it (not staling it)
+        also keeps `/rebuild` producing the same row count as steady-state
+        operation, where nothing ever generates a definition for an id that
+        cannot be clicked. Leaving it would be a silent divergence nobody
+        could later explain.
+        """
+        await self._definitions.mark_stale(event.tenant_id, event.canonical_entity_id)
+        for merged_id in event.merged_entity_ids:
+            await self._definitions.delete(event.tenant_id, merged_id)
+
+
+class EntityDefinitionRunner:
+    """Keeps the definition cache's staleness following the log.
+
+    A third runner beside `CorpusRunner` and `SessionSummaryRunner`, for the
+    same reasons `CorpusRunner`'s docstring gives for being a second one
+    rather than sharing: a distinct port (`rebuild()` and `health()`-shaped
+    surface for this table alone), and a `rebuild()` that must not be able to
+    truncate a table it does not own.
+
+    Unlike those two, this runner's `rebuild()` recomputes staleness rather
+    than the rows themselves -- see `rebuild` below for why truncating here
+    would be destructive rather than merely wasteful.
+    """
+
+    def __init__(
+        self,
+        store: SQLiteEventStore,
+        db_path: str,
+        bus: InMemoryEventBus,
+        tracer=None,
+    ):
+        self._store = store
+        self._db_path = db_path
+        self._bus = bus
+        self._tracer = tracer
+        self._definitions: EntityDefinitionStore | None = None
+        self._manager: SubscriptionManager | None = None
+        self._subscription = None
+        self._checkpoints: SQLCheckpointRepository | None = None
+        self._dlq: SQLDLQRepository | None = None
+        self._engine: AsyncEngine | None = None
+
+    @property
+    def projection_name(self) -> str:
+        return EntityDefinitionProjection.__name__
+
+    async def start(self) -> None:
+        """Open the table and start following the log.
+
+        Same shape as `CorpusRunner.start`, including touching the event
+        store first so `projection_checkpoints` exists before anything reads
+        it.
+        """
+        if self._manager is not None:
+            return
+        await self._store.current_position()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        self._engine = engine
+        self._checkpoints = SQLCheckpointRepository(engine)
+        self._dlq = SQLDLQRepository(engine)
+        self._definitions = await EntityDefinitionStore.open(self._db_path, self._tracer)
+        projection = EntityDefinitionProjection(
+            self._definitions, self._checkpoints, self._dlq, self._tracer
+        )
+        self._manager = SubscriptionManager(
+            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
+        )
+        self._subscription = await self._manager.subscribe(
+            projection, SubscriptionConfig(start_from="checkpoint")
+        )
+        results = await self._manager.start()
+        failures = {name: err for name, err in results.items() if err is not None}
+        if failures:
+            raise RuntimeError(f"the entity definition projection failed to start: {failures}")
+
+    async def failures(self, limit: int = 100) -> list[DLQEntry]:
+        if self._dlq is None:
+            return []
+        return await self._dlq.get_failed_events(
+            projection_name=self.projection_name, limit=limit
+        )
+
+    async def get(self, project_id: UUID, entity_id: UUID) -> EntityDefinitionRow | None:
+        """This project's cached definition of `entity_id`, if there is one.
+
+        Delegated the way `CorpusRunner.get` is, rather than handing the
+        `EntityDefinitionStore` out through a property, and the reason is
+        `rebuild()`: it closes the store and opens another one. A caller
+        holding the store would go on calling a closed connection, silently,
+        after a repair -- where a caller holding the runner reaches whichever
+        store is current on every call. That is also what keeps the route's
+        cache and this projection's invalidation the *same* table: there is
+        one owner of the connection, and it is this object.
+        """
+        if self._definitions is None:
+            raise RuntimeError("the entity definition projection has not been started")
+        return await self._definitions.get(project_id, entity_id)
+
+    async def put(self, row: EntityDefinitionRow) -> None:
+        """Store a generated definition, superseding whatever was cached.
+
+        The write half of `get`, for the same one-owner reason. This
+        projection never calls it -- see the class docstring on why
+        generation and invalidation are split -- but the generating service
+        reaches the table through here so that both halves go through one
+        connection rather than two that would each cache the other's stale
+        reads.
+        """
+        if self._definitions is None:
+            raise RuntimeError("the entity definition projection has not been started")
+        await self._definitions.put(row)
+
+    async def rebuild(self) -> None:
+        """Reset the checkpoint and replay, without truncating the table.
+
+        `CorpusRunner.rebuild` and its `/sessions` counterpart both truncate
+        first because their tables hold nothing that is not entirely derived
+        from the log. This table is different: `text`/`citations`/`model`/
+        `generated_at` come from the definition service's `put`, not from the
+        event log this projection replays at all -- see the class
+        docstring on why invalidation is split from generation. Truncating
+        here would discard every generated definition and replace it with
+        nothing, where a resubscribed replay would only re-derive
+        `stale`. Resetting the checkpoint and replaying re-applies every
+        `DocumentExtracted`/`EntitiesMerged` in the log, which correctly
+        re-stales (and re-deletes) whatever the current rows say -- the same
+        repair `CorpusRunner.rebuild` performs, minus the truncate that would
+        make it destructive for this table.
+        """
+        if self._manager is None:
+            raise RuntimeError("the entity definition projection has not been started")
+        await self._manager.stop()
+        for entry in await self.failures(limit=1000):
+            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
+        await self._checkpoints.reset_checkpoint(self.projection_name)
+        self._manager = None
+        self._subscription = None
+        await self._definitions.close()
+        self._definitions = None
+        await self.start()
+        await self.caught_up()
+
+    async def caught_up(self, timeout: float = 10.0) -> None:
+        if self._manager is None:
+            return
+        target = await self._store.current_position()
+        if target is None:
+            return
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            reached = self._subscription.last_processed_position
+            if reached is not None and not reached < target:
+                return
+            await asyncio.sleep(0.01)
+        raise TimeoutError(
+            f"the entity definition projection did not reach {target} within {timeout}s"
+        )
+
+    async def stop(self) -> None:
+        if self._manager is not None:
+            await self._manager.stop()
+            self._manager = None
+        if self._definitions is not None:
+            await self._definitions.close()
+            self._definitions = None
         if self._engine is not None:
             await self._engine.dispose()
             self._engine = None

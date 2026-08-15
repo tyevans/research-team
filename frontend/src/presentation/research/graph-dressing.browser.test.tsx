@@ -1,7 +1,12 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render } from 'vitest-browser-react'
 import { expect, it, vi } from 'vitest'
 
+import type { Container as AppContainer } from '@app/container.ts'
+import { ContainerProvider } from '@app/container-context.tsx'
+import type { UsagesRepository } from '@application/ports/repositories.ts'
 import type { GraphNode, GraphView } from '@domain/knowledge/graph.ts'
+import { ProjectId } from '@domain/shared/identifier.ts'
 
 import { GraphBrowser } from './GraphPane.tsx'
 
@@ -66,32 +71,47 @@ const view: GraphView = {
   expanded: new Set(['n0']),
 }
 
+const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
+
+// `GraphDetail`'s new usages section reads through a query hook, which is why
+// this file gained a container and a `QueryClient` it did not need before --
+// see `GraphDetail.test.tsx` for the behaviour this repository fakes; here it
+// only has to not throw on mount, since every assertion below is geometry.
+const usages: UsagesRepository = { usages: vi.fn().mockResolvedValue([]) }
+const container = { usages } as unknown as AppContainer
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+
 /** Boxed to a real size: `GraphBrowser` is `flex-1 min-h-0`, so rendered into
  *  an unsized parent it would be zero-height and every float would measure as a
  *  zero rect that satisfies any containment assertion vacuously. */
 const Mounted = () => (
-  <div style={{ width: '900px', height: '420px', display: 'flex' }}>
-    <GraphBrowser
-      view={view}
-      results={NODES}
-      knownTypes={['Person']}
-      truncated={false}
-      searching={false}
-      error={null}
-      partial={false}
-      edgesPartial={false}
-      loading={false}
-      entity="n0"
-      term="e"
-      entityType=""
-      onTerm={() => {}}
-      onEntityType={() => {}}
-      onEntity={() => {}}
-      onPick={() => {}}
-      onReset={() => {}}
-      onRemove={() => {}}
-    />
-  </div>
+  <QueryClientProvider client={queryClient}>
+    <ContainerProvider container={container}>
+      <div style={{ width: '900px', height: '420px', display: 'flex' }}>
+        <GraphBrowser
+          projectId={PROJECT}
+          view={view}
+          results={NODES}
+          knownTypes={['Person']}
+          truncated={false}
+          searching={false}
+          error={null}
+          partial={false}
+          edgesPartial={false}
+          loading={false}
+          entity="n0"
+          term="e"
+          entityType=""
+          onTerm={() => {}}
+          onEntityType={() => {}}
+          onEntity={() => {}}
+          onPick={() => {}}
+          onReset={() => {}}
+          onRemove={() => {}}
+        />
+      </div>
+    </ContainerProvider>
+  </QueryClientProvider>
 )
 
 /** The outermost edge an element's outline reaches, in viewport coordinates.

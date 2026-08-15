@@ -203,6 +203,28 @@ database and starting each: the copy with its checkpoints cleared came back
 with all four rows, the copy with them rebound came back with none. The rebound
 one is the honest reproduction.
 
+**A fixture that seeds through the same call the code under test depends on
+cannot see that dependency go missing.** Found on the entity-definitions work:
+the definition-reading path called `graphs.chunks(project)`, which requires the
+chunk store built inside `graphs.open(project)` -- but the call site fetched
+chunks *before* opening, so the first definition request for any newly-touched
+project answered 503 and every request after it succeeded, because by then
+some earlier call in the same test process had already opened the project.
+Once per project, and indistinguishable from flakiness if you don't know to
+look for it.
+
+All six of that task's tests missed it, and the reason is the same test
+shape in every one: the fixture that set up the test data called `graphs.open`
+to seed it, which is the very call the request path had stopped making. From
+the fixture's point of view the project was always open, so a code path that
+forgot to open it first was invisible. It took a reviewer's throwaway probe --
+issuing a request against a project the fixture had *not* touched -- to see
+the 503. The general form: when a test's arrange phase invokes the same
+collaborator method that is the thing under test is supposed to invoke,
+that test cannot detect the invocation being dropped. Write at least one test
+per code path that starts from a fixture that has *not* made the call the
+code is responsible for making.
+
 ## Events
 
 Events already written are not rewritten, so a change to an event's shape has
@@ -218,6 +240,29 @@ say so in the field's docstring, say what no longer loads, and update the
 schema-evolution test to assert the *refusal* rather than deleting the case.
 A deliberate break that is written down is a decision; a silent one is a bug
 somebody meets years later.
+
+**An event no projection handles counts as APPLIED, not rejected.**
+`eventsource.replay`'s own docstring says it plainly: "An event that every
+projection ignores still counts as applied -- it was delivered and nothing
+rejected it." `strict=True` raises only when a projection's `handle()` itself
+raises; it has no opinion about an event nothing subscribed to. That is the
+right default for *adding* an event type -- an older build with no projection
+for it keeps replaying cleanly, which is what "events are not rewritten" above
+depends on. But it means *omitting* a projection produces a silently EMPTY
+read model, not a refusal. Nothing crashes, nothing logs, the endpoint answers
+200 with nothing in it.
+
+The consequence for tests is specific: an assertion that "the project opened"
+or "the request succeeded" passes with the projection removed entirely, and is
+therefore worthless as a test of that projection. The assertion has to be that
+the *data* is there -- a row exists, a field has the value the event carried --
+not that the surrounding machinery didn't throw. This was found mid-build on
+the entity-definitions work, where an earlier draft of that feature's design
+document asserted the opposite (that a missing projection would be caught),
+and it wasn't: a build with `EntityDefinitionRunner` never constructed in
+`composition.py` served every definition request as an empty cache miss, and
+the tests that "confirmed the endpoint worked" never noticed, because none of
+them checked for a stored row.
 
 ## Comments and commit messages
 

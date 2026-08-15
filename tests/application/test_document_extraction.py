@@ -46,7 +46,11 @@ class Knowledge:
 
     def __init__(self) -> None:
         self.ingested: list[SourceRef] = []
+        self.indexed: list[SourceRef] = []
         self.reports: list[ExtractionNote] = []
+
+    async def index(self, source: SourceRef) -> None:
+        self.indexed.append(source)
 
     async def ingest(self, source: SourceRef, *, report=None) -> IngestReport:
         self.ingested.append(source)
@@ -189,3 +193,58 @@ async def test_unextracted_is_empty_when_everything_has_a_graph():
     corpus = Corpus((_record("s1"), "one", True), (_record("s2"), "two", True))
 
     assert await _extractor(corpus, Knowledge()).unextracted(uuid4()) == ()
+
+
+async def test_reindex_puts_every_stored_document_through_indexing():
+    """Including the ones that already have a graph.
+
+    Extraction status says nothing about whether a document was *chunked* --
+    the corpus this exists to repair was extracted normally and simply
+    predates indexing -- so filtering on `extracted` here would skip exactly
+    the documents that need it. Fails if `reindex` reuses `unextracted`.
+    """
+    corpus = Corpus(
+        (_record("s1"), "one", True),
+        (_record("s2"), "two", False),
+    )
+    knowledge = Knowledge()
+
+    indexed = await _extractor(corpus, knowledge).reindex(uuid4())
+
+    assert [source.source_id for source in knowledge.indexed] == ["s1", "s2"]
+    assert [source.text for source in knowledge.indexed] == ["one", "two"]
+    assert indexed == 2
+
+
+async def test_reindex_carries_the_records_provenance_the_way_extract_does():
+    """A chunk's citations are checked against the document they came from, so
+    a `SourceRef` rebuilt from text alone would index passages whose source has
+    no title or URI to show a reader. Fails if the ref is built from
+    `source_id`/`text` only."""
+    corpus = Corpus(
+        (
+            _record("s1", uri="https://example.test/a", title="A", published_at="2024-01-01"),
+            "one",
+            True,
+        ),
+    )
+    knowledge = Knowledge()
+
+    await _extractor(corpus, knowledge).reindex(uuid4())
+
+    (source,) = knowledge.indexed
+    assert source.uri == "https://example.test/a"
+    assert source.title == "A"
+    assert source.published_at == "2024-01-01"
+
+
+async def test_reindex_ingests_nothing():
+    """The repair is chunking, not extraction: `ingest` is minutes of model
+    time per document and re-running it over a whole corpus is the cost this
+    path exists to avoid. Fails if `reindex` calls `ingest`."""
+    corpus = Corpus((_record("s1"), "one", False))
+    knowledge = Knowledge()
+
+    await _extractor(corpus, knowledge).reindex(uuid4())
+
+    assert knowledge.ingested == []

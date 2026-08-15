@@ -1,14 +1,15 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import { ApiError } from '@application/ports/errors.ts'
-import type { GraphRepository } from '@application/ports/repositories.ts'
+import type { GraphRepository, UsagesRepository } from '@application/ports/repositories.ts'
 import type { GraphNode, Neighborhood } from '@domain/knowledge/graph.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
@@ -97,19 +98,34 @@ const fakeStream = () => {
  *  The `StreamProvider` is not decoration: `GraphPane` subscribes to the feed,
  *  and a harness without one would exercise a component the application never
  *  renders. */
+// `GraphDetail` reads usages through a query hook (`useUsages`), which is the
+// only reason a `QueryClient` joined this harness -- everything else here is
+// still the zustand store `createGraphStore` owns. Resolved to empty rather
+// than left unstubbed: none of the suites below are about mentions, and a
+// panel that threw on mount because this repository was missing would fail
+// every one of them for a reason that has nothing to do with what they test.
+const fakeUsages = (over: Partial<UsagesRepository> = {}): UsagesRepository => ({
+  usages: vi.fn().mockResolvedValue([]),
+  ...over,
+})
+
 const renderWithContainer = (
   ui: ReactElement,
   parts: Partial<AppContainer>,
   stream: EventStream = fakeStream().stream,
 ) => {
-  const container = { stream, ...parts } as unknown as AppContainer
-  return render(
-    <ContainerProvider container={container}>
-      <StreamProvider>
-        <OverlayHost>{ui}</OverlayHost>
-      </StreamProvider>
-    </ContainerProvider>,
+  const container = { stream, usages: fakeUsages(), ...parts } as unknown as AppContainer
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>
+      <ContainerProvider container={container}>
+        <StreamProvider>
+          <OverlayHost>{children}</OverlayHost>
+        </StreamProvider>
+      </ContainerProvider>
+    </QueryClientProvider>
   )
+  return render(ui, { wrapper })
 }
 
 it('populates results from a search', async () => {

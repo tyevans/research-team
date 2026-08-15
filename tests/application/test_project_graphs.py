@@ -274,3 +274,83 @@ async def test_a_failed_open_is_retried_rather_than_latched():
 
     assert await graphs.vectors() is not None
     assert len(attempts) == 2
+
+
+class _FakeChunkStore:
+    """Just enough of a `ChunkStore` for the cache to hold and close."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _RecordingRebuild:
+    """A fake `rebuild` that records whether it was called with `chunks`.
+
+    Standing in for `rebuild_graph`'s own keyword-only `chunks` parameter --
+    what these tests assert on is whether `ProjectGraphs` passes it through
+    (and only when a chunk store actually exists), not what folding a chunk
+    store does.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def __call__(self, store, project_id, **kwargs) -> None:
+        self.calls.append(kwargs)
+        await asyncio.sleep(0)
+
+
+async def test_a_chunk_store_is_built_once_per_project_and_handed_to_rebuild():
+    """`build_chunk_store` runs per project, like `build_store`, not once for the process.
+
+    Unlike the vector store: a corpus is this project's data derived from
+    this project's log, not a process-wide index, so sharing one across
+    projects the way `_vector_store` is shared would leak one project's
+    chunks into another's BM25 candidates.
+    """
+    chunk_store = _FakeChunkStore()
+    rebuild = _RecordingRebuild()
+    graphs = ProjectGraphs(
+        build_store=_FakeStore, rebuild=rebuild, build_chunk_store=lambda: chunk_store
+    )
+    project_id = uuid4()
+
+    await graphs.open(project_id)
+
+    assert graphs.chunks(project_id) is chunk_store
+    assert rebuild.calls == [{"chunks": chunk_store}]
+
+
+async def test_no_chunk_store_configured_rebuilds_without_the_keyword():
+    """`build_chunk_store` omitted (the default) must not add a `chunks=` kwarg.
+
+    A `rebuild` that never expects chunking -- `rebuild_graph` itself, before
+    this feature existed -- would raise `TypeError` on an unexpected keyword
+    if this were passed unconditionally.
+    """
+    rebuild = _RecordingRebuild()
+    graphs = ProjectGraphs(build_store=_FakeStore, rebuild=rebuild)
+
+    await graphs.open(uuid4())
+
+    assert rebuild.calls == [{}]
+    assert graphs.chunks(uuid4()) is None
+
+
+async def test_closing_a_project_closes_its_chunk_store_too():
+    chunk_store = _FakeChunkStore()
+    graphs = ProjectGraphs(
+        build_store=_FakeStore,
+        rebuild=_RecordingRebuild(),
+        build_chunk_store=lambda: chunk_store,
+    )
+    project_id = uuid4()
+    await graphs.open(project_id)
+
+    await graphs.close(project_id)
+
+    assert chunk_store.closed is True
+    assert graphs.chunks(project_id) is None

@@ -9,7 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,10 +41,12 @@ from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
 from research_team.application.document_extraction import DocumentExtractor
+from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grading import GradingError, grade
 from research_team.application.graph_read import (
     MAX_GRAPH_NODES,
     MAX_NEIGHBORHOOD_DEPTH,
+    MAX_USAGES,
     GraphReadPort,
 )
 from research_team.application.ports import ActivityDelta, ActivityMessage
@@ -73,6 +75,7 @@ from research_team.domain.topic import (
 )
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.timeline_reader import ProjectTimelineReader
+from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.event_store import KNOWLEDGE_CATEGORIES
@@ -85,6 +88,7 @@ from research_team.interfaces.web.presenters import (
     autonomy_view,
     corpus_change,
     course_view,
+    definition_view,
     dispatch_view,
     entity_page_view,
     event_rows,
@@ -112,6 +116,7 @@ from research_team.interfaces.web.presenters import (
     topic_documents_view,
     topic_view,
     tree_view,
+    usages_view,
 )
 from research_team.interfaces.web.seeding import SeedingActivity
 from research_team.workflows import PRESETS
@@ -162,6 +167,20 @@ KEEPALIVE_SECONDS = 15.0
 
 DISCONNECT_CHECK = 0.5
 """How long we may sit unaware that the browser has gone."""
+
+DefinitionReaders = Callable[[UUID], Awaitable["DefinitionService | None"]]
+"""One project's `DefinitionService`, built on demand, or `None` when this
+build cannot make one.
+
+A callable for `TopicReaders`' reason, awaitable for one more: a
+`DefinitionService` is assembled from that project's graph store, that
+project's chunk store and a project-bound view of the definition cache, and
+opening the graph store is asynchronous. `project_id` is in the route's path
+and has to reach all three -- a single shared `DefinitionService` would
+answer every project out of whichever one it was built for, and because the
+cache port takes no project argument (deliberately; see
+`application/entity_definitions.py`) it would write those answers into that
+project's rows too."""
 
 TopicReaders = Callable[[UUID], TopicReadPort]
 """One project's `TopicReadPort`, built on demand.
@@ -459,6 +478,7 @@ def create_app(
     ask: AskService | None = None,
     extractor: DocumentExtractor | None = None,
     extract_queue: ExtractionQueue | None = None,
+    definitions: DefinitionReaders | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -760,6 +780,34 @@ def create_app(
             status_code=202,
             content={"queued": len(queued), "source_ids": queued},
         )
+
+    @app.post("/api/projects/{project_id}/sources/reindex")
+    async def reindex_sources(project_id: UUID):
+        """Chunk every stored document again, and say how many. 200, it has run.
+
+        Registered inside the literal-segment block above for that block's
+        reason: `reindex` would otherwise be read as a `{source_id}`.
+
+        200 and not 202, unlike its `extract` neighbours: chunking makes no
+        model call, so there is nothing to queue and the work is finished when
+        this answers. See `DocumentExtractor.reindex` for what that costs on a
+        large corpus and why the queue was not worth building anyway.
+
+        The repair this exists for is a corpus stored before chunk indexing
+        shipped: it has no `DocumentChunked` events, so replay leaves its chunk
+        store empty and every entity reads as unmentioned.
+        `/api/corpus/rebuild` does not help -- it rebuilds the corpus documents
+        table, which is derived from the log, where these chunks are not.
+
+        Safe at any time: `index` is idempotent through the adapter's event
+        store, so a second run on an unchanged corpus rewrites nothing.
+        """
+        if extractor is None:
+            raise HTTPException(
+                status_code=503, detail="document extraction is not configured"
+            )
+        await _require_project(project_id)
+        return {"indexed": await extractor.reindex(project_id)}
 
     @app.post("/api/projects/{project_id}/sources/{source_id}/extract")
     async def extract_source(project_id: UUID, source_id: str):
@@ -1304,6 +1352,101 @@ def create_app(
                 status_code=404, detail=f"no such entity in project {project_id}"
             )
         return neighborhood_view(hood)
+
+    async def _usage_reader(project_id: UUID) -> UsageReader:
+        """This project's `UsageReadPort`, over the graph and chunk stores
+        `graphs` already owns.
+
+        503 rather than 404 when either store is unwired, matching
+        `_graph_reader`: a build with chunking off (`AGENT_CHUNK_STORE=none`)
+        is a valid thing to serve, and the caller needs to know the server
+        cannot answer rather than that the entity has no usages.
+
+        `open` first, the same call `_graph_reader` makes: it is what builds
+        this project's chunk store on first use (see `ProjectGraphs.open`),
+        and it is idempotent, so a usages request that lands before any graph
+        route has still opened the project gets a store rather than a 503
+        that only means "nobody happened to ask for the graph yet".
+        """
+        if graphs is None:
+            raise HTTPException(status_code=503, detail="no graph read model is configured")
+        store = await graphs.open(project_id)
+        chunk_store = graphs.chunks(project_id)
+        if chunk_store is None:
+            raise HTTPException(status_code=503, detail="no chunk store is configured")
+        return UsageReader(store, chunk_store, project_id)
+
+    @app.get("/api/projects/{project_id}/graph/entities/{entity_id}/usages")
+    async def read_graph_usages(project_id: UUID, entity_id: UUID, limit: int = MAX_USAGES):
+        """Passages naming `entity_id`, best matches first.
+
+        A separate endpoint from the entity definition that follows in a
+        later task, not a field folded into the same response: a definition
+        may cost an LLM call, usages are a cheap deterministic BM25 lookup
+        over an already-open chunk store, and a combined endpoint would make
+        every caller wait for the slow half to get the fast one.
+
+        `limit` above `MAX_USAGES` is refused with 422 rather than clamped,
+        unlike `whole`'s `limit` -- see `MAX_USAGES`'s docstring for why the
+        two asks are different.
+        """
+        if limit > MAX_USAGES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"limit {limit} exceeds the maximum of {MAX_USAGES}",
+            )
+        await _require_project(project_id)
+        reader = await _usage_reader(project_id)
+        return usages_view(await reader.usages(entity_id, limit=limit))
+
+    @app.get("/api/projects/{project_id}/graph/entities/{entity_id}/definition")
+    async def read_graph_definition(project_id: UUID, entity_id: UUID):
+        """`entity_id`'s grounded definition, generated on first ask and
+        cached from then on -- see `DefinitionService.define`.
+
+        **503 only when nothing is wired.** `definitions` is now supplied by
+        the composition root (`Application.definition_readers`), so the
+        503 below means a caller built this app without it -- a test fixture,
+        or a build with no chunk store, which is the second 503 further down.
+        It is a factory rather than one service because the cache, the graph
+        and the chunk store behind it are all bound to `project_id`; see
+        `DefinitionReaders`.
+
+        **200 with a null `text`, not 404, when `define` returns `None`.**
+        `entity_id` is a real node in the graph; it is merely undefinable
+        today because nothing was found to ground a definition in (no
+        passages, no edges -- see `DefinitionService.define`'s docstring). A
+        404 would tell the caller the entity itself does not exist, which is
+        a different and wrong statement, and one the browser would act on by
+        treating the node as gone rather than merely lacking a summary. Do
+        not "fix" this to a 404 without re-reading that reasoning -- it is
+        the deliberate case a later reader is likely to trip on, which is why
+        it is spelled out here as well as in the service.
+
+        No `force=True` here -- this route only reads. Regeneration is a
+        separate concern (Task 12's retrigger), not something a GET should
+        cause as a side effect the caller did not ask for.
+
+        **Synchronous, deliberately, unlike extraction.** `ExtractionQueue`
+        exists because extraction is long-running and a request that loses a
+        queued extraction loses an intention the caller cannot easily
+        re-express (BACKLOG B62). A definition is seconds of work, produces
+        the same answer from the same inputs, and a failed or interrupted
+        request costs the caller nothing but a second click -- so the entire
+        retry story is "click again", and a durable queue here would be
+        machinery bought for a payoff nobody would notice.
+        """
+        await _require_project(project_id)
+        if definitions is None:
+            raise HTTPException(status_code=503, detail="no definition service is configured")
+        service = await definitions(project_id)
+        if service is None:
+            # A build with no chunk store cannot ground a definition in
+            # passages, and a definition citing nothing is refused anyway --
+            # see `definition_reader` in `composition.py`. The same 503 the
+            # usages route above answers for the same absence.
+            raise HTTPException(status_code=503, detail="no chunk store is configured")
+        return definition_view(await service.define(entity_id))
 
     def _timeline_interval(from_: str | None, to: str | None) -> TimelineInterval | None:
         """`from`/`to` as an interval, or `None` when neither was given.

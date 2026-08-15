@@ -7,7 +7,7 @@ swapping any of them is an edit here and nowhere else.
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -53,6 +53,7 @@ from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
 from research_team.application.check_telemetry_read import CheckTelemetryReadPort
 from research_team.application.components import component_guidance
 from research_team.application.document_extraction import DocumentExtractor
+from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.application.ports import GateReview
@@ -93,6 +94,7 @@ from research_team.infrastructure.agent.corpus_tools import (
     CORPUS_PROMPT,
     build_corpus_tools,
 )
+from research_team.infrastructure.agent.definition_model import ChatModelDefinitionText
 from research_team.infrastructure.agent.delegation import (
     DEFAULT_SUBAGENTS,
     DELEGATION_PROMPT,
@@ -126,12 +128,15 @@ from research_team.infrastructure.agent.workflow_tools import (
     EndTurnOnStageAdvance,
     build_workflow_tools,
 )
+from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.knowledge.stores import (
+    build_chunk_store,
     build_graph_store,
     build_vector_store,
 )
+from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.persistence import (
     CorpusRunner,
     EventStoreSessionRepository,
@@ -148,7 +153,9 @@ from research_team.infrastructure.persistence.check_telemetry_reader import (
     ProjectCheckTelemetryReader,
 )
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
+from research_team.infrastructure.persistence.definition_cache import ProjectDefinitionCache
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
+from research_team.infrastructure.persistence.read_models import EntityDefinitionRunner
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.telemetry import build_tracer
 from research_team.workflows import PRESETS
@@ -194,6 +201,25 @@ class Application:
     that is constructed and never started records nothing while looking wired.
     Exposing it here is what makes `rebuild()` and `failures()` reachable when
     the numbers turn out to disagree with the log."""
+
+    definitions: EntityDefinitionRunner
+    """Keeps cached entity definitions marked stale. Idle until `start()`.
+
+    A field for `check_telemetry`'s reason and one more: it is not only a
+    projection nobody would otherwise start, it is also the owner of the
+    table `definition_readers` reads and writes through, so `rebuild()` and
+    `failures()` have to be reachable when a definition disagrees with the
+    graph beside it."""
+
+    definition_readers: Callable[[UUID], Awaitable[DefinitionService | None]]
+    """One project's `DefinitionService`, built fresh per call, or `None` when
+    this build has no chunk store.
+
+    A factory for `topic_readers`' reason -- the project is bound at
+    construction so no caller can read or overwrite another project's cached
+    definitions -- and awaitable because building one opens that project's
+    graph store. See `definition_reader` in `build_application` for why the
+    cache inside it is process-wide while the graph beside it is not."""
 
     check_telemetry_readers: Callable[[UUID], CheckTelemetryReadPort]
     """One project's `CheckTelemetryReadPort`, built fresh per call.
@@ -375,6 +401,7 @@ class Application:
         await self.corpus.start()
         await self.topics.start()
         await self.check_telemetry.start()
+        await self.definitions.start()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
@@ -427,6 +454,17 @@ class Application:
         """
         await self.check_telemetry.caught_up()
 
+    async def definitions_caught_up(self) -> None:
+        """Wait until the definition cache has seen every event appended.
+
+        A test affordance, like `check_telemetry_caught_up` and unlike the
+        other two: nothing on the read path waits for staleness to land. The
+        cost of not waiting in production is one extra read of text that was
+        about to be marked stale, which is the same text the reader would
+        have seen a moment earlier anyway.
+        """
+        await self.definitions.caught_up()
+
     async def close(self) -> None:
         """Stop anything still running, then let go of the store.
 
@@ -446,6 +484,7 @@ class Application:
         await self.corpus.stop()
         await self.topics.stop()
         await self.check_telemetry.stop()
+        await self.definitions.stop()
         await self.service.close()
         await self.detach_project()
         # Every project this instance ever opened a graph for, not just the
@@ -653,6 +692,17 @@ def build_application(
     # one line in `start()`. A projection wired somewhere else is a projection
     # somebody forgets to start.
     check_telemetry = CheckTelemetryRunner(
+        repository.store, resolved_path, repository.publisher, resolved_tracer
+    )
+    # The fifth projection over this store, built beside the other four for
+    # the reason stated above them. It matters more here than for its
+    # neighbours: this runner is *both* the thing that marks a definition
+    # stale and the thing the read route caches through (see
+    # `definition_reader` below), so a second instance would give the route
+    # its own connection and its own view of `stale` -- the cache would then
+    # go on serving text the invalidator had already marked untrustworthy,
+    # which is precisely the state `stale` exists to make impossible.
+    definition_invalidation = EntityDefinitionRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
 
@@ -1142,10 +1192,19 @@ def build_application(
 
     graphs = ProjectGraphs(
         build_store=lambda: build_graph_store(config.graph_store()),
-        rebuild=lambda store, target_project_id: rebuild_graph(
-            store, feed=repository.store, project_id=target_project_id
+        rebuild=lambda store, target_project_id, **rebuild_kwargs: rebuild_graph(
+            store, feed=repository.store, project_id=target_project_id, **rebuild_kwargs
         ),
         open_vector_store=open_vector_store,
+        # Same `embedding_dimension` read above for the vector store, not a
+        # second `config.embedding_dimension()` call: a corpus and the vector
+        # store built from two separate reads could disagree if the env
+        # changed between them, and `build_chunk_store`'s docstring is
+        # explicit that a corpus built under one width can't accept vectors
+        # of another without a rebuild.
+        build_chunk_store=lambda: build_chunk_store(
+            config.chunk_store(), dimension=embedding_dimension
+        ),
     )
 
     async def open_graph(
@@ -1216,6 +1275,17 @@ def build_application(
             # only the size is ours to choose, and passing the others would
             # freeze values we have no reason to hold against upstream's.
             chunker=SlidingWindowChunker(default_chunk_size=config.extraction_chunk_size()),
+            # `graphs.chunks(...)`, not a second `build_chunk_store()` call:
+            # `graphs.open` above already built this project's chunk store and
+            # folded it in the same replay pass as the graph (see
+            # `ProjectGraphs.open`), and a second store built here would be
+            # empty. Indexing would write into it, replay would keep filling
+            # the *other* one, and every read downstream would silently see
+            # an empty corpus -- the exact failure this call is here to rule
+            # out rather than the one it happens to avoid. `None` when
+            # `AGENT_CHUNK_STORE=none`, matching `ProjectGraphs.chunks`'s own
+            # None-when-off return.
+            chunks=graphs.chunks(target_project_id),
         )
         # Both tool sets travel back through the one channel `KnowledgeAttachment`
         # already has. A second callable for the corpus would need its own copy of
@@ -1391,6 +1461,54 @@ def build_application(
             topics, topic_repository, topics.corpus_facts, target_project_id
         )
 
+    async def definition_reader(target_project_id: UUID) -> DefinitionService | None:
+        """This project's `DefinitionService`, or `None` if it cannot be built.
+
+        Async and per-call, unlike `topic_reader` above, because two of the
+        three collaborators come from `graphs.open` -- which may open a store
+        and replay into it -- and none of them can be bound before a project
+        id exists. `ProjectGraphs` caches the stores, so the cost of building
+        one of these per request is the three adapter objects, not the opens.
+
+        **Two lifetimes meet here and they are deliberately different.** The
+        graph and chunk stores are per-project and owned by `graphs`. The
+        definition cache is one SQLite table for the whole process, keyed by
+        `(project_id, entity_id)`, owned by `definition_invalidation`; what is
+        per-project about it is only the id `ProjectDefinitionCache` binds, so
+        that no caller can reach another project's rows. Building a cache per
+        project would give each one its own connection to the same table --
+        the drift described where the runner is constructed.
+
+        `None` rather than a raise when there is no chunk store
+        (`AGENT_CHUNK_STORE=none`), matching what the usages route does with
+        the same absence: the caller renders it as 503 "not configured",
+        which is the truth. It costs nothing in definitions: with no chunk
+        store there are no passages, and `DefinitionService._generate`
+        refuses a passage-less entity before the model call, because a
+        definition assembled from edges alone cites nothing `_verified`
+        could check. A null usage reader here would buy the same `None`
+        one HTTP round trip later.
+        """
+        # `open` before `chunks`, and the order is the whole of a bug this
+        # had: `ProjectGraphs.chunks` answers `None` for a project whose
+        # store has not been opened yet -- it is built during `open`, in the
+        # same replay pass as the graph -- so asking first made the *first*
+        # request for any project 503 with "no chunk store is configured",
+        # and only that one. A reviewer's probe caught it; `_usage_reader` in
+        # `app.py` had the order right and this did not.
+        store = await graphs.open(target_project_id)
+        chunk_store = graphs.chunks(target_project_id)
+        if chunk_store is None:
+            return None
+        return DefinitionService(
+            graph=ProjectGraphReader(project_id=target_project_id, store=store),
+            usages=UsageReader(store, chunk_store, target_project_id),
+            cache=ProjectDefinitionCache(definition_invalidation, target_project_id),
+            # The extraction model, not a second client -- see
+            # `ChatModelDefinitionText` for why, and for what that costs.
+            model=ChatModelDefinitionText(extraction_model, model_name=config.model_name()),
+        )
+
     def check_telemetry_reader(target_project_id: UUID) -> CheckTelemetryReadPort:
         """This project's `CheckTelemetryReadPort`, over the one runner above.
 
@@ -1520,6 +1638,8 @@ def build_application(
         topics=topics,
         check_telemetry=check_telemetry,
         check_telemetry_readers=check_telemetry_reader,
+        definitions=definition_invalidation,
+        definition_readers=definition_reader,
         graphs=graphs,
         topic_readers=topic_reader,
         topic_repository=topic_repository,
