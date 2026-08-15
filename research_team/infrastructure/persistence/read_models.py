@@ -49,6 +49,7 @@ from eventsource.application.subscriptions import (
 from eventsource.application.subscriptions.retry import RetryConfig
 from eventsource.ports.dlq import DLQEntry
 from eventsource.ports.readmodels import (
+    Filter,
     Query,
     ReadModelRepository,
     ReadModelSchemaMismatchError,
@@ -66,12 +67,15 @@ from research_team.application.corpus_read import DocumentListing
 from research_team.domain import (
     CorpusDocumentDropped,
     CorpusDocumentStored,
+    CorpusMediaStored,
     FileDeleted,
     FileEdited,
     FileWritten,
+    MediaRecord,
     Session,
     SessionForkedFrom,
     SessionStarted,
+    SourceRecord,
     TextRecord,
     TurnCompleted,
     TurnFailed,
@@ -656,15 +660,72 @@ class CorpusDocumentRow(ReadModel):
         return uuid5(CORPUS_NAMESPACE, f"{project_id}:{source_id}")
 
 
-def to_record(row: CorpusDocumentRow) -> TextRecord:
-    """Present a stored row as the aggregate's own no-text shape.
+class CorpusMediaRow(ReadModel):
+    """One media source: everything but its bytes.
 
-    Reusing `TextRecord` rather than defining a listing type here makes the
-    no-text guarantee structural: there is no field for text to arrive in, so a
-    listing cannot start carrying corpora by accident. It also keeps the table
-    and the fold saying the same thing about a document, which is the property
-    a rebuild depends on.
+    A separate table rather than columns on `corpus_documents`, for two
+    reasons. `corpus_documents.text` is NOT NULL and every media row would have
+    to lie about it -- and making it nullable would then let a text row lie
+    too, which is the failure mode where a document silently loses its content
+    and still lists. Second, `apply_schema` refuses a required column with no
+    default outright, so widening is also the more expensive path.
+
+    No `extracted_at`. Nothing extracts media yet, and a column whose only
+    value is NULL is a promise the perception slice may not want to keep.
     """
+
+    __table_name__ = "corpus_media"
+
+    project_id: UUID
+    source_id: str
+    sha256: str
+    """Where the bytes are. A row whose blob is gone is a dangling reference,
+    which the read path reports as 410 rather than 404 -- see
+    `CorpusReadPort.read_media`."""
+    media_type: str
+    byte_count: int
+    uri: str | None = None
+    title: str | None = None
+    published_at: str | None = None
+    note: str | None = None
+    fetched_at: str | None = None
+    dropped_reason: str | None = None
+
+    @staticmethod
+    def row_id(project_id: UUID, source_id: str) -> UUID:
+        """Mirrors `CorpusDocumentRow.row_id` exactly.
+
+        Deliberately the same derivation over the same inputs: the two tables
+        share one `source_id` namespace, so a row id that differed between them
+        would let one id name two rows. Source ids are chosen per project --
+        `"s1"`, a URL, a filename -- and will collide across them. Keying on
+        the pair means one project's re-ingest cannot overwrite another's.
+        """
+        return uuid5(CORPUS_NAMESPACE, f"{project_id}:{source_id}")
+
+
+def to_record(row: CorpusDocumentRow | CorpusMediaRow) -> SourceRecord:
+    """Present a stored row as the aggregate's own no-bytes shape.
+
+    Reusing `TextRecord`/`MediaRecord` rather than defining listing types here
+    makes the no-content guarantee structural: there is no field for text or
+    bytes to arrive in, so a listing cannot start carrying a corpus by
+    accident. It also keeps the tables and the fold saying the same thing
+    about a source, which is the property a rebuild depends on.
+    """
+    if isinstance(row, CorpusMediaRow):
+        return MediaRecord(
+            source_id=row.source_id,
+            sha256=row.sha256,
+            media_type=row.media_type,
+            byte_count=row.byte_count,
+            uri=row.uri,
+            title=row.title,
+            published_at=row.published_at,
+            note=row.note,
+            fetched_at=row.fetched_at,
+            dropped_reason=row.dropped_reason,
+        )
     return TextRecord(
         source_id=row.source_id,
         sha256=row.sha256,
@@ -690,11 +751,13 @@ class CorpusProjection(DeclarativeProjection):
     def __init__(
         self,
         rows: ReadModelRepository[CorpusDocumentRow],
+        media_rows: ReadModelRepository[CorpusMediaRow],
         checkpoint_repo=None,
         dlq_repo=None,
         tracer=None,
     ) -> None:
         self._rows = rows
+        self._media_rows = media_rows
         super().__init__(
             checkpoint_repo=checkpoint_repo,
             dlq_repo=dlq_repo,
@@ -768,21 +831,71 @@ class CorpusProjection(DeclarativeProjection):
         row.extracted_at = event.occurred_at.isoformat()
         await self._rows.save(row)
 
+    @handles(CorpusMediaStored)
+    async def _on_media_stored(self, event: CorpusMediaStored) -> None:
+        """Write the media source, superseding whatever it held before.
+
+        Load-and-mutate, matching `_on_stored`: the version counter keeps
+        climbing on a re-store rather than resetting, and `dropped_reason` is
+        cleared explicitly for the same reason it is there -- storing asserts
+        presence.
+        """
+        row_id = CorpusMediaRow.row_id(event.aggregate_id, event.source_id)
+        fields = {
+            "project_id": event.aggregate_id,
+            "source_id": event.source_id,
+            "sha256": event.sha256,
+            "media_type": event.media_type,
+            "byte_count": event.byte_count,
+            "uri": event.uri,
+            "title": event.title,
+            "published_at": event.published_at,
+            "note": event.note,
+            "fetched_at": event.fetched_at,
+            "dropped_reason": None,
+        }
+        existing = await self._media_rows.get(row_id)
+        if existing is None:
+            await self._media_rows.save(CorpusMediaRow(id=row_id, **fields))
+            return
+        for name, value in fields.items():
+            setattr(existing, name, value)
+        await self._media_rows.save(existing)
+
     @handles(CorpusDocumentDropped)
     async def _on_dropped(self, event: CorpusDocumentDropped) -> None:
-        row = await self._require(event.aggregate_id, event.source_id)
-        row.dropped_reason = event.reason
-        await self._rows.save(row)
+        """Mark whichever table holds the id, never both.
 
-    async def _require(self, project_id: UUID, source_id: str) -> CorpusDocumentRow:
-        """The row for a source, which must already exist.
-
-        The aggregate rejects dropping a source it does not hold, so a missing
-        row cannot come from a legitimate stream: it means events arrived out
-        of order or the table was truncated under a checkpoint that survived.
-        Inventing a row would hide exactly the drift worth knowing about.
+        Task 2's kind-collision guard makes an id held in both tables
+        impossible -- `decide` refuses a store that would change what an
+        existing source id means. A handler that updated both tables
+        unconditionally would not merely tolerate that guard being violated,
+        it would hide the violation: the drop would "succeed" against a row
+        that should not exist, instead of surfacing the id collision as
+        drift. Trying the document row first and falling back to the media
+        row is the same distinction `_kind_of` makes in the domain, made
+        again here because the read side cannot ask the aggregate.
         """
-        row = await self._rows.get(CorpusDocumentRow.row_id(project_id, source_id))
+        row_id = CorpusDocumentRow.row_id(event.aggregate_id, event.source_id)
+        row = await self._rows.get(row_id)
+        if row is not None:
+            row.dropped_reason = event.reason
+            await self._rows.save(row)
+            return
+        media_row = await self._require_media(event.aggregate_id, event.source_id)
+        media_row.dropped_reason = event.reason
+        await self._media_rows.save(media_row)
+
+    async def _require_media(self, project_id: UUID, source_id: str) -> CorpusMediaRow:
+        """The media row for a source, which must already exist.
+
+        Reached only once `_on_dropped` has ruled out a document row, so a
+        miss here means the id is in neither table: the aggregate rejects
+        dropping a source it does not hold, so that cannot come from a
+        legitimate stream. Inventing a row would hide exactly the drift worth
+        knowing about, matching `_require`'s reasoning for the document side.
+        """
+        row = await self._media_rows.get(CorpusMediaRow.row_id(project_id, source_id))
         if row is None:
             raise LookupError(f"no corpus row for {source_id!r} in project {project_id}")
         return row
@@ -799,10 +912,12 @@ class CorpusStore:
         self,
         connection: aiosqlite.Connection,
         rows: ReadModelRepository[CorpusDocumentRow],
+        media_rows: ReadModelRepository[CorpusMediaRow],
         projection: CorpusProjection,
     ) -> None:
         self._connection = connection
         self._rows = rows
+        self._media_rows = media_rows
         self.projection = projection
 
     @classmethod
@@ -811,6 +926,7 @@ class CorpusStore:
     ) -> "CorpusStore":
         connection = await aiosqlite.connect(db_path)
         await apply_schema(connection, CorpusDocumentRow)
+        await apply_schema(connection, CorpusMediaRow)
         # `apply_schema` reconciles columns and not indexes, so this stays: it
         # is not made redundant by the line above and deleting it would put
         # every project's reads back on a full scan.
@@ -822,9 +938,21 @@ class CorpusStore:
             f"CREATE INDEX IF NOT EXISTS idx_corpus_documents_project "
             f"ON {CorpusDocumentRow.table_name()}(project_id)"
         )
+        # Mirrors the index above, and for the same reason: every read of
+        # this table is scoped to one project.
+        await connection.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_corpus_media_project "
+            f"ON {CorpusMediaRow.table_name()}(project_id)"
+        )
         await connection.commit()
         rows = SQLiteReadModelRepository(connection, CorpusDocumentRow, tracer)
-        return cls(connection, rows, CorpusProjection(rows, checkpoint_repo, dlq_repo, tracer))
+        media_rows = SQLiteReadModelRepository(connection, CorpusMediaRow, tracer)
+        return cls(
+            connection,
+            rows,
+            media_rows,
+            CorpusProjection(rows, media_rows, checkpoint_repo, dlq_repo, tracer),
+        )
 
     async def get(
         self, project_id: UUID, source_id: str, *, include_dropped: bool = False
@@ -906,14 +1034,57 @@ class CorpusStore:
         finally:
             await cursor.close()
 
+    async def get_media(
+        self, project_id: UUID, source_id: str, *, include_dropped: bool = False
+    ) -> CorpusMediaRow | None:
+        """One media source, or None if it is unknown -- or dropped, unless
+        `include_dropped` says otherwise. Mirrors `get` exactly, over the
+        other table.
+        """
+        row = await self._media_rows.get(CorpusMediaRow.row_id(project_id, source_id))
+        if row is None or row.project_id != project_id:
+            return None
+        if row.dropped_reason is not None and not include_dropped:
+            return None
+        return row
+
+    async def list_all(
+        self, project_id: UUID, *, include_dropped: bool = False
+    ) -> "list[CorpusDocumentRow | CorpusMediaRow]":
+        """Every source in a project, text and media together, whole rows.
+
+        Unlike `list`, this loads full rows rather than selected columns --
+        it exists for Task 4's read port, which needs `to_record` to work on
+        whatever it returns, and `to_record` reads fields (`char_count`,
+        `media_type`) that a projected column tuple would not carry for both
+        kinds at once. Two tables, one query each, held to the same
+        `dropped_reason`/`deleted_at` filter as `list` and `get_media`.
+        """
+        project_filter = [Filter.eq("project_id", str(project_id))]
+        by_project = Query(filters=project_filter, order_by="source_id")
+        documents = await self._rows.find(by_project)
+        media = await self._media_rows.find(by_project)
+        return sorted(
+            (
+                row
+                for row in (*documents, *media)
+                if row.deleted_at is None and (include_dropped or row.dropped_reason is None)
+            ),
+            key=lambda row: row.source_id,
+        )
+
     async def truncate(self) -> None:
-        """Empty the table, for a rebuild to fill again.
+        """Empty both tables, for a rebuild to fill again.
 
         Deletes rather than soft-deletes, for the reason `SessionSummaryStore`
         gives: a soft-deleted row would linger invisibly and collide with the
-        row the replay is about to write for the same document.
+        row the replay is about to write for the same source. Both tables,
+        because one rebuild replays both `CorpusDocumentStored` and
+        `CorpusMediaStored` -- truncating only the document table would leave
+        stale media rows the replay never revisits.
         """
         await self._connection.execute(f"DELETE FROM {CorpusDocumentRow.table_name()}")
+        await self._connection.execute(f"DELETE FROM {CorpusMediaRow.table_name()}")
         await self._connection.commit()
 
     async def close(self) -> None:
@@ -1029,6 +1200,22 @@ class CorpusRunner:
         if self._corpus is None:
             raise RuntimeError("the corpus projection has not been started")
         return await self._corpus.list(project_id, include_dropped=include_dropped)
+
+    async def get_media(
+        self, project_id: UUID, source_id: str, *, include_dropped: bool = False
+    ) -> CorpusMediaRow | None:
+        if self._corpus is None:
+            raise RuntimeError("the corpus projection has not been started")
+        return await self._corpus.get_media(
+            project_id, source_id, include_dropped=include_dropped
+        )
+
+    async def list_all(
+        self, project_id: UUID, *, include_dropped: bool = False
+    ) -> "list[CorpusDocumentRow | CorpusMediaRow]":
+        if self._corpus is None:
+            raise RuntimeError("the corpus projection has not been started")
+        return await self._corpus.list_all(project_id, include_dropped=include_dropped)
 
     async def rebuild(self) -> None:
         """Throw the table away and derive it again from the log.

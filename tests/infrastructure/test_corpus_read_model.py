@@ -15,6 +15,9 @@ from redstring import DocumentExtracted
 
 from research_team.domain.corpus import (
     Corpus,
+    CorpusDocumentDropped,
+    CorpusDocumentStored,
+    CorpusMediaStored,
     DropSourceDocument,
     StoreSourceDocument,
     TextRecord,
@@ -22,9 +25,11 @@ from research_team.domain.corpus import (
 from research_team.infrastructure.persistence.event_store import build_corpus_repository
 from research_team.infrastructure.persistence.read_models import (
     CorpusDocumentRow,
+    CorpusMediaRow,
     CorpusProjection,
     CorpusRunner,
     CorpusStore,
+    to_record,
 )
 
 ADVERSARIAL_TEXTS = [
@@ -68,8 +73,43 @@ def rows() -> InMemoryReadModelRepository:
 
 
 @pytest.fixture
-def projection(rows) -> CorpusProjection:
-    return CorpusProjection(rows)
+def media_rows() -> InMemoryReadModelRepository:
+    return InMemoryReadModelRepository(CorpusMediaRow)
+
+
+@pytest.fixture
+def projection(rows, media_rows) -> CorpusProjection:
+    return CorpusProjection(rows, media_rows)
+
+
+@pytest.fixture
+async def corpus_store(db_path):
+    """A real `CorpusStore`, for the media tests -- which drive the
+    projection through `corpus_store.projection.handle` and read back
+    through `corpus_store.get_media`/`list_all`, both of which are only on
+    the store, not on the bare `InMemoryReadModelRepository` fixtures above.
+    """
+    store = await CorpusStore.open(db_path)
+    try:
+        yield store
+    finally:
+        await store.close()
+
+
+def _media_stored(project_id, source_id: str, **overrides) -> CorpusMediaStored:
+    """A `CorpusMediaStored` with sane defaults, for tests that don't care
+    about a specific field -- mirrors `_extracted`'s role below for
+    `DocumentExtracted`.
+    """
+    fields = {
+        "aggregate_id": project_id,
+        "source_id": source_id,
+        "sha256": "c" * 64,
+        "media_type": "video/mp4",
+        "byte_count": 123,
+    }
+    fields.update(overrides)
+    return CorpusMediaStored(**fields)
 
 
 async def _project(projection, events) -> None:
@@ -198,14 +238,16 @@ async def test_rebuilding_from_an_empty_table_reproduces_the_same_rows(rows):
         DropSourceDocument(source_id="s2", reason="duplicate"),
     )
 
-    await _project(CorpusProjection(rows), events)
+    await _project(CorpusProjection(rows, InMemoryReadModelRepository(CorpusMediaRow)), events)
     first = {
         row.id: row.model_dump(exclude={"created_at", "updated_at", "version"})
         for row in await rows.find(None)
     }
 
     rebuilt_rows = InMemoryReadModelRepository(CorpusDocumentRow)
-    await _project(CorpusProjection(rebuilt_rows), events)
+    await _project(
+        CorpusProjection(rebuilt_rows, InMemoryReadModelRepository(CorpusMediaRow)), events
+    )
     second = {
         row.id: row.model_dump(exclude={"created_at", "updated_at", "version"})
         for row in await rebuilt_rows.find(None)
@@ -583,3 +625,87 @@ async def test_one_projects_extraction_does_not_mark_anothers_document(projectio
 
     assert (await rows.get(CorpusDocumentRow.row_id(mine, "s1"))).extracted_at is not None
     assert (await rows.get(CorpusDocumentRow.row_id(theirs, "s1"))).extracted_at is None
+
+
+async def test_a_stored_media_event_lands_as_a_row(corpus_store) -> None:
+    """Assert the row, not the call.
+
+    An assertion that the projection "handled" the event, or that a request
+    returned 200, passes with the media handler deleted entirely: an event no
+    projection handles counts as APPLIED. The row is the only thing that does
+    not.
+    """
+    project_id = uuid4()
+    await corpus_store.projection.handle(
+        CorpusMediaStored(
+            aggregate_id=project_id,
+            source_id="v1",
+            sha256="a" * 64,
+            media_type="video/mp4",
+            byte_count=999,
+            title="A talk",
+        )
+    )
+    row = await corpus_store.get_media(project_id, "v1")
+    assert row is not None
+    assert row.sha256 == "a" * 64
+    assert row.byte_count == 999
+    assert row.media_type == "video/mp4"
+    assert row.title == "A talk"
+
+
+async def test_dropping_media_marks_the_media_row(corpus_store) -> None:
+    """One drop event, two tables. Fails if `_on_dropped` only ever looked in
+    `corpus_documents` -- in which case a dropped video keeps listing as live
+    and the console offers to drop it again forever."""
+    project_id = uuid4()
+    await corpus_store.projection.handle(_media_stored(project_id, "v1"))
+    await corpus_store.projection.handle(
+        CorpusDocumentDropped(aggregate_id=project_id, source_id="v1", reason="wrong talk")
+    )
+    assert await corpus_store.get_media(project_id, "v1") is None
+    dropped = await corpus_store.get_media(project_id, "v1", include_dropped=True)
+    assert dropped is not None and dropped.dropped_reason == "wrong talk"
+
+
+async def test_listing_returns_both_kinds_in_one_answer(corpus_store) -> None:
+    """The Documents page renders one table.
+
+    Fails if `list_all` queries only one table, which reads downstream as half
+    a corpus -- and half a corpus looks exactly like a whole one.
+    """
+    project_id = uuid4()
+    await corpus_store.projection.handle(
+        CorpusDocumentStored(
+            aggregate_id=project_id, source_id="s1", text="prose", sha256="b" * 64
+        )
+    )
+    await corpus_store.projection.handle(_media_stored(project_id, "v1"))
+    kinds = sorted(to_record(row).kind for row in await corpus_store.list_all(project_id))
+    assert kinds == ["media", "text"]
+
+
+async def test_a_replayed_media_event_rewrites_rather_than_duplicates(corpus_store) -> None:
+    """Idempotent by overwrite, like both document handlers.
+
+    Replay from a checkpoint that is behind must re-derive the same row rather
+    than accumulate, because that is what makes `rebuild()` safe to reach for.
+    """
+    project_id = uuid4()
+    await corpus_store.projection.handle(_media_stored(project_id, "v1"))
+    await corpus_store.projection.handle(_media_stored(project_id, "v1"))
+    rows = await corpus_store.list_all(project_id)
+    assert len(rows) == 1
+
+
+async def test_dropping_a_source_in_neither_table_still_raises(corpus_store) -> None:
+    """The fallback in `_on_dropped` must still refuse an id that matches
+    nothing, not silently succeed against an invented media row -- the same
+    guarantee `test_dropping_a_source_with_no_row_is_an_error` gives for the
+    document-only path, extended across both tables.
+    """
+    project_id = uuid4()
+    with pytest.raises(LookupError, match="v1"):
+        await corpus_store.projection.handle(
+            CorpusDocumentDropped(aggregate_id=project_id, source_id="v1", reason="mistake")
+        )
