@@ -253,7 +253,7 @@ class DefinitionService:
         """This entity's definition, or `None` when there is nothing to ground one in.
 
         `None` rather than an exception or an empty `Definition`: an entity
-        with no passages and no edges is an ordinary state of a young corpus,
+        with no passages to cite is an ordinary state of a young corpus,
         not a failure -- the same reasoning `GraphReadPort.neighborhood`
         gives for its own `None`. An empty `Definition` was rejected because
         it is a cacheable-looking object carrying a promise it cannot keep,
@@ -280,11 +280,11 @@ class DefinitionService:
         single bad extraction could permanently blank an entity's panel
         until someone got lucky with `force=True`.
 
-        This does not cost more model calls than before: the guard above
-        still runs first, so an entity with nothing to ground a definition
-        in is refused before any request reaches the model, stale row or
-        not. Only entities that *were* groundable pay for the attempt, and
-        most of those succeed.
+        This does not cost more model calls than before: the guard in
+        `_generate` still runs first, so an entity with no passages to
+        ground a definition in is refused before any request reaches the
+        model, stale row or not. Only entities that *were* groundable pay
+        for the attempt, and most of those succeed.
         """
         cached = await self._cache.get(entity_id)
         if not force and cached is not None and not cached.stale:
@@ -323,7 +323,19 @@ class DefinitionService:
         # The guard, not an optimisation. See the module docstring: a bare
         # name sent to a model comes back defined from the model's own
         # memory, which is the one outcome this feature exists to prevent.
-        if not passages and not neighborhood.relationships:
+        #
+        # No passages is enough on its own, edges or not, and the earlier
+        # `not passages and not neighborhood.relationships` was a real cost:
+        # `_verified` can only check a citation against a passage this
+        # service supplied, so with `passages == []` it returns `[]` for any
+        # reply whatsoever, and `_generate` then refuses on `not citations`.
+        # The refusal was knowable before the call, and `read_graph_definition`
+        # calls `define` on every read with nothing cached in that case -- so
+        # an edge-only entity bought one guaranteed-futile model call per
+        # panel open, forever. Grounding a definition in edges alone would
+        # need an edge-shaped citation `_verified` could check; that is a
+        # design change, filed in `BACKLOG.md`.
+        if not passages:
             return None
 
         raw = await self._model.generate(build_prompt(neighborhood, passages))

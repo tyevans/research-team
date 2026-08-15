@@ -1473,11 +1473,12 @@ def build_application(
         `None` rather than a raise when there is no chunk store
         (`AGENT_CHUNK_STORE=none`), matching what the usages route does with
         the same absence: the caller renders it as 503 "not configured",
-        which is the truth. It costs definitions for edge-only entities,
-        which `DefinitionService` could otherwise ground without passages --
-        accepted rather than fixed with a null usage reader, because a
-        definition assembled from edges alone cites nothing and would be
-        refused by `_verified` anyway.
+        which is the truth. It costs nothing in definitions: with no chunk
+        store there are no passages, and `DefinitionService._generate`
+        refuses a passage-less entity before the model call, because a
+        definition assembled from edges alone cites nothing `_verified`
+        could check. A null usage reader here would buy the same `None`
+        one HTTP round trip later.
         """
         # `open` before `chunks`, and the order is the whole of a bug this
         # had: `ProjectGraphs.chunks` answers `None` for a project whose

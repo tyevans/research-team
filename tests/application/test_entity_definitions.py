@@ -26,6 +26,7 @@ from research_team.application.usages import Usage
 
 ACME = UUID("11111111-1111-1111-1111-111111111111")
 BARE = UUID("22222222-2222-2222-2222-222222222222")
+EDGES_ONLY = UUID("33333333-3333-3333-3333-333333333333")
 
 
 class FakeDefinitionModel:
@@ -123,6 +124,22 @@ def _service(model: FakeDefinitionModel, cache: FakeCache) -> DefinitionService:
                 root=GraphEntity(entity_id=str(BARE), name="Nobody", entity_type="Person"),
                 entities=(),
                 relationships=(),
+            ),
+            # Edges but no passages: `FakeUsages` has no entry for it below.
+            str(EDGES_ONLY): Neighborhood(
+                root=GraphEntity(
+                    entity_id=str(EDGES_ONLY), name="Ghost", entity_type="Person"
+                ),
+                entities=(
+                    GraphEntity(entity_id=str(ACME), name="Acme", entity_type="Organization"),
+                ),
+                relationships=(
+                    GraphRelationship(
+                        source_id=str(EDGES_ONLY),
+                        target_id=str(ACME),
+                        relationship_type="works_for",
+                    ),
+                ),
             ),
         }
     )
@@ -243,6 +260,23 @@ async def test_an_entity_with_no_passages_and_no_edges_is_not_sent_to_the_model(
     service = _service(model, FakeCache())
 
     result = await service.define(BARE)
+
+    assert result is None
+    assert model.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_an_entity_with_edges_but_no_passages_is_not_sent_to_the_model():
+    """`_verified` can only check a citation against a supplied passage, so
+    with no passages every reply is refused whatever it says -- the call was
+    guaranteed futile and knowable as such beforehand. Asserts the call count,
+    not the `None`: the previous guard also returned `None` here, after paying
+    for the call. Fails if the guard reverts to `not passages and not
+    neighborhood.relationships`."""
+    model = FakeDefinitionModel()
+    service = _service(model, FakeCache())
+
+    result = await service.define(EDGES_ONLY)
 
     assert result is None
     assert model.calls == 0

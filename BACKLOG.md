@@ -1324,6 +1324,25 @@ none of the three is obviously right without knowing whether anything
 downstream (today: nothing) ever wants to compare scores across entities
 rather than just within one entity's usage list.
 
+### B77. An entity known only by its edges cannot be defined at all
+
+`DefinitionService._generate` refuses any entity with no passages, because
+`_verified` can only check a citation against a passage the service itself
+supplied: with an empty passage list every reply is refused, so the model call
+was pure cost. The guard used to be `not passages and not
+neighborhood.relationships`, which let edge-only entities through to a call
+that could never succeed — one per panel open, forever, since nothing is
+cached when the answer is `None`. Fixed by refusing on `not passages` alone.
+
+What that gives up: an entity that appears in the graph only through its
+relationships now shows no definition, where before it showed no definition
+*and* charged for a model call. Grounding one in edges alone is possible, but
+it is a design change rather than a loosened guard — `_verified` would need an
+edge-shaped citation (a relationship id, say) and the panel would need
+somewhere to send a reader who clicks it, since an edge has no character span
+in a document to highlight. Worth doing if edge-only entities turn out to be
+common in real corpora; nobody has measured how common they are.
+
 ## Security and multi-tenancy
 
 Found while researching course-design workflows
