@@ -26,7 +26,9 @@ DEFAULT_SERVICE_NAME = "research-team"
 DEFAULT_SEARXNG_RESULTS = 5
 
 DEFAULT_GRAPH_STORE = "memory"
-DEFAULT_KNOWLEDGE_DOMAIN = "auto"
+#: `research_corpus`, not `auto`. See `knowledge_domain` for the trade, and
+#: the schema's own YAML for the measurement that motivated it.
+DEFAULT_KNOWLEDGE_DOMAIN = "research_corpus"
 
 #: Chosen together, and neither means much alone -- see `extraction_chunk_size`
 #: for why the pair is the unit. 8 matches the slot count of the local server
@@ -203,7 +205,20 @@ def graph_store() -> str:
 
 
 def knowledge_domain() -> str:
-    """A redstring schema id, or `auto` to have a classifier choose."""
+    """This project's own schema id, a redstring one, or `auto` to classify.
+
+    Defaults to `research_corpus`, which this project ships -- see
+    `infrastructure/knowledge/schemas/research_corpus.yaml` for why it exists
+    at all. The short version: no redstring schema asks the model to fill
+    `temporal_expression`, so with any of them the timeline draws nothing.
+
+    **The default gives up per-document classification**, which `auto` did and
+    which cost one model call per document. That is the deliberate trade: this
+    project's corpus is one subject at a time, so a schema chosen once fits it
+    better than a classifier whose low-confidence fallback was
+    `encyclopedia_wiki` -- the schema whose `date` entity type is half of the
+    bug. Set `AGENT_KNOWLEDGE_DOMAIN=auto` to get the old behaviour back.
+    """
     return os.getenv("AGENT_KNOWLEDGE_DOMAIN", DEFAULT_KNOWLEDGE_DOMAIN)
 
 
