@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from research_team.infrastructure.persistence import blob_store
 from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
 
 
@@ -123,3 +124,97 @@ async def test_put_cleans_up_after_a_cancellation_mid_stream(
         await store.put(cancelling())
 
     assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+
+
+@pytest.mark.parametrize(
+    "start,expected",
+    [
+        (0, b"0123456789"),
+        (7, b"789"),
+        (9, b"9"),
+        # At and past the end: empty, matching `seek` past EOF then `read`.
+        # Not an error -- the range route answers 416 from the record's own
+        # `byte_count` before it ever opens anything.
+        (10, b""),
+        (99, b""),
+    ],
+)
+async def test_open_from_an_offset_returns_the_suffix(
+    store: FilesystemBlobStore, start: int, expected: bytes
+) -> None:
+    """Correctness first, cheapness second: every offset a range request can
+    produce, against a blob whose every byte is distinguishable. Would fail on
+    a `seek` off by one in either direction."""
+    stat = await store.put(chunks(b"0123456789"))
+    read = b"".join([part async for part in store.open(stat.sha256, start)])
+    assert read == expected
+
+
+class _CountingHandle:
+    """A file handle that remembers what it was asked to do.
+
+    The filesystem will not tell you how much of a file was read, so the only
+    honest way to assert "the prefix was never read" is to count it here.
+    """
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self.seeks: list[int] = []
+        self.bytes_read = 0
+
+    async def seek(self, offset: int):
+        self.seeks.append(offset)
+        return await self._inner.seek(offset)
+
+    async def read(self, size: int = -1) -> bytes:
+        part = await self._inner.read(size)
+        self.bytes_read += len(part)
+        return part
+
+
+class _RecordingOpen:
+    """`aiofiles.open`, wrapping each handle it hands out in a counter."""
+
+    def __init__(self, opener) -> None:
+        self._opener = opener
+        self.handles: list[_CountingHandle] = []
+
+    def __call__(self, *args, **kwargs):
+        recorder = self
+
+        class _Context:
+            async def __aenter__(self):
+                self._inner = recorder._opener(*args, **kwargs)
+                handle = _CountingHandle(await self._inner.__aenter__())
+                recorder.handles.append(handle)
+                return handle
+
+            async def __aexit__(self, *error):
+                return await self._inner.__aexit__(*error)
+
+        return _Context()
+
+
+async def test_open_from_an_offset_does_not_read_the_prefix(
+    store: FilesystemBlobStore, monkeypatch
+) -> None:
+    """The seek is the point, and it is invisible to every other assertion.
+
+    An implementation that read from zero and discarded chunks until it
+    reached `start` returns byte-for-byte the same suffix, so
+    `test_open_from_an_offset_returns_the_suffix` above stays green for it --
+    while costing a full read of the prefix on every seek in a video, per
+    viewer. This is what goes red instead: it counts the bytes the handle was
+    actually asked for, and a filtering implementation would read all ten
+    rather than the three after the offset.
+    """
+    stat = await store.put(chunks(b"0123456789"))
+    recorder = _RecordingOpen(blob_store.aiofiles.open)
+    monkeypatch.setattr(blob_store.aiofiles, "open", recorder)
+
+    read = b"".join([part async for part in store.open(stat.sha256, 7)])
+
+    assert read == b"789"
+    handle = recorder.handles[-1]
+    assert handle.seeks == [7]
+    assert handle.bytes_read == 3

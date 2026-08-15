@@ -298,28 +298,29 @@ def _parse_byte_range(header: str, total: int) -> tuple[int, int] | None:
     return start, end
 
 
-async def _slice_of(
-    stream: AsyncIterator[bytes], start: int, end: int
-) -> AsyncIterator[bytes]:
-    """The inclusive `[start, end]` bytes of a chunked stream.
+async def _first_bytes(stream: AsyncIterator[bytes], length: int) -> AsyncIterator[bytes]:
+    """The first `length` bytes of a stream, then stop.
 
-    Sliced here rather than by seeking, because `BlobStorePort.open` is an
-    iterator and has no seek -- the cost is reading and discarding everything
-    before `start`, which for a range request into the middle of a film is
-    real. Left as is deliberately: correctness first, and the port would have
-    to grow a `seek` to fix it. What a test would fail on: the byte arithmetic
-    below is off-by-one-prone in both directions, and
-    `test_a_range_request_answers_206_with_only_that_range` and its
-    single-byte and open-ended siblings are what hold it.
+    Only the *tail* is trimmed here. The head is `BlobStorePort.open`'s
+    `start`, which is a real `seek` -- this used to discard the prefix chunk
+    by chunk instead, which made a seek into a 400MB film a ~300MB read, per
+    seek, per viewer, while every byte-for-byte test stayed green. The
+    trimming that remains cannot be pushed down the same way: the store reads
+    in megabyte chunks and a range rarely ends on one.
+
+    What a test would fail on: the arithmetic is off-by-one-prone in both
+    directions -- an inclusive end read as exclusive truncates every seek by
+    one byte -- and `test_the_range_forms_a_browser_actually_sends` holds it
+    at both edges, open-ended, suffix and clamped.
     """
-    position = 0
+    sent = 0
     async for part in stream:
-        following = position + len(part)
-        if following > start and position <= end:
-            yield part[max(0, start - position) : min(len(part), end - position + 1)]
-        position = following
-        if position > end:
+        remaining = length - sent
+        if len(part) >= remaining:
+            yield part[:remaining]
             return
+        sent += len(part)
+        yield part
 
 
 DefinitionReaders = Callable[[UUID], Awaitable["DefinitionService | None"]]
@@ -1103,7 +1104,10 @@ def create_app(
         headers["Content-Range"] = f"bytes {start}-{end}/{total}"
         headers["Content-Length"] = str(end - start + 1)
         return StreamingResponse(
-            _slice_of(handle.open(), start, end),
+            # `open(start)` seeks; `_first_bytes` trims the tail. Reading from
+            # zero and discarding would answer identically and cost the whole
+            # prefix -- see `BlobStorePort.open`.
+            _first_bytes(handle.open(start), end - start + 1),
             status_code=206,
             media_type=handle.record.media_type,
             headers=headers,

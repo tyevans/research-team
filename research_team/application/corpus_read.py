@@ -21,7 +21,7 @@ it. A caller that could pass a different project id is a caller that could read
 another project's sources.
 """
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -79,6 +79,19 @@ class SourceListing:
     extracted: bool
 
 
+class OpenBlob(Protocol):
+    """`MediaHandle.open`: call it to start reading, optionally from an offset.
+
+    A Protocol rather than `Callable[[int], AsyncIterator[bytes]]` because the
+    offset has to be *optional* -- every caller that wants the whole thing says
+    `handle.open()` -- and `Callable` has no way to spell a defaulted argument.
+    The alternative, `Callable[..., AsyncIterator[bytes]]`, spells nothing at
+    all and would accept a factory taking the wrong argument entirely.
+    """
+
+    def __call__(self, start: int = 0) -> AsyncIterator[bytes]: ...
+
+
 @dataclass(frozen=True)
 class MediaHandle:
     """One media source: its record, whether its bytes still exist, and how
@@ -88,16 +101,20 @@ class MediaHandle:
     -- which is not the same state as `read_media` answering `None` outright.
     See `CorpusReadPort.read_media` for why the two must stay distinguishable.
 
-    `open` is a factory (`Callable[[], AsyncIterator[bytes]]`), not an already
-    -open stream, so a caller that only wants the metadata -- the Documents
-    list, deciding whether to offer playback -- does not pay for a file
-    descriptor it will never read. Calling it is what actually opens the
-    blob; nothing here has touched the filesystem yet.
+    `open` is a factory (`OpenBlob`), not an already-open stream, so a caller
+    that only wants the metadata -- the Documents list, deciding whether to
+    offer playback -- does not pay for a file descriptor it will never read.
+    Calling it is what actually opens the blob; nothing here has touched the
+    filesystem yet.
+
+    It takes the same optional `start` the port does, and passing it through
+    rather than letting the web layer discard chunks is what makes a range
+    request cost the range rather than the file -- see `BlobStorePort.open`.
     """
 
     record: MediaRecord
     stat: BlobStat | None
-    open: Callable[[], AsyncIterator[bytes]]
+    open: OpenBlob
 
 
 class CorpusReadPort(Protocol):

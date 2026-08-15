@@ -41,8 +41,25 @@ class BlobStorePort(Protocol):
         """
         ...
 
-    def open(self, sha256: str) -> AsyncIterator[bytes]:
-        """Stream a blob back. Raises `FileNotFoundError` if it is gone.
+    def open(self, sha256: str, start: int = 0) -> AsyncIterator[bytes]:
+        """Stream a blob back from `start`. Raises `FileNotFoundError` if gone.
+
+        **`start` is a seek, not a filter.** The bytes before it are never read
+        -- that is the entire point, and it is why this is on the port rather
+        than done by the caller discarding chunks. The web layer's range
+        handling read and threw away everything before the offset until this
+        parameter existed, which made a seek into a 400MB film a ~300MB read,
+        per seek, per viewer. Files were chosen over SQLite BLOBs for exactly
+        this (see `config.blob_root`), and the reason went unused for a slice.
+
+        Out of range is not an error here: a `start` at or past the end yields
+        nothing, matching what `seek` past EOF then `read` does, and the range
+        route answers 416 from the record's own `byte_count` before it ever
+        opens anything. What a test would fail on:
+        `test_open_from_an_offset_does_not_read_the_prefix` in
+        `test_blob_store.py` reads the file through a handle that records its
+        seeks, so an implementation that filtered instead of seeking goes red
+        while every byte-for-byte assertion stays green.
 
         Declared `def`, not `async def`, to match the implementation: an
         `async def` containing `yield` is an async-generator *function*, and

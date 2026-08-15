@@ -72,12 +72,18 @@ class FilesystemBlobStore:
         os.replace(temporary, destination)
         return BlobStat(sha256=sha256, byte_count=byte_count)
 
-    async def open(self, sha256: str) -> AsyncIterator[bytes]:
+    async def open(self, sha256: str, start: int = 0) -> AsyncIterator[bytes]:
         path = self._path(sha256)
         # Raises FileNotFoundError, which is the loud answer this wants: a
         # silent empty stream would render as a zero-byte video, turning a
         # dangling reference into what looks like a corrupt file.
         async with aiofiles.open(path, "rb") as handle:
+            if start:
+                # One `seek`, and the prefix is never read. The alternative --
+                # letting the caller iterate and discard -- costs a full read
+                # of everything before the offset on every seek in a video,
+                # which is what this parameter exists to delete.
+                await handle.seek(start)
             while True:
                 part = await handle.read(CHUNK_SIZE)
                 if not part:

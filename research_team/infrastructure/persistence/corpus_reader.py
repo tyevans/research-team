@@ -119,5 +119,10 @@ class ProjectCorpusReader:
         # asserts -- so it was a runtime cost in development buying nothing in
         # production.
         return MediaHandle(
-            record=to_record(row), stat=stat, open=lambda: self._blobs.open(row.sha256)
+            record=to_record(row),
+            stat=stat,
+            # `start` forwarded rather than defaulted away: a factory that
+            # dropped it would leave every range request reading the whole
+            # prefix, and nothing about the response would look different.
+            open=lambda start=0: self._blobs.open(row.sha256, start),
         )
