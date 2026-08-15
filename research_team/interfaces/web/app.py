@@ -774,6 +774,34 @@ def create_app(
             content={"queued": len(queued), "source_ids": queued},
         )
 
+    @app.post("/api/projects/{project_id}/sources/reindex")
+    async def reindex_sources(project_id: UUID):
+        """Chunk every stored document again, and say how many. 200, it has run.
+
+        Registered inside the literal-segment block above for that block's
+        reason: `reindex` would otherwise be read as a `{source_id}`.
+
+        200 and not 202, unlike its `extract` neighbours: chunking makes no
+        model call, so there is nothing to queue and the work is finished when
+        this answers. See `DocumentExtractor.reindex` for what that costs on a
+        large corpus and why the queue was not worth building anyway.
+
+        The repair this exists for is a corpus stored before chunk indexing
+        shipped: it has no `DocumentChunked` events, so replay leaves its chunk
+        store empty and every entity reads as unmentioned.
+        `/api/corpus/rebuild` does not help -- it rebuilds the corpus documents
+        table, which is derived from the log, where these chunks are not.
+
+        Safe at any time: `index` is idempotent through the adapter's event
+        store, so a second run on an unchanged corpus rewrites nothing.
+        """
+        if extractor is None:
+            raise HTTPException(
+                status_code=503, detail="document extraction is not configured"
+            )
+        await _require_project(project_id)
+        return {"indexed": await extractor.reindex(project_id)}
+
     @app.post("/api/projects/{project_id}/sources/{source_id}/extract")
     async def extract_source(project_id: UUID, source_id: str):
         """Queue one stored document for extraction. 202, because it has not run.

@@ -1,7 +1,7 @@
 """Keeping cached definitions honest when the entity they describe changes.
 
 `EntityDefinitionProjection` never writes definition text -- that is
-`DefinitionGenerated`'s job, elsewhere -- it only marks a cached row
+the definition service's `put`, elsewhere -- it only marks a cached row
 untrustworthy (or deletes it outright) in reaction to graph events. The two
 tests that matter most are paired on purpose: the first proves the touched
 row gets marked, the second proves an untouched sibling does not. The obvious

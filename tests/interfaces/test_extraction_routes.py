@@ -80,6 +80,10 @@ class Runner:
 class Knowledge:
     def __init__(self) -> None:
         self.ingested: list[str] = []
+        self.indexed: list[str] = []
+
+    async def index(self, source: SourceRef) -> None:
+        self.indexed.append(source.source_id)
 
     async def ingest(self, source: SourceRef, *, report=None) -> IngestReport:
         self.ingested.append(source.source_id)
@@ -257,7 +261,38 @@ async def test_a_build_without_extraction_wiring_refuses_the_posts_and_answers_t
             await http.post(f"/api/projects/{PROJECT}/sources/s1/extract")
         ).status_code == 503
         assert (await http.post(f"/api/projects/{PROJECT}/sources/extract")).status_code == 503
+        assert (await http.post(f"/api/projects/{PROJECT}/sources/reindex")).status_code == 503
         read = await http.get(f"/api/projects/{PROJECT}/sources/extraction-queue")
 
     assert read.status_code == 200
     assert read.json() == {"running": None, "queued": [], "finished": []}
+
+
+async def test_reindex_chunks_every_document_and_answers_200_synchronously(queue):
+    """200 with a count, not a 202: chunking makes no model call, so the work
+    is finished when the response is written and there is no queue to report
+    on. Fails if the route defers to `extract_queue` or filters on
+    `extracted`."""
+    knowledge = Knowledge()
+    api = _app(Runner(("s1", True), ("s2", False)), queue, knowledge=knowledge)
+
+    async with await _client(api) as http:
+        response = await http.post(f"/api/projects/{PROJECT}/sources/reindex")
+
+    assert response.status_code == 200
+    assert response.json() == {"indexed": 2}
+    assert knowledge.indexed == ["s1", "s2"]
+    assert knowledge.ingested == []
+    assert queue.queued(PROJECT) == ()
+
+
+async def test_reindex_on_an_unknown_project_is_404(queue):
+    """`reindex` is a literal segment declared ahead of `{source_id}`; a 404
+    for a *project* here (rather than 'no source "reindex"') is what shows the
+    ordering still holds."""
+    api = _app(Runner(("s1", False)), queue, exists=False)
+
+    async with await _client(api) as http:
+        response = await http.post(f"/api/projects/{PROJECT}/sources/reindex")
+
+    assert response.status_code == 404

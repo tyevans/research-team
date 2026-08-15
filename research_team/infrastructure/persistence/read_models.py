@@ -1084,7 +1084,7 @@ that are both just strings by the time `uuid5` sees them."""
 class EntityDefinitionRow(ReadModel):
     """One generated definition, cached against the entity it describes.
 
-    A cache and not a projection's own state: `DefinitionGenerated` (Task 8)
+    A cache and not a projection's own state: the definition service's `put`
     is the only writer of `text`/`citations`/`model`/`generated_at`, but the
     row also has to be *invalidated* by graph events this table never reads
     the payload of -- a merge or an edit changes what an entity is without
@@ -1389,8 +1389,8 @@ class EntityDefinitionRunner:
         `CorpusRunner.rebuild` and its `/sessions` counterpart both truncate
         first because their tables hold nothing that is not entirely derived
         from the log. This table is different: `text`/`citations`/`model`/
-        `generated_at` come from `DefinitionGenerated`, an event this
-        projection does not subscribe to and never will -- see the class
+        `generated_at` come from the definition service's `put`, not from the
+        event log this projection replays at all -- see the class
         docstring on why invalidation is split from generation. Truncating
         here would discard every generated definition and replace it with
         nothing, where a resubscribed replay would only re-derive

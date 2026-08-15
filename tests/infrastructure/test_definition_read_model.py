@@ -1,9 +1,11 @@
 """The definition cache: generated text and the citations backing it.
 
 Nothing here folds an event -- unlike the corpus and session tables, there is
-no `DefinitionGenerated` for this store to project, because Task 8 owns that
-projection and writes through this store's `put`/`mark_stale`/`delete` rather
-than reading events itself. These tests only exercise the store: a value
+definition-generated event for this store to project. `DefinitionService`
+writes through this store's `put`, and `EntityDefinitionProjection` marks
+rows through `mark_stale`/`delete`; the store itself reads no events.
+
+These tests only exercise the store: a value
 round-trips through SQLite exactly, and a database that predates this table
 gains it without a query ever raising.
 """

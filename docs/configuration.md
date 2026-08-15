@@ -90,6 +90,17 @@ knowing before you choose:**
   it is told it picked a real, unwired setting rather than a typo. Nobody has
   asked for a chunk corpus that outlives the process yet.
 
+  **A corpus stored before chunk indexing shipped has no `DocumentChunked` to
+  fold, whatever this is set to.** The fold is the only thing that fills the
+  chunk store, so such a project comes up with an empty one — and that is
+  invisible: entity usage lookups simply return nothing and the entity panel
+  says "No mentions of this entity were found", which is also what a correct
+  answer looks like. `POST /api/projects/{project_id}/sources/reindex` is the
+  repair. It re-chunks every stored document, makes no model call, and is safe
+  to run at any time. `POST /api/corpus/rebuild` does *not* help: it rebuilds
+  the corpus documents table, which is derived from the log, and these chunks
+  are not.
+
 `docker-compose.test.yml` is a separate file for `pytest -m integration`. It
 binds the same two servers on different ports (7688, 55432) and keeps no data,
 so an integration run cannot reach the database you are actually using. Both

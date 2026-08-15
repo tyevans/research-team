@@ -1262,9 +1262,13 @@ Revisit if invalidation ever shows up in a profile — not before, since
 guessing at the fix now would trade a working read-modify-write for an
 unverified `UPDATE` on evidence nobody has collected yet.
 
-### B74. Two test-quality gaps left from the entity-definitions review
+### B74. A test-quality gap left from the entity-definitions review
 
-Both minor, both found in review and deferred rather than fixed on the spot:
+Minor, found in review and deferred rather than fixed on the spot. This item
+also carried a second bullet — two stale doc-comments in
+`tests/interfaces/test_web.py` naming a `_definition_service` helper in
+`app.py` that never existed — which is resolved: commit `9e1a1ac` removed both
+references while rewiring the route, so there is nothing left to fix.
 
 - The unknown-project-404 test for the usages route asserts a 404, but that
   red is indistinguishable from the route simply not being registered — the
@@ -1273,15 +1277,6 @@ Both minor, both found in review and deferred rather than fixed on the spot:
   against a route that demonstrably *is* registered — e.g. a 200 for a real
   project alongside the 404 for a fake one in the same test, so only the
   project-lookup branch is what's left able to fail.
-- Two stale doc-comments in `tests/interfaces/test_web.py` (lines 3852 and
-  4106) reference `` `_definition_service`'s docstring in `app.py` `` — no
-  function by that name exists in the diff that added it. The route is
-  `read_graph_definition` and the unwired-service check is inline
-  (`if definitions is None: raise HTTPException(503, ...)`), not a separate
-  helper with its own docstring to point at. The actual fixture the tests use
-  is `_definition_service_client` (`test_web.py:3933`), which is real and
-  fine; only the comment's cross-reference is wrong. Cosmetic — doesn't affect
-  what the tests assert — but misleads a reader chasing the named docstring.
 
 ### B75. No end-to-end test confirms the chunk store instance is shared
 
