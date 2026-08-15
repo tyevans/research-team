@@ -20,7 +20,7 @@ from research_team.application import (
     SessionSummary,
     Worker,
 )
-from research_team.application.corpus_read import DocumentListing, StoredDocument
+from research_team.application.corpus_read import SourceListing, StoredDocument
 from research_team.application.corpus_spans import Span
 from research_team.application.course import (
     ArtifactSlot,
@@ -53,7 +53,7 @@ from research_team.domain import (
     Session,
     SessionForkedFrom,
     SessionStarted,
-    TextRecord,
+    SourceRecord,
     TurnFailed,
 )
 from research_team.domain.learner import LearnerProgressState
@@ -671,8 +671,8 @@ def project_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
     }
 
 
-def _record_view(summary: TextRecord) -> dict[str, Any]:
-    """The fields both source views share: everything the record itself knows.
+def _record_view(summary: SourceRecord) -> dict[str, Any]:
+    """The fields every source view shares: everything the record itself knows.
 
     Split from `source_view` when `extracted` arrived, rather than letting
     `source_text_view` inherit it. Reading one document answers from the row
@@ -680,12 +680,19 @@ def _record_view(summary: TextRecord) -> dict[str, Any]:
     have meant `source_text_view` inventing a value for a field it cannot
     know -- and `False` there would read as "this has no graph" on a document
     that has one.
+
+    `char_count` on a text record and `media_type`/`byte_count` on a media one
+    -- discriminated on `kind` rather than `getattr`, so a record that gained a
+    third shape without a case here fails the type checker instead of silently
+    rendering neither. A media row has no character count to report and a text
+    row has no mimetype; putting one number under a name the other kind cannot
+    give would read as data rather than as the absence it is.
     """
-    return {
+    fields: dict[str, Any] = {
         "source_id": summary.source_id,
-        "char_count": summary.char_count,
-        # The digest is what lets a caller prove a quote came from the bytes
-        # on record rather than from a document that has since been revised.
+        "kind": summary.kind,
+        # The digest is what lets a caller prove a quote (or a download) came
+        # from the bytes on record rather than from a source since revised.
         "sha256": summary.sha256,
         "uri": summary.uri,
         "title": summary.title,
@@ -701,9 +708,15 @@ def _record_view(summary: TextRecord) -> dict[str, Any]:
         # caller can tell "not dropped" from "the field went missing".
         "dropped_reason": summary.dropped_reason,
     }
+    if summary.kind == "media":
+        fields["media_type"] = summary.media_type
+        fields["byte_count"] = summary.byte_count
+    else:
+        fields["char_count"] = summary.char_count
+    return fields
 
 
-def source_view(listing: DocumentListing) -> dict[str, Any]:
+def source_view(listing: SourceListing) -> dict[str, Any]:
     """One row of `/api/projects/{id}/sources`: what a source is, not what it says.
 
     No `text` key, and that absence is the contract rather than an oversight.
@@ -713,13 +726,14 @@ def source_view(listing: DocumentListing) -> dict[str, Any]:
 
     Takes the listing rather than the record because `extracted` is not on the
     record and deliberately cannot be: extraction lives on another aggregate's
-    stream. See `DocumentListing`.
+    stream. See `SourceListing`.
     """
     return {
         **_record_view(listing.record),
         # Whether this document's text has been folded into the graph. False
         # on every row of a database that predates the column until the corpus
-        # projection is rebuilt -- see `CorpusDocumentRow.extracted_at`.
+        # projection is rebuilt -- see `CorpusDocumentRow.extracted_at` -- and
+        # unconditionally False for media, which nothing extracts yet.
         "extracted": listing.extracted,
     }
 

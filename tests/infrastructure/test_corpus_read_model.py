@@ -311,7 +311,7 @@ async def test_documents_outlive_the_process(db_path):
 async def test_listing_carries_metadata_and_never_text(db_path):
     """A listing must not drag whole corpora through memory.
 
-    `list` returns `DocumentListing`, whose `record` is the aggregate's own
+    `list` returns `SourceListing`, whose `record` is the aggregate's own
     no-text shape, so the guarantee is structural: there is no field for the
     text to arrive in. The listing wraps the record rather than widening it
     precisely so that stays true as read-side facts are added beside it.

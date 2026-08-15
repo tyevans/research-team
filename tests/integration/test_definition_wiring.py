@@ -134,6 +134,7 @@ async def composed(db_path):
         application.feed,
         application.turns,
         corpus=application.corpus,
+        blob_store=application.blob_store,
         graphs=application.graphs,
         # The composition root's factory, which is the whole point: passing a
         # hand-built service here would test this file's wiring, not the one
@@ -198,6 +199,7 @@ async def two_projects(db_path):
         application.feed,
         application.turns,
         corpus=application.corpus,
+        blob_store=application.blob_store,
         graphs=application.graphs,
         definitions=application.definition_readers,
     )

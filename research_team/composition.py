@@ -50,6 +50,7 @@ from research_team.application import (
 from research_team.application.artifacts import stage_artifact_instructions
 from research_team.application.ask import AskService, ConversationRegistry
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
+from research_team.application.blobs import BlobStorePort
 from research_team.application.check_telemetry_read import CheckTelemetryReadPort
 from research_team.application.components import component_guidance
 from research_team.application.corpus_editing import CorpusEditor
@@ -149,6 +150,7 @@ from research_team.infrastructure.persistence import (
     build_research_run_repository,
     build_topic_repository,
 )
+from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
 from research_team.infrastructure.persistence.check_telemetry import CheckTelemetryRunner
 from research_team.infrastructure.persistence.check_telemetry_reader import (
     ProjectCheckTelemetryReader,
@@ -185,6 +187,13 @@ class Application:
     corpus is read by two callers that share nothing else: the agent, through
     the tools attached with a project, and the web layer, which lists and
     reads any project's sources without attaching anything."""
+
+    blob_store: BlobStorePort
+    """Where media bytes live. A field for `corpus`'s reason and one more:
+    this is the single instance every `ProjectCorpusReader` in this build is
+    handed -- see the comment beside its construction in `build_application`
+    -- so `web.py` has to be able to reach it too, to hand the same instance
+    to `create_app`."""
 
     topics: TopicRunner
     """Keeps the topic tables following the log. Idle until `start()`.
@@ -692,6 +701,13 @@ def build_application(
     corpus = CorpusRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
+    # The one `FilesystemBlobStore` this process builds. Every
+    # `ProjectCorpusReader` below is handed this exact instance rather than
+    # building its own -- two instances would each hold their own root, and a
+    # test that repointed one would silently leave the other pointed at the
+    # real `~/.research-team/blobs`, which is a bug that only shows up as a
+    # test writing to a developer's home directory.
+    blob_store = FilesystemBlobStore(config.blob_root())
     # Same reasoning as `corpus`: `open_graph` closes over it, so the thing the
     # topic tools read has to exist by the time that callable is defined.
     topics = TopicRunner(
@@ -832,7 +848,11 @@ def build_application(
         if grant is None:
             return ()
         running = await running_workflow(session)
-        reader = ProjectCorpusReader(corpus, running[0]) if running is not None else None
+        reader = (
+            ProjectCorpusReader(corpus, running[0], blob_store)
+            if running is not None
+            else None
+        )
         return (
             build_fetch_tool(
                 recall=recall,
@@ -1304,7 +1324,7 @@ def build_application(
         # untouched -- and two half-attached states are exactly what that
         # guarantee exists to rule out. The corpus reader needs nothing closed,
         # so `close_graph` stays about the graph.
-        reader = ProjectCorpusReader(corpus, target_project_id)
+        reader = ProjectCorpusReader(corpus, target_project_id, blob_store)
         # The topic tools ride the same channel, for the reason the corpus
         # tools do: `KnowledgeAttachment` already carries the atomicity
         # guarantee that a failed attach leaves the executor's tools untouched,
@@ -1445,7 +1465,7 @@ def build_application(
     document_extractor = DocumentExtractor(
         open_knowledge=open_knowledge,
         corpus_readers=lambda target_project_id: ProjectCorpusReader(
-            corpus, target_project_id
+            corpus, target_project_id, blob_store
         ),
         # The same channel `remember` reports through, so a queued extraction
         # and an agent's own land in one pane rather than two accounts of the
@@ -1464,7 +1484,9 @@ def build_application(
     # `restore` that missed it would corrupt the corpus row and wake nothing.
     editor = CorpusEditor(
         open_knowledge=open_knowledge,
-        readers=lambda target_project_id: ProjectCorpusReader(corpus, target_project_id),
+        readers=lambda target_project_id: ProjectCorpusReader(
+            corpus, target_project_id, blob_store
+        ),
         corpus=build_corpus_repository(
             repository.store,
             repository.publisher,
@@ -1664,6 +1686,7 @@ def build_application(
         context_mode=mode,
         summaries=summaries,
         corpus=corpus,
+        blob_store=blob_store,
         topics=topics,
         check_telemetry=check_telemetry,
         check_telemetry_readers=check_telemetry_reader,

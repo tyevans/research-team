@@ -45,6 +45,7 @@ async def app_and_client(db_path, fake_model):
         application.feed,
         application.turns,
         corpus=application.corpus,
+        blob_store=application.blob_store,
         workers=WorkerRoster(
             application.service,
             turns=application.turns,

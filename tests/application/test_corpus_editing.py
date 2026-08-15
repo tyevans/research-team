@@ -22,7 +22,7 @@ from research_team.application.corpus_editing import (
     DocumentExists,
     NotDropped,
 )
-from research_team.application.corpus_read import DocumentListing, StoredDocument
+from research_team.application.corpus_read import SourceListing, StoredDocument
 from research_team.application.document_extraction import UnknownDocument
 from research_team.application.knowledge import MAX_DOCUMENT_CHARS, KnowledgeError, SourceRef
 from research_team.domain.corpus import Corpus, StoreSourceDocument
@@ -48,10 +48,10 @@ class FakeReader:
         self._project_id = project_id
         self._texts = texts
 
-    async def list_documents(self, *, include_dropped: bool = False) -> list[DocumentListing]:
+    async def list_sources(self, *, include_dropped: bool = False) -> list[SourceListing]:
         corpus = await self._corpus.load_or_create(self._project_id)
         return [
-            DocumentListing(record=record, extracted=False)
+            SourceListing(record=record, extracted=False)
             for record in corpus.state.documents.values()
             if include_dropped or record.dropped_reason is None
         ]
@@ -168,7 +168,7 @@ def editor(corpus_repo, project_id, texts, knowledge) -> CorpusEditor:
 async def test_store_puts_the_text_in_the_corpus(editor, reader, project_id):
     await editor.store(project_id, "s1", "hello", title="Hello")
 
-    listing = await reader.list_documents()
+    listing = await reader.list_sources()
     assert [row.record.source_id for row in listing] == ["s1"]
     assert listing[0].record.title == "Hello"
 
@@ -188,9 +188,9 @@ async def test_drop_excludes_the_document_and_keeps_the_record(editor, reader, p
 
     await editor.drop(project_id, "s1", "off topic")
 
-    listing = await reader.list_documents(include_dropped=True)
+    listing = await reader.list_sources(include_dropped=True)
     assert listing[0].record.dropped_reason == "off topic"
-    assert await reader.list_documents() == []
+    assert await reader.list_sources() == []
 
 
 async def test_drop_refuses_a_blank_reason(editor, project_id):
@@ -232,7 +232,7 @@ async def test_a_metadata_only_revise_changes_the_title(editor, reader, project_
 
     await editor.revise(project_id, "s1", title="Fixed")
 
-    listing = await reader.list_documents()
+    listing = await reader.list_sources()
     assert listing[0].record.title == "Fixed"
     assert (await reader.read_document("s1")).text == "hello"
 
@@ -317,7 +317,7 @@ async def test_restore_puts_a_dropped_document_back(editor, reader, project_id):
 
     await editor.restore(project_id, "s1")
 
-    listing = await reader.list_documents()
+    listing = await reader.list_sources()
     assert [row.record.source_id for row in listing] == ["s1"]
     assert listing[0].record.title == "Hello"
     assert listing[0].record.dropped_reason is None

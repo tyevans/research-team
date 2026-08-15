@@ -63,7 +63,7 @@ from redstring import DocumentExtracted, EntitiesMerged
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.application import SessionSummary, SummaryHealth
-from research_team.application.corpus_read import DocumentListing
+from research_team.application.corpus_read import SourceListing
 from research_team.domain import (
     CorpusDocumentDropped,
     CorpusDocumentStored,
@@ -983,8 +983,19 @@ class CorpusStore:
 
     async def list(
         self, project_id: UUID, *, include_dropped: bool = False
-    ) -> list[DocumentListing]:
+    ) -> list[SourceListing]:
         """Every document in a project, by source id, without their text.
+
+        Text only, despite now returning `SourceListing` -- the name changed
+        with `DocumentListing`'s and the query did not. `list_all` is the one
+        that answers for both kinds, and it is what `ProjectCorpusReader`
+        (and therefore `CorpusReadPort.list_sources`) is built on. Nothing in
+        `research_team/` calls this; it survives because
+        `test_corpus_read_model.py` uses it to assert the documents table's
+        own behaviour, where reaching the media table would be noise. Do not
+        reach for it from an application-layer caller -- that is the "seeing
+        half a corpus and believing it whole" failure `list_documents` was
+        deleted to make impossible.
 
         Selects columns explicitly instead of going through the repository,
         which would load whole rows -- and a row here is an entire document.
@@ -1021,7 +1032,7 @@ class CorpusStore:
         )
         try:
             return [
-                DocumentListing(
+                SourceListing(
                     # Sliced rather than `strict=False`: the strictness is what
                     # catches `columns` and the SELECT drifting apart, and
                     # relaxing it to accommodate one trailing column would
@@ -1196,7 +1207,7 @@ class CorpusRunner:
 
     async def list(
         self, project_id: UUID, *, include_dropped: bool = False
-    ) -> list[DocumentListing]:
+    ) -> list[SourceListing]:
         if self._corpus is None:
             raise RuntimeError("the corpus projection has not been started")
         return await self._corpus.list(project_id, include_dropped=include_dropped)

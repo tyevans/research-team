@@ -19,7 +19,7 @@ from uuid import UUID
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from research_team.application.corpus_read import DocumentListing
+from research_team.application.corpus_read import SourceListing
 from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.knowledge import IngestReport, SourceRef
 from research_team.domain import TextRecord
@@ -29,6 +29,10 @@ from research_team.interfaces.web.app import create_app
 from research_team.interfaces.web.extraction_queue import ExtractionQueue
 
 PROJECT = UUID("11111111-1111-1111-1111-111111111111")
+
+_UNUSED_BLOBS = object()
+"""No route exercised here reads media, so `read_media` is never called -- a
+real `BlobStorePort` would be dead weight in a file about extraction queues."""
 
 
 @dataclass
@@ -69,12 +73,18 @@ class Runner:
 
     async def list(self, project_id: UUID, *, include_dropped: bool = False):
         return [
-            DocumentListing(
+            SourceListing(
                 record=TextRecord(source_id=source_id, sha256="0" * 64, char_count=3),
                 extracted=self._extracted[source_id],
             )
             for source_id in self._rows
         ]
+
+    async def list_all(self, project_id: UUID, *, include_dropped: bool = False):
+        """`CorpusRunner.list_all`'s shape: whole rows, text only here -- no
+        test in this file stores media, so `self._rows` (all `CorpusDocumentRow`)
+        is the entire answer."""
+        return list(self._rows.values())
 
 
 class Knowledge:
@@ -107,9 +117,17 @@ def _app(runner: Runner, queue: ExtractionQueue, *, knowledge=None, exists: bool
         feed=None,
         turns=None,
         corpus=runner,
+        # `create_app` refuses to build a reader without a blob store -- a
+        # build wired for text reads but not media reads answers 503 rather
+        # than pretending both are wired. The single-source extract route
+        # resolves its document through that reader, so omitting this here
+        # turns every one of its 404/202 assertions into a 503.
+        blob_store=_UNUSED_BLOBS,
         extractor=DocumentExtractor(
             open_knowledge=open_knowledge,
-            corpus_readers=lambda project_id: ProjectCorpusReader(runner, project_id),
+            corpus_readers=lambda project_id: ProjectCorpusReader(
+                runner, project_id, _UNUSED_BLOBS
+            ),
         ),
         extract_queue=queue,
     )

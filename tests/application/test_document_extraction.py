@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.corpus_read import DocumentListing, StoredDocument
+from research_team.application.corpus_read import SourceListing, StoredDocument
 from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
 from research_team.application.knowledge import ExtractionNote, IngestReport, SourceRef
 from research_team.domain import TextRecord
@@ -27,9 +27,9 @@ class Corpus:
         self._documents = {record.source_id: (record, text) for record, text, _ in documents}
         self._extracted = {record.source_id: done for record, _, done in documents}
 
-    async def list_documents(self, *, include_dropped: bool = False):
+    async def list_sources(self, *, include_dropped: bool = False):
         return [
-            DocumentListing(record=record, extracted=self._extracted[source_id])
+            SourceListing(record=record, extracted=self._extracted[source_id])
             for source_id, (record, _) in self._documents.items()
         ]
 

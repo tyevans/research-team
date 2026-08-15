@@ -78,6 +78,7 @@ async def app_and_client(db_path, fake_model, extraction):
         application.feed,
         application.turns,
         corpus=application.corpus,
+        blob_store=application.blob_store,
         workers=WorkerRoster(
             application.service,
             turns=application.turns,
@@ -118,6 +119,7 @@ async def client_without_workers(db_path, fake_model):
         application.feed,
         application.turns,
         corpus=application.corpus,
+        blob_store=application.blob_store,
         workers=None,
     )
     transport = ASGITransport(app=api)
@@ -2670,6 +2672,7 @@ async def research_client(db_path, fake_model):
         application.feed,
         application.turns,
         corpus=application.corpus,
+        blob_store=application.blob_store,
         research=application.research,
     )
     transport = ASGITransport(app=api)
@@ -2740,6 +2743,7 @@ async def test_a_rounds_turn_opens_an_activity_buffer_like_a_persons_does(db_pat
         application.feed,
         application.turns,
         corpus=application.corpus,
+        blob_store=application.blob_store,
         research=application.research,
         topics=application.topic_readers,
         topic_seeder=application.topic_seeder,
@@ -3764,6 +3768,7 @@ async def test_graph_routes_503_when_no_graph_reader_is_configured(app_and_clien
         application.feed,
         application.turns,
         corpus=application.corpus,
+        blob_store=application.blob_store,
         topics=application.topic_readers,
         graphs=None,
     )
@@ -4013,6 +4018,7 @@ def _definition_service_client(cache, model=None):
             application.feed,
             application.turns,
             corpus=application.corpus,
+            blob_store=application.blob_store,
             topics=application.topic_readers,
             # A factory, matching `Application.definition_readers`: the
             # route binds a project before it can reach a service. These
@@ -4161,6 +4167,7 @@ async def seeding_client(db_path, fake_model):
         application.feed,
         application.turns,
         corpus=application.corpus,
+        blob_store=application.blob_store,
         topic_seeder=application.topic_seeder,
         seeding=activity,
     )
@@ -4274,6 +4281,7 @@ async def dispatch_client(db_path, fake_model):
         application.feed,
         application.turns,
         corpus=application.corpus,
+        blob_store=application.blob_store,
         topics=application.topic_readers,
         topic_seeder=application.topic_seeder,
         seeding=SeedingActivity(),

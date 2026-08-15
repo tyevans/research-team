@@ -37,6 +37,7 @@ from research_team.application import (
     build_fork_tree,
 )
 from research_team.application.ask import AskAnswer, AskInFlight, AskService
+from research_team.application.blobs import BlobStorePort
 from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_editing import CorpusEditor, DocumentExists, NotDropped
 from research_team.application.corpus_spans import quote
@@ -466,6 +467,7 @@ def create_app(
     approvals: WebApprovals | None = None,
     activity: TurnActivity | None = None,
     corpus: CorpusRunner | None = None,
+    blob_store: BlobStorePort | None = None,
     research: ResearchSupervisor | None = None,
     workers: WorkerRoster | None = None,
     extraction: ExtractionActivity | None = None,
@@ -735,10 +737,17 @@ def create_app(
         without a corpus read model is a valid thing to serve (as with
         `approvals` and `activity`), and the caller needs to know the server
         cannot answer rather than that the project has nothing.
+
+        `blob_store` is checked alongside `corpus` rather than defaulted to
+        something that opens on first use: `ProjectCorpusReader` now needs one
+        for `read_media`, and a build that wired a corpus read model but no
+        blob store is exactly as unable to answer as one that wired neither --
+        the 503 is honest about that rather than pretending media reads are
+        wired when only text ones are.
         """
-        if corpus is None:
+        if corpus is None or blob_store is None:
             raise HTTPException(status_code=503, detail="no corpus read model is configured")
-        return ProjectCorpusReader(corpus, project_id)
+        return ProjectCorpusReader(corpus, project_id, blob_store)
 
     def _editor() -> CorpusEditor:
         """The corpus's write side, or the same 503 `_reader` answers.
@@ -857,7 +866,7 @@ def create_app(
         `char_count` are computed in the fold and a client that trusted its own
         echo would render a digest nothing verified.
         """
-        for listing in await _reader(project_id).list_documents(include_dropped=True):
+        for listing in await _reader(project_id).list_sources(include_dropped=True):
             if listing.record.source_id == source_id:
                 return source_view(listing)
         raise HTTPException(status_code=404, detail=f"no document {source_id!r}")
@@ -1032,7 +1041,7 @@ def create_app(
         """
         await _require_project(project_id)
         reader = _reader(project_id)
-        summaries = await reader.list_documents(include_dropped=include_dropped)
+        summaries = await reader.list_sources(include_dropped=include_dropped)
         return [source_view(summary) for summary in summaries]
 
     @app.get("/api/projects/{project_id}/sources/{source_id}")

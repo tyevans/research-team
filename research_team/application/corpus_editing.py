@@ -107,7 +107,7 @@ class CorpusEditor:
         revision is. Only *upload* means creation, and only upload can say so.
         """
         reader = self._readers(project_id)
-        existing = await reader.list_documents(include_dropped=True)
+        existing = await reader.list_sources(include_dropped=True)
         if any(listing.record.source_id == source_id for listing in existing):
             raise DocumentExists(f"the corpus already holds {source_id!r}")
         knowledge = await self._open_knowledge(project_id)
@@ -140,7 +140,7 @@ class CorpusEditor:
         what would fail if this checked the specific id instead.
         """
         reader = self._readers(project_id)
-        if not await reader.list_documents(include_dropped=True):
+        if not await reader.list_sources(include_dropped=True):
             raise UnknownDocument(f"no document {source_id!r} in this corpus")
         corpus = await self._corpus.load_or_create(project_id)
         corpus.execute(DropSourceDocument(source_id=source_id, reason=reason))
