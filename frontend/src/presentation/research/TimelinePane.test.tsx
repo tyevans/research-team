@@ -1,7 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import type { ReactElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
