@@ -19,7 +19,7 @@ from eventsource.application.aggregates.repository import AggregateRepository
 from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 
 from research_team.application import FeedEntry
-from research_team.domain import Corpus, Project, Session
+from research_team.domain import Corpus, EntityJudgements, Project, Session
 from research_team.domain.learner import LearnerProgress
 from research_team.domain.research_run import ResearchRun
 from research_team.domain.topic import Topic
@@ -181,6 +181,30 @@ def build_corpus_repository(
     return AggregateRepository(
         store,
         Corpus,
+        event_publisher=publisher,
+        snapshot_store=snapshot_store,
+        snapshot_threshold=SNAPSHOT_THRESHOLD,
+        snapshot_mode="background",
+    )
+
+
+def build_judgements_repository(
+    store: SQLiteEventStore,
+    publisher: InMemoryEventBus | None = None,
+    snapshot_store: SQLiteSnapshotStore | None = None,
+) -> AggregateRepository[EntityJudgements]:
+    """A project's entity judgements, over the same log as its corpus.
+
+    Shares the project's UUID and is kept apart by `aggregate_type`, exactly as
+    the corpus is, so nothing has to invent or store a third id.
+
+    Snapshots are on at the house threshold. Affordable because the state holds
+    only human-authored judgements -- a set that grows with decisions a person
+    made, not with documents ingested.
+    """
+    return AggregateRepository(
+        store,
+        EntityJudgements,
         event_publisher=publisher,
         snapshot_store=snapshot_store,
         snapshot_threshold=SNAPSHOT_THRESHOLD,

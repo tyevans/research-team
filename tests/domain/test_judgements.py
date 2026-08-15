@@ -6,6 +6,7 @@ import pytest
 from eventsource import CommandRejectedError
 from pydantic import ValidationError
 
+from research_team.domain import EntityJudgements
 from research_team.domain.corpus import CorpusDocumentStored
 from research_team.domain.judgements import (
     EntitiesHeldDistinct,
@@ -305,3 +306,19 @@ def test_a_hold_distinct_refusal_over_a_transitive_group_is_still_refused():
 
     with pytest.raises(CommandRejectedError, match="held same"):
         decide(HoldDistinct(judgements_id=PROJECT, left=a, right=c, reason="r"), state)
+
+
+def test_the_aggregate_executes_a_command_and_folds_its_event():
+    judgements = EntityJudgements(aggregate_id=PROJECT)
+    judgements.execute(HoldSame(judgements_id=PROJECT, keys=[JFK, JOHN], reason="r"))
+
+    assert judgements.state.group_for(JFK) == frozenset({JFK, JOHN})
+
+
+def test_the_aggregate_type_keeps_the_stream_apart_from_the_corpus():
+    """Project, corpus and judgements share one UUID and are three streams.
+
+    `AggregateRepository` puts `aggregate_type` into the `StreamId`, so this
+    string is the whole separation.
+    """
+    assert EntityJudgements.aggregate_type == "EntityJudgements"

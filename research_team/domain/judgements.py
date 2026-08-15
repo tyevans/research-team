@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
-from eventsource import CommandRejectedError, DomainEvent, register_event
+from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
 from pydantic import BaseModel, ConfigDict, Field
 from redstring.domain.similarity import normalize_name
 
@@ -324,3 +324,18 @@ def decide(command: JudgementCommand, state: JudgementsState) -> list[DomainEven
             ]
 
     raise CommandRejectedError(f"unhandled command {type(command).__name__}")
+
+
+class EntityJudgements(DeciderAggregate[JudgementsState, JudgementCommand]):
+    """The imperative shell. Holds no rules -- it delegates all three.
+
+    Mirrors `Corpus`'s shape exactly: the class attributes bind directly to the
+    module-level functions rather than wrapping them in new method bodies, so
+    there is exactly one implementation of each rule to keep in sync.
+    """
+
+    aggregate_type = "EntityJudgements"
+
+    initial_state = staticmethod(initial_state)
+    decide = staticmethod(decide)
+    evolve = staticmethod(evolve)
