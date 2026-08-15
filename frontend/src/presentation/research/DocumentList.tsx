@@ -57,7 +57,20 @@ export const DocumentList = ({
           // here without following it everywhere else.
           flush
         >
+          {/* Keyed on the open document rather than left to update in place.
+              The rail behind the drawer stays clickable while it's open, so a
+              reader can switch documents while `DocumentManagePane` is showing
+              the edit form -- and nothing in that pane or `DocumentEditForm`
+              resets its own `useState` on a prop change, so the fields would
+              keep the old document's values while `document.sourceId` in the
+              submit payload silently became the new one. The key remounts
+              only this pane, discarding its local `editing`/`dropping` state
+              and the edit form's fields with it; `DocumentReader` underneath
+              is unaffected either way, since its fetch is already keyed on
+              `sourceId` through `queryKeys.document` and refetches on a
+              prop change without needing a remount. */}
           <DocumentManagePane
+            key={reading}
             projectId={projectId}
             sourceId={reading}
             document={(query.data ?? []).find((row) => row.sourceId === reading) ?? null}
