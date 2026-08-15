@@ -219,6 +219,14 @@ _MAGIC_NUMBERS: tuple[tuple[bytes, str], ...] = (
     (b"OggS", "audio/ogg"),
     (b"ID3", "audio/mpeg"),
     (b"fLaC", "audio/flac"),
+    # EBML, which is Matroska *and* WebM -- the magic number cannot tell them
+    # apart, and reading far enough to find the DocType is more parsing than a
+    # correction for a wrong header is worth. `video/webm` is the deliberate
+    # choice of the two: it is the same container family, it is what a browser
+    # will attempt, and being wrong costs a `<video>` that fails on codec
+    # rather than one that never tries. `video/x-matroska` would be the
+    # honest label for a `.mkv` and Chromium refuses to play it outright, so
+    # the accurate answer is the less useful one here.
     (b"\x1a\x45\xdf\xa3", "video/webm"),
 )
 
@@ -261,15 +269,26 @@ def _parse_byte_range(header: str, total: int) -> tuple[int, int] | None:
     the whole representation. Answering 400 instead would break a client that
     was entitled to ask.
 
-    Raises `_RangeNotSatisfiable` for a syntactically fine range that starts
-    past the end, which is the case that is *not* ignorable: the client asked
-    for bytes that do not exist and a 200 would silently give it different
-    ones.
+    An end below the start (`bytes=2-1`) is ignored too, and that is a
+    distinction worth keeping straight: RFC 9110 §14.1.1 makes a
+    `last-byte-pos` below `first-byte-pos` an *invalid* byte-range-spec, and
+    an invalid ranges-specifier must be ignored rather than refused. Only a
+    range starting at or past the end is genuinely *unsatisfiable*, and that
+    is what raises `_RangeNotSatisfiable` -- there the client asked for bytes
+    that do not exist and a 200 would silently give it different ones.
 
     The three forms, all of which a browser sends: `bytes=2-5` (both ends),
     `bytes=2-` (open-ended, what a `<video>` sends first), and `bytes=-500`
     (the last 500 bytes, which is how a player finds an MP4's trailing
     `moov` atom).
+
+    **Every form is decided against `total` in one place, at the bottom.** The
+    suffix branch used to return before reaching it, and against a zero-byte
+    blob that produced `(0, -1)` and a response header of
+    `content-range: bytes 0--1/0` -- not a valid `Content-Range`, and a strict
+    client is entitled to call the response broken.
+    `test_a_suffix_range_against_an_empty_blob_answers_416` is what fails if
+    any branch takes a short cut past the guard again.
     """
     unit, _, spec = header.partition("=")
     if unit.strip().lower() != "bytes" or "," in spec:
@@ -281,21 +300,28 @@ def _parse_byte_range(header: str, total: int) -> tuple[int, int] | None:
         if not first:
             if not last:
                 return None
-            # Suffix form: the last N bytes, clamped to a file shorter than N.
             length = int(last)
             if length <= 0:
                 return None
-            return max(0, total - length), total - 1
-        start = int(first)
-        # An absent end means "to the last byte", and an end past the last byte
-        # is clamped rather than refused -- a client that asks for more than
-        # there is gets what there is, which is what a player expects.
-        end = total - 1 if not last else min(int(last), total - 1)
+            # Suffix form: the last N bytes, which for a blob shorter than N
+            # begins at byte zero. Its end is `None` -- "to the last byte" --
+            # rather than `total - 1`, so that an empty blob reaches the
+            # unsatisfiable check below instead of arriving there as an end of
+            # -1 that looks like the invalid spec it is not.
+            start, requested_end = max(0, total - length), None
+        else:
+            start = int(first)
+            requested_end = None if not last else int(last)
     except ValueError:
         return None
-    if start > end or start >= total:
+    if requested_end is not None and requested_end < start:
+        return None
+    if start >= total:
         raise _RangeNotSatisfiable(total)
-    return start, end
+    # An absent end means "to the last byte", and an end past the last byte is
+    # clamped rather than refused -- a client that asks for more than there is
+    # gets what there is, which is what a player expects.
+    return start, total - 1 if requested_end is None else min(requested_end, total - 1)
 
 
 async def _first_bytes(stream: AsyncIterator[bytes], length: int) -> AsyncIterator[bytes]:

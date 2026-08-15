@@ -482,12 +482,70 @@ async def test_content_for_a_text_source_answers_404(app_and_client):
 
 
 async def test_content_for_an_unknown_source_answers_404(app_and_client):
+    """`read_media` answering `None` is 404, not the 410 a dangling reference
+    gets: nothing was ever stored under this id.
+
+    **This test was not proven red**, and the caveat belongs here rather than
+    only in a report nobody reopens. Against a build with no content route at
+    all it passes, because a missing route is also a 404 -- so it cannot
+    witness the route's existence. What it does hold is the discrimination:
+    a handler that answered 410 for every absent blob, not knowing whether the
+    record was there, would go red on this and stay green on
+    `test_a_record_whose_bytes_are_gone_answers_410` beside it.
+    """
     _app, client = app_and_client
     project = await _new_project(client)
 
     response = await client.get(f"/api/projects/{project}/sources/nothing/content")
 
     assert response.status_code == 404
+
+
+async def test_a_suffix_range_against_an_empty_blob_answers_416(app_and_client):
+    """A zero-byte source is uploadable, so a range against one is reachable.
+
+    Would fail on a parser whose suffix branch returned before the
+    against-the-length guard: `bytes=-3` on a zero-byte blob computes
+    `(0, -1)` and the response carries `content-range: bytes 0--1/0`, which is
+    not a valid `Content-Range` and which a strict client may treat as a
+    broken response. 416 with `bytes */0` is the answer that says what is
+    actually true.
+    """
+    _app, client = app_and_client
+    project = await _new_project(client)
+    upload = await _upload_media(client, project, "v1", b"", filename="empty.mp4")
+    assert upload.status_code == 201
+
+    response = await client.get(
+        f"/api/projects/{project}/sources/v1/content", headers={"Range": "bytes=-3"}
+    )
+
+    assert response.status_code == 416
+    assert response.headers["content-range"] == "bytes */0"
+
+
+@pytest.mark.parametrize("header", ["bytes=2-1", "bytes=9-0"])
+async def test_an_end_below_the_start_is_ignored_rather_than_refused(app_and_client, header):
+    """RFC 9110 §14.1.1: a `last-byte-pos` below `first-byte-pos` makes the
+    byte-range-spec *invalid*, and an invalid ranges-specifier must be
+    ignored -- 200 with the whole representation.
+
+    Only a range at or past the end is genuinely unsatisfiable. Would fail on
+    a parser that folded the two together into one 416, which is what this
+    did until review: the function's own docstring already promised to ignore
+    anything it did not understand, so the code contradicted its
+    documentation.
+    """
+    _app, client = app_and_client
+    project = await _new_project(client)
+    await _upload_media(client, project, "v1", b"0123456789")
+
+    response = await client.get(
+        f"/api/projects/{project}/sources/v1/content", headers={"Range": header}
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"0123456789"
 
 
 async def test_an_upload_over_the_ceiling_is_refused_mid_stream(app_and_client, monkeypatch):
