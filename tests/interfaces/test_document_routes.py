@@ -14,6 +14,7 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from research_team.application.knowledge import MAX_DOCUMENT_CHARS
 from research_team.composition import build_application as _build_application
 from research_team.interfaces.web.app import create_app
 
@@ -114,6 +115,26 @@ async def test_a_patch_changes_the_title_and_leaves_the_text(app_and_client):
     assert response.json()["title"] == "Fixed"
     read_back = (await client.get(f"/api/projects/{project}/sources/s1")).json()
     assert read_back["text"] == "hello"
+
+
+async def test_a_patch_over_the_length_cap_is_400_not_500(app_and_client):
+    """`_store`'s length cap is the only guard `revise` has -- `decide` has
+    no opinion on document size -- and `revise_source` used to catch only
+    `UnknownDocument`, so this was an unhandled `KnowledgeError` and a 500
+    rather than the 400 `upload_source` already answers for the same error.
+    """
+    _app, client = app_and_client
+    project = await _new_project(client)
+    await client.post(
+        f"/api/projects/{project}/sources", json={"source_id": "s1", "text": "hello"}
+    )
+
+    response = await client.patch(
+        f"/api/projects/{project}/sources/s1",
+        json={"text": "x" * (MAX_DOCUMENT_CHARS + 1)},
+    )
+
+    assert response.status_code == 400
 
 
 async def test_a_patch_on_an_unknown_source_is_404(app_and_client):

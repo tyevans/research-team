@@ -1153,6 +1153,34 @@ guessing at which half to fix. **Not measured against a real corpus** -- the
 figure to get first is the wall time of each pass on the largest project
 available, because if the `find_entities` pass is the cheap one there is
 nothing here worth doing.
+
+### B79. A browser edit and an agent `remember` on the same source can race to an `OptimisticLockError`
+
+`composition.py` now builds two `AggregateRepository[Corpus]` instances over
+one stream: the one inside `open_graph`'s closure, held by
+`RedstringKnowledge` for `remember`/`remember_page`, and a second one
+`CorpusEditor` holds for the console's upload/revise/drop/restore routes.
+They cannot disagree about state -- both `load_or_create` from the same log
+-- but they can race on the optimistic version: an agent `remember` and a
+browser `PATCH` landing on the same `source_id` in the same instant can both
+load the aggregate at version N and both try to save at N+1, and one of them
+loses.
+
+`CorpusEditor._store` deliberately has no `with_retry`, unlike
+`RedstringKnowledge._store_document` -- see `corpus_editing.py:255-262`: that
+retry exists for two `remember` calls racing in the same assistant turn,
+concurrent by construction and common enough to need one, where `revise` and
+`restore` are browser-driven edits to one document by one person, and adding
+a retry there was judged to buy nothing for a collision nobody expected.
+
+The gap that reasoning leaves open: it did not weigh a *cross-path* race, an
+agent mid-`remember` on a source a person edits at the same moment. That
+collision surfaces as an unhandled `OptimisticLockError` and a 500, not the
+409 the aggregate's own refusals get. Left here rather than fixed, because it
+needs a real collision to reproduce and the two paths' relative timing has
+not been measured -- retrying blind would be guessing at whether the race is
+worth the complexity it costs.
+
 ## Entity definitions and usages
 
 Deferred during the 2026-08-14 entity-definitions-and-usages build
