@@ -10,6 +10,7 @@ import type { GraphView, Usage } from '@domain/knowledge/graph.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
+import { projectHref } from '../routing/routes.ts'
 import { GraphDetail } from './GraphDetail.tsx'
 
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
@@ -74,11 +75,21 @@ it('lists a passage with the document it came from', async () => {
     { usages: fakeUsages({ usages: vi.fn().mockResolvedValue([usage]) }) },
   )
 
-  expect(await screen.findByText(/Acme supplies/)).toBeInTheDocument()
+  const passage = await screen.findByText(/Acme supplies/)
+  expect(passage).toBeInTheDocument()
   // The document it came from, not just the passage -- the short id is this
   // corpus's own convention for naming a source inline (`CitationList` uses
   // the same truncation).
   expect(screen.getByText(usage.sourceId.slice(0, 8))).toBeInTheDocument()
+
+  // A wrong href is invisible to `findByText` above -- this is what pins it.
+  // The frontend's own `doc` facet, not the raw API route: that route answers
+  // JSON, not a page a reader can land on, and `Selection`'s `PlainFacet` arm
+  // has no `start`/`end` to carry today, so this asserts the id only rather
+  // than a span this build cannot yet express.
+  const link = passage.closest('a')
+  expect(link).not.toBeNull()
+  expect(link).toHaveAttribute('href', projectHref(PROJECT, { facet: 'doc', id: usage.sourceId }))
 })
 
 it('says nothing was found rather than showing an empty box', async () => {

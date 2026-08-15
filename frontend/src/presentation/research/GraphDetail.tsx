@@ -2,6 +2,7 @@ import { edgesOf, isExpanded, type GraphView } from '@domain/knowledge/graph.ts'
 import { shortId, type ProjectId } from '@domain/shared/identifier.ts'
 
 import { useEscape } from '../layout/OverlayHost.tsx'
+import { projectHref } from '../routing/routes.ts'
 import { useUsages } from './use-usages.ts'
 
 /** An edge row: a full-width bare button you walk the graph with.
@@ -161,15 +162,20 @@ export const GraphDetail = ({
           <ul className="m-0 flex list-none flex-col gap-[6px] p-0">
             {usagesQuery.data.map((usage) => (
               <li key={`${usage.sourceId}|${usage.start}|${usage.end}`}>
-                {/* The route Task 6 built for exactly this: a quoted span of
-                    one source's text, addressed by the offsets this passage
-                    was matched at. Linking here rather than re-fetching the
-                    whole document and scrolling to a computed position keeps
-                    this panel from inventing a second way to show a passage
-                    the server already knows how to serve. */}
+                {/* The `doc` facet `CitationList` already links through, not
+                    the API route Task 6 built -- that endpoint answers JSON,
+                    and a reader who followed it would get a page of raw text
+                    with no reader chrome around it, which is not "the passage
+                    in context" the citation decision promised. `Selection`'s
+                    `PlainFacet` arm carries only an id (`routes.ts`), so this
+                    cannot ask for `start`/`end` today -- it opens the right
+                    document rather than a scrolled-to span, and lands on the
+                    top of the reader rather than on this exact mention. That
+                    gap is real and is not this task's to close; see the
+                    commit message. */}
                 <a
                   className="flex flex-col gap-[1px] text-inherit no-underline hover:underline"
-                  href={`/api/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(usage.sourceId)}?start=${String(usage.start)}&end=${String(usage.end)}`}
+                  href={projectHref(projectId, { facet: 'doc', id: usage.sourceId })}
                 >
                   <span className="font-mono text-xs text-fg-dim">{shortId(usage.sourceId)}</span>
                   <span className="text-sm [overflow-wrap:anywhere]">{usage.text}</span>
