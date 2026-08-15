@@ -52,6 +52,7 @@ from research_team.application.ask import AskService, ConversationRegistry
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
 from research_team.application.check_telemetry_read import CheckTelemetryReadPort
 from research_team.application.components import component_guidance
+from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.application.ports import GateReview
@@ -317,6 +318,15 @@ class Application:
     open graph store the attached agent writes to rather than a second one
     rebuilt for the question -- which is also why it is constructed inside
     `build_application` and cannot be assembled by a caller."""
+
+    document_extractor: DocumentExtractor
+    """Extracts a stored document into its project's graph, without re-fetching.
+
+    A field beside `ask` and for the same reason: it closes over `open_graph`,
+    which is assembled inside `build_application` from this build's stores, so
+    no caller could construct it. The web layer needs it because "extract this
+    document" is a button on the Documents page, and nothing else on the way
+    from that button to `KnowledgePort.ingest` knows how to build a port."""
 
     _initial_project_id: UUID | None = None
     """`project_id`, if `build_application` was given one. Attached in
@@ -1325,6 +1335,34 @@ def build_application(
         conversations=ConversationRegistry(now=time.monotonic),
         now=time.monotonic,
     )
+
+    # Built here for `ask_service`'s reason, and it is the same reason: this
+    # needs the `open_graph` closure above, which is assembled from this
+    # build's stores and cannot be reached from anywhere a caller could stand.
+    #
+    # `open_graph` returns the knowledge port *and* the project's tools; only
+    # the port is wanted here. Discarding the tools costs building them -- four
+    # tool sets constructed and dropped per extraction -- which is a handful of
+    # dataclasses against a call that is about to spend minutes of model time.
+    # The alternative is a second closure that opens a store and builds a
+    # `RedstringKnowledge` without them, and a second place that decides how an
+    # adapter is configured is exactly how the concurrency and chunker settings
+    # would come to differ between the agent's `remember` and this button.
+    async def open_knowledge(target_project_id: UUID) -> RedstringKnowledge:
+        knowledge, _tools = await open_graph(target_project_id)
+        return knowledge
+
+    document_extractor = DocumentExtractor(
+        open_knowledge=open_knowledge,
+        corpus_readers=lambda target_project_id: ProjectCorpusReader(
+            corpus, target_project_id
+        ),
+        # The same channel `remember` reports through, so a queued extraction
+        # and an agent's own land in one pane rather than two accounts of the
+        # same graph being written. None when nothing is listening, matching
+        # how `open_graph` binds the reporter for the knowledge tools.
+        reporters=extractions.reporter if extractions is not None else None,
+    )
     runs = build_research_run_repository(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store
     )
@@ -1484,6 +1522,7 @@ def build_application(
         policy=resolved_policy,
         grants=resolved_grants,
         ask=ask_service,
+        document_extractor=document_extractor,
         _initial_project_id=project_id,
     )
 
