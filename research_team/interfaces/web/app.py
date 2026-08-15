@@ -1183,10 +1183,13 @@ def create_app(
         except UnknownDocument as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except KnowledgeError as error:
-            # `_store`'s length cap -- the only guard on this path, since
-            # `decide` has no opinion on document size. Missing until review:
-            # a PATCH over the cap was an unhandled exception and a 500,
-            # where `upload_source` already answered 400 for the same error.
+            # Two guards reach here, and `decide` is neither of them. `_store`'s
+            # length cap: missing until review, when a PATCH over the cap was an
+            # unhandled exception and a 500, where `upload_source` already
+            # answered 400 for the same error. And `revise`'s refusal of a
+            # `text` against a media id -- that one has no other handler, so
+            # `test_patching_text_onto_a_media_source_is_refused` fails here
+            # rather than at the editor if this branch narrows.
             raise HTTPException(status_code=400, detail=str(error)) from error
         return await _source_row(project_id, source_id)
 
