@@ -15,7 +15,12 @@ import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
-import type { DocumentText, MediaSummary, SourceSummary } from '@domain/research/document.ts'
+import type {
+  DocumentText,
+  MediaSummary,
+  SourceSummary,
+  TextSummary,
+} from '@domain/research/document.ts'
 import type { ExtractionQueueBoard } from '@domain/research/extraction-queue.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { Dispatch } from '@domain/research/dispatch.ts'
@@ -289,8 +294,15 @@ export interface DocumentRepository {
    *
    * Refused by the server when the corpus already holds the id, rather than
    * superseding it: uploading is creating, and quietly replacing somebody
-   * else's document is not what the word means. */
-  create(projectId: ProjectId, draft: DocumentDraft): Promise<SourceSummary>
+   * else's document is not what the word means.
+   *
+   * A `TextSummary` and not a `SourceSummary`, for the same reason as
+   * `uploadMedia` below: this route stores text and only text, so a caller
+   * should not have to re-narrow what it just created. Narrowed *here* and
+   * not only in the adapter -- every caller reaches the repository through
+   * this interface, so a union left on the port is a union every caller
+   * still sees, whatever the class returns. */
+  create(projectId: ProjectId, draft: DocumentDraft): Promise<TextSummary>
   /** Change a stored document. Every field is optional and an omitted one is
    *  left alone -- in particular `text`, so correcting a title does not
    *  round-trip the prose, and cannot send back a stale copy of it. */
