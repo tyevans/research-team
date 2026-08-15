@@ -126,6 +126,13 @@ const BUDGET_KB = {
   // the side of the pane, and an unlabelled node gave a reader nothing to aim
   // at. Measured at 1.1 kB.
   GraphCanvas: 2,
+  // The timeline pane's `React.lazy` wrapper, same shape as `GraphCanvas`
+  // above: a hand-rolled SVG drawing, kept out of the main chunk so no page
+  // without a Timeline tab pays for it. No dependency behind it -- it draws
+  // with plain SVG rather than a charting library -- so its budget is sized
+  // like GraphCanvas's own wrapper chunk rather than the graph pane's
+  // dependency bucket. Measured at 1.2 kB gzipped.
+  TimelineCanvas: 2,
   // 227 covered the research page's four panes; 228 added the links between
   // that page and the course page, and the breadcrumb that says which of the
   // two you are on. The last 2 kB is the research page's layout: a rail and a
