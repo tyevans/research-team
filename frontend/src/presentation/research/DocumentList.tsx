@@ -3,7 +3,7 @@ import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 import { Drawer } from '../common/Drawer.tsx'
 import { ErrorBox, Loading } from '../common/primitives.tsx'
 import { DocumentBrowser } from './DocumentBrowser.tsx'
-import { DocumentReader } from './DocumentReader.tsx'
+import { DocumentManagePane } from './DocumentManagePane.tsx'
 import { useDocuments } from './use-documents.ts'
 
 /** The project's corpus: a container around `DocumentBrowser`.
@@ -57,7 +57,11 @@ export const DocumentList = ({
           // here without following it everywhere else.
           flush
         >
-          <DocumentReader projectId={projectId} sourceId={reading} />
+          <DocumentManagePane
+            projectId={projectId}
+            sourceId={reading}
+            document={(query.data ?? []).find((row) => row.sourceId === reading) ?? null}
+          />
         </Drawer>
       ) : null}
     </>
