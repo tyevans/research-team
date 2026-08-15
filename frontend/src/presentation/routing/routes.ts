@@ -69,6 +69,11 @@ export const FACETS = [
   'topic',
   'stage',
   'entity',
+  // The graph's peer rather than a mode of it: same material, ordered by time
+  // instead of wired by relationship. A facet of its own because it is a place
+  // on the project with its own selection, which is exactly what the grammar
+  // is for.
+  'timeline',
   'doc',
   'file',
   'artifact',
