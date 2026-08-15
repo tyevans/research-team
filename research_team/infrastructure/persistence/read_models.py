@@ -1072,3 +1072,130 @@ class CorpusRunner:
         if self._engine is not None:
             await self._engine.dispose()
             self._engine = None
+
+
+DEFINITION_NAMESPACE = UUID("8a2c1e6d-4b9f-5a71-9e3c-2d6f8b1a0c45")
+"""Distinct from `CORPUS_NAMESPACE` so a definition and a document that
+happened to share a `(project_id, entity_id)`-shaped key could never collide
+on `id` -- the two tables are keyed on unrelated things (an entity, a source)
+that are both just strings by the time `uuid5` sees them."""
+
+
+class EntityDefinitionRow(ReadModel):
+    """One generated definition, cached against the entity it describes.
+
+    A cache and not a projection's own state: `DefinitionGenerated` (Task 8)
+    is the only writer of `text`/`citations`/`model`/`generated_at`, but the
+    row also has to be *invalidated* by graph events this table never reads
+    the payload of -- a merge or an edit changes what an entity is without
+    itself carrying new definition text. Splitting "what the definition says"
+    from "whether it's still trustworthy" into `mark_stale`/`delete` on the
+    store, rather than folding invalidation events here too, keeps the one
+    thing this table promises -- `stale=True` means *some* graph change
+    invalidated this text -- true regardless of which event caused it,
+    without this row's shape needing to grow a case per invalidating event.
+    """
+
+    __table_name__ = "entity_definitions"
+
+    project_id: UUID
+    entity_id: UUID
+    text: str
+    citations: str
+    """JSON array of `{source_id, start, end}`. A string column and not a
+    list, deliberately unlike `SessionSummaryRow.file_paths`: that field is
+    read back into application code that iterates it, where a citation is
+    only ever handed whole to the browser that renders spans against source
+    text it also holds. Decoding here would be work with no reader."""
+    model: str
+    generated_at: str
+    stale: bool = False
+
+    @staticmethod
+    def row_id(project_id: UUID, entity_id: UUID) -> UUID:
+        """The row id for a definition, matching `CorpusDocumentRow.row_id`'s
+        shape: keying on the pair means one project's entity ids -- which are
+        graph-local, not global -- cannot collide with another project's."""
+        return uuid5(DEFINITION_NAMESPACE, f"{project_id}:{entity_id}")
+
+
+class EntityDefinitionStore:
+    """The definition cache table and the connection it owns.
+
+    No projection here, unlike `CorpusStore` and `SessionSummaryStore` --
+    this store is written to directly by whatever generates a definition and
+    by Task 8's invalidation projection, both through `put`/`mark_stale`/
+    `delete`, rather than by this store reading events itself. A store with
+    no projection is still a store: `open()` still owns reconciling the
+    table's schema, which is the part every caller needs and none should
+    duplicate.
+    """
+
+    def __init__(self, connection: aiosqlite.Connection, rows: ReadModelRepository) -> None:
+        self._connection = connection
+        self._rows = rows
+
+    @classmethod
+    async def open(cls, db_path: str, tracer=None) -> "EntityDefinitionStore":
+        connection = await aiosqlite.connect(db_path)
+        await apply_schema(connection, EntityDefinitionRow)
+        # `apply_schema` reconciles columns, not indexes -- see the identical
+        # note on `CorpusStore.open`. Every read here is project-scoped
+        # (`get`, and `mark_stale`/`delete` before it), so an unindexed table
+        # would put every project's reads behind a scan of every other
+        # project's cached definitions.
+        await connection.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_entity_definitions_project "
+            f"ON {EntityDefinitionRow.table_name()}(project_id)"
+        )
+        await connection.commit()
+        rows = SQLiteReadModelRepository(connection, EntityDefinitionRow, tracer)
+        return cls(connection, rows)
+
+    async def get(self, project_id: UUID, entity_id: UUID) -> EntityDefinitionRow | None:
+        """The cached definition, or None if there is none yet.
+
+        `row.project_id != project_id` cannot happen through this class's own
+        `row_id` -- the pair is baked into the id -- but is checked anyway for
+        the same reason `CorpusStore.get` checks it: a row reached by id alone
+        makes no claim about which project asked, and a bug elsewhere that
+        looked one entity up under the wrong project should not read back
+        another project's definition as if it were an answer.
+        """
+        row = await self._rows.get(EntityDefinitionRow.row_id(project_id, entity_id))
+        if row is None or row.project_id != project_id:
+            return None
+        return row
+
+    async def put(self, row: EntityDefinitionRow) -> None:
+        """Store a definition, superseding whatever was cached before."""
+        await self._rows.save(row)
+
+    async def mark_stale(self, project_id: UUID, entity_id: UUID) -> None:
+        """Flag a cached definition as no longer trustworthy, without
+        discarding it -- Task 8 sets this from a graph event that changed the
+        entity, and the stale text stays visible (labelled) until something
+        regenerates it, rather than disappearing out from under a reader.
+
+        A missing row is a no-op, not an error: this is called from an
+        invalidation projection reacting to graph events, and "this entity
+        has never had a definition generated" is the ordinary case for most
+        entities, not drift the way a missing row is for `CorpusProjection`'s
+        drop handler. Raising here would put routine graph activity in the
+        DLQ for a store that was never asked to remember anything.
+        """
+        row = await self.get(project_id, entity_id)
+        if row is None:
+            return
+        row.stale = True
+        await self._rows.save(row)
+
+    async def delete(self, project_id: UUID, entity_id: UUID) -> None:
+        """Discard a cached definition outright -- for an entity that no
+        longer exists, where marking it stale would leave a permanent orphan
+        nothing will ever regenerate. A missing row is a no-op for the same
+        reason `mark_stale`'s is."""
+        await self._rows.delete(EntityDefinitionRow.row_id(project_id, entity_id))
+
+    async def close(self) -> None:
+        await self._connection.close()
