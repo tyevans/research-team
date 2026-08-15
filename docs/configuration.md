@@ -41,6 +41,7 @@ variable:
 | `AGENT_EMBEDDING_BASE_URL` | *(`AGENT_BASE_URL`)* | where embedding requests go, when that is not the chat endpoint. llama.cpp serves one model per process, so this is usually a second port |
 | `AGENT_EMBEDDING_API_KEY` | *(`AGENT_API_KEY`)* | key for the embedding endpoint, when it differs |
 | `AGENT_PGVECTOR_DSN` | *(unset)* | Postgres DSN; required when `AGENT_VECTOR_STORE=pgvector`, no default. Reached when the store is built, so a wrong one fails at startup rather than mid-ingest |
+| `AGENT_CHUNK_STORE` | `memory` | what backs the document-chunk corpus that usage lookups search: `none`, `memory`, or `postgres` (listed as a real, unwired setting rather than a typo — see below) |
 
 ### Durable backends
 
@@ -78,6 +79,16 @@ knowing before you choose:**
   default was turned off for. `pgvector` is currently the only setting under
   which an embedding outlives the process. Re-ingesting a document re-embeds
   it and repairs this; nothing else does.
+- **`AGENT_CHUNK_STORE`** is the same shape as `AGENT_GRAPH_STORE`, not
+  `AGENT_VECTOR_STORE`: the document-chunk corpus behind entity usage lookups
+  is derived from `DocumentChunked`, so `memory` — the default — is the
+  graph's "memory", rebuilt by folding the log at project open rather than
+  lost with the process. What the default costs is that fold, proportional to
+  corpus size, paid once per project open, not data loss. `postgres` is a real
+  redstring adapter that this deployment refuses rather than ships untested —
+  `build_chunk_store` raises naming it explicitly, so a deployment that sets
+  it is told it picked a real, unwired setting rather than a typo. Nobody has
+  asked for a chunk corpus that outlives the process yet.
 
 `docker-compose.test.yml` is a separate file for `pytest -m integration`. It
 binds the same two servers on different ports (7688, 55432) and keeps no data,

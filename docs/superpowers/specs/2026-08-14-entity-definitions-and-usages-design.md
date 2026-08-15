@@ -350,6 +350,19 @@ updating, rather than blanking the panel. The old text is still the best
 answer available, and replacing it with a spinner makes the panel flicker on
 every re-extraction for a change that may not affect the definition at all.
 
+**This is a browser-side effect, not a server one.** `DefinitionService.define`
+does not serve stale rows on success — it regenerates whenever the cached row
+is marked `stale`, because the point of invalidation is that the next click
+gets a current answer. "Stale while updating" is TanStack Query's own
+behaviour: the query cache keeps the previous response visible while a
+refetch is in flight, and the panel reads `isFetching` off that same query to
+show the updating state. The server has exactly one fallback case, and it is
+narrower than this paragraph's first draft implied: if regeneration is
+attempted and yields nothing usable while a cached row still exists, `define`
+returns that cached row with `stale=True` rather than losing it — a reader
+who has already seen a definition should not lose it to a failed refresh.
+`None` means "never had one and cannot make one now."
+
 Query keys go in `frontend/src/application/queries/keys.ts` — there are no
 graph keys there today, because the graph is a zustand store. That module's
 docstring states the rule this must follow: keys are never spelled out at
