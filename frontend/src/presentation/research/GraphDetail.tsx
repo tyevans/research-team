@@ -3,6 +3,7 @@ import { shortId, type ProjectId } from '@domain/shared/identifier.ts'
 
 import { useEscape } from '../layout/OverlayHost.tsx'
 import { projectHref } from '../routing/routes.ts'
+import { useDefinition } from './use-definition.ts'
 import { useUsages } from './use-usages.ts'
 
 /** An edge row: a full-width bare button you walk the graph with.
@@ -86,13 +87,17 @@ export const GraphDetail = ({
   // reader could not see was in play.
   useEscape(onClose)
 
-  // Fetched independently of the edge list below and of the definition Task
-  // 12 adds above this section: three reads over the same `selected` id, none
-  // of which the others' latency should hold hostage. A reader who clicked a
+  // Fetched independently of the edge list below and of the definition
+  // section above it: three reads over the same `selected` id, none of which
+  // the others' latency should hold hostage. A reader who clicked a
   // heavily-connected node should not wait on the corpus's BM25 lookup before
   // seeing who it is wired to, and a slow edge fetch must not blank the
   // passages that already came back.
   const usagesQuery = useUsages(projectId, selected)
+  // Deliberately its own query rather than a field the usages fetch also
+  // carries -- see `use-definition.ts` for why a cache read and a BM25
+  // lookup do not belong on one request.
+  const definitionQuery = useDefinition(projectId, selected)
 
   const node = view.nodes.find((candidate) => candidate.id === selected)
   // The selection can outlive its node only if something removed it from the
@@ -139,6 +144,44 @@ export const GraphDetail = ({
           </button>
         </div>
       </header>
+
+      {/* Above the passages, per the brief: a generated definition is the
+          answer to "what is this" in one place, and the passages beneath it
+          are where a reader goes to check that answer against the corpus.
+          Renders off its own query (`useDefinition`), so a slow generation
+          never blocks the usages section below it, which is already
+          rendering off a query of its own. */}
+      <section className="border-0 border-b border-solid border-b-line px-3 py-[8px]">
+        <h4 className="tracking-wide m-0 mb-[4px] text-xs text-fg-faint uppercase">Definition</h4>
+        {definitionQuery.isPending ? (
+          <p className="m-0 text-xs text-fg-dim">Generating a definition…</p>
+        ) : definitionQuery.isError ? (
+          <p className="m-0 text-xs text-fg-dim">The definition could not be read.</p>
+        ) : definitionQuery.data.text === null ? (
+          // `text: null` is a 200, not an error: the corpus has nothing to
+          // ground a definition in for this entity, which is a fact worth
+          // stating plainly rather than as a failure the reader might retry.
+          <p className="m-0 text-xs text-fg-dim">
+            No grounded definition is available for this entity.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-[4px]">
+            <p className="m-0 text-sm [overflow-wrap:anywhere]">{definitionQuery.data.text}</p>
+            {definitionQuery.data.stale ? (
+              // The server served older text on purpose rather than
+              // withholding it -- see `Definition`'s own docstring -- so the
+              // reader is told it may be behind rather than left to assume
+              // it is current. Client-side only: this is the same cached
+              // `data` TanStack Query already keeps on screen through a
+              // refetch on this key: no second endpoint, no server round
+              // trip to ask "is this still being generated".
+              <p className="m-0 text-xs text-fg-dim" role="status">
+                Updating — this definition may be out of date while a newer one generates.
+              </p>
+            ) : null}
+          </div>
+        )}
+      </section>
 
       {/* Above the edge list, per the plan: a reader who came here to see
           *what a node is* wants the passages that named it before the graph

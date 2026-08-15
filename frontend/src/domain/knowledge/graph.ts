@@ -100,6 +100,38 @@ export interface Usage {
   readonly score: number
 }
 
+/** One span a definition drew on. `sourceId`/`start`/`end` rather than the
+ *  ask page's `Citation` (`kind`/`id`): that shape names a whole document,
+ *  and a definition cites the specific passage within one -- the offsets are
+ *  the part worth keeping, not just which source it came from. */
+export interface DefinitionCitation {
+  readonly sourceId: string
+  readonly start: number
+  readonly end: number
+}
+
+/** An entity's generated definition, as the definition route returns it.
+ *
+ * `text` is nullable: the route answers 200 with `text: null` for an entity
+ * the corpus has nothing to ground a definition in, which is a fact about
+ * the corpus and not a failure to be retried -- see `presenters.py`'s own
+ * docstring on why that is not a 404. `model` and `generatedAt` are `null`
+ * together with `text`, for the same reason: there is no generation run to
+ * report on.
+ *
+ * `stale` is server-computed (the text predates the entity's current facts)
+ * and is served anyway rather than withheld -- the server's own tradeoff is
+ * that older grounded text beats no text while a refresh is in flight. What
+ * the panel does with a stale definition is client-side, though: this type
+ * only carries the flag the panel reads. */
+export interface Definition {
+  readonly text: string | null
+  readonly citations: readonly DefinitionCitation[]
+  readonly model: string | null
+  readonly generatedAt: string | null
+  readonly stale: boolean
+}
+
 export const emptyGraph: GraphView = {
   nodes: [],
   links: [],

@@ -79,6 +79,11 @@ export const queryKeys = {
    *  entity at a time, and a shared key would show one entity's passages
    *  under another's heading the moment a reader picked a different node. */
   usages: (project: ProjectId, entityId: string) => ['usages', project, entityId] as const,
+  /** Its own key rather than folded into `usages` above: they are two
+   *  separate requests (see `use-definition.ts`'s own docstring for why),
+   *  and a shared key would make a definition refetch invalidate the
+   *  passages too, and vice versa. */
+  definition: (project: ProjectId, entityId: string) => ['definition', project, entityId] as const,
 
   file: (session: SessionId, path: FilePath, at: ScrubPoint) =>
     ['file', session, path.value, ScrubPoint.toNullable(at)] as const,

@@ -7,6 +7,8 @@ import type { Approval, ApprovalDecision, GateContext } from '@domain/approval/a
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame, ExtractionStage } from '@domain/knowledge/extraction.ts'
 import type {
+  Definition,
+  DefinitionCitation,
   GraphLink,
   GraphNode,
   Neighborhood,
@@ -654,6 +656,22 @@ export const toUsage = (raw: Dto<typeof dto.usageDto>): Usage => ({
   end: raw.end,
   text: raw.text,
   score: raw.score,
+})
+
+export const toDefinitionCitation = (
+  raw: Dto<typeof dto.definitionCitationDto>,
+): DefinitionCitation => ({
+  sourceId: raw.source_id,
+  start: raw.start,
+  end: raw.end,
+})
+
+export const toDefinition = (raw: Dto<typeof dto.definitionDto>): Definition => ({
+  text: raw.text,
+  citations: raw.citations.map(toDefinitionCitation),
+  model: raw.model,
+  generatedAt: raw.generated_at,
+  stale: raw.stale,
 })
 
 export const toNeighborhood = (raw: Dto<typeof dto.graphNeighborhoodDto>): Neighborhood => ({

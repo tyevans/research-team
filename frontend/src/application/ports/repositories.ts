@@ -4,6 +4,7 @@ import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
 import type {
+  Definition,
   EntitySearchResult,
   Neighborhood,
   Usage,
@@ -318,6 +319,17 @@ export interface UsagesRepository {
    *  and this panel always wants "as many as the server will give", so there
    *  is no caller-chosen value to thread through. */
   usages(projectId: ProjectId, entityId: string): Promise<readonly Usage[]>
+}
+
+/** Its own port for the reason `UsagesRepository` gives: a different read,
+ *  a different failure shape (`text: null` is a valid answer, not an
+ *  exception), and a fake for one should never have to stub the other. */
+export interface DefinitionsRepository {
+  /** `entityId`'s generated definition. Never rejects for "nothing to
+   *  ground it in" -- that is `text: null` in the resolved value, per
+   *  `Definition`'s own docstring -- so a caller does not need a catch
+   *  block to tell an undefinable entity from a network failure. */
+  definition(projectId: ProjectId, entityId: string): Promise<Definition>
 }
 
 export interface WorkerRepository {
