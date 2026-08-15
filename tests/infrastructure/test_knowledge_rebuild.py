@@ -4,7 +4,15 @@ from uuid import uuid4
 import pytest
 from eventsource import ReplayFailedError, ReplayFailure, replay
 from eventsource.adapters.sqlite import SQLiteEventStore
-from redstring import GraphProjection, InMemoryGraphStore
+from redstring import (
+    GraphProjection,
+    InMemoryChunkStore,
+    InMemoryGraphStore,
+    SourceDocument,
+    index_documents,
+    rank_chunks,
+    tokenize,
+)
 
 from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.infrastructure.knowledge import rebuild
@@ -113,3 +121,45 @@ async def test_a_failed_replay_is_refused_rather_than_served_partial(tmp_path, m
     assert "DocumentExtracted" in str(caught.value)
     assert "poison" in str(caught.value)
     assert isinstance(caught.value.__cause__, ReplayFailedError)
+
+
+@pytest.mark.asyncio
+async def test_a_project_opened_from_a_log_with_chunkings_comes_up_with_chunks(tmp_path):
+    """The assertion is retrieval, not project open.
+
+    An assertion that the project merely opened would pass with
+    `ChunkProjection` removed from the sequence -- `eventsource.replay`
+    applies an event no projection handles rather than rejecting it -- so it
+    would be reassurance rather than a test. Proven red the right way: with
+    `projections.append(ChunkProjection(chunks))` commented out in
+    `rebuild_graph`, this failed on the `assert [ranked...]` line (empty
+    corpus) with `applied > 0` still passing, then restored to green.
+    """
+    project_id = uuid4()
+    event_store = SQLiteEventStore(str(tmp_path / "sessions.db"))
+    try:
+        # A throwaway store to drive `index_documents`, which appends
+        # `DocumentChunked` to the real feed -- the graph's `event_store`, so
+        # the chunking lands in the same log a rebuild reads from. What ends
+        # up retrievable is the *store rebuild_graph folds into*, not this
+        # one.
+        await index_documents(
+            [SourceDocument(id="doc-1", text="Acme Corp builds rockets in Texas.")],
+            store=InMemoryChunkStore(dimension=8),
+            tenant_id=project_id,
+            event_store=event_store,
+        )
+
+        store = InMemoryChunkStore(dimension=8)
+        applied = await rebuild_graph(
+            InMemoryGraphStore(), feed=event_store, project_id=project_id, chunks=store
+        )
+
+        terms = tokenize("Acme")
+        candidates = await store.lexical_candidates(terms, project_id, 10)
+        ranked = rank_chunks(terms, candidates, 10)
+
+        assert applied > 0
+        assert [r.chunk.text for r in ranked], "chunk corpus came up empty after replay"
+    finally:
+        await event_store.close()

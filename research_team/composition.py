@@ -129,6 +129,7 @@ from research_team.infrastructure.agent.workflow_tools import (
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.knowledge.stores import (
+    build_chunk_store,
     build_graph_store,
     build_vector_store,
 )
@@ -1141,10 +1142,19 @@ def build_application(
 
     graphs = ProjectGraphs(
         build_store=lambda: build_graph_store(config.graph_store()),
-        rebuild=lambda store, target_project_id: rebuild_graph(
-            store, feed=repository.store, project_id=target_project_id
+        rebuild=lambda store, target_project_id, **rebuild_kwargs: rebuild_graph(
+            store, feed=repository.store, project_id=target_project_id, **rebuild_kwargs
         ),
         open_vector_store=open_vector_store,
+        # Same `embedding_dimension` read above for the vector store, not a
+        # second `config.embedding_dimension()` call: a corpus and the vector
+        # store built from two separate reads could disagree if the env
+        # changed between them, and `build_chunk_store`'s docstring is
+        # explicit that a corpus built under one width can't accept vectors
+        # of another without a rebuild.
+        build_chunk_store=lambda: build_chunk_store(
+            config.chunk_store(), dimension=embedding_dimension
+        ),
     )
 
     async def open_graph(
