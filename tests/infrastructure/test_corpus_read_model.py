@@ -488,6 +488,49 @@ async def test_a_rebuild_reproduces_the_table_from_the_log(db_path, store, publi
         await runner.stop()
 
 
+async def test_truncate_empties_both_tables(db_path):
+    """`truncate` must clear `corpus_media`, not only `corpus_documents`.
+
+    Not an end-to-end rebuild test, deliberately -- one was tried first and
+    rejected because it doesn't actually exercise the bug this guards
+    against. `CorpusMediaRow.row_id` is a pure function of
+    `(project_id, source_id)`, and `_on_media_stored` writes by
+    load-and-mutate onto that same id. So a rebuild that replays the same
+    events onto a media table `truncate` never cleared still converges to
+    the identical final row through the ordinary overwrite path -- there is
+    no revision or ordering of `CorpusMediaStored` events whose *result*
+    would differ depending on whether `truncate` actually ran a `DELETE`
+    against `corpus_media` first. Proved by trying it: with `truncate`'s
+    second `DELETE` temporarily removed, a rebuild test built the same way
+    as `test_a_rebuild_reproduces_the_table_from_the_log` still passed.
+
+    So this asserts on `truncate`'s own effect instead of on a downstream
+    replay that cannot distinguish it from a no-op. It does not exercise
+    `rebuild()`'s wiring -- `test_a_rebuild_reproduces_the_table_from_the_log`
+    already covers that a rebuild reaches `truncate` at all, and this is the
+    other half: that `truncate`, once reached, is not a single `DELETE`.
+    """
+    store = await CorpusStore.open(db_path)
+    try:
+        project_id = uuid4()
+        for event in _events(
+            project_id, StoreSourceDocument(corpus_id=project_id, source_id="s1", text="body")
+        ):
+            await store.projection.handle(event)
+        await store.projection.handle(_media_stored(project_id, "v1"))
+
+        assert await store.get(project_id, "s1") is not None
+        assert await store.get_media(project_id, "v1") is not None
+
+        await store.truncate()
+
+        assert await store.get(project_id, "s1") is None
+        assert await store.get_media(project_id, "v1") is None
+        assert await store.list_all(project_id, include_dropped=True) == []
+    finally:
+        await store.close()
+
+
 async def test_a_corpus_database_written_before_a_field_existed_gains_its_column(db_path):
     """`CorpusStore.open` must reconcile the table, not only create it.
 
