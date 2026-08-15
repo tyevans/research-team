@@ -1298,6 +1298,37 @@ Worth an integration test the next time chunk-store wiring changes — the
 inspection-only verification is exactly the kind of claim that silently stops
 being true after a refactor moves where the store gets built.
 
+### B76. The usages endpoint exposes a raw BM25 score with no caveat
+
+`usages_view` puts `score` straight into the payload, and the browser orders
+passages by it. But those scores come from **separate per-name queries** — one
+BM25 query per name the entity is known by — and BM25 scores each query
+against its own term statistics, so a score from the query for "Acme Corp"
+and a score from the query for "Acme" are not measuring the same thing. The
+adapter takes the max across names as a deliberate approximation;
+`usage_reader.py`'s own docstring says so and labels it "Reasoned, not
+measured." None of that caveat survives past the adapter — the view and the
+UI both present `score` as if it were one number on one scale.
+
+Not a bug today: the ordering is right far more often than not, because
+within a single name's query the comparison is valid, and cross-name
+collisions are the exception rather than the rule. The risk is a reader
+trusting a number that looks authoritative and isn't. Three options, in
+order of how much they cost:
+
+- Drop `score` from the payload entirely — the reader never needed the
+  figure, only the order it produces.
+- Keep it internally for sorting but never render it as a number in the UI.
+- Make the scores genuinely comparable, which means a single fused ranking
+  model scoring all candidate passages together rather than per-name
+  queries taking their own max — real machinery for a list that is usually
+  twenty passages long.
+
+Deferred as Minor in Task 6's review rather than fixed on the spot, because
+none of the three is obviously right without knowing whether anything
+downstream (today: nothing) ever wants to compare scores across entities
+rather than just within one entity's usage list.
+
 ## Security and multi-tenancy
 
 Found while researching course-design workflows
