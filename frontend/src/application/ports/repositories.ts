@@ -285,11 +285,49 @@ export interface DocumentRepository {
    *  project. Answers how many went, so a caller can report the number rather
    *  than guessing from a queue it re-reads a moment later. */
   cancelExtraction(projectId: ProjectId): Promise<number>
+  /** Store a document a person is holding.
+   *
+   * Refused by the server when the corpus already holds the id, rather than
+   * superseding it: uploading is creating, and quietly replacing somebody
+   * else's document is not what the word means. */
+  create(projectId: ProjectId, draft: DocumentDraft): Promise<DocumentSummary>
+  /** Change a stored document. Every field is optional and an omitted one is
+   *  left alone -- in particular `text`, so correcting a title does not
+   *  round-trip the prose, and cannot send back a stale copy of it. */
+  revise(projectId: ProjectId, sourceId: SourceId, edit: DocumentEdit): Promise<DocumentSummary>
+  /** Exclude a document, keeping the record and the reason. The corpus keeps
+   *  dropped documents on purpose, so this is reversible -- see `restore`. */
+  drop(projectId: ProjectId, sourceId: SourceId, reason: string): Promise<DocumentSummary>
+  /** Put a dropped document back. Refused for one that is not dropped, so a
+   *  press that did nothing cannot look like one that worked. */
+  restore(projectId: ProjectId, sourceId: SourceId): Promise<DocumentSummary>
 }
 
 export interface DocumentRange {
   readonly start?: number
   readonly end?: number
+}
+
+export interface DocumentDraft {
+  /** The citation key. The corpus keys on it and it cannot be changed
+   *  afterwards without orphaning every citation that points at it. */
+  sourceId: string
+  text: string
+  uri?: string
+  title?: string
+  note?: string
+  publishedAt?: string
+}
+
+/** An omitted field is left as stored. There is no way to clear one back to
+ *  null: telling "unset" from "set to null" needs a sentinel and no control
+ *  in the console asks for it. An empty title is sent as "". */
+export interface DocumentEdit {
+  text?: string
+  uri?: string
+  title?: string
+  note?: string
+  publishedAt?: string
 }
 
 export interface GraphRepository {

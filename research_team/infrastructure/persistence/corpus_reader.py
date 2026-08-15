@@ -41,9 +41,13 @@ class ProjectCorpusReader:
             # `CorpusReadError` is the one the tools above know how to say.
             raise CorpusReadError(str(error)) from error
 
-    async def read_document(self, source_id: str) -> StoredDocument | None:
+    async def read_document(
+        self, source_id: str, *, include_dropped: bool = False
+    ) -> StoredDocument | None:
         try:
-            row: CorpusDocumentRow | None = await self._runner.get(self._project_id, source_id)
+            row: CorpusDocumentRow | None = await self._runner.get(
+                self._project_id, source_id, include_dropped=include_dropped
+            )
         except RuntimeError as error:
             raise CorpusReadError(str(error)) from error
         if row is None:

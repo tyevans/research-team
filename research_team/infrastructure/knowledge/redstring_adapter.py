@@ -49,6 +49,7 @@ from redstring import (
 )
 
 from research_team.application.knowledge import (
+    MAX_DOCUMENT_CHARS,
     ExtractionNote,
     ExtractionReporter,
     IngestReport,
@@ -62,9 +63,6 @@ from research_team.domain import Corpus, EntityJudgements, StoreSourceDocument
 from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
 
 logger = logging.getLogger(__name__)
-
-#: Longest document accepted in one `remember`. Roughly a long article.
-MAX_DOCUMENT_CHARS = 200_000
 
 
 #: Why there is no `low=` override here any more.

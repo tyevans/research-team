@@ -52,6 +52,7 @@ from research_team.application.ask import AskService, ConversationRegistry
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
 from research_team.application.check_telemetry_read import CheckTelemetryReadPort
 from research_team.application.components import component_guidance
+from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
@@ -354,6 +355,16 @@ class Application:
     no caller could construct it. The web layer needs it because "extract this
     document" is a button on the Documents page, and nothing else on the way
     from that button to `KnowledgePort.ingest` knows how to build a port."""
+
+    editor: CorpusEditor
+    """Upload, revise, drop and restore one project's documents, over HTTP.
+
+    A field beside `document_extractor` and for the same reason: it closes
+    over `open_knowledge` and the corpus repository, both assembled inside
+    `build_application` from this build's stores, so no caller could
+    construct it. The web layer needs it because "add a document", "edit a
+    document" and "drop/restore a document" are all buttons on the Documents
+    page with no other way to reach `Corpus`."""
 
     _initial_project_id: UUID | None = None
     """`project_id`, if `build_application` was given one. Attached in
@@ -1442,6 +1453,24 @@ def build_application(
         # how `open_graph` binds the reporter for the knowledge tools.
         reporters=extractions.reporter if extractions is not None else None,
     )
+    # Built from the same `open_knowledge` closure and corpus reader factory
+    # `document_extractor` uses, plus an `AggregateRepository[Corpus]` of its
+    # own -- `corpus` in this scope is the `CorpusRunner` read model
+    # `ProjectCorpusReader` wraps, not the aggregate repository `drop` and
+    # `restore` need to execute `DropSourceDocument`/`StoreSourceDocument`
+    # against. Built the same three-argument way `open_graph` builds one for
+    # `RedstringKnowledge`, including the publisher: leaving it out is the
+    # silent-wiring failure that comment already explains, and a `drop` or
+    # `restore` that missed it would corrupt the corpus row and wake nothing.
+    editor = CorpusEditor(
+        open_knowledge=open_knowledge,
+        readers=lambda target_project_id: ProjectCorpusReader(corpus, target_project_id),
+        corpus=build_corpus_repository(
+            repository.store,
+            repository.publisher,
+            snapshot_store=repository.snapshot_store,
+        ),
+    )
     runs = build_research_run_repository(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store
     )
@@ -1652,6 +1681,7 @@ def build_application(
         grants=resolved_grants,
         ask=ask_service,
         document_extractor=document_extractor,
+        editor=editor,
         _initial_project_id=project_id,
     )
 

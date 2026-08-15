@@ -71,6 +71,7 @@ export const DocumentBrowser = ({
   onExtract,
   onExtractAll,
   onCancelExtraction,
+  onAdd,
 }: {
   /** Already filtered. Filtering is a `useMemo` in the hook rather than a
    *  table library: the whole point of trying `react-virtual` first is that a
@@ -102,12 +103,29 @@ export const DocumentBrowser = ({
   onExtract: (sourceId: SourceId) => void
   onExtractAll: () => void
   onCancelExtraction: () => void
+  onAdd: () => void
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null)
 
+  // Not gated on `total`, deliberately: everything below this point sits
+  // behind the `total === 0` guard because it has nothing to act on over an
+  // empty corpus (nothing to filter, nothing to extract) -- but "Add" is the
+  // one control an empty corpus makes *more* relevant, not less. Placed
+  // before the guard so it survives the early return that follows.
+  const addControl = (
+    <Tooltip asChild explanation="Store a document you have, rather than one an agent found">
+      <Button small tone="quiet" onClick={onAdd}>
+        Add
+      </Button>
+    </Tooltip>
+  )
+
   if (total === 0) {
     return (
-      <EmptyState heading="No documents" detail="Nothing has been stored in this corpus yet." />
+      <div className="flex h-full flex-col gap-[8px]">
+        <div className="flex items-center justify-end">{addControl}</div>
+        <EmptyState heading="No documents" detail="Nothing has been stored in this corpus yet." />
+      </div>
     )
   }
 
@@ -171,6 +189,7 @@ export const DocumentBrowser = ({
               Extract all ({extractableCount})
             </Button>
           </Tooltip>
+          {addControl}
         </span>
       </div>
       {documents.length === 0 ? (

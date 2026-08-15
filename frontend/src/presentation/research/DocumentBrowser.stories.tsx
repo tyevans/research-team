@@ -50,6 +50,7 @@ const document = (index: number, over: Partial<DocumentSummary> = {}): DocumentS
   uri: `https://example.org/papers/${String(index)}`,
   publishedAt: '2019-04-02',
   note: null,
+  fetchedAt: null,
   droppedReason: null,
   extracted: false,
   ...over,
@@ -81,6 +82,7 @@ const base = {
   onExtract: () => {},
   onExtractAll: () => {},
   onCancelExtraction: () => {},
+  onAdd: () => {},
 }
 
 /** Thirty-three sources, of which the virtualizer draws the handful on

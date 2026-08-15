@@ -1,6 +1,11 @@
 import { z } from 'zod'
 
-import type { DocumentRange, DocumentRepository } from '@application/ports/repositories.ts'
+import type {
+  DocumentDraft,
+  DocumentEdit,
+  DocumentRange,
+  DocumentRepository,
+} from '@application/ports/repositories.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
@@ -71,4 +76,67 @@ export class HttpDocumentRepository implements DocumentRepository {
     )
     return body.cancelled
   }
+
+  async create(projectId: ProjectId, draft: DocumentDraft) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/sources`,
+      // Built key by key rather than by mapping the whole draft, so an
+      // undefined field is absent from the JSON instead of present as null --
+      // which the server reads as "leave it alone" on the edit route, and the
+      // two shapes are deliberately the same one.
+      prune({
+        source_id: draft.sourceId,
+        text: draft.text,
+        uri: draft.uri,
+        title: draft.title,
+        note: draft.note,
+        published_at: draft.publishedAt,
+      }),
+      dto.documentDto,
+    )
+    return toDocumentSummary(body)
+  }
+
+  async revise(projectId: ProjectId, sourceId: SourceId, edit: DocumentEdit) {
+    const body = await this.http.patch(
+      `/api/projects/${seg(projectId)}/sources/${seg(sourceId)}`,
+      prune({
+        text: edit.text,
+        uri: edit.uri,
+        title: edit.title,
+        note: edit.note,
+        published_at: edit.publishedAt,
+      }),
+      dto.documentDto,
+    )
+    return toDocumentSummary(body)
+  }
+
+  async drop(projectId: ProjectId, sourceId: SourceId, reason: string) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/sources/${seg(sourceId)}/drop`,
+      { reason },
+      dto.documentDto,
+    )
+    return toDocumentSummary(body)
+  }
+
+  async restore(projectId: ProjectId, sourceId: SourceId) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/sources/${seg(sourceId)}/restore`,
+      {},
+      dto.documentDto,
+    )
+    return toDocumentSummary(body)
+  }
 }
+
+/** Drop the keys whose value is undefined.
+ *
+ * `JSON.stringify` already omits them, so this changes no request. It is here
+ * for the tests, which assert on the object handed to the client rather than
+ * on the serialized body, and would otherwise have to spell out every absent
+ * field as `undefined` in every expectation.
+ */
+const prune = (body: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined))

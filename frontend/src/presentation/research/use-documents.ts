@@ -50,6 +50,7 @@ export const useDocuments = (
 ) => {
   const { documents } = useContainer()
   const [filter, setFilter] = useState('')
+  const [adding, setAdding] = useState(false)
 
   const query = useQuery({
     queryKey: queryKeys.documents(projectId),
@@ -78,6 +79,8 @@ export const useDocuments = (
     onClose: () => {
       onOpen(null)
     },
+    adding,
+    onAddClose: () => setAdding(false),
     /** The open document's title, for the drawer's heading.
      *
      * Taken from the row that opened it rather than waited for from the
@@ -143,6 +146,7 @@ export const useDocuments = (
           },
         })
       },
+      onAdd: () => setAdding(true),
     },
   }
 }

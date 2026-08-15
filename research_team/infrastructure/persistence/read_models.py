@@ -673,6 +673,7 @@ def to_record(row: CorpusDocumentRow) -> DocumentRecord:
         title=row.title,
         published_at=row.published_at,
         note=row.note,
+        fetched_at=row.fetched_at,
         dropped_reason=row.dropped_reason,
     )
 
@@ -825,20 +826,30 @@ class CorpusStore:
         rows = SQLiteReadModelRepository(connection, CorpusDocumentRow, tracer)
         return cls(connection, rows, CorpusProjection(rows, checkpoint_repo, dlq_repo, tracer))
 
-    async def get(self, project_id: UUID, source_id: str) -> CorpusDocumentRow | None:
-        """One document with its text, or None if it is unknown or dropped.
+    async def get(
+        self, project_id: UUID, source_id: str, *, include_dropped: bool = False
+    ) -> CorpusDocumentRow | None:
+        """One document with its text, or None if it is unknown -- or dropped,
+        unless `include_dropped` says otherwise.
 
         Returns the row rather than a separate shape. `/sessions` converts
         because `SessionSummary` already existed as the application's own
         vocabulary; nothing here predates the row, and inventing a twin of it
         would be a second thing to keep in sync for no gain.
 
-        A dropped source answers None rather than raising: it is a document
-        somebody excluded, and the caller asking for it wants to hear that it
-        is not available, not to handle an exception for an ordinary state.
+        A dropped source answers None by default: it is a document somebody
+        excluded, and the caller asking for it wants to hear that it is not
+        available, not to handle an exception for an ordinary state. That is
+        wrong for exactly one caller -- `CorpusEditor.restore`, which exists
+        to put a dropped document back and needs its text to do so, and which
+        is the only caller whose job is to un-exclude what this method would
+        otherwise hide. `include_dropped` is keyword-only and defaults False
+        so every other caller keeps seeing what it always has.
         """
         row = await self._rows.get(CorpusDocumentRow.row_id(project_id, source_id))
-        if row is None or row.project_id != project_id or row.dropped_reason is not None:
+        if row is None or row.project_id != project_id:
+            return None
+        if row.dropped_reason is not None and not include_dropped:
             return None
         return row
 
@@ -866,6 +877,7 @@ class CorpusStore:
             "title",
             "published_at",
             "note",
+            "fetched_at",
             "dropped_reason",
         )
         # Selected beside `columns` rather than in it: everything in that tuple
@@ -1006,10 +1018,12 @@ class CorpusRunner:
             projection_name=self.projection_name, limit=limit
         )
 
-    async def get(self, project_id: UUID, source_id: str) -> CorpusDocumentRow | None:
+    async def get(
+        self, project_id: UUID, source_id: str, *, include_dropped: bool = False
+    ) -> CorpusDocumentRow | None:
         if self._corpus is None:
             raise RuntimeError("the corpus projection has not been started")
-        return await self._corpus.get(project_id, source_id)
+        return await self._corpus.get(project_id, source_id, include_dropped=include_dropped)
 
     async def list(
         self, project_id: UUID, *, include_dropped: bool = False

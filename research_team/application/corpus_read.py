@@ -99,12 +99,23 @@ class CorpusReadPort(Protocol):
         """
         ...
 
-    async def read_document(self, source_id: str) -> StoredDocument | None:
-        """One source, or `None` when this project has no such `source_id`.
+    async def read_document(
+        self, source_id: str, *, include_dropped: bool = False
+    ) -> StoredDocument | None:
+        """One source, or `None` when this project has no such `source_id`
+        -- or when it has been dropped and `include_dropped` is not set.
 
         `None` rather than an exception: a model guessing at a source id is
         the expected case, not a failure, and the caller's answer to it is to
         say what does exist. Reserving the exception for storage failure keeps
         the two apart, which matters because only one of them is a bug.
+
+        `include_dropped` defaults to False for the same reason `list_documents`
+        does: the agent's `read_source` tool should keep seeing exactly the live
+        corpus it always has. The callers that opt in are the ones whose job is
+        to act on an excluded document -- `CorpusEditor.restore` and `revise`,
+        which read a dropped document's own text back in order to re-store it,
+        and the console's read route, which shows the text of the document
+        someone is deciding whether to restore.
         """
         ...

@@ -607,6 +607,11 @@ export const documentDto = z.object({
   title: maybe(z.string()),
   published_at: maybe(z.string()),
   note: maybe(z.string()),
+  // Provenance for by-reference content the corpus did not create -- see
+  // `DocumentRecord.fetched_at` server-side. `maybe` rather than required:
+  // `revise`/`restore` carry it through unconditionally but older rows and
+  // documents the console itself stored never set it.
+  fetched_at: maybe(z.string()),
   dropped_reason: maybe(z.string()),
   // Defaulted rather than required, for `graphRelationshipDto.inferred`'s
   // reason: a server that predates the field answers rows without it, and

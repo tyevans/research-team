@@ -1153,6 +1153,34 @@ guessing at which half to fix. **Not measured against a real corpus** -- the
 figure to get first is the wall time of each pass on the largest project
 available, because if the `find_entities` pass is the cheap one there is
 nothing here worth doing.
+
+### B79. A browser edit and an agent `remember` on the same source can race to an `OptimisticLockError`
+
+`composition.py` now builds two `AggregateRepository[Corpus]` instances over
+one stream: the one inside `open_graph`'s closure, held by
+`RedstringKnowledge` for `remember`/`remember_page`, and a second one
+`CorpusEditor` holds for the console's upload/revise/drop/restore routes.
+They cannot disagree about state -- both `load_or_create` from the same log
+-- but they can race on the optimistic version: an agent `remember` and a
+browser `PATCH` landing on the same `source_id` in the same instant can both
+load the aggregate at version N and both try to save at N+1, and one of them
+loses.
+
+`CorpusEditor._store` deliberately has no `with_retry`, unlike
+`RedstringKnowledge._store_document` -- see `corpus_editing.py:255-262`: that
+retry exists for two `remember` calls racing in the same assistant turn,
+concurrent by construction and common enough to need one, where `revise` and
+`restore` are browser-driven edits to one document by one person, and adding
+a retry there was judged to buy nothing for a collision nobody expected.
+
+The gap that reasoning leaves open: it did not weigh a *cross-path* race, an
+agent mid-`remember` on a source a person edits at the same moment. That
+collision surfaces as an unhandled `OptimisticLockError` and a 500, not the
+409 the aggregate's own refusals get. Left here rather than fixed, because it
+needs a real collision to reproduce and the two paths' relative timing has
+not been measured -- retrying blind would be guessing at whether the race is
+worth the complexity it costs.
+
 ## Entity definitions and usages
 
 Deferred during the 2026-08-14 entity-definitions-and-usages build
@@ -2588,3 +2616,54 @@ unconsolidated.
 R1 closing means vector search is now _possible_, not present: there is still
 no `AGENT_VECTOR_STORE` and no recall path. That is a feature to spec, not a
 workaround to delete, and it does not belong in this section.
+
+### B80. Binary document upload
+
+The corpus stores `text: str` and nothing in this tree decodes any binary
+document format — a person holding a PDF converts it to text before the
+browser's Add dialog will take it. This is the same limitation `fetch` and
+`remember` already have; the Add dialog declines to remove an old
+incapability rather than adding a new one. Reasoning in
+`docs/superpowers/specs/2026-08-15-managing-documents-design.md`, Decision 1.
+
+### B81. Purging a dropped document's graph contributions
+
+A drop excludes the document from the corpus and keeps the record — but
+extraction has already written entities and edges that no longer know which
+document proposed them, and the chunk store has no delete path in use here.
+So a definition written last week may still quote a document dropped today.
+Fixing it needs provenance the graph does not currently record — which edges
+came from which document — and the drop dialog's copy says so to the reader
+rather than promising an erasure that has not happened. Reasoning in the same
+spec, Decision 3.
+
+### B82. A ranged read of a document is not invalidated after an edit
+
+`queryKeys.document(projectId, sourceId)` resolves a `start`/`end` range to
+`null, null`, and TanStack Query matches keys by prefix over the elements
+supplied — `null` is a value in that comparison, not a wildcard for "any
+range". A cached read that had actually been fetched with a range would
+therefore survive a `revise` mutation's invalidation and go stale. Nothing
+performs a ranged read today — `DocumentReader.tsx` is the only caller of
+this key and it passes no range — so this is latent rather than observed; the
+first feature that adds citation quoting (see [[B72]]) inherits it and should
+widen the invalidation to the whole key prefix before relying on ranges.
+
+### B83. Route declaration order is protected by convention, not by a gate
+
+`app.py` documents that FastAPI matches routes in declaration order, and
+several literal paths under `/sources` are declared above a dynamic one so
+they are not swallowed by its parameter — but nothing tests this, and no gate
+would fail if a future edit moved one below. Getting it wrong answers a 404 or
+a 422 that reads like a missing route rather than a matching-order bug, which
+is a specific enough failure shape to be worth a regression test rather than
+trusting the comment.
+
+This entry used to name `/drop` and `/restore` as the routes at risk. They are
+not: both are four-segment `POST`s, and the dynamic route is the three-segment
+`GET /sources/{source_id}`, so the path never matches and declaration order is
+irrelevant to them. Checked against the route table on 2026-08-15. The live
+pair is `GET /sources/extraction-queue` above `GET /sources/{source_id}` —
+same method, same segment count — where a reordering really would parse
+`extraction-queue` as a source id and 404. The general constraint is still
+real for the file, which is why the entry stands.

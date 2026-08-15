@@ -118,6 +118,12 @@ class DocumentRecord(BaseModel):
     title: str | None = None
     published_at: str | None = None
     note: str | None = None
+    fetched_at: str | None = None
+    """When the source was retrieved, for by-reference content the corpus did
+    not create -- provenance, not a corpus fact. Carried through so a revise
+    or restore that re-stores this record's own fields cannot silently zero
+    it; see `CorpusEditor._store` for why that caller has to read it back
+    before writing."""
     dropped_reason: str | None = None
     """Set means excluded. The record stays, so the exclusion stays auditable."""
 
@@ -226,6 +232,7 @@ def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
                 title=event.title,
                 published_at=event.published_at,
                 note=event.note,
+                fetched_at=event.fetched_at,
             )
             return state.model_copy(
                 update={
