@@ -62,6 +62,7 @@ const documents: readonly DocumentSummary[] = Array.from({ length: 24 }, (_, ind
   title: `A paper about topic number ${index}`,
   publishedAt: null,
   note: null,
+  fetchedAt: null,
   droppedReason: null,
   extracted: false,
 }))

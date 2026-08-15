@@ -22,6 +22,7 @@ const text = (over: Partial<DocumentText> = {}): DocumentText => ({
   title: 'Ada Lovelace',
   publishedAt: null,
   note: null,
+  fetchedAt: null,
   droppedReason: null,
   extracted: false,
   text: 'Ada Lovelace worked with Charles Babbage.',
@@ -46,9 +47,28 @@ const noExtraction = {
   cancelExtraction: vi.fn(() => {
     throw new Error('DocumentReader should never cancel an extraction')
   }),
+  create: vi.fn(() => {
+    throw new Error('DocumentReader should never create a document')
+  }),
+  revise: vi.fn(() => {
+    throw new Error('DocumentReader should never revise a document')
+  }),
+  drop: vi.fn(() => {
+    throw new Error('DocumentReader should never drop a document')
+  }),
+  restore: vi.fn(() => {
+    throw new Error('DocumentReader should never restore a document')
+  }),
 } as unknown as Pick<
   DocumentRepository,
-  'extract' | 'extractAll' | 'extractionQueue' | 'cancelExtraction'
+  | 'extract'
+  | 'extractAll'
+  | 'extractionQueue'
+  | 'cancelExtraction'
+  | 'create'
+  | 'revise'
+  | 'drop'
+  | 'restore'
 >
 
 const fakeDocuments = (read: DocumentRepository['read']): DocumentRepository => ({

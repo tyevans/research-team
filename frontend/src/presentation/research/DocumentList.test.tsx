@@ -45,6 +45,7 @@ const doc = (over: Partial<DocumentSummary> = {}): DocumentSummary => ({
   title: null,
   publishedAt: null,
   note: null,
+  fetchedAt: null,
   droppedReason: null,
   extracted: false,
   ...over,
@@ -71,6 +72,18 @@ const fakeDocuments = (
     .fn<DocumentRepository['extractionQueue']>()
     .mockResolvedValue(emptyExtractionQueue),
   cancelExtraction: vi.fn<DocumentRepository['cancelExtraction']>().mockResolvedValue(0),
+  create: vi.fn(() => {
+    throw new Error('create was not stubbed for this test')
+  }),
+  revise: vi.fn(() => {
+    throw new Error('revise was not stubbed for this test')
+  }),
+  drop: vi.fn(() => {
+    throw new Error('drop was not stubbed for this test')
+  }),
+  restore: vi.fn(() => {
+    throw new Error('restore was not stubbed for this test')
+  }),
   ...over,
 })
 

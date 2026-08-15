@@ -17,6 +17,12 @@ export interface DocumentSummary {
   readonly title: string | null
   readonly publishedAt: string | null
   readonly note: string | null
+  /** Provenance for by-reference content the corpus did not create -- when the
+   *  console (or an agent) fetched the bytes at `uri`, not when the record was
+   *  written. `null` for a document with no `uri`, or one stored before this
+   *  field existed. Carried through unconditionally by `revise` and `restore`,
+   *  so a form built over this type can show whether an edit disturbed it. */
+  readonly fetchedAt: string | null
   readonly droppedReason: string | null
   /** Whether this document's text has been folded into the project's graph.
    *

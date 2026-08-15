@@ -27,6 +27,10 @@ export class HttpClient {
     return this.request('POST', path, body ?? {}, schema)
   }
 
+  patch<S extends z.ZodTypeAny>(path: string, body: unknown, schema: S): Promise<z.output<S>> {
+    return this.request('PATCH', path, body ?? {}, schema)
+  }
+
   delete<S extends z.ZodTypeAny>(path: string, schema: S): Promise<z.output<S>> {
     return this.request('DELETE', path, undefined, schema)
   }

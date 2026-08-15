@@ -600,6 +600,7 @@ export const toDocumentSummary = (raw: Dto<typeof dto.documentDto>): DocumentSum
   title: raw.title,
   publishedAt: raw.published_at,
   note: raw.note,
+  fetchedAt: raw.fetched_at,
   droppedReason: raw.dropped_reason,
   extracted: raw.extracted,
 })
