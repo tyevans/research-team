@@ -22,11 +22,23 @@ the text is exactly the case that check discards, and it discards it with no
 error: `store_source` returns None and the caller would answer 200 over a
 document that did not change. `decide` has no such check.
 
-The cost of taking the direct path is that indexing does not come with it --
-`index` hangs off `_store_document`, which is bypassed -- so both methods call
-it themselves. An edit that skipped it would leave the chunk corpus quoting
-text the document no longer contains, which is the one failure
-`corpus_spans.py` exists to make impossible.
+The direct path re-pays two of the three things `store_source` gave `store`
+for free, and is honest about the third it does not:
+
+- **The length cap** is not free and is re-paid: `_store` checks
+  `MAX_DOCUMENT_CHARS` itself, because `decide` has no opinion on document
+  size and `revise(text=<huge>)` would otherwise write exactly the entry
+  `store_source`'s own docstring says must never exist.
+- **Indexing** is not free and is re-paid: `index` hangs off
+  `_store_document`, which is bypassed, so both methods call it themselves.
+  An edit that skipped it would leave the chunk corpus quoting text the
+  document no longer contains, which is the one failure `corpus_spans.py`
+  exists to make impossible.
+- **The blank-id refusal** is not free and is *not* re-paid, and does not need
+  to be: both methods only ever reach `_store` with a `source_id` read back
+  from an existing record, never one supplied fresh by a caller, so there is
+  no request shape that could exercise it here. `store`'s own existence check
+  is the only place a caller's `source_id` is untrusted.
 
 The alternative was a `force: bool` on `store_source`. It is fewer lines, and
 it turns the adapter's most carefully-reasoned guard into a request parameter
@@ -42,7 +54,7 @@ from research_team.application.document_extraction import (
     OpenKnowledge,
     UnknownDocument,
 )
-from research_team.application.knowledge import SourceRef
+from research_team.application.knowledge import MAX_DOCUMENT_CHARS, KnowledgeError, SourceRef
 from research_team.domain.corpus import Corpus, DropSourceDocument, StoreSourceDocument
 
 
@@ -164,6 +176,13 @@ class CorpusEditor:
         to anyone. Reading with the default `include_dropped=False` would
         report every dropped document as unknown instead of letting that
         stand.
+
+        Carries `stored.record.fetched_at` through unconditionally, the same
+        way `uri` and `published_at` are: `StoreSourceDocument.fetched_at`
+        defaults to `None`, so a re-store that did not supply it would zero
+        it on every field this method touches, not only the ones the caller
+        asked to change. A metadata-only title fix would otherwise destroy
+        the provenance of by-reference content it never meant to disturb.
         """
         reader = self._readers(project_id)
         stored = await reader.read_document(source_id, include_dropped=True)
@@ -180,6 +199,7 @@ class CorpusEditor:
                 published_at=(
                     stored.record.published_at if published_at is None else published_at
                 ),
+                fetched_at=stored.record.fetched_at,
             ),
         )
 
@@ -197,6 +217,11 @@ class CorpusEditor:
         Reads with `include_dropped=True`: the document being restored is, by
         definition, dropped, and the default read would report it as unknown
         rather than letting `restore` see the text it needs to re-store.
+
+        "Unchanged" includes `fetched_at`: this is a re-store of the whole
+        record, and `StoreSourceDocument.fetched_at` defaults to `None`, so
+        leaving it out would restore a document with its provenance quietly
+        erased -- the opposite of what "unchanged" promises above.
         """
         reader = self._readers(project_id)
         stored = await reader.read_document(source_id, include_dropped=True)
@@ -213,18 +238,40 @@ class CorpusEditor:
                 title=stored.record.title,
                 note=stored.record.note,
                 published_at=stored.record.published_at,
+                fetched_at=stored.record.fetched_at,
             ),
         )
 
     async def _store(self, project_id: UUID, source: SourceRef) -> None:
-        """The direct path: command, then index.
+        """The direct path: the length cap, then command, then index.
 
-        Both halves are required and neither is optional for a caller. The
-        index call has no local evidence if it is skipped -- the corpus is
-        correct without it and the chunk store is not -- so it lives here
-        rather than at the two call sites, where one of them would eventually
-        be written without it.
+        All three are required and none is optional for a caller. The cap
+        check has no local evidence if it is skipped -- see the module
+        docstring's accounting of what this path re-pays. The index call is
+        the same: the corpus is correct without it and the chunk store is
+        not, so it lives here rather than at the two call sites, where one of
+        them would eventually be written without it.
+
+        **No `with_retry` here, where `_store_document` has one.** That retry
+        exists for two `remember` calls racing in the same assistant turn --
+        concurrent by construction, and common enough to need a retry rather
+        than a raised `OptimisticLockError`. `revise` and `restore` are
+        browser-driven edits to one document; two of them landing on the same
+        `source_id` in the same instant is not a case this feature has to
+        absorb, and `drop` above takes the same single-attempt shape for the
+        same reason.
         """
+        if len(source.text) > MAX_DOCUMENT_CHARS:
+            # Mirrors `store_source`'s own check (`redstring_adapter.py`):
+            # `decide` has no opinion on document size, so nothing upstream of
+            # this call refuses an oversized `revise`, and a document over the
+            # cap can never be extracted later -- see `MAX_DOCUMENT_CHARS`'s
+            # docstring in `knowledge.py` for why the constant lives there.
+            raise KnowledgeError(
+                f"that is {len(source.text)} characters; the limit is "
+                f"{MAX_DOCUMENT_CHARS}. Record it in parts, each with its own "
+                f"source_id."
+            )
         corpus = await self._corpus.load_or_create(project_id)
         corpus.execute(
             StoreSourceDocument(
@@ -235,6 +282,7 @@ class CorpusEditor:
                 title=source.title,
                 published_at=source.published_at,
                 note=source.note,
+                fetched_at=source.fetched_at,
             )
         )
         await self._corpus.save(corpus)

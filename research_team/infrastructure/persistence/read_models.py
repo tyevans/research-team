@@ -673,6 +673,7 @@ def to_record(row: CorpusDocumentRow) -> DocumentRecord:
         title=row.title,
         published_at=row.published_at,
         note=row.note,
+        fetched_at=row.fetched_at,
         dropped_reason=row.dropped_reason,
     )
 
@@ -876,6 +877,7 @@ class CorpusStore:
             "title",
             "published_at",
             "note",
+            "fetched_at",
             "dropped_reason",
         )
         # Selected beside `columns` rather than in it: everything in that tuple

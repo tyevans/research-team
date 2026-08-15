@@ -24,7 +24,7 @@ from research_team.application.corpus_editing import (
 )
 from research_team.application.corpus_read import DocumentListing, StoredDocument
 from research_team.application.document_extraction import UnknownDocument
-from research_team.application.knowledge import SourceRef
+from research_team.application.knowledge import MAX_DOCUMENT_CHARS, KnowledgeError, SourceRef
 from research_team.domain.corpus import Corpus, StoreSourceDocument
 
 
@@ -114,6 +114,7 @@ class FakeKnowledge:
                 title=source.title,
                 published_at=source.published_at,
                 note=source.note,
+                fetched_at=source.fetched_at,
             )
         )
         await self._corpus.save(corpus)
@@ -249,6 +250,37 @@ async def test_a_revise_reindexes(editor, knowledge, project_id):
     assert [source.source_id for source in knowledge.indexed] == ["s1"]
 
 
+async def test_a_revise_keeps_fetched_at(editor, reader, corpus_repo, project_id, texts):
+    """`_store` executes `StoreSourceDocument` directly, whose `fetched_at`
+    defaults to `None` -- a `revise` that forgot to carry the old value
+    forward would silently overwrite it, the same way an omitted `uri` would,
+    except nothing else here would notice: the corpus stays correct-looking
+    and only the provenance of by-reference content is gone.
+
+    Seeded by executing `StoreSourceDocument` on `corpus_repo` directly
+    rather than through `editor.store`, because `store`'s own signature (task
+    1) has no `fetched_at` parameter -- only the by-reference path that will
+    set it in a later task does, and this test only needs a document that
+    already carries one.
+    """
+    corpus = await corpus_repo.load_or_create(project_id)
+    corpus.execute(
+        StoreSourceDocument(
+            corpus_id=project_id,
+            source_id="s1",
+            text="hello",
+            fetched_at="2026-08-01T00:00:00+00:00",
+        )
+    )
+    await corpus_repo.save(corpus)
+    texts["s1"] = "hello"
+
+    await editor.revise(project_id, "s1", title="Fixed")
+
+    stored = await reader.read_document("s1")
+    assert stored.record.fetched_at == "2026-08-01T00:00:00+00:00"
+
+
 async def test_a_revise_keeps_the_text_when_none_is_given(editor, reader, project_id):
     await editor.store(project_id, "s1", "hello", title="Hello")
 
@@ -264,6 +296,19 @@ async def test_revise_refuses_an_unknown_source(editor, project_id):
 
     with pytest.raises(UnknownDocument):
         await editor.revise(project_id, "missing", title="x")
+
+
+async def test_revise_refuses_text_over_the_length_cap(editor, project_id):
+    """`decide` has no size opinion, and `revise` bypasses `store_source` --
+    the one place that check normally lives -- so nothing upstream refuses
+    this on its own. `MAX_DOCUMENT_CHARS` lives in `knowledge.py` precisely
+    so `_store` can reach it without the application layer importing
+    `redstring_adapter.py`.
+    """
+    await editor.store(project_id, "s1", "hello")
+
+    with pytest.raises(KnowledgeError):
+        await editor.revise(project_id, "s1", text="x" * (MAX_DOCUMENT_CHARS + 1))
 
 
 async def test_restore_puts_a_dropped_document_back(editor, reader, project_id):

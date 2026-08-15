@@ -131,6 +131,12 @@ def test_storing_over_a_dropped_source_id_brings_it_back():
 
     Leaving `dropped_reason` set would leave a live document explaining why it
     is not there.
+
+    Load-bearing for `CorpusEditor.restore` (`research_team/application/
+    corpus_editing.py`), which is built entirely on this property: a restore
+    is a re-store of a dropped document's own unchanged bytes, and this test
+    is what would go red if `evolve` ever started carrying `dropped_reason`
+    forward and silently removed the feature.
     """
     corpus_id = uuid4()
     state = _with(
