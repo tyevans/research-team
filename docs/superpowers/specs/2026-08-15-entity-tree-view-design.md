@@ -94,9 +94,16 @@ semantics a disclosure gives for free. This is two levels of grouped list with
 disclosure buttons, and it says so. If someone later wants the full pattern,
 that is a Radix accordion and its own slice.
 
-**No new dependency.** A disclosure is `useState` and `aria-expanded`; pulling
-`@radix-ui/react-accordion` in for it would put a package in the `ui` bucket to
-avoid writing eleven lines.
+**The fold is `primitives.tsx`'s `Disclosure`, not a new one.** It already
+does exactly this — a `<button aria-expanded aria-controls>` over a region,
+chosen over `<details>` precisely so the open state survives a re-render driven
+from elsewhere, which is the property this pane needs when a `graph` frame
+lands mid-read. Writing a second one would be a second caret to keep in step
+with the first.
+
+**No new dependency.** Pulling `@radix-ui/react-accordion` in would put a
+package in the `ui` bucket to replace a primitive this repository already
+ships.
 
 ### 3. `presentation/research/EntityTreePane.tsx` — the subscription
 
