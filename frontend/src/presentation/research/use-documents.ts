@@ -1,9 +1,18 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 
+import { notify } from '@application/notifications/toast-store.ts'
+import { errorMessage } from '@application/ports/errors.ts'
 import { queryKeys } from '@application/queries/keys.ts'
+import {
+  useCancelExtraction,
+  useExtractAll,
+  useExtractDocument,
+  useExtractionQueue,
+} from '@application/research/use-extraction-queue.ts'
 import { useContainer } from '@app/container-context.tsx'
 import { documentLabel, type DocumentSummary } from '@domain/research/document.ts'
+import { unextractedCount } from '@domain/research/extraction-queue.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
 import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
@@ -48,6 +57,14 @@ export const useDocuments = (
   })
   useDocumentRefresh(projectId)
 
+  // Read unconditionally rather than only once something has been pressed, for
+  // `useTopicQueue`'s reason: the whole point of a catch-up route is a tab that
+  // arrived *after* the queue started, which cannot be detected without asking.
+  const { board } = useExtractionQueue(projectId)
+  const extracting = useExtractDocument(projectId)
+  const extractingAll = useExtractAll(projectId)
+  const cancelling = useCancelExtraction(projectId)
+
   const filtered = useMemo(() => {
     const rows = query.data ?? []
     const needle = filter.trim().toLowerCase()
@@ -76,6 +93,56 @@ export const useDocuments = (
       filter,
       onFilterChange: setFilter,
       onOpen,
+      // The *unfiltered* corpus, deliberately: "extract all unextracted" is a
+      // project-level action the server computes over everything, and a count
+      // taken from the filtered rows would promise to extract what the reader
+      // can see while the press extracted more.
+      extractableCount: unextractedCount(query.data ?? [], board),
+      queue: board,
+      queueSize: board.queued.length + (board.running === null ? 0 : 1),
+      busy: extracting.isPending || extractingAll.isPending,
+      cancelling: cancelling.isPending,
+      onExtract: (sourceId: SourceId) => {
+        extracting.mutate(sourceId, {
+          // Reported off the answer rather than off the press. `queued: false`
+          // means the queue already holds this document, which is not an error
+          // and not a start -- and a toast that said "queued" either way would
+          // be the lie the server shaped its 202 to let the client avoid.
+          onSuccess: (queued) => {
+            notify(queued ? 'Queued for extraction' : 'Already queued for extraction')
+          },
+          onError: (error) => {
+            notify(errorMessage(error), 'bad')
+          },
+        })
+      },
+      onExtractAll: () => {
+        extractingAll.mutate(undefined, {
+          // The server's count, not `extractableCount`: it recomputes the set
+          // at press time and refuses what the queue already holds, so the two
+          // differ exactly when a previous press is still draining.
+          onSuccess: (queued) => {
+            notify(
+              queued === 0
+                ? 'Nothing left to extract'
+                : `Queued ${String(queued)} document${queued === 1 ? '' : 's'} for extraction`,
+            )
+          },
+          onError: (error) => {
+            notify(errorMessage(error), 'bad')
+          },
+        })
+      },
+      onCancelExtraction: () => {
+        cancelling.mutate(undefined, {
+          onSuccess: (cancelled) => {
+            notify(`Stopped ${String(cancelled)} extraction${cancelled === 1 ? '' : 's'}`)
+          },
+          onError: (error) => {
+            notify(errorMessage(error), 'bad')
+          },
+        })
+      },
     },
   }
 }
@@ -97,6 +164,14 @@ const label = (rows: readonly DocumentSummary[], sourceId: SourceId): string => 
  * not. A log frame is ignored the way the topic queue ignores it -- the
  * session tree already refetches on every one, and this list doing the same
  * would re-read the corpus on every token of every turn. Both are asserted.
+ *
+ * `useExtractionQueue` invalidates this same key on a *terminal extraction*
+ * frame, and that is not a second violation of the rule above: a document
+ * extracted from the corpus days after it was stored has no corpus frame
+ * beside it, and its row's `extracted` flag has just changed. The rule this
+ * paragraph documents is "no frame that only restates another one", not "one
+ * invalidator" -- and it is why the extraction subscription lives beside the
+ * queue it also refreshes rather than being folded in here.
  *
  * One key, not a prefix: a stored document changes the list. It does not
  * change the *text* of a document already open in the reader, which is

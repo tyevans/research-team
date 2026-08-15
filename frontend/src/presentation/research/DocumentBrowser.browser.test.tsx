@@ -3,6 +3,7 @@ import { render } from 'vitest-browser-react'
 import { expect, it } from 'vitest'
 
 import type { DocumentSummary } from '@domain/research/document.ts'
+import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
 import { SourceId } from '@domain/shared/identifier.ts'
 
 import { DocumentBrowser } from './DocumentBrowser.tsx'
@@ -62,6 +63,7 @@ const documents: readonly DocumentSummary[] = Array.from({ length: 24 }, (_, ind
   publishedAt: null,
   note: null,
   droppedReason: null,
+  extracted: false,
 }))
 
 /** The rail width the browser actually gets, and a height short enough that
@@ -74,6 +76,14 @@ const Browser = () => (
       filter=""
       onFilterChange={() => {}}
       onOpen={() => {}}
+      queue={emptyExtractionQueue}
+      extractableCount={documents.length}
+      queueSize={0}
+      busy={false}
+      cancelling={false}
+      onExtract={() => {}}
+      onExtractAll={() => {}}
+      onCancelExtraction={() => {}}
     />
   </div>
 )
@@ -108,7 +118,12 @@ const clipBox = (element: HTMLElement) => {
 const mount = async () => {
   await render(<Browser />)
   const scroller = document.querySelector('[data-document-scroll]') as HTMLElement
-  const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-document-row] > button'))
+  // `[data-document-open]` rather than the `> button` this used to say. The row
+  // is two controls now -- the open button and a sibling extract action -- and
+  // while the action happens to sit inside a `<span>` and so is not a direct
+  // child, a selector that depended on that would silently start measuring the
+  // wrong element the day the wrapper goes.
+  const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-document-open]'))
   // The precondition, asserted rather than assumed: with no overflow there is
   // no clip, and every assertion below would pass against the defect.
   expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight)
@@ -147,6 +162,31 @@ it('keeps a row further down the list from losing its sides', async () => {
 
   const ring = ringBox(row)
   const clip = clipBox(scroller)
+  expect(ring.left).toBeGreaterThanOrEqual(clip.left)
+  expect(ring.right).toBeLessThanOrEqual(clip.right)
+})
+
+it('keeps the extract action’s ring inside the scroller too', async () => {
+  // The row grew a second control at its right edge, which is the edge the
+  // scroller clips hardest -- the open button used to be `w-full` and owned it.
+  // A control that sat outside `RING_INWARD` here would lose its ring on the
+  // right for every row in the list, which is the defect the three tests above
+  // were written about, one element over.
+  //
+  // **Proved red on 2026-08-14**, and measured rather than reasoned: replacing
+  // the action's `pr-3` with `pr-0 -mr-[4px]` — the smallest edit that puts the
+  // button flush against the clip — gave `right = 234.33` against a clip right
+  // of `227`. The margin the padding buys is what this pins; the button carries
+  // the global outward `:focus-visible` (offset +1px, 2px wide) rather than
+  // `RING_INWARD`, so it reaches 3px past its own border box and needs that
+  // room.
+  const { scroller } = await mount()
+  const action = document.querySelectorAll<HTMLElement>('[data-document-row] .btn')[0]!
+  focus(action)
+
+  const ring = ringBox(action)
+  const clip = clipBox(scroller)
+  expect(ring.drawn).toBe(true)
   expect(ring.left).toBeGreaterThanOrEqual(clip.left)
   expect(ring.right).toBeLessThanOrEqual(clip.right)
 })

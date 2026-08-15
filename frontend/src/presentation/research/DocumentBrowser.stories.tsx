@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 
 import type { DocumentSummary } from '@domain/research/document.ts'
+import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
 import { SourceId } from '@domain/shared/identifier.ts'
 
 import { DocumentBrowser } from './DocumentBrowser.tsx'
@@ -50,6 +51,7 @@ const document = (index: number, over: Partial<DocumentSummary> = {}): DocumentS
   publishedAt: '2019-04-02',
   note: null,
   droppedReason: null,
+  extracted: false,
   ...over,
 })
 
@@ -71,6 +73,14 @@ const base = {
   filter: '',
   onFilterChange: () => {},
   onOpen: () => {},
+  queue: emptyExtractionQueue,
+  extractableCount: DOCUMENTS.length - 1,
+  queueSize: 0,
+  busy: false,
+  cancelling: false,
+  onExtract: () => {},
+  onExtractAll: () => {},
+  onCancelExtraction: () => {},
 }
 
 /** Thirty-three sources, of which the virtualizer draws the handful on
@@ -90,4 +100,37 @@ export const FilteredToNothing: Story = {
  *  a search field over an empty corpus is a control with nothing to do. */
 export const Empty: Story = {
   args: { ...base, documents: [], total: 0 },
+}
+
+/** Every extraction state a row can be in, at once and in one place.
+ *
+ * The first is running, the second queued, the fourth failed and the fifth
+ * already extracted -- the third is the dropped one and deliberately offers no
+ * control at all, because the server excludes dropped documents from
+ * extract-all and a control here would promise an action it cannot honour.
+ *
+ * The failure's `detail` is on the row rather than behind anything, because
+ * nothing durable records that an extraction was even requested: this string
+ * lives only in the queue's memory and is the failure's one account of itself.
+ */
+export const Extracting: Story = {
+  args: {
+    ...base,
+    queue: {
+      running: DOCUMENTS[0]!.sourceId,
+      queued: [DOCUMENTS[1]!.sourceId],
+      finished: [
+        {
+          sourceId: DOCUMENTS[3]!.sourceId,
+          status: 'failed',
+          detail: 'the model refused: context length exceeded',
+          entities: null,
+          relationships: null,
+        },
+      ],
+    },
+    documents: DOCUMENTS.map((row, index) => (index === 4 ? { ...row, extracted: true } : row)),
+    extractableCount: DOCUMENTS.length - 4,
+    queueSize: 2,
+  },
 }

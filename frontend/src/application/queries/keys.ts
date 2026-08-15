@@ -59,6 +59,13 @@ export const queryKeys = {
   topicDocuments: (project: ProjectId, topic: TopicId) =>
     ['topic-documents', project, topic] as const,
   documents: (project: ProjectId) => ['documents', project] as const,
+  /** One key for the whole project's extraction queue, for `dispatch`'s
+   *  reason: the catch-up route answers running, queued and finished in a
+   *  single read, so a corpus of hundreds shares one cache entry rather than
+   *  one per row. Separate from `documents` because they answer different
+   *  questions -- what the corpus holds, and what is being done to it -- and a
+   *  press that changes only the second should not refetch the first. */
+  extractionQueue: (project: ProjectId) => ['extraction-queue', project] as const,
   /** Ranged reads are their own key, distinct from the whole-document read
    *  `range` omitted gives -- a range and the full text are two different
    *  responses over the same source, and sharing a key would show one

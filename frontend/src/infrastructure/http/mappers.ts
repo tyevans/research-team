@@ -18,6 +18,7 @@ import type {
 } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
 import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
+import type { ExtractionOutcome, ExtractionQueueBoard } from '@domain/research/extraction-queue.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { Dispatch, DispatchStatus } from '@domain/research/dispatch.ts'
 import type { TopicDocuments } from '@domain/research/topic-document.ts'
@@ -591,6 +592,25 @@ export const toDocumentSummary = (raw: Dto<typeof dto.documentDto>): DocumentSum
   publishedAt: raw.published_at,
   note: raw.note,
   droppedReason: raw.dropped_reason,
+  extracted: raw.extracted,
+})
+
+export const toExtractionOutcome = (
+  raw: Dto<typeof dto.extractionOutcomeDto>,
+): ExtractionOutcome => ({
+  sourceId: SourceId(raw.source_id),
+  status: raw.status,
+  detail: raw.detail,
+  entities: raw.entities,
+  relationships: raw.relationships,
+})
+
+export const toExtractionQueueBoard = (
+  raw: Dto<typeof dto.extractionQueueDto>,
+): ExtractionQueueBoard => ({
+  running: raw.running === null ? null : SourceId(raw.running),
+  queued: raw.queued.map(SourceId),
+  finished: raw.finished.map(toExtractionOutcome),
 })
 
 export const toDocumentText = (raw: Dto<typeof dto.documentTextDto>): DocumentText => ({
