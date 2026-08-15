@@ -65,6 +65,30 @@ confidently. Lexical-only also means indexing is deterministic, costs no
 embedding pass over the corpus, and adds no model dependency to a code path
 that currently has none.
 
+**`ChunkRetriever` is not the vehicle, and this was found by reading it.**
+Its `__init__` takes `embeddings: EmbeddingProvider` as a required keyword
+and dimension-checks it against the store, so the "no embedding dependency"
+half of this decision does not survive using the class — production wiring
+would have to carry a `FakeEmbeddingProvider` to satisfy a collaborator it
+never calls.
+
+`RetrievalMode.LEXICAL` genuinely never touches that provider
+(`composition/retrieval.py`, `retrieve_chunks` guards both channels), so the
+lexical path is four lines and they are all public API:
+
+```python
+terms = tokenize(query)
+candidates = await store.lexical_candidates(terms, tenant_id, k)
+ranked = rank_chunks(terms, candidates, k)
+```
+
+`tokenize`, `rank_chunks`, `RankedChunk`, `LexicalCandidate` and
+`CorpusStats` are all exported from the package root. The adapter calls the
+store directly and constructs no `ChunkRetriever`. If the semantic channel
+is ever wanted, `ChunkRetriever` is the thing to adopt then, with a real
+provider — this is a decision not to carry it early, not a fork away from
+it.
+
 Rejected: **hybrid retrieval**, for the reasons above plus the cost of an
 embedding pass at index time. The retrieval mode is a parameter, so the
 semantic channel can be switched on later — but note honestly that doing so
@@ -126,6 +150,33 @@ for a human's. Unifying them would force one of the two jobs to accept the
 other's boundaries. What must not happen is the two disagreeing about what a
 *citation* is — and under Decision 2 they cannot, because neither owns
 citation identity. Offsets into the source document do.
+
+### Where the chunks actually live
+
+redstring ships two `ChunkStore` adapters and no more:
+`redstring/chunks/adapters/memory.py` and `.../postgres.py`. There is no
+SQLite adapter, and this system's default deployment is SQLite.
+
+So the chunk store is **in-memory, rebuilt from the log at project open** —
+and that is not a compromise, it is exactly how the graph already works.
+`build_graph_store` offers `none`/`memory`/`neo4j`, the in-memory graph is
+reconstructed by replaying `DocumentExtracted` through `GraphProjection`
+(`rebuild.py`), and chunks reconstructed by replaying `DocumentChunked`
+through `ChunkProjection` are the same mechanism with a different fold.
+`build_chunk_store` mirrors `build_graph_store`'s env switch, `postgres`
+standing where `neo4j` does.
+
+This is what turns the replay coupling below from a hazard into the actual
+load-bearing mechanism: the projection registration is not a precaution
+against a rare failure, it is how chunks exist at all.
+
+`InMemoryChunkStore.__init__` requires a positive `dimension`
+(`chunks/adapters/memory.py:40-42`) even though nothing here embeds
+anything. It is inert under lexical-only retrieval — nothing reads it except
+`semantic_candidates` and the `ChunkRetriever` constructor, neither of which
+this design calls. Set it from the configured embedding dimension so that
+turning the semantic channel on later does not silently mismatch a corpus
+built under a different width.
 
 ### The replay coupling, which is the sharp edge
 
