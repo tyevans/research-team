@@ -184,3 +184,21 @@ it('offers no extract-all over a corpus that holds nothing', async () => {
   await screen.findByText('No documents')
   expect(screen.queryByRole('button', { name: /extract all/i })).not.toBeInTheDocument()
 })
+
+/** "Add" survives the `total === 0` early return that hides everything else
+ *  in the header -- an empty corpus is exactly when a person most needs to
+ *  add the first document, and the guard that hides the filter and
+ *  extract-all controls would hide this one too if it sat with them. */
+it('offers a way to add a document, even over an empty corpus', async () => {
+  const onAdd = vi.fn()
+  const user = userEvent.setup()
+  const { unmount } = render(<Corpus onAdd={onAdd} />)
+
+  await user.click(await screen.findByRole('button', { name: 'Add' }))
+
+  expect(onAdd).toHaveBeenCalled()
+  unmount()
+
+  render(<Empty onAdd={onAdd} />)
+  expect(await screen.findByRole('button', { name: 'Add' })).toBeInTheDocument()
+})

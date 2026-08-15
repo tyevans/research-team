@@ -691,6 +691,12 @@ def _record_view(summary: DocumentRecord) -> dict[str, Any]:
         "title": summary.title,
         "published_at": summary.published_at,
         "note": summary.note,
+        # Provenance for by-reference content the corpus did not create, not
+        # a corpus fact -- see `DocumentRecord.fetched_at`. Exposed because
+        # `revise` and `restore` both carry it through unconditionally, and a
+        # console that could not read it back would have no way to show that
+        # an edit had (or had not) disturbed it.
+        "fetched_at": summary.fetched_at,
         # Null for a live document; set means excluded. Always present so a
         # caller can tell "not dropped" from "the field went missing".
         "dropped_reason": summary.dropped_reason,

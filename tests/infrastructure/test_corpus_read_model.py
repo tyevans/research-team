@@ -331,6 +331,31 @@ async def test_get_and_list_both_refuse_a_dropped_document(db_path):
         await store.close()
 
 
+async def test_get_with_include_dropped_returns_a_dropped_documents_text(db_path):
+    """`CorpusEditor.restore` is the one caller that needs a dropped
+    document's own bytes back, to re-store them unchanged. `include_dropped`
+    exists for exactly that: the default stays False (proved by the previous
+    test, which would fail here if it did not), and this is the opt-in path.
+    """
+    project_id = uuid4()
+    store = await CorpusStore.open(db_path)
+    try:
+        for event in _events(
+            project_id,
+            StoreSourceDocument(corpus_id=project_id, source_id="s1", text="dropped"),
+            DropSourceDocument(source_id="s1", reason="paywalled stub"),
+        ):
+            await store.projection.handle(event)
+
+        assert await store.get(project_id, "s1") is None
+        row = await store.get(project_id, "s1", include_dropped=True)
+        assert row is not None
+        assert row.text == "dropped"
+        assert row.dropped_reason == "paywalled stub"
+    finally:
+        await store.close()
+
+
 async def test_one_project_cannot_read_another_projects_documents(db_path):
     project_id, other = uuid4(), uuid4()
     store = await CorpusStore.open(db_path)

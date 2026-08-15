@@ -132,7 +132,11 @@ const show = async () => {
       </QueryClientProvider>
     </ContainerProvider>,
   )
-  await expect.element(page.getByRole('region', { name: 'Event log' })).toBeVisible()
+  // The tab strip rather than the Event log: the holding session is a tab now
+  // and its region exists only while that tab is the open one. See
+  // `project-tracks.browser.test.tsx`'s `show` for the same change and the
+  // fifteen-second wait it was costing.
+  await expect.element(page.getByRole('tablist', { name: 'Material' })).toBeVisible()
   return { preferences: deps.preferences as InMemoryPreferenceStore }
 }
 
@@ -140,234 +144,183 @@ const split = () => document.querySelector<HTMLElement>('.lay-split[data-split="
 const pane = (id: string) => document.querySelector<HTMLElement>(`[data-pane="${id}"]`)!
 const box = (id: string) => pane(id).getBoundingClientRect()
 
-/** Column count as the browser resolved it, which is the whole subject here:
- *  a `grid-template-columns` of one track is the defect, two is the fix, and
- *  three is `Split`'s inline template above the breakpoint. */
+/** Column count as the browser resolved it, which is the whole subject here: a
+ *  `grid-template-columns` of one track is the defect and two is the fix, in
+ *  this band and in `Split`'s inline template above it alike. The two bands
+ *  agreeing on the count is new -- the page had three columns above 1181 and
+ *  two here until it became a sidebar over one content area -- so the
+ *  hand-back at the breakpoint is now asserted through the *widths* rather
+ *  than through the count, which no longer changes across it. */
 const columns = () => getComputedStyle(split()).gridTemplateColumns.split(' ')
 
 afterEach(restoreViewport)
 
-/** Claim 1. In the 821-1180 band the project split is two columns with MATERIAL
- *  wrapped beneath them -- not the single column it resolved to for the whole
- *  of increment C.
+/** Claim 1. In the 821-1180 band the project split is a sidebar beside a
+ *  content area, not the single column it resolves to with no rule.
  *
  * **Proved red** with the `[data-split='project']` block commented out of
  * `responsive.css`, at 1000x900:
  *
  *     AssertionError: expected [ '1000px' ] to have a length of 2 but got 1
  *
- * and the row heights behind that failure were `375.98px 375.98px 148.03px` --
- * three regions stacked in one column, each still drawing itself as a column.
+ * and the row heights behind that failure were `450px 450px` — two regions
+ * stacked in one column, each still drawing itself as a column.
  */
-it('gives the project split two columns and a wrapped MATERIAL between 821 and 1180', async () => {
+it('gives the project split a sidebar and a content column between 821 and 1180', async () => {
   await show()
   await resizeViewport(1000)
 
   expect(columns()).toHaveLength(2)
 
-  // QUEUE and HOLDER are side by side on the top row: same top edge, and
-  // HOLDER starts where QUEUE ends rather than under it.
+  // Side by side on one row: same top edge, MATERIAL starting where QUEUE ends
+  // rather than under it. Both halves are needed — a stacked pair also has two
+  // "columns" if only the count is read.
   const queue = box('queue')
-  const holder = box('holder')
-  expect(holder.top).toBe(queue.top)
-  expect(holder.left).toBeGreaterThanOrEqual(queue.right - 1)
-
-  // HOLDER carries the extra weight, which is the one thing the arrangement
-  // decides that the column count does not.
-  expect(holder.width).toBeGreaterThan(queue.width)
-
-  // MATERIAL is below both and spans the pair.
   const material = box('material')
-  expect(material.top).toBeGreaterThanOrEqual(holder.bottom - 1)
-  expect(Math.round(material.width)).toBe(Math.round(queue.width + holder.width))
+  expect(material.top).toBe(queue.top)
+  expect(material.left).toBeGreaterThanOrEqual(queue.right - 1)
+
+  // Nothing wraps and nothing is capped, which is what changed when the third
+  // pane left: MATERIAL used to take its own row beneath the other two under a
+  // 46vh cap, and now shares the full height of the split.
+  expect(Math.round(material.height)).toBe(Math.round(queue.height))
+  expect(material.width).toBeGreaterThan(queue.width)
 })
 
-/** Claim 2. Every region clears its floor in the band, and the top row keeps
- *  the majority of the height whatever MATERIAL holds.
+/** Claim 2. QUEUE clears its measured floor across the band, and MATERIAL takes
+ *  everything else.
  *
- * The measurement this slice was opened by: at 1000x900 the three panes were
- * rows of `375.98px 375.98px 148.03px` in one column, so QUEUE and HOLDER had
- * 376px of a 900px viewport each and neither had its width. `display: grid` in
- * this band means `layout.css`'s stacked-mode `max-height: 60vh` does not
- * apply and the surface owns the viewport, so nothing scrolled either.
+ * The floor is `PROJECT_TRACKS`'s measured 344, below which the seeding form
+ * (317px, and it does not wrap) paints outside a box that clips it with no
+ * scroller and no ellipsis. It binds across this whole band rather than at one
+ * edge of it — 25% of 1180 is 295 — which is the difference between this rule
+ * and the one it replaced, where the two flanks' shares crossed their floors
+ * partway through and only the bottom ~5px was wrong.
  *
- * **The obvious assertion here was wrong and the mistake is worth recording.**
- * This first asserted `material.height > 300` — "MATERIAL is no longer
- * squeezed" — and it stayed red *after* the fix, at 149.03px. The wrapped row
- * is `minmax(0, auto)`: 46vh is a cap, not a height, and this fixture's
- * MATERIAL has no documents and no graph, so it is 149px tall because that is
- * what it contains. A pane that is content-sized measures the fixture, not the
- * arrangement.
+ * **Proved red** with the sidebar's `minmax(344px, 25%)` reduced to `25%`:
  *
- * What is fixture-independent is the other side of the cap: the top row cannot
- * be given less than 54vh no matter how tall MATERIAL's content grows. That is
- * the guarantee the arrangement actually makes.
- *
- * **Proved red** with the `[data-split='project']` block commented out of
- * `responsive.css`, at 1000x900:
- *
- *     AssertionError: expected 375.984375 to be greater than or equal to 486
+ *     AssertionError: expected 250 to be greater than or equal to 344
  */
-it('keeps every region above its floor in the band', async () => {
+it('keeps the sidebar above its measured floor across the band', async () => {
   await show()
-  await resizeViewport(1000)
 
-  expect(box('queue').width).toBeGreaterThanOrEqual(280)
-  expect(box('holder').width).toBeGreaterThanOrEqual(320)
-
-  // The top row's floor, which is 900 minus MATERIAL's 46vh cap. Asserted on
-  // both panes because they are the two that hold a reader's attention and a
-  // template that gave the row to one of them would pass on the other.
-  const topRow = 900 - 0.46 * 900
-  expect(box('queue').height).toBeGreaterThanOrEqual(topRow)
-  expect(box('holder').height).toBeGreaterThanOrEqual(topRow)
-
-  // And the cap is on. Vacuous against this fixture — MATERIAL is 149px here
-  // because it is empty, well under 414 — so this fires only once the region
-  // has its real content, which is the slice after this one. Left in rather
-  // than deleted: it is the assertion that catches the cap being dropped, and
-  // it costs nothing.
-  expect(box('material').height).toBeLessThanOrEqual(0.46 * 900 + 1)
+  for (const viewport of [1180, 1000, 821]) {
+    await resizeViewport(viewport)
+    expect(box('queue').width).toBeGreaterThanOrEqual(344)
+    // The two fill the row: a floor that binds moves the boundary between them
+    // rather than adding a gap or overflowing the viewport.
+    expect(Math.round(box('queue').width + box('material').width)).toBe(viewport)
+  }
 })
 
-/** Claim 3. Folding a flank in the band gives it the 34px rail it asks for.
+/** Claim 3. Folding the sidebar in the band gives it the 34px rail it asks for.
  *
- * `Pane.tsx:126` keys the rail form on `stacked` rather than `!wide`, so in
- * this band a collapsed pane rotates its title and asks for a rail -- and until
- * now no template granted one. This is the half of the defect that a reader
- * would have met by clicking rather than by resizing.
+ * `Pane` keys the rail form on `stacked` rather than `!wide`, so in this band a
+ * collapsed pane rotates its title and asks for a rail — and without a rule
+ * here no template grants one. This is the half of the defect a reader meets by
+ * clicking rather than by resizing.
  *
- * **Proved red** with the block commented out:
+ * **Proved red** with the collapsed rule commented out:
  *
  *     AssertionError: expected 1000 to be close to 34, received difference 966
  *
  * — the folded QUEUE was a full-width 1000x182px block with a vertical title.
  */
-it('gives a folded flank its rail width in the band', async () => {
+it('gives the folded sidebar its rail width in the band', async () => {
   await show()
   await resizeViewport(1000)
 
   await page.getByRole('button', { name: 'Collapse Queue' }).click()
   await expect.poll(() => box('queue').width).toBeCloseTo(34, 0)
 
-  // The rail is a rail and not a strip: still a column beside HOLDER, still on
-  // the top row. This is what `stacked` being false in the band buys.
-  expect(box('holder').top).toBe(box('queue').top)
+  // A rail and not a strip: still a column beside MATERIAL, still on the same
+  // row. This is what `stacked` being false in the band buys.
+  expect(box('material').top).toBe(box('queue').top)
   expect(getComputedStyle(pane('queue')).getPropertyValue('--rail-w').trim()).toBe('34px')
 
-  // And the space it gave up went to HOLDER rather than nowhere.
-  expect(box('holder').width).toBeGreaterThan(900)
+  // And the space it gave up went to MATERIAL rather than nowhere.
+  expect(box('material').width).toBeGreaterThan(900)
 })
 
-/** Claim 5. Folding *both* flanks rails both of them.
+/** Claim 4. The reader can get the sidebar back.
  *
- * Two clicks reach this and claim 3 does not cover it. `toggleCollapsed`
- * (`split-tracks.ts:98`) refuses only when every pane would close, so with three
- * tracks QUEUE and HOLDER can both be folded while MATERIAL stays open — and the
- * two single-collapse rules have identical specificity and each write the whole
- * `grid-template-columns`, so when both match the later one wins outright and
- * the other pane keeps a full track under a rotated title.
+ * The assertion that would have caught this slice's own rejected design. Folding
+ * the sidebar automatically below the wide breakpoint was written and backed
+ * out — `use-project-panes.ts` carries the reasoning — and its defect was
+ * precisely that the expand control stayed present, named and focusable while
+ * doing nothing, because the override re-folded the pane on the next render.
+ * Every other assertion in this file passed under it.
  *
- * The rails are asserted rather than the template string, because the template
- * is what was wrong: reading `grid-template-columns` back would have agreed with
- * whichever rule won.
- *
- * **Proved red** with only the combined `:has():has()` rule removed and the two
- * single rules left in place, at 1000x900:
- *
- *     AssertionError: expected 966 to be close to 34, received difference is 932
- *
- * — QUEUE at 966px, because the HOLDER rule is written second and simply won.
+ * **Proved red** against that design: `expected 34 to be greater than 300`.
  */
-it('rails both flanks when both are folded', async () => {
+it('lets the reader unfold the sidebar again in the band', async () => {
   await show()
   await resizeViewport(1000)
 
   await page.getByRole('button', { name: 'Collapse Queue' }).click()
   await expect.poll(() => box('queue').width).toBeCloseTo(34, 0)
-  await page.getByRole('button', { name: 'Collapse Holding session' }).click()
-  await expect.poll(() => box('holder').width).toBeCloseTo(34, 0)
 
-  // Both, after the second fold. The first is re-read here rather than trusted
-  // from the poll above: the whole defect is the second collapse silently
-  // undoing the first pane's track.
-  expect(box('queue').width).toBeCloseTo(34, 0)
-  expect(box('holder').width).toBeCloseTo(34, 0)
-
-  // Still the top row, and MATERIAL still spans it — folding two flanks is not
-  // a way to reach a different arrangement.
-  expect(box('holder').top).toBe(box('queue').top)
-  expect(box('material').top).toBeGreaterThanOrEqual(box('queue').bottom - 1)
+  await page.getByRole('button', { name: 'Expand Queue' }).click()
+  await expect.poll(() => box('queue').width).toBeGreaterThan(300)
 })
 
-/** Claim 6. At the band's own bottom edge, QUEUE still clears its measured
- *  floor.
+/** Claim 5. The content area offers no fold at all.
  *
- * 821 is the narrowest viewport at which this arrangement applies at all — one
- * pixel lower and `layout.css` takes over with a flex column — so it is the
- * width at which the two columns are thinnest and the only one where a floor
- * can bind. Nothing tested it: claim 4 asserts 1181 and 1180, both at the top.
+ * Where the three-pane page needed a rule for "both flanks folded at once" —
+ * two clicks reached a state neither single rule covered — a sidebar layout
+ * removes the state rather than styling it: MATERIAL declares
+ * `collapsible={false}`, so there is one toggle on the page and no combination
+ * to get wrong.
  *
- * The floor is `PROJECT_TRACKS`'s **measured** 344 for QUEUE, below which the
- * seeding form (317px, and it does not wrap) paints outside a box that clips it
- * with no scroller and no ellipsis. Asserted against the same number the tracks
- * declare rather than against the fr share, because the share is what the
- * template produces and the floor is what it owes.
- *
- * **HOLDER is asserted too and it is the passing half.** Its floor is 342 and
- * its share here is ~479, so it never binds anywhere in this band; that is a
- * fact worth pinning rather than leaving implicit, since the obvious "raise both
- * to match the tracks" edit would be justified by nothing.
- *
- * **Proved red** at 821x900 against the `minmax(280px, 1fr)` this block shipped
- * in round 1:
- *
- *     AssertionError: expected 342.078125 to be greater than or equal to 344
- *
- * — which settles the arithmetic that predicted it: 821 x (1 / 2.4) = 342.08,
- * two pixels under a floor that was measured, not chosen. The range is ~5px
- * wide and nobody would have looked, because the comment above the template
- * said the minima never bind.
+ * Worth an assertion rather than left to `Pane.test.tsx` because the two say
+ * different things. That test says the prop suppresses the button; this says
+ * *the project page passes it*, at the width where a second fold would have
+ * left the reader with two rails and nothing between them.
  */
-it('clears QUEUE’s measured floor at the bottom of the band', async () => {
+it('offers no fold for the content area', async () => {
   await show()
-  await resizeViewport(821)
+  await resizeViewport(1000)
 
-  expect(columns()).toHaveLength(2)
-  expect(box('queue').width).toBeGreaterThanOrEqual(344)
-  expect(box('holder').width).toBeGreaterThanOrEqual(342)
-
-  // The two still fill the row: raising a floor moves the boundary between them
-  // rather than adding a gap or overflowing the viewport.
-  expect(Math.round(box('queue').width + box('holder').width)).toBe(821)
+  expect(page.getByRole('button', { name: /Material/ }).elements()).toHaveLength(0)
+  expect(page.getByRole('button', { name: 'Collapse Queue' }).elements()).toHaveLength(1)
 })
 
-/** Claim 4. The new rule stops at `--bp-wide`, where `Split`'s inline template
- *  takes over again.
+/** Claim 6. The rule stops at `--bp-wide`, where `Split`'s inline template takes
+ *  over again.
  *
- * The boundary is asserted because the rule is written with range syntax
- * against the same literals `layout-tokens.ts` hands to `matchMedia`, and an
- * off-by-one there would put a two-column media query and a three-column inline
- * style on the same element at 1181 — where the inline style silently wins and
- * the `grid-template-rows` from the media query does not. That combination
- * lays out, so nothing would look obviously wrong.
+ * The boundary is asserted because the rule is written with range syntax against
+ * the same literals `layout-tokens.ts` hands to `matchMedia`, and an off-by-one
+ * there would put a media query and an inline style on the same element at 1181
+ * — where the inline style silently wins. That combination lays out, so nothing
+ * would look obviously wrong.
  *
- * **Proved red**, which was not the prediction — this was written expecting to
- * pass against the unfixed CSS, on the reasoning that a boundary guard's
- * subject is the edit that would break it rather than the state before it. It
- * fails at its lower half, because 1180 is inside the band and the band had no
- * rule:
+ * **Asserted through the inline style rather than the column count, and that is
+ * a change this slice forced.** Both bands are two columns now, so the count
+ * that used to distinguish them (three above, two below) says the same thing on
+ * either side of the boundary and could not fail. What still differs is *who
+ * writes the template*: `Split` sets `style.gridTemplateColumns` only when
+ * `wide`, and leaves the property absent otherwise so the media query keeps its
+ * say. That is the handoff, so that is what is read.
  *
- *     AssertionError: expected [ '1180px' ] to have a length of 2 but got 1
- *
- * The 1181 half is the one that would have passed either way, and it is the
- * half that guards the boundary. Both are kept.
+ * **Proved red** by removing the `wide` guard from `splitTemplate`, which makes
+ * the inline style present at 1180 too: `expected '' to be ''` fails at the
+ * second assertion with `minmax(344px, 25%) minmax(537px, 1fr)`.
  */
 it('hands the layout back to Split at 1181', async () => {
   await show()
+
   await resizeViewport(1181)
-  expect(columns()).toHaveLength(3)
+  expect(split().style.gridTemplateColumns).not.toBe('')
+  expect(columns()).toHaveLength(2)
 
   await resizeViewport(1180)
+  expect(split().style.gridTemplateColumns).toBe('')
   expect(columns()).toHaveLength(2)
+
+  // And the two agree about the geometry across the boundary, which is the
+  // point of writing the same declaration in both places: one pixel of viewport
+  // must not move the sidebar.
+  const below = box('queue').width
+  await resizeViewport(1181)
+  expect(box('queue').width).toBeCloseTo(below, 0)
 })

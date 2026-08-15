@@ -18,6 +18,7 @@ const doc = (over: Partial<DocumentSummary> = {}): DocumentSummary => ({
   title: null,
   publishedAt: null,
   note: null,
+  fetchedAt: null,
   droppedReason: null,
   extracted: false,
   ...over,

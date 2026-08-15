@@ -13,20 +13,26 @@ import type { Selection } from '@presentation/routing/routes.ts'
 import { StreamProvider } from '@presentation/shell/StreamProvider.tsx'
 
 import { resizeViewport, restoreViewport } from '../../test/browser-viewport.ts'
-import { ProjectView } from './ProjectView.tsx'
+import { MATERIAL_TABS, ProjectView } from './ProjectView.tsx'
 import { PROJECT_TRACKS } from './use-project-panes.ts'
 
-/** Where each of the project page's three regions stops being usable — the
- *  measurement `PROJECT_TRACKS` deferred for four slices, taken on 2026-08-14.
+/** How the project page's sidebar and content region are sized, and where each
+ *  stops being usable — first measured on 2026-08-14, re-measured on
+ *  2026-08-15 when the page became a sidebar over one content area.
+ *
+ * **Two regions, where this file was written against three.** HOLDER is a tab
+ * in MATERIAL now, so its floor is gone from `PROJECT_TRACKS` and its content
+ * is reached through `MATERIAL_TABS`. `use-project-panes.ts` carries what
+ * survived and `ProjectView.tsx`'s `regionOf` carries why.
  *
  * **The fixture is the point of this file, not its setup.** The docstring being
  * settled here deferred to "the slice that gives each region its real content",
- * because a floor measured against three empty regions is a floor for the
- * fixture. So QUEUE holds four stages and four topics, HOLDER holds a scrub bar
- * over an eight-message transcript, and MATERIAL holds six documents and a
- * twelve-node graph with the real `GraphCanvas` mounted. Every claim below is
- * measured with all three loaded, and claim 4 exists to fail if any of them
- * quietly empties.
+ * because a floor measured against empty regions is a floor for the fixture. So
+ * QUEUE holds four stages and four topics, and MATERIAL holds a scrub bar over
+ * an eight-message transcript, six documents, and a twelve-node graph with the
+ * real `GraphCanvas` mounted. Claims 4 and 5 exist to fail if any of that
+ * quietly empties — two claims rather than one because the documents and the
+ * transcript are two tabs, and only one of them is `keepMounted`.
  *
  * **The floor is defined mechanically**, because "usable" needs an assertion:
  * a region is below its floor when some element in it has `scrollWidth` past
@@ -42,10 +48,10 @@ import { PROJECT_TRACKS } from './use-project-panes.ts'
  *
  * The 1px slack matches `TruncatedText`'s: `scrollWidth` and `clientWidth` are
  * integers rounded from fractional layout, so a box sized exactly to its
- * content reports a 1px difference often enough to matter. It is also why the
- * three numbers are one or two pixels above what measured clean rather than
- * equal to it — 343px of QUEUE and 350px of MATERIAL clear the check only by
- * consuming that slack, which is not clearance.
+ * content reports a 1px difference often enough to matter. It is also why each
+ * floor is a pixel or two above what measured clean rather than equal to it —
+ * 343px of QUEUE clears the check only by consuming that slack, which is not
+ * clearance.
  *
  * **The viewport is resized here**, which `project-responsive.browser.test.tsx`
  * established on the same day and whose two hazards this file inherits: wait on
@@ -225,7 +231,22 @@ const show = async (selection: Selection | null = null) => {
       </QueryClientProvider>
     </ContainerProvider>,
   )
-  await expect.element(page.getByRole('region', { name: 'Event log' })).toBeVisible()
+  // **Not the Event log, which this waited on until the holding session became
+  // a tab.** `Tabs` renders only the active panel, so that region exists only
+  // when the session tab is the open one — every `show({ facet: 'doc' })` and
+  // `show({ facet: 'entity' })` below would wait fifteen seconds for a region
+  // the page is correct not to have.
+  //
+  // Two waits rather than one, because either alone admits a half-loaded page:
+  // the tab strip is chrome and renders before any request resolves, and the
+  // topic rows are data. Together they mean "MATERIAL is mounted and QUEUE has
+  // its content", which is the precondition every floor below is measured
+  // under. Each claim that needs a *particular* panel loaded still waits for it
+  // itself — the graph canvas in claim 1, the document title in claim 4.
+  await expect.element(page.getByRole('tablist', { name: 'Material' })).toBeVisible()
+  await expect
+    .poll(() => pane('queue').querySelectorAll('.ent-topic-question').length)
+    .toBeGreaterThan(0)
 }
 
 const pane = (id: string) => document.querySelector<HTMLElement>(`[data-pane="${id}"]`)!
@@ -322,96 +343,109 @@ it('paints nothing outside its region at the narrowest wide viewport', async () 
   // would bury the finding.
   await expect.poll(() => clipped('material'), { timeout: 5000, interval: 100 }).toEqual([])
   expect(clipped('queue')).toEqual([])
-  expect(clipped('holder')).toEqual([])
 })
 
-/** Claim 2. The floors bind at 1181, and used to be inert at 1440 -- MATERIAL's
- *  no longer is.
+/** Claim 2. The sidebar is a quarter of the window until its floor takes over,
+ *  and MATERIAL is the rest at every width.
  *
- * `minmax(min, 1fr)` takes the floor only when the fr share falls below it, so
- * raising three minima by 64, 22 and 72 pixels changed the page at the bottom
- * of the band and nowhere else, at the slice this file first measured: at 1440
- * the fr shares were 411/617/411, every one above its floor. Changing the
- * weights was the alternative and would have reshaped every width to fix one
- * end; that is why the floors were the lever.
+ * This claim replaces "the floors bind at 1181 and 1440 is left alone", which
+ * was the right claim about three peers sharing free space and is not a claim
+ * about a sidebar. `max: '25%'` is not a share of what the floors left over --
+ * it is a fraction of the column box itself, so it holds its proportion at
+ * every width instead of drifting with its neighbours' content.
  *
- * **Task 10's sixth tab moved MATERIAL's floor past its own fr share at 1440**,
- * which is the one place this claim's second half stopped holding. 422 was
- * above the 411 MATERIAL would get from `1fr`, so the floor bound there too --
- * MATERIAL was pinned across the whole wide band rather than only at 1181, and
- * QUEUE/HOLDER absorbed the 11px the floor took from them (411->407, 617->611).
+ * The crossover is arithmetic and is worth stating because it is where the two
+ * rules trade places: 25% of the viewport equals QUEUE's 344px floor at
+ * 344/0.25 = 1376. Above that the percentage governs and the sidebar grows with
+ * the window; below it the floor governs and the sidebar stops shrinking while
+ * MATERIAL absorbs the loss. Both sides are measured below rather than only the
+ * ends, because a rule that changed at some *other* width would still satisfy
+ * assertions taken at 1181 and 1440 alone.
  *
- * **The Tree tab (Task 5's task, a seventh) moved the floor again, and the
- * shape did not change -- only the number.** MATERIAL was already pinned
- * across the whole band by the sixth tab, so the seventh does not flip
- * anything from inert to binding; it just raises what was already binding.
- * QUEUE and HOLDER's own floors are still inert at both widths.
+ * The numbers, measured in Chromium on 2026-08-15:
  *
- * The numbers, re-measured in Chromium on 2026-08-15 after the Tree tab:
- *
- * | viewport | queue | holder | material |
+ * | viewport | queue | material | which rule |
  * | --- | --- | --- | --- |
- * | 1181 | 344 | 369 | 468 |
- * | 1440 | 389 | 583 | 468 |
+ * | 1181 | 344 | 837 | floor |
+ * | 1376 | 344 | 1032 | floor, exactly at the crossover |
+ * | 1440 | 360 | 1080 | 25% |
  *
- * **Proved red** with the old minima restored: 1181 reads `344/415/422` and
- * `expected 422 to be 468` -- the case this slice added. Proved red again with
- * MATERIAL's floor still at 422 (this slice's starting point) at 1440:
- * `407/611/422`, so `expected 422 to be 468`.
+ * **Proved red** with `max: '25%'` replaced by `weight: 1`: 1440 reads
+ * `q=720 m=720`, so `expected 720 to be 360` -- two equal columns, which is
+ * what an fr weight means and is the layout this slice replaced.
  */
-it('binds the floors at 1181 and leaves 1440 alone', async () => {
+it('holds the sidebar at a quarter, and at its floor below the crossover', async () => {
   await show()
 
   await resizeViewport(BP_WIDE)
+  // Below the crossover: 25% of 1181 is 295, under QUEUE's 344 floor, so the
+  // floor wins and MATERIAL takes everything else.
   expect(Math.round(width('queue'))).toBe(344)
-  expect(Math.round(width('material'))).toBe(468)
-  // HOLDER keeps what the two floors leave. Re-measured with MATERIAL's floor
-  // -- 369 rather than 415, because the seventh tab's extra 46px comes out of
-  // the same 1181 column and HOLDER is the one column with slack to give up.
-  // Still far the widest column, and still well above its own floor of 342 --
-  // which is why HOLDER's number is the one that never binds in this band.
-  expect(Math.round(width('holder'))).toBe(369)
+  expect(Math.round(width('material'))).toBe(837)
 
   await resizeViewport(1440)
-  expect(Math.round(width('queue'))).toBe(389)
-  expect(Math.round(width('holder'))).toBe(583)
-  // MATERIAL was already pinned to its floor across the whole wide band as of
-  // Task 10's sixth tab (see the class comment's claim 2), so the seventh tab
-  // does not change *whether* the floor binds at 1440, only its value -- 468
-  // in place of 422, with QUEUE/HOLDER absorbing the further 18/28px
-  // (407->389, 611->583). Measured, not reasoned -- proved red first at the
-  // old 422.
-  expect(Math.round(width('material'))).toBe(468)
+  // Above it: exactly a quarter and exactly three quarters. The two assertions
+  // together are what make this a sidebar rather than a wide-ish first column —
+  // either number alone is satisfied by several other rules.
+  expect(Math.round(width('queue'))).toBe(360)
+  expect(Math.round(width('material'))).toBe(1080)
+
+  await resizeViewport(1376)
+  // The crossover itself, where 25% and the floor are the same number. Asserted
+  // because it is the width at which a wrong rule would first disagree with a
+  // right one, and neither end catches that.
+  expect(Math.round(width('queue'))).toBe(344)
+  expect(Math.round(width('material'))).toBe(1032)
 })
 
 /** Claim 3. MATERIAL's floor is its tab strip, and the tab strip is a product
  *  constant rather than a fixture.
  *
- * The one region whose floor nothing about the data can move: five tabs whose
- * labels are declared in `ProjectView.tsx:119-125`, in a `.tabs` row with no
- * wrap and no scroller. Asserted as "the strip fits" rather than as "the strip
- * is 351px", because that number is a font measurement and would go red on a
- * label edit for the wrong reason. What must hold is that `PROJECT_TRACKS`'s
- * floor is at least what the strip needs.
+ * The one region whose floor nothing about the data can move: seven tabs whose
+ * labels are declared in `ProjectView.tsx`'s `MATERIAL_TABS`, in a `.tabs` row
+ * with no wrap and no scroller. Asserted as "the floor covers the strip" rather
+ * than as "the strip is 536px", because that number is a font measurement and
+ * would go red on a label edit for the wrong reason. What must hold is that
+ * `PROJECT_TRACKS`'s floor is at least what the strip needs.
  *
- * This is also the assertion that catches a sixth tab: a label arriving without
+ * This is the assertion that catches an eighth tab: a label arriving without
  * the floor moving fails here, at the width where it starts costing a reader a
- * tab.
+ * tab. It caught the seventh — `expected 422 to be greater than or equal to
+ * 536.3125` — which is how this slice learned that adding the holding session
+ * to the strip had invalidated a floor measured against six.
  *
- * **Proved red** with `material`'s floor back at 280:
- *
- *     AssertionError: expected 337 to be greater than or equal to 351
+ * **The strip is summed rather than read from `scrollWidth`, and that change is
+ * load-bearing rather than stylistic.** `scrollWidth` is the larger of the
+ * content and the box, so it only reveals the content's width while the content
+ * *overflows*. MATERIAL is now three quarters of the page — 837px at the
+ * narrowest wide viewport, against a strip needing 536 — so the strip never
+ * overflows and `scrollWidth` reports the pane. The old assertions would have
+ * compared 837 against 837 and 422 against 837: one vacuously true, the other
+ * red for a reason that has nothing to do with tabs. Summing the laid-out
+ * children measures the strip whether or not it happens to be cramped.
  */
 it('keeps MATERIAL wide enough for the tab strip it always has', async () => {
   await show()
   await resizeViewport(BP_WIDE)
 
-  const tabs = pane('material').querySelector<HTMLElement>('.tabs')!
-  expect(tabs.scrollWidth).toBeGreaterThan(300)
-  expect(width('material')).toBeGreaterThanOrEqual(tabs.scrollWidth)
+  const strip = pane('material').querySelector<HTMLElement>('.tabs')!
+  const style = getComputedStyle(strip)
+  const children = [...strip.children].map((tab) => tab.getBoundingClientRect().width)
+  const needed =
+    children.reduce((total, each) => total + each, 0) +
+    Number.parseFloat(style.columnGap || '0') * Math.max(0, children.length - 1) +
+    Number.parseFloat(style.paddingLeft || '0') +
+    Number.parseFloat(style.paddingRight || '0')
+
+  // Every declared tab is laid out, so a strip that silently lost one cannot
+  // pass this by needing less room. `MATERIAL_TABS` is the declaration; this is
+  // the only place the two are compared.
+  expect(children).toHaveLength(MATERIAL_TABS.length)
+  expect(needed).toBeGreaterThan(300)
+  expect(width('material')).toBeGreaterThanOrEqual(needed)
 
   const floor = PROJECT_TRACKS.find((track) => track.id === 'material')!.min
-  expect(floor).toBeGreaterThanOrEqual(tabs.scrollWidth)
+  expect(floor).toBeGreaterThanOrEqual(needed)
 })
 
 /** Claim 4. The fixture is loaded, which is what stops the three claims above
@@ -435,17 +469,36 @@ it('keeps MATERIAL wide enough for the tab strip it always has', async () => {
  * for this one existing: an emptied MATERIAL still has its tab strip, so the
  * floor assertions go on passing against a region with nothing in it.
  */
-it('measures a page with all three regions loaded', async () => {
+it('measures a page with both regions loaded', async () => {
   await show({ facet: 'doc', id: null })
   await resizeViewport(BP_WIDE)
 
   // QUEUE: the topic queue, populated. The stage rail is beside it and is what
   // `ProjectView.browser.test.tsx` already covers.
   expect(pane('queue').querySelectorAll('.ent-topic-question').length).toBeGreaterThan(0)
-  // HOLDER: a transcript with messages laid out in it.
-  expect(
-    pane('holder').querySelectorAll('[aria-label="Conversation"] .conv-scroll *').length,
-  ).toBeGreaterThan(0)
   // MATERIAL: the documents the Documents tab is open on.
   expect(pane('material').textContent).toContain('A very long document title')
+})
+
+/** Claim 5. The transcript is still laid out, one tab away.
+ *
+ * Separate from claim 4 rather than folded into it, because the two need
+ * *different pages*. Claim 4 opens the Documents tab, and this panel is
+ * `keepMounted`, so it is still in the tree there — but `hidden`, which is
+ * `display: none`, so everything in it measures zero. Folded together, "the
+ * transcript is laid out" would be asserted against a panel that is present
+ * and zero-sized, which is a green that means nothing.
+ *
+ * This is the fixture half of the holding session's move into MATERIAL: the
+ * conversation used to be its own column and is now the default tab, so "the
+ * transcript has messages laid out in it" is still a precondition of every
+ * floor above, just reached differently.
+ */
+it('lays out the transcript in the tab that replaced HOLDER', async () => {
+  await show()
+  await resizeViewport(BP_WIDE)
+
+  expect(
+    pane('material').querySelectorAll('[aria-label="Conversation"] .conv-scroll *').length,
+  ).toBeGreaterThan(0)
 })

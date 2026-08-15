@@ -37,17 +37,20 @@ import { useSessionScreen } from '../session/use-session-screen.ts'
 import { QueueHeader } from './queue/QueueHeader.tsx'
 import { PROJECT_TRACKS, useProjectPanes } from './use-project-panes.ts'
 
-/** The three regions a project page has.
+/** The two regions a project page has: a sidebar and the content beside it.
  *
  * Named for what they answer rather than for what they contain, which is the
- * argument for the merge in one line: QUEUE is "what is there to do", HOLDER is
- * "what is working on it right now", MATERIAL is "what has been produced". The
- * two pages this replaces cut across all three — the course page held stages
- * (QUEUE) and artifacts (MATERIAL); the research page held topics (QUEUE) and
- * documents and a graph (MATERIAL) — so a reader following one thread crossed a
- * route boundary to do it.
+ * argument for the merge in one line: QUEUE is "what is there to do" and
+ * MATERIAL is "what has come of it". The two pages this replaces cut across
+ * both — the course page held stages (QUEUE) and artifacts (MATERIAL); the
+ * research page held topics (QUEUE) and documents and a graph (MATERIAL) — so a
+ * reader following one thread crossed a route boundary to do it.
+ *
+ * **There were three.** HOLDER answered "what is working on it right now" and
+ * was the middle column; it is a tab in MATERIAL now, and `regionOf` below
+ * carries both the reasoning and what it costs.
  */
-export type Region = 'queue' | 'holder' | 'material'
+export type Region = 'queue' | 'material'
 
 /** Which region a selected facet lands in.
  *
@@ -73,14 +76,22 @@ export const regionOf = (facet: Facet): Region => {
     case 'topic':
     case 'ask':
       return 'queue'
-    // A session is what is holding the project: HOLDER is "who is working on
-    // this right now", and a session is the answer.
+    // A session used to be its own region — HOLDER, "who is working on this
+    // right now" — and is now a tab in MATERIAL. The question it answers has
+    // not changed; what changed is that the page is a sidebar over one content
+    // area rather than three peers, so there is one place for everything a
+    // reader reads and QUEUE is the only thing beside it.
+    //
+    // The cost, recorded rather than argued away: a transcript and the output
+    // it produced can no longer be on screen together. That was HOLDER's whole
+    // argument for existing, and it loses to a permanent third of the page
+    // spent on material a reader consults rather than reads.
     case 'session':
-      return 'holder'
+      return 'material'
     // A file is **not**, and this is the one mapping slice 2 reverses. It read
     // `holder` because a project file is a file in the holding session's
     // workspace, which is true and is about where the bytes come from — not
-    // about which question the reader is asking. The three regions are named
+    // about which question the reader is asking. The regions are named
     // for questions, and "what has this project produced" is the one a file
     // answers: the workspace tree beside the artifacts is the live half of the
     // same shelf. Keeping it in HOLDER also cost the arrangement, because a
@@ -100,17 +111,17 @@ export const regionOf = (facet: Facet): Region => {
 
 /** Which facets MATERIAL offers, in the order it offers them.
  *
- * `artifact` first and therefore the default, which is a bundle decision rather
- * than a taste one: `GraphCanvas` is `React.lazy` over ~60 kB of
- * `react-force-graph-2d`, and a default of `entity` would pull that chunk on
- * every project page anybody opened. The plan's §2.3 makes the same call and
- * defers *checking* it to the slice where the size budget can be read against a
- * page with real content in it. **`file` arriving does not disturb that
- * argument** — the workspace is `FileList` and `FileView`, both already in the
- * main chunk — so the default stays `artifact` and this slice does not also
- * change what a project page opens on.
+ * **The default tab is loaded on every project page, so what sits first is a
+ * bundle decision as much as a taste one.** `GraphCanvas` is `React.lazy` over
+ * ~60 kB of `react-force-graph-2d` and `TimelineCanvas` is lazy too, so
+ * `entity` and `timeline` are kept out of the first position and sit last.
+ * `artifact` held that position until the holding session took it; the swap
+ * costs nothing, because the session's panels were a permanent region until
+ * this slice and are all in the main chunk already. Checked rather than
+ * assumed — `npm run size` after the change: app 75.1 kB of 80.
  *
- * **Workspace second, and the order is an argument rather than an accident.**
+ * **Artifacts then Workspace, and the order is an argument rather than an
+ * accident.**
  * Artifacts and the workspace are the same shelf at two ages: an artifact is
  * what a stage declared it produced, and the workspace is the tree those
  * declarations are made *of*, live and at any scrub point. Putting them
@@ -118,9 +129,25 @@ export const regionOf = (facet: Facet): Region => {
  * moves one tab rather than three. Findings, documents and the graph are all
  * about material that arrived from outside the course, so they sit after.
  */
-type MaterialFacet = 'artifact' | 'file' | 'finding' | 'doc' | 'entity' | 'tree' | 'timeline'
+type MaterialFacet =
+  'session' | 'artifact' | 'file' | 'finding' | 'doc' | 'entity' | 'tree' | 'timeline'
 
-const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
+/** Exported so `project-tracks.browser.test.tsx` can compare the strip it
+ *  measures against the strip that was declared — a count taken from the
+ *  rendered row alone cannot tell "eight tabs" from "eight of nine rendered". */
+export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
+  // First, and therefore the default, which reverses the argument the two
+  // paragraphs above make for `artifact`. Both halves of that argument survive:
+  // the default tab is the one loaded on every project page, and `entity` and
+  // `timeline` are still kept out of the position for exactly that reason. What
+  // changed is that the holding session is no longer *optional* content — it
+  // was a permanent region until this slice, so every panel it renders is
+  // already in the main chunk and defaulting to it pulls nothing new.
+  //
+  // First rather than merely present because it is what the page is about: a
+  // reader opening a project is asking what is happening to it, and the answer
+  // used to be the middle third of the screen.
+  { id: 'session', label: 'Holding session' },
   { id: 'artifact', label: 'Artifacts' },
   { id: 'file', label: 'Workspace' },
   { id: 'finding', label: 'Findings' },
@@ -141,26 +168,32 @@ const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   { id: 'timeline', label: 'Timeline' },
 ]
 
-const DEFAULT_MATERIAL: Facet = 'artifact'
+const DEFAULT_MATERIAL: Facet = 'session'
 
-/** A project, whole: one page with three regions instead of two pages.
+/** A project, whole: one page with a sidebar and a content area, instead of two
+ *  pages.
  *
  * **A frame with mostly-unchanged tenants.** Slice 0 built this as three panes
  * holding the components the two old pages happened to have, unrestyled, on
  * purpose: the container and the regions are two changes and shipping them
  * together leaves no way to tell which half broke. Slice 1 gave QUEUE its header
  * band; slice 2 took the nesting out of HOLDER and gave MATERIAL the workspace;
- * slice 3 rewrote three of MATERIAL's five tabs in utilities and threaded their
- * route ids in. The stage list is still the course page's rail and the topic
- * list is still the research page's, both in QUEUE, and neither is MATERIAL's
- * to rewrite — which is also why neither `course.css` nor `research.css` has
- * died yet.
+ * slice 3 rewrote three of MATERIAL's tabs in utilities and threaded their route
+ * ids in. The stage list is still the course page's rail and the topic list is
+ * still the research page's, both in QUEUE, and neither is MATERIAL's to
+ * rewrite — which is also why neither `course.css` nor `research.css` has died
+ * yet.
  *
- * A `Split` rather than three divs because the regions are peers whose widths a
- * reader trades against each other, and `Split` already owns that — the sizing,
- * the fold, the refusal to fold the last one open, and the handoff to the
- * stylesheet below the widest breakpoint. Building any of it again here is the
- * mistake `split-tracks.ts` was written about.
+ * **This slice made it two regions rather than three**, and the tenants moved
+ * again without being rewritten: HOLDER's four panels are MATERIAL's first tab,
+ * in the order and the flex column they already had.
+ *
+ * A `Split` rather than two divs, still, and the reasons survive the change of
+ * shape: `Split` owns the sizing, the fold, the persistence of the fold, the
+ * rail form a folded pane takes, and the handoff to the stylesheet below the
+ * widest breakpoint. A sidebar needs every one of those. What it does not need
+ * is a second fold — MATERIAL passes `collapsible={false}`, which is the one
+ * thing this page asks the primitive for that peers never did.
  */
 export const ProjectView = ({
   projectId,
@@ -360,106 +393,7 @@ export const ProjectView = ({
         />
       </Pane>
 
-      {/* `regions` rather than the default, and it is load-bearing: the body is
-          a flex column that does not scroll, so the two sections inside it can
-          each own a scroller and split the leftover height between them. A
-          scrolling body here would be a box scrolling around a transcript that
-          already scrolls — the box-inside-a-box `Pane` documents.
-
-          **No `Split` and no `Pane` inside this one, which is the change.**
-          Slice 0 mounted `SessionView` whole, and `SessionView` is itself a
-          three-pane `Split`: a pane header inside a pane header, two collapse
-          groups, and a reader who could fold the event log inside a region they
-          could also fold. The nesting worked — the slice's browser test proved
-          the height travelled — and it was still the wrong shape, because
-          HOLDER is one region and a region's contents are not panes. */}
-      <Pane id="holder" label="Holding session" scroll="regions">
-        {sessionId === null ? (
-          <EmptyState
-            heading="Nothing is holding this project."
-            detail="Join the project from the landing page, and the session working on it appears here."
-          />
-        ) : (
-          <>
-            <ScrubBar
-              head={screen.state.head}
-              log={screen.state.log}
-              scrub={screen.state.scrub}
-              loading={screen.state.loadingSnapshot}
-              onSelect={screen.selectEvent}
-              onFork={() => {
-                if (screen.state.scrub.kind === 'historical') screen.forkAt(screen.state.scrub.at)
-              }}
-              onEndSession={() => screen.setEndPending(true)}
-            />
-
-            {screen.endPending ? (
-              <Confirm
-                heading="End this session and hand its files back to the project?"
-                lines={[
-                  'The log stays readable and forkable.',
-                  "The project becomes free, and the next session in it starts from this one's files.",
-                ]}
-                confirmLabel="End the session"
-                onCancel={() => screen.setEndPending(false)}
-                onConfirm={() => {
-                  screen.setEndPending(false)
-                  screen.endSession()
-                }}
-              />
-            ) : null}
-
-            {/* Each section names itself, because it no longer gets a name from
-                a `Pane` header — and losing those two names is the one thing
-                un-nesting could quietly have cost. A screen-reader user
-                navigating by region had "Event log" and "Conversation" here
-                yesterday; `aria-label` on a `<section>` is the same landmark
-                without the visible heading, chrome and a fold toggle that the
-                region above already provides.
-
-                The meta lines are the same strings the pane headers wrote,
-                through the same helpers, which is why they are helpers. */}
-            <section
-              aria-label="Event log"
-              className="flex min-h-0 flex-1 flex-col border-0 border-b border-solid border-line"
-            >
-              <SectionHead label="Event log" meta={timelineMeta(screen.state.log.length)} />
-              {/* The scroller is this box and not `.timeline`, which has no
-                  overflow of its own — `timeline.css:4` is a bare flex column,
-                  and on `#/s/` the `Pane` body is what scrolls it. Something
-                  here has to, or the log runs the page's whole height. */}
-              <div className="min-h-0 flex-1 overflow-auto" data-holder-scroll="log">
-                <TimelinePanel screen={screen} />
-              </div>
-              <TimelineFeed store={store} />
-            </section>
-
-            <section aria-label="Conversation" className="flex min-h-0 flex-1 flex-col">
-              <SectionHead
-                label="Conversation"
-                meta={conversationMeta(
-                  screen.messages.length,
-                  screen.compacted,
-                  screen.historicalAt,
-                )}
-              />
-              {/* No scroller of its own: `Conversation` renders `.conv-scroll`,
-                  which is already `flex: 1 1 auto; min-height: 0; overflow:
-                  auto`, and holds a ref on it to stick to the bottom. A box
-                  around it would absorb the wheel from the box that measures. */}
-              <ConversationPanel screen={screen} />
-            </section>
-
-            {/* Pinned last and outside both scrollers, which is what `Pane`'s
-                `footer` slot did on `#/s/`. Inside either one it scrolls away,
-                and a composer that leaves the screen as the conversation grows
-                is the defect that slot exists for. */}
-            <ComposerPanel screen={screen} store={store} />
-          </>
-        )}
-      </Pane>
-
-      <Pane id="material" label="Material" scroll="regions">
+      <Pane id="material" label="Material" scroll="regions" collapsible={false} showLabel={false}>
         {/* Utilities rather than a stylesheet, per the standing policy: new
             surfaces are dressed in utilities and no stylesheet is added. The
             flex column is what carries the pane body's height down to
@@ -470,10 +404,148 @@ export const ProjectView = ({
           // The cast is narrow and is the one Radix forces: `Tabs` is
           // controlled by `string`, and every value it can hand back is an id
           // this component declared in `MATERIAL_TABS`.
-          onValueChange={(next) => select({ facet: next as MaterialFacet, id: null })}
+          //
+          // `session` is the arm that cannot go through the cast, because it is
+          // the one facet whose `Selection` carries more than an id — an `at`
+          // and a `path` the grammar requires. Choosing the tab is not choosing
+          // a session to watch, so it writes the *default* selection rather
+          // than inventing a scrub point: `null` lands back on this tab through
+          // `DEFAULT_MATERIAL`, and the holding session is what the region
+          // reads when nothing is explicitly watched. Watching a specific
+          // worker still comes from `QueueHeader`, which has a session id to
+          // write.
+          onValueChange={(next) => {
+            // Narrowed before the cast rather than cast to the whole union:
+            // `session` is the one arm whose `Selection` carries an `at` and a
+            // `path`, so `{ facet, id }` is not a legal selection for it and
+            // the compiler says so. The `Exclude` is what keeps that true if a
+            // second such facet is ever added.
+            if (next === 'session') {
+              select(null)
+              return
+            }
+            select({ facet: next as Exclude<MaterialFacet, 'session'>, id: null })
+          }}
           className="flex min-h-0 flex-1 flex-col"
         >
           <TabList label="Material" options={MATERIAL_TABS} />
+
+          {/* The old HOLDER region, whole, one level further in.
+
+              `flex min-h-0 flex-col` rather than `overflow-auto`, which is the
+              `scroll="regions"` pane body this used to be: the two sections
+              inside each own a scroller and split the leftover height between
+              them, and a scrolling box here would be a box scrolling around a
+              transcript that already scrolls.
+
+              **Still no `Split` and no `Pane` inside it.** Slice 0 mounted
+              `SessionView` whole, and `SessionView` is itself a three-pane
+              `Split` — a pane header inside a pane header, two collapse groups,
+              and a reader who could fold the event log inside a region they
+              could also fold. Un-nesting it was right then and is right now;
+              the region simply became a tab.
+
+              **`keepMounted`, which is the one thing this panel asks for that
+              the other six do not.** `Tabs` unmounts an inactive panel, and for
+              a list or a graph that is right — it is what makes manual
+              activation mean something. This panel is a live transcript with a
+              composer in it, and it was a permanent column until this slice, so
+              a half-typed message and a scrub position had never been at risk;
+              unmounting discarded both on a trip to Artifacts and back.
+
+              What it costs, plainly: the transcript goes on subscribing behind
+              every other tab, and `hidden` is `display: none`, so everything in
+              here measures zero while it is away. The second one is the danger
+              — `Pane`'s `unmountWhenCollapsed` documents a virtualizer caching
+              exactly that zero and coming back empty — and it is why the claim
+              that covers this is in `ProjectView.browser.test.tsx` and asserts
+              the conversation's height on the way back, not just the draft. */}
+          <TabPanel value="session" keepMounted className="flex min-h-0 flex-1 flex-col">
+            {sessionId === null ? (
+              <EmptyState
+                heading="Nothing is holding this project."
+                detail="Join the project from the landing page, and the session working on it appears here."
+              />
+            ) : (
+              <>
+                <ScrubBar
+                  head={screen.state.head}
+                  log={screen.state.log}
+                  scrub={screen.state.scrub}
+                  loading={screen.state.loadingSnapshot}
+                  onSelect={screen.selectEvent}
+                  onFork={() => {
+                    if (screen.state.scrub.kind === 'historical')
+                      screen.forkAt(screen.state.scrub.at)
+                  }}
+                  onEndSession={() => screen.setEndPending(true)}
+                />
+
+                {screen.endPending ? (
+                  <Confirm
+                    heading="End this session and hand its files back to the project?"
+                    lines={[
+                      'The log stays readable and forkable.',
+                      "The project becomes free, and the next session in it starts from this one's files.",
+                    ]}
+                    confirmLabel="End the session"
+                    onCancel={() => screen.setEndPending(false)}
+                    onConfirm={() => {
+                      screen.setEndPending(false)
+                      screen.endSession()
+                    }}
+                  />
+                ) : null}
+
+                {/* Each section names itself, because it no longer gets a name from
+                a `Pane` header — and losing those two names is the one thing
+                un-nesting could quietly have cost. A screen-reader user
+                navigating by region had "Event log" and "Conversation" here
+                yesterday; `aria-label` on a `<section>` is the same landmark
+                without the visible heading, chrome and a fold toggle that the
+                region above already provides.
+
+                The meta lines are the same strings the pane headers wrote,
+                through the same helpers, which is why they are helpers. */}
+                <section
+                  aria-label="Event log"
+                  className="flex min-h-0 flex-1 flex-col border-0 border-b border-solid border-line"
+                >
+                  <SectionHead label="Event log" meta={timelineMeta(screen.state.log.length)} />
+                  {/* The scroller is this box and not `.timeline`, which has no
+                  overflow of its own — `timeline.css:4` is a bare flex column,
+                  and on `#/s/` the `Pane` body is what scrolls it. Something
+                  here has to, or the log runs the page's whole height. */}
+                  <div className="min-h-0 flex-1 overflow-auto" data-holder-scroll="log">
+                    <TimelinePanel screen={screen} />
+                  </div>
+                  <TimelineFeed store={store} />
+                </section>
+
+                <section aria-label="Conversation" className="flex min-h-0 flex-1 flex-col">
+                  <SectionHead
+                    label="Conversation"
+                    meta={conversationMeta(
+                      screen.messages.length,
+                      screen.compacted,
+                      screen.historicalAt,
+                    )}
+                  />
+                  {/* No scroller of its own: `Conversation` renders `.conv-scroll`,
+                  which is already `flex: 1 1 auto; min-height: 0; overflow:
+                  auto`, and holds a ref on it to stick to the bottom. A box
+                  around it would absorb the wheel from the box that measures. */}
+                  <ConversationPanel screen={screen} />
+                </section>
+
+                {/* Pinned last and outside both scrollers, which is what `Pane`'s
+                `footer` slot did on `#/s/`. Inside either one it scrolls away,
+                and a composer that leaves the screen as the conversation grows
+                is the defect that slot exists for. */}
+                <ComposerPanel screen={screen} store={store} />
+              </>
+            )}
+          </TabPanel>
 
           <TabPanel value="artifact" className="min-h-0 flex-1 overflow-auto">
             {course.data ? (

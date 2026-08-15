@@ -45,6 +45,7 @@ const doc = (over: Partial<DocumentSummary> = {}): DocumentSummary => ({
   title: null,
   publishedAt: null,
   note: null,
+  fetchedAt: null,
   droppedReason: null,
   extracted: false,
   ...over,
@@ -71,6 +72,18 @@ const fakeDocuments = (
     .fn<DocumentRepository['extractionQueue']>()
     .mockResolvedValue(emptyExtractionQueue),
   cancelExtraction: vi.fn<DocumentRepository['cancelExtraction']>().mockResolvedValue(0),
+  create: vi.fn(() => {
+    throw new Error('create was not stubbed for this test')
+  }),
+  revise: vi.fn(() => {
+    throw new Error('revise was not stubbed for this test')
+  }),
+  drop: vi.fn(() => {
+    throw new Error('drop was not stubbed for this test')
+  }),
+  restore: vi.fn(() => {
+    throw new Error('restore was not stubbed for this test')
+  }),
   ...over,
 })
 
@@ -261,6 +274,57 @@ it('opens a document over the page rather than below the list', async () => {
   const dialog = await screen.findByRole('dialog')
   expect(dialog).toHaveAttribute('aria-modal', 'true')
   expect(within(dialog).getByText(/analytical engine/i)).toBeInTheDocument()
+})
+
+it('discards stale edit state when the open document changes under it', async () => {
+  // Driven by `open` changing rather than a row click: `OverlayHost` marks
+  // everything behind a modal drawer both `inert` and `aria-hidden` (the
+  // second exists *because* jsdom does not enforce the first), so a row
+  // click here would not reach the rail in this environment any more than it
+  // would in a real one. `open` is still free to change from outside the DOM
+  // that is `inert`-blocked -- exactly the address-bar case `useDocuments`'s
+  // own comment describes for `CitationList` -- and that is enough to
+  // reproduce the bug: nothing in `DocumentManagePane` or `DocumentEditForm`
+  // resets its own `useState` on a prop change, so without `key={reading}` on
+  // `DocumentManagePane` the edit form keeps showing "Fixed" -- s1's edited
+  // title -- after `document` underneath it has already become s2's summary.
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([
+        doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace' }),
+        doc({ sourceId: SourceId('s2'), title: 'Grace Hopper' }),
+      ]),
+  )
+  documents.read = vi.fn<DocumentRepository['read']>().mockImplementation((_projectId, sourceId) =>
+    Promise.resolve({
+      sourceId,
+      title: sourceId === 's1' ? 'Ada Lovelace' : 'Grace Hopper',
+      text: sourceId === 's1' ? 'Notes on the Analytical Engine.' : 'Notes on the compiler.',
+      droppedReason: null,
+    } as Awaited<ReturnType<DocumentRepository['read']>>),
+  )
+  const user = userEvent.setup()
+
+  const { rerender } = renderWithContainer(
+    <DocumentList projectId={PROJECT} open={SourceId('s1')} onOpen={() => {}} />,
+    { documents },
+  )
+
+  await screen.findByRole('dialog')
+  await user.click(await screen.findByRole('button', { name: 'Edit' }))
+
+  await user.clear(screen.getByLabelText('Title'))
+  await user.type(screen.getByLabelText('Title'), 'Fixed')
+  expect(screen.getByLabelText('Title')).toHaveValue('Fixed')
+
+  rerender(<DocumentList projectId={PROJECT} open={SourceId('s2')} onOpen={() => {}} />)
+
+  // The reader for the new document is what should be on screen -- either
+  // showing s2's text directly, or (if a reader chose Edit again) an edit
+  // form pre-filled from s2, but never s1's half-typed correction.
+  expect(await screen.findByText(/compiler/i)).toBeInTheDocument()
+  expect(screen.queryByDisplayValue('Fixed')).not.toBeInTheDocument()
 })
 
 it('opens the document the route names, with no click at all', async () => {

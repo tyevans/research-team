@@ -90,126 +90,52 @@
   }
 }
 
-/* The project split's middle arrangement, which it did not have until now.
+/* The project split's middle arrangement.
 
-   Measured on 2026-08-14 in Chromium via `page.viewport`, before any of this
-   existed: at 1000x900 `.lay-split[data-split='project']` computed
-   `grid-template-columns: 1000px` and `grid-template-rows: 375.98px 375.98px
-   148.03px`. Three regions in one column, each still drawing itself as a
-   column, and MATERIAL -- which holds the documents and the graph canvas --
-   squeezed to 148px with nowhere to scroll, because `display: grid` here means
-   `layout.css`'s stacked-mode `.lay-pane-body { max-height: 60vh }` does not
-   apply and the surface owns the viewport above 821px. The band was bounded on
-   both sides by bands that work, which is why nobody found it.
+   **Rewritten when the page became a sidebar over one content area.** The
+   arrangement this replaces was two columns with MATERIAL wrapped onto its own
+   row beneath them, capped at 46vh -- the right answer for three peers that do
+   not fit side by side in this band, and not an answer to any question a
+   two-column page asks. QUEUE and MATERIAL fit here with room to spare, so
+   there is nothing to wrap and no cap to apply.
 
-   Collapsing was worse and is the specific thing `Pane` warned about:
-   `Pane.tsx:126` keys the rail form on `stacked`, not `!wide`, so in this band
-   a collapsed pane asks to be a 34px rail with its title turned on its side --
-   and with no template granting it one, the folded QUEUE measured 1000x182px.
-   A full-width horizontal block with a vertical title.
+   What survives is the reason the band needs a rule at all, and it is the part
+   that was measured rather than reasoned: `Split` writes no inline template
+   below 1181px, so with no rule here the grid resolves to a single column.
+   Measured on 2026-08-14 at 1000x900 against the three-pane page:
+   `grid-template-columns: 1000px`, rows of `375.98px 375.98px 148.03px` --
+   every region drawing itself as a column while stacked, and nothing scrolling,
+   because `display: grid` in this band means `layout.css`'s stacked-mode
+   `max-height: 60vh` does not apply. Two panes stack just as wrongly as three.
 
-   The arrangement: two columns, with MATERIAL wrapped onto its own row beneath
-   them. This mirrors the session view above rather than inventing a second
-   shape, and the 46vh cap is that rule's number adopted, not independently
-   derived.
+   The second half is `Pane`'s: it keys the rail form on `stacked`, not `!wide`,
+   so a pane folded in this band asks for a 34px rail with a rotated title, and
+   with no template granting one the folded QUEUE measured 1000x182px -- a
+   full-width horizontal block with a vertical title. That is why the collapsed
+   rule below is not optional.
 
-   Rejected, and the rejections are the argument:
+   The sidebar keeps a proportion rather than a share, matching what
+   `PROJECT_TRACKS` declares above 1181: `minmax(344px, 25%)` is the same rule
+   in the same units, so crossing the breakpoint changes which file writes the
+   template and not what it says. The floor binds across this whole band -- 25%
+   of 1180 is 295, well under 344 -- which is intended rather than an accident
+   of the numbers: a sidebar that kept shrinking past its seeding form would
+   clip it, and `project-tracks.browser.test.tsx` measured 344 as the width
+   where that starts.
 
-   - Three columns at their minima. `PROJECT_TRACKS`'s floors sum to **1038px**
-     (344 + 342 + 352), which does not fit in most of this band and clears 1180
-     only by leaving 142px to share between three regions. They are measured
-     floors, raised from an unmeasured 280/320/280 by the same slice that wrote
-     this rule -- MATERIAL's 337px share at 1181 was painting a 351px tab strip
-     past the pane's edge, leaving the Graph tab present and unclickable. So the
-     argument against three columns here is stronger than the 880 this comment
-     first cited, not weaker. A floor is where a region stops working, not a
-     target to aim three of them at.
-   - Wrapping HOLDER instead of MATERIAL. HOLDER is a scrub bar, two scrollers
-     and a pinned composer; the 46vh row that suits a graph canvas is the same
-     ~410px squeeze the measurement above shows already breaks it, and it is the
-     region a reader watches.
-   - Forcing a flank to its rail from CSS, which was the shape suggested to me.
-     It cannot be done here: the rail form comes from `.is-collapsed`, which is
-     React state from the collapsed set, so a 34px track around a pane that is
-     not collapsed *clips* a full pane rather than railing it. Doing it properly
-     means seeding the collapsed set, and that file belongs to another task.
-
-   The signal, not built: two views now declare their own middle arrangement in
-   this file, which is the second of the two the `layout.css:124-141` comment
-   allows for. A third would be the case for teaching `Split` how many columns
-   to fall back to and which pane may wrap. */
+   Rejected: auto-folding the sidebar here from JavaScript so the content area
+   got the whole width. `use-project-panes.ts` carries why -- it makes the
+   expand control inert, which is worse than a narrow sidebar. */
 @media (width >= 821px) and (width < 1181px) {
-  /* One of these two floors binds and the other does not, and round 1 of this
-     comment claimed neither did. That was wrong, and measured wrong: at the
-     band's own bottom edge the shares of `1fr` and `1.4fr` are 821 / 2.4 =
-     **342.08px** for QUEUE against a floor of 344, so QUEUE spent the bottom
-     ~5px of the band two pixels under the width at which its seeding form
-     (317px, and it does not wrap) paints outside a box that clips it with no
-     scroller and no ellipsis. The same defect `PROJECT_TRACKS` was just raised
-     to fix above 1181, reached from underneath.
-
-     So QUEUE's is `PROJECT_TRACKS`'s measured 344 and it binds at 821, giving
-     344 / 477 rather than 342 / 479.
-
-     HOLDER's stays at the session view's 320 rather than moving to its measured
-     342, because it cannot bind: its share at 821 is ~479 and the band only
-     gets wider from there. Raising it would change no pixel at any width. It is
-     written down here rather than in the declaration because a floor nobody can
-     reach is a fact about the arrangement, not a constraint on it — and
-     `project-responsive.browser.test.tsx`'s bottom-edge claim asserts both, so
-     a future reweighting that made HOLDER's reachable fails rather than
-     silently clips. */
   .lay-split[data-split='project'] {
-    grid-template-columns: minmax(344px, 1fr) minmax(320px, 1.4fr);
-    grid-template-rows: minmax(0, 1fr) minmax(0, auto);
+    grid-template-columns: minmax(344px, 25%) minmax(0, 1fr);
   }
-  .lay-split[data-split='project'] > [data-pane='material'] {
-    grid-column: 1 / -1;
-    border-right: none;
-    border-top: 1px solid var(--line);
-    max-height: 46vh;
-  }
-  /* Two columns, so `Split` writes no inline template and collapsing has to
-     shrink a track from here instead. MATERIAL spans the full width on its own
-     row, so only the top two need one. */
+  /* One column can fold, so one rule is all this band needs -- where the
+     three-pane version needed three, one per flank plus a `:has():has()` for
+     both at once. MATERIAL declares `collapsible={false}` and so never carries
+     `.is-collapsed`. */
   .lay-split[data-split='project']:has([data-pane='queue'].is-collapsed) {
-    grid-template-columns: var(--rail-w) minmax(320px, 1.4fr);
-  }
-  .lay-split[data-split='project']:has([data-pane='holder'].is-collapsed) {
-    grid-template-columns: minmax(344px, 1fr) var(--rail-w);
-  }
-  /* Both flanks at once, which two clicks reach and neither rule above covers.
-     `toggleCollapsed` (`split-tracks.ts:98`) refuses only when *every* pane
-     would close, so with three tracks QUEUE and HOLDER can both be folded while
-     MATERIAL stays open. The two rules above have identical specificity and each
-     writes the whole `grid-template-columns`, so when both match the later one
-     simply wins and the earlier pane keeps a full-width track -- and because
-     `Pane.tsx:126` keys the rail *form* on `stacked` rather than on the grid
-     having granted a rail, the folded pane draws a rotated title stretched
-     across it. The same defect this block was written to remove, one click
-     further in.
-
-     Written after the two single rules so it wins on order rather than on
-     specificity, which is what the pair above already relies on.
-
-     The session block above had the same bug, for `timeline` + `workspace`, and
-     was left with it for one slice because fixing it meant editing a view that
-     slice did not own. It has the rule now (B60), so the two blocks are once
-     again the same shape in every respect but their floors -- 344/320 here
-     against 280/300 there, and that difference is the only thing a merge into
-     one primitive would have to carry. */
-  .lay-split[data-split='project']:has([data-pane='queue'].is-collapsed):has(
-      [data-pane='holder'].is-collapsed
-    ) {
-    grid-template-columns: var(--rail-w) var(--rail-w);
-  }
-  /* A collapsed MATERIAL is its head and nothing else; the cap would otherwise
-     hold the row open at 46vh around it. It keeps the vertical title its rail
-     form asks for, which on a full-width row is the wart the session view's
-     wrapped pane already carries -- fixing it means changing what `Pane` does
-     with `stacked`, which is a primitive change and not this slice's. */
-  .lay-split[data-split='project'] > [data-pane='material'].is-collapsed {
-    max-height: none;
+    grid-template-columns: var(--rail-w) minmax(0, 1fr);
   }
 }
 

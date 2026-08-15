@@ -145,7 +145,7 @@ const box = (id: string) => pane(id).getBoundingClientRect()
 // inside a band and across `--bp-wide`, neither of which this file crosses.
 afterEach(restoreViewport)
 
-/** Claim 1. Below 821 the split is a flex column and the three panes stack
+/** Claim 1. Below 821 the split is a flex column and both panes stack
  *  full-width, each starting where the one above it ended.
  *
  * **This passes against unfixed code and is a record rather than a guard.** It
@@ -157,7 +157,7 @@ afterEach(restoreViewport)
  * computes to `none` and `'none'.split(' ')` has length 1 — the same answer a
  * genuine one-column grid gives, which is the defect that file measures. The
  * assertions here are `flexDirection` and stacked geometry instead. */
-it('stacks the three panes full-width below 821', async () => {
+it('stacks both panes full-width below 821', async () => {
   await show()
   await resizeViewport(700)
 
@@ -165,18 +165,18 @@ it('stacks the three panes full-width below 821', async () => {
   expect(getComputedStyle(split()).flexDirection).toBe('column')
 
   const queue = box('queue')
-  const holder = box('holder')
   const material = box('material')
 
   // One column: a shared left edge, and each pane the full viewport width.
-  for (const b of [queue, holder, material]) {
+  for (const b of [queue, material]) {
     expect(b.left).toBe(0)
     expect(Math.round(b.width)).toBe(700)
   }
 
-  // In order, each below the last, with no gap and no overlap.
-  expect(holder.top).toBeCloseTo(queue.bottom, 0)
-  expect(material.top).toBeCloseTo(holder.bottom, 0)
+  // In order, each below the last, with no gap and no overlap. The sidebar is
+  // on top here, which is the one thing stacking decides that the wide band
+  // does not — a sidebar has no side to be on once the panes are rows.
+  expect(material.top).toBeCloseTo(queue.bottom, 0)
 })
 
 /** Claim 2. **The stacked band is page-scrolling, and until this slice it was
@@ -221,8 +221,12 @@ it('lets the surface scroll below 821 rather than squeezing every pane', async (
   // And the panes are the reason: each at its content height (capped — see
   // claim 3) rather than at a share of 856. The numbers are floors well under
   // what was measured, because the heights themselves are the fixture's.
-  expect(box('holder').height).toBeGreaterThan(380)
-  expect(box('material').height).toBeGreaterThan(140)
+  //
+  // MATERIAL is the one that carries the transcript now, so the height that
+  // used to be HOLDER's is asserted on it. QUEUE is the other half of the pair
+  // and was implied by the two regions above it before.
+  expect(box('queue').height).toBeGreaterThan(140)
+  expect(box('material').height).toBeGreaterThan(380)
 })
 
 /** Claim 3. **The unqualified 60vh cap does not clip the two `regions` panes,
@@ -266,10 +270,12 @@ it('caps the scrolling body at 60vh and leaves what it hides reachable', async (
   // unit rather than value is visible.
   expect(getComputedStyle(body('queue')).maxHeight).toBe('540px')
 
-  // QUEUE alone, so the cap has something to bind on: with all three open the
-  // panes total more than the screen and none of them reaches 540.
-  await page.getByRole('button', { name: 'Collapse Holding session' }).click()
-  await page.getByRole('button', { name: 'Collapse Material' }).click()
+  // QUEUE's body reaches the cap on its own content, which is what changed when
+  // MATERIAL stopped being collapsible: this used to fold the other two panes
+  // away so QUEUE had the screen to itself, and there is now no fold that
+  // reaches that state. It does not need one — the surface page-scrolls here
+  // (claim 2), so QUEUE takes the height its content asks for up to the cap
+  // whatever MATERIAL below it is doing.
   await expect.poll(() => body('queue').clientHeight).toBeCloseTo(540, 0)
 
   // Bounded, and what it cannot show is reachable by scrolling it.
@@ -287,21 +293,24 @@ it('caps the scrolling body at 60vh and leaves what it hides reachable', async (
  *
  * **This passes against unfixed code**: it pins the refutation so the next
  * reader does not re-derive it, and guards no fix. */
-it('gives HOLDER’s regions their own scrollers under the cap', async () => {
+it('gives the transcript’s regions their own scrollers under the cap', async () => {
   await show()
   await resizeViewport(700)
 
+  // The sidebar folded away, so MATERIAL has the screen. This used to fold
+  // MATERIAL and measure HOLDER; the two regions swapped places when the
+  // holding session became MATERIAL's default tab, and QUEUE is now the only
+  // pane with a fold at all.
   await page.getByRole('button', { name: 'Collapse Queue' }).click()
-  await page.getByRole('button', { name: 'Collapse Material' }).click()
-  await expect.poll(() => box('material').height).toBeLessThan(50)
+  await expect.poll(() => box('queue').height).toBeLessThan(60)
 
-  const holderBody = body('holder')
-  expect(getComputedStyle(holderBody).overflowY).toBe('hidden')
-  expect(holderBody.clientHeight).toBeLessThanOrEqual(540)
+  const materialBody = body('material')
+  expect(getComputedStyle(materialBody).overflowY).toBe('hidden')
+  expect(materialBody.clientHeight).toBeLessThanOrEqual(540)
 
   // Nothing clipped: the body shows all of itself, because its regions took the
   // shortfall.
-  expect(holderBody.scrollHeight).toBeLessThanOrEqual(holderBody.clientHeight)
+  expect(materialBody.scrollHeight).toBeLessThanOrEqual(materialBody.clientHeight)
 
   // And they took it by scrolling rather than by vanishing.
   for (const sel of ['[data-holder-scroll="log"]', '.conv-scroll']) {
@@ -361,31 +370,39 @@ it('folds a pane to a level strip below 821', async () => {
   expect(body('queue').hidden).toBe(true)
 })
 
-/** Claim 6. Folding all but one leaves a usable page, and the third fold is
- *  refused.
+/** Claim 6. Folding everything that folds still leaves the page usable, because
+ *  only one thing folds.
  *
- * `toggleCollapsed` (`split-tracks.ts:98`) refuses only when every pane would
- * close, and nothing had checked that below 821 — where it matters more,
- * because three stacked strips would be a page with no content on it and would
- * still look like a layout.
+ * **This replaces "the third fold is refused", and the replacement is the
+ * point.** `toggleCollapsed` refuses the fold that would close the last open
+ * pane, and that refusal used to be reachable here: three panes, three toggles,
+ * and three clicks left a page of stacked strips with no content on it. With
+ * MATERIAL declared `collapsible={false}` there is one toggle on the page, so
+ * the state the guard defends against cannot be reached from the UI at all.
  *
- * **This passes against unfixed code**: the refusal is in the reducer and is
- * breakpoint-independent. */
-it('refuses the fold that would close the last pane', async () => {
+ * The guard is not deleted and this is not a test of it — `split-tracks.test.ts`
+ * covers the reducer directly, breakpoint-independently, and would go red if the
+ * refusal were removed. What is asserted here is the stronger property that
+ * makes the guard unreachable: after every fold a reader can perform, there is
+ * still content on the screen.
+ *
+ * **Proved red** by removing `collapsible={false}` from MATERIAL: a second
+ * toggle appears and the last assertion fails at `expected true to be false`,
+ * with both panes folded to strips. */
+it('leaves content on the page after every fold a reader can reach', async () => {
   await show()
   await resizeViewport(700)
 
+  const toggles = page.getByRole('button', { name: /^(Collapse|Expand) / })
+  expect(toggles.elements()).toHaveLength(1)
+
   await page.getByRole('button', { name: 'Collapse Queue' }).click()
-  await page.getByRole('button', { name: 'Collapse Material' }).click()
-  await expect.poll(() => body('material').hidden).toBe(true)
+  await expect.poll(() => body('queue').hidden).toBe(true)
 
-  await page.getByRole('button', { name: 'Collapse Holding session' }).click()
-
-  // Still open, and still showing its regions. Polled rather than asserted
-  // immediately: an accepted fold would take a frame, and an assertion running
-  // before it would pass for the wrong reason.
-  await expect.poll(() => body('holder').hidden).toBe(false)
-  expect(box('holder').height).toBeGreaterThan(300)
+  // MATERIAL is still open and still showing its regions, with no fold left to
+  // take it away.
+  expect(body('material').hidden).toBe(false)
+  expect(box('material').height).toBeGreaterThan(300)
 })
 
 /** Claim 7. Nothing paints outside a box that clips it, down to 561px — the
@@ -399,25 +416,35 @@ it('refuses the fold that would close the last pane', async () => {
  * slice's scoping rule — one user, one machine, and neither width is a window
  * anyone would put a research console in.
  *
- * - **MATERIAL's five-tab strip needs 351px** and `.tabs` has no `flex-wrap`
- *   (`workspace.css:130-133`). It fits exactly at 351 and clips from **350px of
- *   viewport downwards** — measured 351/350 at a 350px viewport. The survey
- *   predicted 351 and was right. Not fixed: `.tabs` is `Choices` and `TabList`
- *   both, used across the console, so `flex-wrap: wrap` there changes every tab
- *   row at every width — cheap to type, not cheap to justify from one
- *   measurement in one view.
+ * - **MATERIAL's seven-tab strip clips from 485px of viewport downwards**, and
+ *   `.tabs` has no `flex-wrap` (`workspace.css:130-133`). Re-measured on
+ *   2026-08-15 by sweeping the same check down to 360 and bisecting: clean at
+ *   486, two clipped boxes at 485 — `.tabs` and the utility-classed column
+ *   around it, the same pair as before.
+ *
+ *   **This threshold moved 135px, and the number that moved it is the seventh
+ *   tab.** The strip was five tabs and 351px when this was written, clipping
+ *   from 350; the holding session's tab took it to 536.3px laid out (measured
+ *   in `project-tracks.browser.test.tsx`, which is where MATERIAL's 537 floor
+ *   comes from). 485 rather than 537 because the tabs do give up a little
+ *   padding under pressure before the row stops fitting at all.
+ *
+ *   Still not fixed, and the reason is unchanged: `.tabs` is `Choices` and
+ *   `TabList` both, used across the console, so `flex-wrap: wrap` there changes
+ *   every tab row at every width — cheap to type, not cheap to justify from one
+ *   measurement in one view. What did change is the margin: 485 is much closer
+ *   to the 561 this sweep treats as the bottom of the supported band than 350
+ *   was, so an eighth tab is the edit that would push it *into* the band, and
+ *   this sweep is what would say so.
  * - **QUEUE's seeding form needs 317px** in a box that is the viewport less
  *   27px of padding, so it clips from **343px downwards** — `PROJECT_TRACKS`'
  *   measured 344 floor showing up again, as a viewport width this time rather
  *   than a track width.
  *
- * **Proved red** by running the same sweep at 350 instead of 561:
+ * **Proved red** by running the same sweep at 485 instead of 561:
  *
- *     AssertionError: at 350px: expected [ Array(2) ] to have a length of +0
+ *     AssertionError: at 485px: expected [ Array(2) ] to have a length of +0
  *     but got 2
- *
- * — the two being `.tabs` and the utility-classed column around it, both
- * reporting `scrollWidth` 351 against a `clientWidth` of 350.
  */
 it('clips nothing down to 561', async () => {
   await show()

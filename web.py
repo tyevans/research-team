@@ -102,6 +102,11 @@ def main() -> None:
             ask=application.ask,
             extractor=application.document_extractor,
             extract_queue=extract_queue,
+            # The write side beside the read side above: without it every
+            # upload/edit/drop/restore route in this entrypoint 503s while
+            # `app_and_client` in the tests wires one and passes -- the same
+            # gap `corpus` and `topic_repository` closed above it.
+            editor=application.editor,
             # The factory, not a service: one per project, built on demand.
             # This is the instance whose cache is the same table
             # `application.definitions` marks stale, which is the only reason

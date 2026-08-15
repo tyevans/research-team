@@ -92,15 +92,38 @@ export const TabList = ({
 
 /** One panel. Rendered only while its tab is open — Radix unmounts the others,
  *  which is what the ternary it replaces did, so a panel that fetches does not
- *  fetch until it is looked at. */
+ *  fetch until it is looked at. `keepMounted` opts out. */
 export const TabPanel = ({
   value,
   children,
   className,
+  keepMounted = false,
 }: {
   value: string
   children: ReactNode
   className?: string
+  /** Keep this panel in the tree while another tab is open, hidden rather than
+   *  unmounted.
+   *
+   *  For a panel holding state a reader would be dismayed to lose: the project
+   *  page's holding session is a live transcript with a composer in it, and it
+   *  was a permanent column until it became a tab, so a half-typed message and
+   *  a scrub position had never been at risk. Unmounting discards both, and a
+   *  reader meets it by checking another tab mid-sentence.
+   *
+   *  **Not the default, and the cost is the reason.** Every other panel here is
+   *  something a reader looks at — a list, a graph, a corpus — and unmounting is
+   *  what keeps `activationMode="manual"`'s promise that arrowing past a tab
+   *  does not fetch it. A kept panel goes on subscribing, polling and holding
+   *  its query cache behind whatever else is open.
+   *
+   *  The second cost is subtler and is why the panel that uses this has a
+   *  browser test rather than a jsdom one: `hidden` is `display: none`, so every
+   *  measurement inside a kept panel reads zero while it is away. Anything that
+   *  caches a measured height — a virtualizer, a stick-to-bottom scroller —
+   *  can come back empty. `Pane`'s `unmountWhenCollapsed` documents the same
+   *  trap from the other side. */
+  keepMounted?: boolean
 }) => (
   // Radix gives the panel `tabIndex={0}`, and it is kept rather than overridden
   // even though it adds a tab stop that was not there before. The panel this
@@ -108,7 +131,18 @@ export const TabPanel = ({
   // focusable content in it at all — and a scroll region nobody can focus
   // cannot be scrolled from the keyboard. Overriding it to -1 would tidy away
   // one keypress and take that with it.
-  <TabsPrimitive.Content value={value} className={className}>
+  // `forceMount` is spread in rather than passed as a value, and both halves of
+  // that are forced. Radix types it `true | undefined` and branches on
+  // *presence*, so `forceMount={false}` would keep the panel mounted exactly as
+  // `true` does; and `exactOptionalPropertyTypes` in this repo's tsconfig
+  // rejects handing an optional property an explicit `undefined`, so the
+  // property has to be absent rather than undefined. A conditional spread is
+  // the only form that is both.
+  <TabsPrimitive.Content
+    value={value}
+    className={className}
+    {...(keepMounted ? { forceMount: true as const } : {})}
+  >
     {children}
   </TabsPrimitive.Content>
 )

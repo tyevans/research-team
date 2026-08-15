@@ -18,77 +18,95 @@ import { useSplitPanes } from '@presentation/layout/use-split-panes.ts'
  */
 const GROUP = 'project'
 
-/** The project page's three columns, as data.
+/** The project page's two columns -- a sidebar and the content beside it.
  *
- * **The three floors were measured in Chromium on 2026-08-14**, against the
- * real page with all three regions loaded -- four stages and four topics in
- * QUEUE, a scrub bar over an eight-message transcript in HOLDER, six documents
- * and a twelve-node graph with its canvas drawn in MATERIAL.
- * `project-tracks.browser.test.tsx` is that measurement and holds the method;
- * what follows is what it found.
+ * **This was three columns until this slice, and HOLDER's row is gone from the
+ * table below rather than merely unused.** The holding session is a tab in
+ * MATERIAL now; `ProjectView.tsx`'s `regionOf` carries the argument and the
+ * cost. What survives here is the floors, because a floor is a measurement and
+ * measurements do not stop being true when the layout around them changes.
  *
- * A floor here is the width below which the region paints content outside a box
- * that clips it, with no scroller and no ellipsis to reach it by -- not a taste
+ * A floor is the width below which the region paints content outside a box that
+ * clips it, with no scroller and no ellipsis to reach it by -- not a taste
  * judgement about legibility, which is not something a test can hold.
+ * `project-tracks.browser.test.tsx` is where each number was taken and holds the
+ * method.
  *
- * | region | floor | what sets it | measured clean at |
+ * | region | floor | what sets it | measured at |
  * | --- | --- | --- | --- |
  * | queue | 344 | the seeding form, 317px and unwrapping | 343 |
- * | holder | 342 | `.scrub-bar`, 341px | 342 |
- * | material | 468 | the seven-tab strip, 467px and unwrapping | 467 |
+ * | material | 582 | the eight-tab strip, 581.6px laid out | 581.6 |
  *
- * **The material row was re-measured on 2026-08-14, same day, after Task 10
- * added a sixth tab.** `project-tracks.browser.test.tsx`'s "keeps MATERIAL
- * wide enough for the tab strip it always has" comment already named this as
- * the assertion that would catch it, and it did: red at 352 against a strip
- * that had grown to 421. The floor moves with the strip because nothing else
- * can -- the row does not wrap and has no scroller, so a floor that lagged the
- * label would clip the newest tab past the pane's edge exactly as the old
- * 280/320/280 numbers clipped Graph before this table existed.
- *
- * **The material row was re-measured again on 2026-08-15, after the Tree tab
- * made it a seventh.** Same assertion, same mechanism, same outcome: red at
- * 422 against a strip that had grown to 467. The floor moved from 422 to 468
- * (467 plus the same 1px slack the 421->422 step used), and nothing else about
- * the layout changed -- MATERIAL was already pinned to its floor across the
- * whole wide band as of the sixth tab, so this step raises what was already
- * binding rather than making something newly bind.
+ * **The material row was re-measured on 2026-08-15 at the merge, and the merge
+ * is the reason.** Two branches each added a seventh tab without seeing the
+ * other -- main folded the holding session in (537, against a 536.3px strip),
+ * this branch added Tree (468, against a 467px strip on the old three-column
+ * shape). Both floors are wrong for the eight-tab strip they produce together,
+ * and taking either side of the conflict would have kept a number that was
+ * measured against a strip that no longer exists. Re-measured after resolving:
+ * red at 537 against 581.6, so 582.
  *
  * Each floor is a pixel or two above what measured clean, deliberately: the
- * check carries `TruncatedText`'s 1px slack for fractional layout, and 343 of
- * QUEUE and 467 of MATERIAL clear it only by spending that slack.
+ * check carries `TruncatedText`'s 1px slack for fractional layout, and QUEUE's
+ * 343 clears it only by spending that slack.
  *
- * **These replace `280/320/280`, which were the session view's floors adopted
- * unmeasured, and the old numbers shipped a defect.** At 1181 -- the narrowest
- * viewport where a template is written at all -- the fr shares are 337/506/337,
- * so MATERIAL got 337px for a tab strip that is 351px wide and does not shrink:
- * the Graph tab was painted past the pane's right edge, present and unclickable.
- * QUEUE's seeding form went the same way 14px later. Nobody met it because the
- * page had only ever been looked at at 1440.
+ * **MATERIAL's floor moves with its tab strip, and has been re-measured four
+ * times for that reason** -- once when Task 10 added a sixth tab (red at 352
+ * against a strip that had grown to 421), once when the holding session became
+ * a seventh (422 against 536.3), and once at the merge that made Tree an eighth
+ * (537 against 581.6), all in Chromium. The row does not wrap and has no
+ * scroller, so a floor
+ * that lagged the strip clips the newest tab past the pane's edge: present,
+ * painted, unclickable. That is not hypothetical -- it is what the old
+ * unmeasured `280/320/280` did to the Graph tab, on a page that had only ever
+ * been looked at at 1440.
  *
- * **The floors were the lever rather than the weights, and that is the whole
- * argument for this shape of fix.** `minmax(min, 1fr)` takes the floor only
- * where the fr share falls under it, so at 1181 the columns become 344/485/352
- * and at 1440 they are 411/617/411 -- what they measured before this change.
- * Reweighting would have bought the same clearance at 1181 by reshaping every
- * width above it, which is a redesign of the page to fix its narrowest 60px.
+ * **582 does not bind anywhere in the wide band, and is written down anyway.**
+ * MATERIAL is `1fr` beside a quarter-width sidebar, so it takes 837 at 1181 and
+ * more above -- three hundred pixels of clearance. The number is the guard, not
+ * the geometry: it is what fails, at the width where a reader would lose a tab,
+ * if a ninth tab arrives and this line does not move with it. The measurement
+ * that takes it is `project-tracks.browser.test.tsx`'s claim 3, which sums the
+ * strip's laid-out children rather than reading `scrollWidth` -- in a pane this
+ * wide the strip does not overflow, so `scrollWidth` reports the pane and would
+ * make the assertion vacuously true.
  *
- * HOLDER's 342 never binds in the wide band: 1.5 of 3.5 at 1181 is 506, and
- * with the two flanks on their floors it still gets 485. It is written down
- * because it was measured and because it is the number that starts mattering
- * the day a fourth region arrives, not because it does anything today.
- *
- * **Still reasoned rather than observed:** the weights. `1 / 1.5 / 1` says
- * HOLDER is what a reader watches and the two flanks are interchangeable, and
- * nothing here measures that -- it is a claim about attention, not about
- * layout. The floors say where each region breaks; they say nothing about where
- * each region is *good*, and a test cannot tell the difference.
+ * **QUEUE is sized by a ceiling rather than a weight, and that is the change
+ * this slice makes to the shape of the table.** A weight is a share of what the
+ * floors left over, so the same `1fr` is a different fraction of the window at
+ * every width -- fine for peers, wrong for a sidebar, which is a *fraction of
+ * the page* by definition. `max: '25%'` says so directly. The floor still wins
+ * underneath it: below roughly 1376px, 25% is less than 344 and the column
+ * takes 344 instead, so the seeding form never clips no matter how narrow the
+ * band gets. MATERIAL keeps a weight because `1fr` of one flexible track is
+ * simply "the rest", which is what a content area is.
  */
 export const PROJECT_TRACKS: readonly Track[] = [
-  { id: 'queue', min: 344, weight: 1 },
-  { id: 'holder', min: 342, weight: 1.5 },
-  { id: 'material', min: 468, weight: 1 },
+  { id: 'queue', min: 344, max: '25%' },
+  { id: 'material', min: 582, weight: 1 },
 ]
+
+/** **Rejected: folding the sidebar automatically below the wide breakpoint.**
+ *
+ * It was written, tested and backed out in the same slice, and the reason is
+ * worth more than the code was. The idea was that below 1181px `splitTemplate`
+ * withdraws its template, so an open sidebar would stop being a quarter beside
+ * the content and become a full-width band above it -- fold it, and the reader
+ * with less room keeps the content area whole.
+ *
+ * What that missed is that the fold has a *control*. Overriding the collapsed
+ * set on the way into `Split` leaves the reader's own set untouched, which is
+ * what stops a transient fold being persisted -- and it also means clicking
+ * "Expand Queue" writes a set that the override immediately re-folds. The
+ * button is present, focusable, correctly named, and does nothing. That is a
+ * worse failure than the band it was fixing, and it is invisible to every test
+ * that does not click the control at that width.
+ *
+ * The band does not need it: `responsive.css` gives 821-1180 its own two-column
+ * template, so the sidebar keeps its proportion there without any of this.
+ * Below 821 the panes genuinely stack, and folding is left to the reader --
+ * where the control works.
+ */
 
 /** The project page's half of its pane layout, which is only the group it
  *  remembers itself under. Shaped after `useSessionPanes` deliberately: the

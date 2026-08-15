@@ -26,6 +26,20 @@ class KnowledgeError(Exception):
     """Something went wrong reaching or writing the graph."""
 
 
+#: Longest document accepted in one `remember` or `store_source` call.
+#: Roughly a long article.
+#:
+#: Lives here rather than in `redstring_adapter.py`, where it originated,
+#: because `CorpusEditor._store` (`corpus_editing.py`) has to enforce it too:
+#: `revise` and `restore` execute `StoreSourceDocument` directly rather than
+#: going through `store_source`, so the cap is not free on that path the way
+#: indexing and the blank-id refusal are not free either -- and the
+#: application layer cannot import the infrastructure module to reach it.
+#: Dependencies point inward, so the constant moved inward with the second
+#: caller rather than the second caller reaching outward for it.
+MAX_DOCUMENT_CHARS = 200_000
+
+
 @dataclass(frozen=True)
 class SourceRef:
     """Content to commit to the graph, supplied by the caller."""
