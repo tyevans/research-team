@@ -170,8 +170,9 @@ lead's four items and the plan's four — `responsive.css:208-211` still styles 
 class no element carries, and `tree.css:39,47,53` still define the family. The
 progress ledger shows it re-dispatched to B as item 5. It is not in my scope
 (`BACKLOG.md` and `docs/`) and I have not filed it, since it is being done rather
-than deferred. **If that dispatch does not land, it needs a B-number** — B66 is
-free.
+than deferred. **Resolved:** the dispatch landed — task B's item 5 deleted the
+family from both files. Nothing owed here. (This paragraph said B66 was free for
+it; B66 went to `.node-actions` instead, below.)
 
 ## Not run
 
@@ -180,3 +181,46 @@ comments only; prettier does not cover `.md` here and the CSS comment edits were
 made in place without reflowing to a different wrap width. Worth a
 `npm run verify` on the merged branch regardless, since `components.css` and
 `layout.css` are both in it.
+
+---
+
+# Item 4 — `.node-actions`, filed as suspected rather than dead
+
+`BACKLOG.md` **B66**. Written after task B's item 5 section, which is where the
+observation comes from.
+
+**Filed as suspected-dead, and the entry is built around why that is not the same
+claim as `.view-head`'s.** The two deletions would have rested on different kinds
+of evidence, and the entry says so in as many words:
+
+- `.view-head` had a **recorded cause** — `QueueHeader.tsx:84` names the commit
+  that removed its last inbound link, and the stylesheet's own comment said it
+  dressed the head "shared by the course and research views, which is all that
+  still uses it", both of which are gone. The grep confirmed a story the
+  repository already told.
+- `.node-actions` has **the grep and nothing else**. Nothing records it being
+  orphaned, and its comment still describes a live purpose (row buttons that were
+  raw inline-block elements with no gap before it).
+
+The sentence the entry turns on: *a deletion justified by "I could not find a
+reference" is a weaker claim than one justified by a record of the reference
+being removed* — a grep searches the spellings you thought of, a recorded cause
+is evidence.
+
+Recorded as instructed: the grep covered every `.tsx`, `.ts`, `.css`, `.mjs`,
+`.js`, `.html`, `.json` and `.md` under `frontend/`, dated 2026-08-14; the only
+hits are `node-actions-gap` (`ProjectList.tsx:354`, `ProjectCard.stories.tsx:173`),
+a distinct single token with its own live rule directly below — not
+`.node-actions` with a modifier. The rules are `tree.css:103-112`, five
+declarations. What upgrades it: `git log -S 'node-actions'` over the deleted
+views, or a reviewer's second look.
+
+**`check-deleted.mjs`'s blind spot is in the same entry** rather than beside it,
+because it is the reason `.view-head` lasted: the 35 `RULES` forbid named
+patterns from coming back and none names this class, and `STYLESHEETS` freezes
+**the set of files, not their contents** — its own docstring says so and names
+the hole. So `tree.css` surviving means every rule that dies inside it is
+invisible to the check. **Rot inside a living file is a class of decay no gate
+here sees.** Written as a description of coverage, explicitly not a request to
+change the script, with the reason a rule on a name this generic would be the
+wrong fix.

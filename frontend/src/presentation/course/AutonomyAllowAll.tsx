@@ -48,10 +48,16 @@ import { INSTANCE_WIDE, NO_POLICY, STAGE_GATE_HELD } from './autonomy-copy.ts'
  * panel is shaped to make unskippable.
  *
  * **`.sub` is gone as well, for the opposite reason: it was already dead.** Its
- * only definition anywhere under `src/styles/` is `tree.css`'s `.view-head
- * .sub`, which needs an ancestor the decision bar has never provided — so the
+ * only definition anywhere under `src/styles/` was `tree.css`'s `.view-head
+ * .sub`, which needed an ancestor the decision bar has never provided — so the
  * dimmed secondary text this file has been asking for since it moved has been
- * rendering at full `--fg` all along. The dressing was plainly meant to apply
+ * rendering at full `--fg` all along. **That definition is itself deleted as of
+ * 2026-08-14**, with the rest of the `.view-head` family, once the course and
+ * research views took its last live users with them: `.sub` now has no
+ * definition anywhere at all. Which is the same conclusion arrived at twice —
+ * the class was decorative in name only, and this paragraph was written when
+ * the rule still existed and could still have been mistaken for live.
+ * The dressing was plainly meant to apply
  * (every `.sub` here is a subordinate line beside a `<strong>` or under a
  * heading), so it is `text-fg-dim` now rather than deleted, on the three
  * elements where the intent is unambiguous. `.view-head .sub`'s `font-size` and

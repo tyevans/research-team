@@ -15,9 +15,17 @@ import { projectHref } from '../routing/routes.ts'
  * destination, and grouping it with three links is why the row read as four
  * unrelated buttons.
  *
- * Not `.view-head`: that rule lives unlayered in `tree.css` and caps itself at
+ * Not `.view-head`: that rule lived unlayered in `tree.css` and capped itself at
  * 1100px for the tree it was written for, which this page had to undo with two
  * `!` overrides. Owning the head outright is one rule instead of three.
+ *
+ * The rule is **deleted** as of 2026-08-14 -- the course and research views
+ * were its last two users and both are gone -- so the class this paragraph
+ * declines no longer exists to be declined. Kept, and put in the past tense,
+ * because it is the reason this component owns its own head rather than
+ * reaching for a shared one, and that reason outlives the rule: the next
+ * shared head someone writes will want the same cap for the same page, and
+ * this is where the cost of adopting it is written down.
  */
 export const AskHead = ({ projectId, onReset }: { projectId: ProjectId; onReset: () => void }) => (
   // `border-0` first, `border-b` second: `border-solid` sets `border-style:

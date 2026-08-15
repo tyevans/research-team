@@ -47,9 +47,9 @@
    `AutonomyAllowAll.tsx` records that `.view-head .sub` was the *only*
    definition of `.sub` under `src/styles/` and needed an ancestor the decision
    bar never provided -- so a paragraph asking to be dim had been rendering at
-   full `--fg` all along. Both comments now describe a rule that is gone; they
-   are correct about why their elements do not use it and stale about it
-   existing.
+   full `--fg` all along. Both were corrected in the same change that removed
+   these rules, and both kept their reasoning: the second one's argument gets
+   stronger, since `.sub` now has no definition anywhere at all.
 
    Not added to `check-deleted.mjs`. The rules there forbid names a reviewer
    might re-add to fix an undressed surface; `.view-head` is a generic enough

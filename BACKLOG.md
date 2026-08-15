@@ -1693,6 +1693,54 @@ Neither is a defect. Both are numbers with no measurement behind them in a file
 where the neighbouring numbers now have one, which is exactly the asymmetry that
 makes the next reader trust them more than they have earned.
 
+### B66. `.node-actions` looks dead, on a grep and nothing else
+
+**Suspected dead, not confirmed dead, and the entry exists for that distinction.**
+
+`tree.css:103-112` — five declarations, `display: flex`, `align-items`, `gap`,
+`flex-wrap` and a `margin-top`. Grepped across every `.tsx`, `.ts`, `.css`,
+`.mjs`, `.js`, `.html`, `.json` and `.md` under `frontend/` on 2026-08-14:
+nothing carries the class. The only hits are **`node-actions-gap`**
+(`ProjectList.tsx:354`, `ProjectCard.stories.tsx:173`), which is a distinct
+single token with its own live rule immediately below it — it is not
+`.node-actions` with a modifier, and the two rules are unrelated.
+
+**Why this is filed rather than deleted, which is the whole point.** The
+`.view-head` family in the same file was deleted in the same sitting, and the
+deletions are not the same claim:
+
+- `.view-head` rested on a **recorded cause**. `QueueHeader.tsx:84` names the
+  commit that removed its last inbound link, and the stylesheet's own comment
+  said it dressed "the head shared by the course and research views, which is
+  all that still uses it" — and both those views are gone. The grep confirmed a
+  story the repository already told.
+- `.node-actions` rests on **the grep alone**. Nothing anywhere records it being
+  orphaned, and its comment describes a live purpose (row buttons that were "raw
+  inline-block elements with no gap and no wrap behaviour" before it).
+
+**A deletion justified by "I could not find a reference" is a weaker claim than
+one justified by a record of the reference being removed**, and this repository
+has a rule shaped like exactly that difference. A grep is a search of the
+spellings you thought of; a recorded cause is evidence.
+
+**What upgrades this to a deletion:** find the commit that orphaned it —
+`git log -S 'node-actions'` over the deleted views is the obvious place — or a
+reviewer's second look confirming the grep. Either turns it into the same kind of
+claim `.view-head` had. It is five declarations in one file; the work is the
+justification, not the edit.
+
+**And a note on what will not catch this, because it explains why `.view-head`
+lasted as long as it did.** `scripts/check-deleted.mjs` guards two things and
+neither reaches here. Its 35 `RULES` forbid named patterns from *coming back*,
+and none names this class. Its `STYLESHEETS` list freezes **the set of files, not
+their contents** — its own docstring says so and calls the hole out explicitly —
+so `tree.css` surviving means every rule that dies inside it is invisible to the
+check. **Rot inside a living file is a class of decay no gate here sees.** That
+is a description of the guard's coverage, not a request to change it: the
+existing rules forbid names specific enough that a re-add is always the mistake,
+and a rule anchored on a name this generic would make a legitimate future use a
+build failure.
+
 ## The ask page
 
 Everything here was named in
