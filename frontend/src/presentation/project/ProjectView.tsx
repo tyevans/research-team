@@ -17,6 +17,7 @@ import { useCourse } from '../course/use-course.ts'
 import { Pane } from '../layout/Pane.tsx'
 import { Split } from '../layout/Split.tsx'
 import { DocumentList } from '../research/DocumentList.tsx'
+import { EntityTreePane } from '../research/EntityTreePane.tsx'
 import { GraphPane } from '../research/GraphPane.tsx'
 import { TimelinePane } from '../research/TimelinePane.tsx'
 import { TopicList } from '../research/TopicList.tsx'
@@ -89,6 +90,7 @@ export const regionOf = (facet: Facet): Region => {
       return 'material'
     case 'entity':
     case 'timeline':
+    case 'tree':
     case 'doc':
     case 'artifact':
     case 'finding':
@@ -116,7 +118,7 @@ export const regionOf = (facet: Facet): Region => {
  * moves one tab rather than three. Findings, documents and the graph are all
  * about material that arrived from outside the course, so they sit after.
  */
-type MaterialFacet = 'artifact' | 'file' | 'finding' | 'doc' | 'entity' | 'timeline'
+type MaterialFacet = 'artifact' | 'file' | 'finding' | 'doc' | 'entity' | 'tree' | 'timeline'
 
 const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   { id: 'artifact', label: 'Artifacts' },
@@ -124,6 +126,13 @@ const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   { id: 'finding', label: 'Findings' },
   { id: 'doc', label: 'Documents' },
   { id: 'entity', label: 'Graph' },
+  // Directly after Graph, not at the end: the tree is the graph's own material
+  // read a second way (a list instead of a drawing), same as Timeline is a
+  // second way (ordered by time) -- and the two adjacent readings belong next
+  // to each other. Doesn't touch the bundle argument above: nothing in the
+  // tree is lazy and nothing in it pulls a canvas, so inserting it here costs
+  // nothing and Timeline still closes the list.
+  { id: 'tree', label: 'Tree' },
   // After Graph, not before: this list is ordered by what the reader is asking,
   // and the timeline is a second reading of the graph's own material. Last also
   // keeps it out of the default position, which matters for the same bundle
@@ -529,6 +538,14 @@ export const ProjectView = ({
               // button restoring the previous entity would return a URL
               // describing a smaller graph than the one on screen.
               onEntity={(entity) => select({ facet: 'entity', id: entity })}
+            />
+          </TabPanel>
+
+          <TabPanel value="tree" className="flex min-h-0 flex-1 flex-col">
+            <EntityTreePane
+              projectId={projectId}
+              entity={selection?.facet === 'tree' ? (selection.id ?? null) : null}
+              onEntity={(entity) => select({ facet: 'tree', id: entity })}
             />
           </TabPanel>
 

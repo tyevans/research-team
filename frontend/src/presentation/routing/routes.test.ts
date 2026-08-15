@@ -72,6 +72,11 @@ describe('the facet grammar', () => {
       selection: { facet: 'timeline', id: 'e1' },
       hash: '#/p/abc/timeline/e1',
     },
+    {
+      facet: 'tree',
+      selection: { facet: 'tree', id: 'e1' },
+      hash: '#/p/abc/tree/e1',
+    },
     { facet: 'doc', selection: { facet: 'doc', id: 'd1' }, hash: '#/p/abc/doc/d1' },
     {
       facet: 'file',
