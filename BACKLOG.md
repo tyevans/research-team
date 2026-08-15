@@ -1133,6 +1133,27 @@ somebody decides what the reader meant. Worth deciding -- the pane's whole
 pruning feature exists because browsing accumulates -- but it is a design
 question, not an implementation gap.
 
+### B68. The timeline reads the tenant twice per open
+
+`ProjectTimelineReader.timeline` makes two linear passes over the tenant: one
+`TemporalQuery.timeline` for the ordered dated entities, and one
+`find_entities` for the `undated_count` denominator. The second exists only
+because `TemporalQuery.timeline` returns dated entities and therefore cannot
+supply the count of the ones it left out.
+
+This is the same *order* as `ProjectGraphReader.whole`, which already pages the
+store on every graph open, so it is not a new class of cost. It is double a
+single read, and it is paid on a tab a reader may return to repeatedly.
+
+Deliberately uncached, and this entry is the record of that being a decision
+rather than an oversight. A cache needs an invalidation; the knowledge log
+already emits `graph` frames that would have to drive one; and building that
+before a measurement says which of the two passes actually hurts would be
+guessing at which half to fix. **Not measured against a real corpus** -- the
+figure to get first is the wall time of each pass on the largest project
+available, because if the `find_entities` pass is the cheap one there is
+nothing here worth doing.
+
 ## Security and multi-tenancy
 
 Found while researching course-design workflows
