@@ -471,6 +471,20 @@ async def test_a_rebuild_reproduces_the_table_from_the_log(db_path, store, publi
     something: two revisions folded to one row, so a rebuild that replayed
     them as two would change the listing, and a rebuild that replayed neither
     would empty it.
+
+    **What the equality covers, and what it gave up.** `before` used to be a
+    `list[SourceListing]`, which carried `extracted`; it is now a list of
+    records, and a record has no extraction state -- so the equality alone
+    would not notice a rebuild that dropped `extracted_at` on every row. The
+    `extracted_at` assertion below is added back for that, and it is weaker
+    than the one it replaces: every value here is `None`, because a
+    `DocumentExtracted` lives on another aggregate's stream and this fixture
+    saves only corpus events to the store, so there is no set timestamp for a
+    rebuild to lose. It catches a rebuild that *invents* extraction state, not
+    one that drops it. Catching the latter needs a `DocumentExtracted`
+    persisted in the same event store the rebuild replays -- which is
+    production's arrangement and not this fixture's, and is the thing to build
+    if this column ever moves.
     """
     project_id = uuid4()
     runner = CorpusRunner(store, db_path, publisher)
@@ -503,7 +517,9 @@ async def test_a_rebuild_reproduces_the_table_from_the_log(db_path, store, publi
 
         await runner.rebuild()
 
-        assert [to_record(row) for row in await runner.list_all(project_id)] == before
+        rebuilt = await runner.list_all(project_id)
+        assert [to_record(row) for row in rebuilt] == before
+        assert [row.extracted_at for row in rebuilt] == [None]
         assert (await runner.get(project_id, "s1")).text == "v2 revised"
         assert await runner.get(project_id, "s2") is None
     finally:

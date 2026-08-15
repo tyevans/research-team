@@ -1185,12 +1185,23 @@ worth the complexity it costs.
 
 `CorpusStore.list_all` is the only listing method, and it loads whole rows.
 A `CorpusDocumentRow` carries `text`, so every caller above it --
-`CorpusReadPort.list_sources`, and therefore `GET /api/projects/{id}/sources`
-and the agent's own `list_sources` tool -- materialises the full body of every
-document in the project in order to render source ids, titles and character
-counts. Nothing above the read model can *see* the text (`SourceListing.record`
-is a `TextRecord`/`MediaRecord`, which has no field for it), so this is cost,
-not a leak.
+`CorpusReadPort.list_sources`, and therefore `GET /api/projects/{id}/sources`,
+the agent's own `list_sources` tool, and `fetch.stored_page` -- materialises the
+full body of every document in the project in order to render source ids, titles
+and character counts. Nothing above the read model can *see* the text
+(`SourceListing.record` is a `TextRecord`/`MediaRecord`, which has no field for
+it), so this is cost, not a leak.
+
+**`stored_page` is the caller to measure, and it is not the obvious one.**
+`fetch.py:191` calls `list_sources()` on **every `fetch` tool call**, to match one
+normalised URL against the corpus -- so during an autonomous run this is tens to
+hundreds of calls, each materialising every live document's body, and the
+frequency scales with the *work* rather than with someone opening a page. The
+route and the listing tool are a person pressing something; this is a hot loop.
+Anyone picking this up should profile `stored_page` first, not `GET /sources`.
+(`stored_page` needs only `uri` and `source_id`, so it is also the caller a
+column-projected query would help most, and the one that could be fixed
+independently if the general fix stays deferred.)
 
 **It arrived with `list_all` in the media-corpus work and was invisible for two
 tasks, which is the part worth knowing.** `CorpusStore.list` sat beside it the
@@ -1209,16 +1220,24 @@ column tuple the way `list`'s single one did. That is the whole cost: it is not
 hard, it is just more machinery than an unmeasured cost justifies, and this
 repository does not optimise on reasoning alone.
 
-**What would make it worth doing.** The memory bound is honest and easy to
-state: one listing call transiently holds the sum of every live document's text
-in the project. At a research paper's ~40KB of extracted text, a hundred-paper
-corpus is ~4MB per call -- not worth machinery -- and a thousand-paper corpus is
-~40MB, which is, especially since `GET /sources` is a route several browser tabs
-can hit at once. The number that would actually settle it is one nobody has
-taken: the wall time of a `list_sources` call on the largest real corpus
-available, because the per-row pydantic model construction may well dominate the
-bytes, and if it does then column projection is the wrong fix and a narrower row
-model is the right one. **Measure before building either.**
+**What would make it worth doing.** One listing call transiently holds the sum of
+every live document's text in the project. `MAX_DOCUMENT_CHARS = 200_000`
+(`knowledge.py:40`) caps each document, so the worst case is bounded and
+checkable: 500 documents at the cap is ~100MB per call. **The realistic figure is
+reasoned, not measured** -- taking ~40KB of extracted text as a typical research
+paper, which is an estimate nobody in this repository has checked against real
+stored documents, a 500-document corpus is ~20MB per call and a thousand-paper
+one ~40MB. Treat both numbers as an order of magnitude, not a measurement. Per
+`fetch`, per concurrent run, is what makes even the small figure worth a look.
+
+The number that would settle it is one nobody has taken: the wall time and peak
+memory of `stored_page` on the largest real corpus available. That is worth
+saying because per-row pydantic model construction may well dominate the bytes,
+and if it does then column projection is the wrong fix and a narrower row model
+is the right one. **Measure before building either -- and the measurement is
+cheap.** `stored_page` is one call on a fixture corpus; if timing it is an hour's
+work, do that hour before deciding anything here, including deciding to keep
+deferring it.
 
 `test_listing_carries_metadata_and_never_text` now asserts only the structural
 half -- that `to_record` yields a record with no field for text, so nothing
