@@ -87,12 +87,21 @@
    beyond "do not use both", and quietly unwrapping those scrollers here would
    be a second guess at what the pane meant.
 
-   Not extended to `auto` below `narrow`, which reaches the same overflow by
-   the media query below and keeps `max-height: 60vh` on its bodies. That cap
-   is deliberate -- one long event log otherwise pushes every other stacked
-   pane off the screen, and the rule says so where it is written. The two
-   modes therefore differ in kind and not only in trigger, which `Shell.tsx`
-   now says rather than calling `auto` "`page` below the breakpoint". */
+   **Half of this is now shared with `auto` below `narrow`, and this paragraph
+   used to say none of it was.** It said `auto` was "not extended" this block
+   and reached the same overflow by the media query alone -- which was true and
+   was the bug: the media query gave that mode the surface's `overflow` without
+   the split's release, so the split stayed pinned and the surface never had
+   anything to scroll. `auto` now carries the split rule too, written where it
+   belongs rather than added to this selector, because the two modes reach it
+   by different triggers and only one of them is breakpoint-scoped.
+
+   What still differs, and it is the half that makes them modes rather than
+   spellings: the body rule below. `page` stops a non-`regions` body being a
+   scroll container at all; `auto` keeps it scrolling under `max-height: 60vh`,
+   because one long event log otherwise pushes every other stacked pane off the
+   screen. So the two differ in kind and not only in trigger, which `Shell.tsx`
+   says rather than calling `auto` "`page` below the breakpoint". */
 .lay-shell[data-scroll='page'] .lay-split {
   flex: 0 0 auto;
 }
@@ -106,11 +115,15 @@
   max-height: none;
 }
 
-/* `not all and (min-width: …)` rather than `max-width: 1180px`, so the number
-   in this file is the same number `layout-tokens.ts` hands to `matchMedia`.
-   One boundary, one literal -- the current pair is `1180` in a stylesheet and
-   `1181` in a hook, off by one on purpose and with nothing tying them
-   together. */
+/* `not all and (min-width: …)` rather than `max-width: 820px`, so the number
+   below is the same literal `layout-tokens.ts:31` hands to `matchMedia`
+   (`narrow: 821`). One boundary, one literal.
+
+   **This comment used to cite `1180`/`1181` and an off-by-one, and it sits
+   above an 821 query.** It was copy-pasted from the wide band, whose pair is
+   the one described -- `tokens.css:135-154`. There is no 1180 anywhere in this
+   file. The spelling is the point and it survives the correction; the numbers
+   were about a different rule. */
 @media not all and (min-width: 821px) {
   .lay-shell[data-scroll='auto'] .lay-surface {
     overflow: auto;
@@ -145,13 +158,49 @@
   .lay-split {
     display: flex;
     flex-direction: column;
+
+    /* The same release `page` mode needs, for the same reason, and this mode
+       shipped without it. `.lay-surface` above is already `overflow: auto`
+       here -- but the split stayed `flex: 1 1 auto`, so it was pinned to the
+       surface's height, every pane shrank to share one screen, and the
+       innermost scroller absorbed everything the surface was meant to have.
+       The rule fifty lines up says exactly this about `page` mode; the
+       below-narrow half of `auto` was given the `overflow` and not the
+       release, under a comment describing behaviour it did not have.
+
+       Measured at 700x900 on the project view, before and after: the surface
+       856/856 with the split at exactly 856 and QUEUE's body 400.5px around
+       590px of content, against 1128/856 with the three panes at 578.5 /
+       401.4 / 148.0. `project-stacked.browser.test.tsx` claim 2 fails on the
+       first number with this line removed.
+
+       The cap below is what stops the release from being unbounded, and only
+       together do the two mean anything: without this line no body can reach
+       60vh, and without the cap one long log takes the whole page. */
+    flex: 0 0 auto;
   }
 
   /* Stacked, a body takes its content's height unless it is told not to, and
      one long event log then pushes every other pane off the screen. 60vh is
      the cap `responsive.css` already applied to `.pane-body` at this width;
      it moves here so it belongs to the primitive rather than to a list of
-     view class names. */
+     view class names.
+
+     **Unqualified, where the `page` rule above writes
+     `:not([data-scroll='regions'])`, and that difference was measured rather
+     than left as an oversight.** A cap on a `regions` body -- which is
+     `overflow: hidden` -- would clip with no way to reach what it cut. It does
+     not, because a `regions` pane's whole contract is that its children scroll
+     on their own: each region is a flex child with `min-height: 0` and a
+     scroller, so a capped body hands the shortfall down and every region
+     scrolls what it cannot show. Measured on 2026-08-14 with HOLDER the only
+     open pane at 700x900: body 362.9 under a 540 cap, its two sections 110.5
+     and 109.5, their scrollers 87.8 each holding 88, nothing clipped.
+
+     So the qualifier would be a change justified by nothing. What breaks this
+     is a `regions` pane whose regions do not each shrink and scroll, which is
+     a condition no selector can state -- `project-stacked.browser.test.tsx`
+     claims 3 and 4 are where it is stated and where it would fail. */
   .lay-pane-body {
     max-height: 60vh;
   }

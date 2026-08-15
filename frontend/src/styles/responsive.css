@@ -24,6 +24,27 @@
    `Split` how many columns to fall back to and which pane may wrap, and that
    is a redesign of the primitive rather than a migration onto it. */
 @media (width >= 821px) and (width < 1181px) {
+  /* Neither of these two floors can bind, which is why the 300 stays 300
+     despite `SESSION_TRACKS` declaring `workspace`'s floor as **320**
+     (`use-session-panes.ts`). A CSS floor below the declared one is the shape
+     of a real defect and was checked as one: `workspace` carries the 1.4
+     weight, so its narrowest share in the band is at the band's own bottom
+     edge, 821 x (1.4 / 2.4) = **478.9** -- measured 478.906 in Chromium on
+     2026-08-14 -- and the band only widens from there. `timeline`'s 280 matches
+     its declared floor and is equally unreachable at 342.078. Raising either
+     would change no pixel at any width, which is the same argument the project
+     block below makes for HOLDER's unreachable 320.
+
+     What the numbers do *not* say is that 342 is wide enough, because unlike
+     the project view's 344 neither session floor was ever derived from a
+     measurement -- `use-session-panes.ts` records that `panes.css`'s numbers
+     never took effect at all. That half is measured instead:
+     `session-responsive.browser.test.tsx` sweeps the pane for anything painting
+     outside a box that clips it at 821, in all three collapse states the band
+     can reach, and finds none. It also asserts both floors against the numbers
+     the tracks declare, so a future reweighting that made either reachable
+     fails there rather than silently clipping -- which is exactly how the
+     project view's 344 was found, from underneath, in a 5px-wide range. */
   .lay-split[data-split='session'] {
     grid-template-columns: minmax(280px, 1fr) minmax(300px, 1.4fr);
     grid-template-rows: minmax(0, 1fr) minmax(0, auto);
@@ -42,6 +63,27 @@
   }
   .lay-split[data-split='session']:has([data-pane='workspace'].is-collapsed) {
     grid-template-columns: minmax(280px, 1fr) var(--rail-w);
+  }
+  /* Both flanks at once, which two clicks reach and neither rule above covers.
+     `toggleCollapsed` (`split-tracks.ts:98`) refuses only when *every* pane
+     would close, so with three tracks `timeline` and `workspace` can both be
+     folded while the conversation stays open. The two rules above have
+     identical specificity and each write the whole `grid-template-columns`, so
+     when both match the later one simply wins and `timeline` keeps a full-width
+     track -- and because `Pane.tsx:126` keys the rail *form* on `stacked`
+     rather than on the grid having granted a rail, the folded pane draws a
+     rotated title stretched across it.
+
+     Measured before this rule, at 1000x900: a folded `timeline` **966px** wide
+     where a rail is 34. `session-responsive.browser.test.tsx`'s first claim is
+     what fails without it.
+
+     Written after the two single rules so it wins on order rather than on
+     specificity, which is what the pair above already relies on. B60. */
+  .lay-split[data-split='session']:has([data-pane='timeline'].is-collapsed):has(
+      [data-pane='workspace'].is-collapsed
+    ) {
+    grid-template-columns: var(--rail-w) var(--rail-w);
   }
   .lay-split[data-split='session'] > [data-pane='conversation'].is-collapsed {
     max-height: none;
@@ -150,11 +192,12 @@
      Written after the two single rules so it wins on order rather than on
      specificity, which is what the pair above already relies on.
 
-     The session block above has this bug, for `timeline` + `workspace`, and is
-     deliberately left with it -- it is pre-existing and out of this slice. So
-     the duplication between the two blocks now carries a *difference* and not
-     just a repeated shape: whoever merges them owes the session view this rule.
-     Filed rather than fixed here. */
+     The session block above had the same bug, for `timeline` + `workspace`, and
+     was left with it for one slice because fixing it meant editing a view that
+     slice did not own. It has the rule now (B60), so the two blocks are once
+     again the same shape in every respect but their floors -- 344/320 here
+     against 280/300 there, and that difference is the only thing a merge into
+     one primitive would have to carry. */
   .lay-split[data-split='project']:has([data-pane='queue'].is-collapsed):has(
       [data-pane='holder'].is-collapsed
     ) {
@@ -204,10 +247,6 @@
   }
   .actions-search {
     flex: 1 1 auto;
-  }
-  .view-head {
-    flex-direction: column;
-    align-items: stretch;
   }
   .new-project-workflow {
     flex-direction: column;

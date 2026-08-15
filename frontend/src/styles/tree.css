@@ -33,28 +33,29 @@
   margin: 0 auto;
 }
 
-/* The head shared by the course and research views, which is all that still
-   uses it: this page's own heading is `.section` below. Left here rather than
-   moved, because `research.css` already overrides it by this name. */
-.view-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-5);
-  max-width: 1100px;
-  margin: 0 auto var(--space-5);
-}
-.view-head h1 {
-  margin: 0;
-  font-size: var(--t-2xl);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-.view-head .sub {
-  margin: var(--space-1) 0 0;
-  color: var(--fg-dim);
-  font-size: var(--t-sm);
-}
+/* `.view-head`, `.view-head h1` and `.view-head .sub` stood here, and the
+   comment above them said they were "the head shared by the course and research
+   views, which is all that still uses it". Both views are deleted, so all that
+   still used it is nothing -- and this is the §5.1 hazard the rest of this
+   sweep is about, in its quietest form: a rule that matches no element costs
+   nothing at runtime and fails no test, so it survives every gate and reads to
+   the next person as a live part of the design.
+
+   Its absence was already load-bearing before its presence stopped being.
+   `AskHead.tsx` says it declines this class because the 1100px cap here is for
+   the tree and had to be undone with two `!` overrides, and
+   `AutonomyAllowAll.tsx` records that `.view-head .sub` was the *only*
+   definition of `.sub` under `src/styles/` and needed an ancestor the decision
+   bar never provided -- so a paragraph asking to be dim had been rendering at
+   full `--fg` all along. Both were corrected in the same change that removed
+   these rules, and both kept their reasoning: the second one's argument gets
+   stronger, since `.sub` now has no definition anywhere at all.
+
+   Not added to `check-deleted.mjs`. The rules there forbid names a reviewer
+   might re-add to fix an undressed surface; `.view-head` is a generic enough
+   name that a future view head could legitimately want it, and forbidding it
+   would cost more than the reintroduction it prevents. Recorded here instead,
+   which is where someone re-adding it would be looking. */
 
 /* --- purpose line and section headings --------------------------------- */
 
@@ -91,17 +92,22 @@
   min-width: 0;
 }
 
-/* `.view-head-actions` and `.node-actions` had no rule in any of the
-   seventeen stylesheets, so the project-creation row and every row's buttons
-   were raw inline-block elements with no gap and no wrap behaviour. */
-.view-head-actions,
+/* `.node-actions` had no rule in any of the seventeen stylesheets, so every
+   row's buttons were raw inline-block elements with no gap and no wrap
+   behaviour.
+
+   `.view-head-actions` shared this declaration and is deleted with the rest of
+   the `.view-head` family above: `QueueHeader.tsx` records that the course and
+   research views each carried an "Ask" link in one, and the commit that deleted
+   both views deleted the last element that carried the class. */
 .node-actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
-}
-.node-actions {
+  /* Was a second `.node-actions` block, because the four declarations above
+     were shared with `.view-head-actions` and the margin was not. With the
+     other selector gone there is nothing left to separate them. */
   margin-top: var(--space-3);
 }
 /* Pushes the two navigation buttons away from the two that start something,
