@@ -193,11 +193,17 @@ def test_containment_does_not_fire_for_a_cross_document_pair():
         0.5(0.85) + 0.3(1.00) + 0.2(0.00)  =  0.7250  <  0.75
 
     Rejected before the adjudicator is ever offered it, and **at any embedding
-    value whatever** -- clearing 0.75 would need an embedding of 1.083. The
-    second assertion is the one that matters, because it is what rules out
-    fixing this by reweighting: no split of a fixed budget across name and
-    embedding rescues a pair whose third feature is a present zero, and a
-    reweight that only appears to work is how this nearly shipped.
+    value whatever** -- clearing 0.75 would need an embedding of 1.083, which
+    is why the first assertion below uses a perfect 1.0: `combined_score` is
+    monotonic in the embedding, so rejecting at the ceiling rejects everywhere.
+
+    **The reweighting sweep is the assertion that matters**, because it is the
+    one that rules out the fix this repository actually attempted and withdrew
+    (6c2ae4a). No split of the remaining budget across name and embedding
+    rescues a pair whose third feature is a present zero -- swept below against
+    the *measured* 0.8516 embedding rather than the assumed 1.0, because
+    assuming that number is precisely how the withdrawn reweight came to look
+    like it worked. Prose here would be the same mistake in a different place.
 
     B58 is the fix: with the graph feature *absent* rather than zero, the same
     pair scores 0.8506 against a real `nomic-embed-text` and is adjudicated.
@@ -208,6 +214,21 @@ def test_containment_does_not_fire_for_a_cross_document_pair():
 
     assert score == pytest.approx(0.7250)
     assert decide(score) is MergeDecision.REJECT
+
+    # Every reweighting of name against embedding, graph left at its default.
+    # Measured embedding, not the assumed one: 0.8516 from a real
+    # `nomic-embed-text` on 2026-08-14 (BACKLOG B58 carries the table).
+    for tenth in range(9):
+        name_weight = tenth / 10
+        weights = FeatureWeights(name=name_weight, embedding=0.8 - name_weight, graph=0.2)
+        swept = combined_score(
+            SimilarityFeatures(name=CONTAINMENT_CEILING, embedding=0.8516, graph=0.0),
+            weights,
+        )
+        assert decide(swept) is MergeDecision.REJECT, (
+            f"name={name_weight} scored {swept:.4f}; if this ever passes, the "
+            f"reweight withdrawn in 6c2ae4a would have worked after all"
+        )
 
     # Absent rather than zero -- the whole of B58, in one line.
     assert decide(_score(CONTAINMENT_CEILING, 1.0, None)) is MergeDecision.ADJUDICATE

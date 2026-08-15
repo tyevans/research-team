@@ -82,6 +82,20 @@ class EntityKey(BaseModel):
         directly with an unnormalised name yields a key that matches nothing,
         and the symptom is a judgement that appears to do nothing rather than
         an error.
+
+        **`entity_type` is deliberately not normalised**, and carries the same
+        hazard with none of the protection. redstring's `find_entities`
+        compares it exactly too, so a judgement recorded against `"Person"`
+        matches nothing in a graph holding `"person"` -- silently, in exactly
+        the way an unnormalised name would. It is left alone because redstring
+        leaves it alone, and normalising one side of a comparison the other
+        side does not is how the two stop agreeing. Callers pass the type
+        straight from the entity they are looking at rather than typing one.
+
+        The type is also the only escape hatch from the limitation in this
+        module's docstring: two senses of one name (`Mercury` the planet and
+        the element) can only be told apart here if the graph gave them
+        different entity types.
         """
         return cls(normalized_name=normalize_name(name), entity_type=entity_type)
 
@@ -172,11 +186,36 @@ class JudgementsState(BaseModel):
     def are_held_distinct(self, left: EntityKey, right: EntityKey) -> bool:
         """Whether a human has said these two are never the same thing.
 
-        Pairwise and symmetric, and deliberately **not** transitive: "A is not
-        B" and "B is not C" says nothing whatever about A and C.
+        **Two inferences that look alike and are not.**
+
+        `A != B` and `B != C` says nothing whatever about A and C, and this
+        deliberately does not conclude one. Distinctness is not transitive:
+        knowing a thing differs from two others tells you nothing about how
+        those two relate.
+
+        `A = B` and `B != C` *does* entail `A != C`, and this does conclude it.
+        That is substitution of equals, not transitivity of difference -- if A
+        and B are one thing, then anything B is not, A is not either. So both
+        sides are expanded to their held-same groups before the comparison.
+
+        **The group expansion is not a refinement; without it the two layers of
+        this feature disagree.** `decide`'s `HoldSame` branch already makes this
+        inference, over the prospective group, so the aggregate refuses to
+        *state* `A = C`. A bare pairwise check here would let `JudgedCandidates`
+        offer C as an ordinary candidate for A and merge it at scoring --
+        producing a node that is simultaneously B and C while a live judgement
+        says B is never C. Found by a reviewer running it, not by reading it,
+        which is why the case is spelled out here and pinned by
+        `test_a_group_inherits_the_distinctness_of_its_members`.
         """
-        pair = {left, right}
-        return any(set(record.keys) == pair for record in self._live("distinct"))
+        left_group = self.group_for(left)
+        right_group = self.group_for(right)
+        return any(
+            (first in left_group and second in right_group)
+            or (second in left_group and first in right_group)
+            for record in self._live("distinct")
+            for first, second in (record.keys,)
+        )
 
 
 def initial_state() -> JudgementsState:

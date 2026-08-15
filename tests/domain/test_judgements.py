@@ -4,6 +4,8 @@ from uuid import uuid4
 
 import pytest
 from eventsource import CommandRejectedError
+from hypothesis import given
+from hypothesis import strategies as st
 from pydantic import ValidationError
 
 from research_team.domain import EntityJudgements
@@ -361,3 +363,71 @@ def test_normalisation_matches_redstrings():
         "Nova Scotia Duck Tolling Retriever",
     ):
         assert normalize_name(case) == theirs(case), case
+
+
+@given(st.text())
+def test_normalisation_matches_redstrings_on_any_string(case: str):
+    """The same parity, without a table of ten strings deciding its reach.
+
+    The table above is well chosen -- it covers `casefold` against `lower`,
+    whitespace runs, tabs, newlines and the strip -- but it can only fail on
+    what somebody thought to list. A redstring change that added NFKC
+    normalisation, punctuation stripping or dash folding would pass all ten and
+    silently break the key this feature is built on.
+
+    Same import, same exemption, and `hypothesis` is already a dev dependency
+    used across this suite. Kept beside the table rather than replacing it: the
+    table names the specific differences a reimplementer would introduce, which
+    is documentation, and this closes the gap the table cannot see.
+    """
+    from redstring.domain.normalization import normalize_name as theirs
+
+    assert normalize_name(case) == theirs(case)
+
+
+def test_a_group_inherits_the_distinctness_of_its_members():
+    """`A = B` and `B != C` entails `A != C`, and the seam has to agree.
+
+    Substitution of equals, not transitivity of difference: if A and B are one
+    thing, anything B is not, A is not either. `decide` already makes this
+    inference over the prospective group -- it refuses `HoldSame(A, C)` here --
+    so a bare pairwise `are_held_distinct` would let `JudgedCandidates` offer C
+    as an ordinary candidate for A and merge it at scoring, producing a node
+    that is simultaneously B and C while a live judgement says otherwise.
+
+    **Proved red before it was trusted green**: with the group expansion
+    removed from `are_held_distinct` (comparing the two bare keys, as it did
+    before), this returns False and the test fails. That version shipped
+    through five task reviews and was found by running it, not by reading it.
+    """
+    state = _fold(
+        EntitiesHeldSame(aggregate_id=PROJECT, keys=[JFK, JOHN], reason="r"),
+        EntitiesHeldDistinct(aggregate_id=PROJECT, left=JOHN, right=IRAN, reason="r"),
+    )
+
+    assert state.are_held_distinct(JOHN, IRAN), "the judgement as recorded"
+    assert state.are_held_distinct(JFK, IRAN), "and it reaches JFK through the group"
+    assert state.are_held_distinct(IRAN, JFK), "in both directions"
+
+    # The other layer's view of the same fact, which is what must not diverge.
+    with pytest.raises(CommandRejectedError, match="held distinct"):
+        decide(HoldSame(judgements_id=PROJECT, keys=[JFK, IRAN], reason="r"), state)
+
+
+def test_distinctness_still_does_not_travel_between_two_distinct_pairs():
+    """The inference that stays invalid, guarding the fix above.
+
+    `A != B` and `B != C` says nothing about A and C. The group expansion in
+    `are_held_distinct` must not quietly turn distinctness transitive on its
+    way to fixing the substitution case -- so this asserts the pair the fix
+    must *still* refuse to conclude.
+
+    Would pass against the pre-fix pairwise implementation too. It is here to
+    stop the fix overreaching, not to pin the fix.
+    """
+    state = _fold(
+        EntitiesHeldDistinct(aggregate_id=PROJECT, left=JFK, right=JOHN, reason="r"),
+        EntitiesHeldDistinct(aggregate_id=PROJECT, left=JOHN, right=IRAN, reason="r"),
+    )
+
+    assert not state.are_held_distinct(JFK, IRAN)

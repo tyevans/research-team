@@ -17,6 +17,7 @@ from research_team.domain.judgements import (
     EntityKey,
     evolve,
     initial_state,
+    normalize_name,
 )
 from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
 
@@ -24,11 +25,17 @@ TENANT = uuid4()
 
 
 class _Entity:
-    """Enough of redstring's `Entity` for these tests: an id, a name, a type."""
+    """Enough of redstring's `Entity` for these tests: an id, a name, a type.
+
+    Carries `normalized_name` because the real entity does and `_FakeGraph`
+    matches on it exactly -- see that method for why the fake must not be more
+    forgiving than the store it stands in for.
+    """
 
     def __init__(self, name: str, entity_type: str = "person") -> None:
         self.id = uuid4()
         self.name = name
+        self.normalized_name = normalize_name(name)
         self.entity_type = entity_type
 
 
@@ -49,11 +56,19 @@ class _FakeGraph:
         self._entities = list(entities)
 
     async def find_entities(self, tenant_id, *, name=None, **_):
-        from redstring.domain.similarity import normalize_name
+        """Compares `normalized_name` to `name` **exactly**, as the real store does.
 
+        `InMemoryGraphStore.find_entities` does not normalise its argument --
+        it matches `entity.normalized_name == name` and nothing more. A fake
+        that normalised both sides would accept a caller passing a raw name,
+        and every test here would still pass while production matched nothing:
+        the silent "the judgement did nothing" failure that `EntityKey.of`
+        exists to prevent. Being exactly as unforgiving as the real store is
+        what makes this file able to catch that.
+        """
         if name is None:
             return list(self._entities)
-        return [e for e in self._entities if normalize_name(e.name) == normalize_name(name)]
+        return [e for e in self._entities if e.normalized_name == name]
 
 
 def _scored(entity: _Entity, score: float) -> ScoredCandidate:
@@ -168,6 +183,18 @@ async def test_the_subject_is_never_its_own_candidate():
     `judged_candidates.py`, this version of the test fails (the excluded
     entity comes back as a candidate); the brief's original version still
     passed.
+
+    **The fixture is impossible in production, and the guard is unreachable
+    there.** Two entities cannot share an id in a real graph store. And
+    `_injected` skips `key == subject_key`, so the only way a lookup returns
+    the subject at all is a key carrying the subject's `normalized_name` under
+    a *different* `entity_type` -- which the `entity.entity_type !=
+    key.entity_type` check one line later excludes, not the id guard. So this
+    manufactures a state the system cannot reach, to exercise one line of
+    defence-in-depth against a future store or lookup path. Said plainly
+    because the paragraphs above argue carefully that this version is the
+    honest one, and leaving it out would let the test read as proving more
+    than it does.
     """
     subject = _Entity("JFK")
     impostor = _Entity("John F. Kennedy")
