@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 
 import { laneRows, spanOf, type TimelineBand } from '@domain/knowledge/timeline.ts'
 
@@ -48,6 +48,25 @@ const PALETTE = KIND_TOKENS.map((name) => `var(${name})`)
  *  on top of this rather than replacing "no stroke" with "a stroke". */
 const STROKE_DEFAULT = 'var(--line)'
 
+/** Screen pixels a pointer must travel before a press becomes a drag rather
+ *  than a click. Below it, a click on a band that happened to wobble by a
+ *  pixel or two while pressing still selects the band; above it, the press
+ *  is unambiguously a pan and the click that follows on release is
+ *  suppressed -- without a threshold every pan would also fire whatever
+ *  band happened to be under the pointer when it went down. */
+const DRAG_THRESHOLD_PX = 4
+
+/** Keep the content's drawn span covering the viewport rather than able to
+ *  be dragged past its own edge into empty space.
+ *
+ * `positionOf` places the content's left edge at `pan` and its right edge at
+ * `zoom + pan`, in the same 0-1 units the viewport occupies (0 to 1). The
+ * viewport is fully covered exactly when `pan <= 0` and `zoom + pan >= 1`,
+ * i.e. `1 - zoom <= pan <= 0`. At `zoom === 1` that range collapses to a
+ * single point, `0` -- so clamping is what makes pan a no-op there, with no
+ * separate `zoom === 1` special case needed anywhere a pan is applied. */
+const clampPan = (pan: number, zoom: number): number => Math.min(0, Math.max(1 - zoom, pan))
+
 /** The project's dated entities as bars on a shared axis.
  *
  * Hand-rolled SVG rather than a charting library, and the reason is the bundle
@@ -76,14 +95,24 @@ export const TimelineCanvas = ({
   selected: string | null
   onSelect: (id: string) => void
 }) => {
-  // Zoom in axis units, not pixels: the SVG has its own coordinate space, so
-  // keeping the transform there means a resize does not move the view.
-  // `zoom` is a multiplier on the span. `pan` is read by `positionOf` below
-  // but has no setter yet -- panning a zoomed-in timeline is left for a
-  // future task, and the constant keeps the maths ready for it rather than
-  // hardcoding zero inline everywhere it is used.
+  // Zoom and pan in axis units, not pixels: the SVG has its own coordinate
+  // space, so keeping the transform there means a resize does not move the
+  // view. `zoom` is a multiplier on the span; `pan` is a fraction of it,
+  // clamped by `clampPan` so the content can never be dragged past its own
+  // edge.
   const [zoom, setZoom] = useState(1)
-  const pan = 0
+  const [pan, setPan] = useState(0)
+
+  // Pointer-drag state lives in a ref, not state: it changes on every
+  // pointermove and none of it is ever rendered, so putting it in state would
+  // be a re-render per pixel of drag for no visible benefit.
+  const dragState = useRef<{ pointerId: number; startX: number; startPan: number } | null>(null)
+  // Set once a drag crosses `DRAG_THRESHOLD_PX`, read and cleared by the
+  // capturing click handler below. A ref rather than state for the same
+  // reason, and because it must be readable synchronously inside the click
+  // handler that fires immediately after `pointerup` -- a state update
+  // scheduled from `pointermove` is not guaranteed to have committed yet.
+  const suppressClick = useRef(false)
 
   const lanes = useMemo(() => laneRows(bands), [bands])
   const span = useMemo(() => spanOf(bands), [bands])
@@ -130,12 +159,57 @@ export const TimelineCanvas = ({
       aria-label="Timeline of dated entities"
       viewBox={`0 0 1000 ${Math.max(laneTotal, 1)}`}
       preserveAspectRatio="none"
-      className="h-full w-full"
+      className="h-full w-full cursor-grab"
       onWheel={(event) => {
         event.preventDefault()
         // Multiplicative, so a step out undoes a step in exactly. Additive
         // zoom drifts: ten steps in and ten out does not return to 1.
-        setZoom((current) => Math.min(Math.max(current * (event.deltaY < 0 ? 1.1 : 1 / 1.1), 1), 50))
+        setZoom((current) => {
+          const next = Math.min(Math.max(current * (event.deltaY < 0 ? 1.1 : 1 / 1.1), 1), 50)
+          setPan((currentPan) => clampPan(currentPan, next))
+          return next
+        })
+      }}
+      // Pan starts from anywhere on the drawing, band or background: a
+      // reader mid-drag does not stop to find empty space first, and the
+      // click suppression below is what keeps a drag that started on a band
+      // from also selecting it.
+      onPointerDown={(event: ReactPointerEvent<SVGSVGElement>) => {
+        if (event.button !== 0) return
+        dragState.current = { pointerId: event.pointerId, startX: event.clientX, startPan: pan }
+        // Captured on the SVG itself rather than left to whatever element is
+        // under the pointer when it moves -- without capture, dragging off a
+        // narrow band's rect mid-pan loses the subsequent pointermove events.
+        event.currentTarget.setPointerCapture(event.pointerId)
+      }}
+      onPointerMove={(event: ReactPointerEvent<SVGSVGElement>) => {
+        const drag = dragState.current
+        if (drag === null || event.pointerId !== drag.pointerId) return
+        const width = event.currentTarget.getBoundingClientRect().width
+        if (width === 0) return
+        const dx = event.clientX - drag.startX
+        if (Math.abs(dx) > DRAG_THRESHOLD_PX) suppressClick.current = true
+        // Screen pixels to the same 0-1 fraction `positionOf` works in: the
+        // viewBox always exactly fills the container (`preserveAspectRatio`
+        // is "none"), so a drag of `dx` container pixels is `dx / width` of
+        // that fraction, and dragging right moves the content right --
+        // negated because the content should follow the pointer.
+        setPan(clampPan(drag.startPan - dx / width, zoom))
+      }}
+      onPointerUp={(event: ReactPointerEvent<SVGSVGElement>) => {
+        dragState.current = null
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }}
+      // Capturing rather than a plain click handler: React fires `click` on
+      // whatever element the pointer released over, which for a drag begun
+      // on a band's `<rect>` is that same rect's own `onClick={() =>
+      // onSelect(...)}`. Catching it here, above the band, is what stops a
+      // pan from also selecting whatever it started or ended on.
+      onClickCapture={(event) => {
+        if (!suppressClick.current) return
+        suppressClick.current = false
+        event.stopPropagation()
+        event.preventDefault()
       }}
     >
       {laneLayout.map(({ lane, top }) => (
