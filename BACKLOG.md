@@ -1908,6 +1908,43 @@ for. None is a correctness bug on the happy path.
 
 ## Waiting on redstring
 
+### B58. `graph = 0.0` across a document boundary is absence of evidence read as disagreement
+
+Open as of redstring **0.9.1**. This is the ask that would let
+`redstring_adapter._WEIGHTS` go back to redstring's defaults, and it is worth
+preferring over any further retuning of those numbers.
+
+`CandidateFinder._graph_feature` scores the overlap between two entities'
+neighbour names. Two documents describing different facets of the same entity
+share no neighbours **because they are different documents**, not because the
+entities differ — and the feature reports `0.0`, which `combined_score` reads
+as a present feature scoring zero and keeps in its divisor. So the third
+feature actively drags every cross-document pair down, and caps one at 0.8000
+even with a perfect name and a perfect embedding.
+
+redstring already draws the distinction this asks for, one method away. A
+dangling entity returns the feature **absent** rather than `0.0`, on the stated
+reasoning that "an id nothing can be learned about is not evidence of
+disagreement" (`consolidation/candidates.py`). A cross-document neighbourhood
+deserves the same reading: nothing was learned about whether these two agree,
+so the honest report is `None` and a renormalized divisor.
+
+What it would change here: the adapter's `_WEIGHTS` exists only because the
+zero sits in the divisor. With the feature absent, a title-qualified name
+(`Dr. Grant`/`Grant`, 0.85 since 0.9.0's containment fix) clears
+`LOW_SIMILARITY` on redstring's own defaults, and the constant and its long
+note can be deleted.
+
+The reason it is an upstream ask and not a local fix: the two knobs that look
+like they would do it locally do not. `FeatureWeights(graph=0.0)` and
+`use_graph_signal=False` are the same scoring change as each other, neither can
+be scoped to the cross-document case (weights are fixed at construction and
+`resolve` takes no override), and both make the score a weighted mean of two
+near-1.0 features — which clears `HIGH_SIMILARITY` for any name/embedding
+split, auto-merging the `#84` duplicate with no model call, and auto-merging on
+a bare name in any deployment without embeddings.
+`test_zeroing_the_graph_weight_would_auto_merge_on_name_alone` pins both.
+
 **Closed by redstring 0.3.0 and eventsource 0.12.0.** Every ask in this section
 landed upstream, and the workarounds they justified are deleted:
 

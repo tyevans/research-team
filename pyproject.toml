@@ -52,7 +52,7 @@ dependencies = [
     # runtime break for a narrow duck-typed double -- it type-checks nowhere
     # and fails at the first `resolve`. Nothing here passes one; every store
     # handed to a `Consolidator` is redstring's own.
-    "redstring[llm,neo4j,pgvector]>=0.8.0,<0.9",
+    "redstring[llm,neo4j,pgvector]>=0.9.1,<0.10",
     "trafilatura>=2.2.0",
     "uvicorn[standard]>=0.52.1",
 ]
