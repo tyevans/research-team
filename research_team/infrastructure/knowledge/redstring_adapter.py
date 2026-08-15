@@ -35,7 +35,6 @@ from redstring import (
     Chunker,
     Consolidator,
     EmbeddingProvider,
-    FeatureWeights,
     GraphStore,
     LlmProvider,
     RedstringError,
@@ -87,63 +86,6 @@ MAX_DOCUMENT_CHARS = 200_000
 #: perfect name and a perfect embedding cap at 0.8 against `graph = 0.0`,
 #: below `HIGH_SIMILARITY` 0.92 -- so **every cross-document duplicate costs one
 #: adjudicator call**. `test_embedded_consolidation.py` pins all three facts.
-
-
-#: Why the name feature is worth less than the embedding one.
-#:
-#: redstring 0.9.0 added token containment to `string_similarity`, so a
-#: title-qualified name scores `CONTAINMENT_CEILING` (0.85) rather than the
-#: 0.437 an edit distance gives it -- `Dr. Grant`/`Grant` and
-#: `Alan Grant`/`Grant` are the shape. **That fix does not fire under
-#: redstring's default weights**, and the arithmetic is the whole reason this
-#: constant exists. A cross-document pair carries `graph = 0.0` as a *present*
-#: feature, `combined_score` renormalizes over present features, so the zero
-#: stays in the divisor:
-#:
-#:     0.5(0.85) + 0.3(1.00) + 0.2(0.00)  =  0.7250   <  LOW_SIMILARITY 0.75
-#:
-#: Rejected before the adjudicator is offered it, at *any* embedding value --
-#: clearing 0.75 would need an embedding of 1.083. Moving 0.2 from name to
-#: embedding lands the same pair at 0.7550 and buys nothing else:
-#:
-#:     0.3(0.85) + 0.5(1.00) + 0.2(0.00)  =  0.7550   >= 0.75, adjudicated
-#:
-#: **The graph weight is deliberately left at redstring's default**, and the
-#: obvious-looking alternatives are both worse:
-#:
-#: `weights=FeatureWeights(graph=0.0)` and `use_graph_signal=False` are the
-#: same thing -- a zero weight is exactly equivalent to an absent feature, by
-#: `combined_score`'s own docstring -- and neither is scoped to the
-#: cross-document case, because weights are fixed at construction and `resolve`
-#: takes no override. Dropping graph from the divisor makes the score a
-#: weighted mean of two features that are both near 1.0 for a duplicate, so it
-#: clears `HIGH_SIMILARITY` (0.92) for *any* name/embedding split: the `#84`
-#: exact duplicate would auto-merge at 1.0000 with **no model call at all**,
-#: and `University of York`/`University of Cork` at 0.9823 with it. That is not
-#: a tuning slip to be fixed by a different ratio; it is what removing the
-#: third feature does. Keeping graph at 0.2 caps every cross-document pair at
-#: 0.8000 -- perfect name, perfect embedding -- which is below 0.92, and is
-#: what keeps the adjudicator in the loop.
-#: `test_auto_merge_stays_out_of_reach_so_every_duplicate_costs_a_call` is the
-#: test that goes red if anyone zeroes it.
-#:
-#: What this does *not* fix, and is the item to prefer over retuning these
-#: numbers again: `graph = 0.0` across a document boundary is doing two jobs.
-#: Two documents describing different facets of one entity share no neighbours
-#: *because they are different documents*, not because the entities differ.
-#: redstring draws exactly that distinction elsewhere -- `candidates.py` returns
-#: the feature **absent** for a dangling entity, on the reasoning that "an id
-#: nothing can be learned about is not evidence of disagreement" -- and a
-#: cross-document neighbourhood arguably deserves the same reading. If it got
-#: one upstream, the feature would go absent, the divisor would renormalize
-#: honestly, and this constant could go back to the defaults. See BACKLOG B58.
-#:
-#: The `Dr. Grant` and `York`/`Cork` figures above are `string_similarity`
-#: measured on 0.9.1 against an **assumed** embedding, not an observed one:
-#: `FakeEmbeddingProvider` hashes text and cannot produce them, and no real
-#: model has been run over this pair. The exact-duplicate 0.8000 is measured.
-#: Treat the two near-miss numbers as arithmetic on an estimate.
-_WEIGHTS = FeatureWeights(name=0.3, embedding=0.5, graph=0.2)
 
 
 class _CountingProvider:
@@ -307,7 +249,6 @@ class RedstringKnowledge:
             event_store=event_store,
             snapshot_store=snapshot_store,
             vector_store=self._vectors,
-            weights=_WEIGHTS,
         )
         # Without an adjudicator the middle similarity band is rejected rather
         # than merged. That band is where cross-document duplicates live and
