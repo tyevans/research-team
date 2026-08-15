@@ -4,6 +4,7 @@ import { Drawer } from '../common/Drawer.tsx'
 import { ErrorBox, Loading } from '../common/primitives.tsx'
 import { DocumentBrowser } from './DocumentBrowser.tsx'
 import { DocumentManagePane } from './DocumentManagePane.tsx'
+import { DocumentUpload } from './DocumentUpload.tsx'
 import { useDocuments } from './use-documents.ts'
 
 /** The project's corpus: a container around `DocumentBrowser`.
@@ -23,7 +24,11 @@ export const DocumentList = ({
   open?: SourceId | null
   onOpen?: (sourceId: SourceId | null) => void
 }) => {
-  const { query, reading, onClose, readingLabel, browser } = useDocuments(projectId, open, onOpen)
+  const { query, reading, onClose, readingLabel, browser, adding, onAddClose } = useDocuments(
+    projectId,
+    open,
+    onOpen,
+  )
 
   if (query.isPending) return <Loading what="documents" />
 
@@ -40,6 +45,11 @@ export const DocumentList = ({
   return (
     <>
       <DocumentBrowser {...browser} />
+      {/* Beside the reader drawer rather than inside it: adding a document and
+          reading one are independent -- a reader mid-add has nothing open yet,
+          and the corpus keys `reading`/`adding` off separate state so both can
+          never fight over the same drawer slot. */}
+      {adding ? <DocumentUpload projectId={projectId} onClose={onAddClose} /> : null}
       {/* Over the page, not below the list. The list lives in a 340px rail,
           and a document is a wall of prose -- read in that column it was a few
           words per line under a list that had been pushed up out of the way.

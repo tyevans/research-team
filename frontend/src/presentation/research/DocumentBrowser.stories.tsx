@@ -82,6 +82,7 @@ const base = {
   onExtract: () => {},
   onExtractAll: () => {},
   onCancelExtraction: () => {},
+  onAdd: () => {},
 }
 
 /** Thirty-three sources, of which the virtualizer draws the handful on

@@ -85,6 +85,7 @@ const Browser = () => (
       onExtract={() => {}}
       onExtractAll={() => {}}
       onCancelExtraction={() => {}}
+      onAdd={() => {}}
     />
   </div>
 )

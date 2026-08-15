@@ -2616,3 +2616,45 @@ unconsolidated.
 R1 closing means vector search is now _possible_, not present: there is still
 no `AGENT_VECTOR_STORE` and no recall path. That is a feature to spec, not a
 workaround to delete, and it does not belong in this section.
+
+### B80. Binary document upload
+
+The corpus stores `text: str` and nothing in this tree decodes any binary
+document format — a person holding a PDF converts it to text before the
+browser's Add dialog will take it. This is the same limitation `fetch` and
+`remember` already have; the Add dialog declines to remove an old
+incapability rather than adding a new one. Reasoning in
+`docs/superpowers/specs/2026-08-15-managing-documents-design.md`, Decision 1.
+
+### B81. Purging a dropped document's graph contributions
+
+A drop excludes the document from the corpus and keeps the record — but
+extraction has already written entities and edges that no longer know which
+document proposed them, and the chunk store has no delete path in use here.
+So a definition written last week may still quote a document dropped today.
+Fixing it needs provenance the graph does not currently record — which edges
+came from which document — and the drop dialog's copy says so to the reader
+rather than promising an erasure that has not happened. Reasoning in the same
+spec, Decision 3.
+
+### B82. A ranged read of a document is not invalidated after an edit
+
+`queryKeys.document(projectId, sourceId)` resolves a `start`/`end` range to
+`null, null`, and TanStack Query matches keys by prefix over the elements
+supplied — `null` is a value in that comparison, not a wildcard for "any
+range". A cached read that had actually been fetched with a range would
+therefore survive a `revise` mutation's invalidation and go stale. Nothing
+performs a ranged read today — `DocumentReader.tsx` is the only caller of
+this key and it passes no range — so this is latent rather than observed; the
+first feature that adds citation quoting (see [[B72]]) inherits it and should
+widen the invalidation to the whole key prefix before relying on ranges.
+
+### B83. Route declaration order is protected by convention, not by a gate
+
+`app.py` documents that FastAPI matches routes in declaration order, and the
+corpus write routes' literal tails (`/drop`, `/restore`) are declared above
+`/sources/{source_id}` so they are not swallowed by its dynamic segment — but
+nothing tests this, and no gate would fail if a future edit moved either
+route below the dynamic one. Getting it wrong answers a 404 that reads like a
+missing route rather than a matching-order bug, which is a specific enough
+failure shape to be worth a regression test rather than trusting the comment.
