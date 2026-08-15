@@ -1,6 +1,8 @@
 import { edgesOf, isExpanded, type GraphView } from '@domain/knowledge/graph.ts'
+import { shortId, type ProjectId } from '@domain/shared/identifier.ts'
 
 import { useEscape } from '../layout/OverlayHost.tsx'
+import { useUsages } from './use-usages.ts'
 
 /** An edge row: a full-width bare button you walk the graph with.
  *
@@ -50,12 +52,14 @@ const ROW = [
  * worth reading.
  */
 export const GraphDetail = ({
+  projectId,
   view,
   selected,
   onSelect,
   onRemove,
   onClose,
 }: {
+  projectId: ProjectId
   view: GraphView
   selected: string
   /** Selecting from here expands too, which is what makes this a way of
@@ -80,6 +84,14 @@ export const GraphDetail = ({
   // view, one Escape closed the dock *and* this panel behind it, which the
   // reader could not see was in play.
   useEscape(onClose)
+
+  // Fetched independently of the edge list below and of the definition Task
+  // 12 adds above this section: three reads over the same `selected` id, none
+  // of which the others' latency should hold hostage. A reader who clicked a
+  // heavily-connected node should not wait on the corpus's BM25 lookup before
+  // seeing who it is wired to, and a slow edge fetch must not blank the
+  // passages that already came back.
+  const usagesQuery = useUsages(projectId, selected)
 
   const node = view.nodes.find((candidate) => candidate.id === selected)
   // The selection can outlive its node only if something removed it from the
@@ -126,6 +138,51 @@ export const GraphDetail = ({
           </button>
         </div>
       </header>
+
+      {/* Above the edge list, per the plan: a reader who came here to see
+          *what a node is* wants the passages that named it before the graph
+          it sits in -- the edges are how it relates to the rest of the
+          drawing, and the passages are where the reader learns what "it" is
+          at all. Renders off its own query, so a slow BM25 lookup here never
+          blanks the edge list below (`edgesOf` reads straight from `view`,
+          already resolved by the time this panel opens). */}
+      <section className="border-0 border-b border-solid border-b-line px-3 py-[8px]">
+        <h4 className="tracking-wide m-0 mb-[4px] text-xs text-fg-faint uppercase">Mentions</h4>
+        {usagesQuery.isPending ? (
+          <p className="m-0 text-xs text-fg-dim">Loading mentions…</p>
+        ) : usagesQuery.isError ? (
+          <p className="m-0 text-xs text-fg-dim">Mentions could not be read.</p>
+        ) : usagesQuery.data.length === 0 ? (
+          // Same distinction the edge list draws below, and the same reason:
+          // a fetch that came back empty is not the same fact as one that has
+          // not happened yet, and this branch only renders once it has.
+          <p className="m-0 text-xs text-fg-dim">No mentions of this entity were found.</p>
+        ) : (
+          <ul className="m-0 flex list-none flex-col gap-[6px] p-0">
+            {usagesQuery.data.map((usage) => (
+              <li key={`${usage.sourceId}|${usage.start}|${usage.end}`}>
+                {/* The route Task 6 built for exactly this: a quoted span of
+                    one source's text, addressed by the offsets this passage
+                    was matched at. Linking here rather than re-fetching the
+                    whole document and scrolling to a computed position keeps
+                    this panel from inventing a second way to show a passage
+                    the server already knows how to serve. */}
+                <a
+                  className="flex flex-col gap-[1px] text-inherit no-underline hover:underline"
+                  href={`/api/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(usage.sourceId)}?start=${String(usage.start)}&end=${String(usage.end)}`}
+                >
+                  <span className="font-mono text-xs text-fg-dim">{shortId(usage.sourceId)}</span>
+                  <span className="text-sm [overflow-wrap:anywhere]">{usage.text}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <h4 className="tracking-wide m-0 px-3 pt-[8px] text-xs text-fg-faint uppercase">
+        Relationships
+      </h4>
 
       {edges.length === 0 ? (
         // Two different facts, and telling them apart matters: an entity whose

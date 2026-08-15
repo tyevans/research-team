@@ -698,5 +698,20 @@ export const graphNeighborhoodDto = z.object({
   relationships: z.array(graphRelationshipDto).default([]),
 })
 
+/** One row of `/api/projects/{id}/graph/entities/{entity_id}/usages`. Best
+ *  matches first, already sorted server-side -- see `usages_view`'s own
+ *  docstring -- so nothing here re-sorts. */
+export const usageDto = z.object({
+  source_id: z.string(),
+  start: z.number(),
+  end: z.number(),
+  text: z.string(),
+  score: z.number(),
+})
+
+export const usagePageDto = z.object({
+  usages: z.array(usageDto).default([]),
+})
+
 export const idDto = z.object({ id: z.string() })
 export const okDto = z.unknown()

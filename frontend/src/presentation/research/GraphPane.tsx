@@ -209,6 +209,7 @@ export const GraphPane = ({
 
   return (
     <GraphBrowser
+      projectId={projectId}
       view={view}
       results={results}
       knownTypes={knownTypes}
@@ -255,6 +256,7 @@ export const GraphPane = ({
  * and nothing above them.
  */
 export const GraphBrowser = ({
+  projectId,
   view,
   results,
   knownTypes,
@@ -274,6 +276,7 @@ export const GraphBrowser = ({
   onReset,
   onRemove,
 }: {
+  projectId: ProjectId
   view: GraphView
   results: readonly GraphNode[]
   knownTypes: readonly string[]
@@ -478,6 +481,7 @@ export const GraphBrowser = ({
 
       {entity ? (
         <GraphDetail
+          projectId={projectId}
           view={view}
           selected={entity}
           onSelect={onEntity}

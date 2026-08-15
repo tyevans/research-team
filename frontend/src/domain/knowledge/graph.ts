@@ -82,6 +82,24 @@ export interface GraphView {
   readonly expanded: ReadonlySet<string>
 }
 
+/** One passage where an entity is mentioned, as the usages route returns it:
+ *  which source it came from, the offsets bounding the mention within that
+ *  source's text, the mention itself, and the search score that ranked it.
+ *
+ * `sourceId` is a plain string rather than the branded `SourceId` -- this type
+ * mirrors the DTO the way `GraphNode.id` mirrors `entity_id`, and every other
+ * id on this page (`GraphNode.id`, `GraphLink.source`/`target`) is unbranded
+ * for the same reason: the graph is read from a route that answers in raw
+ * UUID strings, and branding here would need a cast the domain gains nothing
+ * from. */
+export interface Usage {
+  readonly sourceId: string
+  readonly start: number
+  readonly end: number
+  readonly text: string
+  readonly score: number
+}
+
 export const emptyGraph: GraphView = {
   nodes: [],
   links: [],

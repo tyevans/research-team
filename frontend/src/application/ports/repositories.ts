@@ -3,7 +3,12 @@ import type { AskEvent } from '@domain/ask/conversation.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
-import type { EntitySearchResult, Neighborhood, WholeGraph } from '@domain/knowledge/graph.ts'
+import type {
+  EntitySearchResult,
+  Neighborhood,
+  Usage,
+  WholeGraph,
+} from '@domain/knowledge/graph.ts'
 import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
@@ -300,6 +305,19 @@ export interface GraphRepository {
    *  surface rather than clamp -- see the route's own docstring for why the
    *  server refuses instead of silently capping it. */
   neighborhood(projectId: ProjectId, entityId: string, depth?: number): Promise<Neighborhood>
+}
+
+/** Its own port rather than a method on `GraphRepository`: usages are a BM25
+ *  lookup over the corpus, not a graph read, and the two already diverge on
+ *  their store on the server side (`UsageReader` in `app.py`'s own words).
+ *  Keeping them apart here means a fake for one never has to stub the other. */
+export interface UsagesRepository {
+  /** Passages mentioning `entityId`, best match first -- already the server's
+   *  order, so nothing here re-sorts. No `limit` parameter: the route caps it
+   *  server-side and refuses (422) rather than clamps a limit past that cap,
+   *  and this panel always wants "as many as the server will give", so there
+   *  is no caller-chosen value to thread through. */
+  usages(projectId: ProjectId, entityId: string): Promise<readonly Usage[]>
 }
 
 export interface WorkerRepository {

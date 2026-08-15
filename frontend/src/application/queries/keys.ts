@@ -73,6 +73,13 @@ export const queryKeys = {
   document: (project: ProjectId, source: SourceId, range?: { start?: number; end?: number }) =>
     ['document', project, source, range?.start ?? null, range?.end ?? null] as const,
 
+  /** The graph itself is a zustand store, not a query cache -- see
+   *  `graph-store.ts` -- so this is the first graph-shaped key here. Keyed by
+   *  entity id, not by project alone: the panel that reads this opens on one
+   *  entity at a time, and a shared key would show one entity's passages
+   *  under another's heading the moment a reader picked a different node. */
+  usages: (project: ProjectId, entityId: string) => ['usages', project, entityId] as const,
+
   file: (session: SessionId, path: FilePath, at: ScrubPoint) =>
     ['file', session, path.value, ScrubPoint.toNullable(at)] as const,
   fileHistory: (session: SessionId, path: FilePath) =>

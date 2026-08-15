@@ -6,7 +6,13 @@ import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Approval, ApprovalDecision, GateContext } from '@domain/approval/approval.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame, ExtractionStage } from '@domain/knowledge/extraction.ts'
-import type { GraphLink, GraphNode, Neighborhood, WholeGraph } from '@domain/knowledge/graph.ts'
+import type {
+  GraphLink,
+  GraphNode,
+  Neighborhood,
+  Usage,
+  WholeGraph,
+} from '@domain/knowledge/graph.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
   Course,
@@ -640,6 +646,14 @@ export const toWholeGraph = (raw: Dto<typeof dto.graphWholeDto>): WholeGraph => 
   relationships: raw.relationships.map(toGraphLink),
   truncated: raw.truncated,
   inferredTruncated: raw.inferred_truncated,
+})
+
+export const toUsage = (raw: Dto<typeof dto.usageDto>): Usage => ({
+  sourceId: raw.source_id,
+  start: raw.start,
+  end: raw.end,
+  text: raw.text,
+  score: raw.score,
 })
 
 export const toNeighborhood = (raw: Dto<typeof dto.graphNeighborhoodDto>): Neighborhood => ({
