@@ -41,6 +41,15 @@ VECTOR_STORES = ("none", "memory", "pgvector")
 #: See `vector_store` for what it costs and how it degrades.
 DEFAULT_VECTOR_STORE = "memory"
 
+#: Named alongside `postgres` even though `build_chunk_store` refuses that
+#: branch -- see its docstring -- so an operator who sets it sees a real,
+#: unwired setting rather than a typo.
+CHUNK_STORES = ("none", "memory", "postgres")
+#: On by default, because `memory` here is the graph's `memory`: chunks are
+#: rebuilt from `DocumentChunked` at project open, so the cost of the default
+#: is a fold proportional to corpus size, paid once per open, not lost data.
+DEFAULT_CHUNK_STORE = "memory"
+
 #: A widely-served local embedding model, and the width it returns. Defaults
 #: exist for these two *because* the store now defaults to on: a default-on
 #: feature whose required variables have no defaults does not start. Both are
@@ -340,6 +349,28 @@ def vector_store() -> str:
     if configured not in VECTOR_STORES:
         raise ValueError(
             f"AGENT_VECTOR_STORE={configured!r} is not one of {', '.join(VECTOR_STORES)}"
+        )
+    return configured
+
+
+def chunk_store() -> str:
+    """What backs the document-chunk corpus. `none` switches the feature off.
+
+    Defaults on: `memory` is the graph's `memory`, not the vector store's --
+    chunks come from `DocumentChunked`, so the store is rebuilt by folding the
+    log at project open rather than lost with the process. What the default
+    costs is that fold, proportional to corpus size, paid once per open.
+
+    Raises `ValueError` naming the unknown kind rather than falling back, for
+    `build_graph_store`'s reason. `postgres` is listed as valid here even
+    though `build_chunk_store` refuses it -- see that function's docstring --
+    so an operator who sets it is told it is a real, unwired setting rather
+    than a typo.
+    """
+    configured = os.getenv("AGENT_CHUNK_STORE", DEFAULT_CHUNK_STORE).strip().lower()
+    if configured not in CHUNK_STORES:
+        raise ValueError(
+            f"AGENT_CHUNK_STORE={configured!r} is not one of {', '.join(CHUNK_STORES)}"
         )
     return configured
 
