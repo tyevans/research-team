@@ -336,53 +336,52 @@ it('paints nothing outside its region at the narrowest wide viewport', async () 
  * end; that is why the floors were the lever.
  *
  * **Task 10's sixth tab moved MATERIAL's floor past its own fr share at 1440**,
- * which is the one place this claim's second half stopped holding. 422 is
- * above the 411 MATERIAL would get from `1fr`, so the floor binds there too
- * now -- MATERIAL is pinned across the whole wide band rather than only at
- * 1181, and QUEUE/HOLDER absorb the 11px the floor takes from them (411->407,
- * 617->611). QUEUE and HOLDER's floors are still inert at 1440; only
- * MATERIAL's claim changed.
+ * which is the one place this claim's second half stopped holding. 422 was
+ * above the 411 MATERIAL would get from `1fr`, so the floor bound there too --
+ * MATERIAL was pinned across the whole wide band rather than only at 1181, and
+ * QUEUE/HOLDER absorbed the 11px the floor took from them (411->407, 617->611).
  *
- * The numbers, re-measured in Chromium on 2026-08-14 after Task 10:
+ * **The Tree tab (Task 5's task, a seventh) moved the floor again, and the
+ * shape did not change -- only the number.** MATERIAL was already pinned
+ * across the whole band by the sixth tab, so the seventh does not flip
+ * anything from inert to binding; it just raises what was already binding.
+ * QUEUE and HOLDER's own floors are still inert at both widths.
+ *
+ * The numbers, re-measured in Chromium on 2026-08-15 after the Tree tab:
  *
  * | viewport | queue | holder | material |
  * | --- | --- | --- | --- |
- * | 1181 | 344 | 415 | 422 |
- * | 1440 | 407 | 611 | 422 |
+ * | 1181 | 344 | 369 | 468 |
+ * | 1440 | 389 | 583 | 468 |
  *
- * **Proved red** with the old minima restored: 1181 reads `337/506/337` and the
- * first assertion fails at `expected 337 to be 344`. Proved red again with
- * MATERIAL's floor still at 352 (this slice's starting point): 1440 reads
- * `411/617/411`, so `expected 411 to be 422` -- the case that used to pass
- * under the old-minima inversion and now has to be asserted on purpose instead
- * of assumed.
+ * **Proved red** with the old minima restored: 1181 reads `344/415/422` and
+ * `expected 422 to be 468` -- the case this slice added. Proved red again with
+ * MATERIAL's floor still at 422 (this slice's starting point) at 1440:
+ * `407/611/422`, so `expected 422 to be 468`.
  */
 it('binds the floors at 1181 and leaves 1440 alone', async () => {
   await show()
 
   await resizeViewport(BP_WIDE)
   expect(Math.round(width('queue'))).toBe(344)
-  expect(Math.round(width('material'))).toBe(422)
+  expect(Math.round(width('material'))).toBe(468)
   // HOLDER keeps what the two floors leave. Re-measured with MATERIAL's floor
-  // -- 415 rather than 485, because MATERIAL's extra 70px (the sixth tab) comes
-  // out of the same 1181 column and HOLDER is the one column with slack to
-  // give up. Still far the widest column, and still well above its own floor
-  // of 342 -- which is why HOLDER's number is the one that never binds in this
-  // band.
-  expect(Math.round(width('holder'))).toBe(415)
+  // -- 369 rather than 415, because the seventh tab's extra 46px comes out of
+  // the same 1181 column and HOLDER is the one column with slack to give up.
+  // Still far the widest column, and still well above its own floor of 342 --
+  // which is why HOLDER's number is the one that never binds in this band.
+  expect(Math.round(width('holder'))).toBe(369)
 
   await resizeViewport(1440)
-  expect(Math.round(width('queue'))).toBe(407)
-  expect(Math.round(width('holder'))).toBe(611)
-  // **This is the one MATERIAL number Task 10 actually changed at 1440, and it
-  // is a real behavioural shift, not a rounding artifact.** Before the sixth
-  // tab, MATERIAL's fr share (411) already cleared its floor (352) and the
-  // floor was inert here -- the class comment's whole claim 2. Now the floor
-  // (422) is *above* the fr share MATERIAL would otherwise get, so it binds at
-  // 1440 too: MATERIAL is pinned to its floor across the whole wide band
-  // instead of only at 1181, and QUEUE/HOLDER absorb the difference (411->407,
-  // 617->611). Measured, not reasoned -- proved red first at the old 411.
-  expect(Math.round(width('material'))).toBe(422)
+  expect(Math.round(width('queue'))).toBe(389)
+  expect(Math.round(width('holder'))).toBe(583)
+  // MATERIAL was already pinned to its floor across the whole wide band as of
+  // Task 10's sixth tab (see the class comment's claim 2), so the seventh tab
+  // does not change *whether* the floor binds at 1440, only its value -- 468
+  // in place of 422, with QUEUE/HOLDER absorbing the further 18/28px
+  // (407->389, 611->583). Measured, not reasoned -- proved red first at the
+  // old 422.
+  expect(Math.round(width('material'))).toBe(468)
 })
 
 /** Claim 3. MATERIAL's floor is its tab strip, and the tab strip is a product

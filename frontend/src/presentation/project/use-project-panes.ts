@@ -35,7 +35,7 @@ const GROUP = 'project'
  * | --- | --- | --- | --- |
  * | queue | 344 | the seeding form, 317px and unwrapping | 343 |
  * | holder | 342 | `.scrub-bar`, 341px | 342 |
- * | material | 422 | the six-tab strip, 421px and unwrapping | 422 |
+ * | material | 468 | the seven-tab strip, 467px and unwrapping | 468 |
  *
  * **The material row was re-measured on 2026-08-14, same day, after Task 10
  * added a sixth tab.** `project-tracks.browser.test.tsx`'s "keeps MATERIAL
@@ -46,9 +46,17 @@ const GROUP = 'project'
  * label would clip the newest tab past the pane's edge exactly as the old
  * 280/320/280 numbers clipped Graph before this table existed.
  *
+ * **The material row was re-measured again on 2026-08-15, after the Tree tab
+ * made it a seventh.** Same assertion, same mechanism, same outcome: red at
+ * 422 against a strip that had grown to 467. The floor moved from 422 to 468
+ * (467 plus the same 1px slack the 421->422 step used), and nothing else about
+ * the layout changed -- MATERIAL was already pinned to its floor across the
+ * whole wide band as of the sixth tab, so this step raises what was already
+ * binding rather than making something newly bind.
+ *
  * Each floor is a pixel or two above what measured clean, deliberately: the
  * check carries `TruncatedText`'s 1px slack for fractional layout, and 343 of
- * QUEUE and 350 of MATERIAL clear it only by spending that slack.
+ * QUEUE and 468 of MATERIAL clear it only by spending that slack.
  *
  * **These replace `280/320/280`, which were the session view's floors adopted
  * unmeasured, and the old numbers shipped a defect.** At 1181 -- the narrowest
@@ -79,7 +87,7 @@ const GROUP = 'project'
 export const PROJECT_TRACKS: readonly Track[] = [
   { id: 'queue', min: 344, weight: 1 },
   { id: 'holder', min: 342, weight: 1.5 },
-  { id: 'material', min: 422, weight: 1 },
+  { id: 'material', min: 468, weight: 1 },
 ]
 
 /** The project page's half of its pane layout, which is only the group it
