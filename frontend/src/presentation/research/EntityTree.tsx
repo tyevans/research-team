@@ -3,10 +3,23 @@ import type { EntityGroup } from '@domain/knowledge/entity-tree.ts'
 import { Disclosure } from '../common/primitives.tsx'
 import { colorForType, KIND_TOKENS } from './entity-colors.ts'
 
-/** An entity row: the same full-width bare button the graph's edge rows and
- *  the search results are, and deliberately the same vocabulary rather than a
- *  third one -- a left gutter that lights up on hover and focus is how this
- *  console says "this one" everywhere else.
+/** The kind palette resolved to CSS colour values, once at module load.
+ *
+ * `colorForType` returns *an element of whatever palette it is handed* --
+ * `KIND_TOKENS` are custom-property names (`'--k-session'`, ...), not
+ * colours, so calling it with `KIND_TOKENS` directly yields a token name
+ * rather than a paintable value. Wrapping each name as `var(--k-session)`
+ * once here, module-level, means one array rather than one per render, and
+ * the call site stays a bare `colorForType(type, PALETTE)` like every other
+ * caller of this idiom (`TimelineCanvas.tsx`, `GraphCanvas`, `GraphLegend`). */
+const PALETTE = KIND_TOKENS.map((name) => `var(${name})`)
+
+/** An entity row: `RESULT_ROW` from `GraphPane.tsx`, not `GraphDetail.tsx`'s
+ *  `ROW` -- these rows are a baseline-aligned name/count pair like a search
+ *  result, not `GraphDetail`'s stacked two-line label, and folding the two
+ *  into one constant with a variant flag would be an abstraction over a
+ *  coincidence. The one addition is `aria-[current=true]:...`, for the
+ *  selected row.
  *
  * `border-0` comes first and is not optional: `border-solid` sets the style on
  * all four sides, and with only `border-l-2` giving a width the other three
@@ -43,7 +56,7 @@ const ROW = [
  * screen reader the keyboard does something it does not. Nested lists with
  * disclosure buttons promise only what they deliver.
  *
- * The swatch is `colorForType` against the same `KIND_TOKENS` palette the
+ * The swatch is `colorForType` against the same resolved palette the
  * canvas and the legend use, so a reader who has learnt the graph's colours is
  * not learning a second scheme for the same types.
  */
@@ -71,7 +84,7 @@ export const EntityTree = ({
               <span
                 aria-hidden="true"
                 className="size-[8px] shrink-0 rounded-full"
-                style={{ background: `var(${colorForType(group.entityType, KIND_TOKENS)})` }}
+                style={{ background: colorForType(group.entityType, PALETTE) }}
               />
               <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
                 {group.entityType}
