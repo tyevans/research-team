@@ -48,6 +48,13 @@ import { BREAKPOINTS } from '@presentation/layout/layout-tokens.ts'
  *
  * Drop any one of them and some resize in the suite becomes a no-op.
  *
+ * **The fourth poll is the one with a cost, and it is paid deliberately.** A
+ * template that overflows never settles, so against a *broken* stylesheet it
+ * times out rather than resolving, and the caller's own assertion never runs —
+ * the failure moves from the test's number to this helper's. It is kept because
+ * refusing failed reading 2 is its whole job, and the cost is paid down by
+ * making the give-up value name the tracks and the width; see the call site.
+ *
  * **Measured on 2026-08-14 in Chromium, not reasoned.** A probe resized the
  * project page 1440 -> 821 and polled a single signal at `{ interval: 1 }`.
  * Polling only `data-collapse-to`, and polling only the split's box width, both
@@ -102,6 +109,39 @@ const splitElement = (selector: string) => {
 const collapseForm = () =>
   document.querySelector<HTMLElement>('[data-pane]')?.getAttribute('data-collapse-to') ?? null
 
+/** What poll 4 below returns when it is happy. Any other string is a report of
+ *  what is wrong, written to be read in an assertion diff. */
+const SETTLED = 'settled'
+
+/** Has the browser finished laying the split out against `width` — and if not,
+ *  *why not*, in numbers.
+ *
+ * Returning a sentence rather than a boolean is the whole point: `expect.poll`
+ * prints the last value it saw, so a give-up here reads as the measurement that
+ * failed rather than as "the resize never settled". See the comment at the call
+ * site for the case that forced it. */
+const settledAgainst = (split: HTMLElement, width: number): string => {
+  const style = getComputedStyle(split)
+  if (style.display !== 'grid')
+    return style.flexDirection === 'column'
+      ? SETTLED
+      : `at ${String(width)}px the split is not a column yet: display ${style.display}, flex-direction ${style.flexDirection}`
+
+  const raw = style.getPropertyValue('grid-template-columns')
+  const tracks = raw.split(' ').map((track) => Number.parseFloat(track))
+  if (tracks.some(Number.isNaN)) return `at ${String(width)}px the tracks are unreadable: "${raw}"`
+
+  const gap = Number.parseFloat(style.columnGap) || 0
+  const gaps = (tracks.length - 1) * gap
+  const total = tracks.reduce((a, b) => a + b, 0) + gaps
+  if (total <= split.clientWidth + 1) return SETTLED
+
+  // Either a template from the previous width still on the element, or a
+  // stylesheet that genuinely overflows. This poll cannot tell the two apart —
+  // it times out either way — so it says what it measured and lets the reader.
+  return `at ${String(width)}px the tracks overflow the split: "${raw}"${gaps === 0 ? '' : ` plus ${String(gaps)}px of gap`} = ${String(Math.round(total))}px in a clientWidth of ${String(split.clientWidth)}px`
+}
+
 /** Resize the viewport and return only once **both** React and the browser are
  *  on the other side of it.
  *
@@ -148,20 +188,20 @@ export const resizeViewport = async (
   // rather than a stale box. Below `--bp-narrow` the split is `display: flex`,
   // where `grid-template-columns` computes to `none` and the question is
   // instead whether it has become a column.
-  await expect
-    .poll(() => {
-      const style = getComputedStyle(split())
-      if (style.display !== 'grid') return style.flexDirection === 'column' ? 'stacked' : 'pending'
-      const tracks = style
-        .getPropertyValue('grid-template-columns')
-        .split(' ')
-        .map((track) => Number.parseFloat(track))
-      if (tracks.some(Number.isNaN)) return 'pending'
-      const gaps = (tracks.length - 1) * (Number.parseFloat(style.columnGap) || 0)
-      const total = tracks.reduce((a, b) => a + b, 0) + gaps
-      return total <= split().clientWidth + 1 ? 'fits' : 'pending'
-    })
-    .not.toBe('pending')
+  //
+  // **It reports its own numbers, and that is not decoration.** This is the one
+  // poll here whose condition a *broken stylesheet* can make permanently
+  // unsatisfiable rather than merely slow: a template that overflows never
+  // settles, so the poll times out and the caller's own assertion never runs.
+  // `session-responsive` claim 2 is the measured case — under its recorded
+  // `minmax(600px, 1fr)` mutation, 600 + 300 do not fit 821 at any moment, and
+  // an earlier version of this poll turned that file's recorded
+  // `expected 300 to be greater than or equal to 320` into
+  // `expected 'pending' not to be 'pending'`. The claim still failed; the
+  // diagnosis did not survive. An overflowing template is exactly the defect
+  // class these files exist to catch, so the give-up value carries the tracks
+  // and the width rather than a bare sentinel.
+  await expect.poll(() => settledAgainst(split(), width)).toBe(SETTLED)
 }
 
 /** Put the viewport back. Nothing else in the browser suite does: it is set once
