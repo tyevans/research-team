@@ -74,6 +74,11 @@ export const FACETS = [
   // on the project with its own selection, which is exactly what the grammar
   // is for.
   'timeline',
+  // The graph's third reading, after canvas (`entity`) and time (`timeline`):
+  // the same material as a list rather than a drawing. A facet of its own for
+  // the reason `timeline` is -- it is a place on the project with its own
+  // selection, which is exactly what the grammar is for.
+  'tree',
   'doc',
   'file',
   'artifact',

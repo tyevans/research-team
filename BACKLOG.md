@@ -2283,6 +2283,63 @@ the `Shell`/`100vh` fixture, rederive claim 2's `topRow` from the split's own
 height rather than from a literal 900, and re-prove claim 2 red. Small, and
 worth doing before anyone reads 486 as a measured floor.
 
+### B79. The Tree tab does not virtualize, and it is fine until the node cap moves
+
+`frontend/src/presentation/research/EntityTree.tsx` (Task 2 of
+`docs/superpowers/plans/2026-08-15-entity-tree-view.md`) renders every entity
+row the fold produces, under plain nested `<ul>`s. Deferred rather than
+missed: the server caps the node count the Graph tab receives, and the tree
+reads the same fetch, so the row count is already bounded by that cap and not
+by anything the tab itself controls.
+
+`frontend/src/presentation/common/VirtualList.tsx` exists and is proven —
+`ProjectRows.tsx` uses it, and the second [[B54]] above (the 122px-hole entry,
+not the premise-withdrawn one) is the record of what it takes to test
+a virtualizer honestly in a real browser engine. If the node cap is ever
+raised for the Graph tab, the Tree tab inherits the same row count with no
+warning, and that is the trigger to revisit this, not a fixed number of rows.
+
+### B80. The Tree tab is not `role="tree"`, on purpose, and driving it by keyboard is the work that would change that
+
+`EntityTree.tsx` is nested lists with disclosure buttons over the existing
+`Disclosure` primitive, not the ARIA tree pattern. Deliberate: `role="tree"`
+obliges arrow-key navigation between rows, typeahead, and a roving tabindex
+across the whole tree, and claiming the role without providing them tells a
+screen reader the keyboard does something it does not — worse than not
+claiming it.
+
+Nobody has asked to drive this from the keyboard alone yet. If someone does,
+the work is not adding the ARIA attribute — it is building the interaction
+the attribute promises, which in this codebase's terms is a Radix accordion or
+equivalent (roving tabindex and arrow-key handling built in) in place of the
+plain disclosure buttons, not a role added to what is here now.
+
+### B81. MATERIAL's tab strip has no headroom left, and the seventh tab already spent it
+
+The MATERIAL tab strip (`PROJECT_TRACKS` floors, `frontend/src/presentation/project/project-tracks.browser.test.tsx`)
+neither wraps nor scrolls, so every tab added widens a hard floor that the
+whole layout has to make room for. Task 10 added a sixth tab and pinned
+MATERIAL's floor across the wide band for the first time — before that, the
+floor only bound below 1181. The Tree tab (this plan's seventh) moved the
+floor again, and the shape did not change, only the number: **measured in
+Chromium on 2026-08-15**, MATERIAL's floor moved from 422 to 468, and at
+1440 — the width this console is actually used at, not only below 1181 — the
+pane widths went from `411/617/411` to `389/583/468`.
+
+The numbers are in `project-tracks.browser.test.tsx`'s claim 2 (search
+`468`): 344/369/468 at 1181, 389/583/468 at 1440. Both re-measured against the
+built layout, not reasoned from the tab count.
+
+There is no headroom left to absorb an eighth tab the same way — QUEUE and
+HOLDER have already given up 18px and 28px respectively at 1440 to this one.
+The question this defers is what the strip should do instead of continuing to
+widen a floor everything else has to shrink around: wrap the tabs, let the
+strip scroll horizontally, collapse the overflow into a menu, or cap the
+strip's own width and accept clipped labels. Whichever is chosen changes
+`PROJECT_TRACKS`' floor arithmetic and the class comment above claim 2 that
+narrates it, so read that comment first — it already carries the history of
+every floor move to date.
+
 ## The ask page
 
 Everything here was named in

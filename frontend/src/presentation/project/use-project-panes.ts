@@ -35,27 +35,37 @@ const GROUP = 'project'
  * | region | floor | what sets it | measured at |
  * | --- | --- | --- | --- |
  * | queue | 344 | the seeding form, 317px and unwrapping | 343 |
- * | material | 537 | the seven-tab strip, 536.3px laid out | 536.3 |
+ * | material | 582 | the eight-tab strip, 581.6px laid out | 581.6 |
+ *
+ * **The material row was re-measured on 2026-08-15 at the merge, and the merge
+ * is the reason.** Two branches each added a seventh tab without seeing the
+ * other -- main folded the holding session in (537, against a 536.3px strip),
+ * this branch added Tree (468, against a 467px strip on the old three-column
+ * shape). Both floors are wrong for the eight-tab strip they produce together,
+ * and taking either side of the conflict would have kept a number that was
+ * measured against a strip that no longer exists. Re-measured after resolving:
+ * red at 537 against 581.6, so 582.
  *
  * Each floor is a pixel or two above what measured clean, deliberately: the
  * check carries `TruncatedText`'s 1px slack for fractional layout, and QUEUE's
  * 343 clears it only by spending that slack.
  *
- * **MATERIAL's floor moves with its tab strip, and has been re-measured three
+ * **MATERIAL's floor moves with its tab strip, and has been re-measured four
  * times for that reason** -- once when Task 10 added a sixth tab (red at 352
- * against a strip that had grown to 421), and again in this slice, whose
- * seventh tab is the holding session: 422 against a strip measuring 536.3px in
- * Chromium on 2026-08-15. The row does not wrap and has no scroller, so a floor
+ * against a strip that had grown to 421), once when the holding session became
+ * a seventh (422 against 536.3), and once at the merge that made Tree an eighth
+ * (537 against 581.6), all in Chromium. The row does not wrap and has no
+ * scroller, so a floor
  * that lagged the strip clips the newest tab past the pane's edge: present,
  * painted, unclickable. That is not hypothetical -- it is what the old
  * unmeasured `280/320/280` did to the Graph tab, on a page that had only ever
  * been looked at at 1440.
  *
- * **537 does not bind anywhere in the wide band, and is written down anyway.**
+ * **582 does not bind anywhere in the wide band, and is written down anyway.**
  * MATERIAL is `1fr` beside a quarter-width sidebar, so it takes 837 at 1181 and
  * more above -- three hundred pixels of clearance. The number is the guard, not
  * the geometry: it is what fails, at the width where a reader would lose a tab,
- * if an eighth tab arrives and this line does not move with it. The measurement
+ * if a ninth tab arrives and this line does not move with it. The measurement
  * that takes it is `project-tracks.browser.test.tsx`'s claim 3, which sums the
  * strip's laid-out children rather than reading `scrollWidth` -- in a pane this
  * wide the strip does not overflow, so `scrollWidth` reports the pane and would
@@ -73,7 +83,7 @@ const GROUP = 'project'
  */
 export const PROJECT_TRACKS: readonly Track[] = [
   { id: 'queue', min: 344, max: '25%' },
-  { id: 'material', min: 537, weight: 1 },
+  { id: 'material', min: 582, weight: 1 },
 ]
 
 /** **Rejected: folding the sidebar automatically below the wide breakpoint.**
