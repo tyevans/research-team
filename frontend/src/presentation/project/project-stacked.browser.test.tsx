@@ -11,6 +11,7 @@ import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-stor
 import { Shell } from '@presentation/layout/Shell.tsx'
 import { StreamProvider } from '@presentation/shell/StreamProvider.tsx'
 
+import { resizeViewport, restoreViewport } from '../../test/browser-viewport.ts'
 import { ProjectView } from './ProjectView.tsx'
 
 /** What the project page does *below* 821px, which nothing had ever measured.
@@ -138,36 +139,11 @@ const pane = (id: string) => document.querySelector<HTMLElement>(`[data-pane="${
 const body = (id: string) => pane(id).querySelector<HTMLElement>('.lay-pane-body')!
 const box = (id: string) => pane(id).getBoundingClientRect()
 
-/** Resize below `--bp-narrow` and wait for React to have re-rendered.
- *
- * **`widen()` in `project-responsive.browser.test.tsx` cannot be reused here,
- * and the reason is worth stating because reusing it looks free.** It polls
- * `split().style.gridTemplateColumns === ''`, which is already true anywhere
- * below `--bp-wide`: a 1000 → 700 resize satisfies it on the first tick, before
- * `matchMedia` has fired, before `stacked` has become true and before React has
- * committed. That helper is correct for the boundary it was written for and a
- * silent no-op at this one.
- *
- * So this polls something React writes *at this* boundary — `data-collapse-to`,
- * which `Pane.tsx:126` flips between `'rail'` and `'strip'` off the same
- * `useWide('narrow')` subscription the media query shadows. The geometry poll
- * after it is not redundant: the attribute proves React re-rendered, the
- * computed `flexDirection` proves the browser re-laid-out, and neither implies
- * the other. */
-const stack = async (width: number, height = 900) => {
-  await page.viewport(width, height)
-  await expect
-    .poll(() => pane('queue').getAttribute('data-collapse-to'))
-    .toBe(width < 821 ? 'strip' : 'rail')
-  await expect.poll(() => getComputedStyle(split()).flexDirection).toBe('column')
-}
-
-// Nothing else resets it, exactly as in `project-responsive.browser.test.tsx`:
-// the viewport is global to the browser run and a file that resized without
-// restoring would leak into every sibling that ran after it, in file order.
-afterEach(async () => {
-  await page.viewport(1440, 900)
-})
+// This file's `stack()` was the one of the four private helpers that already
+// polled an attribute *and* geometry, and `browser-viewport.ts` keeps that
+// shape — the shared helper is a superset, adding the two signals that move
+// inside a band and across `--bp-wide`, neither of which this file crosses.
+afterEach(restoreViewport)
 
 /** Claim 1. Below 821 the split is a flex column and the three panes stack
  *  full-width, each starting where the one above it ended.
@@ -183,7 +159,7 @@ afterEach(async () => {
  * assertions here are `flexDirection` and stacked geometry instead. */
 it('stacks the three panes full-width below 821', async () => {
   await show()
-  await stack(700)
+  await resizeViewport(700)
 
   expect(getComputedStyle(split()).display).toBe('flex')
   expect(getComputedStyle(split()).flexDirection).toBe('column')
@@ -232,7 +208,7 @@ it('stacks the three panes full-width below 821', async () => {
  * layout never lets a body reach is not a cap. */
 it('lets the surface scroll below 821 rather than squeezing every pane', async () => {
   await show()
-  await stack(700)
+  await resizeViewport(700)
 
   const s = surface()
   expect(s.scrollHeight).toBeGreaterThan(s.clientHeight)
@@ -284,7 +260,7 @@ it('lets the surface scroll below 821 rather than squeezing every pane', async (
  */
 it('caps the scrolling body at 60vh and leaves what it hides reachable', async () => {
   await show()
-  await stack(700)
+  await resizeViewport(700)
 
   // Read off the computed style as well as the geometry, so a cap that changed
   // unit rather than value is visible.
@@ -313,7 +289,7 @@ it('caps the scrolling body at 60vh and leaves what it hides reachable', async (
  * reader does not re-derive it, and guards no fix. */
 it('gives HOLDER’s regions their own scrollers under the cap', async () => {
   await show()
-  await stack(700)
+  await resizeViewport(700)
 
   await page.getByRole('button', { name: 'Collapse Queue' }).click()
   await page.getByRole('button', { name: 'Collapse Material' }).click()
@@ -356,7 +332,7 @@ it('gives HOLDER’s regions their own scrollers under the cap', async () => {
  * rules; the test exists so the next edit to them has something to fail. */
 it('folds a pane to a level strip below 821', async () => {
   await show()
-  await stack(700)
+  await resizeViewport(700)
 
   const open = box('queue').height
   await page.getByRole('button', { name: 'Collapse Queue' }).click()
@@ -397,7 +373,7 @@ it('folds a pane to a level strip below 821', async () => {
  * breakpoint-independent. */
 it('refuses the fold that would close the last pane', async () => {
   await show()
-  await stack(700)
+  await resizeViewport(700)
 
   await page.getByRole('button', { name: 'Collapse Queue' }).click()
   await page.getByRole('button', { name: 'Collapse Material' }).click()
@@ -447,7 +423,7 @@ it('clips nothing down to 561', async () => {
   await show()
 
   for (const width of [820, 700, 640, 561]) {
-    await stack(width)
+    await resizeViewport(width)
 
     const clipped = Array.from(document.querySelectorAll<HTMLElement>('.lay-split *'))
       .filter((el) => el.clientWidth > 0 && el.scrollWidth > el.clientWidth)

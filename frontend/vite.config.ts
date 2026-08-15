@@ -314,6 +314,14 @@ export default defineConfig({
         'src/main.tsx',
         'src/app/**',
         'src/**/*.d.ts',
+        // Test helpers, for the same reason as the tests that import them: a
+        // module whose only caller is a test file is not application code, and
+        // `src/test/browser-viewport.ts` is reached *only* by the browser
+        // suite — which runs outside `verify` and collects no coverage. Left
+        // in, it would be counted as permanently-uncovered application lines
+        // and would push every ratchet below down by whatever it happened to
+        // weigh.
+        'src/test/**',
       ],
       /** Ratchets, not targets. Each number sits just under what the suite
        *  actually reaches today, so the gate catches a *regression* — a layer
