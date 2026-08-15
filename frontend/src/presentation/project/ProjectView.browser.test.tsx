@@ -447,3 +447,51 @@ it('keeps a half-typed message and the transcript across a tab switch', async ()
   // would satisfy every assertion above this one.
   expect(holder().conversation.getBoundingClientRect().height).toBeCloseTo(before, 0)
 })
+
+/** Claim 8. The kept panel is out of the layout while another tab is open, and
+ *  the open tab's panel gets MATERIAL's whole height under the strip.
+ *
+ * The defect, exactly: `keepMounted` becomes Radix's `forceMount`, and Radix
+ * writes `hidden: !present` where `present` is `forceMount || isSelected` -- so
+ * the one panel that asked to survive a tab switch was never hidden at all.
+ * The holding session painted on all eight tabs, and being a `flex-1` sibling
+ * of the chosen panel it took half of MATERIAL's height and left the tab the
+ * reader asked for with the other half. `workspace.css`'s
+ * `[role='tabpanel'][data-state='inactive']` is what hides it instead.
+ *
+ * jsdom can judge none of this: `getComputedStyle` there returns only what an
+ * inline style said, so a rule that never applied is indistinguishable from one
+ * that did, and every height is zero anyway.
+ *
+ * **Proved red** by removing that rule: the display assertion fails at
+ * `expected 'flex' to be 'none'`, and the height assertion at 439.125 against
+ * 878.25 -- exactly the half the report described.
+ */
+it('drops the kept panel out of the layout while another tab is open', async () => {
+  await show()
+  const { body } = holder()
+
+  await page.getByRole('tab', { name: 'Artifacts' }).click()
+  await expect
+    .poll(() => page.getByRole('tab', { name: 'Artifacts' }).element().ariaSelected)
+    .toBe('true')
+
+  // Selected by `data-state` rather than by `[hidden]`, because under the
+  // defect the kept panel carries neither `hidden` nor any other mark that
+  // separates it from the chosen one -- `data-state` is the attribute that
+  // reads the same either way, which is what makes it the one to assert on.
+  const kept = body.querySelector<HTMLElement>('[role="tabpanel"][data-state="inactive"]')!
+  expect(getComputedStyle(kept).display).toBe('none')
+  expect(kept.getBoundingClientRect().height).toBe(0)
+
+  // The other half of the claim, and the half a reader actually complained
+  // about: the chosen panel is the whole content area under the tab strip, not
+  // the lower part of it. Measured against the strip rather than a constant, so
+  // this does not have to move when MATERIAL's tab count does.
+  const strip = body.querySelector<HTMLElement>('.tabs')!
+  const shown = body.querySelector<HTMLElement>('[role="tabpanel"][data-state="active"]')!
+  expect(shown.getBoundingClientRect().height).toBeCloseTo(
+    body.getBoundingClientRect().height - strip.getBoundingClientRect().height,
+    0,
+  )
+})

@@ -118,11 +118,20 @@ export const TabPanel = ({
    *  its query cache behind whatever else is open.
    *
    *  The second cost is subtler and is why the panel that uses this has a
-   *  browser test rather than a jsdom one: `hidden` is `display: none`, so every
-   *  measurement inside a kept panel reads zero while it is away. Anything that
-   *  caches a measured height — a virtualizer, a stick-to-bottom scroller —
-   *  can come back empty. `Pane`'s `unmountWhenCollapsed` documents the same
-   *  trap from the other side. */
+   *  browser test rather than a jsdom one: a kept panel is `display: none` while
+   *  it is away, so every measurement inside it reads zero. Anything that caches
+   *  a measured height — a virtualizer, a stick-to-bottom scroller — can come
+   *  back empty. `Pane`'s `unmountWhenCollapsed` documents the same trap from
+   *  the other side.
+   *
+   *  **What hides it is a stylesheet rule, not Radix, and this comment said
+   *  otherwise until a reader found the holding session drawn on all eight of
+   *  the project page's tabs.** Radix writes `hidden: !present` where `present`
+   *  is `forceMount || isSelected`, so a force-mounted panel carries no `hidden`
+   *  at any point — `forceMount` means "I will handle hiding", which suits its
+   *  intended use (exit animations) and not the name. `workspace.css`'s
+   *  `[role='tabpanel'][data-state='inactive']` is what handles it, and
+   *  `ProjectView.browser.test.tsx` claim 8 is what fails if that goes. */
   keepMounted?: boolean
 }) => (
   // Radix gives the panel `tabIndex={0}`, and it is kept rather than overridden
