@@ -30,7 +30,6 @@ from eventsource.ports.positions import ExpectedVersion
 from eventsource.ports.snapshots import SnapshotStore
 from eventsource.ports.store import AggregateStore
 from redstring import (
-    AUTO,
     Adjudicator,
     BoundaryPreferenceChunker,
     CandidateFinder,
@@ -60,6 +59,10 @@ from research_team.application.knowledge import (
 )
 from research_team.application.retry import with_retry
 from research_team.domain import Corpus, EntityJudgements, StoreSourceDocument
+from research_team.infrastructure.knowledge.domain_schemas import (
+    RESEARCH_CORPUS,
+    resolve_domain,
+)
 from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
 
 logger = logging.getLogger(__name__)
@@ -206,7 +209,12 @@ class RedstringKnowledge:
         snapshot_store: SnapshotStore,
         provider: LlmProvider,
         corpus: AggregateRepository[Corpus],
-        domain: str = "auto",
+        # This project's own schema rather than `auto`, matching what the
+        # composition root passes. A directly-constructed adapter -- which is
+        # every one in the suite -- extracted with a different prompt than the
+        # application until this moved, and `auto` additionally spent a
+        # classifier call per document to reach a fallback we now skip.
+        domain: str = RESEARCH_CORPUS,
         adjudicate: bool = True,
         embeddings: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
@@ -243,7 +251,15 @@ class RedstringKnowledge:
         # `reconsolidate` is a separate entry point that must see judgements
         # made since the last ingest.
         self._judgements = judgements
-        self._domain = AUTO if domain == "auto" else domain
+        # Resolved here rather than in the composition root so that every
+        # construction site gets it -- tests build this adapter directly, and a
+        # translation living only in `composition.py` would mean the suite
+        # extracted with a different prompt than the application does.
+        #
+        # Eager, in `__init__`, so a bad id raises at construction. Deferring
+        # it to `ingest` would surface a typo as a failure partway through a
+        # document that has already been stored.
+        self._domain = resolve_domain(domain)
         # Both stores, deliberately. With either omitted the consolidator
         # substitutes an in-memory log and `undo` becomes session-only --
         # silently, which is why `remembers_merges_across_restarts` is asserted

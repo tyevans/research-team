@@ -1,0 +1,200 @@
+# The project's own extraction domain.
+#
+# Forked in spirit from redstring's bundled `encyclopedia_wiki`, which is what
+# `AUTO` falls back to on a low-confidence classification and therefore what
+# this project was effectively using. Two deliberate differences, both aimed at
+# the same defect:
+#
+#   1. There is no `date` entity type. The bundled schema declares one -- "A
+#      specific date or time period", with examples `July 4, 1776`,
+#      `19th century`, `Middle Ages` -- and the model obliges. Measured against
+#      the real database on 2026-08-15: 17 entities of type `date` on the
+#      graph, holding dates in their names, related to nothing much.
+#
+#   2. The prompt asks for `temporal_expression` by name. No bundled schema
+#      does, and neither does redstring's `DEFAULT_SYSTEM_PROMPT`; that field
+#      is the only input `ExtractionPipeline` turns into a `TemporalExtent`.
+#      Same measurement: 214 entities extracted, zero with a temporal extent,
+#      and a timeline endpoint correctly answering with no bands at all.
+#
+# Both halves are needed and neither is sufficient. Removing the entity type
+# only stops the model being *invited* to make date-nodes -- redstring's own
+# guide is explicit that a schema "shapes prompts but does not enforce output"
+# -- so the prose below has to forbid it outright. And forbidding date-nodes
+# without saying where dates should go instead would simply lose them.
+
+domain_id: research_corpus
+display_name: Research Corpus
+description: >-
+  General research material -- articles, papers, reference pages and reports --
+  extracted with the dates attached to the things they date.
+
+entity_types:
+  - id: concept
+    description: A defined term, idea or named phenomenon
+    properties:
+      - name: definition
+        type: string
+        description: What the text says this is
+      - name: field
+        type: string
+        description: Field or discipline it belongs to
+    # Only the first three reach the prompt; the cap is redstring's and the
+    # rest would be documentation pretending to be steering.
+    examples:
+      - Collie eye anomaly
+      - Genetic bottleneck
+      - Machine learning
+
+  - id: person
+    description: A named individual
+    properties:
+      - name: role
+        type: string
+        description: What this person does or did
+      - name: nationality
+        type: string
+        description: Nationality if the text states one
+    examples:
+      - Ada Lovelace
+      - Robert M. Christley
+
+  - id: organization
+    description: A company, institution, club, agency or other named body
+    properties:
+      - name: type
+        type: string
+        description: What kind of body it is
+    examples:
+      - Nova Scotia Duck Tolling Retriever Club of Canada
+      - Canadian Kennel Club
+
+  - id: location
+    description: A place -- geographic, political or built
+    examples:
+      - Little River Harbour
+      - Nova Scotia
+
+  - id: event
+    description: >-
+      Something that happened at a time. Date it with `temporal_expression`
+      rather than naming a separate date entity.
+    properties:
+      - name: outcome
+        type: string
+        description: What resulted, if the text says
+    examples:
+      - Toller provincial dog declaration
+      - 2002 Toller health survey
+
+  - id: work
+    description: A document, study, book, film or other created artefact
+    properties:
+      - name: creator
+        type: string
+        description: Author or creator
+    examples:
+      - Questions and Answers about Collie Eye Anomaly
+
+  - id: fact
+    description: A verifiable factual statement the text asserts
+    properties:
+      - name: source
+        type: string
+        description: Who or what the text credits for it
+    examples:
+      - "Tollers carry a narrow founding gene pool"
+
+  - id: category
+    description: A classification or grouping
+    properties:
+      - name: parent_category
+        type: string
+        description: Parent category if hierarchical
+    examples:
+      - Sporting breeds
+
+relationship_types:
+  - id: is_a
+    description: Taxonomic or classification relationship
+    valid_source_types: [concept, category, work]
+    valid_target_types: [concept, category]
+
+  - id: part_of
+    description: Part-whole relationship
+    valid_source_types: [concept, location, organization]
+    valid_target_types: [concept, location, organization]
+
+  - id: located_in
+    description: Geographic containment
+    valid_source_types: [location, organization, event]
+    valid_target_types: [location]
+
+  - id: affects
+    description: One thing causes, influences or acts on another
+    valid_source_types: [concept, event, organization, person, fact]
+    valid_target_types: [concept, event, organization, person, fact]
+
+  - id: member_of
+    description: Membership in an organization
+    valid_source_types: [person, organization]
+    valid_target_types: [organization]
+
+  - id: founded_by
+    description: Organization founded by a person
+    valid_source_types: [organization]
+    valid_target_types: [person]
+
+  - id: created
+    description: A person or organization produced a work
+    valid_source_types: [person, organization]
+    valid_target_types: [work]
+
+  - id: participated_in
+    description: A person or organization took part in an event
+    valid_source_types: [person, organization]
+    valid_target_types: [event]
+
+  - id: states
+    description: A work asserts a fact
+    valid_source_types: [work, organization, person]
+    valid_target_types: [fact, concept]
+
+extraction_prompt_template: |
+  You are extracting a knowledge graph from research material -- articles,
+  papers, reference pages and reports.
+
+  Extract the following types of entities:
+  {entity_descriptions}
+
+  Extract the following types of relationships:
+  {relationship_descriptions}
+
+  Dates and times:
+
+  When the text says when something happened, put that date on the entity it
+  belongs to, in that entity's `temporal_expression` field. Copy the wording
+  the text uses, exactly as written -- "March 15, 1920", "circa 1850", "the
+  1990s", "the latter half of the 19th century". Do not normalise it, do not
+  convert it to a standard format, and do not resolve a vague period into a
+  specific day.
+
+  Never create an entity whose name is a date. A date is not a thing that
+  exists in its own right; it is when another thing happened. "The club was
+  founded in 1974" is one entity -- the club -- carrying the temporal
+  expression "1974". It is not a club entity plus a "1974" entity.
+
+  Leave `temporal_expression` out entirely unless the text actually states a
+  time for that entity. An entity with no date is the ordinary case and is
+  expected; a guessed date is worse than an absent one.
+
+  If the text narrates events in order without dating them, number them with
+  `sequence_position` counting from 0, and leave `temporal_expression` out.
+
+  General:
+
+  Every relationship's source_name and target_name MUST be an entity you
+  listed, spelled the same way. Do not relate an entity to itself.
+
+  Extract only what the text says. Do not add knowledge of your own, and do
+  not guess at facts the text leaves out.

@@ -107,8 +107,22 @@ def test_graph_store_defaults_to_memory(monkeypatch):
     assert config.graph_store() == "memory"
 
 
-def test_knowledge_domain_defaults_to_auto(monkeypatch):
+def test_knowledge_domain_defaults_to_the_projects_own_schema(monkeypatch):
+    """Was `auto`, and the change is the point rather than an incidental.
+
+    `auto` classifies per document and falls back to `encyclopedia_wiki`,
+    whose `date` entity type is half of why nothing this project extracted
+    ever carried a drawable date. See
+    `infrastructure/knowledge/schemas/research_corpus.yaml`.
+    """
     monkeypatch.delenv("AGENT_KNOWLEDGE_DOMAIN", raising=False)
+    assert config.knowledge_domain() == "research_corpus"
+
+
+def test_auto_is_still_reachable_through_the_environment(monkeypatch):
+    """The way back to per-document classification, and the reason the
+    resolver kept its `auto` arm."""
+    monkeypatch.setenv("AGENT_KNOWLEDGE_DOMAIN", "auto")
     assert config.knowledge_domain() == "auto"
 
 
