@@ -7,6 +7,7 @@ import type { Timeline } from '@domain/knowledge/timeline.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { EmptyState, Loading } from '../common/primitives.tsx'
+import { projectHref } from '../routing/routes.ts'
 import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
 import { GraphDetail } from './GraphDetail.tsx'
 
@@ -48,7 +49,7 @@ export const TimelinePane = ({
 }) => {
   const { timelines, graphs } = useContainer()
   const store = useMemo(() => createTimelineStore({ timelines, projectId }), [timelines, projectId])
-  const { timeline, loading, error, entityType } = store()
+  const { timeline, loading, error, entityType, knownTypes } = store()
 
   // Keyed to the entity it was fetched for, rather than cleared on deselect:
   // the render guard below (`detail?.id === entity`) means stale detail for a
@@ -102,10 +103,12 @@ export const TimelinePane = ({
     }
   }, [entity, graphs, projectId])
 
-  const types = useMemo(
-    () => [...new Set(timeline.bands.map((band) => band.entityType))].sort(),
-    [timeline.bands],
-  )
+  // The roster comes from the store's `knownTypes`, not from `timeline.bands`,
+  // and that was a real defect: the filter is pushed to the server, so bands
+  // in hand are only ever the *chosen* type, and options derived from them
+  // dropped every other type from the control that had just offered them.
+  // `knownTypes` is populated from the unfiltered load. See `timeline-store`.
+  const types = knownTypes
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -129,6 +132,8 @@ export const TimelinePane = ({
       </div>
 
       <TimelineBrowser
+        projectId={projectId}
+        entityType={entityType}
         timeline={timeline}
         loading={loading}
         error={error}
@@ -147,6 +152,8 @@ export const TimelinePane = ({
  * without standing up a fake repository and waiting for a promise.
  */
 export const TimelineBrowser = ({
+  projectId,
+  entityType,
   timeline,
   loading,
   error,
@@ -154,6 +161,13 @@ export const TimelineBrowser = ({
   onSelect,
   detail,
 }: {
+  /** Only so the detail panel can link into the graph view for the selected
+   *  entity; nothing here fetches. */
+  projectId: ProjectId
+  /** The filter in force, or `null`. Read only to word the undated notice: the
+   *  server counts undated entities *within* the filter, so with one on, the
+   *  number is about that type and a sentence claiming otherwise is wrong. */
+  entityType: string | null
   timeline: Timeline
   loading: boolean
   error: string | null
@@ -172,7 +186,9 @@ export const TimelineBrowser = ({
         // extracted". Without it a reader meeting this goes looking for an
         // extraction failure that did not happen.
         detail={
-          timeline.undatedCount > 0 ? `${timeline.undatedCount} entities carry no dates` : undefined
+          timeline.undatedCount > 0
+            ? `${timeline.undatedCount} ${entityType === null ? 'entities' : `${entityType} entities`} carry no dates`
+            : undefined
         }
       />
     )
@@ -183,8 +199,25 @@ export const TimelineBrowser = ({
       <div className="flex min-h-0 flex-1 flex-col">
         {timeline.undatedCount > 0 ? (
           <p className={NOTICE}>
-            {timeline.undatedCount} of {timeline.undatedCount + timeline.bands.length} entities are
-            undated and are not drawn
+            {/* The denominator is dropped on a truncated timeline rather than
+                corrected from a total the server would have to start sending.
+                `bands` is post-cap, so `undated + bands` understated the
+                project -- and the two notices then contradicted each other,
+                one saying "of 1,312" directly above one saying "there are
+                more". Wording it away costs the denominator in the capped
+                case only, and that case already has a notice of its own
+                saying the count on screen is not the whole. Carrying a real
+                total was the alternative: a field on `Timeline`, a third
+                number through five layers, to restore a figure the line below
+                already qualifies. */}
+            {timeline.undatedCount}
+            {timeline.truncated ? '' : ` of ${timeline.undatedCount + timeline.bands.length}`}{' '}
+            {/* Named when a filter is in force, because the server counts
+                undated entities within it: with `event` chosen the number is
+                about events, and "entities" would claim it was about the
+                project. */}
+            {entityType === null ? 'entities' : `${entityType} entities`} are undated and are not
+            drawn
           </p>
         ) : null}
         {timeline.truncated ? (
@@ -201,6 +234,11 @@ export const TimelineBrowser = ({
           view={expand(emptyGraph, detail)}
           selected={selected}
           onSelect={onSelect}
+          // What keeps the two views peers rather than making this one a dead
+          // end: a reader who finds an interesting band otherwise has no route
+          // into the graph for it. Built through `projectHref` rather than
+          // spelled out, so the hash grammar stays in one place.
+          showInGraphHref={projectHref(projectId, { facet: 'entity', id: selected })}
           onClose={() => onSelect(null)}
         />
       ) : null}

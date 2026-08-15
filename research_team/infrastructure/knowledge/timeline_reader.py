@@ -20,12 +20,13 @@ from typing import Any
 from uuid import UUID
 
 from eventsource.domain.tenant_context import tenant_scope
-from redstring import TemporalQuery
+from redstring import Bounds, TemporalQuery
 
 from research_team.application.timeline_read import (
     MAX_TIMELINE_BANDS,
     Timeline,
     TimelineBand,
+    TimelineInterval,
 )
 from research_team.infrastructure.knowledge.temporal_interval import extent_bounds
 from research_team.infrastructure.knowledge.temporal_rendering import render_extent
@@ -97,6 +98,7 @@ class ProjectTimelineReader:
         self,
         *,
         entity_type: str | None = None,
+        interval: TimelineInterval | None = None,
         limit: int = MAX_TIMELINE_BANDS,
     ) -> Timeline:
         """This project's dated entities, ascending by when they begin.
@@ -123,28 +125,42 @@ class ProjectTimelineReader:
         throw that away and reintroduce the instability at the next adapter
         change.
         """
-        capped = min(limit, MAX_TIMELINE_BANDS)
+        # `max(1, ...)` and not just `min`: a negative limit reaches
+        # `bands[:capped]`, where Python's slice semantics quietly *drop the
+        # last N* and report `truncated=True` -- `?limit=-1` would return
+        # everything but the final event and say the cap did it. One band is
+        # the smallest honest answer to "as few as possible".
+        capped = max(1, min(limit, MAX_TIMELINE_BANDS))
+        # Translated here rather than above: `Bounds` is redstring's, and the
+        # port names none of its types. Field-for-field because
+        # `TimelineInterval` is deliberately the same half-open convention.
+        bounds = None if interval is None else Bounds(interval.start, interval.end)
         async with tenant_scope(self._project_id):
             dated = await TemporalQuery(self._store).timeline(
-                self._project_id, entity_type=entity_type
+                self._project_id, interval=bounds, entity_type=entity_type
             )
             dated = await self._without_aliases(list(dated))
+            # No `interval` here, and that is the point of `undated_count`: an
+            # undated entity intersects no window, so filtering the denominator
+            # by one would count zero of them and report a timeline that is
+            # missing nothing.
             everything = await self._store.find_entities(
                 self._project_id, entity_type=entity_type
             )
             everything = await self._without_aliases(list(everything))
 
         bands = [band for band in map(_to_band, dated) if band is not None]
-        # Counted against the whole entity set rather than by subtracting the
-        # band count from it: `TemporalQuery` and `extent_bounds` decide
-        # "dated" separately, and a subtraction would silently absorb any
-        # disagreement between them into the undated figure.
-        undated_count = len(everything) - len(bands)
+        # Asked of each entity directly rather than computed as
+        # `len(everything) - len(bands)`, which is what this was until
+        # `interval` arrived and broke it: with a window in play `bands` is a
+        # subset of the dated entities, so the subtraction would report every
+        # entity dated *outside* the window as undated. Asking `_to_band` is
+        # also the definition the field claims -- "carrying no drawable
+        # extent" -- rather than a difference between two counts that two
+        # modules decide separately.
+        undated_count = sum(1 for entity in everything if _to_band(entity) is None)
         return Timeline(
             bands=tuple(bands[:capped]),
-            # Never negative, even if the two "dated" judgements above ever
-            # diverge: a negative count on screen is a worse failure than a
-            # zero, and this is the one place it could reach a reader.
-            undated_count=max(undated_count, 0),
+            undated_count=undated_count,
             truncated=len(bands) > capped,
         )

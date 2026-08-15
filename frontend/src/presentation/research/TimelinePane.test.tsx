@@ -50,6 +50,12 @@ const band = (id: string, name: string): TimelineBand => ({
   uncertainty: 'EXACT',
 })
 
+/** A band of a second type, so the type roster has something to lose. */
+const personBand = (id: string, name: string): TimelineBand => ({
+  ...band(id, name),
+  entityType: 'person',
+})
+
 const timeline = (over: Partial<Timeline> = {}): Timeline => ({
   bands: [band('e1', 'Waterloo')],
   undatedCount: 0,
@@ -188,6 +194,74 @@ describe('TimelinePane', () => {
     await userEvent.selectOptions(screen.getByLabelText(/type/i), 'event')
 
     await waitFor(() => expect(fetchTimeline).toHaveBeenLastCalledWith(expect.anything(), 'event'))
+  })
+
+  it('keeps every type on offer after one of them is chosen', async () => {
+    // The defect this pins: the filter is pushed to the server, so the
+    // response for `event` contains only event bands. Options derived from the
+    // bands in hand then collapse to `All` + `event`, and the reader has to go
+    // back to `All` to reach `person` at all. Fails against the version that
+    // read `timeline.bands`, where `person` is gone from the second assertion.
+    const fetchTimeline = vi
+      .fn()
+      .mockResolvedValueOnce(
+        timeline({ bands: [band('e1', 'Waterloo'), personBand('p1', 'Wellington')] }),
+      )
+      .mockResolvedValue(timeline({ bands: [band('e1', 'Waterloo')] }))
+    renderPane({ timelines: fakeTimelines({ timeline: fetchTimeline }) })
+
+    const select = await screen.findByLabelText(/type/i)
+    await waitFor(() => expect(screen.getByRole('option', { name: 'person' })).toBeInTheDocument())
+
+    await userEvent.selectOptions(select, 'event')
+
+    await waitFor(() => expect(fetchTimeline).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('option', { name: 'person' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'event' })).toBeInTheDocument()
+  })
+
+  it('names the filtered type in the undated notice rather than claiming the project', async () => {
+    // The server counts undated entities *within* the filter, so "312 of 313
+    // entities are undated" would be a claim about the project made from a
+    // number about events.
+    renderPane({
+      timelines: fakeTimelines({
+        timeline: vi.fn().mockResolvedValue(timeline({ undatedCount: 312 })),
+      }),
+    })
+
+    await screen.findByText('Waterloo')
+    await userEvent.selectOptions(await screen.findByLabelText(/type/i), 'event')
+
+    expect(await screen.findByText(/312 of 313 event entities are undated/)).toBeInTheDocument()
+  })
+
+  it('drops the undated denominator when the timeline was capped', async () => {
+    // `bands` is post-cap, so `undated + bands.length` understates the project
+    // -- and the capped notice directly below would then contradict it. Fails
+    // against the version that always rendered the total, which said
+    // "312 of 313".
+    renderPane({
+      timelines: fakeTimelines({
+        timeline: vi.fn().mockResolvedValue(timeline({ undatedCount: 312, truncated: true })),
+      }),
+    })
+
+    expect(await screen.findByText(/312 entities are undated/)).toBeInTheDocument()
+    expect(screen.queryByText(/of 313/)).not.toBeInTheDocument()
+  })
+
+  it('offers a route into the graph view for the selected band', async () => {
+    // Without this the timeline is a dead end: a reader who finds an
+    // interesting band has no way through to what it is connected to. The
+    // href, not just the label, because the two views are peers only if the
+    // link actually lands on the entity facet.
+    renderPane({ timelines: fakeTimelines(), graphs: fakeGraphsWithNeighborhood() })
+
+    await userEvent.click(await screen.findByText('Waterloo'))
+
+    const link = await screen.findByRole('link', { name: /show in graph/i })
+    expect(link).toHaveAttribute('href', `#/p/${PROJECT}/entity/e1`)
   })
 
   it('opens the detail panel for a clicked band, with no remove control', async () => {

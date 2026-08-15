@@ -23,6 +23,7 @@ from httpx import ASGITransport, AsyncClient
 from redstring import DatePrecision, Entity, ExtractionMethod, Provenance, TemporalExtent
 
 from research_team.application import SummaryProjects, WorkerRoster
+from research_team.application.timeline_read import MAX_TIMELINE_BANDS
 from research_team.composition import build_application
 from research_team.interfaces.web import create_app
 from research_team.interfaces.web.extraction import ExtractionActivity
@@ -157,3 +158,94 @@ async def test_a_limit_past_the_cap_is_clamped_rather_than_refused(app_and_clien
     response = await client.get(f"/api/projects/{project_id}/timeline?limit=100000")
 
     assert response.status_code == 200
+    # The status alone would pass against an implementation with no clamp at
+    # all -- which is what this test asserted until the clamp gained a lower
+    # bound and the weakness was noticed. The band count is the part that can
+    # only be right if something clamped.
+    assert len(response.json()["bands"]) <= MAX_TIMELINE_BANDS
+
+
+async def test_a_negative_limit_is_clamped_rather_than_slicing_from_the_end(app_and_client):
+    """`?limit=-1` reaching `bands[:-1]` is the failure this catches.
+
+    Python's slice semantics turn a negative limit into "everything but the
+    last", so the route would answer 200 with a band silently missing and
+    `truncated` blaming the cap. With one entity seeded that is an empty
+    `bands`, so this fails on the unclamped implementation.
+    """
+    application, client = app_and_client
+    project_id = await _project_with_dated_entity(application, client)
+
+    response = await client.get(f"/api/projects/{project_id}/timeline?limit=-1")
+
+    assert response.status_code == 200
+    assert len(response.json()["bands"]) == 1
+
+
+async def test_an_interval_excludes_an_entity_dated_outside_it(app_and_client):
+    """`from`/`to` reaching the port at all.
+
+    The seeded entity is dated 1815, so a window over the 1900s must return no
+    bands -- and an implementation that parsed the parameters and dropped them
+    would return the one band and fail here.
+    """
+    application, client = app_and_client
+    project_id = await _project_with_dated_entity(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/timeline"
+        "?from=1900-01-01T00:00:00%2B00:00&to=1950-01-01T00:00:00%2B00:00"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["bands"] == []
+    # The window narrows the bands and not the denominator: an undated entity
+    # intersects no window, so narrowing it would report a timeline missing
+    # nothing.
+    assert response.json()["undated_count"] == 0
+
+
+async def test_an_open_ended_interval_bounds_only_the_end_it_was_given(app_and_client):
+    """One parameter, not two -- the case a UI offering "since" produces.
+
+    Written with only `from` so an implementation requiring both would 422
+    here rather than answering.
+    """
+    application, client = app_and_client
+    project_id = await _project_with_dated_entity(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/timeline?from=1800-01-01T00:00:00%2B00:00"
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["bands"]) == 1
+
+
+async def test_no_interval_returns_the_whole_timeline(app_and_client):
+    """The default, pinned because `from`/`to` were threaded through it after
+    the route shipped: this passed before that change and must go on passing.
+    """
+    application, client = app_and_client
+    project_id = await _project_with_dated_entity(application, client)
+
+    response = await client.get(f"/api/projects/{project_id}/timeline")
+
+    assert response.status_code == 200
+    assert len(response.json()["bands"]) == 1
+
+
+async def test_an_unparseable_interval_is_a_422_naming_the_parameter(app_and_client):
+    """A mistyped date is refused rather than silently ignored.
+
+    Falling back to "no window" would answer a *different question* than the
+    caller asked with no way for it to tell -- the whole timeline looks exactly
+    like a window that matched everything.
+    """
+    application, client = app_and_client
+    project_id = await _project_with_dated_entity(application, client)
+
+    response = await client.get(f"/api/projects/{project_id}/timeline?from=last%20Tuesday")
+
+    assert response.status_code == 422
+    assert "from" in response.json()["detail"]

@@ -19,6 +19,7 @@ from redstring import (
     UncertaintyMarker,
 )
 
+from research_team.application.timeline_read import TimelineInterval
 from research_team.infrastructure.knowledge.timeline_reader import ProjectTimelineReader
 
 TENANT_ID = uuid4()
@@ -196,6 +197,108 @@ async def test_entity_type_restricts_which_entities_are_banded():
     timeline = await reader.timeline(entity_type="event")
 
     assert [band.name for band in timeline.bands] == ["A battle"]
+
+
+async def test_an_interval_restricts_the_bands_to_the_ones_it_intersects():
+    """The window, doing something -- an adapter that dropped `interval=` on
+    the floor would return all three and fail here.
+    """
+    reader = await _reader_over(
+        [
+            _entity(uuid4(), "Too early", temporal=_year(1700)),
+            _entity(uuid4(), "Inside", temporal=_year(1815)),
+            _entity(uuid4(), "Too late", temporal=_year(1900)),
+        ]
+    )
+
+    timeline = await reader.timeline(
+        interval=TimelineInterval(
+            start=datetime(1800, 1, 1, tzinfo=UTC), end=datetime(1850, 1, 1, tzinfo=UTC)
+        )
+    )
+
+    assert [band.name for band in timeline.bands] == ["Inside"]
+
+
+async def test_an_interval_open_at_one_end_bounds_only_the_other():
+    """`None` as infinity outwards, which is the half of `Bounds` a caller
+    reaches by parsing only `from`. Asserted with the *upper* end open so a
+    translation that silently swapped the two would return "Too early" and
+    fail.
+    """
+    reader = await _reader_over(
+        [
+            _entity(uuid4(), "Too early", temporal=_year(1700)),
+            _entity(uuid4(), "Inside", temporal=_year(1815)),
+            _entity(uuid4(), "Later still", temporal=_year(1900)),
+        ]
+    )
+
+    timeline = await reader.timeline(
+        interval=TimelineInterval(start=datetime(1800, 1, 1, tzinfo=UTC), end=None)
+    )
+
+    assert [band.name for band in timeline.bands] == ["Inside", "Later still"]
+
+
+async def test_no_interval_bands_everything_dated():
+    """The default path, pinned because `interval` was threaded through it
+    late: this would have passed before that change and must go on passing.
+    """
+    reader = await _reader_over(
+        [
+            _entity(uuid4(), "Early", temporal=_year(1700)),
+            _entity(uuid4(), "Late", temporal=_year(1900)),
+        ]
+    )
+
+    timeline = await reader.timeline()
+
+    assert [band.name for band in timeline.bands] == ["Early", "Late"]
+
+
+async def test_a_windowed_read_still_counts_every_undated_entity():
+    """The denominator is not narrowed by the window, and the subtraction it
+    replaced would have got this wrong.
+
+    `len(everything) - len(bands)` would answer 2 here -- reporting the entity
+    dated outside the window as undated -- so this fails against the
+    implementation that predates `interval`.
+    """
+    reader = await _reader_over(
+        [
+            _entity(uuid4(), "Inside", temporal=_year(1815)),
+            _entity(uuid4(), "Outside", temporal=_year(1900)),
+            _entity(uuid4(), "Cavalry", temporal=None),
+        ]
+    )
+
+    timeline = await reader.timeline(
+        interval=TimelineInterval(
+            start=datetime(1800, 1, 1, tzinfo=UTC), end=datetime(1850, 1, 1, tzinfo=UTC)
+        )
+    )
+
+    assert [band.name for band in timeline.bands] == ["Inside"]
+    assert timeline.undated_count == 1
+
+
+async def test_a_negative_limit_returns_one_band_rather_than_dropping_the_last():
+    """The lower clamp, which is not cosmetic.
+
+    Without `max(1, ...)` a limit of -1 reaches `bands[:-1]`, and Python's
+    slice semantics return every band *but the last* while `truncated` blames
+    the cap. This test fails on that implementation with three bands where it
+    expects one.
+    """
+    reader = await _reader_over(
+        [_entity(uuid4(), f"Event {n}", temporal=_year(1800 + n)) for n in range(4)]
+    )
+
+    timeline = await reader.timeline(limit=-1)
+
+    assert [band.name for band in timeline.bands] == ["Event 0"]
+    assert timeline.truncated is True
 
 
 async def test_the_cap_sets_truncated_and_a_graph_at_exactly_the_cap_does_not():

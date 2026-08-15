@@ -95,6 +95,28 @@ describe('spanOf', () => {
     })
   })
 
+  it('reads the offset-suffixed instants the server actually sends', () => {
+    // Every other fixture in this file writes a bare local-time string, which
+    // is *not* the shape the wire carries: the backend calls `isoformat()` on
+    // tz-aware datetimes, so a real `start` is `'1815-01-01T00:00:00+00:00'`.
+    // Nothing tested that until this, and the two spellings parse to different
+    // numbers on any machine not at UTC -- so a comparison mixing them (an
+    // axis extreme hard-coded in the bare shape, say) would be wrong by the
+    // offset and invisible in CI.
+    const span = spanOf([
+      band({
+        id: 'utc',
+        start: '1815-01-01T00:00:00+00:00',
+        end: '1816-01-01T00:00:00+00:00',
+      }),
+    ])
+
+    expect(span).toEqual({
+      from: Date.UTC(1815, 0, 1),
+      to: Date.UTC(1816, 0, 1),
+    })
+  })
+
   it('is null when nothing has a bounded date', () => {
     expect(spanOf([band({ id: 'open' })])).toBeNull()
     expect(spanOf([])).toBeNull()

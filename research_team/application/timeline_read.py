@@ -16,6 +16,7 @@ underneath this contract rather than a change to it.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 #: How many bands one timeline hands back. A cap for the same reason
@@ -28,6 +29,28 @@ from typing import Protocol
 #: but still readable and still pans, where 1,000 nodes in a simulation is a
 #: disc. The bound here is the browser's layout cost, not legibility.
 MAX_TIMELINE_BANDS = 1_000
+
+
+@dataclass(frozen=True)
+class TimelineInterval:
+    """The window a timeline is restricted to, half-open `[start, end)`.
+
+    This application's own type rather than redstring's `Bounds`, for the
+    reason the rest of this module gives: no redstring type is named above the
+    adapter, so a library rename stays an implementation detail. It is the same
+    shape and the same half-open convention deliberately -- the adapter's
+    translation is a constructor call, and a *different* convention here would
+    make that translation somewhere a boundary could silently move.
+
+    Both ends nullable and both meaning infinity outwards, so `None` for the
+    interval as a whole and `TimelineInterval(None, None)` are the same
+    request. Kept expressible rather than rejected: a route that parsed only
+    `from` should not have to decide between inventing an upper bound and
+    dropping the lower one.
+    """
+
+    start: datetime | None
+    end: datetime | None
 
 
 @dataclass(frozen=True)
@@ -116,9 +139,23 @@ class TimelineReadPort(Protocol):
         self,
         *,
         entity_type: str | None = None,
+        interval: TimelineInterval | None = None,
         limit: int = MAX_TIMELINE_BANDS,
     ) -> Timeline:
         """This project's dated entities, ascending by when they begin.
+
+        `interval` restricts to entities intersecting that window; `None` is
+        the whole timeline. On the port from the first commit even though no UI
+        offers a date range yet, and that ordering is the point: with it here
+        the range filter is an additive change to one component, and without it
+        the same feature is a port, adapter, route, DTO and repository change
+        all at once.
+
+        It restricts the *bands* and not `undated_count`, which no window can
+        select on -- an undated entity intersects nothing. So a windowed read
+        reports the same denominator an unwindowed one does, which is the
+        honest number: the entities it names were never candidates for the
+        window in the first place.
 
         `limit` is clamped inside the implementation rather than trusted, for
         the reason `MAX_NEIGHBORHOOD_DEPTH` is clamped inside `neighborhood`:

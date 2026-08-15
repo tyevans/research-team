@@ -54,6 +54,7 @@ export const GraphDetail = ({
   selected,
   onSelect,
   onRemove,
+  showInGraphHref,
   onClose,
 }: {
   view: GraphView
@@ -66,6 +67,15 @@ export const GraphDetail = ({
    *  prune -- offering the control there would be a button that either does
    *  nothing or silently changes a different tab. */
   onRemove?: (id: string) => void
+  /** Where "Show in graph" goes, or `undefined` where this panel *is* the
+   *  graph. Optional for the reason `onRemove` is, in the other direction:
+   *  the timeline needs a route into the graph view and `GraphPane` would be
+   *  offering a link to the page the reader is already on.
+   *
+   *  An href rather than a callback, so it is a real link -- middle-click and
+   *  "open in new tab" work, which is most of what makes the two views peers
+   *  rather than one being a launcher for the other. */
+  showInGraphHref?: string
   onClose: () => void
 }) => {
   // Escape closes it, the way it closes the drawers this console already has.
@@ -109,6 +119,11 @@ export const GraphDetail = ({
           <p className="mx-0 mt-[2px] mb-0 font-mono text-xs text-fg-dim">{node.entityType}</p>
         </div>
         <div className="flex shrink-0 gap-2">
+          {showInGraphHref && (
+            <a className="btn btn-sm" href={showInGraphHref}>
+              Show in graph
+            </a>
+          )}
           {/* "Remove from view", not "Delete": this takes a dot off a drawing
               and nothing else. A reader who thought this deleted an entity
               from the knowledge graph would never touch it. Rendered only
