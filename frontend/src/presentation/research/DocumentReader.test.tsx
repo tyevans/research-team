@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import type { ReactElement, ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
@@ -262,4 +262,55 @@ it('reports an error rather than an empty pane when the read fails', async () =>
   })
 
   expect(await screen.findByText(/boom/)).toBeInTheDocument()
+})
+
+it('says so when a video source cannot load its bytes', async () => {
+  // A dangling reference -- the record is in the corpus and the blob is gone,
+  // which the content route answers 410 for -- reaches this component as an
+  // `error` event on the element and nothing else. Before `onError` the pane
+  // rendered an inert black box, indistinguishable from a network hiccup or a
+  // codec this browser will not play, which is the one surface where the
+  // design's "detectable rather than silent" promise was not kept.
+  //
+  // Fired rather than provoked: jsdom loads no media and would never emit the
+  // event on its own, so the assertion is about what the handler does, not
+  // about when the browser calls it.
+  const documents = fakeDocuments(
+    vi.fn(() => {
+      throw new Error('read() must not be called for media')
+    }),
+  )
+
+  renderWithContainer(<DocumentReader projectId={PROJECT} sourceId={MEDIA} source={media()} />, {
+    documents,
+  })
+  fireEvent.error(await screen.findByTestId('media-player'))
+
+  expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument()
+  expect(screen.queryByTestId('media-player')).not.toBeInTheDocument()
+})
+
+it('says so when an image source cannot load its bytes', async () => {
+  // The `<img>` branch has its own `onError`, and would have kept the broken
+  // -image glyph if only the media elements had been wired. Covered
+  // separately for that reason: one test over `<video>` would pass with the
+  // image left silent.
+  const documents = fakeDocuments(
+    vi.fn(() => {
+      throw new Error('read() must not be called for media')
+    }),
+  )
+
+  renderWithContainer(
+    <DocumentReader
+      projectId={PROJECT}
+      sourceId={MEDIA}
+      source={media({ mediaType: 'image/png', title: 'A scan' })}
+    />,
+    { documents },
+  )
+  fireEvent.error(await screen.findByRole('img', { name: 'A scan' }))
+
+  expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument()
+  expect(screen.queryByRole('img', { name: 'A scan' })).not.toBeInTheDocument()
 })

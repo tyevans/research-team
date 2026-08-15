@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { queryKeys } from '@application/queries/keys.ts'
@@ -130,6 +131,34 @@ const MediaView = ({ projectId, source }: { projectId: ProjectId; source: MediaS
 }
 
 const Player = ({ url, label, mediaType }: { url: string; label: string; mediaType: string }) => {
+  // The one place a dangling reference is met by a person. The port
+  // distinguishes "no such source" from "record here, bytes gone" and the
+  // content route answers 410 for the second, but a `<video>` handed a 410
+  // renders an inert black box and an `<img>` a broken-image glyph -- neither
+  // says anything, and both look identical to a network hiccup or a codec
+  // this browser will not play. `onError` is the only signal the elements
+  // give, so it is what this hangs on.
+  //
+  // It deliberately does not claim *which* failure it was. The element
+  // reports an error with no status code, and re-fetching the URL to read one
+  // would be a second request whose answer could differ from the first -- so
+  // the message names the likely cause and the digest line below it stays
+  // rendered, which is what an operator needs to go and ask the route
+  // directly. Naming 410 outright would be a guess wearing a status code.
+  //
+  // No `onRetry`: retrying re-runs the same request, and the failure this is
+  // most often reporting (the blob is gone) does not heal by being asked
+  // twice. A reload is one keystroke away for the case that does.
+  const [failed, setFailed] = useState(false)
+  if (failed) {
+    return (
+      <ErrorBox
+        heading="These bytes could not be loaded. "
+        message={`The corpus still holds this source's record; its ${mediaType} bytes did not arrive. They may no longer be stored.`}
+      />
+    )
+  }
+
   // The stored mimetype's first segment and nothing cleverer. The server
   // already sniffed the bytes once at upload (`_sniff_media_type`) and nothing
   // re-sniffs a stored blob, so guessing again here could only disagree with
@@ -147,18 +176,32 @@ const Player = ({ url, label, mediaType }: { url: string; label: string; mediaTy
         data-testid="media-player"
         controls
         src={url}
+        onError={() => setFailed(true)}
         className="bg-black max-h-[60vh] w-full rounded-md"
       />
     )
   }
   if (mediaType.startsWith('audio/')) {
-    // Same trade as the video above, for the same missing transcript.
-    // eslint-disable-next-line jsx-a11y/media-has-caption
-    return <audio data-testid="media-player" controls src={url} className="w-full" />
+    return (
+      // Same trade as the video above, for the same missing transcript.
+      // eslint-disable-next-line jsx-a11y/media-has-caption
+      <audio
+        data-testid="media-player"
+        controls
+        src={url}
+        onError={() => setFailed(true)}
+        className="w-full"
+      />
+    )
   }
   if (mediaType.startsWith('image/')) {
     return (
-      <img src={url} alt={label} className="max-h-[60vh] max-w-full rounded-md object-contain" />
+      <img
+        src={url}
+        alt={label}
+        onError={() => setFailed(true)}
+        className="max-h-[60vh] max-w-full rounded-md object-contain"
+      />
     )
   }
   // A `<video>` pointed at a zip renders an empty black box and reports
