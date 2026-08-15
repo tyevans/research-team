@@ -45,17 +45,25 @@ it turns the adapter's most carefully-reasoned guard into a request parameter
 every future caller opts out of at will.
 """
 
+from collections.abc import AsyncIterator
 from uuid import UUID
 
 from eventsource.application.aggregates.repository import AggregateRepository
 
+from research_team.application.blobs import BlobStorePort
 from research_team.application.document_extraction import (
     CorpusReaders,
     OpenKnowledge,
     UnknownDocument,
 )
 from research_team.application.knowledge import MAX_DOCUMENT_CHARS, KnowledgeError, SourceRef
-from research_team.domain.corpus import Corpus, DropSourceDocument, StoreSourceDocument
+from research_team.domain.corpus import (
+    Corpus,
+    DropSourceDocument,
+    MediaRecord,
+    StoreSourceDocument,
+    StoreSourceMedia,
+)
 
 
 class DocumentExists(Exception):
@@ -84,10 +92,12 @@ class CorpusEditor:
         open_knowledge: OpenKnowledge,
         readers: CorpusReaders,
         corpus: AggregateRepository[Corpus],
+        blobs: BlobStorePort,
     ) -> None:
         self._open_knowledge = open_knowledge
         self._readers = readers
         self._corpus = corpus
+        self._blobs = blobs
 
     async def store(
         self,
@@ -131,6 +141,71 @@ class CorpusEditor:
                 published_at=published_at,
             )
         )
+
+    async def store_media(
+        self,
+        project_id: UUID,
+        source_id: str,
+        stream: AsyncIterator[bytes],
+        media_type: str,
+        *,
+        uri: str | None = None,
+        title: str | None = None,
+        note: str | None = None,
+        published_at: str | None = None,
+        fetched_at: str | None = None,
+    ) -> MediaRecord:
+        """Stream the bytes to the blob store, then record the claim.
+
+        Bytes first, deliberately: a rejected command then leaves an
+        unreferenced blob, which content addressing makes harmless -- the next
+        store of the same bytes adopts it. The other order would commit a
+        record whose bytes are not there, and a dangling reference is the one
+        failure this design promised to make loud rather than merely rare.
+        Cheap failure (an orphan blob) over expensive one (a record pointing
+        at nothing). `test_a_rejected_store_leaves_the_blob_and_no_record` is
+        what holds the order -- measured, not assumed: reordering the two
+        writes fails that test and only that test, because the blob exists at
+        the end of a *successful* store either way.
+
+        Takes no `sha256`. That absence is the whole mitigation for the domain
+        accepting a digest it did not compute; see `application/blobs.py`.
+        `test_store_media_takes_no_digest_from_its_caller` asserts the
+        signature directly, because it is the signature -- not this
+        docstring -- that keeps the claim true.
+
+        No existence check against text the way `store` has one: `decide`
+        already refuses `StoreSourceMedia` for a `source_id` a text record
+        holds (`corpus.py`'s `_kind_of` guard), and that refusal is the
+        aggregate's exactly as `drop`'s refusals are -- duplicating it here
+        would risk drifting from it, the same reasoning `store`'s own
+        docstring gives for leaving the blank-id and double-drop checks to
+        `decide`. A media `source_id` repeat is not creation the way a text
+        upload is, so there is no "upload means creation" rule to re-pay here.
+        """
+        stat = await self._blobs.put(stream)
+        corpus = await self._corpus.load_or_create(project_id)
+        corpus.execute(
+            StoreSourceMedia(
+                corpus_id=project_id,
+                source_id=source_id,
+                sha256=stat.sha256,
+                media_type=media_type,
+                byte_count=stat.byte_count,
+                uri=uri,
+                title=title,
+                published_at=published_at,
+                note=note,
+                fetched_at=fetched_at,
+            )
+        )
+        await self._corpus.save(corpus)
+        record = corpus.state.documents[source_id]
+        # Narrowing, not a check: `decide` refuses this command outright when
+        # the id holds text, so the only record it can have written here is a
+        # MediaRecord. The assert is what tells the type checker that.
+        assert isinstance(record, MediaRecord)
+        return record
 
     async def drop(self, project_id: UUID, source_id: str, reason: str) -> None:
         """Exclude a document, keeping its record and its text.

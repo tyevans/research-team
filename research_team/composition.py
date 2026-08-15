@@ -1492,6 +1492,7 @@ def build_application(
             repository.publisher,
             snapshot_store=repository.snapshot_store,
         ),
+        blobs=blob_store,
     )
     runs = build_research_run_repository(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store

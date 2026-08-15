@@ -10,6 +10,8 @@ the real adapter runs.
 """
 
 import hashlib
+import inspect
+from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
 import pytest
@@ -26,6 +28,13 @@ from research_team.application.corpus_read import SourceListing, StoredDocument
 from research_team.application.document_extraction import UnknownDocument
 from research_team.application.knowledge import MAX_DOCUMENT_CHARS, KnowledgeError, SourceRef
 from research_team.domain.corpus import Corpus, StoreSourceDocument, StoreSourceMedia
+from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
+
+
+async def chunks(payload: bytes) -> AsyncIterator[bytes]:
+    """A one-chunk stream -- `put` only needs an async iterator, not a real
+    multi-chunk transfer, to exercise the digest and byte count it computes."""
+    yield payload
 
 
 class FakeReader:
@@ -154,7 +163,12 @@ def knowledge(corpus_repo, project_id, texts) -> FakeKnowledge:
 
 
 @pytest.fixture
-def editor(corpus_repo, project_id, texts, knowledge) -> CorpusEditor:
+def blob_store(tmp_path) -> FilesystemBlobStore:
+    return FilesystemBlobStore(tmp_path / "blobs")
+
+
+@pytest.fixture
+def editor(corpus_repo, project_id, texts, knowledge, blob_store) -> CorpusEditor:
     async def open_knowledge(target_project_id: UUID) -> FakeKnowledge:
         return knowledge
 
@@ -162,6 +176,7 @@ def editor(corpus_repo, project_id, texts, knowledge) -> CorpusEditor:
         open_knowledge=open_knowledge,
         readers=lambda target_project_id: FakeReader(corpus_repo, target_project_id, texts),
         corpus=corpus_repo,
+        blobs=blob_store,
     )
 
 
@@ -363,3 +378,68 @@ async def test_restore_refuses_a_document_that_is_not_dropped(editor, project_id
 
     with pytest.raises(NotDropped):
         await editor.restore(project_id, "s1")
+
+
+async def test_store_media_puts_the_bytes_in_the_blob_store(editor, blob_store, project_id):
+    """A successful store leaves the bytes retrievable under their digest.
+
+    **This test does not hold the ordering, despite what an earlier draft of it
+    claimed.** Measured by reordering `store_media` to issue the command first
+    and stream after: this test still passed, because on a store that succeeds
+    the blob is there at the end either way. The ordering is held by
+    `test_a_rejected_store_leaves_the_blob_and_no_record` below, which was the
+    only failure under that reordering. What is left here is still worth
+    asserting -- that `put` was called at all, with the whole stream -- and
+    `byte_count` is the part that would fail if a chunk were dropped.
+    """
+    await editor.store_media(project_id, "v1", chunks(b"payload"), "video/mp4")
+
+    stat = await blob_store.stat(hashlib.sha256(b"payload").hexdigest())
+    assert stat is not None and stat.byte_count == 7
+
+
+async def test_a_rejected_store_leaves_the_blob_and_no_record(
+    editor, blob_store, corpus_repo, project_id
+):
+    """The orphan is accepted, deliberately. Assert it rather than pretend.
+
+    Documents the cost so nobody later "fixes" it by reordering the writes and
+    reintroduces the dangling reference -- and it is the *only* test that would
+    catch that reordering, measured by making it: the blob assertion below goes
+    from present to None, and no other test in this file moves.
+
+    The record half is asserted too, because the name promises it: the text
+    record `s1` already held must survive unchanged rather than be superseded
+    by a media one, which is the refusal `decide`'s `_kind_of` guard exists for.
+    """
+    await editor.store(project_id, "s1", "prose")
+
+    with pytest.raises(CommandRejectedError):
+        await editor.store_media(project_id, "s1", chunks(b"payload"), "video/mp4")
+
+    assert await blob_store.stat(hashlib.sha256(b"payload").hexdigest()) is not None
+    corpus = await corpus_repo.load_or_create(project_id)
+    assert corpus.state.documents["s1"].kind == "text"
+
+
+async def test_the_recorded_digest_is_the_one_the_store_computed(editor, project_id):
+    """`store_media` has no digest parameter, and this asserts the consequence.
+
+    The mitigation for the domain taking a digest on trust is that no call site
+    can supply one. If a parameter is ever added, this test still passes -- so
+    it is paired with a signature assertion below, which does not.
+    """
+    record = await editor.store_media(project_id, "v1", chunks(b"payload"), "video/mp4")
+
+    assert record.sha256 == hashlib.sha256(b"payload").hexdigest()
+
+
+def test_store_media_takes_no_digest_from_its_caller() -> None:
+    """The signature is the mitigation, so the signature is asserted.
+
+    Reads as a strange test and is the honest one: `application/blobs.py`
+    claims a wrong digest requires a bug in the store rather than a mistake at
+    a call site, and that claim is only true while this parameter list has no
+    `sha256` in it.
+    """
+    assert "sha256" not in inspect.signature(CorpusEditor.store_media).parameters
