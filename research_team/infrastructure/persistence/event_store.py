@@ -60,6 +60,7 @@ UNROUTED_AGGREGATE_TYPES = frozenset(
     {
         ResearchRun.aggregate_type,
         LearnerProgress.aggregate_type,
+        EntityJudgements.aggregate_type,
     }
 )
 """Aggregate types deliberately kept off the feed, and the other half of the guard.
@@ -79,7 +80,15 @@ emits -- its own frames would be a second signal for the same repaint. See
 opening a lesson and written by the reader who is already looking at it, so a
 frame would arrive at the one client that does not need telling.
 
-Neither is a *correctness* argument, and if either grows a pane the answer is
+`EntityJudgements` is off because nothing renders a judgement. The events a
+human's decision produces are consumed by consolidation, not by a view, and
+what a viewer would actually want to see repaint is the *merge* that follows --
+which is redstring's own event on the graph's stream, already routed. This is
+the entry to revisit when the aliases panel lands (piece 3 of the entity-
+judgements design): a panel listing what you have taught the project is a view
+of these events, and then it belongs on the feed.
+
+None is a *correctness* argument, and if any grows a pane the answer is
 to move it into `FEED_AGGREGATE_TYPES` and give `_sse` a branch -- not to
 widen this set.
 """

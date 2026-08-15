@@ -13,7 +13,10 @@ from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from redstring import InMemoryGraphStore
 
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
-from research_team.infrastructure.persistence.event_store import build_corpus_repository
+from research_team.infrastructure.persistence.event_store import (
+    build_corpus_repository,
+    build_judgements_repository,
+)
 from tests.conftest import fake_provider
 
 
@@ -50,6 +53,7 @@ async def build_adapter():
         adjudicate=False,
         embeddings=None,
         vector_store=None,
+        judgements=False,
         **knowledge_kwargs,
     ):
         db_path = str(tmp_path / "sessions.db")
@@ -75,6 +79,17 @@ async def build_adapter():
                 adjudicate=adjudicate,
                 embeddings=embeddings,
                 vector_store=vector_store,
+                # A flag rather than a repository, because the repository has
+                # to be built over the store this factory creates and a caller
+                # cannot reach it until after the call returns. Off by default
+                # for the same reason `embeddings` is: a test about the
+                # adapter's bookkeeping should not pay an event-store read per
+                # consolidation to load an empty judgement set.
+                judgements=(
+                    build_judgements_repository(store, snapshot_store=snapshot_store)
+                    if judgements
+                    else None
+                ),
                 # `concurrency` and `chunker` reach `RedstringKnowledge`
                 # through here rather than as named parameters. Both default
                 # to redstring's serial behaviour, so every test that does not

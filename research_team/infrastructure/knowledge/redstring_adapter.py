@@ -43,6 +43,7 @@ from redstring import (
     build_graph,
     document_stream,
 )
+from redstring.consolidation.candidates import CandidateFinder
 
 from research_team.application.knowledge import (
     ExtractionNote,
@@ -54,7 +55,8 @@ from research_team.application.knowledge import (
     SourceRef,
 )
 from research_team.application.retry import with_retry
-from research_team.domain import Corpus, StoreSourceDocument
+from research_team.domain import Corpus, EntityJudgements, StoreSourceDocument
+from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +211,7 @@ class RedstringKnowledge:
         vector_store: VectorStore | None = None,
         concurrency: int = 1,
         chunker: Chunker | None = None,
+        judgements: AggregateRepository[EntityJudgements] | None = None,
     ) -> None:
         self._project_id = project_id
         self._store = store
@@ -226,6 +229,13 @@ class RedstringKnowledge:
         # someone forgets. There are few construction sites and they all have
         # a repository to hand.
         self._corpus = corpus
+        # Optional, and the default is what keeps every existing construction
+        # site honest: with no repository there is no finder, `resolve` falls
+        # back to its own, and consolidation is byte-identical to before this
+        # existed. The repository rather than a snapshot of its state, because
+        # `reconsolidate` is a separate entry point that must see judgements
+        # made since the last ingest.
+        self._judgements = judgements
         self._domain = AUTO if domain == "auto" else domain
         # Both stores, deliberately. With either omitted the consolidator
         # substitutes an in-memory log and `undo` becomes session-only --
@@ -590,6 +600,39 @@ class RedstringKnowledge:
 
         await with_retry(store, what=f"storing {source.source_id!r}")
 
+    async def _judged_finder(self):
+        """The candidate source for one `_consolidate` run, or None for the default.
+
+        **Built once per run, not once per entity.** An ingest resolves every
+        extracted entity in a loop, and a human cannot record a judgement
+        part-way through that loop, so loading the aggregate per entity would
+        be one event-store read each to re-learn something that cannot have
+        changed. `reconsolidate` is the case that makes the repository rather
+        than a captured state the right thing to hold: it is a separate entry
+        point and must see judgements made since the last ingest.
+
+        None when no repository was supplied. `resolve` reads that as "use my
+        own default finder", so the call site needs no branch -- and an empty
+        judgement set makes `JudgedCandidates` a passthrough anyway, so the two
+        paths agree on behaviour rather than merely on outcome.
+
+        `CandidateFinder` is constructed with the same arguments the
+        `Consolidator` was given: the store and the vector store, with
+        `weights` and `use_graph_signal` left at redstring's defaults.
+        Deliberately no `weights=` here -- 6c2ae4a withdrew a reweight for lack
+        of evidence, and a second one hidden inside the finder would be the
+        same mistake somewhere harder to find.
+        """
+        if self._judgements is None:
+            return None
+        judgements = await self._judgements.load_or_create(self._project_id)
+        return JudgedCandidates(
+            CandidateFinder(self._store, vector_store=self._vectors),
+            graph_store=self._store,
+            tenant_id=self._project_id,
+            judgements=judgements.state,
+        )
+
     async def _consolidate(
         self, entities, *, announce=_no_announcement
     ) -> tuple[list[MergeRecord], int]:
@@ -615,11 +658,12 @@ class RedstringKnowledge:
         merges: list[MergeRecord] = []
         failures = 0
         total = len(entities)
+        finder = await self._judged_finder()
         for position, entity in enumerate(entities, start=1):
             announce("consolidating", index=position, total=total, detail=entity.name)
             try:
                 report = await self._consolidator.resolve(
-                    entity, adjudicator=self._adjudicator
+                    entity, adjudicator=self._adjudicator, finder=finder
                 )
             except RedstringError as error:
                 # The comment that used to be here said this is "typically the
