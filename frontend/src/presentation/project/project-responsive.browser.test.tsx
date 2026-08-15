@@ -11,6 +11,7 @@ import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-stor
 import { OverlayHost } from '@presentation/layout/OverlayHost.tsx'
 import { StreamProvider } from '@presentation/shell/StreamProvider.tsx'
 
+import { resizeViewport, restoreViewport } from '../../test/browser-viewport.ts'
 import { ProjectView } from './ProjectView.tsx'
 
 /** What the project page does between 821px and 1180px, which until this file
@@ -35,8 +36,11 @@ import { ProjectView } from './ProjectView.tsx'
  * was needed.
  *
  * The two costs of that, both handled below rather than discovered: the
- * viewport is global to the run and nothing else restores it (see `afterEach`),
- * and awaiting the resize is not awaiting the re-render (see `widen`).
+ * viewport is global to the run and nothing else restores it, and awaiting the
+ * resize is not awaiting the re-render. Both now live in
+ * `src/test/browser-viewport.ts` rather than here — this file's own `widen()`
+ * is one of the three failed readings that module's docstring records, and it
+ * was deleted rather than kept beside it.
  */
 
 const ATLAS = ProjectId('11111111-1111-1111-1111-111111111111')
@@ -141,33 +145,7 @@ const box = (id: string) => pane(id).getBoundingClientRect()
  *  three is `Split`'s inline template above the breakpoint. */
 const columns = () => getComputedStyle(split()).gridTemplateColumns.split(' ')
 
-/** Resize and wait for React to have re-rendered on the other side of it.
- *
- * `page.viewport` resolves when the iframe has been resized, which is not when
- * `matchMedia` has fired, `useWide`'s `useSyncExternalStore` subscription has
- * observed it and React has committed.
- *
- * **Polling `window.innerWidth` is not enough, and this helper did that first.**
- * It is downstream of the resize and upstream of the render: claim 1 read three
- * columns at 1000px on the first run, because `innerWidth` already said 1000
- * while `Split` still had `wide === true` and its inline three-track template
- * still on the element. The poll has to be on something React writes, so it is
- * the inline style: `splitTemplate` returns `undefined` below `--bp-wide` and
- * React omits the property entirely, which is the same handoff the stylesheet
- * relies on. */
-const widen = async (width: number) => {
-  await page.viewport(width, 900)
-  await expect.poll(() => split().style.gridTemplateColumns === '').toBe(width < 1181)
-}
-
-// Nothing else resets it. The viewport is global to the whole browser run
-// (`vite.config.ts:288` sets 1440x900 once) and no other file in the suite
-// touches it, so a test here that resized and did not restore would leak into
-// every sibling that happens to run after it -- in file order, which is the
-// kind of failure that reads as flakiness.
-afterEach(async () => {
-  await page.viewport(1440, 900)
-})
+afterEach(restoreViewport)
 
 /** Claim 1. In the 821-1180 band the project split is two columns with MATERIAL
  *  wrapped beneath them -- not the single column it resolved to for the whole
@@ -183,7 +161,7 @@ afterEach(async () => {
  */
 it('gives the project split two columns and a wrapped MATERIAL between 821 and 1180', async () => {
   await show()
-  await widen(1000)
+  await resizeViewport(1000)
 
   expect(columns()).toHaveLength(2)
 
@@ -232,7 +210,7 @@ it('gives the project split two columns and a wrapped MATERIAL between 821 and 1
  */
 it('keeps every region above its floor in the band', async () => {
   await show()
-  await widen(1000)
+  await resizeViewport(1000)
 
   expect(box('queue').width).toBeGreaterThanOrEqual(280)
   expect(box('holder').width).toBeGreaterThanOrEqual(320)
@@ -267,7 +245,7 @@ it('keeps every region above its floor in the band', async () => {
  */
 it('gives a folded flank its rail width in the band', async () => {
   await show()
-  await widen(1000)
+  await resizeViewport(1000)
 
   await page.getByRole('button', { name: 'Collapse Queue' }).click()
   await expect.poll(() => box('queue').width).toBeCloseTo(34, 0)
@@ -303,7 +281,7 @@ it('gives a folded flank its rail width in the band', async () => {
  */
 it('rails both flanks when both are folded', async () => {
   await show()
-  await widen(1000)
+  await resizeViewport(1000)
 
   await page.getByRole('button', { name: 'Collapse Queue' }).click()
   await expect.poll(() => box('queue').width).toBeCloseTo(34, 0)
@@ -353,7 +331,7 @@ it('rails both flanks when both are folded', async () => {
  */
 it('clears QUEUE’s measured floor at the bottom of the band', async () => {
   await show()
-  await widen(821)
+  await resizeViewport(821)
 
   expect(columns()).toHaveLength(2)
   expect(box('queue').width).toBeGreaterThanOrEqual(344)
@@ -387,9 +365,9 @@ it('clears QUEUE’s measured floor at the bottom of the band', async () => {
  */
 it('hands the layout back to Split at 1181', async () => {
   await show()
-  await widen(1181)
+  await resizeViewport(1181)
   expect(columns()).toHaveLength(3)
 
-  await widen(1180)
+  await resizeViewport(1180)
   expect(columns()).toHaveLength(2)
 })

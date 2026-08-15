@@ -14,6 +14,7 @@ import { OverlayHost } from '@presentation/layout/OverlayHost.tsx'
 import { Shell } from '@presentation/layout/Shell.tsx'
 import { StreamProvider } from '@presentation/shell/StreamProvider.tsx'
 
+import { resizeViewport, restoreViewport } from '../../test/browser-viewport.ts'
 import { SessionView } from './SessionView.tsx'
 
 /** What the session page does below `--bp-wide`, in both of the two bands under
@@ -137,54 +138,16 @@ const clipped = () =>
       (el) => `${el.className || el.tagName} ${String(el.scrollWidth)}/${String(el.clientWidth)}`,
     )
 
-/** Resize, and wait for both React and the browser to be on the other side of
- *  it.
- *
- * **Neither half of this poll is optional, and the first version of this helper
- * had only the first — which made it a no-op.** `data-collapse-to` is `'rail'`
- * at 1440 and `'rail'` at 821, so a 1440 → 821 resize satisfied it on the first
- * tick and the probe read the *1440* layout: a template of
- * `280px 320px 280px`, `Split`'s inline three-track template still on the
- * element, and a conversation 880px wide in an 821px viewport. This is the
- * same shape of failure the plan warns about in `widen()`, reached from the
- * other side.
- *
- * So the attribute proves React re-rendered where that boundary moves
- * (`Pane.tsx:126` flips it at 821), and the computed geometry proves the
- * browser re-laid-out where it does not — two columns in the band, a flex
- * column below it. The template is deliberately *not* used as the below-821
- * signal: the split is `display: flex` there, so `grid-template-columns`
- * computes to `none` and `'none'.split(' ')` has length 1, which is
- * indistinguishable from a genuine single-column defect.
- *
- * It is read through `getPropertyValue` rather than through the camel-cased
- * property, because `check-deleted.mjs` forbids that identifier anywhere under
- * the session view — phase A deleted a hand-built session grid and the rule is
- * what stops one coming back. Reading the browser's own answer is not that, but
- * the rule cannot tell, and a rule loosened for a test is worth less than one
- * spelling. */
-const at = async (width: number, height = 900) => {
-  await page.viewport(width, height)
-  await expect
-    .poll(() => pane('timeline').getAttribute('data-collapse-to'))
-    .toBe(width < 821 ? 'strip' : 'rail')
-  await expect
-    .poll(() =>
-      width < 821
-        ? getComputedStyle(split()).flexDirection
-        : String(
-            getComputedStyle(split()).getPropertyValue('grid-template-columns').split(' ').length,
-          ),
-    )
-    .toBe(width < 821 ? 'column' : '2')
-}
-
-// Nothing else resets it: the viewport is global to the whole browser run
-// (`vite.config.ts` sets 1440x900 once) and a file that resized without
-// restoring would leak into every sibling that ran after it, in file order.
-afterEach(async () => {
-  await page.viewport(1440, 900)
-})
+// This file's `at()` is now `resizeViewport` in `src/test/browser-viewport.ts`,
+// which keeps both halves of its poll for the reason this file discovered them:
+// `data-collapse-to` is `'rail'` on both sides of 1440 → 821, so an
+// attribute-only poll returned with the 1440 layout still on the element — an
+// inline `280px 320px 280px` and an 880px conversation in an 821px viewport.
+// The shared helper still reads grid templates through `getPropertyValue`,
+// because `check-deleted.mjs` forbids the camel-cased identifier anywhere under
+// the session view and a rule loosened for a test is worth less than one
+// spelling.
+afterEach(restoreViewport)
 
 /** Claim 1. **B60.** Folding *both* session flanks rails both of them.
  *
@@ -213,7 +176,7 @@ afterEach(async () => {
  */
 it('rails both session flanks when both are folded', async () => {
   await show()
-  await at(1000)
+  await resizeViewport(1000)
 
   await page.getByRole('button', { name: 'Collapse Event log' }).click()
   await expect.poll(() => box('timeline').width).toBeCloseTo(34, 0)
@@ -280,7 +243,7 @@ it('rails both session flanks when both are folded', async () => {
  */
 it('clears both declared floors at the bottom of the band, and clips nothing', async () => {
   await show()
-  await at(821)
+  await resizeViewport(821)
 
   expect(box('timeline').width).toBeGreaterThanOrEqual(280)
   expect(box('workspace').width).toBeGreaterThanOrEqual(320)
@@ -335,7 +298,7 @@ it('clears both declared floors at the bottom of the band, and clips nothing', a
  */
 it('stacks into a scrolling page below 821', async () => {
   await show()
-  await at(700)
+  await resizeViewport(700)
 
   const timeline = box('timeline')
   const workspace = box('workspace')
