@@ -1021,16 +1021,79 @@ not be attributed to a document, and a per-entity consolidation opt-out. Note
 `rebuild.py` replays `strict=True` with one projection, so a new event type
 without a handler fails project open rather than degrading.
 
-### B16. Bulk ingest reports no progress
+### B62. A queued extraction is an intention, and a restart loses it
 
-`build_graph` takes no progress callback, and `build_knowledge_tools`
-(`research_team/infrastructure/agent/knowledge_tools.py`) takes no
-`ActivityReporter`. One document is tolerable. Forty documents behind a single
-opaque `await`, in a UI that streams token-level deltas for everything else, is
-not.
+`ExtractionQueue` (`research_team/interfaces/web/extraction_queue.py`) is
+provisional in the same way `DispatchQueue` is: queued / running / done is not
+a fact the log records. Press "extract all" against forty documents, restart
+the process a minute later, and thirty-nine of them are simply gone -- the
+catch-up route answers with an empty queue, and nothing anywhere says work was
+ever asked for.
 
-Blocking for corpus construction at any real scale, which is the only reason it
-is not filed as a nicety.
+This is worse here than it is for dispatch, and the reason is worth keeping.
+`DispatchQueue`'s docstring already argues that losing a queued *intention* is
+worse than losing a running *process*, because nobody chose the process.
+"Extract all" is the largest single intention this UI can express -- one press
+standing for an entire corpus -- and it is the one most likely to be left
+running unattended, which is exactly when a restart is not noticed.
+
+The partial mitigation that already exists: extraction is idempotent in effect
+and `extracted_at` is durable, so pressing the button again after a restart
+re-queues precisely what was lost and nothing else. That is why this is filed
+rather than fixed -- the recovery is one press, and it is discoverable because
+the rows still read as unextracted.
+
+The fix, when it is worth it, is not a queue aggregate. It is noticing that
+"which documents lack a graph" is already a durable query
+(`DocumentExtractor.unextracted`), so a queue that rebuilt itself from the
+corpus on start would restore the intention without inventing four events and
+a decision about what an `ExtractionStarted` with no terminal event means. The
+trigger is somebody actually losing a long bulk run.
+
+### B63. The extraction queue cannot push, so a second tab goes stale
+
+The queue deliberately publishes no frames and has no SSE pump: `ExtractionActivity`
+already streams the running document's stages, and a second channel saying
+"this is running" beside one already saying `extracting, chunk 3 of 40` would
+be two accounts of one thing that can disagree. The client refreshes the
+catch-up route when a terminal extraction frame arrives.
+
+What that leaves: **a queue change with no extraction frame behind it is not
+pushed anywhere.** Queue six documents in one tab and a second tab's rows do
+not move until something else refreshes them. Enqueueing produces no frame at
+all, so the staleness starts at the press and lasts until the first document
+finishes.
+
+Single-user, second-tab-only, in a local tool -- which is the whole reason it
+was accepted. The fix is a frame type, a pump, a `decodeFrame` case and a
+client store, and it should not be bought until somebody is genuinely running
+two tabs against one project. If it is ever bought, the thing to preserve is
+that the *running* item keeps exactly one account of itself: the new frames
+should carry queue membership only, not progress.
+
+### B16. Premise superseded -- one ingest reports, and the forty-document case is now a queue
+
+This said `build_graph` takes no progress callback and `build_knowledge_tools`
+takes no `ActivityReporter`, so forty documents sat behind a single opaque
+`await` in a UI that streams token-level deltas for everything else.
+
+The second clause is now simply false: `build_knowledge_tools`
+(`research_team/infrastructure/agent/knowledge_tools.py:78-84`) takes
+`report: ExtractionReporter | None`, `ExtractionActivity` buffers those notes
+per project, and `ExtractionNote` carries `index` / `total` / `model_calls`,
+so a chunked extraction reports where it has got to. Verified against the
+signature on 2026-08-14, not reasoned.
+
+The first clause was never really about `build_graph`: what "forty documents"
+described was a bulk operation with no per-document account. That case now
+exists for real -- "extract all" on the Documents page -- and it is answered by
+`ExtractionQueue` plus its catch-up route rather than by a callback. What it
+inherits instead are B62 (a restart loses the queue) and B63 (the queue cannot
+push), which is where the remaining work on this actually lives.
+
+Left as a corrected entry rather than deleted, following B55: an entry the
+repository acted on for months is worth more as a record of what changed than
+as an absence.
 
 ### B34. The live feed reads whole extractions to say "something happened"
 
