@@ -47,10 +47,7 @@ export const TimelinePane = ({
   onEntity: (id: string | null) => void
 }) => {
   const { timelines, graphs } = useContainer()
-  const store = useMemo(
-    () => createTimelineStore({ timelines, projectId }),
-    [timelines, projectId],
-  )
+  const store = useMemo(() => createTimelineStore({ timelines, projectId }), [timelines, projectId])
   const { timeline, loading, error, entityType } = store()
 
   const [detail, setDetail] = useState<Neighborhood | null>(null)
@@ -172,9 +169,7 @@ export const TimelineBrowser = ({
         // extracted". Without it a reader meeting this goes looking for an
         // extraction failure that did not happen.
         detail={
-          timeline.undatedCount > 0
-            ? `${timeline.undatedCount} entities carry no dates`
-            : undefined
+          timeline.undatedCount > 0 ? `${timeline.undatedCount} entities carry no dates` : undefined
         }
       />
     )
