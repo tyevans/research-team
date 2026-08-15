@@ -45,6 +45,7 @@ from research_team.application.grading import GradingError, grade
 from research_team.application.graph_read import (
     MAX_GRAPH_NODES,
     MAX_NEIGHBORHOOD_DEPTH,
+    MAX_USAGES,
     GraphReadPort,
 )
 from research_team.application.ports import ActivityDelta, ActivityMessage
@@ -67,6 +68,7 @@ from research_team.domain.topic import (
     TopicStatus,
 )
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
+from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.event_store import KNOWLEDGE_CATEGORIES
@@ -105,6 +107,7 @@ from research_team.interfaces.web.presenters import (
     topic_documents_view,
     topic_view,
     tree_view,
+    usages_view,
 )
 from research_team.interfaces.web.seeding import SeedingActivity
 from research_team.workflows import PRESETS
@@ -1297,6 +1300,52 @@ def create_app(
                 status_code=404, detail=f"no such entity in project {project_id}"
             )
         return neighborhood_view(hood)
+
+    async def _usage_reader(project_id: UUID) -> UsageReader:
+        """This project's `UsageReadPort`, over the graph and chunk stores
+        `graphs` already owns.
+
+        503 rather than 404 when either store is unwired, matching
+        `_graph_reader`: a build with chunking off (`AGENT_CHUNK_STORE=none`)
+        is a valid thing to serve, and the caller needs to know the server
+        cannot answer rather than that the entity has no usages.
+
+        `open` first, the same call `_graph_reader` makes: it is what builds
+        this project's chunk store on first use (see `ProjectGraphs.open`),
+        and it is idempotent, so a usages request that lands before any graph
+        route has still opened the project gets a store rather than a 503
+        that only means "nobody happened to ask for the graph yet".
+        """
+        if graphs is None:
+            raise HTTPException(status_code=503, detail="no graph read model is configured")
+        store = await graphs.open(project_id)
+        chunk_store = graphs.chunks(project_id)
+        if chunk_store is None:
+            raise HTTPException(status_code=503, detail="no chunk store is configured")
+        return UsageReader(store, chunk_store, project_id)
+
+    @app.get("/api/projects/{project_id}/graph/entities/{entity_id}/usages")
+    async def read_graph_usages(project_id: UUID, entity_id: UUID, limit: int = MAX_USAGES):
+        """Passages naming `entity_id`, best matches first.
+
+        A separate endpoint from the entity definition that follows in a
+        later task, not a field folded into the same response: a definition
+        may cost an LLM call, usages are a cheap deterministic BM25 lookup
+        over an already-open chunk store, and a combined endpoint would make
+        every caller wait for the slow half to get the fast one.
+
+        `limit` above `MAX_USAGES` is refused with 422 rather than clamped,
+        unlike `whole`'s `limit` -- see `MAX_USAGES`'s docstring for why the
+        two asks are different.
+        """
+        if limit > MAX_USAGES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"limit {limit} exceeds the maximum of {MAX_USAGES}",
+            )
+        await _require_project(project_id)
+        reader = await _usage_reader(project_id)
+        return usages_view(await reader.usages(entity_id, limit=limit))
 
     @app.post("/api/sessions/{session_id}/release")
     async def release_session(session_id: UUID):

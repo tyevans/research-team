@@ -38,6 +38,7 @@ from research_team.application.graph_read import (
 )
 from research_team.application.research_supervisor import ActiveRun
 from research_team.application.topic_read import TopicDetail, TopicView
+from research_team.application.usages import Usage
 from research_team.domain import (
     AutonomyChanged,
     ConversationCompacted,
@@ -816,6 +817,24 @@ def neighborhood_view(neighborhood: Neighborhood) -> dict[str, Any]:
         "relationships": [
             relationship_view(relationship) for relationship in neighborhood.relationships
         ],
+    }
+
+
+def usages_view(usages: list[Usage]) -> dict[str, Any]:
+    """`GET .../usages`, best matches first -- already the order `UsageReader`
+    returns, so there is nothing to re-sort here.
+    """
+    return {
+        "usages": [
+            {
+                "source_id": usage.source_id,
+                "start": usage.start,
+                "end": usage.end,
+                "text": usage.text,
+                "score": usage.score,
+            }
+            for usage in usages
+        ]
     }
 
 

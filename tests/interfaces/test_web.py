@@ -10,7 +10,13 @@ import pytest
 from eventsource.ports.positions import ExpectedVersion
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
-from redstring import DatePrecision, DocumentExtracted, TemporalExtent, document_stream
+from redstring import (
+    DatePrecision,
+    DocumentExtracted,
+    StoredChunk,
+    TemporalExtent,
+    document_stream,
+)
 
 from research_team.application import GATED_TOOLS, SummaryProjects, WorkerRoster
 from research_team.application.autonomy import ADVANCE_STAGE_TOOL
@@ -3760,6 +3766,76 @@ async def test_graph_routes_503_when_no_graph_reader_is_configured(app_and_clien
 
     assert listing.status_code == 503
     assert neighborhood.status_code == 503
+
+
+# ---------------- graph usages ----------------
+
+
+async def _project_with_a_usage(application, client) -> tuple[str, UUID]:
+    """A project holding one entity and one chunk that names it.
+
+    Seeded straight through `GraphStore.upsert_entities` and
+    `ChunkStore.upsert_many`, the same shortcut `_project_with_graph` and
+    `test_usage_reader.py` take -- what is under test is the route, not
+    chunking or extraction.
+    """
+    created = await client.post("/api/projects", json={"name": f"usages-{uuid4()}"})
+    assert created.status_code == 200
+    project_id = created.json()["id"]
+    tenant_id = UUID(project_id)
+
+    store = await application.graphs.open(tenant_id)
+    entity_id = uuid4()
+    await store.upsert_entities([_graph_entity(entity_id, tenant_id, "Acme Corp")])
+
+    chunk_store = application.graphs.chunks(tenant_id)
+    text = "Acme Corp builds rockets in Texas."
+    await chunk_store.upsert_many(
+        [
+            StoredChunk(
+                id="chunk-1",
+                tenant_id=tenant_id,
+                source_id="doc-1",
+                text=text,
+                chunk_index=0,
+                start_char=0,
+                end_char=len(text),
+            )
+        ]
+    )
+    return project_id, entity_id
+
+
+async def test_usages_returns_passages_with_offsets(app_and_client):
+    application, client = app_and_client
+    project_id, entity_id = await _project_with_a_usage(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities/{entity_id}/usages"
+    )
+
+    assert response.status_code == 200
+    first = response.json()["usages"][0]
+    assert first["source_id"] and first["end"] > first["start"]
+
+
+async def test_usages_for_an_unknown_project_is_a_404(client):
+    response = await client.get(f"/api/projects/{uuid4()}/graph/entities/{uuid4()}/usages")
+
+    assert response.status_code == 404
+
+
+async def test_a_usages_limit_above_the_cap_is_refused_rather_than_clamped(app_and_client):
+    """A caller asking for 10,000 passages has misunderstood the endpoint,
+    and silently handing back `MAX_USAGES` would teach them it worked."""
+    application, client = app_and_client
+    project_id, entity_id = await _project_with_a_usage(application, client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities/{entity_id}/usages?limit=10000"
+    )
+
+    assert response.status_code == 422
 
 
 # ---------------- topic seeding ----------------
