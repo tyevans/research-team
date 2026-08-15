@@ -9,7 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -160,6 +160,20 @@ KEEPALIVE_SECONDS = 15.0
 
 DISCONNECT_CHECK = 0.5
 """How long we may sit unaware that the browser has gone."""
+
+DefinitionReaders = Callable[[UUID], Awaitable["DefinitionService | None"]]
+"""One project's `DefinitionService`, built on demand, or `None` when this
+build cannot make one.
+
+A callable for `TopicReaders`' reason, awaitable for one more: a
+`DefinitionService` is assembled from that project's graph store, that
+project's chunk store and a project-bound view of the definition cache, and
+opening the graph store is asynchronous. `project_id` is in the route's path
+and has to reach all three -- a single shared `DefinitionService` would
+answer every project out of whichever one it was built for, and because the
+cache port takes no project argument (deliberately; see
+`application/entity_definitions.py`) it would write those answers into that
+project's rows too."""
 
 TopicReaders = Callable[[UUID], TopicReadPort]
 """One project's `TopicReadPort`, built on demand.
@@ -457,7 +471,7 @@ def create_app(
     ask: AskService | None = None,
     extractor: DocumentExtractor | None = None,
     extract_queue: ExtractionQueue | None = None,
-    definitions: DefinitionService | None = None,
+    definitions: DefinitionReaders | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -1355,17 +1369,13 @@ def create_app(
         """`entity_id`'s grounded definition, generated on first ask and
         cached from then on -- see `DefinitionService.define`.
 
-        **503, not a missing route, until Task 10b lands.** `definitions` has
-        no composition-root wiring yet: there is no `DefinitionTextPort`
-        adapter for a real model, and `EntityDefinitionStore` (the cache) is
-        currently constructed privately inside `EntityDefinitionRunner`
-        (`read_models.py`) with no way for this route to reach it. Ruled in
-        task planning to be its own task rather than folded in here, because
-        the route's contract (status codes, view shape, the 200-vs-404 call
-        below) and the wiring's concerns (per-project store lifetime, where
-        the model client comes from) fail in different ways and deserve
-        separate review. A build without `definitions` wired is expected to
-        answer 503 here for now -- see that task's report once it lands.
+        **503 only when nothing is wired.** `definitions` is now supplied by
+        the composition root (`Application.definition_readers`), so the
+        503 below means a caller built this app without it -- a test fixture,
+        or a build with no chunk store, which is the second 503 further down.
+        It is a factory rather than one service because the cache, the graph
+        and the chunk store behind it are all bound to `project_id`; see
+        `DefinitionReaders`.
 
         **200 with a null `text`, not 404, when `define` returns `None`.**
         `entity_id` is a real node in the graph; it is merely undefinable
@@ -1394,7 +1404,14 @@ def create_app(
         await _require_project(project_id)
         if definitions is None:
             raise HTTPException(status_code=503, detail="no definition service is configured")
-        return definition_view(await definitions.define(entity_id))
+        service = await definitions(project_id)
+        if service is None:
+            # A build with no chunk store cannot ground a definition in
+            # passages, and a definition citing nothing is refused anyway --
+            # see `definition_reader` in `composition.py`. The same 503 the
+            # usages route above answers for the same absence.
+            raise HTTPException(status_code=503, detail="no chunk store is configured")
+        return definition_view(await service.define(entity_id))
 
     @app.post("/api/sessions/{session_id}/release")
     async def release_session(session_id: UUID):

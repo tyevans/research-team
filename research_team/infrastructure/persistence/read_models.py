@@ -1353,6 +1353,36 @@ class EntityDefinitionRunner:
             projection_name=self.projection_name, limit=limit
         )
 
+    async def get(self, project_id: UUID, entity_id: UUID) -> EntityDefinitionRow | None:
+        """This project's cached definition of `entity_id`, if there is one.
+
+        Delegated the way `CorpusRunner.get` is, rather than handing the
+        `EntityDefinitionStore` out through a property, and the reason is
+        `rebuild()`: it closes the store and opens another one. A caller
+        holding the store would go on calling a closed connection, silently,
+        after a repair -- where a caller holding the runner reaches whichever
+        store is current on every call. That is also what keeps the route's
+        cache and this projection's invalidation the *same* table: there is
+        one owner of the connection, and it is this object.
+        """
+        if self._definitions is None:
+            raise RuntimeError("the entity definition projection has not been started")
+        return await self._definitions.get(project_id, entity_id)
+
+    async def put(self, row: EntityDefinitionRow) -> None:
+        """Store a generated definition, superseding whatever was cached.
+
+        The write half of `get`, for the same one-owner reason. This
+        projection never calls it -- see the class docstring on why
+        generation and invalidation are split -- but the generating service
+        reaches the table through here so that both halves go through one
+        connection rather than two that would each cache the other's stale
+        reads.
+        """
+        if self._definitions is None:
+            raise RuntimeError("the entity definition projection has not been started")
+        await self._definitions.put(row)
+
     async def rebuild(self) -> None:
         """Reset the checkpoint and replay, without truncating the table.
 

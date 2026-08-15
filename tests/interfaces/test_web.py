@@ -3844,12 +3844,13 @@ async def test_a_usages_limit_above_the_cap_is_refused_rather_than_clamped(app_a
 # `DefinitionService` (Task 9) is exercised here through fakes matching
 # `tests/application/test_entity_definitions.py`'s own -- these tests are
 # about the route's status codes and view shape, not about grounding, which
-# that suite already covers. Built directly rather than through
-# `application.graphs`/`_started`, because the route needs a wired
-# `DefinitionService` and nothing in `composition.py` builds one yet: that
-# wiring is Task 10b (a real LLM adapter and per-project `EntityDefinitionStore`
-# access), tracked separately so this endpoint answers 503 until it lands --
-# see `_definition_service`'s docstring in `app.py`.
+# that suite already covers. Built over fakes rather than through
+# `application.definition_readers`, deliberately kept that way after the
+# composition wiring landed: reaching the real factory would put a graph
+# store, a chunk store and an LLM adapter between these tests and the status
+# code they are about. That the *composed* app answers rather than 503ing is
+# a different question, asserted in
+# `tests/integration/test_definition_wiring.py`.
 
 
 class _FakeDefinitionGraph:
@@ -3918,6 +3919,15 @@ class _FakeDefinitionModel:
         if len(self._replies) > 1:
             return self._replies.pop(0)
         return self._replies[0]
+
+
+async def _ready(value):
+    """`value`, as something awaitable.
+
+    `definitions` is `Callable[[UUID], Awaitable[...]]` because building a
+    real service opens a graph store; a fake that needs no opening still has
+    to satisfy the shape."""
+    return value
 
 
 def _definition_service_client(cache, model=None):
@@ -3993,7 +4003,11 @@ def _definition_service_client(cache, model=None):
             application.turns,
             corpus=application.corpus,
             topics=application.topic_readers,
-            definitions=service,
+            # A factory, matching `Application.definition_readers`: the
+            # route binds a project before it can reach a service. These
+            # fakes are project-agnostic, so one service answers for the one
+            # project this fixture makes.
+            definitions=lambda _project_id: _ready(service),
         )
         transport = ASGITransport(app=api)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -4101,10 +4115,13 @@ async def test_an_undefinable_entity_returns_200_with_a_null_text_not_404():
 
 
 async def test_definition_route_503s_when_no_definition_service_is_configured(app_and_client):
-    """`definitions` unwired is the state this build ships in until Task 10b
-    lands the LLM adapter and store wiring -- see the note atop this section
-    and `_definition_service` in `app.py`. 503, not 404: the project and
-    entity may both be real, the server just cannot answer yet."""
+    """An app built without `definitions` still answers 503, not 500.
+
+    No longer the shipping state -- `web.py` passes
+    `Application.definition_readers` now -- but every fixture in this file
+    except `_definition_service_client` builds an app without it, and the
+    honest answer for those is "this build cannot do that", not a traceback.
+    503, not 404: the project and entity may both be real."""
     application, client = app_and_client
     project_id, ids = await _project_with_graph(application, client)
 
