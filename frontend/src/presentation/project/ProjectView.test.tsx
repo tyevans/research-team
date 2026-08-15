@@ -20,7 +20,7 @@ it('sends every facet the grammar declares to a region', () => {
   // cannot fail at runtime without also failing to compile -- which is the
   // point. It fails loudly if the type is ever widened to `string`.
   for (const facet of FACETS) {
-    expect(regionOf(facet)).toMatch(/^(queue|holder|material)$/)
+    expect(regionOf(facet)).toMatch(/^(queue|material)$/)
   }
 })
 
@@ -39,14 +39,24 @@ it('puts the three facets that reached no view in a region each', () => {
   expect(regionOf('finding')).toBe<Region>('material')
 })
 
-/** That HOLDER is now exactly one facet wide, which is what makes the region
- *  a stack rather than a screen.
+/** HOLDER is gone, and `session` is a tab in MATERIAL rather than a region of
+ *  its own.
  *
- * **This test would pass trivially before the change** — `session` was in
- * HOLDER then too — so it is asserted as a count over `FACETS` rather than as a
- * lookup. Reverted, `file` joins it and the count is 2. */
-it('leaves one facet in HOLDER, so the region shows one thing', () => {
-  expect(FACETS.filter((facet) => regionOf(facet) === 'holder')).toEqual(['session'])
+ * **The regions are still named for questions, and this one is a genuine
+ * reinterpretation rather than a tidy-up.** HOLDER answered "who is working on
+ * this right now", which is a different question from "what has this project
+ * produced" — the argument the three-region split was built on. What overrode
+ * it is that a permanent middle column spends a third of the page on a
+ * transcript a reader consults rather than reads, and the page is a sidebar
+ * over one content area. The cost is real and is written down here rather than
+ * argued away: the holding session is now one tab-click from invisible, and a
+ * reader watching a worker while reading its output can no longer see both.
+ *
+ * Reverted, this is red twice over: `holder` is not assignable to `Region`, and
+ * `regionOf('session')` answers `'holder'`. */
+it('puts the holding session in MATERIAL, where its tab is', () => {
+  expect(regionOf('session')).toBe<Region>('material')
+  expect(FACETS.filter((facet) => regionOf(facet) === 'material')).toContain('session')
 })
 
 /** The split that used to be a route boundary. `stage` came from the course

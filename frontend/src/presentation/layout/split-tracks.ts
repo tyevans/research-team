@@ -10,16 +10,38 @@ import { RAIL_TRACK } from './layout-tokens.ts'
  * changes two minima by 20px and the third weight from 1.15 to 1.05, on top of
  * the reflow the breakpoint exists for. Neither file is wrong; they were never
  * read side by side. One declaration cannot disagree with itself. */
-export interface Track {
+export type Track = {
   /** Matches the `id` of the `Pane` that occupies it. Not an index: a column
    *  identified by position is one that silently means something else the day
    *  a pane is inserted. */
   readonly id: string
   /** The floor, in pixels, below which the column stops being usable. */
   readonly min: number
-  /** Share of the leftover space. */
-  readonly weight: number
-}
+} & (
+  | {
+      /** Share of the leftover space. */
+      readonly weight: number
+      readonly max?: never
+    }
+  | {
+      /** A ceiling written in the grid's own units — `25%`, `20rem` — instead
+       *  of a share.
+       *
+       * A union arm rather than an optional field beside `weight`, because a
+       * track sized both ways has no meaning and a shape that permits it
+       * invites a reader to wonder which wins. `never` is what makes the
+       * compiler say so at the declaration rather than here.
+       *
+       * The distinction is not decoration: a weight is a share of what the
+       * *floors* left over, so the same `1fr` is a different fraction of the
+       * window at every width, and a sidebar asked to be a quarter of the page
+       * cannot be spelled with one. This says the fraction directly. `min`
+       * still applies underneath, so a percentage that falls below the floor
+       * loses to it rather than crushing the column. */
+      readonly max: string
+      readonly weight?: never
+    }
+)
 
 /** The `grid-template-columns` a split should use, or `undefined` when it must
  *  not set one at all.
@@ -51,7 +73,7 @@ export const splitTemplate = ({
     .map((track) =>
       collapsed.has(track.id)
         ? RAIL_TRACK
-        : `minmax(${String(track.min)}px, ${String(track.weight)}fr)`,
+        : `minmax(${String(track.min)}px, ${track.max ?? `${String(track.weight)}fr`})`,
     )
     .join(' ')
 }
