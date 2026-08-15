@@ -348,8 +348,11 @@ async def test_the_route_sees_what_the_invalidation_projection_marked(composed, 
     `stale` is the one field written by neither the service nor the route --
     only the invalidation projection sets it -- so it is the only field that
     can prove the two halves meet in one table rather than in two that agree
-    by accident. The projection here runs over its own connection to the same
-    database, which is how `EntityDefinitionRunner` would see it arrive.
+    by accident. The projection here is driven by hand over its own connection
+    to the same database -- `EntityDefinitionRunner`'s subscription is *not*
+    what delivered this event, so nothing below says anything about the
+    subscription working. What it does say is that a mark written by the
+    projection is a mark the route reads, which is the claim about the table.
 
     The assertion is `stale is False` *after* a stale mark, not `True`:
     `DefinitionService.define` regenerates a stale row and answers the fresh
