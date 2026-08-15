@@ -3,6 +3,7 @@
 from uuid import uuid4
 
 import pytest
+from eventsource import CommandRejectedError
 from pydantic import ValidationError
 
 from research_team.domain.corpus import CorpusDocumentStored
@@ -10,7 +11,11 @@ from research_team.domain.judgements import (
     EntitiesHeldDistinct,
     EntitiesHeldSame,
     EntityKey,
+    HoldDistinct,
+    HoldSame,
     JudgementWithdrawn,
+    WithdrawJudgement,
+    decide,
     evolve,
     initial_state,
 )
@@ -174,3 +179,99 @@ def test_an_unknown_event_leaves_the_state_alone():
         )
         == state
     )
+
+
+def test_holding_two_names_same_produces_one_event():
+    events = decide(
+        HoldSame(judgements_id=PROJECT, keys=[JFK, JOHN], reason="same president"),
+        initial_state(),
+    )
+
+    assert len(events) == 1
+    assert events[0].keys == [JFK, JOHN]
+    assert events[0].aggregate_id == PROJECT
+
+
+def test_every_judgement_requires_a_reason():
+    """The reason is what the aliases panel shows and the only record of why a
+    human decided something. Blank is refused rather than stored empty."""
+    for command in (
+        HoldSame(judgements_id=PROJECT, keys=[JFK, JOHN], reason="  "),
+        HoldDistinct(judgements_id=PROJECT, left=IRAN, right=IRAQ, reason=""),
+    ):
+        with pytest.raises(CommandRejectedError, match="reason"):
+            decide(command, initial_state())
+
+
+def test_holding_fewer_than_two_distinct_keys_same_is_refused():
+    with pytest.raises(CommandRejectedError, match="two"):
+        decide(HoldSame(judgements_id=PROJECT, keys=[JFK], reason="r"), initial_state())
+    with pytest.raises(CommandRejectedError, match="two"):
+        decide(HoldSame(judgements_id=PROJECT, keys=[JFK, JFK], reason="r"), initial_state())
+
+
+def test_holding_a_key_distinct_from_itself_is_refused():
+    with pytest.raises(CommandRejectedError, match="itself"):
+        decide(
+            HoldDistinct(judgements_id=PROJECT, left=JFK, right=JFK, reason="r"),
+            initial_state(),
+        )
+
+
+def test_holding_same_what_is_already_held_distinct_is_refused():
+    state = _fold(
+        EntitiesHeldDistinct(aggregate_id=PROJECT, left=IRAN, right=IRAQ, reason="r")
+    )
+
+    with pytest.raises(CommandRejectedError, match="held distinct"):
+        decide(HoldSame(judgements_id=PROJECT, keys=[IRAN, IRAQ], reason="r"), state)
+
+
+def test_holding_distinct_what_is_already_one_group_is_refused():
+    state = _fold(EntitiesHeldSame(aggregate_id=PROJECT, keys=[JFK, JOHN], reason="r"))
+
+    with pytest.raises(CommandRejectedError, match="held same"):
+        decide(HoldDistinct(judgements_id=PROJECT, left=JFK, right=JOHN, reason="r"), state)
+
+
+def test_a_same_judgement_that_would_transitively_unite_a_distinct_pair_is_refused():
+    """The refusal that is easy to miss, and the reason it is checked on the
+    prospective *group* rather than on the command's own keys.
+
+    A and C are held distinct. Holding A=B is legal on its face, but B is
+    already grouped with C, so the union would put A and C together -- and the
+    contradiction only appears after the merge. Would pass with the naive
+    check that only compares the command's own key pairs.
+    """
+    a, b, c = JFK, JOHN, KENNEDY
+    state = _fold(
+        EntitiesHeldDistinct(aggregate_id=PROJECT, left=a, right=c, reason="r"),
+        EntitiesHeldSame(aggregate_id=PROJECT, keys=[b, c], reason="r"),
+    )
+
+    with pytest.raises(CommandRejectedError, match="held distinct"):
+        decide(HoldSame(judgements_id=PROJECT, keys=[a, b], reason="r"), state)
+
+
+def test_withdrawing_an_unknown_judgement_is_refused():
+    with pytest.raises(CommandRejectedError, match="unknown"):
+        decide(WithdrawJudgement(judgement_id=uuid4(), reason="r"), initial_state())
+
+
+def test_withdrawing_twice_is_refused():
+    held = EntitiesHeldSame(aggregate_id=PROJECT, keys=[JFK, JOHN], reason="r")
+    state = _fold(
+        held, JudgementWithdrawn(aggregate_id=PROJECT, judgement_id=held.event_id, reason="w")
+    )
+
+    with pytest.raises(CommandRejectedError, match="already withdrawn"):
+        decide(WithdrawJudgement(judgement_id=held.event_id, reason="again"), state)
+
+
+def test_a_refusal_names_the_conflicting_judgement_so_a_ui_can_offer_to_undo_it():
+    """A dead end is a worse error than one that says what to withdraw first."""
+    conflict = EntitiesHeldDistinct(aggregate_id=PROJECT, left=IRAN, right=IRAQ, reason="r")
+    state = _fold(conflict)
+
+    with pytest.raises(CommandRejectedError, match=str(conflict.event_id)):
+        decide(HoldSame(judgements_id=PROJECT, keys=[IRAN, IRAQ], reason="r"), state)

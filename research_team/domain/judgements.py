@@ -24,10 +24,11 @@ another. Accepted deliberately; per-id judgements remain addable later as a
 second kind without disturbing this one.
 """
 
+from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
-from eventsource import DomainEvent, register_event
+from eventsource import CommandRejectedError, DomainEvent, register_event
 from pydantic import BaseModel, ConfigDict, Field
 from redstring.domain.similarity import normalize_name
 
@@ -197,3 +198,111 @@ def evolve(state: JudgementsState, event: DomainEvent) -> JudgementsState:
 
         case _:
             return state
+
+
+@dataclass(frozen=True)
+class HoldSame:
+    #: Which project's judgements. Carried on the command rather than read off
+    #: the state because this may be the creation command, exactly as
+    #: `StoreSourceDocument.corpus_id` is.
+    judgements_id: UUID
+    keys: list[EntityKey]
+    reason: str
+
+
+@dataclass(frozen=True)
+class HoldDistinct:
+    judgements_id: UUID
+    left: EntityKey
+    right: EntityKey
+    reason: str
+
+
+@dataclass(frozen=True)
+class WithdrawJudgement:
+    #: No `judgements_id`: a withdrawal can only follow a judgement, so the
+    #: stream already exists and the state carries its id.
+    judgement_id: UUID
+    reason: str
+
+
+JudgementCommand = HoldSame | HoldDistinct | WithdrawJudgement
+
+
+def _prospective_group(state: JudgementsState, keys: list[EntityKey]) -> set[EntityKey]:
+    """Every key that would end up in one group if `keys` were held same."""
+    group: set[EntityKey] = set()
+    for key in keys:
+        group |= state.group_for(key)
+    return group
+
+
+def decide(command: JudgementCommand, state: JudgementsState) -> list[DomainEvent]:
+    """Which judgements are legal, and what facts they produce.
+
+    Contradictions are refused **here** rather than resolved later by
+    `JudgedCandidates`. A finder that had to reconcile "same" against "not the
+    same" would be choosing on a human's behalf, silently, at scoring time --
+    and whichever way it chose would be invisible.
+    """
+    match command:
+        case HoldSame(judgements_id=judgements_id, keys=keys, reason=reason):
+            if not reason.strip():
+                raise CommandRejectedError("a judgement requires a reason")
+            unique = set(keys)
+            if len(unique) < 2:
+                raise CommandRejectedError(
+                    "holding names the same needs at least two distinct keys"
+                )
+            group = _prospective_group(state, keys)
+            # Checked over the prospective group, not the command's own keys:
+            # holding A=B is a contradiction when B already shares a group with
+            # C and A is held distinct from C, and that only appears after the
+            # union.
+            for judgement_id, record in state.judgements.items():
+                if record.kind != "distinct" or record.withdrawn_reason is not None:
+                    continue
+                if set(record.keys) <= group:
+                    raise CommandRejectedError(
+                        f"those names are held distinct by judgement {judgement_id}; "
+                        f"withdraw it first"
+                    )
+            return [
+                EntitiesHeldSame(aggregate_id=judgements_id, keys=list(keys), reason=reason)
+            ]
+
+        case HoldDistinct(judgements_id=judgements_id, left=left, right=right, reason=reason):
+            if not reason.strip():
+                raise CommandRejectedError("a judgement requires a reason")
+            if left == right:
+                raise CommandRejectedError("a name cannot be held distinct from itself")
+            if right in state.group_for(left):
+                raise CommandRejectedError(
+                    "those names are held same; withdraw that judgement first"
+                )
+            return [
+                EntitiesHeldDistinct(
+                    aggregate_id=judgements_id, left=left, right=right, reason=reason
+                )
+            ]
+
+        case WithdrawJudgement(judgement_id=judgement_id, reason=reason):
+            if not reason.strip():
+                raise CommandRejectedError("a withdrawal requires a reason")
+            record = state.judgements.get(judgement_id)
+            if record is None:
+                raise CommandRejectedError(f"unknown judgement {judgement_id}")
+            if record.withdrawn_reason is not None:
+                raise CommandRejectedError(
+                    f"judgement {judgement_id} was already withdrawn: "
+                    f"{record.withdrawn_reason}"
+                )
+            return [
+                JudgementWithdrawn(
+                    aggregate_id=state.judgements_id,
+                    judgement_id=judgement_id,
+                    reason=reason,
+                )
+            ]
+
+    raise CommandRejectedError(f"unhandled command {type(command).__name__}")
