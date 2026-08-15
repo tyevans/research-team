@@ -435,13 +435,22 @@ export const ProjectView = ({
               could also fold. Un-nesting it was right then and is right now;
               the region simply became a tab.
 
-              The cost this slice adds: `Tabs` unmounts an inactive panel, so a
-              scroll position in the log and a half-typed message in the
-              composer do not survive a trip to Artifacts and back. It was a
-              permanent column until now and survived everything. Fixing it
-              means keeping the panel mounted and hidden, which trades that back
-              for a transcript subscription running behind every other tab. */}
-          <TabPanel value="session" className="flex min-h-0 flex-1 flex-col">
+              **`keepMounted`, which is the one thing this panel asks for that
+              the other six do not.** `Tabs` unmounts an inactive panel, and for
+              a list or a graph that is right — it is what makes manual
+              activation mean something. This panel is a live transcript with a
+              composer in it, and it was a permanent column until this slice, so
+              a half-typed message and a scrub position had never been at risk;
+              unmounting discarded both on a trip to Artifacts and back.
+
+              What it costs, plainly: the transcript goes on subscribing behind
+              every other tab, and `hidden` is `display: none`, so everything in
+              here measures zero while it is away. The second one is the danger
+              — `Pane`'s `unmountWhenCollapsed` documents a virtualizer caching
+              exactly that zero and coming back empty — and it is why the claim
+              that covers this is in `ProjectView.browser.test.tsx` and asserts
+              the conversation's height on the way back, not just the draft. */}
+          <TabPanel value="session" keepMounted className="flex min-h-0 flex-1 flex-col">
             {sessionId === null ? (
               <EmptyState
                 heading="Nothing is holding this project."

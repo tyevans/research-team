@@ -31,9 +31,8 @@ import { PROJECT_TRACKS } from './use-project-panes.ts'
  * QUEUE holds four stages and four topics, and MATERIAL holds a scrub bar over
  * an eight-message transcript, six documents, and a twelve-node graph with the
  * real `GraphCanvas` mounted. Claims 4 and 5 exist to fail if any of that
- * quietly empties — two claims rather than one because `Tabs` unmounts the
- * inactive panel, so the documents and the transcript can no longer be observed
- * on the same render.
+ * quietly empties — two claims rather than one because the documents and the
+ * transcript are two tabs, and only one of them is `keepMounted`.
  *
  * **The floor is defined mechanically**, because "usable" needs an assertion:
  * a region is below its floor when some element in it has `scrollWidth` past
@@ -483,11 +482,12 @@ it('measures a page with both regions loaded', async () => {
 
 /** Claim 5. The transcript is still laid out, one tab away.
  *
- * Separate from claim 4 rather than folded into it, because the two now need
- * *different pages*: claim 4 opens the Documents tab, and opening it unmounts
- * the holding session's panel — `Tabs` renders only the active one. Asserting
- * both against one render is what would quietly stop being possible here, and
- * a reader who folded them together would get a green from an absent panel.
+ * Separate from claim 4 rather than folded into it, because the two need
+ * *different pages*. Claim 4 opens the Documents tab, and this panel is
+ * `keepMounted`, so it is still in the tree there — but `hidden`, which is
+ * `display: none`, so everything in it measures zero. Folded together, "the
+ * transcript is laid out" would be asserted against a panel that is present
+ * and zero-sized, which is a green that means nothing.
  *
  * This is the fixture half of the holding session's move into MATERIAL: the
  * conversation used to be its own column and is now the default tab, so "the

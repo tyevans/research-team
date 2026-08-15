@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { page } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
+import { useEffect, useState } from 'react'
 import { expect, it, vi } from 'vitest'
 
 import { createSessionStore } from '@application/session/session-store.ts'
@@ -10,6 +11,9 @@ import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
 import { OverlayHost } from '@presentation/layout/OverlayHost.tsx'
 import { StreamProvider } from '@presentation/shell/StreamProvider.tsx'
+
+import type { SessionStore } from '@application/session/session-store.ts'
+import { parseRoute, type Selection } from '@presentation/routing/routes.ts'
 
 import { ProjectView } from './ProjectView.tsx'
 
@@ -105,6 +109,40 @@ const container = () =>
     autonomy: { read: vi.fn().mockResolvedValue(null) },
   }) as unknown as Container
 
+/** `ProjectView` with the one thing the route would otherwise supply: a
+ *  `selection` that changes when the page asks it to.
+ *
+ * This file rendered `selection={null}` fixed until the tab claim below needed
+ * one to move, and the difference is not cosmetic — the material tabs are
+ * derived from the route rather than held in state, so a static `selection`
+ * makes every tab click a no-op that still *looks* like a working page. The
+ * first version of claim 7 passed a click to Artifacts and asserted against a
+ * panel that had never changed.
+ *
+ * Reading `navigate` back out of the address bar would be the faithful thing
+ * and is not worth it here: the address bar is global to the run, and
+ * `App.test.tsx` already covers the route round trip in jsdom. What this needs
+ * is only that choosing a tab reaches the component. */
+const Routed = ({ store }: { store: SessionStore }) => {
+  const [selection, setSelection] = useState<Selection | null>(null)
+  useEffect(() => {
+    const onHash = () => {
+      setSelection(parseRoute(window.location.hash).name === 'project' ? readSelection() : null)
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => {
+      window.removeEventListener('hashchange', onHash)
+    }
+  }, [])
+  return <ProjectView projectId={ATLAS} selection={selection} store={store} />
+}
+
+/** The project selection the address bar currently names, or null. */
+const readSelection = (): Selection | null => {
+  const route = parseRoute(window.location.hash)
+  return route.name === 'project' ? route.selection : null
+}
+
 const show = async () => {
   const deps = container()
   const store = createSessionStore({
@@ -124,7 +162,7 @@ const show = async () => {
               would make all of them vacuous. */}
           <OverlayHost>
             <div style={{ height: '900px', display: 'flex', flexDirection: 'column' }}>
-              <ProjectView projectId={ATLAS} selection={null} store={store} />
+              <Routed store={store} />
             </div>
           </OverlayHost>
         </StreamProvider>
@@ -355,4 +393,57 @@ it('keeps the queue header out of the queue pane’s scroller', async () => {
   // And it does not take the leftover height, which is the other half of the
   // same claim — a header that grows leaves the queue nothing to scroll in.
   expect(style.flexGrow).toBe('0')
+})
+
+/** Claim 7. The holding session survives a trip to another tab: a half-typed
+ *  message is still there, and the transcript still has its height.
+ *
+ * **The defect this closes shipped for one commit.** `Tabs` unmounts the panel
+ * that is not shown, which is right for panels that fetch — it is why
+ * `activationMode` is manual — and wrong for the one panel that is a *session*.
+ * The holding session was a permanent column until it became a tab, so nothing
+ * had ever taken its state away; the move made a tab-away discard a draft
+ * message and a scrub position, which is a data loss a reader would meet by
+ * checking the Artifacts tab mid-sentence.
+ *
+ * **The second assertion is the one that is not obvious, and it is the reason
+ * this is a browser test.** `Pane`'s `unmountWhenCollapsed` documents the trap
+ * being walked into deliberately here: a virtualizer inside a hidden-but-mounted
+ * box measures a zero-height scroll container and caches that, so the box comes
+ * back empty. `forceMount` keeps the panel in the tree with `hidden` on it,
+ * which is `display: none` — every measurement inside is zero while it is away.
+ * So "the draft survived" is not enough; the transcript has to have laid itself
+ * out again on the way back, and jsdom cannot see the difference.
+ *
+ * **Proved red** by removing `keepMounted` from the session panel: the first
+ * assertion fails at `expected '' to be 'half a thought'`, the panel having been
+ * unmounted and remounted with a fresh composer.
+ */
+it('keeps a half-typed message and the transcript across a tab switch', async () => {
+  await show()
+
+  const composer = document.querySelector<HTMLTextAreaElement>('.composer textarea')!
+  await page.getByRole('textbox', { name: /Send a turn/i }).fill('half a thought')
+  expect(composer.value).toBe('half a thought')
+
+  const before = holder().conversation.getBoundingClientRect().height
+  expect(before).toBeGreaterThan(0)
+
+  // Asserted on the tab rather than on the panel, deliberately: the panel is
+  // absent under the defect and merely hidden under the fix, so a check on it
+  // would read differently for two reasons at once and could not say which.
+  // What both agree on is that the reader left.
+  await page.getByRole('tab', { name: 'Artifacts' }).click()
+  await expect
+    .poll(() => page.getByRole('tab', { name: 'Artifacts' }).element().ariaSelected)
+    .toBe('true')
+
+  await page.getByRole('tab', { name: 'Holding session' }).click()
+  await expect
+    .poll(() => document.querySelector<HTMLTextAreaElement>('.composer textarea')?.value)
+    .toBe('half a thought')
+
+  // Laid out again, not merely present. A cached zero from the hidden pass
+  // would satisfy every assertion above this one.
+  expect(holder().conversation.getBoundingClientRect().height).toBeCloseTo(before, 0)
 })
