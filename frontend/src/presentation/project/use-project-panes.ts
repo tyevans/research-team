@@ -35,7 +35,7 @@ const GROUP = 'project'
  * | --- | --- | --- | --- |
  * | queue | 344 | the seeding form, 317px and unwrapping | 343 |
  * | holder | 342 | `.scrub-bar`, 341px | 342 |
- * | material | 468 | the seven-tab strip, 467px and unwrapping | 468 |
+ * | material | 468 | the seven-tab strip, 467px and unwrapping | 467 |
  *
  * **The material row was re-measured on 2026-08-14, same day, after Task 10
  * added a sixth tab.** `project-tracks.browser.test.tsx`'s "keeps MATERIAL
@@ -56,7 +56,7 @@ const GROUP = 'project'
  *
  * Each floor is a pixel or two above what measured clean, deliberately: the
  * check carries `TruncatedText`'s 1px slack for fractional layout, and 343 of
- * QUEUE and 468 of MATERIAL clear it only by spending that slack.
+ * QUEUE and 467 of MATERIAL clear it only by spending that slack.
  *
  * **These replace `280/320/280`, which were the session view's floors adopted
  * unmeasured, and the old numbers shipped a defect.** At 1181 -- the narrowest

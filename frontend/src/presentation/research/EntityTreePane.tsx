@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { createGraphStore } from '@application/research/graph-store.ts'
 import { useContainer } from '@app/container-context.tsx'
@@ -68,34 +68,49 @@ export const EntityTreePane = ({
   // and never again on its own.
   const defaultedFor = useRef<ProjectId | null>(null)
 
-  /** Apply the default openness once the fetch it needs has actually landed,
-   *  not on mount -- `view.nodes` is still `[]` at that point regardless of
-   *  how big the project's graph turns out to be, and defaulting off that
-   *  would open nothing on every project, small or large. `.then()` rather
-   *  than an effect keyed to `view`: the ref already guards "once per
-   *  project", and a `view`-keyed effect would need a second guard to avoid
-   *  re-running on every subsequent `graph` frame's reload. */
+  /** Apply the default openness once a fetch that actually found something has
+   *  landed. Checked after *every* `loadAll` -- the mount load and every
+   *  `graph`-frame reload alike -- not only the mount load's own promise:
+   *  a project mid-extraction has zero nodes at mount, and a project that
+   *  only ever checked the mount load would never revisit that decision, so
+   *  every group that arrived on a later frame would render closed for the
+   *  rest of the session, on a graph of any size -- the exact state
+   *  `OPEN_ALL_BELOW` exists to avoid. The ref still guards "once per
+   *  project": the first load with a nonzero node count wins and spends the
+   *  token, and no load after that touches `open` again, so a reader's
+   *  collapses survive every reload that follows. Residual, and acceptable: a
+   *  project that stays genuinely empty forever never defaults, which costs
+   *  nothing because it renders the empty state regardless. */
+  const applyDefaultOpenness = useCallback(
+    (forProject: ProjectId) => {
+      if (defaultedFor.current === forProject) return
+      const nodes = store.getState().view.nodes
+      if (nodes.length === 0) return
+      defaultedFor.current = forProject
+      setOpen(
+        nodes.length < OPEN_ALL_BELOW
+          ? new Set(groupByType(nodes).map((group) => group.entityType))
+          : new Set(),
+      )
+    },
+    [store],
+  )
+
   useEffect(() => {
-    const forProject = projectId
     void store
       .getState()
       .loadAll()
-      .then(() => {
-        if (defaultedFor.current === forProject) return
-        defaultedFor.current = forProject
-        const nodes = store.getState().view.nodes
-        setOpen(
-          nodes.length < OPEN_ALL_BELOW
-            ? new Set(groupByType(nodes).map((group) => group.entityType))
-            : new Set(),
-        )
-      })
-  }, [store, projectId])
+      .then(() => applyDefaultOpenness(projectId))
+  }, [store, projectId, applyDefaultOpenness])
 
   useFrameRefresh(
     true,
     (frame) => frame.kind === 'graph' && frame.projectId === projectId,
-    () => void store.getState().loadAll(),
+    () =>
+      void store
+        .getState()
+        .loadAll()
+        .then(() => applyDefaultOpenness(projectId)),
   )
 
   const toggle = (entityType: string) => {

@@ -2257,7 +2257,7 @@ worth doing before anyone reads 486 as a measured floor.
 
 ### B79. The Tree tab does not virtualize, and it is fine until the node cap moves
 
-`frontend/src/presentation/tree/EntityTree.tsx` (Task 3 of
+`frontend/src/presentation/research/EntityTree.tsx` (Task 2 of
 `docs/superpowers/plans/2026-08-15-entity-tree-view.md`) renders every entity
 row the fold produces, under plain nested `<ul>`s. Deferred rather than
 missed: the server caps the node count the Graph tab receives, and the tree
@@ -2265,7 +2265,8 @@ reads the same fetch, so the row count is already bounded by that cap and not
 by anything the tab itself controls.
 
 `frontend/src/presentation/common/VirtualList.tsx` exists and is proven —
-`ProjectRows.tsx` uses it, and [[B54]] is the record of what it takes to test
+`ProjectRows.tsx` uses it, and the second [[B54]] above (the 122px-hole entry,
+not the premise-withdrawn one) is the record of what it takes to test
 a virtualizer honestly in a real browser engine. If the node cap is ever
 raised for the Graph tab, the Tree tab inherits the same row count with no
 warning, and that is the trigger to revisit this, not a fixed number of rows.

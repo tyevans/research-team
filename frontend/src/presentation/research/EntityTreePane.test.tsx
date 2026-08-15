@@ -193,4 +193,37 @@ describe('EntityTreePane', () => {
 
     expect(screen.queryByText('Hinton')).not.toBeInTheDocument()
   })
+
+  /** The once-per-project token must not be spent on an empty first load: a
+   *  project with nothing extracted yet at mount time is the common case for
+   *  a project mid-extraction, and burning the token there leaves every group
+   *  that arrives on a later `graph` frame closed for the rest of the
+   *  session -- the state `OPEN_ALL_BELOW`'s comment says the tab exists to
+   *  avoid. Distinct from the test above: that one proves a *closed* group
+   *  survives a reload; this one proves an empty *first* load does not
+   *  poison the default for every reload after it. */
+  it('still defaults a group open when the first load found nothing to open', async () => {
+    const whole = vi
+      .fn()
+      .mockResolvedValueOnce({ entities: [], relationships: [], truncated: false })
+      .mockResolvedValue({
+        entities: [{ id: 'p1', name: 'Hinton', entityType: 'person' }],
+        relationships: [],
+        truncated: false,
+      })
+    const feed = fakeStream()
+
+    renderWithContainer(
+      <EntityTreePane projectId={projectId} entity={null} onEntity={vi.fn()} />,
+      { graphs: fakeGraphs({ whole }) },
+      feed.stream,
+    )
+
+    await waitFor(() => expect(whole).toHaveBeenCalledTimes(1))
+
+    feed.pushGraph()
+    await waitFor(() => expect(whole).toHaveBeenCalledTimes(2))
+
+    expect(await screen.findByText('Hinton')).toBeInTheDocument()
+  })
 })

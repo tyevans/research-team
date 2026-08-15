@@ -33,7 +33,12 @@ const PALETTE = KIND_TOKENS.map((name) => `var(${name})`)
  * is in `layout.css` and carries that measurement.
  *
  * `[font:inherit]` because the `font` shorthand has no utility and a `<button>`
- * that does not inherit it renders in the user agent's 13.33px sans. */
+ * that does not inherit it renders in the user agent's 13.33px sans.
+ *
+ * No browser test measures this row's focus ring: it is `RESULT_ROW` from
+ * `GraphPane.tsx` verbatim, already measured there, and the one added line
+ * above touches only border colour and background -- nothing that could move
+ * the ring's geometry a second measurement would catch. */
 const ROW = [
   'flex w-full cursor-pointer items-baseline justify-between gap-2',
   'border-0 border-l-2 border-solid border-l-transparent rounded-md',
