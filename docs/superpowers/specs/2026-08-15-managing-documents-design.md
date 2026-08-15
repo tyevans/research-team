@@ -183,19 +183,28 @@ record — and is filed as backlog.
 constraint the file already documents (FastAPI matches in declaration order,
 so a literal segment registered after `/sources/{source_id}` is unreachable):
 
-- `POST   /api/projects/{project_id}/sources` — create. 201.
-- `PATCH  /api/projects/{project_id}/sources/{source_id}` — revise. 200.
-- `DELETE /api/projects/{project_id}/sources/{source_id}` — drop; reason in
-  the body. 200.
-- `POST   /api/projects/{project_id}/sources/{source_id}/restore` — 200.
+- `POST  /api/projects/{project_id}/sources` — create. 201.
+- `PATCH /api/projects/{project_id}/sources/{source_id}` — revise. 200.
+- `POST  /api/projects/{project_id}/sources/{source_id}/drop` — reason in the
+  body. 200.
+- `POST  /api/projects/{project_id}/sources/{source_id}/restore` — 200.
 
-Of the four, only `/restore` has a literal tail and must therefore be
-declared inside the existing literal block, above `/sources/{source_id}`. The
-`POST` on the collection has no `{source_id}` to be shadowed by, and the
-`PATCH`/`DELETE` are different methods on a path that already exists, so
-their position is free. The ordering rule is cited here because getting it
-wrong produces a 404 that looks like a missing route rather than a
-mis-declared one.
+**Dropping is a POST to `/drop`, not a `DELETE`, and the reason is the
+frontend's.** `HttpClient.delete` passes `undefined` as the body and so sends
+none; a `DELETE` carrying a mandatory reason would mean either widening that
+method for one caller or smuggling the reason through the query string, where
+it would be a free-text sentence in a URL that gets logged. A `POST` with a
+body is what the client already does well, and it pairs with `/restore`,
+which has to be a `POST` regardless. The cost is that the route is less
+RESTful than it looks; the operation is not a delete either, so the honest
+verb was never `DELETE`.
+
+`/drop` and `/restore` have literal tails and must be declared inside the
+existing literal block, above `/sources/{source_id}`. The `POST` on the
+collection has no `{source_id}` to be shadowed by and the `PATCH` is a
+different method on a path that already exists, so their position is free.
+The ordering rule is cited because getting it wrong produces a 404 that looks
+like a missing route rather than a mis-declared one.
 `_require_project` first, then the editor, matching how every other write
 route in the file is arranged. All four answer 503 when no corpus is
 configured, through the same check `_reader` makes.
@@ -216,18 +225,41 @@ this is the fourth, written the same way, with the same zod validation.
 helper on success and `errorMessage(error)` on failure — the shape
 `use-extraction-queue.ts` already uses.
 
-`DocumentBrowser` gains an "Add document" button in its header and, per row,
-Edit and Drop (or Restore, when the row is dropped) beside the existing
-Extract. New components in `presentation/research/`:
+`DocumentBrowser` gains one control: an "Add document" button in its header,
+beside "Extract all".
 
-- `DocumentUpload.tsx` — a dialog: title, optional URI, note, a file picker
-  and a text area. Picking a file fills the text area and defaults the title
-  from the filename, so what is about to be stored is visible before it is
-  stored. `source_id` defaults to the URI when one is given and to a slug of
-  the title otherwise, and is editable, because it is the citation key and
-  the corpus keys on it.
-- `DocumentEditPane.tsx` — the same fields over an existing document.
-- Drop reuses `Confirm.tsx` with a required reason field.
+**The per-document actions go in the reader drawer, not on the row.** The
+browser's rows live in a 340px rail, are virtualized against a 52px estimate,
+and already carry an open control and a conditional Extract button whose ring
+geometry is pinned by a browser test. Three more controls would either shrink
+the title to nothing or change the row height, and the row is the one part of
+this pane whose layout is measured rather than asserted. The drawer is where
+a person already goes to look at a document before deciding anything about
+it, it has 640px to work with, and every action here is a decision you make
+*having read the thing*.
+
+New components in `presentation/research/`:
+
+- `DocumentUpload.tsx` — a dialog on `Drawer`: title, optional URI, note, a
+  file picker and a text area. Picking a file fills the text area and defaults
+  the title from the filename, so what is about to be stored is visible before
+  it is stored. `source_id` defaults to a slug of the title (or the URI when
+  one is given) and stays editable, because it is the citation key and the
+  corpus keys on it.
+- `DocumentManagePane.tsx` — what the reader drawer now renders: an action bar
+  (Edit, Drop or Restore) above the existing `DocumentReader`, switching its
+  body to `DocumentEditForm` while editing. `DocumentList` renders this in
+  place of `DocumentReader`, which is otherwise untouched.
+- `DocumentEditForm.tsx` — the upload dialog's fields over an existing
+  document, with `source_id` fixed and shown rather than editable: changing it
+  would be creating a different document, and silently orphaning every
+  citation that points at the old id.
+- `DocumentDropDialog.tsx` — heading, the copy from Decision 3 about what a
+  drop does not remove, a required reason field, and a destructive confirm.
+  Built on `Drawer` the way `Confirm.tsx` is, rather than widening `Confirm`:
+  that component takes `lines: readonly string[]` and has no slot for a field,
+  and adding one for a single caller would put an optional input on every
+  confirm in the console.
 
 ## Testing
 
@@ -264,13 +296,16 @@ must be run against a copy of a real database via
 
 Frontend, faking the `DocumentRepository` port (there is no MSW here):
 
-- `DocumentUpload.test.tsx` — a file drop populates the text area; submit
-  calls `create` with what is on screen; a blank `source_id` is refused before
-  the request.
-- `DocumentEditPane.test.tsx` — a metadata-only save sends no `text` field,
-  which is the client half of Decision 2.
-- `DocumentBrowser.test.tsx` — additions for the new row actions, including
-  that a dropped row offers Restore and not Drop.
+- `DocumentUpload.test.tsx` — picking a file populates the text area and
+  defaults the title; submit calls `create` with what is on screen; a blank
+  `source_id` is refused before the request.
+- `DocumentEditForm.test.tsx` — a metadata-only save sends no `text` field,
+  which is the client half of Decision 2; `source_id` is rendered and is not
+  an input.
+- `DocumentManagePane.test.tsx` — a live document offers Drop and not
+  Restore, a dropped one the reverse; the drop dialog refuses an empty reason
+  before calling the port.
+- `DocumentBrowser.test.tsx` — one addition for the Add button.
 
 ## Deliberately not built
 
