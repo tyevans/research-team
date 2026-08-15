@@ -73,6 +73,20 @@ def default_db_path() -> str:
     return str(path)
 
 
+def blob_root() -> Path:
+    """Where media bytes live: beside the database, not inside it.
+
+    SQLite would hold them -- it has a BLOB type and a 1GB row ceiling -- and
+    the reason not to is streaming. Serving a range request out of a BLOB means
+    reading it into memory to slice it; a file supports `seek`. The cost is
+    that a backup now has two things to copy, which is written on the
+    `/rebuild` page rather than being left for someone to discover.
+    """
+    path = Path.home() / ".research-team" / "blobs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def model_name() -> str:
     return os.getenv("AGENT_MODEL", DEFAULT_MODEL)
 

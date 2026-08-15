@@ -55,6 +55,9 @@ dependencies = [
     "redstring[llm,neo4j,pgvector]>=0.9.1,<0.10",
     "trafilatura>=2.2.0",
     "uvicorn[standard]>=0.52.1",
+    # The blob store streams to disk with async file handles rather than
+    # blocking the event loop on ordinary `open()` -- see `blob_store.py`.
+    "aiofiles>=24.1",
 ]
 
 [project.optional-dependencies]
