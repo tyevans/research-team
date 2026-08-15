@@ -12,6 +12,7 @@ import { OverlayHost } from '@presentation/layout/OverlayHost.tsx'
 import type { Selection } from '@presentation/routing/routes.ts'
 import { StreamProvider } from '@presentation/shell/StreamProvider.tsx'
 
+import { resizeViewport, restoreViewport } from '../../test/browser-viewport.ts'
 import { ProjectView } from './ProjectView.tsx'
 import { PROJECT_TRACKS } from './use-project-panes.ts'
 
@@ -227,27 +228,20 @@ const show = async (selection: Selection | null = null) => {
   await expect.element(page.getByRole('region', { name: 'Event log' })).toBeVisible()
 }
 
-const split = () => document.querySelector<HTMLElement>('.lay-split[data-split="project"]')!
 const pane = (id: string) => document.querySelector<HTMLElement>(`[data-pane="${id}"]`)!
 const width = (id: string) => pane(id).getBoundingClientRect().width
 
-/** Resize, then wait for the layout on the other side of it. `page.viewport`
- *  resolves when the iframe has been resized, which is before the split has
- *  been re-laid-out against it; `project-responsive.browser.test.tsx` records
- *  the run where reading `window.innerWidth` instead measured the old columns.
- *  The split is full-width, so its own box reaching the new width is the
- *  cheapest thing to wait on that is downstream of the render. */
-const resize = async (viewport: number) => {
-  await page.viewport(viewport, 900)
-  await expect.poll(() => Math.round(split().getBoundingClientRect().width)).toBe(viewport)
-}
-
-// Nothing else in the browser suite restores it -- the viewport is set once for
-// the whole run at `vite.config.ts:288`, so a file that resizes and does not put
-// it back leaks into every sibling after it in file order.
-afterEach(async () => {
-  await page.viewport(1440, 900)
-})
+// The local `resize` this file used to carry polled only the split's own box
+// width. That is the *right* signal for this file — every resize here is 1440
+// <-> 1181, inside the wide band, where no React-written attribute changes at
+// all — and it is exactly the reason it could not be reused anywhere else. The
+// shared helper keeps that poll and adds the two attribute polls the boundary
+// crossings need; its docstring carries the three readings that were got wrong.
+//
+// `restoreViewport` for the reason the local `afterEach` gave: nothing else in
+// the browser suite restores it, so a file that resizes and does not put it back
+// leaks into every sibling after it in file order.
+afterEach(restoreViewport)
 
 /** Content painted outside a box that clips it, with no scroller and no
  *  ellipsis to reach it by. See this file's docstring for the three exclusions
@@ -321,7 +315,7 @@ it('paints nothing outside its region at the narrowest wide viewport', async () 
   // (legend, search, reset) is what is really being measured, and that renders
   // in both states.
   await expect.poll(() => pane('material').querySelectorAll('canvas').length).toBeGreaterThan(0)
-  await resize(BP_WIDE)
+  await resizeViewport(BP_WIDE)
 
   // MATERIAL first, because it is the region the old numbers actually broke
   // and an assertion order that reported QUEUE's smaller failure ahead of it
@@ -357,7 +351,7 @@ it('paints nothing outside its region at the narrowest wide viewport', async () 
 it('binds the floors at 1181 and leaves 1440 alone', async () => {
   await show()
 
-  await resize(BP_WIDE)
+  await resizeViewport(BP_WIDE)
   expect(Math.round(width('queue'))).toBe(344)
   expect(Math.round(width('material'))).toBe(352)
   // HOLDER keeps what the two floors leave. Still far the widest column, and
@@ -365,7 +359,7 @@ it('binds the floors at 1181 and leaves 1440 alone', async () => {
   // the one that never binds in this band.
   expect(Math.round(width('holder'))).toBe(485)
 
-  await resize(1440)
+  await resizeViewport(1440)
   expect(Math.round(width('queue'))).toBe(411)
   expect(Math.round(width('holder'))).toBe(617)
   expect(Math.round(width('material'))).toBe(411)
@@ -391,7 +385,7 @@ it('binds the floors at 1181 and leaves 1440 alone', async () => {
  */
 it('keeps MATERIAL wide enough for the tab strip it always has', async () => {
   await show()
-  await resize(BP_WIDE)
+  await resizeViewport(BP_WIDE)
 
   const tabs = pane('material').querySelector<HTMLElement>('.tabs')!
   expect(tabs.scrollWidth).toBeGreaterThan(300)
@@ -424,7 +418,7 @@ it('keeps MATERIAL wide enough for the tab strip it always has', async () => {
  */
 it('measures a page with all three regions loaded', async () => {
   await show({ facet: 'doc', id: null })
-  await resize(BP_WIDE)
+  await resizeViewport(BP_WIDE)
 
   // QUEUE: the topic queue, populated. The stage rail is beside it and is what
   // `ProjectView.browser.test.tsx` already covers.
