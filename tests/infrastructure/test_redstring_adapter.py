@@ -6,9 +6,12 @@ from eventsource import StreamId, collect
 from eventsource.adapters.sqlite import SQLiteEventStore
 from redstring import (
     FakeLlmProvider,
+    InMemoryChunkStore,
     LlmProviderError,
     SlidingWindowChunker,
     document_stream,
+    rank_chunks,
+    tokenize,
 )
 
 from research_team.application.knowledge import KnowledgeError, SourceRef
@@ -47,6 +50,102 @@ async def test_ingest_reports_what_it_extracted(tmp_path, build_adapter):
     assert report.source_id == "notes"
     assert report.entity_count >= 1
     assert report.domain == "encyclopedia_wiki"
+
+
+@pytest.mark.asyncio
+async def test_indexing_a_document_writes_retrievable_passages(tmp_path, build_adapter):
+    """`index` runs with no `provider`/`embeddings` at all -- it must still work
+    with the fixture's `fake_provider()` sitting unused, which is the point:
+    nothing about indexing touches a model.
+    """
+    project_id = uuid4()
+    chunk_store = InMemoryChunkStore(dimension=8)
+    knowledge, _, _ = build_adapter(tmp_path, project_id, chunks=chunk_store)
+
+    await knowledge.index(
+        SourceRef(source_id="doc-1", text="Acme Corp builds rockets in Texas.")
+    )
+
+    terms = tokenize("Acme")
+    candidates = await chunk_store.lexical_candidates(terms, project_id, 10)
+    assert list(rank_chunks(terms, candidates, 10))
+
+
+@pytest.mark.asyncio
+async def test_indexing_the_same_document_twice_writes_nothing_the_second_time(
+    tmp_path, build_adapter
+):
+    """`record_chunking` refuses a repeat under the same signature, so a
+    re-index over an unchanged corpus is free rather than duplicating every
+    passage. Without the shared event store (see `RedstringKnowledge.index`)
+    it would not be -- the repeat is recognised from the recorded signature,
+    not from the store's contents.
+
+    **Counts the writes rather than the passages**, and the distinction is the
+    whole test. An earlier version asserted `get_by_source` returned the same
+    number of chunks both times; it passed with `event_store` deleted from the
+    `index_documents` call, because `ChunkProjection` writes through
+    `replace_source` and replacing a source with an identical re-chunking
+    leaves the count untouched. That version could not observe the failure it
+    was named for -- every passage rewritten while `documents_skipped` read 0.
+    Proved red on 2026-08-14 by removing `event_store=self._event_store`: this
+    version fails with 2 writes against the expected 1, the earlier one still
+    passed.
+    """
+    project_id = uuid4()
+    writes = []
+
+    class CountingChunkStore(InMemoryChunkStore):
+        """`replace_source` is the only method `ChunkProjection` calls (its own
+        docstring says so: one of the port's nine), so counting it counts every
+        write indexing can make."""
+
+        async def replace_source(self, source_id, tenant_id, chunks):
+            writes.append(source_id)
+            return await super().replace_source(source_id, tenant_id, chunks)
+
+    chunk_store = CountingChunkStore(dimension=8)
+    knowledge, _, _ = build_adapter(tmp_path, project_id, chunks=chunk_store)
+    source = SourceRef(source_id="doc-1", text="Acme Corp builds rockets in Texas.")
+
+    await knowledge.index(source)
+    await knowledge.index(source)
+
+    assert writes == ["doc-1"]
+
+
+@pytest.mark.asyncio
+async def test_indexing_with_no_chunk_store_configured_is_a_no_op(tmp_path, build_adapter):
+    """`chunks=None` is `AGENT_CHUNK_STORE=none`. Indexing must not raise over a
+    feature that is off -- the same shape `ProjectGraphs.chunks` uses for
+    "chunking is off" (see its docstring).
+    """
+    project_id = uuid4()
+    knowledge, _, _ = build_adapter(tmp_path, project_id)
+
+    await knowledge.index(
+        SourceRef(source_id="doc-1", text="Acme Corp builds rockets in Texas.")
+    )
+
+
+@pytest.mark.asyncio
+async def test_storing_a_document_indexes_it_without_extracting(tmp_path, build_adapter):
+    """Indexing must not be conditional on extraction having run: `store_source`
+    never extracts, and a document worth reading is worth finding passages in
+    regardless. This is what makes `RedstringKnowledge._store_document` the
+    right hook rather than `ingest` alone.
+    """
+    project_id = uuid4()
+    chunk_store = InMemoryChunkStore(dimension=8)
+    knowledge, _, _ = build_adapter(tmp_path, project_id, chunks=chunk_store)
+
+    await knowledge.store_source(
+        SourceRef(source_id="doc-1", text="Acme Corp builds rockets in Texas.")
+    )
+
+    terms = tokenize("Acme")
+    candidates = await chunk_store.lexical_candidates(terms, project_id, 10)
+    assert list(rank_chunks(terms, candidates, 10))
 
 
 @pytest.mark.asyncio

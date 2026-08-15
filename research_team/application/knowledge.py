@@ -169,6 +169,22 @@ class KnowledgePort(Protocol):
         """
         ...
 
+    async def index(self, source: SourceRef) -> None:
+        """Split `source`'s text into passages a reader can be shown quotes of.
+
+        No model call, and no dependency on `ingest` having run or ever
+        running: the corpus this fills is built for every document a caller
+        holds, not only the ones worth paying to extract. Safe to call
+        whether or not `source` has been indexed before -- a repeat over
+        unchanged text writes nothing the second time.
+
+        A no-op, not an error, when the implementation has no chunk store
+        configured (`AGENT_CHUNK_STORE=none`): the same "feature is off"
+        shape `ProjectGraphs.chunks` uses, rather than a caller having to
+        know whether chunking is on before it can call this at all.
+        """
+        ...
+
     async def search(self, query: str, *, limit: int = 10) -> list[Match]:
         """Entities whose name matches `query`. Entry points, not traversal."""
         ...

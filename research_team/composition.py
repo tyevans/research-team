@@ -1217,6 +1217,17 @@ def build_application(
             # only the size is ours to choose, and passing the others would
             # freeze values we have no reason to hold against upstream's.
             chunker=SlidingWindowChunker(default_chunk_size=config.extraction_chunk_size()),
+            # `graphs.chunks(...)`, not a second `build_chunk_store()` call:
+            # `graphs.open` above already built this project's chunk store and
+            # folded it in the same replay pass as the graph (see
+            # `ProjectGraphs.open`), and a second store built here would be
+            # empty. Indexing would write into it, replay would keep filling
+            # the *other* one, and every read downstream would silently see
+            # an empty corpus -- the exact failure this call is here to rule
+            # out rather than the one it happens to avoid. `None` when
+            # `AGENT_CHUNK_STORE=none`, matching `ProjectGraphs.chunks`'s own
+            # None-when-off return.
+            chunks=graphs.chunks(target_project_id),
         )
         # Both tool sets travel back through the one channel `KnowledgeAttachment`
         # already has. A second callable for the corpus would need its own copy of
