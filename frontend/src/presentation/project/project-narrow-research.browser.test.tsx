@@ -177,14 +177,14 @@ const show = async (selection: Selection | null) => {
   )
   // What "mounted" means differs between the two claims, and not for a
   // cosmetic reason. With the reader open the whole page behind it is `inert`,
-  // so HOLDER's `Event log` region — the sibling files' readiness signal — is
-  // never *visible* to a locator and the wait times out against a page that
-  // rendered correctly. The drawer is the readiness signal in that case.
+  // so the tab strip — the sibling files' readiness signal — is never *visible*
+  // to a locator and the wait times out against a page that rendered
+  // correctly. The drawer is the readiness signal in that case.
   await expect
     .element(
       selection?.facet === 'doc' && selection.id !== null
         ? page.getByRole('dialog', { name: /^Reading /u })
-        : page.getByRole('region', { name: 'Event log' }),
+        : page.getByRole('tablist', { name: 'Material' }),
     )
     .toBeVisible()
 }
@@ -304,13 +304,12 @@ it('page-scrolls below 821 with the research corpus in MATERIAL, as with artifac
 
   // One column, full width, in order — the same shape the artifact tab has.
   const queue = box('queue')
-  const holder = box('holder')
   const material = box('material')
-  for (const b of [queue, holder, material]) {
+  for (const b of [queue, material]) {
     expect(b.left).toBe(0)
     expect(Math.round(b.width)).toBe(700)
   }
-  expect(material.top).toBeCloseTo(holder.bottom, 0)
+  expect(material.top).toBeCloseTo(queue.bottom, 0)
 
   // And MATERIAL is not flattened to its head: the virtualizer's scroller has
   // room. A zero-height list inside a stacked pane is what "the inner scroller

@@ -39,6 +39,8 @@ export const Pane = ({
   footer,
   scroll = 'body',
   collapseTo = 'rail',
+  collapsible = true,
+  showLabel = true,
   minContent,
   unmountWhenCollapsed = false,
   collapsed: collapsedProp,
@@ -66,6 +68,30 @@ export const Pane = ({
    *  Inside one, the split's axis decides and this is not read. See the note
    *  on `form` below for why that is not the prop being ignored. */
   collapseTo?: CollapseTo
+  /** Whether this pane may be folded at all.
+   *
+   *  Default true, because a pane in a `Split` is normally a peer trading width
+   *  against its neighbours and the toggle is how a reader does the trading.
+   *  False is for the one region a layout is *about* — the content area beside
+   *  a sidebar, which nothing folds away from because there would be nothing
+   *  left. `toggleCollapsed`'s last-open guard does not cover that case: with a
+   *  sidebar still open, folding the content area is permitted and leaves a
+   *  rail beside an empty column.
+   *
+   *  It suppresses the control, not the state. A pane declared uncollapsible
+   *  that is somehow handed `collapsed` still renders collapsed — the caller
+   *  owning the set is the caller's business, and a prop that silently
+   *  overrode it would be a second place deciding one fact. */
+  collapsible?: boolean
+  /** Whether to draw the title. The region keeps `label` as its accessible name
+   *  either way.
+   *
+   *  For a pane whose header is something else — MATERIAL's header is its tab
+   *  strip — where a heading repeating the region's name is a second row
+   *  spending vertical space to say what the tabs already say. Dropping `label`
+   *  instead would take the accessible name with it, leaving a region nothing
+   *  can address. */
+  showLabel?: boolean
   /** The height, in pixels, below which this pane's content stops being worth
    *  showing.
    *
@@ -98,7 +124,9 @@ export const Pane = ({
   const bodyId = useId()
 
   const collapsed = collapsedProp ?? split?.collapsed.has(id) ?? false
-  const onToggle = onToggleProp ?? (split ? () => split.toggle(id) : undefined)
+  const onToggle = !collapsible
+    ? undefined
+    : (onToggleProp ?? (split ? () => split.toggle(id) : undefined))
   // Inside a `Split` the form follows the axis, both ways, and the caller's
   // `collapseTo` is not consulted at all. Once the panes stack a pane is a row,
   // so a rotated title would be lying about which way the layout runs;
@@ -141,32 +169,39 @@ export const Pane = ({
           : ({ '--pane-min-content': `${String(minContent)}px` } as CSSProperties)
       }
     >
-      <header className="lay-pane-head">
-        {onToggle ? (
-          <button
-            type="button"
-            className="lay-pane-toggle"
-            aria-expanded={!collapsed}
-            aria-controls={bodyId}
-            onClick={onToggle}
-          >
-            {/* A real sentence, not the glyph. `Pane.tsx` in the session view
+      {/* Skipped entirely rather than rendered empty. A pane with no toggle, no
+          title, no meta and no actions still gets `.lay-pane-head`'s padding
+          and border, which is a visible band above the content saying nothing —
+          and the point of turning the title off was to give that row back to
+          the tab strip below it. */}
+      {!onToggle && !showLabel && meta === undefined && actions === undefined ? null : (
+        <header className="lay-pane-head">
+          {onToggle ? (
+            <button
+              type="button"
+              className="lay-pane-toggle"
+              aria-expanded={!collapsed}
+              aria-controls={bodyId}
+              onClick={onToggle}
+            >
+              {/* A real sentence, not the glyph. `Pane.tsx` in the session view
                 announces its toggles as "◂" and "▸" -- a bug `AgentWidget`
                 names in a comment and routes around rather than through, so
                 the correct behaviour exists in one component and the incorrect
                 one in another. The glyph stays as decoration, hidden from the
                 accessibility tree, and the name is text a screen reader can
                 actually read out. */}
-            <span aria-hidden="true">{collapsed ? '▸' : '◂'}</span>
-            <span className="lay-visually-hidden">
-              {collapsed ? `Expand ${label}` : `Collapse ${label}`}
-            </span>
-          </button>
-        ) : null}
-        <h2 className="lay-pane-title">{label}</h2>
-        {meta === undefined ? null : <span className="lay-pane-meta">{meta}</span>}
-        {actions === undefined ? null : <div className="lay-pane-actions">{actions}</div>}
-      </header>
+              <span aria-hidden="true">{collapsed ? '▸' : '◂'}</span>
+              <span className="lay-visually-hidden">
+                {collapsed ? `Expand ${label}` : `Collapse ${label}`}
+              </span>
+            </button>
+          ) : null}
+          {showLabel ? <h2 className="lay-pane-title">{label}</h2> : null}
+          {meta === undefined ? null : <span className="lay-pane-meta">{meta}</span>}
+          {actions === undefined ? null : <div className="lay-pane-actions">{actions}</div>}
+        </header>
+      )}
 
       {/* Three states, not two. Collapsed-and-unmounting renders no body at
           all; collapsed-and-keeping renders one the stylesheet hides, so its

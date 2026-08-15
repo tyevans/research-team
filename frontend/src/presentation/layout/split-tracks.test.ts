@@ -38,6 +38,23 @@ it('sizes every open track from one declaration', () => {
   )
 })
 
+it('caps a track at a ceiling it declares instead of a share of the leftover', () => {
+  // A sidebar is not a peer competing for free space: it is a fraction of the
+  // window, and an fr weight cannot say that -- `1fr` of three tracks is a
+  // share of what the *floors* left over, so the same weight is a different
+  // fraction at every width. `max` says the fraction directly.
+  //
+  // Red without the `max` arm in `splitTemplate`: emits `minmax(344px, 1fr)`.
+  const sidebar: readonly Track[] = [
+    { id: 'queue', min: 344, max: '25%' },
+    { id: 'material', min: 422, weight: 1 },
+  ]
+
+  expect(splitTemplate({ tracks: sidebar, collapsed: none, wide: true })).toBe(
+    'minmax(344px, 25%) minmax(422px, 1fr)',
+  )
+})
+
 it('gives a collapsed track the fixed rail width, not a smaller minmax', () => {
   // A fixed track rather than a reduced minimum, which is the whole point of
   // collapsing: the space a collapsed pane gives up has to go to the open

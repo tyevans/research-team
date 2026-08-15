@@ -49,6 +49,53 @@ it('names its toggle with a sentence rather than a glyph', () => {
   )
 })
 
+it('offers no toggle inside a split when it is declared uncollapsible', () => {
+  // The content half of a sidebar layout. `Pane` renders a toggle for every
+  // pane in a split, which is right for peers trading width against each other
+  // and wrong for the one region everything else folds *away from* -- a reader
+  // who folds the content area is left with two rails and no content, which is
+  // the state `toggleCollapsed`'s last-open guard exists to prevent and cannot,
+  // because the sidebar is still open.
+  //
+  // Red without `collapsible`: renders "Collapse Material".
+  render(
+    <Split
+      id="project"
+      label="Project panes"
+      tracks={TRACKS}
+      collapsed={new Set()}
+      onCollapsedChange={() => {}}
+    >
+      <Pane id="timeline" label="Queue">
+        rows
+      </Pane>
+      <Pane id="workspace" label="Material" collapsible={false}>
+        tabs
+      </Pane>
+    </Split>,
+  )
+
+  expect(screen.queryByRole('button', { name: /Material/ })).toBeNull()
+  // The sidebar keeps its own, or the layout has no controls at all.
+  expect(screen.getByRole('button', { name: 'Collapse Queue' })).toBeInTheDocument()
+})
+
+it('still names the region when its title is not drawn', () => {
+  // A pane whose header is a tab strip has no room for a second heading saying
+  // the same word, but the region still has to be findable by name -- dropping
+  // `label` rather than hiding it would take the accessible name with it.
+  //
+  // Red without `showLabel`: the heading is in the tree.
+  render(
+    <Pane id="workspace" label="Material" showLabel={false} collapsed={false}>
+      tabs
+    </Pane>,
+  )
+
+  expect(screen.getByRole('region', { name: 'Material' })).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Material' })).toBeNull()
+})
+
 it('keeps a collapsed body in the tree by default, marked hidden', () => {
   render(
     <Pane id="timeline" label="Timeline" collapsed onToggle={() => {}}>

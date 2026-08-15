@@ -143,9 +143,14 @@ const show = async () => {
 
 const outerSplit = () => document.querySelector<HTMLElement>('.lay-split[data-split="project"]')!
 
-/** HOLDER's body, and the three boxes stacked in it. */
+/** The holding session's body, and the three boxes stacked in it.
+ *
+ * MATERIAL's pane body rather than HOLDER's: the holding session is MATERIAL's
+ * first tab now and HOLDER is not a pane. The three boxes inside are the same
+ * three, unchanged — which is what makes these claims still worth asserting
+ * rather than rewriting. */
 const holder = () => {
-  const body = document.querySelector<HTMLElement>('[data-pane="holder"] .lay-pane-body')!
+  const body = document.querySelector<HTMLElement>('[data-pane="material"] .lay-pane-body')!
   return {
     body,
     log: body.querySelector<HTMLElement>('[aria-label="Event log"]')!,
@@ -284,7 +289,6 @@ it('folds a region, remembers it under `project`, and leaves `session` alone', a
   await page.getByRole('button', { name: 'Collapse Queue' }).click()
 
   expect(outer.querySelector('[data-pane="queue"]')!.className).toContain('is-collapsed')
-  expect(outer.querySelector('[data-pane="holder"]')!.className).not.toContain('is-collapsed')
   expect(outer.querySelector('[data-pane="material"]')!.className).not.toContain('is-collapsed')
 
   expect(preferences.collapsedPanes('project')).toEqual(['queue'])

@@ -254,19 +254,25 @@ it('puts a clicked stage in the address bar without a history entry', async () =
   expect(window.history.length).toBe(before)
 })
 
-it('gives one project route three regions rather than a choice of two pages', async () => {
-  // The merge, seen from the route: every project facet now lands on the same
-  // page, and the page has three named regions. Reverted, this fails on the
-  // first assertion -- there was no `Project regions` group, because there was
-  // no container, and `#/p/<id>/entity/e1` reached a whole separate view whose
-  // heading said "Research".
+it('gives one project route a sidebar and a content region, not a choice of two pages', async () => {
+  // The merge, seen from the route: every project facet lands on the same page.
+  // Reverted, this fails on the first assertion -- there was no `Project
+  // regions` group, because there was no container, and `#/p/<id>/entity/e1`
+  // reached a whole separate view whose heading said "Research".
+  //
+  // **Two regions, where this said three until the sidebar slice.** HOLDER was
+  // a region and is now a tab inside MATERIAL, so "Holding session" is no
+  // longer a region name and asking for one would pass on a `tablist` label if
+  // this used a loose query. `region` is the strict one: it matches the
+  // `<section aria-label>` a `Pane` renders and nothing else.
   window.location.hash = `#/p/${ATLAS}/entity/e1`
   renderApp()
 
   expect(await screen.findByRole('group', { name: 'Project regions' })).toBeInTheDocument()
-  for (const region of ['Queue', 'Holding session', 'Material']) {
+  for (const region of ['Queue', 'Material']) {
     expect(screen.getByRole('region', { name: region })).toBeInTheDocument()
   }
+  expect(screen.queryByRole('region', { name: 'Holding session' })).toBeNull()
 })
 
 it('reaches the material region for a facet that used to reach nothing', async () => {
