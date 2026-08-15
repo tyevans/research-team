@@ -265,12 +265,55 @@ class DefinitionService:
         who has just added documents and wants the answer now, rather than
         waiting for an invalidating event that may never come for this
         entity.
-        """
-        if not force:
-            cached = await self._cache.get(entity_id)
-            if cached is not None and not cached.stale:
-                return cached
 
+        **A failed regeneration falls back to the stale cached row, labelled,
+        rather than to `None`.** This is not the ordinary "no definition"
+        case above -- it is a reader who has *already seen* a definition
+        losing it because a refresh happened to fail (the guard tripped
+        after an edit removed every passage, or the model's reply cited
+        nothing verifiable). Discarding a definition the reader already
+        trusts because *this* attempt to improve it came back empty is a
+        worse outcome than showing the older text with `stale=True` -- which
+        is exactly what `stale` is for: telling the reader the text may be
+        out of date, not hiding it. `GET .../definition` calls this on every
+        read (see `read_graph_definition`), so without this fallback a
+        single bad extraction could permanently blank an entity's panel
+        until someone got lucky with `force=True`.
+
+        This does not cost more model calls than before: the guard above
+        still runs first, so an entity with nothing to ground a definition
+        in is refused before any request reaches the model, stale row or
+        not. Only entities that *were* groundable pay for the attempt, and
+        most of those succeed.
+        """
+        cached = await self._cache.get(entity_id)
+        if not force and cached is not None and not cached.stale:
+            return cached
+
+        definition = await self._generate(entity_id)
+        if definition is not None:
+            return definition
+
+        # Regeneration produced nothing usable. See the docstring above --
+        # the stale row (if any) is still the best answer available.
+        if cached is None:
+            return None
+        if cached.stale:
+            return cached
+        return Definition(
+            text=cached.text,
+            citations=cached.citations,
+            model=cached.model,
+            generated_at=cached.generated_at,
+            stale=True,
+        )
+
+    async def _generate(self, entity_id: UUID) -> Definition | None:
+        """A freshly generated, verified, and cached definition -- or `None`
+        if there was nothing to ground one in or the model's reply did not
+        hold up. Split out of `define` so the stale-fallback logic there does
+        not have to interleave with the generation steps.
+        """
         neighborhood = await self._graph.neighborhood(str(entity_id))
         if neighborhood is None:
             return None
@@ -287,11 +330,8 @@ class DefinitionService:
         text, claimed = _parse(raw)
         citations = _verified(claimed, passages)
         if not text or not citations:
-            # Refused rather than stored -- and nothing is written, so a
-            # previously cached (stale) definition stays visible rather than
-            # being replaced by an unsourced one. The reader sees no
-            # definition, or the old labelled one, and a later click tries
-            # again.
+            # Refused rather than stored -- see `define`'s docstring for what
+            # the caller falls back to when this happens.
             return None
 
         definition = Definition(

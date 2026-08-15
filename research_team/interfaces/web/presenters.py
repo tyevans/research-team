@@ -28,6 +28,7 @@ from research_team.application.course import (
     ProvenanceSummary,
     StageProgress,
 )
+from research_team.application.entity_definitions import Definition
 from research_team.application.findings import Finding
 from research_team.application.graph_read import (
     EntityPage,
@@ -835,6 +836,39 @@ def usages_view(usages: list[Usage]) -> dict[str, Any]:
             }
             for usage in usages
         ]
+    }
+
+
+def definition_view(definition: Definition | None) -> dict[str, Any]:
+    """`GET .../definition`.
+
+    `definition is None` renders as `text: None` with no citations, rather
+    than the route raising a 404 -- see `read_graph_definition`'s docstring
+    for why an undefinable entity is not a missing one. `model` and
+    `generated_at` are `None` too in that case: there is no generation to
+    report on, and a placeholder value here would read as though one had run.
+    """
+    if definition is None:
+        return {
+            "text": None,
+            "citations": [],
+            "model": None,
+            "generated_at": None,
+            "stale": False,
+        }
+    return {
+        "text": definition.text,
+        "citations": [
+            {
+                "source_id": citation.source_id,
+                "start": citation.start,
+                "end": citation.end,
+            }
+            for citation in definition.citations
+        ],
+        "model": definition.model,
+        "generated_at": definition.generated_at,
+        "stale": definition.stale,
     }
 
 

@@ -183,6 +183,42 @@ async def test_a_stale_definition_is_regenerated_on_the_next_call():
 
 
 @pytest.mark.asyncio
+async def test_a_stale_definition_whose_regeneration_fails_falls_back_to_the_old_text():
+    """A GET on a stale row regenerates -- the test above -- but a reader who
+    has already seen a definition should not lose it because *this*
+    regeneration attempt came back with nothing usable (an edit that removed
+    the passage a citation used to land in, say). The old text is still
+    served, labelled stale, rather than the caller getting `None`. Added by
+    Task 10 (T10) when its route test proved this was missing: `define` is
+    called on every GET, so without the fallback a single bad regeneration
+    would permanently blank an entity that already had a good definition.
+    """
+    model = FakeDefinitionModel()
+    cache = FakeCache()
+    service = _service(model, cache)
+
+    await service.define(ACME)
+    original = cache.rows[ACME]
+    cache.rows[ACME] = Definition(
+        text=original.text,
+        citations=original.citations,
+        model=original.model,
+        generated_at=original.generated_at,
+        stale=True,
+    )
+    model._reply = json.dumps({"text": "Acme is a company.", "citations": []})
+
+    result = await service.define(ACME)
+
+    assert result is not None
+    assert result.text == original.text
+    assert result.stale is True
+    # Nothing overwrites the cache with the failed attempt's (nonexistent)
+    # output -- the row on disk is still the one this fallback is reading.
+    assert cache.rows[ACME].text == original.text
+
+
+@pytest.mark.asyncio
 async def test_the_prompt_carries_the_passages_and_the_edges():
     model = FakeDefinitionModel()
     service = _service(model, FakeCache())

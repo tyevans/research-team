@@ -41,6 +41,7 @@ from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
 from research_team.application.document_extraction import DocumentExtractor
+from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grading import GradingError, grade
 from research_team.application.graph_read import (
     MAX_GRAPH_NODES,
@@ -81,6 +82,7 @@ from research_team.interfaces.web.presenters import (
     autonomy_view,
     corpus_change,
     course_view,
+    definition_view,
     dispatch_view,
     entity_page_view,
     event_rows,
@@ -455,6 +457,7 @@ def create_app(
     ask: AskService | None = None,
     extractor: DocumentExtractor | None = None,
     extract_queue: ExtractionQueue | None = None,
+    definitions: DefinitionService | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -1346,6 +1349,52 @@ def create_app(
         await _require_project(project_id)
         reader = await _usage_reader(project_id)
         return usages_view(await reader.usages(entity_id, limit=limit))
+
+    @app.get("/api/projects/{project_id}/graph/entities/{entity_id}/definition")
+    async def read_graph_definition(project_id: UUID, entity_id: UUID):
+        """`entity_id`'s grounded definition, generated on first ask and
+        cached from then on -- see `DefinitionService.define`.
+
+        **503, not a missing route, until Task 10b lands.** `definitions` has
+        no composition-root wiring yet: there is no `DefinitionTextPort`
+        adapter for a real model, and `EntityDefinitionStore` (the cache) is
+        currently constructed privately inside `EntityDefinitionRunner`
+        (`read_models.py`) with no way for this route to reach it. Ruled in
+        task planning to be its own task rather than folded in here, because
+        the route's contract (status codes, view shape, the 200-vs-404 call
+        below) and the wiring's concerns (per-project store lifetime, where
+        the model client comes from) fail in different ways and deserve
+        separate review. A build without `definitions` wired is expected to
+        answer 503 here for now -- see that task's report once it lands.
+
+        **200 with a null `text`, not 404, when `define` returns `None`.**
+        `entity_id` is a real node in the graph; it is merely undefinable
+        today because nothing was found to ground a definition in (no
+        passages, no edges -- see `DefinitionService.define`'s docstring). A
+        404 would tell the caller the entity itself does not exist, which is
+        a different and wrong statement, and one the browser would act on by
+        treating the node as gone rather than merely lacking a summary. Do
+        not "fix" this to a 404 without re-reading that reasoning -- it is
+        the deliberate case a later reader is likely to trip on, which is why
+        it is spelled out here as well as in the service.
+
+        No `force=True` here -- this route only reads. Regeneration is a
+        separate concern (Task 12's retrigger), not something a GET should
+        cause as a side effect the caller did not ask for.
+
+        **Synchronous, deliberately, unlike extraction.** `ExtractionQueue`
+        exists because extraction is long-running and a request that loses a
+        queued extraction loses an intention the caller cannot easily
+        re-express (BACKLOG B62). A definition is seconds of work, produces
+        the same answer from the same inputs, and a failed or interrupted
+        request costs the caller nothing but a second click -- so the entire
+        retry story is "click again", and a durable queue here would be
+        machinery bought for a payoff nobody would notice.
+        """
+        await _require_project(project_id)
+        if definitions is None:
+            raise HTTPException(status_code=503, detail="no definition service is configured")
+        return definition_view(await definitions.define(entity_id))
 
     @app.post("/api/sessions/{session_id}/release")
     async def release_session(session_id: UUID):
