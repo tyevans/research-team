@@ -1283,21 +1283,37 @@ not to the increment scheme. One letter, two vocabularies.
 The residue, as surveyed on 2026-08-14 — verified against the code on that
 date, so re-check citations before building:
 
-- ~~**`BACKLOG.md` B57 — the project page's three region widths.**~~ **Measured
-  on 2026-08-14** by the slice
-  `docs/superpowers/plans/2026-08-14-the-page-nobody-measured.md`, which also
-  answered §6 question 3 above and found a shipped defect doing it. **Partly
-  residue still:** nothing below 821px was measured, the wrapped row's 46vh cap
-  is inherited rather than derived, and the weights remain reasoned. B57 is kept
-  open for those three.
+- ~~**`BACKLOG.md` B57 — the project page's three region widths.**~~ **Closed
+  2026-08-14**, across two slices: `2026-08-14-the-page-nobody-measured.md` took
+  the two bands at and above 821 (and answered §6 question 3 above), and
+  `2026-08-14-below-the-narrow-breakpoint.md` took the third. **A shipped defect
+  in each of the three.** The last was the largest: below 821 the surface never
+  scrolled — `scrollHeight == clientHeight == 856` at every width from 820 down
+  to 375, every pane squeezed below its content, MATERIAL at 112px — fixed with
+  one declaration, `flex: 0 0 auto` on `.lay-split`. **No longer residue.**
 - ~~**B56 — `TruncatedText`'s three inert `focus-visible:` utilities.**~~
   **Settled on 2026-08-14 by that slice's task B: deleted, not repaired**, after
-  measuring the ring with and without them and finding it byte-identical.
-- **New, filed by that slice and unowned: `BACKLOG.md` B60 and B61.** B60 is the
-  session view's copy of a both-flanks-collapsed bug the project view had fixed —
-  the reason the two `responsive.css` blocks are not the duplication they look
-  like. B61 is the graph canvas's stale frame after a resize, filed as an
-  observation and as the reason a test on this page must poll.
+  measuring the ring with and without them and finding it byte-identical. **No
+  longer residue.**
+- ~~**B60 — the session view's both-flanks-collapsed bug.**~~ **Closed
+  2026-08-14** by the narrow-band slice: the combined `:has(...):has(...)` rule is
+  ported into the session block, red-proved at **966px where a rail is 34**. The
+  two `responsive.css` blocks now differ only in their floors, and the project
+  block's comment says so. **No longer residue.**
+- **Still residue, and new from the narrow-band slice: B61, B62, B63, B64, B65.**
+  B61 is the graph canvas's stale frame after a resize, filed as an observation
+  and as the reason a test on this page must poll. B62 asks which of two width
+  declarations wins on the drawer below 820 — never measured, and the mechanism
+  is unlayered-versus-layered rather than the source order it looks like. B63 is
+  the research view below 821, which the `.lay-split` fix reaches and no test
+  renders: unmeasured rather than measured and fine. B64 is three browser files
+  with three resize helpers and three versions of one bug, and it is the entry to
+  read before writing a fourth. B65 carries B57's two survivors — the wrapped
+  row's inherited 46vh cap and the reasoned `1 / 1.5 / 1` weights.
+- **Recorded and deliberately not fixed, so nobody re-files them as new:** the
+  project view's first horizontal clips are at **350px** (`.tabs`, needs 351) and
+  **343px** (QUEUE's seeding form), both below the ~561 that slice treats as
+  worth effort; and the session view was never swept below 700.
 - **B58, B59 and §4's `GET /api/capabilities` all want the same backend
   budget.** They are three entries and one decision; whoever takes any of them
   should read all three before spending it.

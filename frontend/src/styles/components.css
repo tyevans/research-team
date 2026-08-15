@@ -583,12 +583,19 @@
    matches no `--bp-*` token and appears nowhere else in the project -- so the
    page had two columns declared across `panes.css` and `course.css` and a
    single column declared in a component stylesheet, and finding all three
-   meant knowing to look. It is now one rule in `responsive.css`, at
-   `--bp-narrow` -- because `theme.test.ts` refuses a media query in the layout
-   system's files whose boundary is not a `BREAKPOINTS` value, and 900 never
-   was one. The page therefore has two columns between 821px and 900px where it
-   had one; that is the cost of the number being made legitimate, and it is
-   recorded here because this file is where the 900 lived. */
+   meant knowing to look.
+
+   **This note used to end "it is now one rule in `responsive.css`, at
+   `--bp-narrow`", and that has not been true since the course view was
+   deleted.** There is no such rule: `responsive.css` names no course selector
+   at any breakpoint (grepped 2026-08-14), because `CourseView` and every rule
+   that was a claim about its markup went in one commit -- `course.css:4-9`
+   says so. So the third declaration was not relocated, it died with the
+   screen, and the "two columns between 821px and 900px" cost it described is a
+   cost nobody pays. What survives is the reason the 900 could not simply move:
+   `theme.test.ts` refuses a media query in the layout system's files whose
+   boundary is not a `BREAKPOINTS` value, and 900 never was one. That is worth
+   keeping here, because this file is where the 900 lived. */
 
 @media (prefers-reduced-motion: reduce) {
   * {

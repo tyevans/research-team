@@ -1187,59 +1187,66 @@ it is cheap — scroll the list before inserting the headings, then assert.
 Worth doing because the alternative is a defect that shipped once, has a fix
 nobody can break loudly, and a docstring that will read as folklore in a year.
 
-### B57. Measured on 2026-08-14 — the widths were a shipped defect, and two bands of this entry remain open
+### B57. Closed 2026-08-14 — all three bands measured, one shipped defect found in each
 
-**Answered, not fully discharged.** Kept rather than deleted because the part of
-it that was never done is the part nobody would think to re-file.
+**Closed by the slice
+`docs/superpowers/plans/2026-08-14-below-the-narrow-breakpoint.md`, which
+measured the band the previous slice left open.** Kept as a stub rather than
+deleted, because `docs/increment-c-plan.md` §8 and four reports cite this number.
 
-**What the measurement found, which is worse than this entry claimed.** The
-numbers were not merely unmeasured — they were wrong at the one width that
-matters. At **1181px**, the narrowest viewport where `Split` writes a template at
-all, the fr shares were 337 / 506 / 337. MATERIAL's 337px had to hold a five-tab
-strip that is **351px wide and neither wraps nor scrolls**, so the Graph tab was
-painted past the pane's right edge: present, and unclickable. QUEUE's 317px
-seeding form went the same way 14px later. It survived four slices for exactly
-the reason this entry guessed — the page had only ever been looked at at 1440,
-and 1440 was never the width that was wrong.
+Three bands, three defects, all three fixed:
 
-**`PROJECT_TRACKS` floors are now 344 / 342 / 352**, measured in Chromium on
-2026-08-14, replacing 280 / 320 / 280 — which were the session view's floors,
-adopted without measurement. 1440 is **pixel-identical** before and after; only
-the bottom of the wide band moves. Reweighting was considered and rejected: it
-buys the same clearance by reshaping every width above 1181 in order to fix its
-narrowest 60px. HOLDER's 342 never binds today and is written down anyway, and
-the docstring says which of the two it is.
+- **≥1181** — the fr shares were 337/506/337 and MATERIAL's five-tab strip is
+  351px wide and neither wraps nor scrolls, so the Graph tab painted past the
+  pane's right edge: present and unclickable. `PROJECT_TRACKS` floors are now
+  **344/342/352**, measured, replacing the session view's 280/320/280 adopted
+  without measurement. 1440 is pixel-identical before and after.
+- **821–1180** — the band had no layout at all: `Split` writes no inline template
+  below `--bp-wide` and the only middle-band rule was scoped to
+  `[data-split='session']`, so three regions resolved to one grid column and
+  MATERIAL measured **148px** with no scroller. The project view now declares its
+  own two-column arrangement in `responsive.css`.
+- **below 821** — **the surface never scrolled, and never had.**
+  `scrollHeight == clientHeight == 856` at every width from 820 down to 375: the
+  split stayed pinned, so every pane shrank below its content to share one screen
+  and MATERIAL got **112px**. `overflow: auto` had nothing to scroll. It is the
+  same defect `layout.css` already records and fixes for `page` mode fifty lines
+  above — the below-narrow half of `auto` was given the overflow and not the
+  release. **Fixed with one declaration**, `flex: 0 0 auto` on `.lay-split`;
+  after, the surface is 1128/856 and the panes 578/401/148.
 
-**The 821–1180 band had no layout at all.** `Split` writes no inline template
-below `--bp-wide` and the only middle-band rule was scoped to
-`[data-split='session']`, so the three regions resolved to a single grid column —
-and because the split is still `display: grid` there, `layout.css`'s stacked
-`max-height: 60vh` never applied and **nothing scrolled**: MATERIAL measured
-**148px** with no scroller to recover it from. Folding a pane gave a full-width
-1000×182px block wearing a rotated rail title. The project view now declares its
-own middle arrangement in `responsive.css` — two columns with MATERIAL wrapped
-onto its own row.
+**The candidate defect that was refuted, so nobody re-derives it.** The 60vh cap
+on `.lay-pane-body` is unqualified where the `page`-mode rule excludes
+`[data-scroll='regions']`, and a cap on an `overflow: hidden` box looks like a
+clip with no way to reach what it cut. Measured: it does not clip. Every region
+inside a `regions` body is `flex: 1 1 0%; min-height: 0` with its own scroller,
+so a capped body hands the shortfall down — HOLDER's body at 362.9 under a 540
+cap, both its regions scrolling 88px each, composer on screen. Adding the
+`:not()` would have been a change justified by nothing.
 
-**What was NOT done, and is what keeps this entry open:**
+**Fixed versus only recorded, and the difference matters.** Fixed: the three
+defects above. **Recorded and deliberately not fixed** — the project view's first
+horizontal clips, at **350px** (MATERIAL's `.tabs`, which needs 351) and **343px**
+(QUEUE's seeding form). Both are phone widths, below the ~561 that slice treats
+as worth effort on a console with one user on one machine; and `.tabs` is the
+class on both `Choices` and `TabList`, so a `flex-wrap` there changes every tab
+row in the console — cheap to type, not cheap to justify from one measurement in
+one view. `workspace.css:130-133` is the whole change if it is ever wanted.
 
-- **Nothing below 821px was measured.** This entry's own "nothing on this page
-  has been rendered below `--bp-wide`" is only half answered. The narrow stack
-  (`layout.css:144-159`) is still unmeasured with real content.
-- **The 46vh cap on the wrapped MATERIAL row is inherited from the session
-  view's rule, not derived.** The assertion guarding it is vacuous against a
-  fixture whose MATERIAL is empty, and says so in its own comment.
-- **The weights (`1 / 1.5 / 1`) remain reasoned rather than observed.** The
-  floors say where a region *breaks*; they say nothing about where it is good,
-  and no test written here can tell the difference. That is a smaller gap than
-  the one it replaces, and it is still a gap.
+**And what was never swept at all: the session view below 700.** Only 821, 1000
+and 700 were rendered there. Unmeasured rather than measured and fine. The
+research view below 821 is unmeasured too and is [[B63]].
 
-Measured by the slice
-`docs/superpowers/plans/2026-08-14-the-page-nobody-measured.md`; the numbers and
-their red proofs are in `docs/reports/measured-task-a.md` and
-`docs/reports/measured-task-b.md`, and the answer is also recorded against
-`increment-c-plan.md` §6 question 3, where the five deferrals are.
+What survives this closure and is re-filed rather than dropped: [[B65]] — the
+wrapped row's 46vh cap is still inherited rather than derived, and the 1/1.5/1
+weights are still reasoned rather than observed.
 
-The original entry follows.
+Numbers and red proofs: `docs/reports/measured-task-a.md`,
+`measured-task-b.md`, `stacked-task-a.md`, `stacked-task-b.md`.
+
+The original entry follows, because the reason it was filed is worth keeping:
+the measurement was nobody's acceptance criterion for four slices running, and
+it took two dedicated slices to discharge.
 
 `PROJECT_TRACKS` sets the QUEUE / HOLDER / MATERIAL widths, and the numbers have
 never been measured against a rendered page. Increment C slice 1 chose them,
@@ -1469,7 +1476,41 @@ Until then the honest summary is that a turn shows up in the roster **only where
 something polls**, and the two places a reader is most likely to be looking are
 the two that do not.
 
-### B60. Collapsing both session flanks at once leaves one of them a full-width rail
+### B60. Closed 2026-08-14 — the combined rule is ported, red-proved at 966px
+
+**Fixed.** `responsive.css` now carries, after the two single-collapse rules so
+it wins on source order exactly as the project block does:
+
+```css
+.lay-split[data-split='session']:has([data-pane='timeline'].is-collapsed):has(
+    [data-pane='workspace'].is-collapsed
+  ) {
+  grid-template-columns: var(--rail-w) var(--rail-w);
+}
+```
+
+**Proved red against the block as it shipped**, at 1000x900, before the CSS was
+touched:
+
+```
+× rails both session flanks when both are folded
+  → AssertionError: expected 966 to be close to 34, received difference is 932,
+    but expected 0.5
+```
+
+**966px where a rail is 34**, under a rotated title — measured in the session
+view rather than carried over from the project view's identical number, which is
+the same 1000 − 34 arithmetic and not a coincidence. The claim asserts the two
+rectangles rather than the template string (reading the template back would agree
+with whichever rule won) and re-reads the first pane *after* the second fold,
+since the defect is the second collapse undoing the first pane's track.
+
+The paragraph below about whoever merges the two blocks "owing the session view
+this rule" is now false and the project block's comment has been rewritten:
+**the two blocks differ only in their floors** — 344/320 against 280/300.
+
+`docs/reports/stacked-task-b.md` §1. Kept as a stub rather than deleted because
+`docs/increment-c-plan.md` §8 cites it. The original entry follows.
 
 `responsive.css:40-45`. In the 821–1180px band the session split declares its own
 arrangement, and two of its rules —
@@ -1519,6 +1560,138 @@ measuring this page after a resize needs `expect.poll`, not a bare read.
 If it is ever picked up as a defect rather than an observation, the fix is on the
 observer side (size from the container's own measurement synchronously on the
 frame the layout changes), not on the test side.
+
+### B62. Which width wins on the drawer below 820 has never been measured
+
+**A question, not a defect, and the distinction is the entry.** `Drawer.tsx:164`
+sets the panel's width three ways in Tailwind utilities — `w-[42vw]
+max-w-[640px] min-w-[360px]` — while `responsive.css:217-221` sets
+`.drawer { width: 100%; max-width: none; min-width: 0 }` below 820px. Both
+selectors are 0-1-0. Nobody has watched the result at a narrow width.
+
+The two outcomes, and they are opposite:
+
+- **The stylesheet wins.** The drawer is full width below 820, which is what
+  the rule was written for and what `Drawer.tsx:155-163`'s comment claims.
+- **Tailwind wins.** `w-[42vw]` and `min-w-[360px]` survive, and the drawer is a
+  360px strip pinned to the right of an 819px viewport — a *narrower* panel on a
+  narrower screen, the exact inverse of the rule's intent, on the one screen
+  size it was written to serve.
+
+**One correction to make before anyone measures: source order is not what
+decides this.** The obvious reading — `index.css:24` imports `responsive.css`,
+so whichever comes later wins — is the wrong mechanism. `theme.css:85` imports
+Tailwind's utilities as `layer(utilities)`, and `responsive.css` contains no
+`@layer` at all, so the comparison is unlayered-versus-layered, and **an
+unlayered normal declaration beats a layered one regardless of specificity or
+order** (the rule `CLAUDE.md` records under the inward focus ring, and
+`theme.css:78-79` states in the same words). On that reading the stylesheet wins
+and the drawer is correct. It is still reasoning, not a measurement, and this
+project has shipped a defect off exactly that substitution once.
+
+**jsdom cannot answer it.** `getComputedStyle` there returns only what an inline
+style said, so a jsdom assertion that the drawer is full width would pass
+whichever rule is actually in force. It needs `npm run test:browser` — open a
+drawer at 800×900 and read `getBoundingClientRect().width` against the
+viewport — or an eye on a real page.
+
+### B63. The research view below 821 is unmeasured, and a change already reaches it
+
+**Unmeasured, not measured-and-fine, and the distinction is the whole entry.**
+
+The 2026-08-14 narrow-band slice fixed the below-821 surface with one declaration
+— `flex: 0 0 auto` on `.lay-split`, inside `layout.css`'s
+`@media not all and (min-width: 821px)` block. **That is on the shared layout
+primitive**, not on a view, so it applies to every view that mounts a `Split`.
+
+Two of the three were then measured there:
+
+- **Project** — `project-stacked.browser.test.tsx`, the file that found the
+  defect. Surface 856/856 before, 1128/856 after.
+- **Session** — `session-responsive.browser.test.tsx` claim 3, at 700x900.
+  The session view **had the same defect**, red-proved by removing the
+  declaration (`expected 856 to be greater than 856`), and the fix cures it here
+  too: surface 1063/856, panes 126/215/683, nothing clipping.
+
+**The research view was not.** Nothing in the browser suite renders it below 821.
+The whole suite is green, which establishes only that nothing that *is* asserted
+broke. Whether the research view stacks into a scrolling page, whether its panes
+take their content's height under the 60vh cap, and whether anything clips
+horizontally are all open.
+
+What it needs is small, because the shape is now written twice: a browser file
+mounting the research view inside a **real `Shell`** (not the bare 900px flex
+column the older sibling files use — that reproduces the pinned height by
+accident and leaves no `.lay-surface` to ask) with a wrapper at `height: 100vh`
+rather than a fixed pixel height, since a fixed height detaches the shell from
+the viewport `60vh` is measured against. Both fixtures are worth copying whole.
+Note [[B64]] before writing the resize helper.
+
+### B64. Three browser files, three resize helpers, three versions of the same bug
+
+**The finding is the repetition, not any one instance.** Every browser test file
+that changes viewport width has written its own resize helper, and each has
+independently shipped a variant of one defect: **the helper's readiness condition
+is already satisfied at the width it starts from, so it resolves on the first
+tick and the probe measures the old layout.**
+
+Three instances, all on record:
+
+1. `project-responsive.browser.test.tsx:158`'s `widen()` polls
+   `split().style.gridTemplateColumns === ''`. That is already true at 1000px, so
+   a 1000 → 700 resize resolves **without waiting for `matchMedia` to flip, for
+   `stacked` to become true, or for React to commit**. It works only crossing
+   `--bp-wide`, and only because the `afterEach` leaves the viewport at 1440.
+2. Task B's first helper polled `data-collapse-to === 'rail'` — which is what the
+   attribute says at 1440, the width every test starts from. A 1440 → 821 resize
+   satisfied it instantly and the probe read the **1440** layout: a
+   `280px 320px 280px` template, `Split`'s inline three-track style still on the
+   element, and a conversation **880px wide inside an 821px viewport**. The
+   documented trap was `widen()` crossing *down* past 1181; this is the same trap
+   from the other side, because `'rail'` is the value on both sides of 1181.
+3. Task A wrote a third helper to avoid both, per the plan's §2 warning.
+
+So the plan for that slice had to spend two paragraphs warning about helper (1),
+and helper (2) reinvented the bug anyway a task later. **A warning in a plan does
+not survive into the next file; a shared helper would.**
+
+**What it wants:** one resize helper, in a shared browser-test module, that polls
+a React-written attribute **and** the resolved geometry (either alone is
+insufficient — the attribute can be stale-correct, the geometry waits on the
+browser rather than on React), with the failed readings above in its docstring as
+the reason it does both. It should be red-proved the way any other claim here is:
+mutate it back to a single poll and watch a probe read the wrong viewport.
+
+**Cheap to state, not cheap to do**, which is why it is filed rather than done.
+The three files' fixtures differ (two wrap the view in a bare flex column, the
+two new ones mount a real `Shell` — see [[B63]]), so unifying the helper means
+deciding whether the fixture unifies too, and that is a bigger change than any
+one of them wanted. One extra constraint any shared version inherits:
+`check-deleted.mjs` forbids the identifier `gridTemplateColumns` anywhere under
+the session view, so the poll has to read
+`getComputedStyle(...).getPropertyValue('grid-template-columns')`. Task B hit
+that and spelled around it rather than loosening the rule; a shared helper should
+be written that way from the start.
+
+### B65. What survives B57: the 46vh cap is inherited, and the weights are reasoned
+
+**Re-filed from [[B57]] rather than dropped when it closed.** B57's headline —
+the three responsive bands are unmeasured — is discharged; these two are the
+residue, and they are small enough that they would have been lost inside a closed
+entry.
+
+- **The 46vh cap on the wrapped MATERIAL row is inherited from the session view's
+  rule, not derived.** Nobody chose 46. The assertion guarding it is vacuous
+  against a fixture whose MATERIAL is empty, and its own comment says so.
+- **The `1 / 1.5 / 1` weights remain reasoned rather than observed.** The floors
+  now say where a region *breaks* — they were measured, and finding them found a
+  shipped defect. They say nothing about where a region is *good*, and no test
+  written so far can tell the difference. A smaller gap than the one it replaced,
+  and still a gap.
+
+Neither is a defect. Both are numbers with no measurement behind them in a file
+where the neighbouring numbers now have one, which is exactly the asymmetry that
+makes the next reader trust them more than they have earned.
 
 ## The ask page
 
