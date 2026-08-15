@@ -11,6 +11,12 @@ entity changes. The usages are the same passages, listed and citable. They
 are one feature because they share their inputs: the retrieval that finds
 what to show you is the retrieval that grounds what the model writes.
 
+Grounded in edges is not the same as citable from them: an edge shapes what
+the model may say but has no span for a citation to point at, so an entity
+known only through its edges is refused before the model is asked rather
+than defined without a source. See `entity_definitions.py`'s module
+docstring and BACKLOG B77.
+
 ## What was verified before designing this
 
 Three things were checked against source rather than assumed, because the

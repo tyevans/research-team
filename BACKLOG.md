@@ -1336,12 +1336,34 @@ cached when the answer is `None`. Fixed by refusing on `not passages` alone.
 
 What that gives up: an entity that appears in the graph only through its
 relationships now shows no definition, where before it showed no definition
-*and* charged for a model call. Grounding one in edges alone is possible, but
-it is a design change rather than a loosened guard — `_verified` would need an
-edge-shaped citation (a relationship id, say) and the panel would need
-somewhere to send a reader who clicks it, since an edge has no character span
-in a document to highlight. Worth doing if edge-only entities turn out to be
-common in real corpora; nobody has measured how common they are.
+*and* charged for a model call. This is narrower than it first looked —
+`.superpowers/sdd/2026-08-14-entity-definitions-and-usages/edge-grounding-design.md`
+traced why an edge cannot carry a citation this system can verify, and it is
+not a gap in this repo's code: redstring's `Relationship`
+(`redstring/domain/relationship.py:13-34`) carries a document `source_id` but
+deliberately no span — its own docstring argues a reconstructed one "reads as
+evidence while being generation", the same failure mode this feature refuses
+for its own text. Inferred edges (`graph_reader.py:65-99`) have no document
+at all; they are arithmetic over two temporal extents, so there is nothing to
+cite even in principle.
+
+So this is blocked on redstring, not open to a local fix. It becomes buildable
+only if `ExtractedRelationship` gains a span field upstream (redstring's B76)
+— at that point `GraphRelationship` could carry a source id and offsets, and
+`_verified` would gain a second clause checking an edge citation the same way
+it checks a passage one.
+
+One wider variant was considered and rejected in the design, closer than it
+looks: carrying just the document `source_id` that already exists on
+`Relationship` today (`relationship.py:33`), so an edge-only entity could cite
+the whole document rather than a span within it. Buildable now, and it was the
+closest call — rejected because every other citation in this system points at
+a span (`GraphDetail.tsx:194-204`, `corpus_spans.quote`), and a citation list
+mixing "this sentence" with "somewhere in this document" degrades the ones
+that are precise rather than adding a genuinely comparable one.
+
+Worth doing if edge-only entities turn out to be common in real corpora and
+redstring gains the span; nobody has measured how common they are.
 
 ## Security and multi-tenancy
 

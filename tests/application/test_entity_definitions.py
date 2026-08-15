@@ -283,6 +283,34 @@ async def test_an_entity_with_edges_but_no_passages_is_not_sent_to_the_model():
 
 
 @pytest.mark.asyncio
+async def test_an_edge_only_entity_falls_back_to_its_stale_definition():
+    """Moving the passage guard into `_generate` does not change which
+    entities `_generate` returns `None` for -- it is the same set, just
+    reached without a call -- so the stale-fallback branch in `define`
+    (`:293-309`) still has to fire for an edge-only entity with an old row on
+    file, and still without paying for a call. Regresses if the guard's move
+    accidentally bypassed the fallback and returned `None` straight from
+    `_generate`'s early exit instead of routing through it."""
+    model = FakeDefinitionModel()
+    cache = FakeCache()
+    cache.rows[EDGES_ONLY] = Definition(
+        text="Ghost works for Acme.",
+        citations=[Citation(source_id="doc-1", start=0, end=10)],
+        model="fake-model",
+        generated_at="2026-01-01T00:00:00Z",
+        stale=True,
+    )
+    service = _service(model, cache)
+
+    result = await service.define(EDGES_ONLY)
+
+    assert result is not None
+    assert result.text == "Ghost works for Acme."
+    assert result.stale is True
+    assert model.calls == 0
+
+
+@pytest.mark.asyncio
 async def test_a_definition_citing_nothing_is_refused_rather_than_stored():
     """An ungrounded definition is worse than none: it reads exactly like a
     correct one. Nothing is cached, so nothing gets served later as though it

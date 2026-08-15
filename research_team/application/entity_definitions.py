@@ -7,10 +7,14 @@ The reader cannot tell, which is exactly why they would trust it. So every
 claim has to be attributable to a passage or an edge this service supplied,
 and the parts of that rule that a prompt cannot enforce are enforced here:
 
-* An entity with no passages *and* no edges is never sent to the model at
-  all (`define` returns `None`). There is nothing to ground it in, so asking
-  guarantees an ungrounded answer -- the guard costs one branch and removes
-  the entire failure mode.
+* An entity with no passages is never sent to the model at all (`define`
+  returns `None`). Edges alone are not enough, and not because they do not
+  ground -- they legitimately shape the text below -- but because they
+  cannot be *cited*: an edge has no character span, only redstring's
+  document id, so no reply built from edges only could ever produce a
+  citation `_verified` can confirm. Asking anyway guarantees a refused
+  reply, so the guard costs one branch and removes a call that was always
+  going to fail.
 * Text that comes back citing nothing verifiable is refused, not stored.
   What a reader sees when that happens: the same thing they see for an
   undefinable entity -- no definition -- rather than a paragraph that reads
@@ -324,17 +328,20 @@ class DefinitionService:
         # name sent to a model comes back defined from the model's own
         # memory, which is the one outcome this feature exists to prevent.
         #
-        # No passages is enough on its own, edges or not, and the earlier
-        # `not passages and not neighborhood.relationships` was a real cost:
-        # `_verified` can only check a citation against a passage this
-        # service supplied, so with `passages == []` it returns `[]` for any
-        # reply whatsoever, and `_generate` then refuses on `not citations`.
-        # The refusal was knowable before the call, and `read_graph_definition`
-        # calls `define` on every read with nothing cached in that case -- so
-        # an edge-only entity bought one guaranteed-futile model call per
-        # panel open, forever. Grounding a definition in edges alone would
-        # need an edge-shaped citation `_verified` could check; that is a
-        # design change, filed in `BACKLOG.md`.
+        # No passages is enough on its own, edges or not -- and that is not
+        # "edges do not count as grounding". Edges legitimately shape the
+        # text below; they just cannot be *cited*, because redstring's
+        # `Relationship` carries a document id but deliberately no span (see
+        # its docstring at `redstring/domain/relationship.py:22-32`: a
+        # reconstructed span "reads as evidence while being generation", the
+        # same argument this module makes about ungrounded text). No span
+        # upstream means no `(source_id, start, end)` `_verified` could ever
+        # confirm, so with `passages == []` the refusal at :332 is knowable
+        # here, before paying for the call -- not a policy choice this repo
+        # is free to loosen, an absence in data this repo does not own.
+        # Edge-only grounding is filed rather than built; see `BACKLOG.md`
+        # B77 for what it would need and why the obvious wider fix falls
+        # short.
         if not passages:
             return None
 
