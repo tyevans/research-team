@@ -24,10 +24,16 @@ from research_team.application.corpus_editing import (
     DocumentExists,
     NotDropped,
 )
-from research_team.application.corpus_read import SourceListing, StoredDocument
+from research_team.application.corpus_read import MediaHandle, SourceListing, StoredDocument
 from research_team.application.document_extraction import UnknownDocument
 from research_team.application.knowledge import MAX_DOCUMENT_CHARS, KnowledgeError, SourceRef
-from research_team.domain.corpus import Corpus, StoreSourceDocument, StoreSourceMedia
+from research_team.domain.corpus import (
+    Corpus,
+    MediaRecord,
+    StoreSourceDocument,
+    StoreSourceMedia,
+    TextRecord,
+)
 from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
 
 
@@ -74,7 +80,34 @@ class FakeReader:
             return None
         if record.dropped_reason is not None and not include_dropped:
             return None
+        if not isinstance(record, TextRecord):
+            # The real reader answers `None` for a media id here -- this
+            # method promises text. Mirrored rather than left to raise a
+            # KeyError off `_texts`, because `revise` and `restore` both
+            # branch on exactly this `None` to reach their media path, and a
+            # fake that answered a `StoredDocument` instead would make that
+            # branch unreachable in every test in this file.
+            return None
         return StoredDocument(record=record, text=self._texts[source_id])
+
+    async def read_media(
+        self, source_id: str, *, include_dropped: bool = False
+    ) -> MediaHandle | None:
+        corpus = await self._corpus.load_or_create(self._project_id)
+        record = corpus.state.documents.get(source_id)
+        if not isinstance(record, MediaRecord):
+            return None
+        if record.dropped_reason is not None and not include_dropped:
+            return None
+
+        def open_blob(start: int = 0) -> AsyncIterator[bytes]:
+            # Nothing in this file reads a blob through the handle; the
+            # editor's media paths want the record and never the bytes. A
+            # factory that raised would be a trap for whoever adds the first
+            # test that does, so it yields nothing instead of lying.
+            return chunks(b"")
+
+        return MediaHandle(record=record, stat=None, open=open_blob)
 
 
 class FakeKnowledge:
@@ -443,3 +476,31 @@ def test_store_media_takes_no_digest_from_its_caller() -> None:
     `sha256` in it.
     """
     assert "sha256" not in inspect.signature(CorpusEditor.store_media).parameters
+
+
+async def test_a_second_media_store_supersedes_the_first_and_undrops_it(
+    editor, reader, project_id
+):
+    """One `source_id`, different bytes: the record moves and the drop lifts.
+
+    The fold's supersession rule for media, pinned above the projection.
+    `test_corpus_read_model.py` covers a *replay of the same event*, which
+    cannot tell a fresh `MediaRecord` from a preserved one -- the fields are
+    identical either way. Here the second store is genuinely different, so a
+    fold that merged into the existing record instead of rebuilding it would
+    leave the old digest or the old `byte_count` in place, and one that
+    carried `dropped_reason` across would leave the source excluded.
+
+    That last part is what `CorpusEditor.restore`'s media branch rests on:
+    restore is a re-store, and it un-drops only because `evolve` does not
+    carry the field. This test is what goes red if that changes.
+    """
+    await editor.store_media(project_id, "v1", chunks(b"first cut"), "video/mp4")
+    await editor.drop(project_id, "v1", "wrong take")
+
+    await editor.store_media(project_id, "v1", chunks(b"second cut, longer"), "video/mp4")
+
+    record = (await reader.read_media("v1")).record
+    assert record.sha256 == hashlib.sha256(b"second cut, longer").hexdigest()
+    assert record.byte_count == 18
+    assert record.dropped_reason is None
