@@ -162,6 +162,7 @@ from research_team.infrastructure.persistence import (
     EventStoreSessionRepository,
     SessionSummaryRunner,
     TopicRunner,
+    build_ask_conversation_repository,
     build_corpus_repository,
     build_judgements_repository,
     build_learner_progress_repository,
@@ -177,6 +178,7 @@ from research_team.infrastructure.persistence.corpus_reader import ProjectCorpus
 from research_team.infrastructure.persistence.definition_cache import ProjectDefinitionCache
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
 from research_team.infrastructure.persistence.read_models import (
+    AskConversationRunner,
     EntityDefinitionRunner,
     MediaProposalRunner,
     OntologyRunner,
@@ -417,16 +419,30 @@ class Application:
     consult, not a second one that would just happen to agree by accident."""
 
     ask: AskService
-    """Read-only questions about a project, answered without touching its log.
+    """Questions about a project, answered without touching the project's log.
 
     A field beside `service` rather than something reached through it, because
-    it is deliberately not a session use case: it starts nothing, joins
-    nothing and appends nothing, and routing it through `SessionService` would
-    put an ephemeral path behind the one object whose whole job is durability.
+    it is deliberately not a session use case: it starts nothing and joins
+    nothing, and routing it through `SessionService` would put a conversational
+    path behind the one object whose whole job is durability. It does append,
+    since `docs/superpowers/specs/2026-08-16-ask-persistence-design.md` -- to
+    an `AskConversation` stream of its own, which is off the project's stream
+    and off its feed.
     It shares this instance's `open_graph` closure, so an ask reads the same
     open graph store the attached agent writes to rather than a second one
     rebuilt for the question -- which is also why it is constructed inside
     `build_application` and cannot be assembled by a caller."""
+
+    asks: AskConversationRunner
+    """The read side of persisted asks: history for a project, one
+    conversation with its turns. Idle until `start()`.
+
+    A field for `check_telemetry`'s reason -- a projection nobody would
+    otherwise start -- and, like `ontology`, read-only: `ask` above appends to
+    the log and this follows it. The two must never be collapsed into one
+    object; a service that both answered questions and owned the table would
+    make "the answer was given" and "the answer was recorded" the same
+    assertion, and they are exactly the pair this feature needs kept apart."""
 
     document_extractor: DocumentExtractor
     """Extracts a stored document into its project's graph, without re-fetching.
@@ -571,6 +587,7 @@ class Application:
         # re-fetching an hour of video must not hold the port closed.
         await self.media_proposals.caught_up()
         self._reconciliation.append(asyncio.create_task(self.media_accept_reconciler.run()))
+        await self.asks.start()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
@@ -682,6 +699,7 @@ class Application:
         await self.definitions.stop()
         await self.ontology.stop()
         await self.media_proposals.stop()
+        await self.asks.stop()
         await self.service.close()
         # Unconditional, whether this client was built here or handed in by a
         # test: whoever built it, `Application` owns it for its lifetime, and
@@ -984,6 +1002,14 @@ def build_application(
     # test_media_proposals_reach_the_read_model.py` exists to catch the same
     # failure here.
     media_proposals = MediaProposalRunner(
+        repository.store, resolved_path, repository.publisher, resolved_tracer
+    )
+    # The eighth, built here with the other seven for the same reason, and it
+    # is the one with the worst failure mode if it is not: an ask appends
+    # whether or not anything is following, so a build missing this line
+    # answers 200 with an empty history for every conversation anyone ever
+    # had, and nothing anywhere raises.
+    asks = AskConversationRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
 
@@ -1736,6 +1762,11 @@ def build_application(
         ),
         conversations=ConversationRegistry(now=time.monotonic),
         now=time.monotonic,
+        # The durable half of the same record. Wired here rather than
+        # defaulted inside the service for `progress`'s reason above: which
+        # store an aggregate lands in is the decision this root exists to
+        # make. No snapshot store -- see the builder's docstring.
+        transcripts=build_ask_conversation_repository(repository.store, repository.publisher),
     )
 
     # Built here for `ask_service`'s reason, and it is the same reason: this
@@ -2125,6 +2156,7 @@ def build_application(
         policy=resolved_policy,
         grants=resolved_grants,
         ask=ask_service,
+        asks=asks,
         document_extractor=document_extractor,
         editor=editor,
         perception=resolved_perception,

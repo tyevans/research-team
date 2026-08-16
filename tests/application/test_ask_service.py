@@ -9,9 +9,12 @@ from collections.abc import Sequence
 from uuid import uuid4
 
 import pytest
+from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.testing import InMemoryTestHarness
 
 from research_team.application.ask import (
     AskAnswer,
+    AskConversationOpened,
     AskInFlight,
     AskMessage,
     AskService,
@@ -19,6 +22,7 @@ from research_team.application.ask import (
     ConversationRegistry,
 )
 from research_team.application.ports import ActivityDelta, ActivityReporter
+from research_team.domain.ask_conversation import AskConversation
 
 
 class FakeExecutor:
@@ -49,6 +53,13 @@ def service(executor, **kwargs) -> AskService:
         executor=executor,
         conversations=ConversationRegistry(now=lambda: 0.0, **kwargs),
         now=lambda: 0.0,
+        # A real repository over an in-memory store rather than a fake: the
+        # append is now part of what `ask` does on success, and a stub that
+        # accepted anything would let a malformed command through unnoticed.
+        # What this file is about is the streaming and the guard, so what the
+        # stream ends up holding is `tests/application/test_ask_persistence.py`'s
+        # business, not this one's.
+        transcripts=AggregateRepository(InMemoryTestHarness().event_store, AskConversation),
     )
 
 
@@ -63,7 +74,11 @@ async def test_activity_is_yielded_before_the_answer():
 
     notes = await drain(ask.ask(project_id=uuid4(), chat_id="c", question="why?"))
 
-    assert notes[0] == delta
+    # `notes[1]`, not `notes[0]`: the conversation id is announced first, ahead
+    # of the executor even starting -- see `AskConversationOpened`. Activity
+    # coming before the answer is what this test is about, and still does.
+    assert isinstance(notes[0], AskConversationOpened)
+    assert notes[1] == delta
     assert notes[-1] == AskAnswer(text="an answer")
 
 
@@ -104,6 +119,11 @@ async def test_a_note_queued_as_the_executor_returns_still_reaches_the_reader():
     ask = service(executor)
     iterator = ask.ask(project_id=uuid4(), chat_id="c", question="why?")
 
+    # The conversation frame comes first and is not what this test is about;
+    # taking it here leaves the drain loop as the next thing to run.
+    assert isinstance(
+        await asyncio.wait_for(anext(iterator), timeout=2.0), AskConversationOpened
+    )
     pending = asyncio.create_task(anext(iterator))
     # Let the drain loop reach its `await`, so the getter is genuinely parked
     # on an empty queue before anything is put into it.
@@ -156,6 +176,13 @@ async def test_abandoning_the_stream_cancels_the_executor_and_records_nothing():
     project = uuid4()
 
     iterator = ask.ask(project_id=project, chat_id="c", question="one")
+    # Two `anext`s rather than one: the conversation frame is yielded before
+    # the executor is started, so the note that proves the executor is running
+    # -- which is what has to be true before abandoning the stream means
+    # anything -- is the second.
+    assert isinstance(
+        await asyncio.wait_for(anext(iterator), timeout=2.0), AskConversationOpened
+    )
     assert await asyncio.wait_for(anext(iterator), timeout=2.0) == executor.note
     await asyncio.wait_for(iterator.aclose(), timeout=2.0)
 

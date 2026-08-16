@@ -5,6 +5,16 @@ langchain, no deepagents, no SQLite, no environment. Everything above may
 import from here; nothing here imports from above.
 """
 
+from research_team.domain.ask_conversation import (
+    AskConversation,
+    AskConversationCommand,
+    AskConversationStarted,
+    AskConversationState,
+    AskTurnRecorded,
+    Citation,
+    RecordAskTurn,
+    StartAskConversation,
+)
 from research_team.domain.commands import (
     ChangeAutonomy,
     CompactConversation,
@@ -114,10 +124,16 @@ __all__ = [
     "UNREADABLE_DEGRADATIONS",
     "AdvanceStage",
     "AdvanceTip",
+    "AskConversation",
+    "AskConversationCommand",
+    "AskConversationStarted",
+    "AskConversationState",
+    "AskTurnRecorded",
     "AssistantMessageAdded",
     "AutonomyChanged",
     "Budget",
     "ChangeAutonomy",
+    "Citation",
     "CompactConversation",
     "CompleteTurn",
     "ConversationCompacted",
@@ -162,6 +178,7 @@ __all__ = [
     "ProjectState",
     "ProjectTipAdvanced",
     "ProjectWorkflowSelected",
+    "RecordAskTurn",
     "RecordAssistantMessage",
     "RecordAttempt",
     "RecordChecklistState",
@@ -180,6 +197,7 @@ __all__ = [
     "SessionState",
     "SourceRecord",
     "StageChecksEvaluated",
+    "StartAskConversation",
     "StartRun",
     "StartSession",
     "StoreDerivedText",

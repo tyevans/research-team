@@ -84,6 +84,11 @@ from research_team.domain import (
     TurnFailed,
     UserMessageSent,
 )
+from research_team.domain.ask_conversation import (
+    AskConversation,
+    AskConversationStarted,
+    AskTurnRecorded,
+)
 from research_team.domain.media_proposals import (
     MediaAssetIgnored,
     MediaAssetUnignored,
@@ -2921,6 +2926,385 @@ class MediaProposalRunner:
         if self._proposals is not None:
             await self._proposals.close()
             self._proposals = None
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None
+
+
+ASK_NAMESPACE = UUID("b0d4f1a7-52c6-5f38-9d1e-7a3c806b45e9")
+"""Distinct from the other namespaces here, for the reason stated on
+`ONTOLOGY_NAMESPACE`: tables keyed on unrelated things that are all just
+strings by the time `uuid5` sees them must not be able to collide on `id`."""
+
+
+class AskConversationRow(ReadModel):
+    """One persisted conversation. `id` is the conversation id.
+
+    The aggregate id itself, with no `uuid5` over it, unlike every other row
+    in this module: the id is minted by the server and handed to the client on
+    the ask stream, so deriving a second one would give the history route a
+    key nothing ever returned.
+
+    Carries `first_question` and `turn_count` so a history list can be drawn
+    from this table alone. The alternative -- listing conversations and then
+    reading every turn of each to find its opening line -- is a query per row
+    on a page whose whole job is to be a cheap index.
+    """
+
+    __table_name__ = "ask_conversations"
+
+    project_id: UUID
+    opened_at: datetime
+    first_question: str = ""
+    turn_count: int = 0
+
+
+class AskTurnRow(ReadModel):
+    """One question and its answer, with the citations that answer rested on.
+
+    **`position` is stored, not inferred.** A read that leaned on insertion
+    order would be correct until `rebuild()` truncated and replayed, which is
+    a supported operation here and free to insert rows in a different physical
+    order. The column is assigned from the conversation's `turn_count` as the
+    event is applied, so a replay of the same log reproduces the same numbers.
+
+    `citations` is a JSON list for `SessionSummaryRow.file_paths`' reason, and
+    is decoded on the way out for the same asymmetry that field documents.
+    """
+
+    __table_name__ = "ask_turns"
+
+    conversation_id: UUID
+    project_id: UUID
+    position: int
+    question: str
+    answer: str
+    citations: list[dict] = Field(default_factory=list)
+    recorded_at: datetime
+
+    @field_validator("citations", mode="before")
+    @classmethod
+    def _decode_json_list(cls, value: object) -> object:
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+    @staticmethod
+    def row_id(conversation_id: UUID, position: int) -> UUID:
+        """Derived from the pair, so replaying one event twice rewrites a row
+        rather than appending a second copy of the same turn."""
+        return uuid5(ASK_NAMESPACE, f"{conversation_id}:{position}")
+
+
+class AskConversationStore:
+    """The two ask tables and the connection they share.
+
+    One store rather than one per table, for `OntologyStore`'s reason: a turn
+    and its conversation's `turn_count` are written together, and two stores
+    over two connections would leave a window in which a conversation claims a
+    turn that cannot be read yet.
+    """
+
+    def __init__(
+        self,
+        connection: aiosqlite.Connection,
+        conversations: ReadModelRepository[AskConversationRow],
+        turns: ReadModelRepository[AskTurnRow],
+    ) -> None:
+        self._connection = connection
+        self._conversations = conversations
+        self._turns = turns
+
+    @classmethod
+    async def open(cls, db_path: str, tracer=None) -> "AskConversationStore":
+        connection = await aiosqlite.connect(db_path)
+        await apply_schema(connection, AskConversationRow)
+        await apply_schema(connection, AskTurnRow)
+        # `apply_schema` reconciles columns and not indexes -- the same note as
+        # on `EntityDefinitionStore.open`. Both reads here are scoped: the
+        # history list by project and one conversation's turns by conversation,
+        # so without these every read scans every ask anyone ever made.
+        for statement in (
+            f"CREATE INDEX IF NOT EXISTS idx_ask_conversations_project "
+            f"ON {AskConversationRow.table_name()}(project_id)",
+            f"CREATE INDEX IF NOT EXISTS idx_ask_turns_conversation "
+            f"ON {AskTurnRow.table_name()}(conversation_id, position)",
+        ):
+            await connection.execute(statement)
+        await connection.commit()
+        return cls(
+            connection,
+            SQLiteReadModelRepository(connection, AskConversationRow, tracer),
+            SQLiteReadModelRepository(connection, AskTurnRow, tracer),
+        )
+
+    async def start(
+        self, conversation_id: UUID, project_id: UUID, opened_at: datetime
+    ) -> None:
+        await self._conversations.save(
+            AskConversationRow(id=conversation_id, project_id=project_id, opened_at=opened_at)
+        )
+
+    async def record(
+        self,
+        conversation_id: UUID,
+        *,
+        question: str,
+        answer: str,
+        citations: list[dict],
+        recorded_at: datetime,
+    ) -> None:
+        """Store one turn at the next position, and move the conversation on.
+
+        A turn against a conversation with no row is dropped rather than
+        raised on: `AskConversation.decide` refuses a turn before a start, so
+        the only way to arrive here is a log whose first event this projection
+        never saw, and a DLQ entry per turn would bury a real failure under a
+        stream that cannot be repaired anyway.
+        """
+        conversation = await self._conversations.get(conversation_id)
+        if conversation is None:
+            return
+        position = conversation.turn_count
+        await self._turns.save(
+            AskTurnRow(
+                id=AskTurnRow.row_id(conversation_id, position),
+                conversation_id=conversation_id,
+                project_id=conversation.project_id,
+                position=position,
+                question=question,
+                answer=answer,
+                citations=citations,
+                recorded_at=recorded_at,
+            )
+        )
+        conversation.turn_count = position + 1
+        if position == 0:
+            conversation.first_question = question
+        await self._conversations.save(conversation)
+
+    async def get(self, conversation_id: UUID) -> AskConversationRow | None:
+        return await self._conversations.get(conversation_id)
+
+    async def for_project(self, project_id: UUID) -> list[AskConversationRow]:
+        """A project's conversations, most recently opened first."""
+        return await self._conversations.find(
+            Query(
+                filters=[Filter(field="project_id", operator="eq", value=str(project_id))],
+                order_by="opened_at",
+                order_direction="desc",
+            )
+        )
+
+    async def turns_for(self, conversation_id: UUID) -> list[AskTurnRow]:
+        """One conversation's turns, in the order they were asked -- by the
+        stored `position`, never by arrival. See `AskTurnRow`."""
+        return await self._turns.find(
+            Query(
+                filters=[
+                    Filter(field="conversation_id", operator="eq", value=str(conversation_id))
+                ],
+                order_by="position",
+                order_direction="asc",
+            )
+        )
+
+    async def truncate(self) -> None:
+        """Empty both tables, for a rebuild to fill again -- a hard delete for
+        `SessionSummaryStore.truncate`'s reason."""
+        for table in (AskConversationRow.table_name(), AskTurnRow.table_name()):
+            await self._connection.execute(f"DELETE FROM {table}")
+        await self._connection.commit()
+
+    async def close(self) -> None:
+        await self._connection.close()
+
+
+class AskConversationProjection(DeclarativeProjection):
+    """Writes persisted asks into the two tables above.
+
+    Nothing else writes them: unlike `EntityDefinitionStore`, every column
+    here comes from an event payload, which is what lets `rebuild()` truncate.
+    """
+
+    def __init__(
+        self,
+        asks: AskConversationStore,
+        checkpoint_repo=None,
+        dlq_repo=None,
+        tracer=None,
+    ) -> None:
+        self._asks = asks
+        super().__init__(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+            retry_policy=LOCAL_RETRY_POLICY,
+            tracer=tracer,
+        )
+
+    @handles(AskConversationStarted)
+    async def _on_started(self, event: AskConversationStarted) -> None:
+        await self._asks.start(event.aggregate_id, event.project_id, event.opened_at)
+
+    @handles(AskTurnRecorded)
+    async def _on_turn(self, event: AskTurnRecorded) -> None:
+        """`event.occurred_at` rather than a clock read, for the reason
+        `OntologyProjection._on_discovered` gives: a rebuild has to reproduce
+        the timestamps it produced the first time, not today's."""
+        await self._asks.record(
+            event.aggregate_id,
+            question=event.question,
+            answer=event.answer,
+            citations=[{"kind": kind, "id": cited} for kind, cited in event.citations],
+            recorded_at=event.occurred_at,
+        )
+
+
+class AskConversationRunner:
+    """Keeps the ask tables following the log.
+
+    A seventh runner, for the reasons `CorpusRunner`'s docstring gives for
+    being a second: a `rebuild()`/`failures()`-shaped surface for these tables
+    alone, and a `rebuild()` that cannot truncate tables it does not own.
+    """
+
+    def __init__(
+        self,
+        store: SQLiteEventStore,
+        db_path: str,
+        bus: InMemoryEventBus,
+        tracer=None,
+    ):
+        self._store = store
+        self._db_path = db_path
+        self._bus = bus
+        self._tracer = tracer
+        self._asks: AskConversationStore | None = None
+        self._manager: SubscriptionManager | None = None
+        self._subscription = None
+        self._checkpoints: SQLCheckpointRepository | None = None
+        self._dlq: SQLDLQRepository | None = None
+        self._engine: AsyncEngine | None = None
+
+    @property
+    def projection_name(self) -> str:
+        return AskConversationProjection.__name__
+
+    async def start(self) -> None:
+        """Open the tables and start following the log.
+
+        Same shape as `OntologyRunner.start`, including touching the event
+        store first so `projection_checkpoints` exists before anything reads
+        it.
+        """
+        if self._manager is not None:
+            return
+        await self._store.current_position()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        self._engine = engine
+        self._checkpoints = SQLCheckpointRepository(engine)
+        self._dlq = SQLDLQRepository(engine)
+        self._asks = await AskConversationStore.open(self._db_path, self._tracer)
+        projection = AskConversationProjection(
+            self._asks, self._checkpoints, self._dlq, self._tracer
+        )
+        self._manager = SubscriptionManager(
+            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
+        )
+        self._subscription = await self._manager.subscribe(
+            projection, SubscriptionConfig(start_from="checkpoint")
+        )
+        results = await self._manager.start()
+        failures = {name: err for name, err in results.items() if err is not None}
+        if failures:
+            raise RuntimeError(f"the ask projection failed to start: {failures}")
+
+    async def failures(self, limit: int = 100) -> list[DLQEntry]:
+        if self._dlq is None:
+            return []
+        return await self._dlq.get_failed_events(
+            projection_name=self.projection_name, limit=limit
+        )
+
+    def _started(self) -> AskConversationStore:
+        """The open store, or a refusal naming what was not done -- delegated
+        rather than handed out, for `OntologyRunner._started`'s reason."""
+        if self._asks is None:
+            raise RuntimeError("the ask projection has not been started")
+        return self._asks
+
+    async def get(self, conversation_id: UUID) -> AskConversationRow | None:
+        return await self._started().get(conversation_id)
+
+    async def for_project(self, project_id: UUID) -> list[AskConversationRow]:
+        return await self._started().for_project(project_id)
+
+    async def turns_for(self, conversation_id: UUID) -> list[AskTurnRow]:
+        return await self._started().turns_for(conversation_id)
+
+    async def rebuild(self) -> None:
+        """Truncate and replay.
+
+        Allowed here, unlike `EntityDefinitionRunner.rebuild`, because every
+        column in both tables is written from an event payload -- including
+        `position`, which the projection derives in log order and therefore
+        reproduces.
+        """
+        if self._manager is None:
+            raise RuntimeError("the ask projection has not been started")
+        await self._manager.stop()
+        for entry in await self.failures(limit=1000):
+            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
+        await self._checkpoints.reset_checkpoint(self.projection_name)
+        await self._started().truncate()
+        self._manager = None
+        self._subscription = None
+        await self._asks.close()
+        self._asks = None
+        await self.start()
+        await self.caught_up()
+
+    async def caught_up(self, timeout: float = 10.0) -> None:
+        """Block until every `AskConversation` event appended so far is in the
+        tables.
+
+        Scoped by aggregate type and started from what the subscription has
+        already processed, **not** compared against the store's global end --
+        `SessionSummaryRunner.caught_up` documents at length why that
+        comparison runs its full timeout for a scoped subscription, and asks
+        share a store with sessions, the corpus and redstring's documents, any
+        of which moves the end to a position this projection never reaches.
+
+        No event-type filter, unlike `OntologyRunner.caught_up`: this
+        projection handles *both* event types on its aggregate, so the scope is
+        already exact.
+        """
+        if self._manager is None:
+            return
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            remaining = await collect(
+                self._store.read_all(
+                    from_position=self._subscription.last_processed_position,
+                    options=FeedReadOptions(aggregate_type=AskConversation.aggregate_type),
+                )
+            )
+            if not remaining:
+                return
+            await asyncio.sleep(0.01)
+        raise TimeoutError(
+            f"the ask projection did not consume every "
+            f"{AskConversation.aggregate_type} event within {timeout}s"
+        )
+
+    async def stop(self) -> None:
+        if self._manager is not None:
+            await self._manager.stop()
+            self._manager = None
+            self._subscription = None
+        if self._asks is not None:
+            await self._asks.close()
+            self._asks = None
         if self._engine is not None:
             await self._engine.dispose()
             self._engine = None

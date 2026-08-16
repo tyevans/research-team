@@ -46,7 +46,12 @@ from research_team.application import (
     WorkerRoster,
     build_fork_tree,
 )
-from research_team.application.ask import AskAnswer, AskInFlight, AskService
+from research_team.application.ask import (
+    AskAnswer,
+    AskConversationOpened,
+    AskInFlight,
+    AskService,
+)
 from research_team.application.blobs import BlobStorePort
 from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_editing import CorpusEditor, DocumentExists, NotDropped
@@ -117,6 +122,7 @@ from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.event_store import KNOWLEDGE_CATEGORIES
 from research_team.infrastructure.persistence.read_models import (
+    AskConversationRunner,
     MediaProposalRow,
     MediaProposalRunner,
     OntologyRunner,
@@ -694,6 +700,7 @@ def create_app(
     dispatcher: TopicDispatcher | None = None,
     dispatch: DispatchQueue | None = None,
     ask: AskService | None = None,
+    asks: AskConversationRunner | None = None,
     extractor: DocumentExtractor | None = None,
     extract_queue: ExtractionQueue | None = None,
     definitions: DefinitionReaders | None = None,
@@ -2866,8 +2873,18 @@ def create_app(
         `message` mirrors ActivityMessage's fields so the browser reuses the
         parsing it already has for the session activity feed.
         """
-        if isinstance(note, ActivityDelta):
+        if isinstance(note, AskConversationOpened):
+            # The first frame of every ask. Without it the browser holds only
+            # its own `chat_id`, which is not what the conversation is stored
+            # under and never reaches storage at all -- so the history routes
+            # below would list conversations the page that produced them could
+            # not identify.
             body: dict[str, Any] = {
+                "type": "conversation",
+                "conversation_id": str(note.conversation_id),
+            }
+        elif isinstance(note, ActivityDelta):
+            body = {
                 "type": "delta",
                 "message_id": note.message_id,
                 "text": note.text,
@@ -2974,6 +2991,68 @@ def create_app(
         # it should not be answered 404 for doing so.
         ask.forget(chat_id)
         return {"ok": True}
+
+    def _conversation_view(row) -> dict[str, Any]:
+        """One conversation, without its turns -- what a history list needs.
+
+        `conversationId` is the id the ask stream announced in its first frame
+        (`AskConversationOpened`), deliberately the same string: a list whose
+        ids did not match what the page was told would let a reader open every
+        past conversation except the one they are in.
+        """
+        return {
+            "conversationId": str(row.id),
+            "projectId": str(row.project_id),
+            "openedAt": row.opened_at.isoformat(),
+            "firstQuestion": row.first_question,
+            "turnCount": row.turn_count,
+        }
+
+    @app.get("/api/projects/{project_id}/asks")
+    async def list_asks(project_id: UUID):
+        """Every conversation asked of this project, most recent first.
+
+        **503 when the projection is unwired, not an empty 200** -- the same
+        ruling as `read_ontology`, and it matters more here: an empty list is
+        the right answer for a project nobody has asked anything, and an ask
+        appends whether or not anything follows the log, so a build with no
+        runner started is indistinguishable from a quiet project unless the
+        route says so.
+        """
+        if asks is None:
+            raise HTTPException(status_code=503, detail="ask history is not configured")
+        return [_conversation_view(row) for row in await asks.for_project(project_id)]
+
+    @app.get("/api/projects/{project_id}/asks/{conversation_id}")
+    async def read_ask(project_id: UUID, conversation_id: UUID):
+        """One conversation, with its turns in the order they were asked.
+
+        404 covers both "no such conversation" and "that conversation belongs
+        to another project", and they are deliberately the same answer: the
+        second is a guessed id, and telling a caller that an id they cannot
+        read does exist is the distinction not worth drawing.
+        """
+        if asks is None:
+            raise HTTPException(status_code=503, detail="ask history is not configured")
+        row = await asks.get(conversation_id)
+        if row is None or row.project_id != project_id:
+            raise HTTPException(
+                status_code=404, detail=f"no conversation {conversation_id} in {project_id}"
+            )
+        turns = await asks.turns_for(conversation_id)
+        return {
+            **_conversation_view(row),
+            "turns": [
+                {
+                    "position": turn.position,
+                    "question": turn.question,
+                    "answer": turn.answer,
+                    "citations": turn.citations,
+                    "recordedAt": turn.recorded_at.isoformat(),
+                }
+                for turn in turns
+            ],
+        }
 
     @app.get("/api/health")
     async def health():

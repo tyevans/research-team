@@ -2450,20 +2450,47 @@ out. Picking up any one of these on the parallel path means rebuilding a piece
 of the session machinery, and picking up two or three means the ask page should
 have been a session after all.
 
-### B48. An ask is not persisted, so there is no history and no resumption
+### B102. A stored ask cannot be resumed, only read
 
-The conversation lives in a `ConversationRegistry` in server memory, keyed by a
-browser-minted chat id, and is dropped on `forget` or on restart. Nothing
-records that a question was ever asked. A reader who found an answer useful
-cannot come back to it, cannot link to it, and cannot see what anyone else
-asked.
+Closed B48 (an ask was not persisted at all); this is the half that did not
+land with it. A conversation now survives a restart and can be listed and read
+back, and the server sends its `conversation_id` to the client as the ask
+stream's first frame. **Nothing sends it back.**
 
-Picking it up means choosing where it lands. Events are the obvious home and
-the one the design refused: appending them moves the project's tip, which is
-what "ephemeral" was bought with, and
-`tests/integration/test_ask_writes_nothing.py` fails the moment anything on
-that path appends. A separate store answers that, and then owes an answer for
-why the project's own log is not the record of what was asked of it.
+`Conversation.conversation_id` is `field(default_factory=uuid4)`, and
+`ConversationRegistry.get` returns a fresh `Conversation` on any miss —
+eviction past 64, an hour idle, or a restart. So a reader who continues a chat
+after any of those gets a new id, a new stream, and a silently split history;
+the earlier conversation is orphaned under an id nothing echoed back.
+
+Two things are owed and neither is hard: `AskService.ask` needs a
+`conversation_id` parameter (it has none — resuming is currently unexpressible
+in the application layer), and the browser needs to hold the id it is already
+being sent and return it. The design work is the frontend's: what a history
+list looks like, what "continue this" does to the composer, and what happens
+when a resumed conversation's project no longer matches.
+
+Found on 2026-08-16 by the controller reviewing the persistence wave, not by a
+test — and that is the point worth keeping. `test_a_conversation_survives_a_restart`
+passes while all of the above is true, because it asserts the artifact exists
+rather than that the feature works. The restart test is honest about what it
+covers; this entry is the rest.
+
+### B103. The ask history has no frontend
+
+The backend half of the ask-persistence spec
+(`docs/superpowers/specs/2026-08-16-ask-persistence-design.md`) is done: the
+aggregate, the projection, `GET /api/projects/{id}/asks` and
+`GET /api/projects/{id}/asks/{conversation_id}`. Nothing in the console calls
+either route, so a persisted conversation is reachable by `curl` and by nothing
+a reader can click.
+
+Deliberately split rather than dropped — the spec's plan says so. The UI needs
+design this repository has not done: where history lives in the shell, what a
+conversation card shows, and how "resume" reads once [[B102]] makes resuming
+possible. Doing it in the same wave as the backend would have meant designing
+that surface by accident, which is the mistake `DocumentReader`'s docstring
+records about building a shared player before the reference syntax existed.
 
 ### B49. No forking and no time travel over an ask
 
@@ -2472,10 +2499,34 @@ is no way to take a conversation five turns in, branch it, and try a different
 question from the same context, and no way to look at what the transcript held
 before the last answer replaced it.
 
-This one is downstream of B48 — there is nothing to travel over until there is
-something stored — but it is the sharper reason to reopen the session
-question, because scrub and fork are exactly what the session machinery already
-does and what a bespoke store would have to reimplement.
+**Now cheap, which was the point of how B48 was closed.** The conversation is an
+event-sourced aggregate on its own stream, so scrub is a pure fold of a history
+prefix — exactly `SessionService.state_at` — and fork is a new aggregate id, the
+events replayed onto it, and one more event, exactly `SessionService.fork`. Both
+are a few dozen lines against machinery that already exists and is already
+proven, rather than a reimplementation on a bespoke store. That argument is the
+reason the aggregate was chosen over a side table, and it is written here so the
+next person does not re-derive it.
+
+One thing fork needs that today's shape does not carry: `AskTurnRow.position` is
+derived by the projection from arrival order, not carried on the event. Replay
+reproduces it because the log replays in order; a fork that interleaved turns
+from two streams would not. Put the index on `AskTurnRecorded` before building
+fork, not after.
+
+### B104. Asking a project is now a write, and a failed write is a failed ask
+
+The cost B48's closure took knowingly, recorded so it is not rediscovered as a
+surprise. `AskService` appends `AskConversationStarted`/`AskTurnRecorded` on a
+successful answer, and the append is not swallowed — a store that refuses turns
+a good answer into an error the reader sees. The in-memory registry could not
+fail this way; it could only forget.
+
+No instance of this has been observed. It is here because the spec chose it
+explicitly over the alternative (log the failure, serve the answer), and that
+choice deserves a place a future maintainer can find. If it does bite, the
+fallback named in the spec is a separate store, and the aggregate work is not
+recoverable — which is the honest price of the decision, not a hidden one.
 
 ### B50. The chat cannot steer the project it is asking about
 

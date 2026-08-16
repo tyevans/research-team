@@ -1,13 +1,20 @@
-"""The ask routes, and the claim that asking writes nothing.
+"""The ask routes: streaming, the busy guard, and forgetting a chat.
 
-The position assertion is the load-bearing one: it is what makes 'ephemeral'
-a property of the system rather than a promise in a document.
+This docstring used to say the file's load-bearing assertion was a position
+assertion proving the ask wrote nothing. There is no position assertion here
+and there has not been for some time -- that claim lives in
+`tests/integration/test_ask_writes_nothing.py`, which now scopes it to the
+project's own stream and feed because the ask does write, to its own
+`AskConversation` stream
+(`docs/superpowers/specs/2026-08-16-ask-persistence-design.md`).
 """
 
 import asyncio
 import json
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.testing import InMemoryTestHarness
 from fastapi.testclient import TestClient
 
 from research_team.application.ask import (
@@ -18,6 +25,7 @@ from research_team.application.ask import (
     ConversationRegistry,
 )
 from research_team.application.ports import ActivityDelta, ActivityMessage
+from research_team.domain.ask_conversation import AskConversation
 from research_team.interfaces.web.app import AskRequest, create_app
 
 SOME_ANSWER = AskAnswer(text="an answer")
@@ -47,6 +55,13 @@ def ask_service(executor) -> AskService:
         executor=executor,
         conversations=ConversationRegistry(now=lambda: 0.0),
         now=lambda: 0.0,
+        # A real repository over an in-memory store rather than a fake: the
+        # append is now part of what `ask` does on success, and a stub that
+        # accepted anything would let a malformed command through unnoticed.
+        # What this file is about is the streaming and the guard, so what the
+        # stream ends up holding is `tests/application/test_ask_persistence.py`'s
+        # business, not this one's.
+        transcripts=AggregateRepository(InMemoryTestHarness().event_store, AskConversation),
     )
 
 
@@ -89,7 +104,24 @@ def test_activity_is_streamed_before_the_answer():
     )
 
     kinds = [frame["type"] for frame in frames(response)]
-    assert kinds == ["delta", "message", "answer"]
+    # `conversation` leads every ask: the page is told which stream its
+    # questions are being recorded on before any of them is answered, because
+    # the id it minted itself is not the one anything is stored under.
+    assert kinds == ["conversation", "delta", "message", "answer"]
+
+
+def test_the_conversation_id_leads_the_stream():
+    """Without this frame nothing ever returns the server-minted id, and the
+    history routes list conversations the page that produced them cannot
+    name. Fails if `AskConversationOpened` stops being yielded or stops being
+    rendered."""
+    response = client(ask_service(StubExecutor())).post(
+        f"/api/projects/{uuid4()}/ask", json={"chat_id": "c", "question": "why?"}
+    )
+
+    first = frames(response)[0]
+    assert first["type"] == "conversation"
+    assert UUID(first["conversation_id"])
 
 
 def test_a_failing_executor_reports_an_error_frame_rather_than_a_dead_stream():
@@ -178,7 +210,11 @@ async def test_closing_the_stream_cancels_the_model_call():
     )
 
     response = await endpoint(uuid4(), AskRequest(chat_id="c", question="why?"))
-    assert await response.body_iterator.__anext__()  # the first note; now parked
+    # Two frames: the conversation id, then the executor's first note. Only
+    # the second means the executor is running, which is the precondition for
+    # abandoning the stream to prove anything.
+    assert await response.body_iterator.__anext__()
+    assert await response.body_iterator.__anext__()  # now parked
     await response.body_iterator.aclose()
 
     assert Parking.cancelled

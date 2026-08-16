@@ -101,6 +101,13 @@ def main() -> None:
             dispatcher=application.dispatcher,
             dispatch=dispatch,
             ask=application.ask,
+            # The read side of the same feature: `ask` appends a conversation
+            # and this is what the history routes read it back through. The
+            # started runner from the application, never a second one built
+            # here -- a second instance would open its own connection to the
+            # same tables and answer from whatever the projection it is not
+            # following had got to.
+            asks=application.asks,
             extractor=application.document_extractor,
             extract_queue=extract_queue,
             # The write side beside the read side above: without it every
