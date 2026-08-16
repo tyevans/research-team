@@ -31,6 +31,7 @@ from eventsource.testing import InMemoryTestHarness
 from research_team.application.blobs import BlobStat
 from research_team.application.corpus_read import MediaHandle, SourceListing, StoredDocument
 from research_team.application.document_extraction import UnknownDocument
+from research_team.application.knowledge import MAX_DOCUMENT_CHARS
 from research_team.application.locators import resolve
 from research_team.application.perception import (
     LocatorSpan,
@@ -38,6 +39,7 @@ from research_team.application.perception import (
     MediaPerceiver,
     NotPerceivable,
     Perceived,
+    PerceivedTextTooLong,
     PerceptionCapabilities,
     PerceptionUnavailable,
     SourceDropped,
@@ -479,6 +481,45 @@ async def test_a_failed_perception_stores_nothing(corpus_repo, corpus, project_i
     perceiver = _build(corpus_repo, FakePerception(error=RuntimeError("the model fell over")))
 
     with pytest.raises(RuntimeError):
+        await perceiver.perceive(project_id, "vid")
+
+    assert not [x for x in await corpus.list_sources() if "#perceived" in x.record.source_id]
+
+
+async def test_a_reading_over_the_document_cap_is_refused_and_stores_nothing(
+    corpus_repo, corpus, project_id
+):
+    """B93: the only other path into `corpus_documents` had no length check.
+
+    `Budget(max_chars=...)` handed to the port is advisory -- this fake
+    ignores it entirely, standing in for a pre-1.0 library minor that honours
+    it loosely -- so the reading returned here is one character over
+    `MAX_DOCUMENT_CHARS` and the port raises nothing. Without the check this
+    test guards, `perceive` would execute `StoreDerivedText` anyway: `decide`
+    has no length opinion, so the write would succeed and produce a row that
+    can never be extracted (`store_source`'s own cap) or revised (`_store`'s
+    cap) -- this test would pass with that check reverted, because nothing
+    downstream of the write raises either.
+
+    Asserts the refusal reaches the corpus, not merely that the call raised:
+    an event no projection handles still counts as applied, so "it raised"
+    and "nothing was written" are different claims and only the second is
+    the one B93 is about.
+    """
+    oversized = "x" * (MAX_DOCUMENT_CHARS + 1)
+    perceiver = _build(
+        corpus_repo,
+        FakePerception(
+            perceived=Perceived(
+                text=oversized,
+                locators=(),
+                fingerprint="vision=v1,asr=w1",
+                degradations=(),
+            )
+        ),
+    )
+
+    with pytest.raises(PerceivedTextTooLong):
         await perceiver.perceive(project_id, "vid")
 
     assert not [x for x in await corpus.list_sources() if "#perceived" in x.record.source_id]

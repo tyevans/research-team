@@ -1511,6 +1511,14 @@ def create_app(
         raised would leave the pane on `perceiving` forever, with the only
         account of the failure sitting in a catch-up route nothing refetches.
         The exception is re-raised so the queue still records the outcome.
+
+        **No route status for `PerceivedTextTooLong`, and that is not an
+        omission.** This runs behind the 202 already answered above, so there
+        is nothing left to map it to -- B93's ruling. `except Exception`
+        below is broad enough to catch it along with everything else this
+        path can raise; it lands on the pane as a `failed` note with the cap
+        and the actual length in `detail`, the same as any other perception
+        failure.
         """
         assert perceiver is not None  # the route guards above
 

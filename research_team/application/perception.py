@@ -24,6 +24,7 @@ from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application.corpus_read import MediaHandle
 from research_team.application.document_extraction import CorpusReaders, UnknownDocument
+from research_team.application.knowledge import MAX_DOCUMENT_CHARS
 from research_team.domain.corpus import Corpus, MediaRecord, StoreDerivedText, TextRecord
 
 LOCATOR_KINDS = ("time", "page", "bbox", "char", "byte")
@@ -213,6 +214,25 @@ class MediaBytesMissing(Exception):
     """
 
 
+class PerceivedTextTooLong(Exception):
+    """A reading came back longer than this corpus can ever store or revise.
+
+    `Budget(max_chars=...)` handed to `readeverything.represent` is advisory
+    only -- a pre-1.0 minor could honour it exactly, approximately, or
+    per-segment without this repository noticing, and `decide` has no opinion
+    on length at all. `CorpusEditor._store` enforces `MAX_DOCUMENT_CHARS` on
+    the direct-write path; this is the same cap on the only other path that
+    writes into `corpus_documents`, checked here rather than left to `decide`
+    for the same reason `_store` checks it itself: an oversized row can never
+    be extracted (`store_source`'s cap refuses it downstream) or revised
+    (`_store`'s cap refuses that too), so refusing before the write is the
+    only way out. Not a truncation -- cutting the text would store a sentence
+    ending mid-word as if a model had produced it, which is worse than
+    refusing outright. See B93 in `BACKLOG.md`, and `CorpusEditor._store_derived`
+    for the one path that deliberately does *not* make this same check.
+    """
+
+
 class PerceptionUnavailable(Exception):
     """This install has no model that could read a medium.
 
@@ -307,6 +327,20 @@ class MediaPerceiver:
             sha256=handle.record.sha256,
             max_chars=self._max_chars(),
         )
+
+        if len(perceived.text) > MAX_DOCUMENT_CHARS:
+            # Between the port returning and the command being executed, on
+            # purpose: the money for this reading is already spent (the same
+            # trade `perceive` makes ahead of it, in its own docstring), but
+            # nothing has been written yet, and `StoreDerivedText` below has no
+            # length opinion to stop it. `Budget(max_chars=...)` handed to the
+            # port above is advisory and not a guarantee -- see
+            # `PerceivedTextTooLong`'s docstring -- so this is the one place
+            # that actually enforces the cap on this path.
+            raise PerceivedTextTooLong(
+                f"perceiving {source_id!r} produced {len(perceived.text)} characters; "
+                f"the limit is {MAX_DOCUMENT_CHARS}. This reading cannot be stored."
+            )
 
         locator_map = json.dumps(
             [

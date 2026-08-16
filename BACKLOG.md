@@ -3158,39 +3158,6 @@ would newly run without embeddings need checking one at a time rather than in
 a feature branch about video.
 
 
-### B93. `MediaPerceiver` writes text without the cap `CorpusEditor._store` enforces
-
-`MAX_DOCUMENT_CHARS` (200_000) is enforced on exactly one of the two paths that
-write text into `corpus_documents`. `CorpusEditor._store` checks it and raises
-`KnowledgeError`, which the PATCH route maps to 400. `MediaPerceiver.perceive`
-executes `StoreDerivedText` on the aggregate directly, and `decide` has no
-opinion on the length of anything — so nothing in this repository bounds a
-transcript.
-
-The only bound is advisory: `Budget(max_chars=config.perception_max_chars())`
-handed to `readeverything.represent`. Reasoned rather than measured — no
-transcript this long has been produced here — but the shape of the risk is
-plain from the code: a `Budget` is a request to the library, and whether it is
-honoured exactly, approximately, or per-segment is the library's business and
-is pinned only by a `<0.3` version cap. A pre-1.0 minor could change it without
-anything here noticing.
-
-What it costs if it happens: an oversized derived row that can never be
-extracted (`store_source`'s own cap refuses it downstream) and can never be
-revised (`_store`'s cap refuses that too) — a row the system wrote and cannot
-subsequently act on. Note that `CorpusEditor._store_derived` deliberately does
-*not* check the cap, for exactly this reason: a restore that enforced it would
-refuse to put back a transcript this system itself produced, which is a worse
-dead end than the one it exists to fix. That comment cross-references this
-entry.
-
-The fix is a check in `MediaPerceiver.perceive` between the port returning and
-the command being executed, raising a named exception the perceive route maps —
-not a truncation, which would store a sentence ending mid-word as if a model
-had produced it. Deliberately not done inside this slice: it needs a route
-status decision and an error type, and the perceive route's exception mapping
-was settled two tasks earlier.
-
 ### B94. A running transcription shows no state on its own media row
 
 Between the 202 and the terminal frame — minutes for an hour of audio — a media
