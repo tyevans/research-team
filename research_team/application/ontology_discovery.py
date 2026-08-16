@@ -64,6 +64,23 @@ from research_team.domain.ontology import (
 #: of raising it is a longer prompt on the few documents that need one, not a
 #: multiplier on all of them.
 #:
+#: **This is a policy, and a deployment still has to be able to honour it.**
+#: The cap says "if the corpus stored it, this pass may read it"; it cannot say
+#: the serving stack will. Measured 2026-08-15 on the development machine, with
+#: the configured endpoint (`localhost:8080`, `qwen3.6-27b-mtp`) down and
+#: Ollama's `qwen3.5:9b` standing in: a 19,644-character prompt did not return
+#: within 500 seconds, while a trivial one answered instantly. So on that
+#: machine, that day, a document a third of this cap was already unservable --
+#: and the largest real document in the corpus is 173,258.
+#:
+#: That is a property of the deployment rather than of this code, and it is
+#: recorded here because the failure it produces is a timeout rather than a
+#: refusal: the document stays ungrouped, which is the correct outcome, but it
+#: costs the whole timeout to reach it. A deployment that cannot serve long
+#: prompts wants a *lower* value here, set deliberately and with this note
+#: read, rather than the 40,000 that was here before -- which was low for no
+#: stated reason and biased the evidence (above).
+#:
 #: **What would make this wrong later**, in the order it is likely to happen: a
 #: model whose context window cannot hold 200,000 characters of prompt, which
 #: is where the refusal would start being a real limit rather than a formality;
