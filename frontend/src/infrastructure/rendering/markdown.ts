@@ -21,7 +21,8 @@ const marked = new Marked({
   breaks: false,
 })
 
-/** Only `http(s)` and `mailto` become real links.
+/** Two href shapes become real links: `http(s)`/`mailto`, and this app's own
+ * `#/...` hash routes.
  *
  * Everything else — `javascript:`, `data:`, and any scheme invented later —
  * keeps its text and loses its href, so a reader sees the label and the target
@@ -31,13 +32,26 @@ const marked = new Marked({
  */
 const SAFE_SCHEME = /^(https?:|mailto:)/i
 
-/** This app's own hash routes (`#/p/<id>/doc/<id>`), the one other href shape
- * a link built by *our own code* — never model text — can carry. A `[[src:...]]`
- * reference expands to one of these before this file ever sees it (see
- * `references.ts`). No scheme means nothing for a browser to execute; the
- * leading `#` is what tells it apart from a scheme-relative or protocol-
- * relative string DOMPurify would otherwise be right to distrust. */
-const SAFE_HASH_ROUTE = /^#\//
+/** This app's own hash routes, the one other href shape this hook trusts. A
+ * `[[src:...]]` reference expands to one of these before this file ever sees
+ * it (see `references.ts`) -- but that is not why the pattern is safe, and
+ * saying so here would be a claim the code doesn't enforce: this hook sees
+ * every anchor DOMPurify kept, including one from raw `<a href="#/p/...">`
+ * HTML a model wrote itself, and that reaches this same branch with no way
+ * to tell it apart from an expanded reference. What actually makes it safe
+ * is the *shape*, not the *provenance*: an `#/...` href is same-document by
+ * construction, so it cannot execute, cannot leave the application, and
+ * cannot reach another origin, regardless of who wrote it -- which is a
+ * weaker capability than the `http(s)` links this hook has always allowed
+ * through, model-authored or not.
+ *
+ * Matched against the route grammar `routes.ts` actually emits (`#/`,
+ * `#/s/...`, `#/p/...`) rather than "anything starting with `#/`" -- `#//x`,
+ * `#/\x` and the like all fail this pattern even though a hash fragment
+ * couldn't navigate off-origin through them either. Defence in depth, not a
+ * fix for a hole: don't loosen this back to `^#\/` thinking the narrower
+ * form was arbitrary. */
+const SAFE_HASH_ROUTE = /^#\/($|s\/|p\/)/
 
 let hooked = false
 
@@ -54,10 +68,12 @@ const installHooks = (): void => {
       node.classList.add('md-link')
       return
     }
-    // An in-app link, not an external one — no new tab, no rel, and no title
-    // duplicating the href a reader can already see in the status bar.
+    // An in-app link, not an external one — no new tab, no rel (both
+    // meaningless for a same-document route), and a class of its own rather
+    // than reusing `md-link` outright, so styling can tell the two apart if
+    // it ever needs to.
     if (href && SAFE_HASH_ROUTE.test(href)) {
-      node.classList.add('md-link')
+      node.classList.add('md-link', 'md-link-internal')
       return
     }
     node.removeAttribute('href')
