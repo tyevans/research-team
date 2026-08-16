@@ -64,6 +64,16 @@ from research_team.infrastructure.knowledge.domain_schemas import (
     resolve_domain,
 )
 from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
+from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
+from research_team.infrastructure.knowledge.temporal_expressions import (
+    RAW_TEMPORAL_PROPERTY,
+    normalize_for_parsing,
+)
+
+#: Re-exported: written here, defined next to the normalisation it compensates
+#: for, and read by `temporal_rendering.py`. Named in `__all__`-less code, so
+#: this assignment is what stops a linter calling the import unused.
+_ = RAW_TEMPORAL_PROPERTY
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +135,73 @@ class _CountingProvider:
         self._calls += 1
         self._announce(self._calls)
         return await self._inner.extract(text, schema, system_prompt=system_prompt)
+
+
+class _DatingProvider:
+    """An `LlmProvider` that respells dates on the way back from the model.
+
+    **The only seam available.** The correction has to land between the model
+    answering and redstring parsing, and `map_extraction` runs inside
+    `build_graph`, which writes the graph store and builds the
+    `DocumentExtracted` event together. Correcting the entities afterwards
+    would fix the event and leave the store disagreeing with it, so the
+    correction goes in the input where there is exactly one copy of it.
+
+    Wraps `_CountingProvider` rather than replacing it: counting calls and
+    respelling dates are unrelated jobs, and one class doing both would be
+    harder to read than two doing one each. See
+    `temporal_expressions.py` for what is respelled and the measurements
+    behind each rule.
+    """
+
+    def __init__(self, inner: LlmProvider) -> None:
+        self._inner = inner
+
+    @property
+    def model(self) -> str:
+        return self._inner.model
+
+    async def extract(self, text, schema, *, system_prompt=None):
+        answer = await self._inner.extract(text, schema, system_prompt=system_prompt)
+        return _with_respelled_dates(answer)
+
+
+def _with_respelled_dates(extraction):
+    """`extraction` with every entity's temporal expression normalised.
+
+    Rebuilt by `model_copy` rather than mutated: the pipeline holds the same
+    answer object for gleaning and carryover, and editing it in place would
+    make what a later stage reads depend on whether this ran first.
+    """
+    entities = []
+    changed = False
+    for candidate in extraction.entities:
+        # `properties` first, and that is not a fallback -- it is where the
+        # date usually is. Traced against qwen3.8-27b-mtp on the real 'Edict
+        # of Milan' article: across three chunks every `temporal_expression`
+        # field came back None while `properties` held
+        # {"temporal_expression": "AD 380", "outcome": ...}. The model files
+        # the date beside `outcome`, `role` and `creator`, which is where the
+        # domain schema's own per-type properties go, and the prompt's phrase
+        # "that entity's `temporal_expression` field" does nothing to single
+        # it out. The schema field is read second because the model does
+        # sometimes use it, and when it does it is the more direct answer.
+        raw = candidate.properties.get(RAW_TEMPORAL_PROPERTY) or candidate.temporal_expression
+        if not isinstance(raw, str) or not raw.strip():
+            entities.append(candidate)
+            continue
+        changed = True
+        entities.append(
+            candidate.model_copy(
+                update={
+                    "temporal_expression": normalize_for_parsing(raw),
+                    "properties": {**candidate.properties, RAW_TEMPORAL_PROPERTY: raw},
+                }
+            )
+        )
+    if not changed:
+        return extraction
+    return extraction.model_copy(update={"entities": entities})
 
 
 def _reporting(report: ExtractionReporter | None, source_id: str):
@@ -363,14 +440,16 @@ class RedstringKnowledge:
             # is acceptable: adjudication is per-merge and each merge already
             # has its own `consolidating` note, so nothing goes unreported --
             # only the model-call tally understates by those calls.
-            counting = _CountingProvider(
-                self._provider, lambda calls: announce("extracting", model_calls=calls)
+            wrapped = _DatingProvider(
+                _CountingProvider(
+                    self._provider, lambda calls: announce("extracting", model_calls=calls)
+                )
             )
             async with tenant_scope(self._project_id):
                 embeddings, vectors = await self._embedding_pair()
                 built = await build_graph(
                     document,
-                    provider=counting,
+                    provider=wrapped,
                     store=self._store,
                     tenant_id=self._project_id,
                     domain=self._domain,
@@ -588,6 +667,33 @@ class RedstringKnowledge:
         quoted back to a reader, which is what this corpus is for and
         extraction's chunking is not.
 
+        Wrapped in `MarkdownTableChunker`, so a quoted passage of table rows
+        carries the header naming its columns -- a row whose cells are unnamed
+        is the complaint this whole path exists to answer.
+
+        **This requires redstring >= 0.9.2 and fails silently below it.**
+        Until 0.9.2, `redstring.extraction.corpus.stored_chunks` built each
+        `StoredChunk` without carrying `Chunk.metadata` across, so the header
+        reached the corpus inside the stored text with no
+        `synthetic_prefix_chars` to subtract it back off: `original_text`
+        degraded to the identity and every offset into a table chunk pointed
+        at the wrong words, with nothing raising. That is why this line went
+        unwrapped through two commits. The guard against a regression is
+        `test_the_prefix_survives_the_round_trip_into_the_chunk_store`, which
+        drives the real `index_documents` rather than trusting the chunker --
+        if metadata is ever dropped again the failure names the invariant.
+
+        Re-chunking is a re-`index`, not a `/rebuild`.
+        `/rebuild` folds stored `DocumentChunked` events, which carry the old
+        chunk *text* -- it reproduces the old chunking faithfully. A new
+        chunker only takes effect when `index_documents` runs again and emits
+        a fresh `DocumentChunked`; it will, because `chunking_signature` is
+        `f"{chunker_type}:{chunking_digest(...)}"` and both halves change.
+        The projection folds that with `replace_source`, which deletes the
+        chunks of that source that are not in the new set -- so the old rows
+        are replaced rather than orphaned, despite chunk ids being
+        content-addressed over the text.
+
         Reads `source.text` directly rather than re-reading it back out of
         the corpus: every caller of `index` already has the text in hand (it
         is a required field of `SourceRef`), and a round trip through the
@@ -604,7 +710,7 @@ class RedstringKnowledge:
             [SourceDocument(id=source.source_id, text=source.text)],
             store=self._chunks,
             tenant_id=self._project_id,
-            chunker=BoundaryPreferenceChunker(),
+            chunker=MarkdownTableChunker(BoundaryPreferenceChunker()),
             event_store=self._event_store,
         )
 

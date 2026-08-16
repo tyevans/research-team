@@ -48,6 +48,7 @@ from research_team.domain.judgements import (
     JudgementWithdrawn,
     WithdrawJudgement,
 )
+from research_team.domain.ontology import OntologyDiscovered
 from research_team.domain.research_run import ResearchRunStarted
 from research_team.domain.topic import OpenTopic, TopicInvestigated
 from research_team.infrastructure.persistence.event_store import (
@@ -1011,3 +1012,68 @@ async def test_a_derived_text_payload_reads_back_as_a_text_row_pointing_at_its_m
     # `CorpusDerivedTextStored` written before that field existed still folds,
     # and an unasserted omission is one tidy away from being "completed".
     assert derived.note is None
+
+
+async def test_an_ontology_written_before_rejected_members_existed_still_loads(store, db_path):
+    """`rejected_members` is a case-1 addition: absence must mean "nothing was
+    rejected", not "unknown".
+
+    The distinction is the whole point of the field. A class that found five of
+    a declared six with an empty rejection list is a document genuinely short
+    one; the same class with an *unrecorded* rejection is a model that invented
+    a member. Those are opposite conclusions about whether to trust the pass,
+    so the default has to state the first rather than stand in for the second.
+
+    Writes the payload with the key absent, which is the only shape that proves
+    the default fills in -- constructing the event through today's model would
+    supply it. Would pass with `rejected_members` made required only if this
+    fixture also stopped omitting it, and the omission is the test.
+
+    Builds nothing from a repository: `Ontology` has no aggregate, by design
+    (see `domain/ontology.py`), so the event is read straight off its stream.
+    """
+    project_id = uuid4()
+    # Applies the schema, which the library does lazily -- otherwise `events`
+    # does not exist yet to insert into. Same reason as the research-run case.
+    await collect(store.read_stream(StreamId(project_id, "Ontology")))
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=1,
+        event_type="OntologyDiscovered",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "Ontology",
+            "aggregate_version": 1,
+            "project_id": str(project_id),
+            "source_id": "sekaipedia-songs",
+            "model_version": "some-old-model",
+            "classes": [
+                {
+                    "name": "Difficulty",
+                    "kind": "ordered_scale",
+                    "declared_count": 6,
+                    "evidence": {
+                        "source_id": "sekaipedia-songs",
+                        "start": 100,
+                        "end": 180,
+                    },
+                    "members": [{"name": "EASY", "ordinal": 0}],
+                }
+            ],
+        },
+        aggregate_type="Ontology",
+    )
+
+    stream = StreamId(project_id, "Ontology")
+    events = [envelope.event for envelope in await collect(store.read_stream(stream))]
+
+    discovered = events[0]
+    assert isinstance(discovered, OntologyDiscovered)
+    assert discovered.classes[0].rejected_members == []
+    # The rest of the payload survives the default filling in, which is what
+    # separates "the field defaulted" from "the whole class failed to parse".
+    assert discovered.classes[0].name == "Difficulty"
+    assert discovered.classes[0].declared_count == 6
+    assert discovered.classes[0].members[0].name == "EASY"
+    assert discovered.classes[0].evidence.start == 100

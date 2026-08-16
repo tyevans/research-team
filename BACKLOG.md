@@ -2773,6 +2773,75 @@ R1 closing means vector search is now _possible_, not present: there is still
 no `AGENT_VECTOR_STORE` and no recall path. That is a feature to spec, not a
 workaround to delete, and it does not belong in this section.
 
+### B86. `BoundaryPreferenceChunker` advances one character at a time when a chunk ends inside the overlap
+
+Open as of redstring **0.9.2**. This is a defect in the chunker *this project
+contributed upstream*, and it is what `RedstringKnowledge.index` uses at its
+defaults — so it is shaping the chunk corpus retrieval reads today.
+
+**What happens.** The next chunk starts at `end - overlap`. When a chunk ends
+at or before the overlap distance, that is at or before the previous start, and
+the chunker falls back to advancing a single character instead. It then grinds
+forward one character per chunk until it escapes, emitting a run of
+near-identical chunks that differ only by a leading character.
+
+A short leading paragraph is all it takes, because the first cut lands on a
+paragraph boundary. A document beginning `# Title\n\nSome prose here.\n\n` — 27
+characters — produces 26 of them before recovering.
+
+**Reproduction**, bare chunker, no wrapper involved:
+
+```python
+from redstring.extraction.chunkers import BoundaryPreferenceChunker
+
+text = "# Title\n\nSome prose here.\n\n" + "".join(
+    f"| row {i} | {'x' * 60} |\n" for i in range(300)
+)
+for overlap in (0, 26, 27, 50, 200):
+    result = BoundaryPreferenceChunker().chunk(text, 3000, overlap)
+    print(overlap, len(result.chunks), [c.start_char for c in result.chunks[:5]])
+```
+
+```
+0     9 chunks  [0, 27, 2988, 5948, 8929]
+26   35 chunks  [0, 1, 2, 3, 4]
+27   35 chunks  [0, 1, 2, 3, 4]
+50   35 chunks  [0, 1, 2, 3, 4]
+200  35 chunks  [0, 1, 2, 3, 4]
+```
+
+The parameter isolates it exactly: `overlap=0` gives nine sane chunks, and the
+degenerate run appears the moment the overlap reaches the length of that first
+27-character chunk. The default is **200**, so production is always on the
+wrong side of it. Measured 2026-08-15 on redstring 0.9.2.
+
+**What it costs the corpus.** Every degenerate chunk is stored — they have
+distinct text, so content-addressed `chunk_id` gives each its own row, and
+nothing dedupes them. They are near-duplicates of one short passage, so BM25
+sees that passage `overlap` times over, and a lexical query matching it can
+return a page of results that are all the same sentence shifted by one
+character. The waste is bounded (roughly `overlap` extra chunks per affected
+document, near the start) but the retrieval-quality effect is not obviously
+bounded, and nothing in this repository would notice: `corpus_spans.py`'s
+property tests assert that concatenating a no-overlap chunking reproduces the
+input, which this does not violate.
+
+**How it was found.** Not by looking for it. It inflated a chunk count taken
+while measuring the markdown table chunker: the 131k `sekaipedia-list-of-songs`
+document was reported as 855 corpus chunks, of which 627 gained a table header.
+Both numbers are wrong in the same direction, and the entry in commit `8ca9b6e`
+that cites them should be read with this in mind. That document no longer
+exists in any surviving copy, so those figures cannot be re-taken.
+
+**The fix is upstream, not here.** A chunk that cannot advance by `end -
+overlap` should clamp the overlap to something smaller than the chunk it is
+overlapping with, rather than falling back to a one-character step —
+`min(overlap, len(previous) - 1)` would do, and a chunker that emits a chunk
+shorter than the overlap should probably not overlap it at all. Do not work
+around it here by passing an explicit `overlap_size`: that hides the defect on
+one call site and leaves it for `corpus_spans.py`, the extraction path, and
+every future caller.
+
 ### B80. Binary document upload
 
 The corpus stores `text: str` and nothing in this tree decodes any binary
@@ -2824,7 +2893,97 @@ same method, same segment count — where a reordering really would parse
 `extraction-queue` as a source id and 404. The general constraint is still
 real for the file, which is why the entry stands.
 
-### B86. Nothing records which ffmpeg produced a video reading
+### B87. Four temporal defects that belong in redstring, not in a workaround here
+
+Open as of redstring **0.9.2**. redstring is this project's own library
+(`github.com/tyevans/redstring`) and the pin is `>=0.9.1,<0.10`, so a patch
+release lands here with no pin change. All four were measured on 2026-08-15
+against real Ancient Rome articles and a real llama.cpp `qwen3.8-27b-mtp`.
+
+The first two would let most of `temporal_expressions.py` and the whole of
+`_DatingProvider` be deleted. They are listed in the order worth fixing.
+
+**1. `_build_extent` reads only `ExtractedEntity.temporal_expression`, which
+models do not fill.** The date arrives inside `properties`, beside the domain
+schema's own declared properties. Traced across every chunk of three articles:
+zero entities with the typed field set, and the dates all present one level
+down. Every redstring consumer with a domain schema hits this, silently, as an
+empty timeline -- nothing raises and the extraction reports success. See
+`CLAUDE.md`'s Extraction section for the full measurement. `map_extraction`
+consulting `properties` for the key would fix it for every consumer.
+
+**2. `parse_temporal` fabricates a month and day from `reference_date`.** With
+a reference date set -- which is the normal case, extraction passes
+`published_at` -- dateutil fills the missing fields from the vantage point:
+
+```
+'313'    -> 0313-08-25, DAY      'AD 14' -> 2003-08-14, DAY
+'AD 476' -> 0476-08-25, DAY      'AD 64' -> 2064-08-25, DAY
+'44'     -> 2044-08-25, DAY      'AD 80' -> 1980-08-25, DAY
+```
+
+25 August 2003 is when the *article* was published. This is not a dropped
+date, it is an invented one, asserted at DAY precision. `'AD 14'` and `'AD 64'`
+also show the era marker being ignored outright. A bare year should be YEAR
+precision. The workaround here is to zero-pad to four digits, which only works
+because `'0313'` happens to reach a different branch.
+
+**3. Era markers and leading articles defeat the century parser.** `'2nd
+century AD'` and `'the 19th century'` both yield `None`, while a bare `'19th
+century'` parses. `'AD 476'` works only by accident of the year being four
+digits. redstring's own bundled schemas invite these forms -- `encyclopedia_wiki`
+offers "the latter half of the 19th century" as a model answer.
+
+**4. BC is unrepresentable.** `TemporalExtent.start_date` is a `datetime` and
+`datetime.MINYEAR` is 1, so no year before 1 AD can be stored. This is a limit
+of the type, not the parser. For an ancient-history corpus it is most of the
+real dates: the Patrician article yielded `'494 BC to 287 BC'`, `'504 BC'`,
+`'367 BC'`, `'342 BC'`, `'91-88 BC'` and nothing else, so the fixes above
+change its dated count from 0 to 0.
+
+The agreed shape is a signed astronomical year integer plus explicit precision
+replacing the `datetime`, with the timeline API emitting numbers rather than
+ISO strings. Not a BC special case: day precision is a lie for most of this
+corpus, and an ISO string structurally implies a precision the sources never
+had. Rejected: keeping the `datetime` and adding a signed year beside it,
+which leaves two sources of truth for one fact.
+
+**Why this is not worked around here.** It could be -- park signed years in
+`properties` and build the interval at read time -- but `TemporalExtent` would
+then stay empty for every BC entity, and two pieces of redstring go blind with
+it: `TemporalQuery(...).timeline(...)` (`timeline_reader.py:141`), which is how
+the timeline is queried and ordered at all, and `infer_relations`
+(`graph_reader.py:83`), which draws the temporal edges. That means
+reimplementing redstring's temporal querying and interval arithmetic on a
+parallel representation, for the majority of the corpus.
+
+### B88. Temporal expression forms still not handled, and the re-extraction they need
+
+Everything below is observed real model output from the 2026-08-15 runs, and
+is currently kept as wording on the entity rather than dated. Worth doing
+**after** B87.4 settles the representation -- these are refinements on a shape
+that is due to be replaced, and doing them first means doing them twice.
+
+**Hedged centuries, the largest group.** `'around the mid-2nd century AD'`,
+`'by the late 2nd century AD'`, `'during the 4th century'`, `'mid-200s'`,
+`'from the reign of Augustus up to the early 3rd century AD'`. These are year
+ranges the parser misses only because of the qualifier wrapped around them,
+and the qualifier usually carries real information about *where in* the
+century.
+
+**Ranges.** `'494 BC to 287 BC'`, `'91-88 BC'`, `'27 BC - AD 14'`, `'r. 249-251'`
+(regnal years). The BC ones are blocked on B87.4 regardless.
+
+**Named eras.** `'during the time of the kings'`, `'during the Imperial era'`.
+These need a lookup the extraction does not have, and may not be worth it.
+
+**Re-extraction is required and is nobody's default.** Events are not
+rewritten, so every document already in a graph keeps its empty or fabricated
+dates until it is extracted again. The Edict of Milan keeps its 0313-08-25
+until then. This is a user decision, not an automatic consequence of the fix
+landing -- and it costs model calls over the whole corpus.
+
+### B89. Nothing records which ffmpeg produced a video reading
 
 `FFMPEG_REVISION = "present"` in
 `infrastructure/perception/readeverything_adapter.py` deliberately keeps the
@@ -2847,7 +3006,7 @@ neutral — seek behaviour, scaler defaults and decoder fixes change the pixels
 handed to the VLM — so "same model, same video, different description" is
 possible today and would be unattributable.
 
-### B87. Six browser-test fixtures cast their container to `Container`, and the cast is what breaks them
+### B90. Six browser-test fixtures cast their container to `Container`, and the cast is what breaks them
 
 `project-narrow-research`, `project-responsive`, `project-tracks`,
 `session-responsive`, `ProjectView` and `project-stacked` (all
@@ -2875,7 +3034,7 @@ pre-existing infrastructure debt that the slice met rather than caused, and
 rewriting six fixtures inside a feature branch buries the change that branch
 is about.
 
-### B88. A successful extraction never marks its document extracted
+### B91. A successful extraction never marks its document extracted
 
 Measured on 2026-08-16, twice and independently (once while writing
 `tests/integration/test_media_reaches_the_graph.py`, once by its reviewer):
@@ -2922,7 +3081,7 @@ carries a paragraph explaining why. That workaround is load-bearing and
 undocumented anywhere else — without this entry the next reader concludes the
 test is wrong.
 
-### B89. A composed-application test that ingests reaches the network by default
+### B92. A composed-application test that ingests reaches the network by default
 
 `build_application` builds an embedding provider unless `AGENT_VECTOR_STORE` is
 `none`, and the provider's first ingest reaches `AGENT_EMBEDDING_BASE_URL`. So
@@ -2948,7 +3107,7 @@ would newly run without embeddings need checking one at a time rather than in
 a feature branch about video.
 
 
-### B90. `MediaPerceiver` writes text without the cap `CorpusEditor._store` enforces
+### B93. `MediaPerceiver` writes text without the cap `CorpusEditor._store` enforces
 
 `MAX_DOCUMENT_CHARS` (200_000) is enforced on exactly one of the two paths that
 write text into `corpus_documents`. `CorpusEditor._store` checks it and raises
@@ -2981,7 +3140,7 @@ had produced it. Deliberately not done inside this slice: it needs a route
 status decision and an error type, and the perceive route's exception mapping
 was settled two tasks earlier.
 
-### B91. A running transcription shows no state on its own media row
+### B94. A running transcription shows no state on its own media row
 
 Between the 202 and the terminal frame — minutes for an hour of audio — a media
 row in the console shows a live "Transcribe" button and nothing else.
@@ -3005,7 +3164,7 @@ rendered on the media row the way `ExtractionPane` renders a stage. Left for
 the slice that adds the batch "Transcribe all" control, which needs the same
 per-row state and would otherwise build it twice.
 
-### B92. Two corpus routes turn a domain refusal into a 500
+### B95. Two corpus routes turn a domain refusal into a 500
 
 `app.py`'s restore route maps only `UnknownDocument` and `NotDropped`; the
 PATCH (revise) route maps only `UnknownDocument` and `KnowledgeError`. Neither

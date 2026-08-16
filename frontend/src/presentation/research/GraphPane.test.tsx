@@ -442,6 +442,36 @@ it('says when the drawing is only part of a larger graph', async () => {
   expect(await screen.findByText(/part of a larger graph/i)).toBeInTheDocument()
 })
 
+it('says when the entities it drew have no relationships between them', async () => {
+  // The "Ancient Rome" shape: thousands of entities, almost none of them
+  // dated, so the inferred edges that would connect them are absent. The
+  // drawing is a field of unconnected dots, which is indistinguishable by eye
+  // from a drawing whose edges failed to load -- this line is what tells them
+  // apart, and there was nothing saying it before.
+  const whole = vi.fn().mockResolvedValue({
+    entities: [node(), node({ id: 'grace', name: 'Grace Hopper' })],
+    relationships: [],
+    truncated: false,
+  })
+
+  renderWithContainer(<RoutedGraphPane />, { graphs: fakeGraphs({ whole }) })
+
+  expect(await screen.findByText(/no relationships were found/i)).toBeInTheDocument()
+})
+
+it('does not claim a linked graph has no relationships', async () => {
+  const whole = vi.fn().mockResolvedValue({
+    entities: [node(), node({ id: 'grace', name: 'Grace Hopper' })],
+    relationships: [{ source: 'ada', target: 'grace', relationshipType: 'preceded' }],
+    truncated: false,
+  })
+
+  renderWithContainer(<RoutedGraphPane />, { graphs: fakeGraphs({ whole }) })
+
+  expect(await screen.findByRole('button', { name: 'canvas' })).toBeInTheDocument()
+  expect(screen.queryByText(/no relationships were found/i)).not.toBeInTheDocument()
+})
+
 it('restores the whole graph after pruning, rather than emptying the canvas', async () => {
   const ada = node()
   const babbage = node({ id: 'babbage', name: 'Charles Babbage' })

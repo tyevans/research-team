@@ -225,6 +225,48 @@ that test cannot detect the invocation being dropped. Write at least one test
 per code path that starts from a fixture that has *not* made the call the
 code is responsible for making.
 
+## Extraction
+
+**The model files its answer where the schema's other fields live, not where
+the field is declared.** `ExtractedEntity` has typed fields *and* a free
+`properties` dict, and a domain schema's declared per-type properties
+(`outcome`, `role`, `creator`, `definition`) all land in `properties`. So when
+the prompt asks for a date "in that entity's `temporal_expression` field", the
+model puts it in `properties` beside the others. Nothing in the prompt or the
+schema distinguishes the one field that is not a property.
+
+Measured on 2026-08-15, tracing the provider seam across every chunk of three
+real Ancient Rome articles against qwen3.8-27b-mtp: **not one entity arrived
+with `temporal_expression` set.** Every date was in `properties`:
+
+```
+{"temporal_expression": "AD 380", "outcome": "Nicene Christianity ..."}
+```
+
+`redstring`'s `_build_extent` reads only the typed field, so every date was
+discarded before any parsing was attempted. That is the whole of the measured
+0.3% temporal rate -- 2,525 entities, 8 with an extent -- and it is invisible
+from every direction: nothing raises, nothing logs, the extraction succeeds,
+and the timeline is simply empty. `redstring_adapter._DatingProvider` lifts
+the key back out; `tests/infrastructure/test_temporal_extraction.py` pins it.
+
+**The general rule is worth more than the instance.** A field that is optional
+in the schema and absent in practice looks exactly like a field the model
+declined to fill. Before concluding that a model will not answer something,
+log what it actually returned. Three minutes of tracing the seam beat two
+hours of reasoning about what the code downstream of it does with the answer.
+
+**And a perfect reproduction of a real defect is not proof it is *the*
+defect.** The first cause found here was `parse_temporal` fabricating a day
+from `published_at` -- reproducible on demand, byte-identical to a value
+sitting in the production database, and genuinely a bug. It was the second
+bug. It was fixed first, and fixing it moved the rate almost not at all.
+
+That fix was not wasted and should not be read as rework: `AD 80` -> 1980 and
+`AD 64` -> 2064 are real fabrications that would have surfaced the moment the
+`properties` lift started feeding the parser actual expressions. It was the
+right fix in the wrong order.
+
 ## Events
 
 Events already written are not rewritten, so a change to an event's shape has

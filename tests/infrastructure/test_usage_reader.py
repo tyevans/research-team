@@ -161,3 +161,41 @@ async def test_a_blank_name_never_reaches_the_ranker(graph, chunks, reader):
     )
 
     assert await reader.usages(blank_named_id) == []
+
+
+async def test_a_repeated_table_header_is_not_counted_into_the_offsets(graph, chunks, reader):
+    """A chunk carrying a synthetic header must report the slice, not the text.
+
+    `MarkdownTableChunker` prepends a header the document does not contain at
+    `start_char`, recording its length in metadata. `Usage` promises `text` is
+    exactly what `start`/`end` name, and the console highlights
+    `document[start:end]` against text this reports -- so passing `chunk.text`
+    through makes the quotation and the highlight disagree by the header's
+    length. Fails with `original_text` reverted to `chunk.text`: the assertion
+    below is the one that catches it, since the offsets themselves stay right.
+    """
+    header = "| Company | Product |\n|---|---|\n"
+    document = f"Preamble.\n{header}| Acme Corp | rockets |\n"
+    row_start = document.index("| Acme Corp")
+    acme_id = uuid4()
+    await graph.upsert_entity(_entity(acme_id, "Acme"))
+    await chunks.upsert_many(
+        [
+            StoredChunk(
+                id="c1",
+                tenant_id=TENANT_ID,
+                source_id="doc-1",
+                text=header + document[row_start:],
+                chunk_index=1,
+                start_char=row_start,
+                end_char=len(document),
+                metadata={"synthetic_prefix_chars": len(header), "table_header": header},
+            )
+        ]
+    )
+
+    usages = await reader.usages(acme_id)
+
+    assert len(usages) == 1
+    assert usages[0].text == document[usages[0].start : usages[0].end]
+    assert header not in usages[0].text

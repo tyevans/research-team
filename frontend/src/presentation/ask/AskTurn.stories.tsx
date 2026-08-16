@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useState } from 'react'
 
 import { AskTurn } from './AskTurn.tsx'
-import { PROJECT, activity, turn } from './ask-fixtures.ts'
+import { PROJECT, assistantCall, toolResult, turn } from './ask-fixtures.ts'
 
 /** One exchange, in the five states a turn passes through.
  *
@@ -41,17 +41,33 @@ export const Answered: Story = { args: { turn: turn() } }
 export const WithActivity: Story = {
   args: {
     turn: turn({
+      // Call frames and their result frames, as the stream really delivers
+      // them -- the story is about how a run reads, and a story made only of
+      // result frames would show the rows the join is meant to remove.
       activity: [
-        activity({ messageId: 'm1', payload: { type: 'tool', data: { name: 'read_source' } } }),
-        activity({
-          messageId: 'm2',
-          payload: { type: 'tool', data: { name: 'search_findings' } },
+        assistantCall({ name: 'graph_search', args: { query: 'Imperial cult' }, id: 'c1' }),
+        toolResult({
+          name: 'graph_search',
+          callId: 'c1',
+          content:
+            'Imperial cult (concept) -- 14 relationship(s) [e1]\nAugustus (person) -- 9 relationship(s) [e2]',
         }),
-        activity({
-          messageId: 'm3',
-          payload: { type: 'tool', data: { name: 'read_source' } },
+        assistantCall({ name: 'read_source', args: { source_id: 'wiki-imperial-cult' }, id: 'c2' }),
+        toolResult({
+          name: 'read_source',
+          callId: 'c2',
+          content:
+            'wiki-imperial-cult@0-20000 of 84210 chars\ntitle: Imperial cult of ancient Rome',
+        }),
+        assistantCall({ name: 'read_source', args: { source_id: 'wiki-missing' }, id: 'c3' }),
+        toolResult({
+          name: 'read_source',
+          callId: 'c3',
+          content: "No source 'wiki-missing' in this project's corpus.",
           isError: true,
         }),
+        // Still running: the answer streamed before this one came back.
+        assistantCall({ name: 'grep', args: { pattern: 'pontifex', path: '/' }, id: 'c4' }),
       ],
     }),
   },

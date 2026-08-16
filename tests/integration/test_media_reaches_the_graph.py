@@ -27,7 +27,7 @@ than implied:
 an embedding provider that reaches `AGENT_EMBEDDING_BASE_URL` on first ingest,
 and without this the test hangs against whatever that happens to be. Measured
 -- it is how the first draft of this file behaved. A local workaround, not a
-fix; `BACKLOG.md` B89 is the repository-wide one.
+fix; `BACKLOG.md` B92 is the repository-wide one.
 """
 
 import asyncio
@@ -203,7 +203,7 @@ async def test_a_stored_video_reaches_the_graph_through_its_transcript(wired):
     on the same position. That is a pre-existing gap this slice neither caused
     nor is in a position to fix; asserting it here would make this file red
     about somebody else's bug and hide the one it is for. Filed as `BACKLOG.md`
-    B88, with the measurement, rather than left as a note in one docstring.
+    B91, with the measurement, rather than left as a note in one docstring.
     """
     application, client, queue, port, model = wired
     created = await client.post("/api/projects", json={"name": f"corpus-{uuid4()}"})
@@ -309,7 +309,7 @@ async def _row_when(application, project_id: UUID, source_id: str, ready, *, tim
     """The transcript's row once `ready(row)` holds, or a failure saying it never did.
 
     A poll rather than `application.corpus_caught_up()`, and the reason is
-    B88 rather than flakiness. `CorpusEditor._store_derived` re-indexes after
+    B91 rather than flakiness. `CorpusEditor._store_derived` re-indexes after
     it stores -- it has to, or the chunk store goes on quoting text the
     corpus no longer holds -- and indexing appends redstring events that the
     corpus subscription never processes, so `caught_up` waits for a position

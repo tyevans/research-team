@@ -539,7 +539,7 @@ class CorpusEditor:
 
         **No `MAX_DOCUMENT_CHARS` check, unlike `_store`, and this is the one
         place the two paths deliberately differ.** `MediaPerceiver` does not
-        enforce the cap on the way in (B90), so a transcript longer than it can
+        enforce the cap on the way in (B93), so a transcript longer than it can
         already be stored -- and a restore that checked the cap would refuse to
         put back a transcript this system itself wrote, which is a worse dead
         end than the one this branch exists to fix. The cap belongs where the

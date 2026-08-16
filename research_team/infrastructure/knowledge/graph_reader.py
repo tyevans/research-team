@@ -23,7 +23,10 @@ from research_team.application.graph_read import (
     GraphRelationship,
     Neighborhood,
 )
-from research_team.infrastructure.knowledge.temporal_rendering import render_extent
+from research_team.infrastructure.knowledge.temporal_rendering import (
+    entity_extent_label,
+    render_extent,
+)
 
 #: The only relations `infer_relations` produces that are worth a line on the
 #: canvas. It emits four -- `BEFORE`, `CONTAINS`, `OVERLAPS`, `EQUALS` -- of
@@ -50,7 +53,11 @@ def _to_graph_entity(entity: Any) -> GraphEntity:
         entity_id=str(entity.id),
         name=entity.name,
         entity_type=entity.entity_type,
-        temporal=render_extent(entity.temporal),
+        # The entity form, not `render_extent`: an entity knows the wording
+        # the model used, and that is what a node should say. The two
+        # relationship endpoints below stay on `render_extent` because a
+        # `TemporalRelation` carries extents and no entities to ask.
+        temporal=entity_extent_label(entity),
     )
 
 

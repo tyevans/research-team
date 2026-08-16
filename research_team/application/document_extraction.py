@@ -135,6 +135,44 @@ class DocumentExtractor:
             if listing.record.kind == "text" and not listing.extracted
         )
 
+    async def ungrouped(self, project_id: UUID, *, examined: set[str]) -> tuple[str, ...]:
+        """Every extracted document no ontology pass has examined, in listing order.
+
+        **`examined` is a parameter rather than something this class fetches.**
+        `DocumentExtractor` knows the corpus and the graph; ontology tables
+        belong to a projection it has no reason to depend on, and taking the
+        set as an argument keeps this testable without standing one up. The
+        route joins the two.
+
+        **Extracted, not merely stored.** A document with no graph has no
+        entities for a class's memberships to resolve against, so grouping it
+        would produce a class every one of whose members is unresolvable. The
+        useful order is extract first, group second.
+
+        **Examined is not the same as "has classes", and the distinction is
+        load-bearing.** A document the pass read and found nothing in is done.
+        If "no classes" meant "pending", every barren document would be
+        re-examined on every sweep at model cost -- which is why the projection
+        records that a source was examined separately from any class rows it
+        produced.
+
+        **Text only.** The corpus holds media under the same `source_id`
+        namespace, and discovery reads a document's text -- there is nothing for
+        it to read in a video. Filtered the same way `unextracted` filters, so
+        the two sweeps agree about what a document is.
+
+        Order is the listing's, matching `unextracted` above and for the same
+        reason.
+        """
+        listings = await self._corpus_readers(project_id).list_sources()
+        return tuple(
+            listing.record.source_id
+            for listing in listings
+            if listing.record.kind == "text"
+            and listing.extracted
+            and listing.record.source_id not in examined
+        )
+
     async def reindex(self, project_id: UUID) -> int:
         """Put every stored document back through chunk indexing. No model call.
 

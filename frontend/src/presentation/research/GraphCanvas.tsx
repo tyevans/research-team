@@ -4,6 +4,7 @@ import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d'
 import type { GraphView } from '@domain/knowledge/graph.ts'
 
 import { colorForType, KIND_TOKENS } from './entity-colors.ts'
+import { framing, nodeRadius } from './graph-framing.ts'
 
 /** A node as `react-force-graph-2d` hands it back once its simulation has
  *  positioned it: the `GraphNode` fields, plus the `x`/`y` the simulation
@@ -25,6 +26,11 @@ interface SimulatedNode {
  */
 const FOCUS_ZOOM = 2.5
 const FOCUS_MS = 600
+
+/** The whole-graph framing's transition and its margin, unchanged from the
+ *  `zoomToFit(400, 48)` this replaced. */
+const FIT_MS = 400
+const FIT_PADDING = 48
 
 /** The force-directed drawing of a `GraphView`. The only module in this
  *  console that imports `react-force-graph-2d` -- `GraphPane` loads this
@@ -56,6 +62,11 @@ export const GraphCanvas = memo(function GraphCanvas({
   onNodeClick: (id: string) => void
 }) {
   const graphData = useMemo(() => ({ nodes: [...view.nodes], links: [...view.links] }), [view])
+
+  /** How big a node is drawn, which depends on how many there are -- see
+   *  `nodeRadius`. Read by the painter, the hit area and the library's own
+   *  bounding-box maths, all three of which have to agree. */
+  const radius = nodeRadius(view.nodes.length)
 
   // Measured, not left to the library: force-graph defaults `width` to
   // `window.innerWidth`, and this canvas lives in one column of a two-column
@@ -113,6 +124,21 @@ export const GraphCanvas = memo(function GraphCanvas({
     api.centerAt(node.x, node.y, FOCUS_MS)
     api.zoom(Math.max(api.zoom(), FOCUS_ZOOM), FOCUS_MS)
     return true
+  }
+
+  /** Put the whole drawing on the stage, at a bounded distance.
+   *
+   * Not `zoomToFit`, which is the library's version of this and has no ceiling
+   * -- see `MAX_FIT_ZOOM` for the measurement. Everything else here is what
+   * `zoomToFit` does: its own bounding box, its own centre, its own padding.
+   */
+  const fit = () => {
+    const api = graph.current
+    if (!api || size === null) return
+    const frame = framing(api.getGraphBbox(), size.width, size.height, FIT_PADDING)
+    if (!frame) return
+    api.centerAt(frame.x, frame.y, FIT_MS)
+    api.zoom(frame.zoom, FIT_MS)
   }
 
   /** Move to the selection as soon as there is one.
@@ -232,7 +258,7 @@ export const GraphCanvas = memo(function GraphCanvas({
 
             if (framedAt.current === settledAt) return
             framedAt.current = settledAt
-            graph.current?.zoomToFit(400, 48)
+            fit()
           }}
           // A node's date, appended when it has one: a temporal edge points
           // at two nodes, and a reader checking what it asserts needs the
@@ -273,7 +299,11 @@ export const GraphCanvas = memo(function GraphCanvas({
           // eye instead -- see the task report.
           linkColor={(link) => (link.inferred ? theme.linkInferred : theme.link)}
           linkLineDash={(link) => (link.inferred ? [2, 2] : null)}
-          nodeRelSize={5}
+          // Told to the library as well as used by the painter below, because
+          // `getGraphBbox` -- and so the framing -- pads the box by this
+          // number. A graph framed as if its marks were 5px while they are
+          // drawn at 10px clips half of every node on the edge of the drawing.
+          nodeRelSize={radius}
           // Names are drawn on the canvas rather than left to the hover
           // tooltip: a field of identical unlabelled dots gives a reader
           // nothing to aim at, so finding anything means hovering every node
@@ -291,7 +321,7 @@ export const GraphCanvas = memo(function GraphCanvas({
             // every zoom level. Drawn in graph units it would be a 5px mark
             // when the graph was small and a blob wider than its own label
             // once the view was fitted to a handful of nodes.
-            const radius = 5 / globalScale
+            const r = radius / globalScale
 
             // Filled means explored, hollow means there is more behind it.
             //
@@ -301,7 +331,7 @@ export const GraphCanvas = memo(function GraphCanvas({
             // that added something. On a graph of thirty nodes that is thirty
             // clicks to find the frontier. The ring is the frontier.
             ctx.beginPath()
-            ctx.arc(x, y, radius, 0, 2 * Math.PI)
+            ctx.arc(x, y, r, 0, 2 * Math.PI)
             if (view.expanded.has(String(node.id))) {
               ctx.fillStyle = color
               ctx.fill()
@@ -316,7 +346,7 @@ export const GraphCanvas = memo(function GraphCanvas({
             // one fact for another instead of adding one.
             if (node.id === selected) {
               ctx.beginPath()
-              ctx.arc(x, y, radius + 3.5 / globalScale, 0, 2 * Math.PI)
+              ctx.arc(x, y, r + 3.5 / globalScale, 0, 2 * Math.PI)
               ctx.strokeStyle = theme.accent
               ctx.lineWidth = 1.5 / globalScale
               ctx.stroke()
@@ -336,7 +366,7 @@ export const GraphCanvas = memo(function GraphCanvas({
             ctx.textAlign = 'center'
             ctx.textBaseline = 'top'
             ctx.fillStyle = theme.label
-            ctx.fillText(label, x, y + 8 / globalScale)
+            ctx.fillText(label, x, y + (radius + 3) / globalScale)
           }}
           // The painted circle is 5px, but the hit area should not be: a
           // reader aiming at a labelled node is aiming at the label too.
@@ -345,8 +375,10 @@ export const GraphCanvas = memo(function GraphCanvas({
             ctx.fillStyle = color
             ctx.beginPath()
             // Tracks the painted dot, and is a little larger than it: a reader
-            // aiming at a labelled node is aiming at the label too.
-            ctx.arc(x, y, 9 / scale.current, 0, 2 * Math.PI)
+            // aiming at a labelled node is aiming at the label too. Derived
+            // from `radius` rather than the 9 it used to be a constant of, so
+            // the two stay in step when density changes the mark's size.
+            ctx.arc(x, y, (radius + 4) / scale.current, 0, 2 * Math.PI)
             ctx.fill()
           }}
           onNodeClick={(node) => {

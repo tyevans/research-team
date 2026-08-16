@@ -21,6 +21,7 @@ from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 from research_team.application import FeedEntry
 from research_team.domain import Corpus, EntityJudgements, Project, Session
 from research_team.domain.learner import LearnerProgress
+from research_team.domain.ontology import ONTOLOGY_AGGREGATE_TYPE
 from research_team.domain.research_run import ResearchRun
 from research_team.domain.topic import Topic
 
@@ -61,6 +62,7 @@ UNROUTED_AGGREGATE_TYPES = frozenset(
         ResearchRun.aggregate_type,
         LearnerProgress.aggregate_type,
         EntityJudgements.aggregate_type,
+        ONTOLOGY_AGGREGATE_TYPE,
     }
 )
 """Aggregate types deliberately kept off the feed, and the other half of the guard.
@@ -87,6 +89,18 @@ which is redstring's own event on the graph's stream, already routed. This is
 the entry to revisit when the aliases panel lands (piece 3 of the entity-
 judgements design): a panel listing what you have taught the project is a view
 of these events, and then it belongs on the feed.
+
+`Ontology` is off because the ontology view is a page a reader opens
+deliberately and which reads its classes on open, not a pane that sits watching.
+The pass that writes these events is queued through the same route a human just
+pressed, so the one client that would be told is the one already waiting on the
+202 it got back. The staleness this leaves is real and bounded: a pass finishing
+while the view is open does not repaint it until a refresh. That is the same
+trade `extraction_queue.py`'s docstring makes and states -- a frame type, a
+pump, a `decodeFrame` case and a store cost more than they buy until somebody
+is watching two tabs. Revisit when the ontology view becomes something left
+open while a sweep runs across a project's documents, because then the missing
+repaint is the whole point of having it open.
 
 None is a *correctness* argument, and if any grows a pane the answer is
 to move it into `FEED_AGGREGATE_TYPES` and give `_sse` a branch -- not to

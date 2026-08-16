@@ -17,6 +17,8 @@ graph.
 
 from typing import Any
 
+from research_team.infrastructure.knowledge.temporal_expressions import RAW_TEMPORAL_PROPERTY
+
 # Kept in sync with the module docstring's example, not with `DatePrecision`
 # itself: `HOUR` and `MINUTE` exist on the enum but no extraction pipeline in
 # this project produces them, so they fall through to the ISO branch below
@@ -46,6 +48,33 @@ def _format_one(date: Any, precision: Any) -> str:
     if precision_name == "DAY":
         return f"{date.day} {_MONTH_NAMES[date.month - 1]} {date.year}"
     return date.date().isoformat()
+
+
+def entity_extent_label(entity: Any) -> str | None:
+    """What to show under `entity` as its date, or `None` for an undated one.
+
+    `render_extent` with the model's own wording preferred over the extent's
+    `original_text`. The two differ because `_DatingProvider` rewrites the
+    expression before redstring parses it -- 'AD 476' is handed over as
+    '0476', or the parser fills in the source document's month and day and
+    claims DAY precision. The rewrite is what makes the date correct and is
+    also unfit to show anyone, so the wording is kept beside it and read here.
+
+    Takes the entity rather than the extent because the wording lives in
+    `properties` and the extent cannot see it. That is also why this is a
+    second function instead of a change to `render_extent`: an extent on its
+    own is still a thing this module renders (relationship endpoints in
+    `graph_reader.py` are exactly that), and it has no entity to consult.
+
+    A BC expression reaches here with no extent at all, and still labels: an
+    entity whose only date is one nothing can currently represent is better
+    shown with its date than shown as undated. That is the one case where this
+    returns text for an entity `render_extent` would have called blank.
+    """
+    raw = (entity.properties or {}).get(RAW_TEMPORAL_PROPERTY)
+    if raw is not None and raw.strip():
+        return raw
+    return render_extent(entity.temporal)
 
 
 def render_extent(extent: Any) -> str | None:
