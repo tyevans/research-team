@@ -114,6 +114,13 @@ def main() -> None:
             # a definition invalidated by an extraction is regenerated rather
             # than served from a second connection that never heard about it.
             definitions=application.definition_readers,
+            # Both halves of the ontology layer. The runner is the read side --
+            # the tables the projection writes -- and the factory is the write
+            # side, one service per project. Passing only one of them leaves a
+            # route answering 503 in the build that ships, which is the failure
+            # `definitions` above was one review away from.
+            ontology=application.ontology,
+            ontology_discoverers=application.ontology_discoverers,
             # The same object the executor's gating predicate reads, which is
             # the only reason the routes over it can change anything: a copy
             # would answer reads correctly and change nothing. Instance-wide,
