@@ -118,6 +118,12 @@ export interface DefinitionCitation {
   readonly sourceId: string
   readonly start: number
   readonly end: number
+  /** The moment inside the source this passage sits at, or `null` when the
+   *  source has no locator map (every text source, today) or the span
+   *  resolved to no `TimeSpan` -- see `presenters.py`'s `definition_view`.
+   *  `null` means absent, never zero: `0` is a real citation at the source's
+   *  first second, and a check that treats it as falsy drops it silently. */
+  readonly atSeconds: number | null
 }
 
 /** An entity's generated definition, as the definition route returns it.

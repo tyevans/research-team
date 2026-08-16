@@ -48,7 +48,9 @@ export const AskTurn = ({
         renderer this application has -- see `Markdown`. `text-fg`, not
         `text-fg-dim`: dimming the answer -- the thing the reader came for --
         was backwards; the machinery around it is what should recede. */}
-    {turn.answer ? <Markdown className="text-fg" source={turn.answer} /> : null}
+    {turn.answer ? (
+      <Markdown className="text-fg" source={turn.answer} projectId={projectId} />
+    ) : null}
 
     {/* In the turn as well as in the page's banner. The banner is what a
         reader who has scrolled away sees; this is what says which question

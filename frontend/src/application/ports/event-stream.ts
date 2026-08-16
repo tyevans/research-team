@@ -93,6 +93,20 @@ export type FeedFrame =
    * pane keyed to graph frames would go quiet on exactly the ingests whose
    * source a reader needs to find. */
   | { readonly kind: 'corpus'; readonly projectId: string; readonly change: string }
+  /** A media proposal moved -- proposed, accepted, rejected, stored or failed.
+   *
+   * Same shape as `corpus` and for the same reason: `MediaProposals` is keyed
+   * on `project_id` alone (see the aggregate's docstring in
+   * `media_proposals.py`), so the server addresses this frame by project with
+   * no lookup. It replaces a 3s poll `MediaProposalPane` ran only while a
+   * proposal sat in `accepted` -- accepting answers 202 and the terminal
+   * state arrives minutes later after a download and a perception pass, with
+   * nothing in the tab to prompt a re-read until this frame does.
+   *
+   * Carries no proposal, only that one moved -- `corpus`'s argument applies:
+   * the pane re-reads the listing route, which is the one description of a
+   * proposal's status, against a wire payload that could disagree with it. */
+  | { readonly kind: 'media'; readonly projectId: string; readonly change: string }
   /** The project itself moved -- a stage advanced, a workflow was chosen, a
    * session took or released it.
    *

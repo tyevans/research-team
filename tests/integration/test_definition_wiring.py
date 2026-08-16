@@ -236,11 +236,16 @@ async def test_each_project_is_defined_from_its_own_corpus(two_projects):
     assert second.status_code == 200
     assert first.json()["text"] == "Acme Corp builds rockets."
     assert second.json()["text"] == "Acme Corp bakes bread."
+    # `at_seconds: None` on both -- these are text sources, which have no
+    # locator map. That is the majority case (see `test_citation_moments.
+    # py`'s `test_a_citation_into_a_text_source_is_unchanged`), and this is
+    # its integration-level witness: served through a composed app, over two
+    # real projects, still `None` rather than a guessed zero.
     assert first.json()["citations"] == [
-        {"source_id": "doc-a", "start": 0, "end": len(A_PASSAGE)}
+        {"source_id": "doc-a", "start": 0, "end": len(A_PASSAGE), "at_seconds": None}
     ]
     assert second.json()["citations"] == [
-        {"source_id": "doc-b", "start": 0, "end": len(B_PASSAGE)}
+        {"source_id": "doc-b", "start": 0, "end": len(B_PASSAGE), "at_seconds": None}
     ]
 
 
@@ -322,7 +327,11 @@ async def test_a_composed_app_defines_an_entity(composed):
     assert response.status_code == 200
     body = response.json()
     assert body["text"] == "Acme Corp builds rockets."
-    assert body["citations"] == [{"source_id": "doc-1", "start": 0, "end": len(PASSAGE)}]
+    # `at_seconds: None` -- a text source, the majority case; see the same
+    # note on `test_each_project_is_defined_from_its_own_corpus` above.
+    assert body["citations"] == [
+        {"source_id": "doc-1", "start": 0, "end": len(PASSAGE), "at_seconds": None}
+    ]
     assert body["stale"] is False
 
 

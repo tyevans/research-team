@@ -42,6 +42,9 @@ variable:
 | `AGENT_EMBEDDING_API_KEY` | *(`AGENT_API_KEY`)* | key for the embedding endpoint, when it differs |
 | `AGENT_PGVECTOR_DSN` | *(unset)* | Postgres DSN; required when `AGENT_VECTOR_STORE=pgvector`, no default. Reached when the store is built, so a wrong one fails at startup rather than mid-ingest |
 | `AGENT_CHUNK_STORE` | `memory` | what backs the document-chunk corpus that usage lookups search: `none`, `memory`, or `postgres` (listed as a real, unwired setting rather than a typo — see below) |
+| `AGENT_CURATION_MODEL` | *(`AGENT_MODEL`)* | model the media-curation chain runs on: phrasing a search term, judging a pool of results |
+| `AGENT_VISION_MODEL` | *(unset)* | model that describes frames and images; unset means no vision |
+| `AGENT_TRANSCRIBER_MODEL` | *(unset)* | ASR model name, required once `AGENT_TRANSCRIBER_URL` is set |
 
 ### Durable backends
 
@@ -145,3 +148,67 @@ logs a warning and consolidates on `name` and `graph` for the rest of the
 process. Ingests still complete — a document already fetched and extracted is
 not thrown away over an optional scoring signal. Set `AGENT_VECTOR_STORE=none`
 to skip the probe and say you meant it.
+
+### `AGENT_CURATION_MODEL` defaults to the chat model, on purpose and loosely
+
+Curation — deciding what a topic needs seen or heard, phrasing a search term,
+judging a pool of results — is a distinct role from the chat model, the same
+way embedding is. It differs from `AGENT_EMBEDDING_MODEL` in what happens when
+you leave it unset: embedding has no reasonable default (a chat model refuses
+or, worse, answers something vector-shaped and numerically meaningless), so
+that variable is required once the vector store is on. Curation's replies are
+read the way the agent's own JSON-shaped tool replies already are, so pointing
+it at `AGENT_MODEL` is a reasonable place to start rather than a hazard, and
+`AGENT_CURATION_MODEL` defaults to `model_name()` accordingly. That default is
+a convenience, not a claim that the two roles are the same thing — set
+`AGENT_CURATION_MODEL` once curation should run cheaper, faster, or on a
+different endpoint, and the two stop moving together.
+
+### `image_proxy` — a deployment setting the code cannot enforce
+
+The media review pane renders thumbnails from whatever the search instance
+returns in `thumbnail_src`. Measured on 2026-08-15 against a real SearXNG
+instance: it returns **raw third-party thumbnail URLs**
+(`https://tse1.mm.bing.net/...`), because `image_proxy` is off by default. With
+it off, opening the pane makes the viewer's browser fetch each thumbnail
+directly from whoever indexed the image — leaking that viewer's IP and
+referrer to a third party, once per thumbnail rendered.
+
+This is a different axis from the project's usual "nothing escapes" property.
+That property is about the *agent process* — no shell, network gated by
+default, pinned by `test_no_network.py` and `test_no_shell.py`. This is the
+*browser*, which the agent process does not mediate and this project's code
+cannot reach into. The pane renders whatever `thumbnail_src` holds; the fix has
+to happen where that field is produced.
+
+Set it on the SearXNG instance's `settings.yml`:
+
+```yaml
+server:
+  image_proxy: true
+```
+
+With it set, SearXNG rewrites `thumbnail_src` to an instance-relative proxied
+URL before the pane ever sees it, and the browser never talks to a third
+party. Nothing in this codebase changes; the fix is entirely in the instance
+you point `AGENT_SEARXNG_URL` at.
+
+**The rejected alternative** was a proxy endpoint of our own — the server
+fetching model-supplied thumbnail URLs on a browser's behalf. That solves the
+leak but adds an SSRF surface (our server, told to fetch an attacker-chosen
+URL) for a feature that does not need one, since SearXNG already does this
+job when asked to.
+
+One more thing the same measurement turned up: `thumbnail_src` was absent on
+46 of 262 captured image results (`thumbnail` was frequently present but
+empty). The pane falls back to a typed placeholder rather than the full-size
+asset in that case — falling back to the full asset would put a grid of
+full-resolution images on the page for the results that happened to lack a
+thumbnail, which is not the same failure mode as a missing thumbnail should
+produce.
+
+This was one instance, one afternoon, 262 image results captured in one
+session. What generalises is the shape — an unproxied instance leaks, a
+proxied one doesn't, thumbnails are sometimes absent — not the exact ratio;
+a different instance or a differently-indexed query set will not reproduce
+46/262.

@@ -626,6 +626,68 @@ async def test_sse_frames_a_stored_document_as_a_corpus_frame(repository):
     assert "session_id" not in payload
 
 
+async def test_sse_frames_a_media_proposal_change_as_a_media_frame(repository):
+    """A media proposal reaching the browser over the live feed, not a poll.
+
+    `MediaProposals` was in `FEED_AGGREGATE_TYPES` (so events for it were
+    read off the log) but `_sse` had no branch for it -- its events fell to
+    the generic `feed_event`, which stamps `index: 0`, which the frontend's
+    `decodeFrame` requires be `>= 1` to treat a frame as a log entry. Every
+    one of those frames was silently dropped, and `MediaProposalPane` polled
+    every 3s instead while a proposal sat in `accepted`. This test would have
+    passed with only a presenter added and no branch in `_sse` -- proving a
+    dict shape, not that a frame reaches a consumer -- so it goes through the
+    same `_sse` generator the browser is served from, the way the corpus and
+    project frame tests above do.
+    """
+    from eventsource import AggregateRepository
+
+    from research_team.application import LiveFeed
+    from research_team.domain.media_proposals import (
+        AcceptMediaProposal,
+        MediaProposals,
+        ProposeMedia,
+    )
+    from research_team.interfaces.web.app import _sse
+
+    feed = LiveFeed(repository, poll_interval=0.01)
+    project_id = uuid4()
+    proposals = AggregateRepository(repository.store, MediaProposals)
+    aggregate = await proposals.load_or_create(project_id)
+
+    frames: list[str] = []
+    generator = _sse(StubRequest(), feed)
+    await _subscribed(generator)
+    task = asyncio.create_task(_drain(generator, frames, wanted=1))
+    aggregate.execute(
+        ProposeMedia(
+            project_id=str(project_id),
+            proposal_id="proposal-1",
+            need_id="need-0",
+            topic_id=str(uuid4()),
+            page_url="https://example.org/gallery/trajan",
+            asset_url="https://example.org/gallery/trajan.jpg",
+            thumbnail_url="",
+            kind="image",
+            title="Trajan's Column, detail",
+            reason="shows the relief the finding describes",
+            query="trajan column relief",
+        )
+    )
+    aggregate.execute(
+        AcceptMediaProposal(project_id=str(project_id), proposal_id="proposal-1")
+    )
+    await proposals.save(aggregate)
+    await asyncio.wait_for(task, timeout=5)
+
+    assert frames[0].startswith("id: ")
+    payload = json.loads(frames[0].split("data: ", 1)[1])
+    assert payload["type"] == "Media"
+    assert payload["project_id"] == str(project_id)
+    assert payload["change"] == "MediaProposed"
+    assert "session_id" not in payload
+
+
 async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
     """An advanced stage reaches the live feed addressed to its project.
 
@@ -3402,6 +3464,13 @@ async def test_allow_all_records_exactly_the_changes_it_made(client, service):
     """One event per level that really moved, never one per gated tool: a log
     claiming eight decisions where a person made one is as unreadable as one
     that omitted them.
+
+    `fetch_media` now appears in `changed` alongside `fetch` -- intended, not
+    drift: it floors at `ask` for the same reason `fetch` does (a network
+    tool a model can point at any URL, see `TOOL_FLOORS`), so allow-all
+    genuinely relaxes it too. It is the first floored tool where "allow all"
+    means authorizing megabytes to disk and, downstream, a perception pass --
+    worth a person seeing named in the log, not folded into a count.
     """
     session_id = await _new_session(client)
     await client.post(
@@ -3411,13 +3480,14 @@ async def test_allow_all_records_exactly_the_changes_it_made(client, service):
 
     body = (await client.post(f"/api/sessions/{session_id}/autonomy/allow-all")).json()
 
-    assert body["changed"] == {"write_file": "auto", "fetch": "auto"}
+    assert body["changed"] == {"write_file": "auto", "fetch": "auto", "fetch_media": "auto"}
     events = await service.history(UUID(session_id))
     changes = [event for event in events if isinstance(event, AutonomyChanged)]
     assert [(change.tool_name, change.level) for change in changes] == [
         ("write_file", "deny"),
         # `GATED_TOOLS` order, which is the order `relax_all` walks.
         ("fetch", "auto"),
+        ("fetch_media", "auto"),
         ("write_file", "auto"),
     ]
 

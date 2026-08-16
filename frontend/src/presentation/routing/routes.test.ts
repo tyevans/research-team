@@ -5,9 +5,12 @@ import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { FilePath } from '@domain/shared/file-path.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
+import { expandReferences } from '../../infrastructure/rendering/references.ts'
+
 import {
   FACETS,
   parseRoute,
+  parseSeekSeconds,
   projectHref,
   sessionHref,
   sessionSelection,
@@ -49,6 +52,74 @@ describe('parseRoute', () => {
   it('reads a project page with nothing selected', () => {
     expect(parseRoute('#/p/abc')).toEqual({ name: 'project', id: PROJECT, selection: null })
   })
+
+  // `wouter`'s `useHashLocation` hands the whole hash to this function, query
+  // string and all -- `?t=252` is not stripped anywhere upstream. Before
+  // `splitQuery` existed, `parts = hash.split('/')` folded that query onto
+  // the end of whatever segment came last, because `?t=252` contains no `/`
+  // for the split to catch. A citation's own `?t=252` link corrupted the id
+  // it pointed at: this is the regression that would reintroduce.
+  it('does not let a `?t=` query corrupt the id it trails', () => {
+    const route = parseRoute(`#/p/abc/doc/${encodeURIComponent('wiki-trajan')}?t=252`)
+    expect(route).toEqual({
+      name: 'project',
+      id: PROJECT,
+      selection: { facet: 'doc', id: 'wiki-trajan' },
+    })
+  })
+})
+
+describe('parseSeekSeconds', () => {
+  it('reads a whole-second offset', () => {
+    expect(parseSeekSeconds('#/p/abc/doc/x?t=252')).toBe(252)
+  })
+
+  // The falsy trap, at the URL boundary rather than the render boundary:
+  // `0` is a real requested second and `if (parseSeekSeconds(hash))` at any
+  // call site would silently discard it.
+  it('reads a zero offset rather than treating it as absent', () => {
+    expect(parseSeekSeconds('#/p/abc/doc/x?t=0')).toBe(0)
+  })
+
+  // `GraphDetail` formats a definition citation's `atSeconds` -- a float --
+  // with plain `String()`, so a genuine fraction reaches this query and has
+  // to survive the round trip rather than truncate.
+  it('reads a fractional offset', () => {
+    expect(parseSeekSeconds('#/p/abc/doc/x?t=252.5')).toBe(252.5)
+  })
+
+  it('is null with no query at all', () => {
+    expect(parseSeekSeconds('#/p/abc/doc/x')).toBeNull()
+  })
+
+  it('is null for a `t` that is not a well-formed non-negative number', () => {
+    // Hand-edited or model-influenced junk, each covering a different way a
+    // naive parse would misbehave: `NaN` reaching `HTMLMediaElement.
+    // currentTime` throws, so every one of these has to come back `null`
+    // rather than a number a caller would seek to blindly.
+    expect(parseSeekSeconds('#/p/abc/doc/x?t=')).toBeNull()
+    expect(parseSeekSeconds('#/p/abc/doc/x?t=soon')).toBeNull()
+    expect(parseSeekSeconds('#/p/abc/doc/x?t=-5')).toBeNull()
+    // A range, not a moment. This *was* documented here as a shape
+    // `expandReferences` never emits -- false: it emitted exactly this for
+    // `[[src:x@5-10]]` until references.ts collapsed a range to its start,
+    // and every reference with an end seeked nowhere as a result. `,` is
+    // still rejected -- there is no second field for an end to occupy -- but
+    // it is rejected because a comma-bearing `t` is invalid input, not
+    // because this app never produces one.
+    expect(parseSeekSeconds('#/p/abc/doc/x?t=5,10')).toBeNull()
+  })
+
+  it('accepts a range reference expansion and seeks to its start', () => {
+    // Pins the round trip BLOCKER 2 was about: expandReferences(id@252-310)
+    // -> a URL -> parseSeekSeconds. Importing expandReferences here (rather
+    // than hand-writing the query) is deliberate -- a hand-written `?t=252`
+    // would pass even if the two files drifted again.
+    const html = expandReferences('[[src:x@252-310]]', ProjectId('abc'))
+    const href = /href="([^"]+)"/.exec(html)?.[1]
+    expect(href).toBeDefined()
+    expect(parseSeekSeconds(href!)).toBe(252)
+  })
 })
 
 /** The grammar itself: every facet the proposal names, parsed and rebuilt.
@@ -86,6 +157,7 @@ describe('the facet grammar', () => {
       hash: '#/p/abc/ontology/c1',
     },
     { facet: 'doc', selection: { facet: 'doc', id: 'd1' }, hash: '#/p/abc/doc/d1' },
+    { facet: 'media', selection: { facet: 'media', id: 'p1' }, hash: '#/p/abc/media/p1' },
     {
       facet: 'file',
       selection: { facet: 'file', id: FilePath.of('a/b.md') },

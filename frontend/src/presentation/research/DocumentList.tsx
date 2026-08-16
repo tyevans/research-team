@@ -16,12 +16,16 @@ import { useDocuments } from './use-documents.ts'
 export const DocumentList = ({
   projectId,
   open = null,
+  seekSeconds = null,
   onOpen,
 }: {
   projectId: ProjectId
   /** The route's `doc` id. See `useDocuments`, which says what this being
    *  `useState` cost. */
   open?: SourceId | null
+  /** The route's `?t=`, passed straight through to `DocumentReader` on the
+   *  open document -- this component has no player of its own to seek. */
+  seekSeconds?: number | null
   onOpen?: (sourceId: SourceId | null) => void
 }) => {
   const { query, reading, onClose, readingLabel, browser, adding, onAddClose } = useDocuments(
@@ -84,6 +88,7 @@ export const DocumentList = ({
             projectId={projectId}
             sourceId={reading}
             document={(query.data ?? []).find((row) => row.sourceId === reading) ?? null}
+            seekSeconds={seekSeconds}
           />
         </Drawer>
       ) : null}

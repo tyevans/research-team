@@ -22,6 +22,7 @@ from langchain_core.tools import BaseTool, tool
 from research_team.application.corpus_read import (
     LIST_SOURCES_TOOL,
     READ_SOURCE_TOOL,
+    REFERENCE_SYNTAX_PROMPT,
     CorpusReadError,
     CorpusReadPort,
     SourceListing,
@@ -189,6 +190,12 @@ CORPUS_PROMPT = (
     "\n\nThis project keeps the full text of every source it has stored. "
     "`list_sources` shows what is there; `read_source` returns a document, or "
     "a character range of one, headed by `source_id@start-end`.\n\n"
+    "Every stored source is also mounted read-only at `/sources/<source_id>`, "
+    "so `grep` and `glob` search the whole corpus at once -- use them to find "
+    "which source discusses something rather than opening documents one by "
+    "one. The file tools can search a source but not open one: `read_file` on "
+    "a mounted path is refused, because only `read_source` returns the "
+    "`source_id@start-end` span that makes a quote checkable.\n\n"
     "Read the source before you write about it. The knowledge graph holds an "
     "extraction of a document, which is the thing a claim should be checked "
     "against rather than the thing to quote -- if you are about to state what "
@@ -199,5 +206,6 @@ CORPUS_PROMPT = (
     "the `source_id` and the offsets it came from, or it is marked plainly as "
     "inferred. Both are legitimate -- an inference you have labelled is honest "
     "work, and a reviewer can weigh it. An inference wearing a citation is "
-    "not, and the offsets are what makes the difference checkable."
+    "not, and the offsets are what makes the difference checkable.\n\n"
+    + REFERENCE_SYNTAX_PROMPT
 )

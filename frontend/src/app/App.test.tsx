@@ -6,7 +6,10 @@ import { beforeEach, expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
-import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
+import type { DocumentRepository } from '@application/ports/repositories.ts'
+import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
+import type { MediaSummary } from '@domain/research/document.ts'
+import { ProjectId, SessionId, SourceId } from '@domain/shared/identifier.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
 import { projectHref } from '@presentation/routing/routes.ts'
 
@@ -420,4 +423,82 @@ it('puts a watched worker in the address bar under the session facet', async () 
       'true',
     ),
   )
+})
+
+const MEDIA = SourceId('m1')
+
+const media = (over: Partial<MediaSummary> = {}): MediaSummary => ({
+  sourceId: MEDIA,
+  kind: 'media',
+  mediaType: 'video/mp4',
+  byteCount: 12_500_000,
+  sha256: 'deadbeef',
+  uri: null,
+  title: 'The keynote',
+  publishedAt: null,
+  note: null,
+  fetchedAt: null,
+  droppedReason: null,
+  extracted: false,
+  ...over,
+})
+
+const fakeDocumentsWithMedia = (): DocumentRepository => ({
+  list: vi.fn().mockResolvedValue([media()]),
+  read: vi.fn(() => {
+    throw new Error('read must not be called for media')
+  }),
+  extract: vi.fn(),
+  extractAll: vi.fn(),
+  extractionQueue: vi.fn().mockResolvedValue(emptyExtractionQueue),
+  cancelExtraction: vi.fn(),
+  perceive: vi.fn(),
+  create: vi.fn(),
+  revise: vi.fn(),
+  drop: vi.fn(),
+  restore: vi.fn(),
+  contentUrl: (projectId, sourceId) => `/api/projects/${projectId}/sources/${sourceId}/content`,
+  uploadMedia: vi.fn(),
+})
+
+/** The seam this task exists to close: `GraphDetail` puts `?t=252` on a
+ *  citation link, and until this test the whole path from that URL to a
+ *  seeked player had never been exercised together -- `DocumentReader`'s own
+ *  tests pass `seekSeconds` as a prop, which proves the component but not
+ *  that anything upstream ever supplies it. Rendering `App` and setting
+ *  `window.location.hash` the way a followed link would is what makes this
+ *  end-to-end rather than a second unit test of the same prop.
+ *
+ * It also stands in for the router risk raised while wiring this: a query
+ * string glued onto the last path segment (`wouter`'s `useHashLocation`
+ * does not strip it) could easily have corrupted the document id instead of
+ * being read as a seek. This passing is what confirms `doc/<id>?t=252` still
+ * resolves to `<id>`, not `<id>?t=252`. */
+it('seeks a cited video to the second a `?t=` query names, on a followed link', async () => {
+  window.location.hash = `#/p/${ATLAS}/doc/${MEDIA}?t=252`
+  renderApp(containerWith({ documents: fakeDocumentsWithMedia() }))
+
+  const player = await screen.findByTestId('media-player')
+  expect((player as HTMLMediaElement).currentTime).toBe(252)
+})
+
+// The falsy trap, exercised at the top of the stack: a citation at a
+// source's first second is real, and any `if (seekSeconds)` guard between
+// the query string and `currentTime` would silently swallow it.
+it('seeks to second zero rather than treating the query as absent', async () => {
+  window.location.hash = `#/p/${ATLAS}/doc/${MEDIA}?t=0`
+  renderApp(containerWith({ documents: fakeDocumentsWithMedia() }))
+
+  const player = await screen.findByTestId('media-player')
+  expect((player as HTMLMediaElement).currentTime).toBe(0)
+})
+
+// The ordinary case, and the majority one: most links into a document carry
+// no `?t=` at all, and the player must not seek anywhere on its own.
+it('does not seek an opened document with no `?t=` in its link', async () => {
+  window.location.hash = `#/p/${ATLAS}/doc/${MEDIA}`
+  renderApp(containerWith({ documents: fakeDocumentsWithMedia() }))
+
+  const player = await screen.findByTestId('media-player')
+  expect((player as HTMLMediaElement).currentTime).toBe(0)
 })

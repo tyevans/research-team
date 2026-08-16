@@ -50,6 +50,30 @@ describe('renderMarkdown — sanitisation', () => {
     expect(html).toContain('target="_blank"')
   })
 
+  it('keeps an in-app hash-route link, without the external-link decoration', () => {
+    // Exercises the same hook a `[[src:...]]` reference relies on
+    // (`content.tsx` expands one into exactly this href shape before this
+    // function ever sees the source) — written against raw markdown here
+    // because that hook has no other coverage of the safe, non-http case.
+    const html = renderMarkdown('[keynote](#/p/1/doc/keynote?t=252)')
+    expect(html).toContain('href="#/p/1/doc/keynote?t=252"')
+    expect(html).not.toContain('target="_blank"')
+    expect(html).not.toContain('rel="noopener')
+    // Distinct from an external `.md-link`, not reused outright — see the
+    // class comment in markdown.css.
+    expect(html).toContain('md-link-internal')
+  })
+
+  // Guards against the widened hash-route rule swallowing this case: '#'
+  // alone isn't the distinguishing feature, '#/' -- the leading slash -- is.
+  // A scheme this hook does not know about must still lose its href, exactly
+  // as it did before the hash-route case existed.
+  it('still drops an unknown scheme once #/ hrefs are allowed', () => {
+    const html = renderMarkdown('[x](weird-scheme:something)')
+    expect(html).not.toContain('weird-scheme:')
+    expect(html).toContain('md-link-inert')
+  })
+
   it('keeps a mailto link', () => {
     const html = renderMarkdown('<mailto:a@b.com>')
     expect(html).toContain('href="mailto:a@b.com"')

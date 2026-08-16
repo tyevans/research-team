@@ -272,7 +272,22 @@ export const GraphDetail = ({
                     <li key={`${citation.sourceId}|${citation.start}|${citation.end}`}>
                       <a
                         className="font-mono text-xs text-fg-dim no-underline hover:underline"
-                        href={projectHref(projectId, { facet: 'doc', id: citation.sourceId })}
+                        href={
+                          projectHref(projectId, { facet: 'doc', id: citation.sourceId }) +
+                          // Checked against `null`, not truthiness: `atSeconds`
+                          // is `0` for a real citation at a source's first
+                          // second, and `0 ? … : …` would silently drop the
+                          // query for exactly that case. Same `?t=` query
+                          // `expandReferences` emits for an inline reference
+                          // -- one seek param, not two -- formatted with
+                          // `String()` rather than `toFixed`: it prints `252`
+                          // for the common whole-second case (matching the
+                          // integer-only grammar `[[src:id@252]]` parses) and
+                          // keeps a genuine fraction like `252.5` intact,
+                          // where a fixed precision would either truncate or
+                          // pad zeros nobody asked for.
+                          (citation.atSeconds === null ? '' : `?t=${String(citation.atSeconds)}`)
+                        }
                       >
                         {shortId(citation.sourceId)}
                       </a>
@@ -343,7 +358,11 @@ export const GraphDetail = ({
                       the commit message. `mention-snippet.browser.test.tsx`
                       measures what the browser actually does with it, because
                       jsdom does not reparent and so cannot see this at all. */}
-                      <Markdown className="md-bare text-sm" source={passageStart(usage.text)} />
+                      <Markdown
+                        className="md-bare text-sm"
+                        source={passageStart(usage.text)}
+                        projectId={projectId}
+                      />
                     </a>
                   </li>
                 ))}

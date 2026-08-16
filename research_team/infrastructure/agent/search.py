@@ -18,6 +18,7 @@ import httpx
 from langchain_core.tools import BaseTool, tool
 
 from research_team.application import SEARCH_TOOL
+from research_team.application.media_curation import SearchResult
 from research_team.infrastructure.agent.recall import Recall, Recalled, describe_age, query_key
 
 TIMEOUT = httpx.Timeout(10.0)
@@ -225,30 +226,6 @@ def _text(result: dict, key: str) -> str:
     return value.translate(_HIGHLIGHT).strip()
 
 
-@dataclass(frozen=True)
-class SearchResult:
-    """One SearXNG result, flattened to the fields the media pipeline needs.
-
-    `thumbnail_url` is the whole reason this type exists apart from the string
-    `format_results` renders: the review pane needs an image to show for a
-    media result, and the model must never see that URL -- it costs context
-    for something only a human-facing pane reads. Getting it by re-parsing
-    `format_results`' prose would mean scraping a string built for a different
-    reader; this is built once and rendered from, in both directions.
-
-    All fields are `str`, never `None` -- a field absent from a real payload
-    (see `_text`) becomes `""`, not a sentinel a caller has to check for.
-    """
-
-    title: str
-    url: str
-    snippet: str
-    kind: Literal["image", "video", "other"]
-    asset_url: str
-    detail: str
-    thumbnail_url: str
-
-
 def parse_results(payload: object, limit: int) -> tuple[SearchResult, ...] | None:
     """A SearXNG payload as structured data, capped at `limit`.
 
@@ -263,7 +240,14 @@ def parse_results(payload: object, limit: int) -> tuple[SearchResult, ...] | Non
     if not isinstance(payload, dict):
         return None
     results = payload.get("results") or []
-    return tuple(_parse_one(result) for result in results[:limit])
+    # The payload guard above is total for the payload's own shape, but
+    # not one level down -- `{"results": ["oops"]}` is a well-formed payload
+    # carrying a result that is not a dict, and `_parse_one`'s `result.get`
+    # raised `AttributeError` on it. Skipped rather than raised, matching the
+    # totality this function already promises for the payload itself: a
+    # skipped result is still a result set, where a raised exception was a
+    # lost turn.
+    return tuple(_parse_one(result) for result in results[:limit] if isinstance(result, dict))
 
 
 def _parse_one(result: dict) -> SearchResult:

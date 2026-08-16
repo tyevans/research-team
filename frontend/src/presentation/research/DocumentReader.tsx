@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { queryKeys } from '@application/queries/keys.ts'
@@ -34,13 +34,20 @@ export const DocumentReader = ({
   projectId,
   sourceId,
   source,
+  seekSeconds = null,
 }: {
   projectId: ProjectId
   sourceId: SourceId
   source: SourceSummary | null
+  /** The moment a citation pointed at, carried in from the `?t=` query on the
+   *  `doc` route -- see `references.ts`'s `expandReferences` and
+   *  `GraphDetail`'s citation links, which are the two things that produce
+   *  it. `null` for the ordinary "just opened the document" case, and for
+   *  every text source: there is nothing to seek in prose. */
+  seekSeconds?: number | null
 }) => {
   if (source?.kind === 'media') {
-    return <MediaView projectId={projectId} source={source} />
+    return <MediaView projectId={projectId} source={source} seekSeconds={seekSeconds} />
   }
   return <TextRead projectId={projectId} sourceId={sourceId} />
 }
@@ -106,7 +113,11 @@ const TextRead = ({ projectId, sourceId }: { projectId: ProjectId; sourceId: Sou
           `md-bare` because the `<article>` above already owns the padding and
           the measure; see `markdown.css`. The measure moves here from the old
           paragraph, unchanged. */}
-      <Markdown className="md-bare max-w-[68ch] text-sm leading-[1.65]" source={document.text} />
+      <Markdown
+        className="md-bare max-w-[68ch] text-sm leading-[1.65]"
+        source={document.text}
+        projectId={projectId}
+      />
     </article>
   )
 }
@@ -125,7 +136,15 @@ const TextRead = ({ projectId, sourceId }: { projectId: ProjectId; sourceId: Sou
  * inside Ask answers needs a reference syntax that does not exist yet, and a
  * general component built now would be designing that syntax by accident.
  */
-const MediaView = ({ projectId, source }: { projectId: ProjectId; source: MediaSummary }) => {
+const MediaView = ({
+  projectId,
+  source,
+  seekSeconds,
+}: {
+  projectId: ProjectId
+  source: MediaSummary
+  seekSeconds: number | null
+}) => {
   const { documents } = useContainer()
   const url = documents.contentUrl(projectId, source.sourceId)
   const label = documentLabel(source)
@@ -135,7 +154,7 @@ const MediaView = ({ projectId, source }: { projectId: ProjectId; source: MediaS
       {source.droppedReason ? (
         <p className="m-0 text-xs text-k-failure">Dropped: {source.droppedReason}</p>
       ) : null}
-      <Player url={url} label={label} mediaType={source.mediaType} />
+      <Player url={url} label={label} mediaType={source.mediaType} seekSeconds={seekSeconds} />
       {/* The digest beside the bytes rather than hidden behind an edit form:
           it is what proves the recording being watched is the one on record,
           and this is the one place a reader is looking at both. */}
@@ -146,7 +165,50 @@ const MediaView = ({ projectId, source }: { projectId: ProjectId; source: MediaS
   )
 }
 
-const Player = ({ url, label, mediaType }: { url: string; label: string; mediaType: string }) => {
+const Player = ({
+  url,
+  label,
+  mediaType,
+  seekSeconds,
+}: {
+  url: string
+  label: string
+  mediaType: string
+  seekSeconds: number | null
+}) => {
+  // `currentTime` rather than `#t=<n>` on the `src`: this element's `src` is
+  // the content route, and a media fragment appended there would ask the
+  // *server* to satisfy the range with `Range`/`Accept-Ranges`, which the
+  // route already supports but only by re-requesting the whole element from
+  // scratch. Setting `currentTime` on the already-mounted element seeks the
+  // one request that is already in flight instead.
+  //
+  // **Depends on `seekSeconds`, not empty deps -- a mount does not track a
+  // new offset within one source.** A first version here ran once per mount
+  // on the premise that `DocumentList.tsx` keys this reader on the open
+  // document and would remount for every new citation. That premise is
+  // false for the case that matters: the key is the *source id*, and two
+  // citations into the same source at different offsets share it. Clicking
+  // the second one updates `seekSeconds` in place with no remount, and an
+  // empty-deps effect would never see the new value -- the player would sit
+  // wherever the first citation left it. Depending on the value is what
+  // makes the second click seek at all; a `React.key` on the offset was the
+  // other way to force this and was rejected because it ties this
+  // component's identity to a transient number rather than to the document
+  // it is actually reading.
+  // `HTMLMediaElement` -- the base both `<video>` and `<audio>` share -- kept
+  // in a plain mutable ref rather than one from `useRef<HTMLVideoElement>`:
+  // that type is specific to `<video>`'s own `ref` prop and rejects an
+  // `<audio>` element structurally, even though both share `currentTime`.
+  const el = useRef<HTMLMediaElement | null>(null)
+  const setRef = (node: HTMLMediaElement | null) => {
+    el.current = node
+  }
+  useEffect(() => {
+    if (seekSeconds === null) return
+    if (el.current) el.current.currentTime = seekSeconds
+  }, [seekSeconds])
+
   // The one place a dangling reference is met by a person. The port
   // distinguishes "no such source" from "record here, bytes gone" and the
   // content route answers 410 for the second, but a `<video>` handed a 410
@@ -189,6 +251,7 @@ const Player = ({ url, label, mediaType }: { url: string; label: string; mediaTy
       // worse than the honest gap. Revisit when transcription lands.
       // eslint-disable-next-line jsx-a11y/media-has-caption
       <video
+        ref={setRef}
         data-testid="media-player"
         controls
         src={url}
@@ -202,6 +265,7 @@ const Player = ({ url, label, mediaType }: { url: string; label: string; mediaTy
       // Same trade as the video above, for the same missing transcript.
       // eslint-disable-next-line jsx-a11y/media-has-caption
       <audio
+        ref={setRef}
         data-testid="media-player"
         controls
         src={url}

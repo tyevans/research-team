@@ -18,6 +18,7 @@ from research_team.application import (
 )
 from research_team.application.autonomy import (
     ADVANCE_STAGE_TOOL,
+    FETCH_MEDIA_TOOL,
     STAGE_GATE_TOOLS,
     TOOL_FLOORS,
 )
@@ -193,7 +194,7 @@ def test_relax_all_reports_only_the_levels_that_actually_moved():
 
     changed = policy.relax_all()
 
-    assert changed == {"write_file": "auto", "fetch": "auto"}
+    assert changed == {"write_file": "auto", "fetch": "auto", "fetch_media": "auto"}
 
 
 def test_relax_all_relaxes_a_deny_too():
@@ -215,3 +216,28 @@ def test_relax_all_on_an_already_relaxed_policy_changes_and_reports_nothing():
     policy.relax_all()
 
     assert policy.relax_all() == {}
+
+
+def test_fetch_media_floors_at_ask():
+    """A default-`auto` policy still asks before this tool leaves the process
+    -- the same argument as `fetch`'s floor, with megabytes and a perception
+    pass added to what a single unreviewed call can do.
+    """
+    assert AutonomyPolicy(default="auto").level_for(FETCH_MEDIA_TOOL) == "ask"
+
+
+def test_an_explicit_setting_still_wins_in_both_directions():
+    """A floor raises a default and never lowers it; someone who turns this
+    to `auto` for a research session meant it."""
+    policy = AutonomyPolicy(default="auto")
+    policy.set(FETCH_MEDIA_TOOL, "auto")
+    assert policy.level_for(FETCH_MEDIA_TOOL) == "auto"
+
+    policy.set(FETCH_MEDIA_TOOL, "deny")
+    assert policy.level_for(FETCH_MEDIA_TOOL) == "deny"
+
+
+def test_relax_all_sweeps_it_in():
+    """Intended, and stated rather than inherited: this is the first tool
+    where "allow all" means megabytes and a perception pass."""
+    assert FETCH_MEDIA_TOOL in AutonomyPolicy().relax_all()

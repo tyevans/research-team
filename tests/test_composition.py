@@ -23,6 +23,8 @@ Two claims, and each is the failure `task-6-brief.md` names by name.
 
 from uuid import uuid4
 
+import pytest
+
 from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.perception import (
     LocatorSpan,
@@ -167,3 +169,61 @@ async def test_capabilities_reflect_configuration_when_nothing_is_injected(
     capabilities = application.perception.capabilities()
     assert capabilities.vision is True
     assert capabilities.any_model() is True
+
+
+async def test_a_raise_late_in_build_application_never_constructs_the_media_client(
+    monkeypatch,
+):
+    """The media `httpx.AsyncClient` used to be built early in
+    `build_application`, roughly a thousand lines and one raise-shaped
+    function above `Application(...)`. Anything raising in that window left
+    the client constructed with no owner to close it -- `Application.close()`
+    is unconditional but only exists once an `Application` does.
+
+    Asserting the client got closed (the more direct claim) is not cheaply
+    testable: nothing in `build_application`'s raise path holds a reference
+    to it once the function unwinds, so there is nothing to call `.aclose()`
+    on and check. What *is* testable, and is what the fix actually changed,
+    is the ordering: the client is now built last, immediately before
+    `Application(...)`, so a raise anywhere earlier -- `WorkerRoster` here,
+    the constructor built immediately before it -- must never construct one
+    at all. Red against the pre-fix ordering: `WorkerRoster` is built after
+    the client, so patching it to raise did not stop the client from having
+    already been constructed and left open.
+    """
+    import httpx
+
+    from research_team import composition
+
+    built = []
+    real_init = httpx.AsyncClient.__init__
+
+    def _tracking_init(self, *args, **kwargs):
+        # `type(self) is httpx.AsyncClient` rather than `isinstance`: the
+        # default model build constructs `langchain_openai`/`openai` clients
+        # that subclass `httpx.AsyncClient`, unrelated to this fix and built
+        # earlier regardless of ordering. Only a bare `httpx.AsyncClient` is
+        # the one this function builds for `media_http_client`.
+        if type(self) is httpx.AsyncClient:
+            built.append(self)
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "__init__", _tracking_init)
+
+    class _Boom(Exception):
+        pass
+
+    def _raise(*args, **kwargs):
+        raise _Boom("WorkerRoster refuses to build")
+
+    monkeypatch.setattr(composition, "WorkerRoster", _raise)
+
+    with pytest.raises(_Boom):
+        composition.build_application()
+
+    # Close first, then assert: a loop after the assertion never runs when
+    # the assertion passes, and is skipped when it fails, so it leaves
+    # anything unexpectedly built open on either outcome.
+    for client in built:
+        await client.aclose()
+    assert built == []

@@ -5,10 +5,12 @@ deepagents, and the environment are chosen and wired to the ports -- so
 swapping any of them is an edit here and nowhere else.
 """
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 from uuid import UUID, uuid4
 
 # Imported for its side effect as much as its names: redstring registers its
@@ -17,6 +19,7 @@ from uuid import UUID, uuid4
 # sessions. A read that meets a `DocumentExtracted` without this import raises
 # `EventTypeNotFoundError`, including on the "no project at all" path, where
 # nothing else would have pulled redstring in.
+import httpx
 import redstring.events  # noqa: F401
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.observability import Tracer
@@ -58,6 +61,11 @@ from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import KnowledgeError, SourceRef, source_id_for_url
+from research_team.application.media_acquisition import (
+    MediaAcceptReconciler,
+    MediaAcceptWorker,
+)
+from research_team.application.media_curation import MediaCurationTextPort, MediaSearchPort
 from research_team.application.ontology_discovery import OntologyDiscoveryService
 from research_team.application.perception import MediaPerceiver, PerceptionPort
 from research_team.application.ports import GateReview
@@ -81,6 +89,7 @@ from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import ProjectState, Session, current_stage_of
 from research_team.domain.commands import RecordStageReview, WriteFile
+from research_team.domain.media_proposals import MediaProposals
 from research_team.domain.research_run import Budget
 from research_team.domain.topic import Topic
 from research_team.domain.workflow import Preset
@@ -108,10 +117,12 @@ from research_team.infrastructure.agent.fetch import (
     FETCH_PROMPT,
     build_fetch_tool,
 )
+from research_team.infrastructure.agent.fetch_media import build_fetch_media_tool
 from research_team.infrastructure.agent.knowledge_tools import (
     KNOWLEDGE_PROMPT,
     build_knowledge_tools,
 )
+from research_team.infrastructure.agent.media_curation_adapter import build_curation_ports
 from research_team.infrastructure.agent.ontology_model import ChatModelOntologyText
 from research_team.infrastructure.agent.recall import PageMemo, Recall
 from research_team.infrastructure.agent.search import (
@@ -120,6 +131,7 @@ from research_team.infrastructure.agent.search import (
     build_search_tool,
 )
 from research_team.infrastructure.agent.search_middleware import SearchAttemptsMiddleware
+from research_team.infrastructure.agent.source_mount import mounted_sources
 from research_team.infrastructure.agent.stage_middleware import (
     StageMiddleware,
     managed_tools_for,
@@ -152,6 +164,7 @@ from research_team.infrastructure.persistence import (
     EventStoreSessionRepository,
     SessionSummaryRunner,
     TopicRunner,
+    build_ask_conversation_repository,
     build_corpus_repository,
     build_judgements_repository,
     build_learner_progress_repository,
@@ -167,7 +180,9 @@ from research_team.infrastructure.persistence.corpus_reader import ProjectCorpus
 from research_team.infrastructure.persistence.definition_cache import ProjectDefinitionCache
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
 from research_team.infrastructure.persistence.read_models import (
+    AskConversationRunner,
     EntityDefinitionRunner,
+    MediaProposalRunner,
     OntologyRunner,
 )
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
@@ -258,6 +273,39 @@ class Application:
     so no caller can run a pass against a project it was not handed. Synchronous
     and never `None`, unlike `definition_readers` -- see `ontology_discoverer`
     in `build_application` for why nothing it needs can be absent."""
+
+    media_proposals: MediaProposalRunner
+    """Keeps the proposal tables following the log. Idle until `start()`.
+
+    A field for `check_telemetry`'s reason -- a projection nobody would
+    otherwise start, and `rebuild()`/`failures()` have to be reachable when
+    the tables disagree with the log. Like `ontology`, nothing reads *through*
+    this runner to write: `MediaCurationService` appends to the event store
+    via `media_proposal_repository` below and the projection does the writing."""
+
+    media_proposal_repository: AggregateRepository[MediaProposals]
+    """The `MediaProposals` aggregate repository, for `MediaCurationService`.
+
+    Exposed directly rather than behind a factory, mirroring `topic_repository`:
+    a `MediaProposals` aggregate is keyed on `project_id` alone, so there is no
+    per-project object to assemble and nothing a factory would buy here. Built
+    over this instance's own event store (`repository.store`/`.publisher`), the
+    same one `media_proposals` above subscribes to -- a repository built over a
+    different store would let a curation and the projection reading it disagree
+    about what was ever appended."""
+
+    media_curation_text: MediaCurationTextPort | None
+    """The chain's text port, or `None` when this install has no model to
+    curate with. Paired with `media_curation_search` below rather than
+    exposed only as a bundle, mirroring `corpus`/`blob_store`: `create_app`
+    takes each optional dependency on its own name, and a route checks each
+    the way `_reader` checks `corpus` and `blob_store` together."""
+
+    media_curation_search: MediaSearchPort | None
+    """The chain's search port, `None` exactly when `searxng` above is --
+    `build_curation_ports` needs a SearXNG instance the same way
+    `build_search_tool` does, and a build with no instance configured has
+    nothing for either to search."""
 
     check_telemetry_readers: Callable[[UUID], CheckTelemetryReadPort]
     """One project's `CheckTelemetryReadPort`, built fresh per call.
@@ -373,16 +421,30 @@ class Application:
     consult, not a second one that would just happen to agree by accident."""
 
     ask: AskService
-    """Read-only questions about a project, answered without touching its log.
+    """Questions about a project, answered without touching the project's log.
 
     A field beside `service` rather than something reached through it, because
-    it is deliberately not a session use case: it starts nothing, joins
-    nothing and appends nothing, and routing it through `SessionService` would
-    put an ephemeral path behind the one object whose whole job is durability.
+    it is deliberately not a session use case: it starts nothing and joins
+    nothing, and routing it through `SessionService` would put a conversational
+    path behind the one object whose whole job is durability. It does append,
+    since `docs/superpowers/specs/2026-08-16-ask-persistence-design.md` -- to
+    an `AskConversation` stream of its own, which is off the project's stream
+    and off its feed.
     It shares this instance's `open_graph` closure, so an ask reads the same
     open graph store the attached agent writes to rather than a second one
     rebuilt for the question -- which is also why it is constructed inside
     `build_application` and cannot be assembled by a caller."""
+
+    asks: AskConversationRunner
+    """The read side of persisted asks: history for a project, one
+    conversation with its turns. Idle until `start()`.
+
+    A field for `check_telemetry`'s reason -- a projection nobody would
+    otherwise start -- and, like `ontology`, read-only: `ask` above appends to
+    the log and this follows it. The two must never be collapsed into one
+    object; a service that both answered questions and owned the table would
+    make "the answer was given" and "the answer was recorded" the same
+    assertion, and they are exactly the pair this feature needs kept apart."""
 
     document_extractor: DocumentExtractor
     """Extracts a stored document into its project's graph, without re-fetching.
@@ -413,6 +475,30 @@ class Application:
     which is synchronous -- see its module docstring for why `build_application`
     does not become `async def` for this one port."""
 
+    _media_http_client: httpx.AsyncClient
+    """The client `media_accept_worker` downloads through. Held here only so
+    `close()` can `aclose()` it -- not a field a route or a test should read;
+    see `media_accept_worker` for the collaborator callers actually want."""
+
+    media_accept_worker: MediaAcceptWorker
+    """Downloads, stores and perceives an accepted media proposal.
+
+    A field for `create_app` to hand to the accept route, mirroring `editor`
+    and `perceiver` above: it closes over collaborators assembled inside
+    `build_application`, so no route could construct one itself. See the
+    long comment where this is built, beside `media_proposal_repository`, for
+    why it lives there and not among the projections above it."""
+
+    media_accept_reconciler: MediaAcceptReconciler
+    """Re-runs `media_accept_worker` over every proposal a crash left
+    `accepted`, once, from `start()`.
+
+    A field rather than a local built inside `start()` because `start()` is
+    handed no collaborators -- and a field with no route reading it, unlike
+    `media_accept_worker` above: nothing outside `start()` calls this, and the
+    spec (`docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`)
+    rules out an operator surface that would give it a second caller."""
+
     perceiver: MediaPerceiver
     """Reads a stored medium into a derived text source, over this instance's
     `perception` and corpus repository.
@@ -428,6 +514,18 @@ class Application:
     """`project_id`, if `build_application` was given one. Attached in
     `start()` rather than at construction, because attaching talks to a
     store and building is deliberately synchronous."""
+
+    _reconciliation: list[asyncio.Task[None]] = field(default_factory=list, repr=False)
+    """The reconciliation task `start()` scheduled, if it has been called.
+
+    A one-element list rather than a plain `asyncio.Task | None` field:
+    `Application` is `frozen=True`, so `start()` cannot rebind an attribute.
+    `Grant._remaining` in `application/grants.py` uses the same shape for the
+    same reason.
+
+    Held at all because `asyncio.create_task` only weakly references its task
+    -- the note `app.py` already carries above `create_app`'s body -- so a
+    reconciliation nothing kept a reference to could be collected mid-download."""
 
     @property
     def knowledge(self) -> RedstringKnowledge | None:
@@ -472,6 +570,26 @@ class Application:
         await self.check_telemetry.start()
         await self.definitions.start()
         await self.ontology.start()
+        await self.media_proposals.start()
+        # Reconcile proposals a crash left `accepted` -- designed in
+        # `docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`.
+        # Here rather than in `web.py`'s lifespan, which is the spec's central
+        # ruling: `web.py` carries three "was missing -- these routes have been
+        # 503ing in this entrypoint while the test fixture wired one and
+        # passed" comments, and a reconciliation that never ran looks exactly
+        # like one that found nothing to do, so it must not depend on a call
+        # site anyone can forget.
+        #
+        # After `caught_up()`, not merely `start()`: a projection mid-replay
+        # under-reports the accepted set and there is no second pass. The cost
+        # is that startup waits for a catch-up it would need before serving
+        # anything about proposals anyway.
+        #
+        # Scheduled, not awaited: an abandoned download is a download, and
+        # re-fetching an hour of video must not hold the port closed.
+        await self.media_proposals.caught_up()
+        self._reconciliation.append(asyncio.create_task(self.media_accept_reconciler.run()))
+        await self.asks.start()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
@@ -536,6 +654,22 @@ class Application:
         await self.definitions.caught_up()
         await self.ontology.caught_up()
 
+    async def reconciled(self) -> None:
+        """Wait until startup reconciliation has finished, if it was scheduled.
+
+        The same seam `summaries_caught_up` is, and for the same reason: the
+        work is deliberately off the startup path, which is invisible to a
+        person and untestable without this -- and a reconciliation observable
+        only by sleeping is one that would rot.
+
+        Returns immediately if `start()` has not run. Never raises what the
+        reconciliation hit: `MediaAcceptReconciler.run` is total by
+        construction (its docstring says why), so there is nothing here to
+        re-raise.
+        """
+        for task in self._reconciliation:
+            await task
+
     async def close(self) -> None:
         """Stop anything still running, then let go of the store.
 
@@ -549,6 +683,15 @@ class Application:
         would make that round a recorded failure rather than the last one. The
         wait is bounded by whatever the in-flight turn takes.
         """
+        # Reconciliation is cancelled rather than awaited, and it goes first
+        # because it reads through the projections and the store stopped
+        # below. Cancelling loses nothing: the proposal it was working on
+        # stays `accepted`, which is precisely the state the next `start()`
+        # reconciles -- whereas awaiting would hold shutdown for as long as
+        # the download it is in the middle of.
+        for task in self._reconciliation:
+            task.cancel()
+        self._reconciliation.clear()
         await self.research.stop_all()
         await self.turns.cancel_all()
         await self.summaries.stop()
@@ -557,7 +700,13 @@ class Application:
         await self.check_telemetry.stop()
         await self.definitions.stop()
         await self.ontology.stop()
+        await self.media_proposals.stop()
+        await self.asks.stop()
         await self.service.close()
+        # Unconditional, whether this client was built here or handed in by a
+        # test: whoever built it, `Application` owns it for its lifetime, and
+        # an unclosed `httpx.AsyncClient` leaks its connection pool.
+        await self._media_http_client.aclose()
         await self.detach_project()
         # Every project this instance ever opened a graph for, not just the
         # one that happened to be attached -- `detach_project` above only
@@ -636,6 +785,7 @@ def build_application(
     grants: GrantRegistry | None = None,
     activity: TurnActivityBuffer | None = None,
     perception: PerceptionPort | None = None,
+    media_http_client: httpx.AsyncClient | None = None,
 ) -> Application:
     """Wire everything over one event store.
 
@@ -670,6 +820,13 @@ def build_application(
     fake here, exactly as the no-network guard tests in this module do, or it
     reaches whatever `AGENT_VISION_MODEL`/`AGENT_TRANSCRIBER_URL` happen to be
     set to in the environment the suite runs in.
+
+    `media_http_client` accepts an existing `httpx.AsyncClient` for
+    `MediaAcceptWorker`'s downloads, for the same reason `perception` does: a
+    test hands in one built over `httpx.MockTransport`
+    (`tests/application/test_media_acquisition.py`'s own `_client` helper) so
+    accepting a proposal never reaches the network. `None` builds a real
+    client, owned by this `Application` and closed in `close()`.
     """
     resolved_path = db_path if db_path is not None else config.default_db_path()
     resolved_model = model if model is not None else build_model()
@@ -752,6 +909,36 @@ def build_application(
     else:
         prompt_suffix += NO_SEARCH_CLAUSE
 
+    # `None`/`None` when `searxng` is, matching `search_attempts` above: the
+    # curation chain's search port needs the same instance the agent's own
+    # `web_search` tool does, and a build with neither configured has nothing
+    # for `MediaCurationService` to search with either. The text port is
+    # gated the same way rather than built unconditionally, so the pair
+    # answers `create_app`'s 503 check together instead of one half being
+    # present for a service the other half can never actually run.
+    media_curation_text: MediaCurationTextPort | None = None
+    media_curation_search: MediaSearchPort | None = None
+    if searxng is not None:
+        # `extraction_model` -- the house pattern `ChatModelOntologyText` and
+        # `ChatModelDefinitionText` also follow: one already-built model
+        # instance, reused rather than constructing a second connection to
+        # the same provider. `model_name=config.curation_model()`, not
+        # `config.model_name()`, is the other half: `curation_model()` is a
+        # documented, tested user-facing knob (`AGENT_CURATION_MODEL`, see
+        # `docs/configuration.md`) that was never called anywhere, so setting
+        # it changed no behaviour. The name threaded through here is only
+        # ever used for `LangChainLlmProvider`'s tracing/logging label (see
+        # `ChatModelOntologyText` for the same split) -- it does not select a
+        # different model instance, since `extraction_model` is one shared
+        # client regardless -- but a label that never reflected the
+        # documented override was the bug, not the split itself.
+        media_curation_text, media_curation_search = build_curation_ports(
+            extraction_model,
+            model_name=config.curation_model(),
+            searxng_url=searxng,
+            limit=config.searxng_results(),
+        )
+
     if project_id is not None:
         # A `project_id=` at build time scopes the whole application to that
         # project, not just sessions started through `start_in_project` --
@@ -806,6 +993,25 @@ def build_application(
     # runner, so the read route and the projection share a connection here for
     # the ordinary reason rather than to keep a cache honest.
     ontology = OntologyRunner(
+        repository.store, resolved_path, repository.publisher, resolved_tracer
+    )
+    # The seventh, built here for the reason stated above `check_telemetry`:
+    # "all [N] projections over this store are constructed in one place and
+    # started by one line in `start()`. A projection wired somewhere else is a
+    # projection somebody forgets to start." Measured directly on this one --
+    # `EntityDefinitionRunner`'s absence once shipped a fully green suite
+    # behind an empty read model, and `tests/integration/
+    # test_media_proposals_reach_the_read_model.py` exists to catch the same
+    # failure here.
+    media_proposals = MediaProposalRunner(
+        repository.store, resolved_path, repository.publisher, resolved_tracer
+    )
+    # The eighth, built here with the other seven for the same reason, and it
+    # is the one with the worst failure mode if it is not: an ask appends
+    # whether or not anything is following, so a build missing this line
+    # answers 200 with an empty history for every conversation anyone ever
+    # had, and nothing anywhere raises.
+    asks = AskConversationRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
 
@@ -1268,6 +1474,28 @@ def build_application(
             review_id=review_id,
         )
 
+    # Shared by the turn executor, the ask executor, `document_extractor`,
+    # `editor` and `perceiver`: all of them read one project's corpus the same
+    # way, and separate lambdas would be separate places a future change to how
+    # a reader is built could drift. Defined here rather than beside its first
+    # user below because the executors above it need it too.
+    corpus_readers = lambda target_project_id: ProjectCorpusReader(  # noqa: E731
+        corpus, target_project_id, blob_store
+    )
+
+    async def turn_sources(session: Session) -> dict[str, Any]:
+        """This turn's corpus mount, or nothing for a session outside a project.
+
+        Keyed off `project_id` alone, not off `running_workflow`: a session's
+        sources are searchable whether or not it ever selected a workflow, and
+        hanging the mount off the workflow fold would have made `grep` answer
+        differently for two projects holding the same documents.
+        """
+        project_id = session.state.project_id
+        if project_id is None:
+            return {}
+        return await mounted_sources(corpus_readers(project_id))
+
     executor = DeepAgentTurnExecutor(
         resolved_model,
         subagents=subagents,
@@ -1276,6 +1504,7 @@ def build_application(
         approvals=approvals,
         middleware_provider=turn_middleware,
         tools_provider=turn_tools,
+        sources_provider=turn_sources,
         gate_reviewer=gate_review,
         # The same registry `turn_tools` (via `granted_tools`) and `start_run`
         # (below) consult -- see `resolved_grants`'s own note for why there
@@ -1452,8 +1681,35 @@ def build_application(
         # with one more place to look: this project's own sources, which is
         # the only lookup that can return something citable.
         project_fetch = build_fetch_tool(recall=recall, corpus=reader, pages=pages)
+        # Unlike `project_fetch` above, `fetch_media` has no ungranted,
+        # project-less form to shadow: `fetch` can run and simply not save
+        # (`_keeper` below is the thing that decides that), but a
+        # `fetch_media` that cannot store what it downloads is the exact
+        # defect this tool was built to fix -- see `build_fetch_media_tool`'s
+        # own refusal. So it exists only from here, once a project is
+        # attached, rather than being registered unconditionally alongside
+        # the base `fetch` in `tools` above and reaching for a project it
+        # might not have.
+        #
+        # `editor` and `resolved_media_http_client` are both closed over from
+        # the outer `build_application` scope, defined further down in this
+        # function (`editor` beside `document_extractor`,
+        # `resolved_media_http_client` beside `media_accept_worker`) --
+        # ordinary in a nested `async def`, since Python resolves a closure's
+        # free variables at call time, and `open_graph` is never called until
+        # `build_application` has finished assembling both. Reusing the
+        # worker's own client rather than building a second one is what
+        # keeps "the connection pool a model's direct fetch uses" and "the
+        # one an accepted proposal's download uses" the same pool, not two
+        # that happen to agree on configuration today.
+        fetch_media = build_fetch_media_tool(
+            client=resolved_media_http_client,
+            editor=editor,
+            project_id=target_project_id,
+        )
         return knowledge, (
             project_fetch,
+            fetch_media,
             # The reporter is per-project and so is this closure, which is why
             # it is made here rather than passed in already bound. None when
             # nothing is listening: a build with no web layer has nobody to
@@ -1550,9 +1806,17 @@ def build_application(
             model=resolved_model,
             open_graph=open_graph,
             project_files=service.project_files,
+            project_sources=lambda target_project_id: mounted_sources(
+                corpus_readers(target_project_id)
+            ),
         ),
         conversations=ConversationRegistry(now=time.monotonic),
         now=time.monotonic,
+        # The durable half of the same record. Wired here rather than
+        # defaulted inside the service for `progress`'s reason above: which
+        # store an aggregate lands in is the decision this root exists to
+        # make. No snapshot store -- see the builder's docstring.
+        transcripts=build_ask_conversation_repository(repository.store, repository.publisher),
     )
 
     # Built here for `ask_service`'s reason, and it is the same reason: this
@@ -1570,13 +1834,6 @@ def build_application(
     async def open_knowledge(target_project_id: UUID) -> RedstringKnowledge:
         knowledge, _tools = await open_graph(target_project_id)
         return knowledge
-
-    # Shared by `document_extractor`, `editor` and `perceiver` below: all three
-    # read one project's corpus the same way, and three separate lambdas would
-    # be three places a future change to how a reader is built could drift.
-    corpus_readers = lambda target_project_id: ProjectCorpusReader(  # noqa: E731
-        corpus, target_project_id, blob_store
-    )
 
     document_extractor = DocumentExtractor(
         open_knowledge=open_knowledge,
@@ -1631,6 +1888,28 @@ def build_application(
     topic_repository = build_topic_repository(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store
     )
+    # Unsnapshotted, unlike `topic_repository` above -- `MediaProposals` has no
+    # `build_media_proposal_repository` helper yet because nothing needing a
+    # snapshot policy has been written against it, mirroring the bare
+    # `AggregateRepository` construction `tests/application/
+    # test_media_curation.py` already uses over `harness.event_store`. Built
+    # over `repository.store`/`.publisher` so `MediaCurationService`'s writes
+    # and `media_proposals`'s subscription above read and write the same log.
+    media_proposal_repository = AggregateRepository(
+        repository.store, MediaProposals, event_publisher=repository.publisher
+    )
+    # Task 11b: the accept route (below, in `create_app`) only appends
+    # `MediaProposalAccepted` and answers 202 -- nothing downstream of it
+    # calls `MediaAcceptWorker` unless this build hands it one. Built here,
+    # after `media_proposal_repository`, `editor` and `media_perceiver` all
+    # exist, rather than beside the other projections above: those three are
+    # exactly the collaborators the worker needs, and `media_proposals` (the
+    # runner just above) already satisfies `MediaProposalReadPort` on its own
+    # -- see `MediaProposalRunner.get` -- so no separate read adapter is
+    # built either. The same "construct once, in one place" reasoning that
+    # motivates gathering the projections applies here too: a worker built
+    # somewhere else, or not at all, is a worker nobody notices is missing
+    # until an accepted proposal never turns into a source.
 
     def topic_reader(target_project_id: UUID) -> TopicReadPort:
         """This project's `TopicReadPort`, over the one repository above.
@@ -1838,6 +2117,60 @@ def build_application(
         summaries=SummaryProjects(summaries),
     )
 
+    # Built last, deliberately: this used to be built ~250 lines earlier,
+    # immediately after `media_perceiver`, where nothing built from
+    # `resolved_media_http_client`/`media_accept_worker` was used before the
+    # `Application(...)` call at the end of this function -- both names are
+    # only read from inside closures (`open_graph`'s `fetch_media` below,
+    # and `Application`'s own field) that Python resolves at call time, not
+    # at definition time. Anything raising between the old site and
+    # `Application(...)` left the client constructed with no owner to close
+    # it, since `Application.close()` is unconditional but only exists once
+    # an `Application` does. Moved here, directly preceding
+    # `Application(...)`, instead of wrapped in `try/finally`: the window
+    # closes by construction rather than by a handler that would itself
+    # need testing (see `fece941`'s commit message for the full reasoning).
+    #
+    # `media_http_client` is a parameter, mirroring `perception` elsewhere in
+    # this function, so a test can inject an `httpx.MockTransport` and never
+    # reach the network --
+    # exactly how `tests/application/test_media_acquisition.py`'s own fakes
+    # work, and the no-network guarantee `build_application`'s docstring
+    # already promises for `perception`.
+    #
+    # A bare `httpx.AsyncClient()` carries httpx's 5-second default read
+    # timeout, which made `fetch_media.TIMEOUT = httpx.Timeout(30.0)` inert
+    # for every caller through this composition site -- that constant only
+    # applies on the branch where a caller builds its own client, and nothing
+    # here ever did. Downloading a multi-megabyte video under a 5s ceiling is
+    # how "stuck accepted forever" (see `MediaAcceptWorker.run`'s widened
+    # exception handling) got hit routinely rather than rarely: a slow but
+    # otherwise healthy host would trip `httpx.HTTPError` on ordinary size,
+    # not just on an actually-broken one. 30s matches `fetch_media.TIMEOUT`
+    # so the two paths that share `download_media` also share the ceiling
+    # they run it under.
+    resolved_media_http_client = (
+        media_http_client
+        if media_http_client is not None
+        else httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+    )
+    media_accept_worker = MediaAcceptWorker(
+        reads=media_proposals,
+        proposals=media_proposal_repository,
+        editor=editor,
+        perceiver=media_perceiver,
+        client=resolved_media_http_client,
+    )
+    # Built here rather than at the projections above, because it needs the
+    # worker, which needs everything the comment above `media_accept_worker`
+    # explains. `reads` is `media_proposals` again -- the same runner the
+    # worker resolves one proposal through, now also asked for the whole
+    # accepted set.
+    media_accept_reconciler = MediaAcceptReconciler(
+        reads=media_proposals,
+        worker=media_accept_worker,
+    )
+
     return Application(
         service=service,
         feed=LiveFeed(repository),
@@ -1853,6 +2186,10 @@ def build_application(
         definition_readers=definition_reader,
         ontology=ontology,
         ontology_discoverers=ontology_discoverer,
+        media_proposals=media_proposals,
+        media_proposal_repository=media_proposal_repository,
+        media_curation_text=media_curation_text,
+        media_curation_search=media_curation_search,
         graphs=graphs,
         topic_readers=topic_reader,
         topic_repository=topic_repository,
@@ -1864,10 +2201,14 @@ def build_application(
         policy=resolved_policy,
         grants=resolved_grants,
         ask=ask_service,
+        asks=asks,
         document_extractor=document_extractor,
         editor=editor,
         perception=resolved_perception,
         perceiver=media_perceiver,
+        media_accept_worker=media_accept_worker,
+        media_accept_reconciler=media_accept_reconciler,
+        _media_http_client=resolved_media_http_client,
         _initial_project_id=project_id,
     )
 

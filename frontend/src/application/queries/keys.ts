@@ -73,6 +73,16 @@ export const queryKeys = {
   document: (project: ProjectId, source: SourceId, range?: { start?: number; end?: number }) =>
     ['document', project, source, range?.start ?? null, range?.end ?? null] as const,
 
+  /** One key for a project's whole set of media proposals, matching
+   *  `dispatch`'s reasoning: the listing route answers every need's group in
+   *  one read, and a card's accept/reject/ignore invalidates the same key a
+   *  sibling card's press would. */
+  mediaProposals: (project: ProjectId) => ['media-proposals', project] as const,
+  /** Separate from `mediaProposals` above rather than folded in, because an
+   *  ignore changes both and a reject changes neither -- a shared key would
+   *  make either write refetch a list it did not touch. */
+  ignoredMedia: (project: ProjectId) => ['ignored-media', project] as const,
+
   /** The graph itself is a zustand store, not a query cache -- see
    *  `graph-store.ts` -- so this is the first graph-shaped key here. Keyed by
    *  entity id, not by project alone: the panel that reads this opens on one

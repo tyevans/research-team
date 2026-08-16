@@ -2450,20 +2450,47 @@ out. Picking up any one of these on the parallel path means rebuilding a piece
 of the session machinery, and picking up two or three means the ask page should
 have been a session after all.
 
-### B48. An ask is not persisted, so there is no history and no resumption
+### B102. A stored ask cannot be resumed, only read
 
-The conversation lives in a `ConversationRegistry` in server memory, keyed by a
-browser-minted chat id, and is dropped on `forget` or on restart. Nothing
-records that a question was ever asked. A reader who found an answer useful
-cannot come back to it, cannot link to it, and cannot see what anyone else
-asked.
+Closed B48 (an ask was not persisted at all); this is the half that did not
+land with it. A conversation now survives a restart and can be listed and read
+back, and the server sends its `conversation_id` to the client as the ask
+stream's first frame. **Nothing sends it back.**
 
-Picking it up means choosing where it lands. Events are the obvious home and
-the one the design refused: appending them moves the project's tip, which is
-what "ephemeral" was bought with, and
-`tests/integration/test_ask_writes_nothing.py` fails the moment anything on
-that path appends. A separate store answers that, and then owes an answer for
-why the project's own log is not the record of what was asked of it.
+`Conversation.conversation_id` is `field(default_factory=uuid4)`, and
+`ConversationRegistry.get` returns a fresh `Conversation` on any miss —
+eviction past 64, an hour idle, or a restart. So a reader who continues a chat
+after any of those gets a new id, a new stream, and a silently split history;
+the earlier conversation is orphaned under an id nothing echoed back.
+
+Two things are owed and neither is hard: `AskService.ask` needs a
+`conversation_id` parameter (it has none — resuming is currently unexpressible
+in the application layer), and the browser needs to hold the id it is already
+being sent and return it. The design work is the frontend's: what a history
+list looks like, what "continue this" does to the composer, and what happens
+when a resumed conversation's project no longer matches.
+
+Found on 2026-08-16 by the controller reviewing the persistence wave, not by a
+test — and that is the point worth keeping. `test_a_conversation_survives_a_restart`
+passes while all of the above is true, because it asserts the artifact exists
+rather than that the feature works. The restart test is honest about what it
+covers; this entry is the rest.
+
+### B103. The ask history has no frontend
+
+The backend half of the ask-persistence spec
+(`docs/superpowers/specs/2026-08-16-ask-persistence-design.md`) is done: the
+aggregate, the projection, `GET /api/projects/{id}/asks` and
+`GET /api/projects/{id}/asks/{conversation_id}`. Nothing in the console calls
+either route, so a persisted conversation is reachable by `curl` and by nothing
+a reader can click.
+
+Deliberately split rather than dropped — the spec's plan says so. The UI needs
+design this repository has not done: where history lives in the shell, what a
+conversation card shows, and how "resume" reads once [[B102]] makes resuming
+possible. Doing it in the same wave as the backend would have meant designing
+that surface by accident, which is the mistake `DocumentReader`'s docstring
+records about building a shared player before the reference syntax existed.
 
 ### B49. No forking and no time travel over an ask
 
@@ -2472,10 +2499,34 @@ is no way to take a conversation five turns in, branch it, and try a different
 question from the same context, and no way to look at what the transcript held
 before the last answer replaced it.
 
-This one is downstream of B48 — there is nothing to travel over until there is
-something stored — but it is the sharper reason to reopen the session
-question, because scrub and fork are exactly what the session machinery already
-does and what a bespoke store would have to reimplement.
+**Now cheap, which was the point of how B48 was closed.** The conversation is an
+event-sourced aggregate on its own stream, so scrub is a pure fold of a history
+prefix — exactly `SessionService.state_at` — and fork is a new aggregate id, the
+events replayed onto it, and one more event, exactly `SessionService.fork`. Both
+are a few dozen lines against machinery that already exists and is already
+proven, rather than a reimplementation on a bespoke store. That argument is the
+reason the aggregate was chosen over a side table, and it is written here so the
+next person does not re-derive it.
+
+One thing fork needs that today's shape does not carry: `AskTurnRow.position` is
+derived by the projection from arrival order, not carried on the event. Replay
+reproduces it because the log replays in order; a fork that interleaved turns
+from two streams would not. Put the index on `AskTurnRecorded` before building
+fork, not after.
+
+### B104. Asking a project is now a write, and a failed write is a failed ask
+
+The cost B48's closure took knowingly, recorded so it is not rediscovered as a
+surprise. `AskService` appends `AskConversationStarted`/`AskTurnRecorded` on a
+successful answer, and the append is not swallowed — a store that refuses turns
+a good answer into an error the reader sees. The in-memory registry could not
+fail this way; it could only forget.
+
+No instance of this has been observed. It is here because the spec chose it
+explicitly over the alternative (log the failure, serve the answer), and that
+choice deserves a place a future maintainer can find. If it does bite, the
+fallback named in the spec is a separate store, and the aggregate work is not
+recoverable — which is the honest price of the decision, not a hidden one.
 
 ### B50. The chat cannot steer the project it is asking about
 
@@ -3164,55 +3215,79 @@ rendered on the media row the way `ExtractionPane` renders a stage. Left for
 the slice that adds the batch "Transcribe all" control, which needs the same
 per-row state and would otherwise build it twice.
 
-### B95. Two corpus routes turn a domain refusal into a 500
+### B99. No periodic sweep for an accept that dies mid-run
 
-`app.py`'s restore route maps only `UnknownDocument` and `NotDropped`; the
-PATCH (revise) route maps only `UnknownDocument` and `KnowledgeError`. Neither
-maps `CommandRejectedError`, which is what `Corpus.decide` raises for every
-refusal it makes — so a refusal the domain states clearly reaches the caller as
-a server error with no message.
+`Application.start()`'s reconciliation (designed in
+`docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`,
+`composition.py:555`) runs once, at startup. It fixes the case a process that
+died and restarted, but not the case where the process never dies: an accept
+whose `asyncio.create_task` raises, hangs, or is silently dropped by the event
+loop stays `accepted` with no source for as long as the process stays up,
+because nothing after startup looks at it again.
 
-Found on 2026-08-16 by the perception slice's final review, which reported the
-restore-a-transcript defect as a 409 and was corrected by the implementer: it
-was a **500**. That is the shape of the problem — the reviewer assumed a mapped
-refusal because the domain refuses clearly, and only reproducing it showed the
-route drops the distinction.
+Deliberately deferred by the spec rather than an oversight — a periodic sweep
+is a different shape of problem than the crash case the spec was scoped to. It
+needs an interval to poll on, a jitter policy so every process in a
+multi-instance deployment doesn't sweep in lockstep, and a story for what
+happens when two processes sweep the same proposal at once (the crash case
+sidesteps this: only one process is ever running). None of that follows from
+the accept-is-safe-to-rerun property the spec already established; it would
+need its own design.
 
-**No reachable case survives today.** The derivedness guards that exposed it
-were fixed in that same pass, and no other `CommandRejectedError` currently
-escapes either route. So this is latent rather than live, which is exactly why
-it is here: the next domain guard added to `StoreSourceDocument`,
-`StoreSourceMedia` or `StoreDerivedText` becomes a silent 500 at two routes,
-and nothing will fail to say so. The media slice's `upload_source` already
-maps this correctly and is the pattern to copy.
+The fix is a background task in `Application` alongside the projections'
+runners, re-using `MediaAcceptReconciler` (already re-run-safe — see
+`StoreMediaProposal`'s refusal of an already-stored proposal, which is what
+makes a re-run idempotent rather than dangerous) on a timer instead of once at
+`start()`.
 
-Cheap to fix and cheaper to fix now than to rediscover: one `except` arm each,
-plus a test per route that a refused command answers 409 rather than 500.
+### B100. `build_application` still leaks the event store, blob store, and every projection runner on a partial build
 
-### B96. `format_results` is total for a bad payload but not for a bad result
+`research_team/composition.py`. The batch-1 review's B98 fixed the specific
+leak it found — the media `httpx.AsyncClient` is now built last, so a raise
+anywhere earlier in `build_application` can no longer construct one with no
+owner to close. The window itself is unchanged: a raise at `WorkerRoster` (or
+anywhere else in the function's body) still abandons the SQLite event store,
+the blob store, and every projection runner constructed above that point,
+none of which have anything closing them either.
 
-`research_team/infrastructure/agent/search.py`. The docstring's totality claim
-is about the payload — a list, a string or a null where a results object was
-expected all return `_MALFORMED_PAYLOAD` rather than raising, and
-`test_format_results_rejects_a_non_dict_payload_without_raising` pins it. The
-claim does not extend one level down: `{"results": ["oops"]}` is a well-formed
-payload carrying a result that is not a dict, and `result.get(...)` raises
-`AttributeError` on it. The exception escapes `web_search`'s `except ValueError`
-and `except httpx.HTTPError` both, so it ends the turn rather than returning a
-notice the model can act on.
+Worth recording precisely because B98 reads, superficially, like it settled
+this. It didn't — its own test
+(`tests/test_composition.py::test_a_raise_late_in_build_application_never_constructs_the_media_client`)
+*demonstrates* the wider leak rather than testing it: it builds the event
+store, blob store and every runner before the raise, walks away from all of
+them, and only asserts on the one thing (the HTTP client) that the fix
+addressed. Nothing catches a future reader concluding from that test's name
+and green status that `build_application` no longer leaks on a partial build.
 
-Found on 2026-08-15 while widening the same function for media results, and
-deliberately not fixed there: that change was scoped to which keys are read, and
-a totality fix belongs with its own test rather than smuggled in beside an
-unrelated one.
+A `try/finally` (or an `AsyncExitStack` collecting each resource as it's
+built and closing everything in reverse order on any exception) is the
+general fix; B98's "build it last" was cheaper only because there was exactly
+one resource with nothing between its construction and `Application(...)`.
+Every other resource here doesn't have that luxury — there's meaningful
+construction between the event store and the return statement — so the fix
+has to actually unwind, not just reorder.
 
-**No instance is known to send this.** Every one of the 353 media results and 29
-general results captured that day carried a dict. It is here for the reason the
-payload guard exists at all — an instance is a foreign system, `.json()`
-promises only valid JSON, and a proxy that serializes an error page is not bound
-by SearXNG's schema. The cost of being wrong is asymmetric: a skipped result is
-still a result set, and a raised `AttributeError` is a lost turn.
+### B101. Nothing asserts the reconciler runs after `caught_up()`, not before
 
-One `isinstance(result, dict)` guard in the loop, skipping what fails it, plus a
-test that a payload mixing a good result with a string still renders the good
-one.
+`Application.start()` (`composition.py`, near line 555) calls
+`self.media_proposals.start()`, then the projection's `caught_up()`, then the
+reconciler — in that order, deliberately: the design spec
+(`docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`) rules
+that the reconciler must read a caught-up projection, or it diffs against
+proposals the log hasn't replayed into the read model yet and reconciles
+correctly-pending accepts it was never supposed to touch.
+
+`tests/integration/test_accept_reconciliation.py` asserts against a composed
+`Application` and would fail if the reconciler call were removed entirely —
+but a test that swapped the two lines, running the reconciler *before*
+`caught_up()`, would still pass. The fixture's projection catches up fast
+enough in-process that the reconciler finds the row settled either way; the
+ordering bug the spec is actually worried about only shows up when the
+projection is still mid-replay at the moment the reconciler reads it.
+
+Reported by the Task 4 implementer as a known gap rather than found by review.
+Proving the ordering would need a projection stalled on purpose — a fake
+`caught_up()` that blocks until released, with the test asserting the
+reconciler's read happens after release, not before. Worth doing before this
+ordering is treated as tested rather than merely stated.
+

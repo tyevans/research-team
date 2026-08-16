@@ -207,6 +207,7 @@ async def _answer(history=(), question="what did we find?") -> tuple[Any, list[s
         model=RecordingModel(responses=[AIMessage(content="an answer", id="a1")]),
         open_graph=lambda _project: _ready((None, project_tools)),
         project_files=lambda _project: _ready({"notes.md": "x"}),
+        project_sources=lambda _project: _ready({}),
     )
     reported: list[str] = []
     answer = await executor.run(
@@ -274,3 +275,22 @@ async def test_the_answer_is_the_models_last_text():
 
     assert answer.text == "an answer"
     assert answer.citations == ()
+
+
+async def test_the_reference_syntax_reaches_the_model():
+    """Not that a constant exists somewhere -- that it is in the system
+    message `RecordingModel` actually receives, which is the point Task 5's
+    brief names as the one that makes the previous four tasks used rather
+    than inert."""
+    from langchain_core.messages import SystemMessage
+
+    from research_team.application.corpus_read import REFERENCE_SYNTAX_PROMPT
+
+    await _answer()
+
+    system_text = "\n".join(
+        str(message.content)
+        for message in RecordingModel.prompted
+        if isinstance(message, SystemMessage)
+    )
+    assert REFERENCE_SYNTAX_PROMPT in system_text

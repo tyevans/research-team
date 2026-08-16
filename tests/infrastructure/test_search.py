@@ -320,6 +320,33 @@ def test_format_results_rejects_a_non_dict_payload_without_raising():
     assert isinstance(format_results(None, limit=5), str)
 
 
+def test_format_results_skips_a_result_that_is_not_a_dict():
+    """The payload-level guard above is total, but a well-formed payload
+    carrying a malformed *result* (`{"results": ["oops"]}`) is not -- a bare
+    string has no `.get`, so `_parse_one` raised `AttributeError` and the
+    exception escaped both of `web_search`'s `except` clauses. No captured
+    instance has sent this; it is defended because the payload guard already
+    treats an instance as a foreign system.
+    """
+    payload = {
+        "results": [
+            {"title": "Good", "url": "https://good.example", "content": "fine"},
+            "oops",
+        ]
+    }
+
+    text = format_results(payload, limit=5)
+
+    assert "Good" in text
+    assert "https://good.example" in text
+    # Not just "the good one is present" -- the bad one must produce no row at
+    # all, not a coerced placeholder. A skip yields exactly one block; an
+    # implementation that turned "oops" into an "(untitled)" entry instead
+    # would still satisfy the assertions above.
+    assert "\n\n" not in text
+    assert "(untitled)" not in text
+
+
 async def test_a_json_array_response_is_an_ordinary_tool_error_not_a_turn_failure():
     """A misconfigured instance or a proxy error page can render as a JSON
     array instead of the expected results object; the turn must survive it.
@@ -742,10 +769,17 @@ def test_the_counter_resets_at_the_turn_boundary() -> None:
 
 def test_the_bound_does_not_touch_the_autonomy_policy() -> None:
     """B24 rejects counting as a permission mechanism by name. This test fails
-    if the bound is ever implemented as a gate."""
-    from research_team.application.autonomy import TOOL_FLOORS
+    if the bound is ever implemented as a gate.
 
-    assert TOOL_FLOORS == {"fetch": "ask", "advance_stage": "ask"}
+    Asserts `SEARCH_TOOL`'s absence from `TOOL_FLOORS`, not the dict's exact
+    contents: the claim here is specifically about the search bound, and an
+    exact-equality literal would fail every time an unrelated tool (most
+    recently `fetch_media`) gained a floor of its own -- a change this test
+    has no opinion about and should not need editing for.
+    """
+    from research_team.application.autonomy import SEARCH_TOOL, TOOL_FLOORS
+
+    assert SEARCH_TOOL not in TOOL_FLOORS
 
 
 async def test_two_concurrent_turns_do_not_bound_each_other() -> None:

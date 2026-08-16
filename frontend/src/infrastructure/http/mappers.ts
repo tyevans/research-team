@@ -33,6 +33,12 @@ import type {
   TextSummary,
 } from '@domain/research/document.ts'
 import type { ExtractionOutcome, ExtractionQueueBoard } from '@domain/research/extraction-queue.ts'
+import type {
+  IgnoredMedia,
+  MediaProposal,
+  MediaProposalGroup,
+  MediaProposalStatus,
+} from '@domain/research/media-proposal.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { Dispatch, DispatchStatus } from '@domain/research/dispatch.ts'
 import type { TopicDocuments } from '@domain/research/topic-document.ts'
@@ -652,6 +658,56 @@ export const toMediaSummary = (raw: Dto<typeof dto.mediaSourceDto>): MediaSummar
   byteCount: raw.byte_count,
 })
 
+/** The five statuses `decide`'s transition table can reach, plus a fallback
+ *  for any this build has never heard of -- `mediaProposalDto` deliberately
+ *  leaves `status` as a bare string so an older console does not fail the
+ *  whole listing over a status a newer server started sending; this is the
+ *  one place that narrows it, and it narrows to `'proposed'` rather than
+ *  throwing, which puts the row back in front of a person to judge instead
+ *  of dropping it from a list that is supposed to be everything. */
+const KNOWN_MEDIA_PROPOSAL_STATUSES: readonly MediaProposalStatus[] = [
+  'proposed',
+  'accepted',
+  'rejected',
+  'stored',
+  'failed',
+]
+
+const toMediaProposalStatus = (raw: string): MediaProposalStatus =>
+  (KNOWN_MEDIA_PROPOSAL_STATUSES as readonly string[]).includes(raw)
+    ? (raw as MediaProposalStatus)
+    : 'proposed'
+
+export const toMediaProposal = (raw: Dto<typeof dto.mediaProposalDto>): MediaProposal => ({
+  proposalId: raw.proposal_id,
+  needId: raw.need_id,
+  topicId: raw.topic_id,
+  pageUrl: raw.page_url,
+  assetUrl: raw.asset_url,
+  thumbnailUrl: raw.thumbnail_url,
+  kind: raw.kind,
+  title: raw.title,
+  reason: raw.reason,
+  query: raw.query,
+  status: toMediaProposalStatus(raw.status),
+  note: raw.note ?? '',
+  sourceId: raw.source_id === null ? null : SourceId(raw.source_id),
+  error: raw.error,
+})
+
+export const toMediaProposalGroup = (
+  raw: Dto<typeof dto.mediaProposalGroupDto>,
+): MediaProposalGroup => ({
+  needId: raw.need_id,
+  needDescription: raw.need_description,
+  proposals: raw.proposals.map(toMediaProposal),
+})
+
+export const toIgnoredMedia = (raw: Dto<typeof dto.ignoredMediaDto>): IgnoredMedia => ({
+  assets: raw.assets,
+  hosts: raw.hosts,
+})
+
 export const toExtractionOutcome = (
   raw: Dto<typeof dto.extractionOutcomeDto>,
 ): ExtractionOutcome => ({
@@ -714,6 +770,7 @@ export const toDefinitionCitation = (
   sourceId: raw.source_id,
   start: raw.start,
   end: raw.end,
+  atSeconds: raw.at_seconds,
 })
 
 export const toDefinition = (raw: Dto<typeof dto.definitionDto>): Definition => ({

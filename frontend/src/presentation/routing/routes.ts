@@ -85,6 +85,12 @@ export const FACETS = [
   // list readings of the material the canvas draws.
   'ontology',
   'doc',
+  // The corpus's other half: a candidate that has not been accepted into it
+  // yet. Its own facet rather than folded into `doc` -- `MediaProposalPane`
+  // has no single-select reading the way a document list does, so its id is
+  // always null, but it is still a *place on the project* and belongs in the
+  // grammar for the reason `timeline` and `tree` are.
+  'media',
   'file',
   'artifact',
   'finding',
@@ -121,9 +127,50 @@ export type Selection =
 const isFacet = (raw: string | undefined): raw is Facet =>
   raw !== undefined && (FACETS as readonly string[]).includes(raw)
 
+/** The one query string this app's hash routes carry -- `?t=<seconds>`, the
+ *  seek a citation link put on a `doc` route (see `references.ts`'s
+ *  `expandReferences` and `GraphDetail`'s citation links, the two things that
+ *  produce it). Split off here, once, rather than left for `parseRoute` to
+ *  trip over: `wouter`'s `useHashLocation` hands back the hash verbatim,
+ *  query and all, and a naive `split('/')` over `…/doc/<sourceId>?t=252`
+ *  would fold `?t=252` onto the end of the id segment instead of parsing it
+ *  as a document at all -- silently, because `?t=252` contains no `/` for the
+ *  segment split to catch. Measured against `parseRoute.test.ts` before this
+ *  existed: a citation's own link broke the id it pointed at.
+ */
+const splitQuery = (hash: string): { path: string; query: string | null } => {
+  const raw = String(hash ?? '')
+  const at = raw.indexOf('?')
+  return at === -1
+    ? { path: raw, query: null }
+    : { path: raw.slice(0, at), query: raw.slice(at + 1) }
+}
+
+/** `null` for every case that is not "a well-formed non-negative seek" --
+ *  absent, non-numeric, negative, or a range (`t=5,10`, which
+ *  `expandReferences` never emits for a query, only for the inline
+ *  reference's own `@start-end` form). Defensive on purpose: this value
+ *  arrives from a URL a person can hand-edit and a model indirectly
+ *  influenced through the citation it wrote, and the failure this guards is
+ *  a seek to `NaN` reaching `HTMLMediaElement.currentTime`, which throws.
+ *  Mirrors `expandReferences`'s own answer to a malformed offset -- render as
+ *  though it were not there, rather than guess -- so the two ends of this
+ *  round trip agree about what a bad value means. `Number(...)` rather than
+ *  `Number.parseInt`: a definition citation's `atSeconds` is a float
+ *  (`GraphDetail` formats it with plain `String()`), so `252.5` in the query
+ *  has to parse back to `252.5`, not truncate to `252`. */
+export const parseSeekSeconds = (hash: string): number | null => {
+  const { query } = splitQuery(hash)
+  if (query === null) return null
+  const raw = new URLSearchParams(query).get('t')
+  if (raw === null || raw === '') return null
+  const seconds = Number(raw)
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null
+}
+
 export const parseRoute = (hash: string): Route => {
-  const parts = String(hash ?? '')
-    .replace(/^#?\/?/, '')
+  const parts = splitQuery(hash)
+    .path.replace(/^#?\/?/, '')
     .split('/')
     .filter(Boolean)
     .map(decodeURIComponent)
