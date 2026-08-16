@@ -2892,3 +2892,93 @@ pair is `GET /sources/extraction-queue` above `GET /sources/{source_id}` —
 same method, same segment count — where a reordering really would parse
 `extraction-queue` as a source id and 404. The general constraint is still
 real for the file, which is why the entry stands.
+
+### B87. Four temporal defects that belong in redstring, not in a workaround here
+
+Open as of redstring **0.9.2**. redstring is this project's own library
+(`github.com/tyevans/redstring`) and the pin is `>=0.9.1,<0.10`, so a patch
+release lands here with no pin change. All four were measured on 2026-08-15
+against real Ancient Rome articles and a real llama.cpp `qwen3.8-27b-mtp`.
+
+The first two would let most of `temporal_expressions.py` and the whole of
+`_DatingProvider` be deleted. They are listed in the order worth fixing.
+
+**1. `_build_extent` reads only `ExtractedEntity.temporal_expression`, which
+models do not fill.** The date arrives inside `properties`, beside the domain
+schema's own declared properties. Traced across every chunk of three articles:
+zero entities with the typed field set, and the dates all present one level
+down. Every redstring consumer with a domain schema hits this, silently, as an
+empty timeline -- nothing raises and the extraction reports success. See
+`CLAUDE.md`'s Extraction section for the full measurement. `map_extraction`
+consulting `properties` for the key would fix it for every consumer.
+
+**2. `parse_temporal` fabricates a month and day from `reference_date`.** With
+a reference date set -- which is the normal case, extraction passes
+`published_at` -- dateutil fills the missing fields from the vantage point:
+
+```
+'313'    -> 0313-08-25, DAY      'AD 14' -> 2003-08-14, DAY
+'AD 476' -> 0476-08-25, DAY      'AD 64' -> 2064-08-25, DAY
+'44'     -> 2044-08-25, DAY      'AD 80' -> 1980-08-25, DAY
+```
+
+25 August 2003 is when the *article* was published. This is not a dropped
+date, it is an invented one, asserted at DAY precision. `'AD 14'` and `'AD 64'`
+also show the era marker being ignored outright. A bare year should be YEAR
+precision. The workaround here is to zero-pad to four digits, which only works
+because `'0313'` happens to reach a different branch.
+
+**3. Era markers and leading articles defeat the century parser.** `'2nd
+century AD'` and `'the 19th century'` both yield `None`, while a bare `'19th
+century'` parses. `'AD 476'` works only by accident of the year being four
+digits. redstring's own bundled schemas invite these forms -- `encyclopedia_wiki`
+offers "the latter half of the 19th century" as a model answer.
+
+**4. BC is unrepresentable.** `TemporalExtent.start_date` is a `datetime` and
+`datetime.MINYEAR` is 1, so no year before 1 AD can be stored. This is a limit
+of the type, not the parser. For an ancient-history corpus it is most of the
+real dates: the Patrician article yielded `'494 BC to 287 BC'`, `'504 BC'`,
+`'367 BC'`, `'342 BC'`, `'91-88 BC'` and nothing else, so the fixes above
+change its dated count from 0 to 0.
+
+The agreed shape is a signed astronomical year integer plus explicit precision
+replacing the `datetime`, with the timeline API emitting numbers rather than
+ISO strings. Not a BC special case: day precision is a lie for most of this
+corpus, and an ISO string structurally implies a precision the sources never
+had. Rejected: keeping the `datetime` and adding a signed year beside it,
+which leaves two sources of truth for one fact.
+
+**Why this is not worked around here.** It could be -- park signed years in
+`properties` and build the interval at read time -- but `TemporalExtent` would
+then stay empty for every BC entity, and two pieces of redstring go blind with
+it: `TemporalQuery(...).timeline(...)` (`timeline_reader.py:141`), which is how
+the timeline is queried and ordered at all, and `infer_relations`
+(`graph_reader.py:83`), which draws the temporal edges. That means
+reimplementing redstring's temporal querying and interval arithmetic on a
+parallel representation, for the majority of the corpus.
+
+### B88. Temporal expression forms still not handled, and the re-extraction they need
+
+Everything below is observed real model output from the 2026-08-15 runs, and
+is currently kept as wording on the entity rather than dated. Worth doing
+**after** B87.4 settles the representation -- these are refinements on a shape
+that is due to be replaced, and doing them first means doing them twice.
+
+**Hedged centuries, the largest group.** `'around the mid-2nd century AD'`,
+`'by the late 2nd century AD'`, `'during the 4th century'`, `'mid-200s'`,
+`'from the reign of Augustus up to the early 3rd century AD'`. These are year
+ranges the parser misses only because of the qualifier wrapped around them,
+and the qualifier usually carries real information about *where in* the
+century.
+
+**Ranges.** `'494 BC to 287 BC'`, `'91-88 BC'`, `'27 BC - AD 14'`, `'r. 249-251'`
+(regnal years). The BC ones are blocked on B87.4 regardless.
+
+**Named eras.** `'during the time of the kings'`, `'during the Imperial era'`.
+These need a lookup the extraction does not have, and may not be worth it.
+
+**Re-extraction is required and is nobody's default.** Events are not
+rewritten, so every document already in a graph keeps its empty or fabricated
+dates until it is extracted again. The Edict of Milan keeps its 0313-08-25
+until then. This is a user decision, not an automatic consequence of the fix
+landing -- and it costs model calls over the whole corpus.
