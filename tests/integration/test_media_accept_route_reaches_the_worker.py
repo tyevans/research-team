@@ -169,16 +169,33 @@ async def test_accepting_a_proposal_stores_it_as_a_source(wired):
     # Polled rather than asserted immediately: the route schedules the
     # worker with `asyncio.create_task` and returns before it has run, which
     # is the entire point of the 202 -- see the accept route's docstring.
+    #
+    # Poll for the *media* row specifically, by `source_id == proposal_id`,
+    # rather than breaking on "the list is non-empty" and then asserting a
+    # total of one. `MediaAcceptWorker` stores the media source and then
+    # runs perception eagerly (its own docstring, step 3), and perception
+    # stores its derived text as a *second* corpus source
+    # (`MediaPerceiver.perceive` -> `StoreDerivedText` on `derived_source_id
+    # (source_id)`) -- so this corpus legitimately ends up with two rows for
+    # one accepted proposal. A poll that breaks on "any result" and then
+    # asserts a count of one is asserting against that race, not against
+    # this test's own claim: it passes only when the poll happens to land in
+    # the instant between the two writes, and whether it lands there is a
+    # fact about scheduling, not about whether the worker was reached.
+    # Confirmed against `research_team/application/perception.py` and
+    # `media_acquisition.py` on 2026-08-16, tracing `MediaAcceptWorker.run`
+    # into `MediaPerceiver.perceive`, rather than assumed from the shape of
+    # the failure.
+    media_row = None
     for _ in range(200):
         listed = await client.get(f"/api/projects/{project_id}/sources")
         assert listed.status_code == 200
         rows = listed.json()
-        if rows:
+        media_row = next((row for row in rows if row["source_id"] == proposal_id), None)
+        if media_row is not None:
             break
         await asyncio.sleep(0.01)
     else:
-        pytest.fail("no source appeared within the poll budget")
+        pytest.fail("no source with source_id == proposal_id appeared within the poll budget")
 
-    assert len(rows) == 1
-    assert rows[0]["uri"] == PAGE_URL
-    assert rows[0]["source_id"] == proposal_id
+    assert media_row["uri"] == PAGE_URL
