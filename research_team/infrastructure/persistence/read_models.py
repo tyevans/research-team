@@ -80,7 +80,7 @@ from research_team.domain import (
     TurnFailed,
     UserMessageSent,
 )
-from research_team.domain.ontology import DiscoveredClass
+from research_team.domain.ontology import DiscoveredClass, OntologyDiscovered
 
 LOCAL_RETRY_POLICY = ExponentialBackoffRetryPolicy(
     config=RetryConfig(max_retries=2, initial_delay=0.05, max_delay=1.0)
@@ -1906,3 +1906,218 @@ class OntologyStore:
 
     async def close(self) -> None:
         await self._connection.close()
+
+
+class OntologyProjection(DeclarativeProjection):
+    """Writes discovered classes, and stales them when extraction moves under them.
+
+    **Marks, never regenerates**, exactly as `EntityDefinitionProjection` does
+    and for the identical measured reason: a bulk re-extraction touching two
+    hundred documents would otherwise fire two hundred paid model calls for
+    classes nobody asked to look at. `stale=True` is a label the next discovery
+    run resolves, not a queue this projection drains. It is handed no model, so
+    it could not call one even by mistake.
+    """
+
+    def __init__(
+        self,
+        ontology: OntologyStore,
+        checkpoint_repo=None,
+        dlq_repo=None,
+        tracer=None,
+    ) -> None:
+        self._ontology = ontology
+        super().__init__(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+            retry_policy=LOCAL_RETRY_POLICY,
+            tracer=tracer,
+        )
+
+    @handles(OntologyDiscovered)
+    async def _on_discovered(self, event: OntologyDiscovered) -> None:
+        """Replace this source's classes with what the pass found.
+
+        `event.occurred_at` rather than a clock read here: a replay has to
+        reproduce the same `generated_at` it produced the first time, or a
+        rebuild would rewrite every row with today's date and lose when the
+        classes were actually derived.
+        """
+        await self._ontology.replace_for_source(
+            event.project_id,
+            event.source_id,
+            event.classes,
+            model=event.model_version,
+            generated_at=event.occurred_at.isoformat(),
+        )
+
+    @handles(DocumentExtracted)
+    async def _on_extracted(self, event: DocumentExtracted) -> None:
+        """Stale this source's classes: the entities its memberships name have
+        just been reminted, so every resolved id is suspect.
+
+        Keys on `event.tenant_id`, matching `EntityDefinitionProjection` --
+        redstring's own event arrives here without new wiring, and `tenant_id`
+        is the project.
+        """
+        await self._ontology.mark_stale_for_source(event.tenant_id, str(event.source_id))
+
+
+class OntologyRunner:
+    """Keeps the ontology tables following the log.
+
+    A sixth runner, for the reasons `CorpusRunner`'s docstring gives for being
+    a second: a distinct `rebuild()`/`health()`-shaped surface for these tables
+    alone, and a `rebuild()` that must not be able to truncate tables it does
+    not own.
+    """
+
+    def __init__(
+        self,
+        store: SQLiteEventStore,
+        db_path: str,
+        bus: InMemoryEventBus,
+        tracer=None,
+    ):
+        self._store = store
+        self._db_path = db_path
+        self._bus = bus
+        self._tracer = tracer
+        self._ontology: OntologyStore | None = None
+        self._manager: SubscriptionManager | None = None
+        self._subscription = None
+        self._checkpoints: SQLCheckpointRepository | None = None
+        self._dlq: SQLDLQRepository | None = None
+        self._engine: AsyncEngine | None = None
+
+    @property
+    def projection_name(self) -> str:
+        return OntologyProjection.__name__
+
+    async def start(self) -> None:
+        """Open the tables and start following the log.
+
+        Same shape as `CorpusRunner.start`, including touching the event store
+        first so `projection_checkpoints` exists before anything reads it.
+        """
+        if self._manager is not None:
+            return
+        await self._store.current_position()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        self._engine = engine
+        self._checkpoints = SQLCheckpointRepository(engine)
+        self._dlq = SQLDLQRepository(engine)
+        self._ontology = await OntologyStore.open(self._db_path, self._tracer)
+        projection = OntologyProjection(
+            self._ontology, self._checkpoints, self._dlq, self._tracer
+        )
+        self._manager = SubscriptionManager(
+            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
+        )
+        self._subscription = await self._manager.subscribe(
+            projection, SubscriptionConfig(start_from="checkpoint")
+        )
+        results = await self._manager.start()
+        failures = {name: err for name, err in results.items() if err is not None}
+        if failures:
+            raise RuntimeError(f"the ontology projection failed to start: {failures}")
+
+    async def failures(self, limit: int = 100) -> list[DLQEntry]:
+        if self._dlq is None:
+            return []
+        return await self._dlq.get_failed_events(
+            projection_name=self.projection_name, limit=limit
+        )
+
+    def _started(self) -> OntologyStore:
+        """The open store, or a refusal naming what was not done.
+
+        Delegated the way `CorpusRunner.get` is rather than handing the store
+        out through a property, and for the same reason: `rebuild()` closes one
+        store and opens another, so a caller holding the store would go on
+        calling a closed connection, silently, after a repair.
+        """
+        if self._ontology is None:
+            raise RuntimeError("the ontology projection has not been started")
+        return self._ontology
+
+    async def classes_for(self, project_id: UUID) -> list[OntologyClassRow]:
+        return await self._started().classes_for(project_id)
+
+    async def members_for(self, class_id: UUID) -> list[OntologyMembershipRow]:
+        return await self._started().members_for(class_id)
+
+    async def sources_with_classes(self, project_id: UUID) -> set[str]:
+        return await self._started().sources_with_classes(project_id)
+
+    async def rebuild(self) -> None:
+        """Truncate and replay.
+
+        The opposite of `EntityDefinitionRunner.rebuild`, which must not
+        truncate, and the difference is which columns come from the log. A
+        definition's `text` comes from a service's `put`, so replaying would
+        not restore it. Every column in these three tables is written by
+        `_on_discovered` from an event payload, so a replay reproduces them
+        exactly -- and the truncate is what removes rows for a class a
+        superseded event no longer carries, which a replay alone would leave
+        behind.
+        """
+        if self._manager is None:
+            raise RuntimeError("the ontology projection has not been started")
+        await self._manager.stop()
+        for entry in await self.failures(limit=1000):
+            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
+        await self._checkpoints.reset_checkpoint(self.projection_name)
+        async with aiosqlite.connect(self._db_path) as connection:
+            for table in (
+                OntologyClassRow.table_name(),
+                OntologyMembershipRow.table_name(),
+                OntologyExaminedRow.table_name(),
+            ):
+                await connection.execute(f"DELETE FROM {table}")
+            await connection.commit()
+        self._manager = None
+        self._subscription = None
+        await self._ontology.close()
+        self._ontology = None
+        await self.start()
+        await self.caught_up()
+
+    async def caught_up(self, timeout: float = 10.0) -> None:
+        """Block until this projection has seen everything appended so far.
+
+        Compares against `current_position()`, the store's *global* end, which
+        `SessionSummaryRunner.caught_up` documents at length as the wrong
+        comparison for a subscription scoped to one aggregate type -- any
+        append of another type moves the end to a position that projection
+        will never reach. It is the right comparison here for the reason that
+        makes this projection unusual: it subscribes to `OntologyDiscovered`
+        *and* to redstring's `DocumentExtracted`, so the two event types that
+        move this store in ordinary use are both ones it consumes. The
+        remaining risk is a `Session` or `Project` append landing last, which
+        is why the loop has a deadline rather than waiting forever.
+        """
+        if self._manager is None:
+            return
+        target = await self._store.current_position()
+        if target is None:
+            return
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            reached = self._subscription.last_processed_position
+            if reached is not None and not reached < target:
+                return
+            await asyncio.sleep(0.01)
+        raise TimeoutError(f"the ontology projection did not reach {target} within {timeout}s")
+
+    async def stop(self) -> None:
+        if self._manager is not None:
+            await self._manager.stop()
+            self._manager = None
+            self._subscription = None
+        if self._ontology is not None:
+            await self._ontology.close()
+            self._ontology = None
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None
