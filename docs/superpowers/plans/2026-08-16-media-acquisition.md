@@ -22,6 +22,7 @@
 - **Application layer imports no framework.** `tests/test_architecture.py` enforces it. LangChain vocabulary stays in `infrastructure/`.
 - **Do not use `with_structured_output`.** It appears nowhere in this repository. Ports return text; the application layer parses and tolerates junk. See `OntologyTextPort` (`application/ontology_discovery.py:267`).
 - **Measured values in this plan came from one instance on 2026-08-15**: 262 image results, 91 video, 29 general. What generalises is the shape, not the ratios.
+- **Never use bare `git stash` / `git stash pop`.** The stash stack is shared with the main checkout and every other worktree, and other sessions may push or pop concurrently — a bare pop can take someone else's entry. To prove a test red against pre-change code, prefer a temporary WIP commit (`git commit -m wip`, run, `git reset --soft HEAD~1`) or simply write the test first and run it before implementing. If you must stash, use `git stash push -u -m "<unique-tag>"`, capture the SHA from `git stash list --format='%H %gs'`, and restore with `git stash apply <sha>` — never `pop`.
 
 ---
 
