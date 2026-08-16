@@ -488,6 +488,32 @@ async def test_a_failed_download_records_why_and_leaves_the_proposal_visible():
 
 ---
 
+## Task 11b: Wire the worker to the accept route
+
+**Added mid-execution — the plan had no task for this**, and without it the
+whole wave is inert: Task 9's accept route appends `MediaProposalAccepted` and
+answers 202, Task 11 built a worker that nobody starts, and the two never meet.
+Every test in both tasks passes with them unconnected, which is exactly the
+class of gap `CLAUDE.md` warns about — the machinery works and the feature does
+not exist.
+
+**Files:**
+- Modify: `research_team/composition.py`, `research_team/interfaces/web/app.py`
+- Test: `tests/integration/test_accepting_a_proposal_acquires_it.py`
+
+- [ ] **Step 1: Write the failing integration test.** Accept a proposal
+  through the composed application, then assert a corpus source exists whose
+  `uri` is the proposal's page URL. Not that the route answered 202 — that
+  passes today, with no worker in the world.
+- [ ] **Step 2:** Verify red.
+- [ ] **Step 3:** Construct `MediaAcceptWorker` in `composition.py` beside the
+  projections, and have the accept route hand off to it. Acceptance stays a
+  202: the route records the decision and returns; the download must not block
+  the response, because an hour of audio is minutes of perception.
+- [ ] **Step 4:** Green. **Step 5:** Commit.
+
+---
+
 ## Task 12: The review pane
 
 **Files:**
