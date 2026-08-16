@@ -21,6 +21,7 @@ from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 from research_team.application import FeedEntry
 from research_team.domain import Corpus, EntityJudgements, Project, Session
 from research_team.domain.learner import LearnerProgress
+from research_team.domain.media_proposals import MediaProposals
 from research_team.domain.ontology import ONTOLOGY_AGGREGATE_TYPE
 from research_team.domain.research_run import ResearchRun
 from research_team.domain.topic import Topic
@@ -43,6 +44,7 @@ FEED_AGGREGATE_TYPES = (
     Project.aggregate_type,
     Topic.aggregate_type,
     Corpus.aggregate_type,
+    MediaProposals.aggregate_type,
     *KNOWLEDGE_CATEGORIES,
 )
 """Every aggregate type `read_since` admits to the live feed.
@@ -55,6 +57,15 @@ compare against a list it can see.
 
 Order is presentation, not behaviour -- `read_since` sorts by position after
 merging -- so it is written to match the order `_sse` tests the types in.
+
+`MediaProposals` is routed because a proposal's state changes without any
+user action in the tab. Accepting one answers 202 immediately, and the
+terminal state (`stored` or `failed`) arrives only after a download plus a
+perception pass -- minutes, for an hour of audio. A pane that updated only on
+reload would show an accepted proposal sitting in a working state forever,
+which is precisely the defect BACKLOG.md B94 records for media rows during
+transcription. Routing it is what makes the review pane's live state possible
+at all.
 """
 
 UNROUTED_AGGREGATE_TYPES = frozenset(
