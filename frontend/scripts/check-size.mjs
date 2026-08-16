@@ -64,20 +64,48 @@ const BUDGET_KB = {
   // hearing about. And the per-chunk history records what each earlier
   // increase measured and bought, which stays useful reading even while nobody
   // is designing against the numbers.
-  // 96, from 80. Measured at 81.3 kB with the ontology layer in -- the fold,
-  // the classes view, the repository and a ninth tab -- against a limit that
-  // was already at 80.1 before any of it landed, so this raise clears a
-  // pre-existing overage as well as the new work.
   //
-  // 96 rather than 82, deliberately. A limit set one kilobyte above the
-  // measurement is a limit the next feature trips, and the last three raises in
-  // this file were each provoked by a feature rather than chosen. The owner's
-  // standing position on this repository is that exploration outranks bundle
-  // size at this stage and that the numbers are revisited before release, so
-  // this is a deferral with a date on it rather than a ratchet nobody owns:
-  // ~15 kB of headroom is roughly four features the size of this one, which is
-  // enough to stop the number moving every slice while still catching the
-  // thing worth catching -- a chunk that doubles overnight.
+  // 80 -> 84: perception reaching the console. Measured at 80.1 kB, which is
+  // what tripped this gate. (An earlier draft of this note blamed the
+  // remaining slack on "media perception's backend landing", which is not a
+  // thing that can happen -- no Python change moves the `app` chunk. What
+  // consumed the 80 raise's room was ordinary frontend work across the
+  // intervening features, and this note does not identify which; the honest
+  // statement is the measurement.) What the 0.3 kB bought: a Transcribe control
+  // on a medium nothing has been derived from, the link to the transcript on
+  // one that has, the degradations line under a derived source, the perceive
+  // mutation and its repository call, and the join between a medium and its
+  // transcript that the wire cannot carry (`derived_from` is on the text arm).
+  // Deliberately no player, no cue list and no seeking -- those need a locator
+  // syntax another sub-project owns, and half of one built here would be built
+  // twice.
+  //
+  // 80 -> 96: the ontology layer -- the fold, the classes view, the repository
+  // and a ninth tab -- measured at 81.3 kB against a limit already at 80.1
+  // before any of it landed, so that raise cleared a pre-existing overage too.
+  //
+  // Those two happened on separate branches and each raised the same 80,
+  // which is how they conflicted. **Neither measurement describes this
+  // tree**: 80.1 and 81.3 were each taken with the other feature absent, so
+  // both understate the merged chunk, and adding the deltas would be a guess
+  // rather than a reading. 96 is kept -- the higher of the two, not their sum
+  // -- and re-measured after the merge at the figure recorded below. The
+  // reason to prefer the higher number over a tighter one is the same in both
+  // notes and is the owner's standing position: exploration outranks bundle
+  // size at this stage, and a limit set a kilobyte above the measurement is a
+  // limit the next feature trips. The last four raises here were each provoked
+  // by a feature rather than chosen. ~14 kB of headroom is roughly four
+  // features the size of these, which is enough to stop the number moving
+  // every slice while still catching the thing worth catching -- a chunk that
+  // doubles overnight. A deferral with a date on it, revisited before release
+  // along with every other number in this file.
+  //
+  // Merged and re-measured on 2026-08-16: **81.7 kB** -- which is under 84,
+  // so the lower of the two conflicting numbers would in fact have held. The
+  // deltas were 1.2 and 0.3 kB and they did not compound. 96 is kept anyway,
+  // on the standing position above rather than on necessity, and this line
+  // says so plainly so nobody later reads 96 as a number the measurement
+  // demanded.
   app: 96, // our code: every component, store, mapper and stylesheet rule
   react: 66, // react + react-dom + scheduler
   text: 34, // marked, dompurify, jsdiff — markdown and diff rendering

@@ -37,14 +37,33 @@ export interface ExtractionState {
 
 export type ExtractionStore = ReturnType<typeof createExtractionStore>
 
-/** The two stages that end an extraction.
+/** The stages that end a job on a source row.
  *
- * Exported because `use-extraction-queue.ts` has to recognise the same two to
+ * Exported because `use-extraction-queue.ts` has to recognise the same set to
  * know when a document's row should be re-read, and spelling them a second
  * time is how the two would come to disagree the next time a stage is added.
  * The list is deliberately *not* every stage -- see `toStage`, which treats an
- * unrecognised one as `extracting` rather than as terminal. */
-export const TERMINAL: readonly string[] = ['consolidated', 'failed']
+ * unrecognised one as `extracting` rather than as terminal.
+ *
+ * `perceived` is here and `perceiving` is not, mirroring `_TERMINAL` in
+ * `interfaces/web/extraction.py`.
+ *
+ * What its absence cost, measured against the code rather than assumed -- an
+ * earlier draft of this comment claimed the wrong one and a reviewer refuted
+ * it. A stage that never reaches terminal leaves `current` uncleared, so the
+ * extraction pane shows a finished transcription as a permanently running job
+ * labelled `extracting`; and `isTerminalExtraction` never fires, so the queue
+ * board is never re-read and the Documents header keeps saying "1 extracting
+ * or queued" with a live Stop button, forever.
+ *
+ * What it did **not** cost, because this is the claim that was wrong: the
+ * transcript row appearing in the listing does not depend on this. A finished
+ * perception executes `StoreDerivedText` against the `Corpus` aggregate, every
+ * `Corpus` event is pushed generically as a `Corpus` frame, and
+ * `useDocumentRefresh` invalidates the listing on *any* corpus frame for the
+ * project -- before the terminal frame, in fact, since the save precedes it.
+ * The row would have appeared regardless. */
+export const TERMINAL: readonly string[] = ['consolidated', 'failed', 'perceived']
 
 export const createExtractionStore = ({
   extractions,

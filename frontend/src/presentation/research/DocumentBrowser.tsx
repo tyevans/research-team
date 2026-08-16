@@ -76,6 +76,9 @@ export const DocumentBrowser = ({
   onExtract,
   onExtractAll,
   onCancelExtraction,
+  derived,
+  perceiveBusy,
+  onPerceive,
   onAdd,
 }: {
   /** Already filtered. Filtering is a `useMemo` in the hook rather than a
@@ -108,6 +111,16 @@ export const DocumentBrowser = ({
   onExtract: (sourceId: SourceId) => void
   onExtractAll: () => void
   onCancelExtraction: () => void
+  /** Each medium's transcript, keyed by the medium's id -- see
+   *  `derivedSources`, which builds it over the whole corpus rather than the
+   *  filtered rows. A media row reads its own entry to decide whether it is
+   *  offering a press or a link, and there is no third state: absent means
+   *  nothing has been derived. */
+  derived: ReadonlyMap<string, SourceId>
+  /** A transcription press is in flight. Separate from `busy` because
+   *  extracting and perceiving are different presses on different rows. */
+  perceiveBusy: boolean
+  onPerceive: (sourceId: SourceId) => void
   onAdd: () => void
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -235,8 +248,11 @@ export const DocumentBrowser = ({
                 measure={position.measure}
                 extraction={documentExtraction(row, queue)}
                 busy={busy}
-                onOpen={() => onOpen(row.sourceId)}
+                transcript={derived.get(row.sourceId) ?? null}
+                perceiveBusy={perceiveBusy}
+                onOpen={onOpen}
                 onExtract={() => onExtract(row.sourceId)}
+                onPerceive={() => onPerceive(row.sourceId)}
               />
             )}
           </VirtualList>
@@ -274,8 +290,11 @@ const DocumentRow = ({
   measure,
   extraction,
   busy,
+  transcript,
+  perceiveBusy,
   onOpen,
   onExtract,
+  onPerceive,
 }: {
   document: SourceSummary
   /** The virtualizer reads this back off the DOM node to know which row it
@@ -285,8 +304,15 @@ const DocumentRow = ({
   measure: (element: HTMLElement | null) => void
   extraction: DocumentExtraction
   busy: boolean
-  onOpen: () => void
+  /** This medium's transcript, or `null` for one nothing has perceived.
+   *  Always `null` on a text row -- a transcript is not itself perceived. */
+  transcript: SourceId | null
+  perceiveBusy: boolean
+  /** Takes the id rather than being pre-bound, because the perception action
+   *  opens a *different* source than the row it sits on. */
+  onOpen: (sourceId: SourceId) => void
   onExtract: () => void
+  onPerceive: () => void
 }) => (
   <li
     ref={measure}
@@ -352,7 +378,7 @@ const DocumentRow = ({
     <button
       type="button"
       data-document-open
-      onClick={onOpen}
+      onClick={() => onOpen(document.sourceId)}
       className={clsx(
         'flex min-w-0 flex-auto cursor-pointer flex-col items-start gap-[2px] border-0 bg-transparent px-3 pt-[7px] pb-[8px] text-left text-inherit [font:inherit] hover:bg-bg-panel-2',
         RING_INWARD,
@@ -372,6 +398,25 @@ const DocumentRow = ({
       {isDropped(document) ? (
         <span className="text-xs text-k-failure">Dropped: {document.droppedReason}</span>
       ) : null}
+      {/* What the perception could not do, in the server's words.
+
+          On the row rather than behind a disclosure, and in the dim colour
+          rather than the failure one, because both halves are the point: a
+          transcript missing its frame descriptions is a real transcript and
+          not a failure, but a reader deciding whether to trust a quote out of
+          it has to meet the caveat without going looking. The char count is as
+          healthy either way, so this line is the only thing on the row that
+          distinguishes a complete perception from a partial one.
+
+          Joined with "; " rather than rendered as a list: the server sends one
+          clause per shortfall and they read as a sentence -- "no vision model
+          configured; frames were not described" -- where a bulleted list of
+          two fragments would take three lines of a 340px rail to say the same
+          thing. Empty for a fetched document *and* for a complete perception
+          alike, so nothing has to read an absent line as "unknown". */}
+      {document.kind === 'text' && document.degradations.length > 0 ? (
+        <span className="text-xs text-fg-dim">{document.degradations.join('; ')}</span>
+      ) : null}
       {EXTRACTION_NOTE[extraction.kind] ? (
         <span
           className={clsx(
@@ -390,8 +435,91 @@ const DocumentRow = ({
       ) : null}
     </button>
     <ExtractAction document={document} extraction={extraction} busy={busy} onExtract={onExtract} />
+    <PerceiveAction
+      document={document}
+      transcript={transcript}
+      busy={perceiveBusy}
+      onOpen={onOpen}
+      onPerceive={onPerceive}
+    />
   </li>
 )
+
+/** The media row's one control: transcribe this, or read what was transcribed.
+ *
+ * Both are in the same slot because they are the same question answered at two
+ * points in time, and a row carrying both would be offering to redo work it is
+ * simultaneously offering to show you. `derivedFrom` is what separates them --
+ * see `derivedSources`, which does the join the wire cannot.
+ *
+ * Nothing at all on a text row, and nothing on a dropped medium. The second is
+ * the same refusal `ExtractAction` makes: the route answers 409 for a dropped
+ * source, so a control here would be a promise the server has already decided
+ * against. Deliberately *not* an `aria-disabled` button with a tooltip, unlike
+ * the extract control's off states -- those can become pressable when the queue
+ * drains, and a dropped source cannot become pressable without a restore, which
+ * is a different action in a different place.
+ *
+ * No player, no cue list, no seeking, and that is a scope decision rather than
+ * an omission: anchoring a quote inside a recording needs a locator syntax that
+ * is another sub-project's to design, and half of one built here would be built
+ * again.
+ */
+const PerceiveAction = ({
+  document,
+  transcript,
+  busy,
+  onOpen,
+  onPerceive,
+}: {
+  document: SourceSummary
+  transcript: SourceId | null
+  busy: boolean
+  onOpen: (sourceId: SourceId) => void
+  onPerceive: () => void
+}) => {
+  if (document.kind !== 'media' || isDropped(document)) return null
+
+  if (transcript !== null) {
+    return (
+      <span className="flex shrink-0 items-center pr-3 pl-[6px]">
+        <Tooltip asChild explanation={`Read the text perceived from ${documentLabel(document)}`}>
+          {/* Opens the derived source's id, not this row's. Opening the medium
+              again would be a control that visibly does nothing -- the reader
+              is already looking at that row. */}
+          <Button small tone="quiet" onClick={() => onOpen(transcript)}>
+            Transcript
+          </Button>
+        </Tooltip>
+      </span>
+    )
+  }
+
+  return (
+    <span className="flex shrink-0 items-center pr-3 pl-[6px]">
+      <Tooltip
+        asChild
+        explanation={`Perceive ${documentLabel(document)} into text this project can read`}
+      >
+        {/* `aria-disabled` and a handler guard rather than `disabled`, for the
+            reason the extract controls give at length: a `disabled` element
+            takes neither focus nor pointer events, so the tooltip explaining
+            why it is off could never open. */}
+        <Button
+          small
+          tone="quiet"
+          aria-disabled={busy}
+          onClick={() => {
+            if (busy) return
+            onPerceive()
+          }}
+        >
+          Transcribe
+        </Button>
+      </Tooltip>
+    </span>
+  )
+}
 
 /** The per-row extract control, or nothing at all.
  *

@@ -160,6 +160,45 @@ async def test_a_failure_is_recorded_and_the_queue_keeps_going(queue, project_id
     assert outcomes["s2"]["relationships"] == 2
 
 
+async def test_a_job_with_no_counts_finishes_done_and_reports_neither(queue, project_id):
+    """`None` from `run` is "done, with no counts", not a crash and not zeros.
+
+    Both halves are load-bearing and neither was named by a test until now.
+
+    *Not a crash*: the `else:` clause that reads `report.entity_count` sits
+    outside the `except Exception` guard -- Python's `try/except/else` puts it
+    there -- so before this contract existed a job returning anything without
+    that attribute raised out of the `while` loop. `finally` still discarded
+    `_draining`, so a later press would restart the drain; the damage was a
+    lost outcome, everything queued behind it stalled until some unrelated
+    press, and a task exception nobody retrieved. Perception is the caller
+    that returns `None`.
+
+    *Not zeros*: `entities: 0` on a finished transcription reads as
+    "extraction found nothing" rather than "no extraction happened", so the
+    keys are absent. Revert either half and this is red -- the first with an
+    `AttributeError` out of `wait`, the second on the `not in` assertions.
+    """
+    seen: list[str] = []
+
+    async def perceive():
+        seen.append("vid")
+        return None
+
+    queue.start(project_id, "vid", perceive)
+    queue.start(project_id, "s2", _run("s2", seen=seen))
+    await queue.wait(project_id)
+
+    assert seen == ["vid", "s2"], "the drain survived the countless job"
+    outcomes = {item["source_id"]: item for item in queue.finished(project_id)}
+    assert outcomes["vid"]["status"] == "done"
+    assert "entities" not in outcomes["vid"]
+    assert "relationships" not in outcomes["vid"]
+    # The ordinary job beside it is unchanged, which is the other half of the
+    # claim: this widening cost extraction nothing.
+    assert outcomes["s2"]["entities"] == 3
+
+
 async def test_cancel_drops_the_waiting_and_stops_the_running(queue, project_id):
     gate = asyncio.Event()
     seen: list[str] = []

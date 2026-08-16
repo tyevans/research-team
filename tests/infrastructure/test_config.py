@@ -163,3 +163,40 @@ def test_the_extraction_throughput_knobs_are_overridable(monkeypatch):
     monkeypatch.setenv("AGENT_EXTRACTION_CHUNK_SIZE", "3000")
     assert config.extraction_concurrency() == 1
     assert config.extraction_chunk_size() == 3_000
+
+
+def test_transcription_is_off_until_a_url_is_set(monkeypatch):
+    monkeypatch.delenv("AGENT_TRANSCRIBER_URL", raising=False)
+    assert config.transcriber_url() is None
+
+
+def test_a_transcriber_url_without_a_model_refuses_to_start(monkeypatch):
+    """The server reports no model name -- measured against whisper.cpp on
+    2026-08-15 -- so there is nothing to infer one from, and the name is the
+    ASR revision inside the capability fingerprint. Defaulting it would let
+    two models' output share one cache key."""
+    monkeypatch.setenv("AGENT_TRANSCRIBER_URL", "http://localhost:8083")
+    monkeypatch.delenv("AGENT_TRANSCRIBER_MODEL", raising=False)
+    with pytest.raises(ValueError, match="AGENT_TRANSCRIBER_MODEL"):
+        config.transcriber_model()
+
+
+def test_perception_max_chars_matches_the_document_cap(monkeypatch):
+    """The drift guard ruling R1 promised, and it used to be tautological.
+
+    It asserted `perception_max_chars() == DEFAULT_PERCEPTION_MAX_CHARS` --
+    the getter against the constant the getter returns -- and never mentioned
+    `MAX_DOCUMENT_CHARS`, the other half of the pair whose drift is the only
+    thing this test exists to catch. Setting `MAX_DOCUMENT_CHARS` to 100_000
+    left it green while transcripts capped at twice the document cap.
+
+    Importing `application.knowledge` from an `infrastructure` test inverts
+    nothing: R1's rule is that `config.py` must not import upward, and this is
+    a test, which sits above both layers and is the only place the two
+    constants can be compared at all.
+    """
+    from research_team.application.knowledge import MAX_DOCUMENT_CHARS
+
+    monkeypatch.delenv("AGENT_PERCEPTION_MAX_CHARS", raising=False)
+    assert config.DEFAULT_PERCEPTION_MAX_CHARS == MAX_DOCUMENT_CHARS
+    assert config.perception_max_chars() == MAX_DOCUMENT_CHARS

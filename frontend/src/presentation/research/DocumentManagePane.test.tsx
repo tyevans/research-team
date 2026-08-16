@@ -21,6 +21,8 @@ const doc = (over: Partial<TextSummary> = {}): TextSummary => ({
   sourceId: SourceId('s1'),
   kind: 'text',
   charCount: 100,
+  derivedFrom: null,
+  degradations: [],
   sha256: 'deadbeef',
   uri: null,
   title: 'A Paper',
@@ -55,6 +57,9 @@ const fakeDocuments = (over: Partial<DocumentRepository> = {}): DocumentReposito
   }),
   cancelExtraction: vi.fn(() => {
     throw new Error('cancelExtraction was not stubbed for this test')
+  }),
+  perceive: vi.fn(() => {
+    throw new Error('perceive was not stubbed for this test')
   }),
   create: vi.fn(() => {
     throw new Error('create was not stubbed for this test')

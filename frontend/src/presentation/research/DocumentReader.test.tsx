@@ -35,6 +35,8 @@ const text = (over: Partial<DocumentText> = {}): DocumentText => ({
   sourceId: SOURCE,
   kind: 'text',
   charCount: 41,
+  derivedFrom: null,
+  degradations: [],
   sha256: 'deadbeef',
   uri: null,
   title: 'Ada Lovelace',
@@ -65,6 +67,9 @@ const noExtraction = {
   cancelExtraction: vi.fn(() => {
     throw new Error('DocumentReader should never cancel an extraction')
   }),
+  perceive: vi.fn(() => {
+    throw new Error('DocumentReader should never perceive a medium')
+  }),
   create: vi.fn(() => {
     throw new Error('DocumentReader should never create a document')
   }),
@@ -83,6 +88,7 @@ const noExtraction = {
   | 'extractAll'
   | 'extractionQueue'
   | 'cancelExtraction'
+  | 'perceive'
   | 'create'
   | 'revise'
   | 'drop'

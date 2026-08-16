@@ -59,6 +59,7 @@ from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.application.ontology_discovery import OntologyDiscoveryService
+from research_team.application.perception import MediaPerceiver, PerceptionPort
 from research_team.application.ports import GateReview
 from research_team.application.prompts import (
     DEFAULT_PROMPT_ROOT,
@@ -143,6 +144,9 @@ from research_team.infrastructure.knowledge.stores import (
     build_vector_store,
 )
 from research_team.infrastructure.knowledge.usage_reader import UsageReader
+from research_team.infrastructure.perception.readeverything_adapter import (
+    build_perception_adapter,
+)
 from research_team.infrastructure.persistence import (
     CorpusRunner,
     EventStoreSessionRepository,
@@ -399,6 +403,27 @@ class Application:
     document" and "drop/restore a document" are all buttons on the Documents
     page with no other way to reach `Corpus`."""
 
+    perception: PerceptionPort
+    """What this instance can read a medium with.
+
+    Exposed as a field, matching `approvals`/`extractions`/`grants`/`activity`
+    above: `build_application(perception=...)` is how a test hands this build
+    a fake, so a suite that perceives media never reaches a network or a
+    vision endpoint. `None` at that parameter calls `build_perception_adapter()`,
+    which is synchronous -- see its module docstring for why `build_application`
+    does not become `async def` for this one port."""
+
+    perceiver: MediaPerceiver
+    """Reads a stored medium into a derived text source, over this instance's
+    `perception` and corpus repository.
+
+    A field beside `document_extractor` and for the same reason: it shares
+    that use case's `corpus_readers` closure and the corpus repository
+    `editor` also holds, both assembled inside `build_application` from this
+    build's stores, so no caller could construct it. The web layer needs it
+    because "perceive this medium" is a button on the Documents page with no
+    other way to reach `PerceptionPort`."""
+
     _initial_project_id: UUID | None = None
     """`project_id`, if `build_application` was given one. Attached in
     `start()` rather than at construction, because attaching talks to a
@@ -610,6 +635,7 @@ def build_application(
     project_id: UUID | None = None,
     grants: GrantRegistry | None = None,
     activity: TurnActivityBuffer | None = None,
+    perception: PerceptionPort | None = None,
 ) -> Application:
     """Wire everything over one event store.
 
@@ -634,6 +660,16 @@ def build_application(
     The supervisor writes into it; the catch-up route reads out of it. `None`
     is the REPL's case and most tests' -- turns then run unbuffered, which is
     what happened on every path but the web one before this was wired.
+
+    `perception` accepts an existing `PerceptionPort` for the same reason
+    `approvals` does, and for one reason unique to this port: `build_perception_
+    adapter()` builds a `ReadEverythingPerception`, whose *construction* touches
+    no network -- capabilities are declared from configuration, not probed --
+    but whose first `perceive()` does. `None` is correct for the REPL and for
+    every test that does not perceive anything; a test that does must inject a
+    fake here, exactly as the no-network guard tests in this module do, or it
+    reaches whatever `AGENT_VISION_MODEL`/`AGENT_TRANSCRIBER_URL` happen to be
+    set to in the environment the suite runs in.
     """
     resolved_path = db_path if db_path is not None else config.default_db_path()
     resolved_model = model if model is not None else build_model()
@@ -644,6 +680,12 @@ def build_application(
     strategy, subagents, prompt_suffix = _context_parts(mode, resolved_model, system_prompt)
     resolved_policy = policy if policy is not None else AutonomyPolicy()
     resolved_grants = grants if grants is not None else GrantRegistry()
+    # Synchronous, deliberately -- see `build_perception_adapter`'s own
+    # docstring for why `build_application` is not `async def` for this one
+    # port. Resolved here, beside the other three optional-port defaults,
+    # rather than beside `document_extractor` below, so every override this
+    # function accepts is decided in one place.
+    resolved_perception = perception if perception is not None else build_perception_adapter()
 
     # Loaded once here, and allowed to raise: a prompt file that will not parse
     # is a broken installation, and the useful moment to learn that is startup,
@@ -1507,11 +1549,16 @@ def build_application(
         knowledge, _tools = await open_graph(target_project_id)
         return knowledge
 
+    # Shared by `document_extractor`, `editor` and `perceiver` below: all three
+    # read one project's corpus the same way, and three separate lambdas would
+    # be three places a future change to how a reader is built could drift.
+    corpus_readers = lambda target_project_id: ProjectCorpusReader(  # noqa: E731
+        corpus, target_project_id, blob_store
+    )
+
     document_extractor = DocumentExtractor(
         open_knowledge=open_knowledge,
-        corpus_readers=lambda target_project_id: ProjectCorpusReader(
-            corpus, target_project_id, blob_store
-        ),
+        corpus_readers=corpus_readers,
         # The same channel `remember` reports through, so a queued extraction
         # and an agent's own land in one pane rather than two accounts of the
         # same graph being written. None when nothing is listening, matching
@@ -1527,17 +1574,34 @@ def build_application(
     # `RedstringKnowledge`, including the publisher: leaving it out is the
     # silent-wiring failure that comment already explains, and a `drop` or
     # `restore` that missed it would corrupt the corpus row and wake nothing.
+    #
+    # Held in a variable and handed to `perceiver` below too, rather than
+    # built a second time: `StoreDerivedText` and `DropSourceDocument` both
+    # execute against this same aggregate stream, and a second repository
+    # built the same three-argument way would still be one connection to one
+    # log -- but two objects that only happen to agree, where composition
+    # should have made them the same object outright.
+    corpus_repository = build_corpus_repository(
+        repository.store,
+        repository.publisher,
+        snapshot_store=repository.snapshot_store,
+    )
     editor = CorpusEditor(
         open_knowledge=open_knowledge,
-        readers=lambda target_project_id: ProjectCorpusReader(
-            corpus, target_project_id, blob_store
-        ),
-        corpus=build_corpus_repository(
-            repository.store,
-            repository.publisher,
-            snapshot_store=repository.snapshot_store,
-        ),
+        readers=corpus_readers,
+        corpus=corpus_repository,
         blobs=blob_store,
+    )
+    # Constructed beside `document_extractor`, sharing its `corpus_readers`
+    # closure and the corpus repository `editor` holds -- see both comments
+    # above. `resolved_perception` is this build's port: a real
+    # `ReadEverythingPerception` unless a test injected a fake through
+    # `build_application(perception=...)`.
+    media_perceiver = MediaPerceiver(
+        port=resolved_perception,
+        corpus_readers=corpus_readers,
+        corpus=corpus_repository,
+        max_chars=config.perception_max_chars,
     )
     runs = build_research_run_repository(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store
@@ -1780,6 +1844,8 @@ def build_application(
         ask=ask_service,
         document_extractor=document_extractor,
         editor=editor,
+        perception=resolved_perception,
+        perceiver=media_perceiver,
         _initial_project_id=project_id,
     )
 

@@ -109,6 +109,38 @@ export const useExtractDocument = (projectId: ProjectId) => {
   })
 }
 
+/** Queue one stored medium to be perceived into a text source.
+ *
+ * Beside the extract mutations rather than in `use-document-writes.ts`,
+ * because it is a queue operation and not a corpus write: it queues into the
+ * same place `extract` does and reports through the same `ExtractionActivity`
+ * frames, so the hook that has to know about that queue is this file.
+ *
+ * Invalidates only the queue, deliberately: the press queues the medium and
+ * changes nothing about the corpus, which does not move until the perception
+ * *finishes* minutes later. Invalidating the listing here would be a read of a
+ * corpus that provably has not changed.
+ *
+ * What re-reads the listing when it does finish is **not** this hook and not
+ * the terminal frame -- an earlier version of this comment said it was, and a
+ * reviewer refuted it. `StoreDerivedText` is a `Corpus` aggregate event, every
+ * one of those is pushed generically as a `Corpus` frame, and
+ * `useDocumentRefresh` invalidates the listing on any of them. That path is
+ * independent of `TERMINAL` and fires slightly earlier, because the corpus save
+ * precedes the terminal note. The terminal frame's own job here is the queue
+ * board and the extraction pane.
+ */
+export const usePerceiveDocument = (projectId: ProjectId) => {
+  const { documents } = useContainer()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (sourceId: SourceId) => documents.perceive(projectId, sourceId),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.extractionQueue(projectId) }),
+  })
+}
+
 /** Queue every stored document that has no graph yet. */
 export const useExtractAll = (projectId: ProjectId) => {
   const { documents } = useContainer()

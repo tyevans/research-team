@@ -62,6 +62,18 @@ DEFAULT_EMBEDDING_DIMENSION = 768
 DEFAULT_NEO4J_URI = "bolt://localhost:7687"
 DEFAULT_NEO4J_USER = "neo4j"
 
+#: The `Budget` handed to `readeverything.represent`, deliberately equal to
+#: `MAX_DOCUMENT_CHARS` in `application/knowledge.py` -- derived text lands in
+#: `corpus_documents` and is extracted like any other document, so a second
+#: ceiling would be a second answer to one question. Defined here rather than
+#: imported from there: `application/` sits above `infrastructure/config.py`
+#: in the direction this module's own docstring names as the edge nothing
+#: below asks the environment anything, and importing upward would invert it.
+#: The two constants must be changed together -- drift makes a transcript
+#: truncate at a different length than a document, which is visible rather
+#: than silent, but still a bug.
+DEFAULT_PERCEPTION_MAX_CHARS = 200_000
+
 
 def default_db_path() -> str:
     """Where sessions live. Sessions persist across runs and are resumable."""
@@ -512,3 +524,69 @@ def neo4j_auth() -> tuple[str, str]:
 def neo4j_database() -> str | None:
     """Which database within the server. None means the server's default."""
     return os.getenv("AGENT_NEO4J_DATABASE") or None
+
+
+def transcriber_url() -> str | None:
+    """The whisper.cpp server to transcribe against, or None for no ASR.
+
+    Unset is the default and means audio and video are perceived without
+    speech -- a frame timeline and nothing said. That is a real, reportable
+    degradation rather than an error, which is why this is a `None` and not a
+    raise.
+    """
+    return os.getenv("AGENT_TRANSCRIBER_URL", "").strip().rstrip("/") or None
+
+
+def transcriber_model() -> str:
+    """What to call the ASR model. Required once a URL is set.
+
+    No default, and the reason is not taste. The server reports no model name
+    of its own (measured against whisper.cpp at `POST /inference` on
+    2026-08-15), and this string is the ASR revision inside
+    `CapabilitySet.fingerprint()` -- which is what invalidates every derived
+    artifact when the model changes. A default would let a swapped model reuse
+    the previous one's cache entries silently, and "silently" is the whole
+    problem.
+    """
+    configured = os.getenv("AGENT_TRANSCRIBER_MODEL", "").strip()
+    if not configured:
+        raise ValueError("AGENT_TRANSCRIBER_MODEL must be set when AGENT_TRANSCRIBER_URL is")
+    return configured
+
+
+def vision_model() -> str | None:
+    """The model that describes frames and images, or None for no vision.
+
+    Speaks to `AGENT_BASE_URL` with `AGENT_API_KEY`, since
+    `build_openai_vision_model` wants an OpenAI-compatible endpoint and the
+    local server is one. Separate from `AGENT_MODEL` for
+    `AGENT_EMBEDDING_MODEL`'s reason: a chat model and a vision model are
+    different models, and pointing this at one that cannot see images fails
+    per-request rather than at startup.
+    """
+    return os.getenv("AGENT_VISION_MODEL", "").strip() or None
+
+
+def perception_max_chars() -> int:
+    """The `Budget` handed to `represent`. The document cap, deliberately.
+
+    The derived text *is* a document -- it lands in `corpus_documents` and is
+    extracted like one -- so a second ceiling would be a second answer to one
+    question, and the smaller of two answers would be the one that silently
+    truncated a transcript.
+    """
+    configured = os.getenv("AGENT_PERCEPTION_MAX_CHARS", "").strip()
+    return int(configured) if configured else DEFAULT_PERCEPTION_MAX_CHARS
+
+
+def perception_root() -> Path:
+    """Where `readeverything`'s artifact cache lives. Beside the blobs.
+
+    Its own directory rather than inside `blob_root()`: the blob root is
+    content-addressed and every name in it is a digest of its own contents, so
+    a cache file sitting there would be the one entry for which that is untrue.
+    """
+    configured = os.getenv("AGENT_PERCEPTION_ROOT")
+    path = Path(configured) if configured else Path.home() / ".research-team" / "perception"
+    path.mkdir(parents=True, exist_ok=True)
+    return path

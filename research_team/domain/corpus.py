@@ -58,12 +58,23 @@ mistake at a call site.
 """
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Annotated, Literal
 from uuid import UUID
 
 from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
 from pydantic import BaseModel, Field
+
+UNREADABLE_DEGRADATIONS = ("<degradations could not be read from the event>",)
+"""What `evolve` records when an event's `degradations` payload will not parse.
+
+Angle-bracketed so it cannot be mistaken for a degradation a perception model
+actually reported -- this is the state saying it failed to read a field, not a
+transcriber saying it failed to see something. Exported rather than inlined
+because a reader of a `TextRecord` may want to test for it, and a string
+literal repeated at both ends is a string literal that drifts at one end.
+"""
 
 
 @register_event
@@ -126,6 +137,58 @@ class CorpusMediaStored(DomainEvent):
     fetched_at: str | None = None
 
 
+@register_event
+class CorpusDerivedTextStored(DomainEvent):
+    """What a perception model made of a stored medium.
+
+    A separate event from `CorpusDocumentStored` because a derived source has
+    to stay permanently distinguishable from a fetched one: a quote from a
+    transcript is a quote from a model's reading of an audio track, and
+    provenance that cannot tell those apart is the unfalsifiable-provenance
+    failure this module exists to prevent, one level up.
+
+    `locator_map` is JSON rather than a structured field because the locator
+    union (`TimeSpan | PageRef | BBox | CharSpan | ByteRange`) belongs to
+    `readeverything` and will evolve there. A structured field here would make
+    every locator kind it adds a schema change in this repository, in exchange
+    for queries nobody makes -- the map is read whole or not at all, since
+    resolving one offset needs every segment.
+
+    `perceived_with` is `CapabilitySet.fingerprint()`: which models, at which
+    revisions, produced this. Two transcripts of one video from two models are
+    two different claims, and this is the field that says so.
+
+    Additive: a build that predates this event ignores it in `evolve` and
+    replays cleanly, which is what "events already written are not rewritten"
+    buys. Nothing about `CorpusDocumentStored`'s shape changes.
+    """
+
+    aggregate_type: str = "Corpus"
+    source_id: str
+    derived_from: str
+    text: str
+    sha256: str
+    locator_map: str
+    perceived_with: str
+    degradations: str
+    title: str | None = None
+    note: str | None = None
+    """An operator's annotation, the same field every other source kind has.
+
+    Added when `CorpusEditor.revise` was taught to edit a transcript: without
+    it, a re-store of a derived record had nowhere to carry a note, so a
+    transcript would have been the one source kind nobody could annotate.
+    Additive and defaulted, so every `CorpusDerivedTextStored` written before
+    it existed folds to `note=None` -- which is what those transcripts have.
+
+    No `uri`, `published_at` or `fetched_at` beside it, and that is a
+    distinction rather than an omission: those three are provenance for
+    by-reference content the corpus did not create, and a transcript was not
+    fetched from anywhere. Its provenance is `derived_from` plus
+    `perceived_with`, and the medium it came from carries the rest.
+    """
+
+
 @dataclass(frozen=True)
 class StoreSourceDocument:
     #: Which corpus to store into. Storing is what brings a corpus into
@@ -164,7 +227,43 @@ class StoreSourceMedia:
     fetched_at: str | None = None
 
 
-CorpusCommand = StoreSourceDocument | StoreSourceMedia | DropSourceDocument
+@dataclass(frozen=True)
+class StoreDerivedText:
+    """Store what perception made of a medium.
+
+    Carries `corpus_id` for `StoreSourceMedia`'s reason -- though unlike that
+    one this can never be the creation command, since it requires a media
+    source to already exist. Carried anyway so the three store commands have
+    one shape; a command that omitted it would invite the question of why.
+
+    **`source_id` is unconstrained here on purpose, and that is a decision
+    rather than an omission.** The application spells a derived id
+    `f"{parent}#perceived"`, and `decide` does not check it: naming is the
+    caller's to choose, the aggregate's rules are about what an id *holds*
+    rather than how it is spelled, and a domain that knew the convention would
+    have to be edited to allow a second perception of one medium by a second
+    model -- which the `perceived_with` field exists to make possible. What the
+    aggregate does enforce is the part a naming convention cannot: that the
+    parent exists, that it is media, that derivedness never flips, and that a
+    transcript never changes which medium it is of. The tests here exploit the
+    freedom deliberately (`source_id="notes", derived_from="vid"`) to reach
+    refusals a convention-abiding id could not.
+    """
+
+    corpus_id: UUID
+    source_id: str
+    derived_from: str
+    text: str
+    locator_map: str
+    perceived_with: str
+    degradations: str
+    title: str | None = None
+    #: Mirrors `CorpusDerivedTextStored.note`; see there for why a transcript
+    #: has a note and no `uri`.
+    note: str | None = None
+
+
+CorpusCommand = StoreSourceDocument | StoreSourceMedia | StoreDerivedText | DropSourceDocument
 
 
 class SourceRecordBase(BaseModel):
@@ -201,6 +300,31 @@ class TextRecord(SourceRecordBase):
 
     kind: Literal["text"] = "text"
     char_count: int
+    derived_from: str | None = None
+    """The media source this was perceived from, or None for a fetched document.
+
+    Not a third arm of `SourceRecord`. A derived source *is* text for every
+    purpose a reader has -- it chunks, it quotes, it extracts -- and the
+    discriminator's job is to answer "can I read this as prose". The cost is
+    that this is a nullable field the type checker cannot force anyone to
+    consider, and it is paid down in exactly one place: `decide` refuses any
+    store that would change a source's derivedness, so nothing can quietly
+    become or stop being a transcript.
+
+    It refuses a *re-pointing* too -- a re-perception has to name the same
+    parent. That is a second refusal rather than a corollary of the first: a
+    transcript moving from one video to another stays derived throughout, so
+    the derivedness guards see nothing wrong, and the field would change under
+    a reader who had already cited it. This docstring claimed only the
+    derivedness half until a reviewer noticed the gap.
+    """
+    perceived_with: str | None = None
+    """The capability fingerprint that produced it. None for a fetched document."""
+    degradations: tuple[str, ...] = ()
+    """What the perception could not do -- "no vision model configured; frames
+    were not described". Empty for a fetched document and for a complete
+    perception; a reader cannot tell those two apart from here, and does not
+    need to, because `derived_from` already does."""
 
 
 class MediaRecord(SourceRecordBase):
@@ -272,6 +396,70 @@ def decide(command: CorpusCommand, state: CorpusState) -> list[DomainEvent]:
     """
     corpus_id = state.corpus_id
     match command, state:
+        # Both derivedness guards come before the kind guards below, and the
+        # order is presently inert rather than load-bearing -- measured, not
+        # reasoned: moving this pair beneath the kind guards leaves all 30
+        # tests in `tests/domain/test_corpus.py` green. The two kind guards
+        # match `StoreSourceDocument`-onto-media and `StoreSourceMedia`-onto-
+        # text, and neither pattern can intercept either case here: a derived
+        # record's kind is "text", not "media", and no kind guard mentions
+        # `StoreDerivedText` at all. The task brief claimed the ordering was
+        # what keeps a derivedness clash from being reported as a kind clash;
+        # that is not true of this code as it stands.
+        #
+        # Kept in this order anyway, because it is the order that stays correct
+        # if a kind guard ever widens -- a guard added for
+        # `StoreSourceMedia`-onto-derived, say, would match before the
+        # derivedness refusal and answer with the less specific message. The
+        # cost of the placement is zero and the failure it forecloses is silent.
+        #
+        # **The inertness holds against those two kind guards and no further.**
+        # It is a two-arm window, not a licence to move this pair anywhere: put
+        # the `StoreSourceDocument` guard below the bare `StoreSourceDocument(),
+        # _` arm, or either `StoreDerivedText` guard below the bare
+        # `StoreDerivedText(derived_from=parent), _` arm, and the refusal does
+        # not merely change its message -- it disappears, because the bare arms
+        # match unconditionally and return an event. That is how a transcript
+        # gets overwritten with prose nobody perceived, silently. Those two arms
+        # are the floor. Also measured, on 2026-08-15: relocating the first
+        # guard below the bare `StoreSourceDocument(), _` arm turns
+        # `test_a_derived_document_cannot_be_overwritten_by_a_plain_one` red.
+        case StoreSourceDocument(source_id=source_id), _ if _is_derived(state, source_id):
+            raise CommandRejectedError(
+                f"source {source_id!r} is derived from "
+                f"{_derived_from(state, source_id)!r}; storing a fetched document "
+                "under it would overwrite a transcript with prose nobody perceived"
+            )
+
+        # Named rather than written inline as `_kind_of(...) is not None and
+        # not _is_derived(...)`: `ruff format` breaks that guard across three
+        # lines with the call head stranded on the `case`, and the predicate is
+        # the kind of thing a reader wants a name for regardless.
+        case StoreDerivedText(source_id=source_id), _ if _holds_something_not_derived(
+            state, source_id
+        ):
+            raise CommandRejectedError(
+                f"source {source_id!r} is not derived; storing perceived text "
+                "under it would replace a source with a reading of another one"
+            )
+
+        # Re-perceiving is a revision of one reading of one medium. Changing
+        # which medium is not a revision -- it is a different claim wearing the
+        # old id, and the derivedness guards above cannot see it, because the
+        # record is derived before and after. Left open, a citation resolved
+        # yesterday against a talk resolves today against a different talk, with
+        # nothing in the state to show it moved. That is the unfalsifiable
+        # provenance this module exists to prevent, so it is refused rather than
+        # merely recorded.
+        case StoreDerivedText(source_id=source_id, derived_from=parent), _ if (
+            _repoints_a_transcript(state, source_id, parent)
+        ):
+            raise CommandRejectedError(
+                f"source {source_id!r} is derived from "
+                f"{_derived_from(state, source_id)!r}, not {parent!r}; a re-perception "
+                "revises one reading of one medium and cannot move it to another"
+            )
+
         case StoreSourceDocument(source_id=source_id), _ if (
             _kind_of(state, source_id) == "media"
         ):
@@ -321,6 +509,45 @@ def decide(command: CorpusCommand, state: CorpusState) -> list[DomainEvent]:
                 )
             ]
 
+        case StoreDerivedText(derived_from=parent), _:
+            parent_record = state.documents.get(parent)
+            if parent_record is None:
+                raise CommandRejectedError(f"unknown source {parent!r}")
+            if parent_record.kind != "media":
+                raise CommandRejectedError(
+                    f"source {parent!r} holds text; there is nothing in it to perceive"
+                )
+            # Reject at the boundary, tolerate at the fold. `evolve` degrades
+            # rather than raising on a malformed payload (see its case below),
+            # because an event already written is never rewritten and one that
+            # makes replay raise halfway is a data-surgery job on an append-only
+            # log. But degrading is lossy and silent, so the command path -- the
+            # one place a bad value can still be refused instead of stored -- is
+            # where the shape is actually enforced. Neither half substitutes for
+            # the other.
+            _reject_unless_json_list_of_strings("degradations", command.degradations)
+            _reject_unless_json_list_of_objects("locator_map", command.locator_map)
+            return [
+                CorpusDerivedTextStored(
+                    # From the command for the same reason the two stores above
+                    # read it from theirs -- though this one can never be the
+                    # creation command, since it needs a media source to exist.
+                    aggregate_id=command.corpus_id,
+                    source_id=command.source_id,
+                    derived_from=command.derived_from,
+                    text=command.text,
+                    # Computed, not supplied: this *is* text and the domain has
+                    # the bytes, so `by_digest` stays a fact here. Media's
+                    # supplied digest is the exception, not the pattern.
+                    sha256=hashlib.sha256(command.text.encode("utf-8")).hexdigest(),
+                    locator_map=command.locator_map,
+                    perceived_with=command.perceived_with,
+                    degradations=command.degradations,
+                    title=command.title,
+                    note=command.note,
+                )
+            ]
+
         # Storing is the only thing an empty corpus can do, since storing is
         # what brings it into existence.
         case _, CorpusState(status="new"):
@@ -358,12 +585,135 @@ def _kind_of(state: CorpusState, source_id: str) -> str | None:
     return None if record is None else record.kind
 
 
+def _is_derived(state: CorpusState, source_id: str) -> bool:
+    """Whether a source id already holds perceived text rather than fetched.
+
+    `getattr` rather than an isinstance narrow because `MediaRecord` has no
+    such field and never will: media is the thing perceived, not the result.
+    A free id is not derived, which is what makes the `StoreDerivedText` guard
+    above fall through to the main case for a first perception.
+    """
+    record = state.documents.get(source_id)
+    return record is not None and getattr(record, "derived_from", None) is not None
+
+
+def _holds_something_not_derived(state: CorpusState, source_id: str) -> bool:
+    """Whether the id is already taken by something that is not perceived text.
+
+    A *free* id is not "not derived" for this purpose -- it is the ordinary
+    first perception, and answering True here would refuse every transcript
+    that has ever been stored. The two conditions are one predicate because
+    getting either half alone wrong produces that failure.
+    """
+    return _kind_of(state, source_id) is not None and not _is_derived(state, source_id)
+
+
+def _derived_from(state: CorpusState, source_id: str) -> str | None:
+    """Which medium a source was perceived from, for naming it in a refusal."""
+    record = state.documents.get(source_id)
+    return getattr(record, "derived_from", None)
+
+
+def _repoints_a_transcript(state: CorpusState, source_id: str, parent: str) -> bool:
+    """Whether this store would move an existing transcript to a different medium.
+
+    False for a free id -- that is a first perception, not a move. False for a
+    re-perception naming the same parent, which is the ordinary case this
+    aggregate supports.
+    """
+    return _is_derived(state, source_id) and _derived_from(state, source_id) != parent
+
+
+def _reject_unless_json_list_of_strings(field: str, value: str) -> None:
+    """Refuse a JSON-encoded degradations list that is not one.
+
+    The check is `isinstance`-per-element rather than a bare `json.loads`
+    because well-formed JSON of the wrong shape is the dangerous case, not
+    malformed JSON. `'"no vision model"'` parses fine and `tuple()`s into
+    fifteen single characters; `'{"a": 1}'` parses fine and `tuple()`s into the
+    key. Both would reach a reader as a plausible-looking degradation list that
+    the producer never wrote, and neither is caught by `tuple[str, ...]` on the
+    record -- pydantic coerces `[1, 2]` to `("1", "2")` rather than complaining.
+    """
+    try:
+        parsed = json.loads(value)
+    except (ValueError, TypeError) as error:
+        raise CommandRejectedError(
+            f"{field} must be a JSON list of strings; got {value!r}"
+        ) from error
+    if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+        raise CommandRejectedError(f"{field} must be a JSON list of strings; got {value!r}")
+
+
+def _reject_unless_json_list_of_objects(field: str, value: str) -> None:
+    """Refuse a locator map that the resolver could not walk.
+
+    A *list of objects*, not a list of strings: a locator map is a sequence of
+    span records (`application/locators.py`'s `resolve` indexes it and reads
+    `["locator"]` off an element), so the two JSON fields on this command have
+    genuinely different shapes and one shared validator would be wrong for one
+    of them.
+
+    The element keys are deliberately not checked. The locator union belongs to
+    `readeverything` and will grow arms there; checking keys here would make
+    every locator kind it adds a refusal in this repository, which is the exact
+    coupling `locator_map` is a JSON string to avoid. "A list whose elements are
+    objects" is the whole invariant the resolver depends on, so it is the whole
+    invariant enforced.
+    """
+    try:
+        parsed = json.loads(value)
+    except (ValueError, TypeError) as error:
+        raise CommandRejectedError(
+            f"{field} must be a JSON list of objects; got {value!r}"
+        ) from error
+    if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
+        raise CommandRejectedError(f"{field} must be a JSON list of objects; got {value!r}")
+
+
+def _degradations_from(event: CorpusDerivedTextStored) -> tuple[str, ...]:
+    """Read an event's degradations, never raising, whatever the payload says.
+
+    `evolve` is documented total, and totality that holds for unknown events but
+    not for known-but-malformed ones is not the property the docstring claims.
+    `decide` refuses these payloads, so nothing this build writes reaches here
+    broken -- but events already written are never rewritten, so a payload from
+    an earlier build, a repair script, or a direct append is beyond the command
+    path's reach, and one of them raising mid-fold would leave the whole stream
+    unreplayable. A rejected command is recoverable; a poisoned log is not.
+
+    The degraded value is a marker rather than `()`. An empty tuple already
+    means something here -- `TextRecord.degradations` says a complete perception
+    is empty -- so degrading to `()` would turn "this field could not be read"
+    into a positive claim that perception went fine, which is the one reading
+    guaranteed to be wrong. The marker says a value was there and could not be
+    read, which is all that is honestly known at this point.
+    """
+    try:
+        parsed = json.loads(event.degradations)
+    except (ValueError, TypeError):
+        return UNREADABLE_DEGRADATIONS
+    if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+        return UNREADABLE_DEGRADATIONS
+    return tuple(parsed)
+
+
 def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
     """What each fact does to the state.
 
     Total on purpose: an unknown event leaves the state alone rather than
     raising, so a stream carrying an event this build does not know about still
     replays instead of failing halfway through.
+
+    Total for *known but malformed* events too, which is a narrower promise
+    than it sounds and used not to hold. `CorpusDerivedTextStored` carries two
+    JSON strings, and the one this fold parses went through
+    `tuple(json.loads(...))` until a reviewer pointed out that it both raises
+    on bad JSON and silently invents a tuple from good JSON of the wrong shape.
+    `decide` now refuses those payloads and `_degradations_from` degrades
+    instead of raising -- rejection at the boundary, tolerance at the fold,
+    because a rejected command costs a caller a retry and a poisoned log costs
+    an append-only stream its replay.
     """
     match event:
         case CorpusDocumentStored():
@@ -412,6 +762,43 @@ def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
                 published_at=event.published_at,
                 note=event.note,
                 fetched_at=event.fetched_at,
+            )
+            return state.model_copy(
+                update={
+                    "corpus_id": event.aggregate_id,
+                    "status": "created",
+                    "documents": {**state.documents, event.source_id: record},
+                    "by_digest": by_digest,
+                }
+            )
+
+        case CorpusDerivedTextStored():
+            previous = state.documents.get(event.source_id)
+            by_digest = dict(state.by_digest)
+            if previous is not None and by_digest.get(previous.sha256) == event.source_id:
+                # Identical supersession to `CorpusDocumentStored`: re-perceiving
+                # a video under the same derived id has to release the previous
+                # transcript's digest exactly as a re-fetch does, or the old
+                # bytes go on claiming an id that no longer holds them.
+                del by_digest[previous.sha256]
+            by_digest.setdefault(event.sha256, event.source_id)
+            record = TextRecord(
+                source_id=event.source_id,
+                sha256=event.sha256,
+                char_count=len(event.text),
+                title=event.title,
+                note=event.note,
+                derived_from=event.derived_from,
+                perceived_with=event.perceived_with,
+                # JSON on the event, tuple in the state: the list shape is
+                # what the producer speaks and the immutable one is what a
+                # pydantic state can hold without a shared mutable default.
+                # Read through a helper rather than `tuple(json.loads(...))`
+                # because that expression has two failure modes inside a fold
+                # promised total -- it raises on malformed JSON, and it quietly
+                # fabricates a plausible tuple from well-formed JSON of the
+                # wrong shape. See `_degradations_from`.
+                degradations=_degradations_from(event),
             )
             return state.model_copy(
                 update={

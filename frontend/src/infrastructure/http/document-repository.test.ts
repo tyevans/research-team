@@ -126,4 +126,41 @@ describe('HttpDocumentRepository writes', () => {
       expect.anything(),
     )
   })
+
+  /** The one place the perceive route's path is written down and checked.
+   *
+   * Every other test of this feature stubs `DocumentRepository` whole -- the
+   * component tests assert that `perceive(project, 'm1')` was called, which is
+   * true of a method posting to any string at all. So a typo in the URL would
+   * pass the entire frontend suite and 404 in production, and the only thing
+   * between those two states was a human having read this file beside
+   * `app.py`. That is `CLAUDE.md`'s fixture rule in another key: a test whose
+   * arrange phase goes through the same collaborator as the code under test
+   * cannot see that collaborator go wrong.
+   *
+   * The `{}` body is asserted too, because the route takes none and a client
+   * that started sending one would be inventing a contract.
+   */
+  it('posts an empty body to perceive, at the path the route declares', async () => {
+    const post = vi.fn().mockResolvedValue({ queued: true, source_id: 'm1' })
+    const repository = new HttpDocumentRepository({ post } as unknown as HttpClient)
+
+    await expect(repository.perceive(project, SourceId('m1'))).resolves.toBe(true)
+
+    expect(post).toHaveBeenCalledWith(
+      `/api/projects/${project}/sources/m1/perceive`,
+      {},
+      expect.anything(),
+    )
+  })
+
+  /** `queued: false` is a 202 and not an error -- the medium is going to be
+   *  perceived, because the queue already holds it. A repository that treated
+   *  it as a failure would make the caller apologise for a press that worked. */
+  it('reports a medium the queue already held without failing', async () => {
+    const post = vi.fn().mockResolvedValue({ queued: false, source_id: 'm1' })
+    const repository = new HttpDocumentRepository({ post } as unknown as HttpClient)
+
+    await expect(repository.perceive(project, SourceId('m1'))).resolves.toBe(false)
+  })
 })

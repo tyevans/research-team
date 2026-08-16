@@ -719,6 +719,16 @@ def _record_view(summary: SourceRecord) -> dict[str, Any]:
         fields["byte_count"] = summary.byte_count
     else:
         fields["char_count"] = summary.char_count
+        # Always present on a text row, `None`/`[]` for one nobody perceived.
+        # Unconditional rather than emitted only for a transcript, because the
+        # page's question is "was this derived, and what was missed" -- and a
+        # key that appears only on derived rows would make "not derived" and
+        # "an older server that did not send this" the same absence.
+        fields["derived_from"] = summary.derived_from
+        # A list, not the JSON string the event carries: the read model has
+        # already decoded it (`_decode_degradations`), and re-encoding it here
+        # would hand the browser a second thing to parse.
+        fields["degradations"] = list(summary.degradations)
     return fields
 
 

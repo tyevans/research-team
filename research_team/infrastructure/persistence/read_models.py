@@ -65,6 +65,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.application import SessionSummary, SummaryHealth
 from research_team.domain import (
+    UNREADABLE_DEGRADATIONS,
+    CorpusDerivedTextStored,
     CorpusDocumentDropped,
     CorpusDocumentStored,
     CorpusMediaStored,
@@ -628,6 +630,26 @@ class CorpusDocumentRow(ReadModel):
     note: str | None = None
     fetched_at: str | None = None
     dropped_reason: str | None = None
+    derived_from: str | None = None
+    """The media source this was perceived from, or None for a fetched
+    document -- mirrors `TextRecord.derived_from` exactly; see its docstring
+    for why this is not a third kind of row."""
+    locator_map: str | None = None
+    """JSON, read whole and never queried into. The locator union
+    (`TimeSpan | PageRef | BBox | CharSpan | ByteRange`) belongs to
+    `readeverything` and will grow arms there; a structured column here would
+    make every arm it adds a schema change in this repository, for a query
+    nobody makes -- resolving one offset needs every segment in the map, so
+    there is no partial read that would justify decomposing it. Nullable
+    because a fetched document has no map at all, not an empty one."""
+    perceived_with: str | None = None
+    """The capability fingerprint that produced this transcript, or None for
+    a fetched document. Mirrors `TextRecord.perceived_with`."""
+    degradations: str | None = None
+    """JSON list of strings, or the JSON encoding of `UNREADABLE_DEGRADATIONS`
+    if the event's own field could not be read -- see `_on_derived_text` for
+    why null is not used for that case. None (not `"[]"`) for a fetched
+    document, which is a different fact from "perception was complete"."""
     extracted_at: str | None = None
     """When this document's text was last folded into the graph, or None.
 
@@ -709,6 +731,44 @@ class CorpusMediaRow(ReadModel):
         return uuid5(CORPUS_NAMESPACE, f"{project_id}:{source_id}")
 
 
+def _decode_degradations(value: str) -> tuple[str, ...] | None:
+    """Parse a `degradations` JSON string, or say the shape is wrong.
+
+    Shared by the write side (`_on_derived_text`, deciding what to store) and
+    the read side (`to_record`, deciding what to hand back), so there is one
+    place that knows what "a JSON list of strings" means rather than two that
+    could drift. `None` means the value did not parse to that shape --
+    callers decide what to do about it, since a writer wants to fall back to
+    `UNREADABLE_DEGRADATIONS` and a reader wants the same, for the identical
+    reason `_degradations_from` gives in `corpus.py`: an empty tuple already
+    means "perception was complete", so silently producing `()` -- or, worse,
+    `tuple(json.loads(...))`'s own failure modes, a `ValueError` on bad JSON
+    or a tuple of dict keys on well-formed JSON of the wrong shape -- would
+    misreport a value that could not be read as one that was fine.
+    """
+    try:
+        parsed = json.loads(value)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+        return None
+    return tuple(parsed)
+
+
+def _degradations_of(stored: str | None) -> tuple[str, ...]:
+    """A row's `degradations` column as a tuple, keeping `[]` distinct from junk.
+
+    Three cases, and the middle one is the one a `or` collapses: no column at
+    all (a fetched document -- `()`), a column holding `[]` (a perception that
+    missed nothing -- also `()`, and it must not be reported as unreadable),
+    and a column that will not parse (`UNREADABLE_DEGRADATIONS`).
+    """
+    if not stored:
+        return ()
+    decoded = _decode_degradations(stored)
+    return decoded if decoded is not None else UNREADABLE_DEGRADATIONS
+
+
 def to_record(row: CorpusDocumentRow | CorpusMediaRow) -> SourceRecord:
     """Present a stored row as the aggregate's own no-bytes shape.
 
@@ -741,6 +801,31 @@ def to_record(row: CorpusDocumentRow | CorpusMediaRow) -> SourceRecord:
         note=row.note,
         fetched_at=row.fetched_at,
         dropped_reason=row.dropped_reason,
+        derived_from=row.derived_from,
+        perceived_with=row.perceived_with,
+        # Stored as JSON, wanted as a tuple. `row.degradations` is None for a
+        # fetched document (no field to decode) and JSON otherwise -- either
+        # the producer's list or `UNREADABLE_DEGRADATIONS` re-encoded by
+        # `_on_derived_text`. Routed through `_decode_degradations` rather than
+        # a bare `tuple(json.loads(...))`: this build never writes a row whose
+        # `degradations` fails that shape check, but a row is not an event --
+        # nothing here refuses on write the way `decide` does, so a row from a
+        # direct edit or an earlier build's bug is not this build's problem to
+        # rule out. `UNREADABLE_DEGRADATIONS` is the honest answer for that
+        # case too, for the same reason it is the answer for a malformed
+        # event.
+        # `is None` and not `or`, and the distinction is a shipped bug rather
+        # than a style point. `_decode_degradations("[]")` returns `()`, which
+        # is falsy, so `or UNREADABLE_DEGRADATIONS` fired on the *ordinary*
+        # case -- a complete perception, nothing missed -- and every clean
+        # transcript listed one degradation reading "<degradations could not be
+        # read from the event>". Measured on 2026-08-16 by the end-to-end test
+        # in `tests/integration/test_media_reaches_the_graph.py`, which is the
+        # first thing to look at a derived row that degraded nothing; the write
+        # side below (`_on_derived_text`) already used `is not None` and was
+        # right. The comment above this one explains why the marker exists at
+        # all, and it stays true -- it just must not be reached from `[]`.
+        degradations=_degradations_of(row.degradations),
     )
 
 
@@ -800,6 +885,72 @@ class CorpusProjection(DeclarativeProjection):
             # the person who can requeue it. Ordering makes this safe rather
             # than lucky: `ingest` stores before it extracts, so the
             # `DocumentExtracted` that follows sets the field again.
+            "extracted_at": None,
+        }
+        existing = await self._rows.get(row_id)
+        if existing is None:
+            await self._rows.save(CorpusDocumentRow(id=row_id, **fields))
+            return
+        for name, value in fields.items():
+            setattr(existing, name, value)
+        await self._rows.save(existing)
+
+    @handles(CorpusDerivedTextStored)
+    async def _on_derived_text(self, event: CorpusDerivedTextStored) -> None:
+        """Write a transcript into `corpus_documents`, not a new table.
+
+        A derived source *is* a text source -- it chunks, it quotes, it
+        extracts -- so every existing text reader has to find it here, not in
+        a parallel place that would need its own `get`/`list_all`/extraction
+        wiring to match. Load-and-mutate, matching `_on_stored` and
+        `_on_media_stored`: the version counter climbs on a re-perception
+        rather than resetting.
+
+        **`degradations` is stored as the marker, not as null, when the
+        event's own field will not parse.** The two candidates were: null
+        the column, or store `UNREADABLE_DEGRADATIONS` (JSON-encoded, since
+        the column is JSON text). Null loses the distinction `TextRecord`
+        depends on -- its docstring says an *empty* `degradations` means "a
+        complete perception", so a NULL that `to_record` decoded as `()`
+        would read back as a clean transcript when the truth is that this
+        column could not be read at all. Storing the marker instead means
+        `to_record` decodes it to the same tuple the aggregate's own
+        `_degradations_from` returns for the identical failure in `evolve` --
+        one string, one meaning, whichever side reads it, and `to_record`
+        reads through the identical `_decode_degradations` check this handler
+        writes through, so that parity is enforced by sharing the check
+        rather than by two call sites agreeing to write the same logic twice.
+        This branch is not reachable through `decide`, which refuses a
+        malformed payload before an event is ever written; it exists for the
+        same reason `_degradations_from` does, for an event this build did
+        not write -- an earlier build, a repair script, or a direct append.
+        """
+        row_id = CorpusDocumentRow.row_id(event.aggregate_id, event.source_id)
+        degradations = (
+            event.degradations
+            if _decode_degradations(event.degradations) is not None
+            else json.dumps(list(UNREADABLE_DEGRADATIONS))
+        )
+        fields = {
+            "project_id": event.aggregate_id,
+            "source_id": event.source_id,
+            "text": event.text,
+            "sha256": event.sha256,
+            "char_count": len(event.text),
+            "title": event.title,
+            # Written on every store, including when it is `None`. A
+            # re-perception or a revise that cleared the note has to clear the
+            # column too -- this handler load-and-mutates, so a field left out
+            # of `fields` keeps whatever the previous store put there, which
+            # would make a removed note reappear.
+            "note": event.note,
+            "dropped_reason": None,
+            "derived_from": event.derived_from,
+            "locator_map": event.locator_map,
+            "perceived_with": event.perceived_with,
+            "degradations": degradations,
+            # Same reasoning as `_on_stored`: new bytes mean any existing
+            # graph describes text this source no longer has.
             "extracted_at": None,
         }
         existing = await self._rows.get(row_id)

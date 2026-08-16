@@ -23,7 +23,9 @@ from research_team.domain.commands import (
     WriteFile,
 )
 from research_team.domain.corpus import (
+    UNREADABLE_DEGRADATIONS,
     Corpus,
+    CorpusDerivedTextStored,
     CorpusDocumentDropped,
     CorpusDocumentStored,
     CorpusMediaStored,
@@ -31,6 +33,7 @@ from research_team.domain.corpus import (
     DropSourceDocument,
     MediaRecord,
     SourceRecord,
+    StoreDerivedText,
     StoreSourceDocument,
     StoreSourceMedia,
     TextRecord,
@@ -108,6 +111,7 @@ from research_team.domain.session import (
 
 __all__ = [
     "SESSION_EVENTS",
+    "UNREADABLE_DEGRADATIONS",
     "AdvanceStage",
     "AdvanceTip",
     "AssistantMessageAdded",
@@ -118,6 +122,7 @@ __all__ = [
     "CompleteTurn",
     "ConversationCompacted",
     "Corpus",
+    "CorpusDerivedTextStored",
     "CorpusDocumentDropped",
     "CorpusDocumentStored",
     "CorpusMediaStored",
@@ -177,6 +182,7 @@ __all__ = [
     "StageChecksEvaluated",
     "StartRun",
     "StartSession",
+    "StoreDerivedText",
     "StoreSourceDocument",
     "StoreSourceMedia",
     "TextRecord",

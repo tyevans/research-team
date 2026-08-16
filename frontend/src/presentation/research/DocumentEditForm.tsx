@@ -31,6 +31,18 @@ export const DocumentEditForm = ({
 }) => {
   const revise = useReviseDocument(projectId)
 
+  /** A transcript: text a model perceived, not prose anyone wrote.
+   *
+   * Its Text field is withheld for the same reason a media source's is, and
+   * the server refuses it for a stronger one -- `CorpusEditor.revise` answers
+   * 400 for a `text` against a derived id, and unlike the media case `decide`
+   * would *not* catch it, because `StoreDerivedText` with changed text is
+   * exactly the shape a legitimate re-perception has. URI and Published go
+   * with it: a transcript was not fetched from anywhere, so those two belong
+   * to the medium and the server says so. Title and Note are ordinary. */
+  const isTranscript = document.kind === 'text' && document.derivedFrom !== null
+  const withoutText = document.kind === 'media' || isTranscript
+
   const [title, setTitle] = useState(document.title ?? '')
   const [uri, setUri] = useState(document.uri ?? '')
   const [note, setNote] = useState(document.note ?? '')
@@ -85,16 +97,18 @@ export const DocumentEditForm = ({
         />
       </label>
 
-      <label htmlFor={uriId} className="flex flex-col gap-1 text-sm">
-        URI
-        <input
-          id={uriId}
-          type="text"
-          className="input w-full"
-          value={uri}
-          onChange={(event) => setUri(event.target.value)}
-        />
-      </label>
+      {isTranscript ? null : (
+        <label htmlFor={uriId} className="flex flex-col gap-1 text-sm">
+          URI
+          <input
+            id={uriId}
+            type="text"
+            className="input w-full"
+            value={uri}
+            onChange={(event) => setUri(event.target.value)}
+          />
+        </label>
+      )}
 
       <label htmlFor={noteId} className="flex flex-col gap-1 text-sm">
         Note
@@ -107,16 +121,18 @@ export const DocumentEditForm = ({
         />
       </label>
 
-      <label htmlFor={publishedAtId} className="flex flex-col gap-1 text-sm">
-        Published
-        <input
-          id={publishedAtId}
-          type="text"
-          className="input w-full"
-          value={publishedAt}
-          onChange={(event) => setPublishedAt(event.target.value)}
-        />
-      </label>
+      {isTranscript ? null : (
+        <label htmlFor={publishedAtId} className="flex flex-col gap-1 text-sm">
+          Published
+          <input
+            id={publishedAtId}
+            type="text"
+            className="input w-full"
+            value={publishedAt}
+            onChange={(event) => setPublishedAt(event.target.value)}
+          />
+        </label>
+      )}
 
       {/* Metadata only for media. A media source has no text to revise, and
           the server says so -- `CorpusEditor.revise` answers 400 for a `text`
@@ -125,8 +141,9 @@ export const DocumentEditForm = ({
           only thing standing between a recording and being turned into a
           document; it is what stops the console offering an edit the server
           will refuse, because a field that exists and must not be used is an
-          invitation. */}
-      {document.kind === 'media' ? null : (
+          invitation. A transcript is withheld here too -- see `isTranscript`
+          above, where the argument is stronger rather than the same. */}
+      {withoutText ? null : (
         <label htmlFor={textId} className="flex flex-col gap-1 text-sm">
           Text
           <textarea

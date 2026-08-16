@@ -82,7 +82,14 @@ class ProjectCorpusReader:
         # rather than repeated: it is what `list_sources` already returns, so
         # a document read one way and listed the other cannot describe itself
         # differently.
-        return StoredDocument(record=to_record(row), text=row.text)
+        # `locator_map` comes off the row directly rather than through
+        # `to_record`: it is not on `TextRecord` and deliberately must not be
+        # (see `StoredDocument.locator_map` for why the aggregate's snapshot
+        # cannot afford it), so this is the one place the stored column
+        # becomes readable.
+        return StoredDocument(
+            record=to_record(row), text=row.text, locator_map=row.locator_map
+        )
 
     async def read_media(
         self, source_id: str, *, include_dropped: bool = False

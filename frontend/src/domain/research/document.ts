@@ -43,6 +43,17 @@ interface SourceProvenance {
 export interface TextSummary extends SourceProvenance {
   readonly kind: 'text'
   readonly charCount: number
+  /** The media source this was perceived from, `null` for a document somebody
+   *  fetched or typed.
+   *
+   * On the text arm rather than on `SourceProvenance`, mirroring the server:
+   * a transcript *is* text for every purpose a reader has, and media is the
+   * thing that gets derived *from*, never the derived thing. */
+  readonly derivedFrom: string | null
+  /** What the perception could not do, in words. Empty for a fetched document
+   *  and for a complete perception alike -- `derivedFrom` is what separates
+   *  those, so nothing has to read an empty list as "unknown". */
+  readonly degradations: readonly string[]
 }
 
 /** A source whose bytes are not text: a recording, a scan, a slide deck.
@@ -94,6 +105,45 @@ export const isDropped = (source: SourceSummary): boolean => source.droppedReaso
  *  either kind, for the same reason -- a media row is titleless exactly as
  *  often as a text one. */
 export const documentLabel = (source: SourceSummary): string => source.title ?? source.sourceId
+
+/** Which medium each derived text source came from, keyed by the medium.
+ *
+ * The join has to happen on this side because the wire carries the edge only
+ * one way: `derived_from` is on the text arm, mirroring the server, where
+ * media is the thing that gets derived *from* and never the derived thing.
+ * A media row therefore cannot say whether anything has been perceived out of
+ * it, and the listing is the only place both ends are visible at once.
+ *
+ * Computed over the *whole* corpus rather than the filtered view, for the same
+ * reason `extractableCount` is: a filter matching the recording and not its
+ * transcript would otherwise make a transcribed medium offer to be transcribed
+ * again, which is real duplicated work rather than a cosmetic error.
+ *
+ * **A dropped transcript still counts its medium as perceived**, and that is
+ * deliberate rather than an oversight of the `kind === 'text'` test below: this
+ * is the same rule `MediaPerceiver.unperceived` applies on the server, whose
+ * comment says it in as many words -- a dropped transcript still counts its
+ * parent as perceived. So a medium whose transcript was dropped shows
+ * "Transcript" here and would be excluded from batch perception there, and the
+ * two ends agree. *Would be*: `unperceived` has no caller yet -- there is no
+ * batch-perceive route in this slice -- so the agreement is between this
+ * function and a rule the server has written down rather than one it currently
+ * runs. Named because they agree by coincidence of shape and
+ * nothing else says so: a future reader "fixing" this to skip dropped rows
+ * would make the console offer to re-transcribe exactly the media the batch
+ * path refuses to touch, and neither side would report a conflict.
+ *
+ * Last one wins on a duplicate, which the server should never produce -- the
+ * derived id is the medium's plus `#perceived`, so there is one per medium.
+ * Nothing here refuses a second: a `Map` picking one arbitrarily is a strictly
+ * better answer than a throw on a listing the reader wanted to see. */
+export const derivedSources = (rows: readonly SourceSummary[]): ReadonlyMap<string, SourceId> => {
+  const derived = new Map<string, SourceId>()
+  for (const row of rows) {
+    if (row.kind === 'text' && row.derivedFrom !== null) derived.set(row.derivedFrom, row.sourceId)
+  }
+  return derived
+}
 
 /** A byte count a person can read, in decimal units.
  *

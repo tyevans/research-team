@@ -9,9 +9,10 @@ import {
   useExtractAll,
   useExtractDocument,
   useExtractionQueue,
+  usePerceiveDocument,
 } from '@application/research/use-extraction-queue.ts'
 import { useContainer } from '@app/container-context.tsx'
-import { documentLabel, type SourceSummary } from '@domain/research/document.ts'
+import { derivedSources, documentLabel, type SourceSummary } from '@domain/research/document.ts'
 import { unextractedCount } from '@domain/research/extraction-queue.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
@@ -65,6 +66,13 @@ export const useDocuments = (
   const extracting = useExtractDocument(projectId)
   const extractingAll = useExtractAll(projectId)
   const cancelling = useCancelExtraction(projectId)
+  const perceiving = usePerceiveDocument(projectId)
+
+  // Over `query.data` and not `filtered`, which is the point of computing it
+  // here rather than in the row: see `derivedSources`. A filter matching a
+  // recording but not its transcript would otherwise offer to transcribe
+  // something already transcribed.
+  const derived = useMemo(() => derivedSources(query.data ?? []), [query.data])
 
   const filtered = useMemo(() => {
     const rows = query.data ?? []
@@ -131,6 +139,31 @@ export const useDocuments = (
                 : `Queued ${String(queued)} document${queued === 1 ? '' : 's'} for extraction`,
             )
           },
+          onError: (error) => {
+            notify(errorMessage(error), 'bad')
+          },
+        })
+      },
+      derived,
+      // Its own flag rather than folded into `busy`: extracting and perceiving
+      // are different presses on different rows, and one in flight is no
+      // reason to grey out the other. Every media row goes quiet together
+      // while one is pending, which is `busy`'s bargain -- the mutation is not
+      // keyed by source, and two presses for one intention is the failure
+      // worth preventing.
+      perceiveBusy: perceiving.isPending,
+      onPerceive: (sourceId: SourceId) => {
+        perceiving.mutate(sourceId, {
+          // `queued: false` means the queue already holds this medium, exactly
+          // as on `onExtract` above -- not an error, and not a start.
+          onSuccess: (queued) => {
+            notify(queued ? 'Queued for transcription' : 'Already queued for transcription')
+          },
+          // Verbatim, and this is the one that matters. The route answers 503
+          // naming what the install is short of -- `AGENT_VISION_MODEL`,
+          // ffmpeg -- precisely so an operator is told where to go. A generic
+          // "could not transcribe" here would throw the only actionable
+          // sentence away, and the 404/409/410 detail with it.
           onError: (error) => {
             notify(errorMessage(error), 'bad')
           },
