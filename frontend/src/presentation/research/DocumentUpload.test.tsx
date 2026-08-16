@@ -8,7 +8,7 @@ import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream } from '@application/ports/event-stream.ts'
 import type { DocumentRepository } from '@application/ports/repositories.ts'
-import { ProjectId } from '@domain/shared/identifier.ts'
+import { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { StreamProvider } from '../shell/StreamProvider.tsx'
@@ -63,9 +63,11 @@ const fakeDocuments = (over: Partial<DocumentRepository> = {}): DocumentReposito
 // gate here (see `DocumentList.test.tsx`'s `queues the document whose extract
 // control was pressed` for the same pattern).
 const create = vi.fn<DocumentRepository['create']>().mockResolvedValue({
-  sourceId: 'hello',
+  sourceId: SourceId('hello'),
   kind: 'text',
   charCount: 5,
+  derivedFrom: null,
+  degradations: [],
   sha256: 'x',
   uri: null,
   title: 'Hello',
@@ -74,7 +76,7 @@ const create = vi.fn<DocumentRepository['create']>().mockResolvedValue({
   fetchedAt: null,
   droppedReason: null,
   extracted: false,
-} as Awaited<ReturnType<DocumentRepository['create']>>)
+})
 
 const uploadMedia = vi.fn<DocumentRepository['uploadMedia']>().mockResolvedValue({
   sourceId: 'keynote',

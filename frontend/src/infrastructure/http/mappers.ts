@@ -623,12 +623,20 @@ export const toSourceSummary = (raw: Dto<typeof dto.documentDto>): SourceSummary
         mediaType: raw.media_type,
         byteCount: raw.byte_count,
       }
-    : { ...toSourceProvenance(raw), kind: 'text', charCount: raw.char_count }
+    : {
+        ...toSourceProvenance(raw),
+        kind: 'text',
+        charCount: raw.char_count,
+        derivedFrom: raw.derived_from,
+        degradations: raw.degradations,
+      }
 
 export const toTextSummary = (raw: Dto<typeof dto.textSourceDto>): TextSummary => ({
   ...toSourceProvenance(raw),
   kind: 'text',
   charCount: raw.char_count,
+  derivedFrom: raw.derived_from,
+  degradations: raw.degradations,
 })
 
 export const toMediaSummary = (raw: Dto<typeof dto.mediaSourceDto>): MediaSummary => ({

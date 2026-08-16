@@ -49,7 +49,7 @@ class _Pending:
     """One document waiting to be extracted."""
 
     source_id: str
-    run: Callable[[], Awaitable[IngestReport]]
+    run: Callable[[], Awaitable[IngestReport | None]]
 
 
 class ExtractionQueue:
@@ -68,7 +68,7 @@ class ExtractionQueue:
         self,
         project_id: UUID,
         source_id: str,
-        run: Callable[[], Awaitable[IngestReport]],
+        run: Callable[[], Awaitable[IngestReport | None]],
     ) -> bool:
         """Enqueue one document. False if it was already queued or running.
 
@@ -170,6 +170,15 @@ class ExtractionQueue:
     async def _drain(self, project_id: UUID) -> None:
         """Extract this project's documents one at a time until none are waiting.
 
+        **`None` from `run` means "done, with no counts to report", and the
+        keys are omitted rather than zeroed.** Perception shares this queue --
+        transcribing an hour of audio is the same kind of slow, and a second
+        queue would be a second thing to cancel -- but it extracts nothing, and
+        `entities: 0` on a finished transcription would read as "extraction
+        found nothing" rather than "no extraction happened". The wire schema
+        already treats both counts as optional (`extractionOutcomeDto`), so
+        this needed no client change.
+
         A failure is recorded and the loop continues, matching
         `DispatchQueue._drain`: stopping on the first would turn one rate-limit
         refusal in the middle of "extract all" into forty documents silently
@@ -189,15 +198,16 @@ class ExtractionQueue:
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:  # noqa: BLE001 -- reported, not raised, from a task
-                    outcome = {"source_id": pending.source_id, "status": "failed"}
+                    outcome: dict[str, Any] = {
+                        "source_id": pending.source_id,
+                        "status": "failed",
+                    }
                     outcome["detail"] = str(error)
                 else:
-                    outcome = {
-                        "source_id": pending.source_id,
-                        "status": "done",
-                        "entities": report.entity_count,
-                        "relationships": report.relationship_count,
-                    }
+                    outcome = {"source_id": pending.source_id, "status": "done"}
+                    if report is not None:
+                        outcome["entities"] = report.entity_count
+                        outcome["relationships"] = report.relationship_count
 
                 self._finished.setdefault(project_id, {})[pending.source_id] = outcome
                 self._running.pop(project_id, None)

@@ -627,6 +627,17 @@ const sourceCommon = z.object({
 export const textSourceDto = sourceCommon.extend({
   kind: z.literal('text'),
   char_count: z.number(),
+  /** The media source this text was perceived from, `null` for a document
+   *  somebody fetched or typed. `maybe` rather than required: the key is
+   *  unconditional on this build's wire, but fixtures in this suite predate
+   *  it and a listing that refused to parse over a provenance annotation
+   *  would take the whole document browser down. */
+  derived_from: maybe(z.string()),
+  /** What the perception could not do, in words -- "no vision model
+   *  configured; frames were not described". Empty both for a fetched
+   *  document and for a complete perception; `derived_from` is what tells
+   *  those apart, which is why this is not a nullable tri-state. */
+  degradations: z.array(z.string()).default([]),
 })
 
 /** A source whose bytes are not text. `media_type` and `byte_count` are the

@@ -60,7 +60,14 @@ from research_team.application.graph_read import (
     MAX_USAGES,
     GraphReadPort,
 )
-from research_team.application.knowledge import KnowledgeError
+from research_team.application.knowledge import ExtractionNote, KnowledgeError
+from research_team.application.perception import (
+    MediaBytesMissing,
+    MediaPerceiver,
+    NotPerceivable,
+    PerceptionPort,
+    SourceDropped,
+)
 from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.timeline_read import (
@@ -662,6 +669,8 @@ def create_app(
     extract_queue: ExtractionQueue | None = None,
     definitions: DefinitionReaders | None = None,
     editor: CorpusEditor | None = None,
+    perception: PerceptionPort | None = None,
+    perceiver: MediaPerceiver | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -1322,6 +1331,128 @@ def create_app(
 
         async def run():
             return await extractor.extract(project_id, source_id)
+
+        return run
+
+    @app.post("/api/projects/{project_id}/sources/{source_id}/perceive")
+    async def perceive_source(project_id: UUID, source_id: str):
+        """Queue one stored medium for perception. 202, because it has not run.
+
+        **Queued rather than run inline, and through the extraction queue
+        rather than one of its own.** Transcribing an hour of audio takes
+        minutes, which is longer than any client should hold a connection, and
+        it is the same kind of slow thing happening to the same source rows --
+        so it reports through `ExtractionActivity` (stages `perceiving` and
+        `perceived`) and waits behind whatever else that project has running.
+        A second pane and a second queue would be a second thing to watch and
+        a second thing to cancel, for one workflow. See `extraction_queue.py`.
+
+        **Everything that can be refused is refused here, before the enqueue.**
+        A 404 delivered later through a progress pane is a 404 nobody connects
+        to the button they pressed. `perceiver.resolve` is what draws the four
+        source-side distinctions -- it is the same call `perceive` makes when
+        the job starts, so the route and the job cannot drift -- and the
+        capability check is separate because it is not about this source at
+        all. The mapping:
+
+        - **404** no such media source. A typo, or an ingest that never ran.
+        - **409** the id holds text. There is nothing in prose to perceive,
+          and this is not the same mistake as a typo.
+        - **409** the source was dropped, with the reason. It exists and
+          somebody excluded it on purpose; restoring it is the operator's move
+          and the detail says so, because "no such source" would send them
+          looking for an ingest that did happen.
+        - **410** the record is here and its blob is not, matching what
+          `/content` already answers for the same dangling reference one click
+          away.
+        - **503** this install has no vision model and no transcriber, naming
+          which, because a refusal that can only say "not configured" sends
+          nobody anywhere. Not 501: the route exists and the install is short
+          of something an operator can supply.
+
+        The capability check is synchronous (`capabilities()` is, on purpose)
+        and happens at the route rather than in the job, so an unconfigured
+        install refuses the press instead of accepting work it cannot do and
+        failing a minute later.
+
+        `queued: false` is still a 202, for `extract_source`'s reason: the
+        medium *is* going to be perceived, because it is already queued.
+        """
+        if perceiver is None or perception is None or extract_queue is None:
+            raise HTTPException(status_code=503, detail="perception is not configured")
+        await _require_project(project_id)
+        try:
+            await perceiver.resolve(project_id, source_id)
+        except UnknownDocument as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except NotPerceivable as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except SourceDropped as error:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{error}; restore it first if it should inform this project",
+            ) from error
+        except MediaBytesMissing as error:
+            raise HTTPException(status_code=410, detail=str(error)) from error
+
+        capabilities = perception.capabilities()
+        if not capabilities.any_model():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "this install cannot perceive media: " + "; ".join(capabilities.missing())
+                ),
+            )
+
+        queued = extract_queue.start(
+            project_id, source_id, _perception_of(project_id, source_id)
+        )
+        return JSONResponse(
+            status_code=202, content={"queued": queued, "source_id": source_id}
+        )
+
+    def _perception_of(project_id: UUID, source_id: str):
+        """A factory the queue can await later -- `_extraction_of`'s shape.
+
+        Returns `None` rather than an `IngestReport`: perception extracts
+        nothing, and reporting `entities: 0` for a finished transcription
+        would read as "extraction found nothing" instead of "no extraction
+        happened". `_drain` omits both counts for a `None`.
+
+        The `failed` note is reported here rather than left to the queue,
+        because the queue publishes nothing: without it a perception that
+        raised would leave the pane on `perceiving` forever, with the only
+        account of the failure sitting in a catch-up route nothing refetches.
+        The exception is re-raised so the queue still records the outcome.
+        """
+        assert perceiver is not None  # the route guards above
+
+        def _note(note: ExtractionNote) -> None:
+            if extraction is not None:
+                extraction.reporter(project_id)(note)
+
+        async def run():
+            _note(ExtractionNote(source_id=source_id, stage="perceiving"))
+            try:
+                report = await perceiver.perceive(project_id, source_id)
+            except Exception as error:
+                _note(ExtractionNote(source_id=source_id, stage="failed", detail=str(error)))
+                raise
+            _note(
+                ExtractionNote(
+                    source_id=source_id,
+                    stage="perceived",
+                    detail=(
+                        f"{report.char_count} characters as {report.source_id}"
+                        + (
+                            f"; {'; '.join(report.degradations)}"
+                            if report.degradations
+                            else ""
+                        )
+                    ),
+                )
+            )
+            return None
 
         return run
 

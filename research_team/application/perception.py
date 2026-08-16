@@ -22,6 +22,7 @@ from uuid import UUID
 
 from eventsource.application.aggregates.repository import AggregateRepository
 
+from research_team.application.corpus_read import MediaHandle
 from research_team.application.document_extraction import CorpusReaders, UnknownDocument
 from research_team.domain.corpus import Corpus, MediaRecord, StoreDerivedText, TextRecord
 
@@ -278,32 +279,7 @@ class MediaPerceiver:
         and better -- but only after the money is spent, which is why this is
         not the duplicate pre-check it looks like.
         """
-        reader = self._corpus_readers(project_id)
-        handle = await reader.read_media(source_id)
-        if handle is None:
-            # Three states arrive here as one `None`, and every extra read
-            # below is on the failure path only. Text: `read_media` declines
-            # it, `read_document` finds it. Dropped media: `read_media` hides
-            # it by default, and only the second read with `include_dropped`
-            # can tell it from an id nobody ever claimed -- which is the
-            # distinction `CorpusReadPort.read_media`'s docstring insists on
-            # and which this method got wrong until a reviewer measured it.
-            if await reader.read_document(source_id, include_dropped=True) is not None:
-                raise NotPerceivable(
-                    f"source {source_id!r} holds text; there is nothing in it to perceive"
-                )
-            dropped = await reader.read_media(source_id, include_dropped=True)
-            if dropped is not None:
-                raise SourceDropped(
-                    f"source {source_id!r} was dropped: {dropped.record.dropped_reason}"
-                )
-            raise UnknownDocument(f"no media source {source_id!r} in project {project_id}")
-
-        if handle.stat is None:
-            # Before the capability check and before the port, because it is
-            # free and the other two are not: there is no reading to be had
-            # from bytes that are gone, whatever this install can do.
-            raise MediaBytesMissing(f"the bytes for {source_id!r} are no longer stored")
+        handle = await self.resolve(project_id, source_id)
 
         capabilities = self._port.capabilities()
         if not capabilities.any_model():
@@ -355,6 +331,52 @@ class MediaPerceiver:
             perceived_with=perceived.fingerprint,
             degradations=perceived.degradations,
         )
+
+    async def resolve(self, project_id: UUID, source_id: str) -> MediaHandle:
+        """The medium this id names, or the reason there is nothing to read.
+
+        Split out of `perceive` rather than duplicated at its one other
+        caller. The web route enqueues perception rather than running it --
+        transcribing an hour of audio would hold the connection open for
+        minutes -- but it still has to answer *now* whether the id names a
+        medium at all, because a 404 delivered later through a progress pane
+        is a 404 nobody connects to the button they pressed. Two copies of
+        these four refusals would drift, and the drift would show up as the
+        route and the job disagreeing about what a dropped source is.
+
+        Cheap on purpose: every read here is against the corpus projection,
+        and none of it touches the perception port or the blob bytes. That is
+        what makes it affordable to run twice -- once at the route, once again
+        inside `perceive` when the job actually starts.
+        """
+        reader = self._corpus_readers(project_id)
+        handle = await reader.read_media(source_id)
+        if handle is None:
+            # Three states arrive here as one `None`, and every extra read
+            # below is on the failure path only. Text: `read_media` declines
+            # it, `read_document` finds it. Dropped media: `read_media` hides
+            # it by default, and only the second read with `include_dropped`
+            # can tell it from an id nobody ever claimed -- which is the
+            # distinction `CorpusReadPort.read_media`'s docstring insists on
+            # and which this method got wrong until a reviewer measured it.
+            if await reader.read_document(source_id, include_dropped=True) is not None:
+                raise NotPerceivable(
+                    f"source {source_id!r} holds text; there is nothing in it to perceive"
+                )
+            dropped = await reader.read_media(source_id, include_dropped=True)
+            if dropped is not None:
+                raise SourceDropped(
+                    f"source {source_id!r} was dropped: {dropped.record.dropped_reason}"
+                )
+            raise UnknownDocument(f"no media source {source_id!r} in project {project_id}")
+
+        if handle.stat is None:
+            # Before the capability check and before the port, because it is
+            # free and the other two are not: there is no reading to be had
+            # from bytes that are gone, whatever this install can do.
+            raise MediaBytesMissing(f"the bytes for {source_id!r} are no longer stored")
+
+        return handle
 
     async def unperceived(self, project_id: UUID) -> tuple[str, ...]:
         """Every live medium with no transcript, in listing order.

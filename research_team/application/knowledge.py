@@ -74,7 +74,20 @@ class SourceRef:
 
 
 ExtractionStage = Literal[
-    "storing", "extracting", "extracted", "consolidating", "consolidated", "failed"
+    "storing",
+    "extracting",
+    "extracted",
+    "consolidating",
+    "consolidated",
+    "failed",
+    # Perception's two, on this literal rather than on a channel of their own.
+    # A transcription is a second slow thing that happens to a source row, and
+    # a second progress pane beside the extraction one would be a second place
+    # to look for "is anything running" -- see `extraction_queue.py`, which
+    # refused a second channel for the same reason. `perceived` is terminal;
+    # a perception that fails reports `failed`, like an extraction that does.
+    "perceiving",
+    "perceived",
 ]
 
 

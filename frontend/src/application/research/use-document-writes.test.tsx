@@ -23,6 +23,8 @@ const row: SourceSummary = {
   sourceId: SourceId('s1'),
   kind: 'text',
   charCount: 0,
+  derivedFrom: null,
+  degradations: [],
   sha256: '',
   uri: null,
   title: null,

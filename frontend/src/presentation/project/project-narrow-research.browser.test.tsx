@@ -78,6 +78,8 @@ const DOCUMENTS = Array.from({ length: 40 }, (_, index) => ({
   sourceId: SourceId(`0000${String(index).padStart(4, '0')}-0000-0000-0000-000000000000`),
   kind: 'text',
   charCount: 4000,
+  derivedFrom: null,
+  degradations: [],
   sha256: 'a'.repeat(64),
   uri: `https://example.invalid/${String(index)}`,
   title: `Source ${String(index)}`,

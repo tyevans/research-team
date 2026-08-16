@@ -35,6 +35,8 @@ const text = (over: Partial<DocumentText> = {}): DocumentText => ({
   sourceId: SOURCE,
   kind: 'text',
   charCount: 41,
+  derivedFrom: null,
+  degradations: [],
   sha256: 'deadbeef',
   uri: null,
   title: 'Ada Lovelace',

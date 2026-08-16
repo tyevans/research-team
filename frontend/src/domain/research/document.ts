@@ -43,6 +43,17 @@ interface SourceProvenance {
 export interface TextSummary extends SourceProvenance {
   readonly kind: 'text'
   readonly charCount: number
+  /** The media source this was perceived from, `null` for a document somebody
+   *  fetched or typed.
+   *
+   * On the text arm rather than on `SourceProvenance`, mirroring the server:
+   * a transcript *is* text for every purpose a reader has, and media is the
+   * thing that gets derived *from*, never the derived thing. */
+  readonly derivedFrom: string | null
+  /** What the perception could not do, in words. Empty for a fetched document
+   *  and for a complete perception alike -- `derivedFrom` is what separates
+   *  those, so nothing has to read an empty list as "unknown". */
+  readonly degradations: readonly string[]
 }
 
 /** A source whose bytes are not text: a recording, a scan, a slide deck.

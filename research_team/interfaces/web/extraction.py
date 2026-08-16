@@ -35,8 +35,12 @@ PascalCase like the event names beside it, because the browser switches on one
 never become one -- the log has no such entry, and that is the point.
 """
 
-#: Stages after which nothing more will arrive for that source.
-_TERMINAL = ("consolidated", "failed")
+#: Stages after which nothing more will arrive for that source. `perceived`
+#: is here for `consolidated`'s reason and not by analogy: a perception ends
+#: there, and a stage left off this tuple leaves its frames in `_running`
+#: forever -- `in_flight` would go on reporting a finished transcription to the
+#: roster, and `active_projects` would count the project as busy.
+_TERMINAL = ("consolidated", "failed", "perceived")
 
 
 class ExtractionActivity:

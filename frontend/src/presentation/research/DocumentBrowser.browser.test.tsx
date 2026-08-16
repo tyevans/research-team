@@ -58,6 +58,8 @@ const documents: readonly TextSummary[] = Array.from({ length: 24 }, (_, index) 
   sourceId: SourceId(`0000000${String(index).padStart(1, '0')}-1111-1111-1111-111111111111`),
   kind: 'text',
   charCount: 1200 + index,
+  derivedFrom: null,
+  degradations: [],
   sha256: 'abc',
   uri: null,
   title: `A paper about topic number ${index}`,
