@@ -240,7 +240,14 @@ def parse_results(payload: object, limit: int) -> tuple[SearchResult, ...] | Non
     if not isinstance(payload, dict):
         return None
     results = payload.get("results") or []
-    return tuple(_parse_one(result) for result in results[:limit])
+    # The payload guard above is total for the payload's own shape, but
+    # not one level down -- `{"results": ["oops"]}` is a well-formed payload
+    # carrying a result that is not a dict, and `_parse_one`'s `result.get`
+    # raised `AttributeError` on it. Skipped rather than raised, matching the
+    # totality this function already promises for the payload itself: a
+    # skipped result is still a result set, where a raised exception was a
+    # lost turn.
+    return tuple(_parse_one(result) for result in results[:limit] if isinstance(result, dict))
 
 
 def _parse_one(result: dict) -> SearchResult:

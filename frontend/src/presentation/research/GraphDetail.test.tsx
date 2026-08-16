@@ -212,7 +212,7 @@ it("renders the definition's citations, linked to the source document", async ()
       definitions: fakeDefinitions({
         definition: vi.fn().mockResolvedValue(
           aDefinition({
-            citations: [{ sourceId, start: 5, end: 40 }],
+            citations: [{ sourceId, start: 5, end: 40, atSeconds: null }],
           }),
         ),
       }),
@@ -229,6 +229,104 @@ it("renders the definition's citations, linked to the source document", async ()
   expect(citationLink.closest('a')).toHaveAttribute(
     'href',
     projectHref(PROJECT, { facet: 'doc', id: sourceId }),
+  )
+})
+
+it("renders today's link, byte-for-byte, for a citation with no moment", async () => {
+  // The overwhelming majority of citations: every text source has no locator
+  // map, so `atSeconds` is `null` for almost every citation this feature will
+  // ever render. A regression here would touch nearly every citation in the
+  // product, which is why this pins the *exact* href rather than just
+  // checking it lacks a `?t=`.
+  const sourceId = '44444444-4444-4444-4444-444444444444'
+  renderDetail(
+    <GraphDetail
+      projectId={PROJECT}
+      view={VIEW}
+      selected="ada"
+      onSelect={noop}
+      onRemove={noop}
+      onClose={noop}
+    />,
+    {
+      definitions: fakeDefinitions({
+        definition: vi.fn().mockResolvedValue(
+          aDefinition({
+            citations: [{ sourceId, start: 5, end: 40, atSeconds: null }],
+          }),
+        ),
+      }),
+    },
+  )
+
+  await screen.findByText(/Acme Corporation is a supplier/)
+  const citationLink = screen.getByText(sourceId.slice(0, 8))
+  expect(citationLink.closest('a')).toHaveAttribute(
+    'href',
+    projectHref(PROJECT, { facet: 'doc', id: sourceId }),
+  )
+})
+
+it('links a citation at second zero to the seek query, not a bare link', async () => {
+  // The falsy trap: `0` is a real citation at a source's first second, and
+  // `citation.atSeconds ? …` would silently drop the query for exactly this
+  // case. This is the test most likely to be skipped for that reason.
+  const sourceId = '55555555-5555-5555-5555-555555555555'
+  renderDetail(
+    <GraphDetail
+      projectId={PROJECT}
+      view={VIEW}
+      selected="ada"
+      onSelect={noop}
+      onRemove={noop}
+      onClose={noop}
+    />,
+    {
+      definitions: fakeDefinitions({
+        definition: vi.fn().mockResolvedValue(
+          aDefinition({
+            citations: [{ sourceId, start: 5, end: 40, atSeconds: 0 }],
+          }),
+        ),
+      }),
+    },
+  )
+
+  await screen.findByText(/Acme Corporation is a supplier/)
+  const citationLink = screen.getByText(sourceId.slice(0, 8))
+  expect(citationLink.closest('a')).toHaveAttribute(
+    'href',
+    `${projectHref(PROJECT, { facet: 'doc', id: sourceId })}?t=0`,
+  )
+})
+
+it('links a citation carrying an offset to the seek query', async () => {
+  const sourceId = '66666666-6666-6666-6666-666666666666'
+  renderDetail(
+    <GraphDetail
+      projectId={PROJECT}
+      view={VIEW}
+      selected="ada"
+      onSelect={noop}
+      onRemove={noop}
+      onClose={noop}
+    />,
+    {
+      definitions: fakeDefinitions({
+        definition: vi.fn().mockResolvedValue(
+          aDefinition({
+            citations: [{ sourceId, start: 5, end: 40, atSeconds: 252 }],
+          }),
+        ),
+      }),
+    },
+  )
+
+  await screen.findByText(/Acme Corporation is a supplier/)
+  const citationLink = screen.getByText(sourceId.slice(0, 8))
+  expect(citationLink.closest('a')).toHaveAttribute(
+    'href',
+    `${projectHref(PROJECT, { facet: 'doc', id: sourceId })}?t=252`,
   )
 })
 

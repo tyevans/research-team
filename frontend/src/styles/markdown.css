@@ -115,6 +115,12 @@ h6.md-h {
 .md-link:hover {
   text-decoration: underline;
 }
+/* `.md-link-internal` (markdown.ts's hook adds it alongside `.md-link` on an
+ * in-app hash-route href) intentionally has no rule of its own yet -- it
+ * looks identical to an external link today. The class exists so a future
+ * change (an icon marking "leaves the page" on the external case, say) has
+ * something to select without a specificity fight against `.md-link`
+ * itself. */
 /* a link target we refuse to make clickable -- still readable, visibly inert */
 .md-link-inert {
   color: var(--fg-dim);

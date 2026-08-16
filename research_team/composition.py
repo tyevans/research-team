@@ -5,10 +5,11 @@ deepagents, and the environment are chosen and wired to the ports -- so
 swapping any of them is an edit here and nowhere else.
 """
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
 # Imported for its side effect as much as its names: redstring registers its
@@ -59,7 +60,10 @@ from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import KnowledgeError, SourceRef
-from research_team.application.media_acquisition import MediaAcceptWorker
+from research_team.application.media_acquisition import (
+    MediaAcceptReconciler,
+    MediaAcceptWorker,
+)
 from research_team.application.media_curation import MediaCurationTextPort, MediaSearchPort
 from research_team.application.ontology_discovery import OntologyDiscoveryService
 from research_team.application.perception import MediaPerceiver, PerceptionPort
@@ -467,6 +471,16 @@ class Application:
     long comment where this is built, beside `media_proposal_repository`, for
     why it lives there and not among the projections above it."""
 
+    media_accept_reconciler: MediaAcceptReconciler
+    """Re-runs `media_accept_worker` over every proposal a crash left
+    `accepted`, once, from `start()`.
+
+    A field rather than a local built inside `start()` because `start()` is
+    handed no collaborators -- and a field with no route reading it, unlike
+    `media_accept_worker` above: nothing outside `start()` calls this, and the
+    spec (`docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`)
+    rules out an operator surface that would give it a second caller."""
+
     perceiver: MediaPerceiver
     """Reads a stored medium into a derived text source, over this instance's
     `perception` and corpus repository.
@@ -482,6 +496,18 @@ class Application:
     """`project_id`, if `build_application` was given one. Attached in
     `start()` rather than at construction, because attaching talks to a
     store and building is deliberately synchronous."""
+
+    _reconciliation: list[asyncio.Task[None]] = field(default_factory=list, repr=False)
+    """The reconciliation task `start()` scheduled, if it has been called.
+
+    A one-element list rather than a plain `asyncio.Task | None` field:
+    `Application` is `frozen=True`, so `start()` cannot rebind an attribute.
+    `Grant._remaining` in `application/grants.py` uses the same shape for the
+    same reason.
+
+    Held at all because `asyncio.create_task` only weakly references its task
+    -- the note `app.py` already carries above `create_app`'s body -- so a
+    reconciliation nothing kept a reference to could be collected mid-download."""
 
     @property
     def knowledge(self) -> RedstringKnowledge | None:
@@ -527,6 +553,24 @@ class Application:
         await self.definitions.start()
         await self.ontology.start()
         await self.media_proposals.start()
+        # Reconcile proposals a crash left `accepted` -- designed in
+        # `docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`.
+        # Here rather than in `web.py`'s lifespan, which is the spec's central
+        # ruling: `web.py` carries three "was missing -- these routes have been
+        # 503ing in this entrypoint while the test fixture wired one and
+        # passed" comments, and a reconciliation that never ran looks exactly
+        # like one that found nothing to do, so it must not depend on a call
+        # site anyone can forget.
+        #
+        # After `caught_up()`, not merely `start()`: a projection mid-replay
+        # under-reports the accepted set and there is no second pass. The cost
+        # is that startup waits for a catch-up it would need before serving
+        # anything about proposals anyway.
+        #
+        # Scheduled, not awaited: an abandoned download is a download, and
+        # re-fetching an hour of video must not hold the port closed.
+        await self.media_proposals.caught_up()
+        self._reconciliation.append(asyncio.create_task(self.media_accept_reconciler.run()))
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
@@ -591,6 +635,22 @@ class Application:
         await self.definitions.caught_up()
         await self.ontology.caught_up()
 
+    async def reconciled(self) -> None:
+        """Wait until startup reconciliation has finished, if it was scheduled.
+
+        The same seam `summaries_caught_up` is, and for the same reason: the
+        work is deliberately off the startup path, which is invisible to a
+        person and untestable without this -- and a reconciliation observable
+        only by sleeping is one that would rot.
+
+        Returns immediately if `start()` has not run. Never raises what the
+        reconciliation hit: `MediaAcceptReconciler.run` is total by
+        construction (its docstring says why), so there is nothing here to
+        re-raise.
+        """
+        for task in self._reconciliation:
+            await task
+
     async def close(self) -> None:
         """Stop anything still running, then let go of the store.
 
@@ -604,6 +664,15 @@ class Application:
         would make that round a recorded failure rather than the last one. The
         wait is bounded by whatever the in-flight turn takes.
         """
+        # Reconciliation is cancelled rather than awaited, and it goes first
+        # because it reads through the projections and the store stopped
+        # below. Cancelling loses nothing: the proposal it was working on
+        # stays `accepted`, which is precisely the state the next `start()`
+        # reconciles -- whereas awaiting would hold shutdown for as long as
+        # the download it is in the middle of.
+        for task in self._reconciliation:
+            task.cancel()
+        self._reconciliation.clear()
         await self.research.stop_all()
         await self.turns.cancel_all()
         await self.summaries.stop()
@@ -1767,35 +1836,6 @@ def build_application(
     # motivates gathering the projections applies here too: a worker built
     # somewhere else, or not at all, is a worker nobody notices is missing
     # until an accepted proposal never turns into a source.
-    #
-    # `media_http_client` is a parameter, mirroring `perception` above, so a
-    # test can inject an `httpx.MockTransport` and never reach the network --
-    # exactly how `tests/application/test_media_acquisition.py`'s own fakes
-    # work, and the no-network guarantee `build_application`'s docstring
-    # already promises for `perception`.
-    # A bare `httpx.AsyncClient()` carries httpx's 5-second default read
-    # timeout, which made `fetch_media.TIMEOUT = httpx.Timeout(30.0)` inert
-    # for every caller through this composition site -- that constant only
-    # applies on the branch where a caller builds its own client, and nothing
-    # here ever did. Downloading a multi-megabyte video under a 5s ceiling is
-    # how "stuck accepted forever" (see `MediaAcceptWorker.run`'s widened
-    # exception handling) got hit routinely rather than rarely: a slow but
-    # otherwise healthy host would trip `httpx.HTTPError` on ordinary size,
-    # not just on an actually-broken one. 30s matches `fetch_media.TIMEOUT`
-    # so the two paths that share `download_media` also share the ceiling
-    # they run it under.
-    resolved_media_http_client = (
-        media_http_client
-        if media_http_client is not None
-        else httpx.AsyncClient(timeout=httpx.Timeout(30.0))
-    )
-    media_accept_worker = MediaAcceptWorker(
-        reads=media_proposals,
-        proposals=media_proposal_repository,
-        editor=editor,
-        perceiver=media_perceiver,
-        client=resolved_media_http_client,
-    )
 
     def topic_reader(target_project_id: UUID) -> TopicReadPort:
         """This project's `TopicReadPort`, over the one repository above.
@@ -2001,6 +2041,60 @@ def build_application(
         summaries=SummaryProjects(summaries),
     )
 
+    # Built last, deliberately: this used to be built ~250 lines earlier,
+    # immediately after `media_perceiver`, where nothing built from
+    # `resolved_media_http_client`/`media_accept_worker` was used before the
+    # `Application(...)` call at the end of this function -- both names are
+    # only read from inside closures (`open_graph`'s `fetch_media` below,
+    # and `Application`'s own field) that Python resolves at call time, not
+    # at definition time. Anything raising between the old site and
+    # `Application(...)` left the client constructed with no owner to close
+    # it, since `Application.close()` is unconditional but only exists once
+    # an `Application` does. Moved here, directly preceding
+    # `Application(...)`, instead of wrapped in `try/finally`: the window
+    # closes by construction rather than by a handler that would itself
+    # need testing (see `fece941`'s commit message for the full reasoning).
+    #
+    # `media_http_client` is a parameter, mirroring `perception` elsewhere in
+    # this function, so a test can inject an `httpx.MockTransport` and never
+    # reach the network --
+    # exactly how `tests/application/test_media_acquisition.py`'s own fakes
+    # work, and the no-network guarantee `build_application`'s docstring
+    # already promises for `perception`.
+    #
+    # A bare `httpx.AsyncClient()` carries httpx's 5-second default read
+    # timeout, which made `fetch_media.TIMEOUT = httpx.Timeout(30.0)` inert
+    # for every caller through this composition site -- that constant only
+    # applies on the branch where a caller builds its own client, and nothing
+    # here ever did. Downloading a multi-megabyte video under a 5s ceiling is
+    # how "stuck accepted forever" (see `MediaAcceptWorker.run`'s widened
+    # exception handling) got hit routinely rather than rarely: a slow but
+    # otherwise healthy host would trip `httpx.HTTPError` on ordinary size,
+    # not just on an actually-broken one. 30s matches `fetch_media.TIMEOUT`
+    # so the two paths that share `download_media` also share the ceiling
+    # they run it under.
+    resolved_media_http_client = (
+        media_http_client
+        if media_http_client is not None
+        else httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+    )
+    media_accept_worker = MediaAcceptWorker(
+        reads=media_proposals,
+        proposals=media_proposal_repository,
+        editor=editor,
+        perceiver=media_perceiver,
+        client=resolved_media_http_client,
+    )
+    # Built here rather than at the projections above, because it needs the
+    # worker, which needs everything the comment above `media_accept_worker`
+    # explains. `reads` is `media_proposals` again -- the same runner the
+    # worker resolves one proposal through, now also asked for the whole
+    # accepted set.
+    media_accept_reconciler = MediaAcceptReconciler(
+        reads=media_proposals,
+        worker=media_accept_worker,
+    )
+
     return Application(
         service=service,
         feed=LiveFeed(repository),
@@ -2036,6 +2130,7 @@ def build_application(
         perception=resolved_perception,
         perceiver=media_perceiver,
         media_accept_worker=media_accept_worker,
+        media_accept_reconciler=media_accept_reconciler,
         _media_http_client=resolved_media_http_client,
         _initial_project_id=project_id,
     )

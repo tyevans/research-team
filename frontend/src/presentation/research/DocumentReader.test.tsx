@@ -296,6 +296,107 @@ it('says so when a video source cannot load its bytes', async () => {
   expect(screen.queryByTestId('media-player')).not.toBeInTheDocument()
 })
 
+it('seeks a video to the requested second on mount', async () => {
+  const documents = fakeDocuments(
+    vi.fn(() => {
+      throw new Error('read() must not be called for media')
+    }),
+  )
+
+  renderWithContainer(
+    <DocumentReader projectId={PROJECT} sourceId={MEDIA} source={media()} seekSeconds={252} />,
+    { documents },
+  )
+
+  const player = await screen.findByTestId('media-player')
+  // jsdom implements `currentTime` as a plain settable property (it plays
+  // nothing, so there is no real seek to observe), which is exactly what
+  // makes it a fair assertion here: this is testing that the component sets
+  // it, not that a real decoder responds.
+  expect((player as HTMLMediaElement).currentTime).toBe(252)
+})
+
+it('does not seek when no second is requested', async () => {
+  const documents = fakeDocuments(
+    vi.fn(() => {
+      throw new Error('read() must not be called for media')
+    }),
+  )
+
+  renderWithContainer(<DocumentReader projectId={PROJECT} sourceId={MEDIA} source={media()} />, {
+    documents,
+  })
+
+  const player = await screen.findByTestId('media-player')
+  // jsdom's default `currentTime` for an element that was never seeked -- the
+  // failure mode this guards is the component seeking to `0` unconditionally
+  // rather than leaving the element alone, which this assertion cannot tell
+  // apart from the correct behaviour by itself. `seekSeconds={0}` below is
+  // the test that actually distinguishes them.
+  expect((player as HTMLMediaElement).currentTime).toBe(0)
+})
+
+it('seeks again for a second citation into the same source, without remounting', async () => {
+  // The case task 4's review found unreachable-until-wired and now reachable:
+  // `DocumentList.tsx` keys this reader on the *source id*, and two
+  // citations into the same source at different offsets share that key --
+  // so a second click updates `seekSeconds` on the already-mounted reader
+  // rather than remounting it. An effect with empty deps would have fired
+  // once for the first offset and never again; this is the test that would
+  // have caught that and does catch a regression back to it.
+  const documents = fakeDocuments(
+    vi.fn(() => {
+      throw new Error('read() must not be called for media')
+    }),
+  )
+
+  const { rerender } = renderWithContainer(
+    <DocumentReader projectId={PROJECT} sourceId={MEDIA} source={media()} seekSeconds={100} />,
+    { documents },
+  )
+
+  const player = await screen.findByTestId('media-player')
+  expect((player as HTMLMediaElement).currentTime).toBe(100)
+
+  rerender(
+    <DocumentReader projectId={PROJECT} sourceId={MEDIA} source={media()} seekSeconds={300} />,
+  )
+
+  expect((player as HTMLMediaElement).currentTime).toBe(300)
+})
+
+it('seeks to second zero, not skipping the seek because it is falsy', async () => {
+  // The same falsy trap as the citation link: `0` is a real requested
+  // second, and `if (seekSeconds)` would silently do nothing here. Spying on
+  // the setter is what tells this apart from "never touched `currentTime`",
+  // which the previous test's assertion alone cannot.
+  const documents = fakeDocuments(
+    vi.fn(() => {
+      throw new Error('read() must not be called for media')
+    }),
+  )
+  const setter = vi.fn()
+  Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
+    configurable: true,
+    get() {
+      return 0
+    },
+    set: setter,
+  })
+
+  try {
+    renderWithContainer(
+      <DocumentReader projectId={PROJECT} sourceId={MEDIA} source={media()} seekSeconds={0} />,
+      { documents },
+    )
+    await screen.findByTestId('media-player')
+    expect(setter).toHaveBeenCalledWith(0)
+  } finally {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (HTMLMediaElement.prototype as any).currentTime
+  }
+})
+
 it('says so when an image source cannot load its bytes', async () => {
   // The `<img>` branch has its own `onError`, and would have kept the broken
   // -image glyph if only the media elements had been wired. Covered

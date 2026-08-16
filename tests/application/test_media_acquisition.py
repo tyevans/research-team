@@ -25,6 +25,7 @@ from research_team.application import media_acquisition
 from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.media_acquisition import (
     AcceptedProposal,
+    MediaAcceptReconciler,
     MediaAcceptWorker,
     MediaMoved,
     MediaTooLarge,
@@ -703,3 +704,61 @@ async def test_a_corpus_store_raising_mid_write_calls_aclose_on_the_stream(
         await worker.run(proposal_id=proposal_id)
 
     assert fake_stream.closed is True
+
+
+# --- MediaAcceptReconciler -----------------------------------------------
+#
+# `worker` here is a bare fake recording calls, not a real `MediaAcceptWorker`
+# -- the reconciler's contract is "loop the ids, call `worker.run` on each,
+# never let one raise stop the rest", which does not depend on anything
+# `MediaAcceptWorker` itself does. Re-run safety is `MediaAcceptWorker`'s own
+# docstring's argument and is not re-tested here.
+
+
+class FakeReconcilerReads:
+    def __init__(self, ids: list[str]) -> None:
+        self._ids = ids
+
+    async def accepted_proposal_ids(self) -> list[str]:
+        return self._ids
+
+
+class FakeReconcilerWorker:
+    def __init__(self, *, raise_on: str | None = None) -> None:
+        self.calls: list[str] = []
+        self.raise_on = raise_on
+
+    async def run(self, proposal_id: str) -> None:
+        self.calls.append(proposal_id)
+        if proposal_id == self.raise_on:
+            raise RuntimeError(f"asset for {proposal_id} is gone")
+
+
+async def test_every_accepted_proposal_is_re_run():
+    worker = FakeReconcilerWorker()
+    reconciler = MediaAcceptReconciler(reads=FakeReconcilerReads(["p1", "p2"]), worker=worker)
+
+    await reconciler.run()
+
+    assert worker.calls == ["p1", "p2"]
+
+
+async def test_one_proposal_failing_does_not_abandon_the_rest():
+    """The reconciler must be total. Fails if the `except` is removed: the
+    first raise would end the loop and `p2` would never be attempted.
+    """
+    worker = FakeReconcilerWorker(raise_on="p1")
+    reconciler = MediaAcceptReconciler(reads=FakeReconcilerReads(["p1", "p2"]), worker=worker)
+
+    await reconciler.run()
+
+    assert worker.calls == ["p1", "p2"]
+
+
+async def test_nothing_accepted_is_not_an_error():
+    worker = FakeReconcilerWorker()
+    reconciler = MediaAcceptReconciler(reads=FakeReconcilerReads([]), worker=worker)
+
+    await reconciler.run()
+
+    assert worker.calls == []

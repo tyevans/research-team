@@ -39,12 +39,15 @@ different id. `tests/test_architecture.py` enforces the redstring half.
 """
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
+from research_team.application.corpus_read import CorpusReadPort
 from research_team.application.graph_read import GraphReadPort, Neighborhood
+from research_team.application.locators import resolve
 from research_team.application.usages import Usage, UsageReadPort
 
 #: How many passages are put in front of the model. Small on purpose: these
@@ -66,6 +69,92 @@ class Citation:
     source_id: str
     start: int
     end: int
+
+
+@dataclass(frozen=True)
+class ServedCitation:
+    """A citation as a reader sees it: its span, plus the moment it names, if any.
+
+    `at_seconds` is `None` for the majority case -- a source with no locator
+    map, which is every text source today -- and that is the *only* thing
+    `None` means here. It is never used for "resolved to zero": a citation
+    into the first second of a transcript is a real, distinct answer from
+    "this source has no timeline at all", and collapsing them would make a
+    citation at the start of a video indistinguishable from a citation into
+    an article.
+
+    Deliberately not stored: `resolve` is arithmetic over a source's locator
+    map, and the map can be corrected (`CorpusEditor.revise`) after a
+    citation was generated. Baking the answer into a cached `Definition`
+    would let it go stale without anything ever reprocessing it; computing it
+    at serve time means a repaired map is reflected the next time anyone
+    reads the citation, for free.
+    """
+
+    source_id: str
+    start: int
+    end: int
+    at_seconds: float | None
+
+
+async def serve_citations(
+    read: CorpusReadPort, citations: Sequence[Citation]
+) -> list[ServedCitation]:
+    """Citations as a reader sees them, each carrying its moment if it has one.
+
+    The first production caller of `locators.resolve` -- see that module's
+    docstring, which named a citation renderer as the intended caller before
+    one existed. This is the shared place both citation producers
+    (`DefinitionService` and `ask.py`'s answer citations) funnel through,
+    chosen over resolving at each call site because "does this source have a
+    map" is one question with one answer regardless of who is asking, and a
+    second implementation is a second place for the majority-case guarantee
+    below to go unenforced.
+
+    **A source with no locator map serves unchanged.** That is not an edge
+    case: every text source has no map and never will, so this is the
+    ordinary path, and `at_seconds` is `None` for it -- see `ServedCitation`
+    for why `None` is not interchangeable with a resolved zero.
+
+    One `read_document` per distinct `source_id`, not one per citation: a
+    definition or an answer commonly cites the same source more than once,
+    and re-fetching its map each time would be work whose result cannot
+    differ.
+
+    Only the first `TimeSpan` a citation's span resolves to is carried, per
+    the spec's "Seeking" section. `resolve` can return several locators for a
+    span that crosses a segment boundary, and the *citation* denotes where
+    the quoted text starts, not the interval it spans in the medium -- taking
+    the first is where the reader would seek to.  Locator kinds other than
+    `time` (`page`, `bbox`, ...) resolve but are not looked at here: a
+    citation's moment is meaningless for a source with no timeline, and this
+    module is where "is there a `time` locator" is decided, not where a
+    reader would want a page number instead.
+    """
+    maps: dict[str, str | None] = {}
+    served: list[ServedCitation] = []
+    for citation in citations:
+        if citation.source_id not in maps:
+            document = await read.read_document(citation.source_id, include_dropped=True)
+            maps[citation.source_id] = document.locator_map if document else None
+        locator_map = maps[citation.source_id]
+        at_seconds: float | None = None
+        if locator_map:
+            for locator in resolve(locator_map, citation.start, citation.end):
+                if locator.get("kind") == "time":
+                    start_s = locator.get("start_s")
+                    if isinstance(start_s, int | float) and not isinstance(start_s, bool):
+                        at_seconds = float(start_s)
+                        break
+        served.append(
+            ServedCitation(
+                source_id=citation.source_id,
+                start=citation.start,
+                end=citation.end,
+                at_seconds=at_seconds,
+            )
+        )
+    return served
 
 
 @dataclass(frozen=True)

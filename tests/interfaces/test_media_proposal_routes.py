@@ -144,8 +144,8 @@ async def test_accept_answers_202(proposed):
 
 
 async def test_a_second_accept_is_refused_with_409_not_500(proposed):
-    """The failure `BACKLOG.md` B95 records: a `CommandRejectedError` this
-    route does not catch reaches the caller as a 500 with no message. `decide`
+    """A `CommandRejectedError` this route does not catch reaches the caller
+    as a 500 with no message. `decide`
     refuses a second `AcceptMediaProposal` on an already-accepted proposal --
     "a closed decision is closed" -- and this is the route's own test of the
     mapping the brief calls out by name, not a copy of `test_document_routes`'s

@@ -28,7 +28,7 @@ from research_team.application.course import (
     ProvenanceSummary,
     StageProgress,
 )
-from research_team.application.entity_definitions import Definition
+from research_team.application.entity_definitions import Definition, ServedCitation
 from research_team.application.findings import Finding
 from research_team.application.graph_read import (
     EntityPage,
@@ -909,7 +909,9 @@ def usages_view(usages: list[Usage]) -> dict[str, Any]:
     }
 
 
-def definition_view(definition: Definition | None) -> dict[str, Any]:
+def definition_view(
+    definition: Definition | None, served: list[ServedCitation] | None = None
+) -> dict[str, Any]:
     """`GET .../definition`.
 
     `definition is None` renders as `text: None` with no citations, rather
@@ -917,6 +919,16 @@ def definition_view(definition: Definition | None) -> dict[str, Any]:
     for why an undefinable entity is not a missing one. `model` and
     `generated_at` are `None` too in that case: there is no generation to
     report on, and a placeholder value here would read as though one had run.
+
+    `served` is `definition.citations` run through `entity_definitions.
+    serve_citations`, in the same order -- passed in rather than resolved
+    here because this function is a pure presenter and resolving a citation's
+    moment needs a corpus read (see `read_graph_definition`). `None` (the
+    default) means the caller had no corpus read model to resolve against,
+    which renders every citation's `at_seconds` as `None` -- indistinguishable
+    from a source with no locator map, which is the correct behaviour for a
+    build that cannot check: it is not this presenter's place to claim a
+    moment it cannot verify.
     """
     if definition is None:
         return {
@@ -926,6 +938,14 @@ def definition_view(definition: Definition | None) -> dict[str, Any]:
             "generated_at": None,
             "stale": False,
         }
+    citations = (
+        served
+        if served is not None
+        else [
+            ServedCitation(source_id=c.source_id, start=c.start, end=c.end, at_seconds=None)
+            for c in definition.citations
+        ]
+    )
     return {
         "text": definition.text,
         "citations": [
@@ -933,8 +953,9 @@ def definition_view(definition: Definition | None) -> dict[str, Any]:
                 "source_id": citation.source_id,
                 "start": citation.start,
                 "end": citation.end,
+                "at_seconds": citation.at_seconds,
             }
-            for citation in definition.citations
+            for citation in citations
         ],
         "model": definition.model,
         "generated_at": definition.generated_at,

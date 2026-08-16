@@ -15,7 +15,11 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import BaseTool
 
 from research_team.application.ask import AskAnswer, AskMessage, Citation
-from research_team.application.corpus_read import LIST_SOURCES_TOOL, READ_SOURCE_TOOL
+from research_team.application.corpus_read import (
+    LIST_SOURCES_TOOL,
+    READ_SOURCE_TOOL,
+    REFERENCE_SYNTAX_PROMPT,
+)
 from research_team.application.knowledge import GRAPH_SEARCH_TOOL
 from research_team.application.ports import ActivityReporter
 from research_team.application.topics import LIST_TOPICS_TOOL
@@ -82,7 +86,8 @@ gone from the allowlist above, and `Citation.kind` narrowed with it rather than
 keeping a union member nothing can emit.
 """
 
-ASK_PROMPT = """You are answering questions about one research project's gathered material.
+ASK_PROMPT = (
+    """You are answering questions about one research project's gathered material.
 
 Use the tools to look things up before answering. You can read the project's
 sources, its knowledge graph, its topics and its files. You cannot change any
@@ -90,7 +95,11 @@ of them, and you have no access to the web -- if the material does not answer
 the question, say so plainly rather than filling the gap from memory.
 
 Prefer quoting what a source actually says over paraphrasing it, and say which
-source you got something from."""
+source you got something from.
+
+"""
+    + REFERENCE_SYNTAX_PROMPT
+)
 
 
 def readable(tools: Iterable[BaseTool]) -> tuple[BaseTool, ...]:

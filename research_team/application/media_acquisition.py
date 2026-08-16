@@ -443,3 +443,38 @@ class MediaAcceptWorker:
                 return
             raise
         await self._proposals.save(aggregate)
+
+
+class AcceptedProposalListPort(Protocol):
+    """The accepted-but-unfinished set, across every project."""
+
+    async def accepted_proposal_ids(self) -> list[str]: ...
+
+
+class MediaAcceptReconciler:
+    """Re-runs `MediaAcceptWorker` over every proposal a crash left
+    `accepted`, on startup -- see
+    `docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`.
+
+    Does not re-derive re-run safety: `MediaAcceptWorker`'s own docstring
+    already argues it (content-addressed blobs; an already-`stored` refusal
+    read back as the worker's own success signal), and this class only
+    supplies the ids and the loop.
+
+    `run` is total -- one proposal's `run` raising is logged with its id and
+    the loop continues, and nothing propagates out of `run`. A reconciliation
+    that raised would turn "one asset's host is gone" into "this install does
+    not boot", which is strictly worse than the defect this class exists to
+    fix.
+    """
+
+    def __init__(self, *, reads: AcceptedProposalListPort, worker: MediaAcceptWorker) -> None:
+        self._reads = reads
+        self._worker = worker
+
+    async def run(self) -> None:
+        for proposal_id in await self._reads.accepted_proposal_ids():
+            try:
+                await self._worker.run(proposal_id)
+            except Exception:
+                logger.exception("reconciliation failed for accepted proposal %s", proposal_id)

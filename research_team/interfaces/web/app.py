@@ -53,7 +53,7 @@ from research_team.application.corpus_editing import CorpusEditor, DocumentExist
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
 from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
-from research_team.application.entity_definitions import DefinitionService
+from research_team.application.entity_definitions import DefinitionService, serve_citations
 from research_team.application.grading import GradingError, grade
 from research_team.application.graph_read import (
     MAX_GRAPH_NODES,
@@ -1220,6 +1220,15 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(error)) from error
         except NotDropped as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+        except CommandRejectedError as error:
+            # `Corpus.decide`'s refusal for a `StoreSourceDocument` or
+            # `StoreDerivedText` this restore re-stores. No reachable case
+            # exists today -- the derivedness guards that could have
+            # triggered this were fixed before this arm was needed -- but
+            # the next guard added to either command would otherwise land
+            # here as an unhandled exception and a 500, matching
+            # `upload_source`'s pattern.
+            raise HTTPException(status_code=409, detail=str(error)) from error
         return await _source_row(project_id, source_id)
 
     @app.patch("/api/projects/{project_id}/sources/{source_id}")
@@ -1237,6 +1246,15 @@ def create_app(
             )
         except UnknownDocument as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        except CommandRejectedError as error:
+            # `decide`'s refusal, which `KnowledgeError` below does not
+            # catch. No reachable case exists today -- the derivedness
+            # guards that could have triggered this were fixed before this
+            # arm was needed -- but the next guard on
+            # `StoreSourceDocument`/`StoreSourceMedia`/`StoreDerivedText`
+            # would otherwise land here as an unhandled exception and a 500,
+            # matching `upload_source`'s pattern.
+            raise HTTPException(status_code=409, detail=str(error)) from error
         except KnowledgeError as error:
             # Two guards reach here, and `decide` is neither of them. `_store`'s
             # length cap: missing until review, when a PATCH over the cap was an
@@ -2403,7 +2421,18 @@ def create_app(
             # see `definition_reader` in `composition.py`. The same 503 the
             # usages route above answers for the same absence.
             raise HTTPException(status_code=503, detail="no chunk store is configured")
-        return definition_view(await service.define(entity_id))
+        definition = await service.define(entity_id)
+        served = None
+        if definition is not None and corpus is not None and blob_store is not None:
+            # Resolved here rather than inside `DefinitionService`, so a
+            # `Definition` fetched from cache is never the thing that goes
+            # stale -- see `ServedCitation`'s docstring. `corpus`/`blob_store`
+            # are checked rather than routed through `_reader` (which 503s):
+            # a build with a definition service but no corpus read model
+            # should still answer with a definition, just without moments,
+            # not lose the whole route over a field it only decorates.
+            served = await serve_citations(_reader(project_id), definition.citations)
+        return definition_view(definition, served)
 
     @app.post("/api/projects/{project_id}/sources/{source_id}/ontology")
     async def discover_ontology(project_id: UUID, source_id: str):

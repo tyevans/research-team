@@ -809,6 +809,7 @@ export const definitionCitationDto = z.object({
   source_id: z.string(),
   start: z.number(),
   end: z.number(),
+  at_seconds: z.number().nullable(),
 })
 
 /** `text`/`model`/`generated_at` are nullable together -- `presenters.py`'s

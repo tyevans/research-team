@@ -204,6 +204,7 @@ const DEFAULT_MATERIAL: Facet = 'session'
 export const ProjectView = ({
   projectId,
   selection,
+  seekSeconds = null,
   store,
   onLoaded,
 }: {
@@ -212,6 +213,13 @@ export const ProjectView = ({
    *  bar is the single source of truth, so a reload reproduces the screen and
    *  every selection is sendable. */
   selection: Selection | null
+  /** The `doc` route's `?t=`, already parsed and validated by
+   *  `parseSeekSeconds` -- `null` for every case that is not a well-formed
+   *  non-negative seek, which includes every facet but `doc`. Passed to
+   *  `DocumentList` regardless of `selection.facet`: a stale `?t=` left over
+   *  from an old link while some other facet is open has nowhere to apply
+   *  itself, since `DocumentList` only reads it for the document it opens. */
+  seekSeconds?: number | null
   /** The shell's session store, threaded through because HOLDER reads the
    *  holding session and the shell needs the same session's head for the
    *  breadcrumb. */
@@ -603,6 +611,7 @@ export const ProjectView = ({
             <DocumentList
               projectId={projectId}
               open={openDoc}
+              seekSeconds={seekSeconds}
               onOpen={(sourceId) => select({ facet: 'doc', id: sourceId })}
             />
           </TabPanel>
