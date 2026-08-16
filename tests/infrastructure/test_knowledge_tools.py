@@ -7,6 +7,7 @@ from research_team.application.knowledge import (
     KnowledgeError,
     Match,
     MergeRecord,
+    source_id_for_url,
 )
 from research_team.infrastructure.agent.knowledge_tools import build_knowledge_tools
 from research_team.infrastructure.agent.recall import PageMemo
@@ -261,7 +262,7 @@ async def test_remember_page_commits_what_fetch_retained():
     knowledge = StubKnowledge(report=report)
     tools = tools_by_name(knowledge, pages=pages)
 
-    await tools["remember_page"].ainvoke({"url": "https://example.com/a", "source_id": "s1"})
+    await tools["remember_page"].ainvoke({"url": "https://example.com/a"})
 
     (source,) = knowledge.ingested
     assert source.text == "the whole document"
@@ -269,7 +270,12 @@ async def test_remember_page_commits_what_fetch_retained():
     assert source.title == "A Paper"
     assert source.published_at == "2026-01-02"
     assert source.fetched_at == "2026-08-10T12:00:00+00:00"
-    assert source.source_id == "s1"
+    # Derived from the url rather than supplied: this used to be `"s1"`, passed
+    # as a `source_id` argument the tool no longer takes. Asserted against
+    # `source_id_for_url` rather than the literal so this test says *which*
+    # rule it is pinning -- a literal would also pass if the tool started
+    # deriving the id some other way that happened to agree on this one url.
+    assert source.source_id == source_id_for_url("https://example.com/a")
 
 
 @pytest.mark.asyncio
@@ -289,7 +295,7 @@ async def test_remember_page_carries_the_note_the_agent_wrote():
     tools = tools_by_name(knowledge, pages=pages)
 
     await tools["remember_page"].ainvoke(
-        {"url": "https://example.com/a", "source_id": "s1", "note": "why it matters"}
+        {"url": "https://example.com/a", "note": "why it matters"}
     )
 
     (source,) = knowledge.ingested
@@ -304,9 +310,7 @@ async def test_an_unretained_page_names_the_url_and_stores_nothing():
     knowledge = StubKnowledge()
     tools = tools_by_name(knowledge, pages=PageMemo())
 
-    result = await tools["remember_page"].ainvoke(
-        {"url": "https://example.com/gone", "source_id": "s1"}
-    )
+    result = await tools["remember_page"].ainvoke({"url": "https://example.com/gone"})
 
     assert knowledge.ingested == []
     assert "https://example.com/gone" in result
@@ -328,9 +332,7 @@ async def test_remember_page_reports_what_it_recorded():
     )
     tools = tools_by_name(StubKnowledge(report=report), pages=pages)
 
-    result = await tools["remember_page"].ainvoke(
-        {"url": "https://example.com/a", "source_id": "s1"}
-    )
+    result = await tools["remember_page"].ainvoke({"url": "https://example.com/a"})
 
     assert "Recorded s1" in result
 
@@ -343,9 +345,7 @@ async def test_a_page_ingest_failure_is_returned_as_text_not_raised():
     pages.put("https://example.com/a", text="body", uri="https://example.com/a")
     tools = tools_by_name(StubKnowledge(error=KnowledgeError("endpoint down")), pages=pages)
 
-    result = await tools["remember_page"].ainvoke(
-        {"url": "https://example.com/a", "source_id": "s1"}
-    )
+    result = await tools["remember_page"].ainvoke({"url": "https://example.com/a"})
 
     assert "Could not record this" in result
 

@@ -757,3 +757,54 @@ def test_the_new_event_and_command_are_exported_from_the_domain_package() -> Non
     assert domain.UNREADABLE_DEGRADATIONS is UNREADABLE_DEGRADATIONS
     for name in ("CorpusDerivedTextStored", "StoreDerivedText", "UNREADABLE_DEGRADATIONS"):
         assert name in domain.__all__
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        StoreSourceDocument(
+            corpus_id=CORPUS_ID, source_id="https://en.wikipedia.org/wiki/X", text="hi"
+        ),
+        _store_media(CORPUS_ID, "a/b"),
+        _store_derived("a/b#perceived", "a/b"),
+    ],
+)
+def test_a_source_id_holding_a_separator_is_refused(command) -> None:
+    """A `/` in a source_id makes the document unreachable through the web layer.
+
+    Refused in `decide` rather than at one writer, because every writer funnels
+    through here: the fetch keep, `remember`, `remember_page`, the manual upload
+    route and the media route all end in one of these three commands, and four
+    of the five accept a caller-chosen id. A refusal that lived only in
+    `redstring_adapter` would miss the two HTTP routes entirely.
+
+    Measured rather than assumed: `{source_id}` is one path segment, uvicorn
+    percent-decodes the path before Starlette routes it, so a `%2F` the browser
+    correctly encoded arrives as a real separator and no route matches. See
+    `test_a_url_shaped_id_never_reaches_the_handler`.
+    """
+    with pytest.raises(CommandRejectedError, match="separator"):
+        decide(command, initial_state())
+
+
+def test_a_hash_in_a_source_id_is_still_allowed() -> None:
+    """Only `/` is refused, and the narrowness is deliberate.
+
+    `derived_source_id` builds a transcript's id as `<parent>#perceived`
+    (`application/perception.py`), so a blanket "no punctuation" rule would
+    refuse every perception this project has ever stored. `#` is safe here for
+    the reason `/` is not: uvicorn splits the request target on the raw `?` and
+    `#` before unquoting, so a percent-encoded one decodes *into* the path and
+    stays one segment.
+
+    **This passes with the guard reverted**, and is not evidence the guard
+    works -- `test_a_source_id_holding_a_separator_is_refused` is. It is here to
+    fail on the plausible next edit, which is widening `"/" in source_id` to a
+    charset or a slug pattern; that change would refuse every perception this
+    project has ever stored, and nothing else in the suite would say so.
+    """
+    state = _with_media(initial_state(), "vid")
+
+    [event] = decide(_store_derived("vid#perceived", "vid"), state)
+
+    assert isinstance(event, CorpusDerivedTextStored)

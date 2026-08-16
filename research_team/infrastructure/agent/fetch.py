@@ -120,15 +120,27 @@ def extract_page(html: str, url: str) -> tuple[str, str | None, str | None] | No
     return text.strip(), title, date
 
 
-def _citation(url: str, title: str | None, date: str | None) -> str:
+def _citation(
+    url: str, title: str | None, date: str | None, source_id: str | None = None
+) -> str:
     """A `url` line, plus title and date when the page offered them.
 
     The URL leads the output because the citation is the reason for fetching.
     Text that arrives without its address cannot be cited by anything
     downstream, and a model that has lost a source will confabulate one rather
     than say so.
+
+    `source_id` rides along when the page was kept, and only then. It is not
+    cosmetic: the id is derived from the url now rather than being the url
+    (`application/knowledge.py`), so this line is the only way the model learns
+    what to pass to `link_source` -- which does not verify that the id it is
+    handed exists, and so would record a dangling link in silence. Absent when
+    `keep` did not run or failed, because naming an id the corpus does not hold
+    is the failure this is here to avoid.
     """
     lines = [f"url: {url}"]
+    if source_id:
+        lines.append(f"source_id: {source_id}")
     if title:
         lines.append(f"title: {title}")
     if date:
@@ -231,7 +243,10 @@ def build_fetch_tool(
     corpus: CorpusReadPort | None = None,
     pages: PageMemo | None = None,
     grant: FetchGrant | None = None,
-    keep: Callable[[str], Awaitable[None]] | None = None,
+    # Returns the `source_id` the page was stored under, or None when nothing
+    # was stored -- the citation names it only in the first case. See
+    # `composition.py`'s `keep` for why the id is no longer the url.
+    keep: Callable[[str], Awaitable[str | None]] | None = None,
 ) -> BaseTool:
     """A `fetch` tool for reading one web page.
 
@@ -450,6 +465,7 @@ def build_fetch_tool(
                     # was only ever that because a document could not reach
                     # the corpus except through the model's own output.
                     pages.put(url, text=full, uri=url, title=title, published_at=date)
+                kept: str | None = None
                 if keep is not None:
                     # After `pages.put`, never before: `keep` reads the page
                     # back out of the memo by url, so the memo has to hold it
@@ -462,12 +478,12 @@ def build_fetch_tool(
                     # copy is worth strictly less than losing the read, and
                     # `keep`'s own implementation is what decides how loudly to
                     # complain. See `composition.py`'s `granted_tools`.
-                    await keep(url)
+                    kept = await keep(url)
                 shown = full
                 if len(shown) > max_chars:
                     shown = shown[:max_chars].rstrip() + _TRUNCATED
                 text = "\n\n".join(
-                    part for part in (_citation(url, title, date), shown) if part
+                    part for part in (_citation(url, title, date, kept), shown) if part
                 )
                 if truncated and not text.endswith(_TRUNCATED):
                     text += _TRUNCATED

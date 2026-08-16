@@ -57,7 +57,7 @@ from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
-from research_team.application.knowledge import KnowledgeError, SourceRef
+from research_team.application.knowledge import KnowledgeError, SourceRef, source_id_for_url
 from research_team.application.ontology_discovery import OntologyDiscoveryService
 from research_team.application.perception import MediaPerceiver, PerceptionPort
 from research_team.application.ports import GateReview
@@ -961,16 +961,30 @@ def build_application(
         irrecoverable half at seconds rather than minutes and leaves the rest
         to a decision made with more information than "the page loaded".
 
-        The url is the `source_id`. There is no model-supplied id at fetch
-        time and inventing a prettier one would invent identity; the url is
-        already the thing the page is, it is stable, and `link_source` can
-        cite it immediately. A later `remember_page` under the model's own id
-        stores a second record of the same bytes, which `_store_document`
-        allows deliberately -- worth knowing, since here it is one URI under
-        two ids rather than the two-URIs case that rule was written for.
+        **The `source_id` is derived from the url, not the url.** This used to
+        read "the url is the `source_id`", on the reasoning that the url is
+        already what the page is and a prettier id would invent identity. The
+        argument is sound and the consequence was not: a url contains `/`,
+        `{source_id}` is one path segment, and uvicorn decodes the path before
+        Starlette routes it -- so every per-source route 404'd for every page
+        this closure ever kept. See `source_id_for_url` for the measurement.
+
+        The cost of deriving it is that the model no longer knows the id from
+        having typed the url, and `link_source` does not check that the id it
+        is given exists -- so a model citing the url would write a dangling
+        link, silently. `keep` returns the id for that reason and `fetch` puts
+        it in the citation block; that return value is not decoration, it is
+        what keeps the cite-immediately property the old id had for free.
+
+        A later `remember_page` stores a second record of the same bytes, which
+        `_store_document` allows deliberately -- worth knowing, since here it is
+        one URI under two ids rather than the two-URIs case that rule was
+        written for. `remember_page` now derives its id the same way, so the
+        two ids agree and the second record is the same document rather than a
+        differently-named one.
         """
 
-        async def keep(url: str) -> None:
+        async def keep(url: str) -> str | None:
             retained = pages.get(url)
             # The attachment is process-wide and last-join-wins (see the web
             # layer's join), so `current` may belong to a project that is not
@@ -979,13 +993,14 @@ def build_application(
             # only as documents in the wrong corpus.
             knowledge = attachment.current
             if retained is None or knowledge is None:
-                return
+                return None
             if attachment.attached_project_id != project_id:
-                return
+                return None
+            source_id = source_id_for_url(url)
             try:
                 await knowledge.store_source(
                     SourceRef(
-                        source_id=url,
+                        source_id=source_id,
                         text=retained.text,
                         uri=retained.uri,
                         title=retained.title,
@@ -1002,6 +1017,13 @@ def build_application(
                 logger.warning(
                     "could not keep %s for project %s", url, project_id, exc_info=True
                 )
+                # None on failure, so `fetch` cites nothing rather than an id
+                # the corpus does not hold. The alternative -- returning the id
+                # regardless -- would hand the model a citation that resolves to
+                # a document the store just refused, which is the dangling link
+                # this return value exists to prevent.
+                return None
+            return source_id
 
         return keep
 

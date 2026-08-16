@@ -1083,7 +1083,7 @@ async def test_store_source_keeps_the_text_without_extracting_it(
 
     await adapter.store_source(
         SourceRef(
-            source_id="https://example.test/ada",
+            source_id="example-test-ada",
             text="Ada Lovelace worked with Charles Babbage.",
             uri="https://example.test/ada",
             title="Ada Lovelace",
@@ -1091,7 +1091,7 @@ async def test_store_source_keeps_the_text_without_extracting_it(
     )
 
     envelopes = await _corpus_events(store, project_id)
-    assert [envelope.event.source_id for envelope in envelopes] == ["https://example.test/ada"]
+    assert [envelope.event.source_id for envelope in envelopes] == ["example-test-ada"]
     assert captured_build_kwargs == []
 
 
@@ -1128,7 +1128,7 @@ async def test_storing_the_same_page_twice_records_it_once(tmp_path, build_adapt
     project_id = uuid4()
     adapter, store, _ = build_adapter(tmp_path, project_id)
     source = SourceRef(
-        source_id="https://example.test/a",
+        source_id="example-test-a",
         text="Ada Lovelace worked with Charles Babbage.",
         uri="https://example.test/a",
     )

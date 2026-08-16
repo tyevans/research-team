@@ -10,12 +10,13 @@ useful claim.
 """
 
 import hashlib
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from research_team.application.knowledge import MAX_DOCUMENT_CHARS
+from research_team.application.knowledge import MAX_DOCUMENT_CHARS, source_id_for_url
 from research_team.composition import build_application as _build_application
 from research_team.domain.corpus import StoreSourceMedia
 from research_team.interfaces.web import app as app_module
@@ -687,3 +688,77 @@ async def test_patching_text_onto_a_media_source_is_refused(app_and_client):
     )
 
     assert response.status_code == 400
+
+
+async def test_a_url_shaped_id_never_reaches_the_handler(app_and_client):
+    """Why `source_id` is derived from a url rather than being one.
+
+    This is the defect that started it: `{source_id}` is a single path segment,
+    and the ASGI server percent-decodes the path before Starlette routes it, so
+    a `%2F` the client correctly encoded arrives at the router as a real
+    separator and no route matches. The document is present and readable by
+    every other means; only the URL cannot name it.
+
+    Asserts the *shape* of the 404 rather than just its number, because the two
+    404s mean opposite things and only one of them is this bug: Starlette's
+    unmatched-route body is a bare `{"detail": "Not Found"}`, while the
+    handler's own says `no source ... in project ...`. A test that checked only
+    the status code would still pass if the route matched and the lookup missed,
+    which is a different failure with a different fix. The contrast is asserted
+    in both directions below for exactly that reason.
+
+    **Stores nothing, and that is not laziness.** An earlier version of this
+    test uploaded the document first, to show the row was fine and the fault was
+    routing. `decide` now refuses a `/` in a source_id, so that upload is a 400
+    and the defect can no longer be reproduced through any writer -- which is
+    the guard working. What survives is the router behaviour that motivated the
+    guard, and it needs no stored document: the request never reaches the
+    handler, so whether one exists cannot change the answer.
+    """
+    _app, client = app_and_client
+    project = await _new_project(client)
+    url_id = "https://en.wikipedia.org/wiki/Roman_monarchy"
+
+    # The writer refuses it now -- the other half of the fix, pinned here
+    # rather than only in the domain tests because this is the route a person
+    # would actually reach it through.
+    refused = await client.post(
+        f"/api/projects/{project}/sources",
+        json={"source_id": url_id, "text": "hello"},
+    )
+    assert refused.status_code == 400
+
+    response = await client.get(f"/api/projects/{project}/sources/{quote(url_id, safe='')}")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}
+
+    # The contrast: an id with no separator reaches the handler, which answers
+    # with its own 404 naming the source. Without this half, the assertion
+    # above would pass against a build where *every* read 404'd.
+    missing = await client.get(f"/api/projects/{project}/sources/no-such-source")
+    assert missing.status_code == 404
+    assert "no source" in missing.json()["detail"]
+
+
+async def test_a_derived_id_survives_the_round_trip(app_and_client):
+    """The other half, and the one that would have caught this.
+
+    `source_id_for_url` is what `keep` and `remember_page` now store under, so
+    the claim worth pinning is not that the helper avoids slashes (that is
+    `tests/application/test_source_ids.py`) but that what it produces is
+    actually fetchable through the route a browser uses. Fails if the helper
+    ever admits a character the router treats as a separator.
+    """
+    _app, client = app_and_client
+    project = await _new_project(client)
+    source_id = source_id_for_url("https://en.wikipedia.org/wiki/Roman_monarchy")
+    await client.post(
+        f"/api/projects/{project}/sources",
+        json={"source_id": source_id, "text": "hello"},
+    )
+
+    response = await client.get(f"/api/projects/{project}/sources/{quote(source_id, safe='')}")
+
+    assert response.status_code == 200
+    assert response.json()["source_id"] == source_id

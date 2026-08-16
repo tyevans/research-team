@@ -396,6 +396,51 @@ def decide(command: CorpusCommand, state: CorpusState) -> list[DomainEvent]:
     """
     corpus_id = state.corpus_id
     match command, state:
+        # **First, and before every guard that reads state.** A source_id is a
+        # path segment in every per-source route, and a `/` in one makes the
+        # document unreachable: uvicorn percent-decodes the path before
+        # Starlette routes it, so the `%2F` a browser correctly encodes arrives
+        # at the router as a real separator and no route matches. The reply is
+        # Starlette's bare 404, not the handler's, because the handler is never
+        # reached -- which is why this was invisible for so long. Measured
+        # against the live console on 2026-08-16: 7 of 7 url-keyed documents
+        # 404'd, 36 of 36 slug-keyed ones did not.
+        #
+        # Here rather than at a writer because all five writers funnel through
+        # `decide` -- the fetch keep, `remember`, `remember_page`, the manual
+        # upload route and the media route -- and four of them take an id the
+        # caller or the model chose. The blank-id refusal in
+        # `redstring_adapter` covers only two of the five; this covers all of
+        # them, and `source_id_for_url` keeps the fetch path from ever reaching
+        # it.
+        #
+        # Ahead of the derivedness guards because those read `state` and answer
+        # "unknown source 'a/b'" for an id that could never have been stored --
+        # a true statement that sends the reader looking for a missing document
+        # rather than at the `/` in front of them.
+        #
+        # `/` alone, deliberately: `derived_source_id` builds a transcript's id
+        # as `<parent>#perceived`, and `#` is safe where `/` is not, because
+        # uvicorn splits the request target on the raw `?` and `#` before
+        # unquoting -- a percent-encoded one decodes into the path and stays a
+        # single segment. A charset rule here would refuse every perception
+        # this project has ever stored.
+        #
+        # Refused on the command path only. Events already written are not
+        # rewritten, so a corpus that already holds url-keyed documents still
+        # replays them; this stops new ones and nothing more.
+        case (
+            StoreSourceDocument(source_id=source_id)
+            | StoreSourceMedia(source_id=source_id)
+            | StoreDerivedText(source_id=source_id),
+            _,
+        ) if "/" in source_id:
+            raise CommandRejectedError(
+                f"source_id {source_id!r} contains '/', a path separator; the "
+                "document would be stored but unreachable through every route "
+                "that names a source"
+            )
+
         # Both derivedness guards come before the kind guards below, and the
         # order is presently inert rather than load-bearing -- measured, not
         # reasoned: moving this pair beneath the kind guards leaves all 30

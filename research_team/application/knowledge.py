@@ -10,10 +10,14 @@ instance belongs to one project and supplies it; a caller that could pass a
 different tenant is a caller that could write into another project's graph.
 """
 
+import hashlib
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 from uuid import UUID
+
+from research_team.application.artifacts import slugify
 
 #: Tool names, in one place so the autonomy policy and the tools agree.
 REMEMBER_TOOL = "remember"
@@ -49,6 +53,61 @@ class KnowledgeError(Exception):
 #: `test_perception_max_chars_matches_the_document_cap` is what fails if they
 #: separate -- this comment is the signal, that test is the gate.
 MAX_DOCUMENT_CHARS = 200_000
+
+#: Longest `source_id` this derives from a url.
+#:
+#: A url is unbounded and a `source_id` is a database key, a read-model row's
+#: uuid5 seed (`read_models.py`) and one segment of every per-source route, so
+#: something has to bound it. 96 is a judgement, not a measurement: long enough
+#: that the host and most of the path survive for a reader, short enough to sit
+#: in a URL bar beside a project uuid.
+SOURCE_ID_LIMIT = 96
+
+#: The scheme, and the `www.` that carries no information. Stripped before
+#: slugging so every id does not begin `https-`, which would be eight characters
+#: of the cap spent telling a reader nothing.
+_URL_NOISE = re.compile(r"^[a-z][a-z0-9+.-]*://(?:www\.)?", re.IGNORECASE)
+
+
+def source_id_for_url(url: str) -> str:
+    """The `source_id` a page fetched from `url` is stored under.
+
+    **Not the url itself, and that is the whole point of this function.**
+    `keep` used to store `source_id=url`, on the reasoning that the url is
+    already what the page is and needs no prettier name. It is a good argument
+    and it produced a corpus the console could not open: `{source_id}` is one
+    path segment, uvicorn percent-decodes the path before Starlette routes it,
+    and the `%2F` the browser correctly sent arrives at the router as a real
+    separator. Every per-source route -- read, content, extract, perceive --
+    answered 404 for every auto-kept page. Measured on 2026-08-16 against the
+    live console: 7 of 7 url-keyed documents failed, 36 of 36 slug-keyed ones
+    succeeded.
+
+    Readable *and* unique, because either alone is worse. A bare digest keys
+    correctly and tells a reader nothing, and this id is what the console shows
+    and what `fetch` now hands the model to cite. A bare slug reads well and
+    collides -- two urls differing only past the cap slug identically -- so the
+    digest is taken over the whole url and appended after truncation.
+
+    Deterministic: `keep` runs on every fetch, and a random component would
+    store a fresh document per re-read of the same page. `_store_document`'s
+    digest check would not catch it, because that check compares bytes under a
+    *given* source_id.
+
+    What this does not do is rename anything already stored. Events are not
+    rewritten, so a corpus holding url-keyed documents still holds them and
+    those rows stay unreachable through the web layer; re-fetching the page is
+    what repairs it, and stores a second document rather than moving the first.
+    """
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:8]
+    # Truncated before the digest is appended, never after: the digest is the
+    # only thing making two similar urls distinguishable, so it is the one part
+    # the cap may not eat.
+    room = SOURCE_ID_LIMIT - len(digest) - 1
+    slug = slugify(_URL_NOISE.sub("", url.strip()))[:room].strip("-")
+    # `or` rather than a branch on `slug`: a url that slugs to nothing at all
+    # (a bare IP, punctuation) still needs an id, and the digest is one.
+    return f"{slug}-{digest}" if slug else digest
 
 
 @dataclass(frozen=True)

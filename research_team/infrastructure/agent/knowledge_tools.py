@@ -21,6 +21,7 @@ from research_team.application.knowledge import (
     KnowledgePort,
     Match,
     SourceRef,
+    source_id_for_url,
 )
 from research_team.infrastructure.agent.recall import PageMemo
 
@@ -133,8 +134,18 @@ def build_knowledge_tools(
         # narrowed by the type checker without a check that could only ever
         # fire on a wiring bug this branch already prevents.
         @tool(REMEMBER_PAGE_TOOL)
-        async def remember_page(url: str, source_id: str, note: str = "") -> str:
+        async def remember_page(url: str, note: str = "") -> str:
             """Commit a page you have already fetched, by its URL, without re-typing it."""
+            # Derived, not a parameter, and that is a deliberate narrowing of
+            # this tool's surface. It used to take `source_id` and the model
+            # chose one -- which is how a corpus ended up holding raw urls as
+            # ids, unreachable through every per-source route (see
+            # `source_id_for_url`). The url is already here and is a better
+            # answer than anything the model would invent, so there is nothing
+            # left for the parameter to do but disagree with `keep`: `fetch`
+            # has usually already stored this page under the derived id, and a
+            # model-supplied one would store a second copy beside it.
+            source_id = source_id_for_url(url)
             retained = pages.get(url)
             if retained is None:
                 # In band, naming the URL, rather than storing nothing quietly.
@@ -199,12 +210,15 @@ KNOWLEDGE_PROMPT = (
     "\n\nThis project has a knowledge graph that outlives the session. "
     "`graph_search` finds entities in it by name -- check there before "
     "searching the web for something the project may already have learned. "
-    "`remember_page` commits a page you have fetched: give it the page's URL "
-    "and a stable `source_id`, and the text and its citation details are taken "
-    "from what you already read -- you do not retype the page, and you do not "
-    "copy its `url:`, `title:` or `date:` lines across. If the page was read "
-    "too long ago to still be held, it will say so and you can `fetch` it "
-    "again.\n\n"
+    "`remember_page` commits a page you have fetched: give it the page's URL, "
+    "and the text, its citation details and its `source_id` are taken from "
+    "what you already read -- you do not retype the page, you do not choose an "
+    "id for it, and you do not copy its `url:`, `title:` or `date:` lines "
+    "across. If the page was read too long ago to still be held, it will say "
+    "so and you can `fetch` it again.\n\n"
+    "When you cite a fetched page -- to `link_source`, or in a finding -- use "
+    "the `source_id:` line `fetch` printed, not the URL. They are not the same "
+    "string, and nothing checks a citation you invent.\n\n"
     "`remember` is for everything else: text you were given, or a passage you "
     "are recording in your own words. Extraction runs over exactly what you "
     "pass, and the result is recorded permanently.\n\n"

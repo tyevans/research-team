@@ -1014,6 +1014,15 @@ def create_app(
         except KnowledgeError as error:
             # The blank-id refusal and the length cap, both `store_source`'s.
             raise HTTPException(status_code=400, detail=str(error)) from error
+        except CommandRejectedError as error:
+            # `decide`'s separator refusal: a `source_id` holding a `/` would be
+            # stored and then unreachable, because every route naming a source
+            # spends it as one path segment. 400 beside the blank-id refusal
+            # rather than 409 -- nothing conflicts, the id is simply not one
+            # this API can address. The media route maps the same exception to
+            # 409 because there it means a kind clash with a document that
+            # exists, which genuinely is a conflict.
+            raise HTTPException(status_code=400, detail=str(error)) from error
         return await _source_row(project_id, body.source_id)
 
     @app.post("/api/projects/{project_id}/sources/media", status_code=201)
@@ -1087,9 +1096,16 @@ def create_app(
                 detail=f"upload exceeds {MAX_UPLOAD_BYTES} bytes",
             ) from error
         except CommandRejectedError as error:
-            # `decide`'s one refusal for this command: a `source_id` that
-            # already holds *text*, which `_kind_of` will not let media take
-            # over. There is no blank-id refusal on this path -- that check
+            # Two of `decide`'s refusals reach here, and only one is a conflict.
+            # The first is a `source_id` that already holds *text*, which
+            # `_kind_of` will not let media take over -- a real 409. The second
+            # is the separator refusal, which is a bad id rather than a clash
+            # and would be better as a 400; it is left at 409 because the id on
+            # this path comes from the form field or the filename, and a
+            # browser does not put a `/` in either, so the case is close to
+            # unreachable and splitting the handler would cost more than it
+            # buys. If a caller ever hits it, the detail names the `/`.
+            # There is no blank-id refusal on this path -- that check
             # lives in `RedstringKnowledge.store_source`, which media
             # deliberately does not go through (`corpus_editing.py`'s module
             # docstring) -- so a form field of `"   "` is stored verbatim as a
