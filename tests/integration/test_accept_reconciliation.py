@@ -220,3 +220,69 @@ async def test_a_stored_proposal_is_not_re_run(db_path):
         assert calls == []
     finally:
         await application.close()
+
+
+async def test_the_reconciler_reads_only_after_caught_up_returns(db_path):
+    """B101: the ordering in `Application.start()` -- `caught_up()` before the
+    reconciler task is created -- was stated in the spec and in a comment
+    above the call, but nothing exercised it. The two existing tests above
+    pass either way: their fixture's projection catches up fast enough
+    in-process that the reconciler finds the row settled whichever line ran
+    first, so they would not fail if the two lines were swapped.
+
+    This test stalls `caught_up()` on purpose -- a fake that blocks on an
+    `asyncio.Event` until released -- and records, on a shared list, the
+    moment the reconciler makes its read (`accepted_proposal_ids()`) against
+    the moment the fake returns. The assertion is on that list's order, not
+    on the absence of an exception: `start()` completing or `reconciled()`
+    returning would both be silent about which line ran first.
+
+    Verified against the mutation it exists to catch: with the two lines in
+    `Application.start()` swapped (reconciler task created *before*
+    `await self.media_proposals.caught_up()`), this test FAILED --
+    `events == ['reconciler_read', 'caught_up_released']`, because
+    `create_task` schedules the reconciler and the very next `await` (the
+    swapped `caught_up()` call) yields control to it before the fake
+    unblocks. Restored to the correct order, it PASSED. Neither of the
+    tests above was disturbed by the swap.
+    """
+    project_id, proposal_id = uuid4(), str(uuid4())
+    await _crash_after_accepting(db_path, project_id, proposal_id, stored=False)
+
+    application = _build(db_path)
+    events: list[str] = []
+    release = asyncio.Event()
+
+    real_caught_up = application.media_proposals.caught_up
+    real_reads = application.media_proposals.accepted_proposal_ids
+
+    async def stalled_caught_up() -> None:
+        # Stands in for a projection still mid-replay: does not return until
+        # the test releases it, so a reconciler that reads before this
+        # returns is reading an under-reported accepted set -- exactly the
+        # defect the spec's ordering ruling exists to prevent.
+        await real_caught_up()
+        await release.wait()
+        events.append("caught_up_released")
+
+    async def recording_reads() -> list[str]:
+        events.append("reconciler_read")
+        return await real_reads()
+
+    application.media_proposals.caught_up = stalled_caught_up
+    application.media_proposals.accepted_proposal_ids = recording_reads
+    try:
+        start_task = asyncio.create_task(application.start())
+        # One tick: enough for `start()` to run everything up to and
+        # including the call to (stalled) `caught_up()`, not enough for
+        # anything scheduled after it to have run yet.
+        await asyncio.sleep(0)
+        assert events == [], "reconciler read before caught_up() was even released"
+
+        release.set()
+        await start_task
+        await application.reconciled()
+
+        assert events == ["caught_up_released", "reconciler_read"]
+    finally:
+        await application.close()

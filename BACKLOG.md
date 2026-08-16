@@ -3233,28 +3233,3 @@ one resource with nothing between its construction and `Application(...)`.
 Every other resource here doesn't have that luxury — there's meaningful
 construction between the event store and the return statement — so the fix
 has to actually unwind, not just reorder.
-
-### B101. Nothing asserts the reconciler runs after `caught_up()`, not before
-
-`Application.start()` (`composition.py`, near line 555) calls
-`self.media_proposals.start()`, then the projection's `caught_up()`, then the
-reconciler — in that order, deliberately: the design spec
-(`docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`) rules
-that the reconciler must read a caught-up projection, or it diffs against
-proposals the log hasn't replayed into the read model yet and reconciles
-correctly-pending accepts it was never supposed to touch.
-
-`tests/integration/test_accept_reconciliation.py` asserts against a composed
-`Application` and would fail if the reconciler call were removed entirely —
-but a test that swapped the two lines, running the reconciler *before*
-`caught_up()`, would still pass. The fixture's projection catches up fast
-enough in-process that the reconciler finds the row settled either way; the
-ordering bug the spec is actually worried about only shows up when the
-projection is still mid-replay at the moment the reconciler reads it.
-
-Reported by the Task 4 implementer as a known gap rather than found by review.
-Proving the ordering would need a projection stalled on purpose — a fake
-`caught_up()` that blocks until released, with the test asserting the
-reconciler's read happens after release, not before. Worth doing before this
-ordering is treated as tested rather than merely stated.
-
