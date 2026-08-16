@@ -207,6 +207,7 @@ async def _answer(history=(), question="what did we find?") -> tuple[Any, list[s
         model=RecordingModel(responses=[AIMessage(content="an answer", id="a1")]),
         open_graph=lambda _project: _ready((None, project_tools)),
         project_files=lambda _project: _ready({"notes.md": "x"}),
+        project_sources=lambda _project: _ready({}),
     )
     reported: list[str] = []
     answer = await executor.run(

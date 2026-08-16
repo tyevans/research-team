@@ -10,6 +10,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Any
 from uuid import UUID, uuid4
 
 # Imported for its side effect as much as its names: redstring registers its
@@ -130,6 +131,7 @@ from research_team.infrastructure.agent.search import (
     build_search_tool,
 )
 from research_team.infrastructure.agent.search_middleware import SearchAttemptsMiddleware
+from research_team.infrastructure.agent.source_mount import mounted_sources
 from research_team.infrastructure.agent.stage_middleware import (
     StageMiddleware,
     managed_tools_for,
@@ -1424,6 +1426,28 @@ def build_application(
             review_id=review_id,
         )
 
+    # Shared by the turn executor, the ask executor, `document_extractor`,
+    # `editor` and `perceiver`: all of them read one project's corpus the same
+    # way, and separate lambdas would be separate places a future change to how
+    # a reader is built could drift. Defined here rather than beside its first
+    # user below because the executors above it need it too.
+    corpus_readers = lambda target_project_id: ProjectCorpusReader(  # noqa: E731
+        corpus, target_project_id, blob_store
+    )
+
+    async def turn_sources(session: Session) -> dict[str, Any]:
+        """This turn's corpus mount, or nothing for a session outside a project.
+
+        Keyed off `project_id` alone, not off `running_workflow`: a session's
+        sources are searchable whether or not it ever selected a workflow, and
+        hanging the mount off the workflow fold would have made `grep` answer
+        differently for two projects holding the same documents.
+        """
+        project_id = session.state.project_id
+        if project_id is None:
+            return {}
+        return await mounted_sources(corpus_readers(project_id))
+
     executor = DeepAgentTurnExecutor(
         resolved_model,
         subagents=subagents,
@@ -1432,6 +1456,7 @@ def build_application(
         approvals=approvals,
         middleware_provider=turn_middleware,
         tools_provider=turn_tools,
+        sources_provider=turn_sources,
         gate_reviewer=gate_review,
         # The same registry `turn_tools` (via `granted_tools`) and `start_run`
         # (below) consult -- see `resolved_grants`'s own note for why there
@@ -1733,6 +1758,9 @@ def build_application(
             model=resolved_model,
             open_graph=open_graph,
             project_files=service.project_files,
+            project_sources=lambda target_project_id: mounted_sources(
+                corpus_readers(target_project_id)
+            ),
         ),
         conversations=ConversationRegistry(now=time.monotonic),
         now=time.monotonic,
@@ -1753,13 +1781,6 @@ def build_application(
     async def open_knowledge(target_project_id: UUID) -> RedstringKnowledge:
         knowledge, _tools = await open_graph(target_project_id)
         return knowledge
-
-    # Shared by `document_extractor`, `editor` and `perceiver` below: all three
-    # read one project's corpus the same way, and three separate lambdas would
-    # be three places a future change to how a reader is built could drift.
-    corpus_readers = lambda target_project_id: ProjectCorpusReader(  # noqa: E731
-        corpus, target_project_id, blob_store
-    )
 
     document_extractor = DocumentExtractor(
         open_knowledge=open_knowledge,
