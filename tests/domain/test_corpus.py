@@ -5,6 +5,7 @@ import pytest
 from eventsource import CommandRejectedError, DomainEvent
 
 from research_team.domain.corpus import (
+    UNREADABLE_DEGRADATIONS,
     CorpusDerivedTextStored,
     CorpusDocumentDropped,
     CorpusDocumentStored,
@@ -349,13 +350,14 @@ def _store_derived(
     derived_from: str,
     text: str = "said something",
     degradations: str = "[]",
+    locator_map: str = "[]",
 ) -> StoreDerivedText:
     return StoreDerivedText(
         corpus_id=CORPUS_ID,
         source_id=source_id,
         derived_from=derived_from,
         text=text,
-        locator_map="[]",
+        locator_map=locator_map,
         perceived_with="abc123",
         degradations=degradations,
     )
@@ -555,3 +557,203 @@ def test_a_transcript_can_be_dropped_like_any_other_source() -> None:
     drop = DropSourceDocument(source_id="vid#perceived", reason="bad audio")
     state = evolve(state, decide(drop, state)[0])
     assert state.documents["vid#perceived"].dropped_reason == "bad audio"
+
+
+def test_a_transcript_cannot_be_repointed_at_a_different_medium() -> None:
+    """A re-perception revises one reading of one medium; it does not move it.
+
+    The derivedness guards cannot catch this -- the record is derived before
+    and after -- so it is a third refusal rather than a corollary. Left open, a
+    citation resolved yesterday against one talk resolves today against
+    another, with nothing in the state recording that it moved.
+    """
+    state = _state_with_media("vid")
+    state = _with_media(state, "other_vid", sha256="b" * 64)
+    state = _evolve_derived(state, source_id="vid#perceived", derived_from="vid")
+
+    with pytest.raises(CommandRejectedError, match="not 'other_vid'"):
+        decide(_store_derived(source_id="vid#perceived", derived_from="other_vid"), state)
+
+
+def test_re_perceiving_the_same_medium_is_still_allowed() -> None:
+    """The other side of the re-pointing refusal, and the reason it is narrow.
+
+    Goes red if the guard is written as "an already-derived id may not be
+    stored again", which refuses every second pass of the perception runner --
+    the ordinary case, and the one `test_re_perceiving_supersedes...` depends
+    on.
+    """
+    state = _state_with_media("vid")
+    state = _evolve_derived(state, source_id="vid#perceived", derived_from="vid")
+
+    events = decide(_store_derived(source_id="vid#perceived", derived_from="vid"), state)
+
+    assert len(events) == 1
+
+
+@pytest.mark.parametrize(
+    "degradations",
+    [
+        pytest.param("not json at all", id="malformed"),
+        pytest.param('"a single string"', id="json-string-tuples-into-characters"),
+        pytest.param('{"a": 1}', id="json-object-tuples-into-keys"),
+        pytest.param("5", id="json-number-raises-in-tuple"),
+        pytest.param("[1, 2]", id="json-list-of-non-strings"),
+        pytest.param("null", id="json-null"),
+    ],
+)
+def test_degradations_that_is_not_a_json_list_of_strings_is_refused(degradations: str) -> None:
+    """Reject at the boundary. Every case here is one `tuple(json.loads(...))` took.
+
+    The two middle cases are the reason a `try`/`except` in `evolve` would not
+    have been enough on its own: they are *well-formed* JSON, they raise
+    nothing, and they produce a plausible-looking degradation list the producer
+    never wrote -- a tuple of fifteen single characters, or a tuple of dict
+    keys. `[1, 2]` is not caught by `tuple[str, ...]` on the record either;
+    pydantic coerces it to `("1", "2")`.
+    """
+    state = _state_with_media("vid")
+    command = _store_derived(
+        source_id="vid#perceived", derived_from="vid", degradations=degradations
+    )
+    with pytest.raises(CommandRejectedError, match="must be a JSON list of strings") as raised:
+        decide(command, state)
+    # Asserted separately for the line-length reason given on the locator_map
+    # test below; the refusal has to name the field or a caller cannot tell
+    # which of the command's two JSON payloads it got wrong.
+    assert "degradations" in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "locator_map",
+    [
+        pytest.param("not json at all", id="malformed"),
+        pytest.param('{"spans": []}', id="json-object-not-a-list"),
+        pytest.param('["a span"]', id="json-list-of-strings"),
+    ],
+)
+def test_a_locator_map_the_resolver_could_not_walk_is_refused(locator_map: str) -> None:
+    """The same boundary check, different shape -- and the shape difference matters.
+
+    A locator map is a list of *span objects*, not of strings:
+    `application/locators.py`'s `resolve` indexes the list and reads
+    `["locator"]` off an element. Sharing one validator with `degradations`
+    would have accepted `["a span"]` here and rejected every real map there.
+
+    Element keys are deliberately unchecked; see
+    `_reject_unless_json_list_of_objects`. `'[]'` and a list of objects both
+    pass, which the other derived-text tests exercise on every call.
+    """
+    state = _state_with_media("vid")
+    command = _store_derived(
+        source_id="vid#perceived", derived_from="vid", locator_map=locator_map
+    )
+    with pytest.raises(CommandRejectedError, match="must be a JSON list of objects") as raised:
+        decide(command, state)
+    # The field name is asserted separately only because the one-line `match=`
+    # carrying both runs past the line limit.
+    assert "locator_map" in str(raised.value)
+
+
+def test_a_real_locator_map_is_accepted() -> None:
+    """The validator has to pass the shape Task 3 actually produces.
+
+    Taken from the plan's own example rather than invented here, so this test
+    fails if the check is tightened to something the producer does not emit.
+    """
+    state = _state_with_media("vid")
+    locator_map = (
+        '[{"char_start": 0, "char_end": 26, '
+        '"locator": {"kind": "time_span", "start_s": 1.0, "end_s": 4.5}}]'
+    )
+    events = decide(
+        _store_derived(source_id="vid#perceived", derived_from="vid", locator_map=locator_map),
+        state,
+    )
+    assert isinstance(events[0], CorpusDerivedTextStored)
+    assert events[0].locator_map == locator_map
+
+
+@pytest.mark.parametrize(
+    "degradations",
+    ["not json at all", '"a single string"', '{"a": 1}', "5", "[1, 2]", "null"],
+)
+def test_evolve_never_raises_on_unreadable_degradations(degradations: str) -> None:
+    """Tolerate at the fold. `decide` refuses these; a written event cannot be.
+
+    Events already in a log are never rewritten, so a payload from an earlier
+    build, a repair script or a direct append is beyond `decide`'s reach --
+    and one of them raising here would leave the whole stream unreplayable,
+    which is data surgery on an append-only log rather than a caller's retry.
+
+    Constructed as an event directly, deliberately: routing through `decide`
+    is exactly the path that now cannot produce these, so a test that went
+    through it would be testing nothing.
+    """
+    state = _state_with_media("vid")
+    event = CorpusDerivedTextStored(
+        aggregate_id=CORPUS_ID,
+        source_id="vid#perceived",
+        derived_from="vid",
+        text="hello",
+        sha256=hashlib.sha256(b"hello").hexdigest(),
+        locator_map="[]",
+        perceived_with="abc123",
+        degradations=degradations,
+    )
+
+    state = evolve(state, event)
+
+    record = state.documents["vid#perceived"]
+    assert isinstance(record, TextRecord)
+    # The rest of the event still lands: an unreadable field degrades one
+    # field, not the whole record.
+    assert record.derived_from == "vid"
+    assert record.char_count == len("hello")
+    assert record.degradations == UNREADABLE_DEGRADATIONS
+
+
+def test_an_unreadable_degradations_does_not_read_as_a_clean_perception() -> None:
+    """Why the degraded value is a marker and not `()`.
+
+    `TextRecord.degradations` documents empty as meaning perception was
+    complete. Degrading an unreadable field to `()` would convert "this could
+    not be read" into a positive claim that nothing went wrong -- the one
+    reading guaranteed to be false. This test is what goes red if someone
+    simplifies the marker away for shape tidiness.
+    """
+    state = _state_with_media("vid")
+    event = CorpusDerivedTextStored(
+        aggregate_id=CORPUS_ID,
+        source_id="vid#perceived",
+        derived_from="vid",
+        text="hello",
+        sha256=hashlib.sha256(b"hello").hexdigest(),
+        locator_map="[]",
+        perceived_with="abc123",
+        degradations="{}",
+    )
+
+    record = evolve(state, event).documents["vid#perceived"]
+    assert isinstance(record, TextRecord)
+    assert record.degradations != ()
+    assert len(record.degradations) == 1
+
+
+def test_the_new_event_and_command_are_exported_from_the_domain_package() -> None:
+    """Every sibling corpus event and store command is; these were not.
+
+    Left unexported, Task 3 either adds them or imports from the submodule
+    while importing its neighbours from the package.
+    """
+    import research_team.domain as domain
+
+    assert domain.CorpusDerivedTextStored is CorpusDerivedTextStored
+    assert domain.StoreDerivedText is StoreDerivedText
+    # The marker too: a read model or an endpoint that wants to render "this
+    # could not be read" differently has to compare against the constant rather
+    # than re-type the string, and `SESSION_EVENTS` is the precedent for a
+    # constant living in this list.
+    assert domain.UNREADABLE_DEGRADATIONS is UNREADABLE_DEGRADATIONS
+    for name in ("CorpusDerivedTextStored", "StoreDerivedText", "UNREADABLE_DEGRADATIONS"):
+        assert name in domain.__all__
