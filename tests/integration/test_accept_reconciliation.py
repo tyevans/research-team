@@ -35,6 +35,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 
+from research_team import composition
 from research_team.application.perception import (
     LocatorSpan,
     Perceived,
@@ -222,7 +223,7 @@ async def test_a_stored_proposal_is_not_re_run(db_path):
         await application.close()
 
 
-async def test_the_reconciler_reads_only_after_caught_up_returns(db_path):
+async def test_the_reconciler_reads_only_after_caught_up_returns(db_path, monkeypatch):
     """B101: the ordering in `Application.start()` -- `caught_up()` before the
     reconciler task is created -- was stated in the spec and in a comment
     above the call, but nothing exercised it. The two existing tests above
@@ -248,6 +249,25 @@ async def test_the_reconciler_reads_only_after_caught_up_returns(db_path):
     """
     project_id, proposal_id = uuid4(), str(uuid4())
     await _crash_after_accepting(db_path, project_id, proposal_id, stored=False)
+
+    # The periodic sweep (`Application._sweep_reconciliation`) calls the same
+    # `accepted_proposal_ids` this test records on, so a sweep landing inside
+    # the test would append a third event and fail an assertion that has
+    # nothing to do with sweeps. Pinned rather than tolerated: at the default
+    # interval the full-jitter draw from `[0, 300]` lands under this test's
+    # ~10ms lifetime about 1.7e-4 of the time, and an intermittent failure in
+    # the one test whose job is pinning the reconciler's *ordering* is exactly
+    # what trains people to shrug at a real one (`BACKLOG.md` B4 is the entry
+    # about a test called flaky for months that was actually broken).
+    #
+    # Both halves are needed and neither is enough alone: the huge interval
+    # sets the ceiling, and removing the jitter makes the draw *be* that
+    # ceiling rather than merely usually near it -- so the first sweep is
+    # scheduled eleven days out by construction, not by probability. Nothing
+    # here weakens full jitter itself; it is turned off for this one
+    # application, in the one test that cannot observe a sweep.
+    monkeypatch.setenv("AGENT_MEDIA_RECONCILE_INTERVAL", "1000000")
+    monkeypatch.setattr(composition.random, "uniform", lambda _low, high: high)
 
     application = _build(db_path)
     events: list[str] = []
