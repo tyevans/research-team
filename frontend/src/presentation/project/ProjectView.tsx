@@ -17,6 +17,7 @@ import { useCourse } from '../course/use-course.ts'
 import { Pane } from '../layout/Pane.tsx'
 import { Split } from '../layout/Split.tsx'
 import { DocumentList } from '../research/DocumentList.tsx'
+import { OntologyPane } from '../research/OntologyPane.tsx'
 import { EntityTreePane } from '../research/EntityTreePane.tsx'
 import { GraphPane } from '../research/GraphPane.tsx'
 import { TimelinePane } from '../research/TimelinePane.tsx'
@@ -102,6 +103,7 @@ export const regionOf = (facet: Facet): Region => {
     case 'entity':
     case 'timeline':
     case 'tree':
+    case 'ontology':
     case 'doc':
     case 'artifact':
     case 'finding':
@@ -130,7 +132,7 @@ export const regionOf = (facet: Facet): Region => {
  * about material that arrived from outside the course, so they sit after.
  */
 type MaterialFacet =
-  'session' | 'artifact' | 'file' | 'finding' | 'doc' | 'entity' | 'tree' | 'timeline'
+  'session' | 'artifact' | 'file' | 'finding' | 'doc' | 'entity' | 'tree' | 'ontology' | 'timeline'
 
 /** Exported so `project-tracks.browser.test.tsx` can compare the strip it
  *  measures against the strip that was declared — a count taken from the
@@ -160,6 +162,13 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   // tree is lazy and nothing in it pulls a canvas, so inserting it here costs
   // nothing and Timeline still closes the list.
   { id: 'tree', label: 'Tree' },
+  // Beside Tree, for Tree's own reason: both are list readings of the material
+  // the canvas draws, and the two belong next to each other. Nothing here is
+  // lazy and nothing pulls a canvas, so it costs the default tab nothing --
+  // the same argument Tree makes one line above. What it *did* cost is the
+  // narrow band: see `project-stacked.browser.test.tsx`, which predicted this
+  // tab before it existed.
+  { id: 'ontology', label: 'Classes' },
   // After Graph, not before: this list is ordered by what the reader is asking,
   // and the timeline is a second reading of the graph's own material. Last also
   // keeps it out of the default position, which matters for the same bundle
@@ -619,6 +628,14 @@ export const ProjectView = ({
               entity={selection?.facet === 'tree' ? (selection.id ?? null) : null}
               onEntity={(entity) => select({ facet: 'tree', id: entity })}
             />
+          </TabPanel>
+
+          <TabPanel value="ontology" className="flex min-h-0 flex-1 flex-col overflow-auto">
+            {/* No selection of its own yet: the view shows every class at once
+                and there is nothing a URL would usefully single out. The facet
+                still carries an `id` slot, because the grammar gives every
+                facet one -- it is simply unused here rather than absent. */}
+            <OntologyPane projectId={projectId} />
           </TabPanel>
 
           <TabPanel value="timeline" className="flex min-h-0 flex-1 flex-col">

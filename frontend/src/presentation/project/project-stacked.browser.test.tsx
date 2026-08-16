@@ -405,14 +405,14 @@ it('leaves content on the page after every fold a reader can reach', async () =>
   expect(box('material').height).toBeGreaterThan(300)
 })
 
-/** Claim 7. Nothing paints outside a box that clips it, down to 561px — the
+/** Claim 7. Nothing paints outside a box that clips it, down to 596px — the
  *  bottom of the band this slice treats as worth supporting.
  *
  * The definition is the previous slice's: an element whose `scrollWidth`
  * exceeds its `clientWidth`, with `overflow-x: visible` so there is no scroller
  * to reach the remainder and no `text-overflow: ellipsis` to say it was cut.
  *
- * **Below 561 there are two, and both are recorded rather than fixed**, per the
+ * **Below 596 there are two, and both are recorded rather than fixed**, per the
  * slice's scoping rule — one user, one machine, and neither width is a window
  * anyone would put a research console in.
  *
@@ -421,6 +421,21 @@ it('leaves content on the page after every fold a reader can reach', async () =>
  *   2026-08-15 by sweeping the same check down to 360 and bisecting: clean at
  *   486, two clipped boxes at 485 — `.tabs` and the utility-classed column
  *   around it, the same pair as before.
+ *
+ *   **The prediction below came true, and this is the record of it.** A ninth
+ *   tab (Classes) arrived, and the strip now clips from **594px** — measured
+ *   2026-08-15 by bisecting this same sweep: clean at 595, two clipped boxes at
+ *   594, the same pair as every time before (`.tabs` and the utility-classed
+ *   column around it). The band was lowered from 561 to 596 rather than the
+ *   strip re-laid out, which is the user's answer to the product question the
+ *   old note left open — "add the tab" won over "keep the band".
+ *
+ *   **What the next tab costs is now larger than what this one did.** Each tab
+ *   has moved the clip threshold by roughly a hundred pixels (350 at five, 485
+ *   at seven, 594 at nine), and the band has followed it. A tenth tab puts the
+ *   threshold near 700, which is not a window nobody uses — it is a laptop
+ *   beside another window. At that point lowering the band stops being a
+ *   bookkeeping change and the wrap decision below has to be made for real.
  *
  *   **This threshold moved 135px, and the number that moved it is the seventh
  *   tab.** The strip was five tabs and 351px when this was written, clipping
@@ -446,10 +461,10 @@ it('leaves content on the page after every fold a reader can reach', async () =>
  *     AssertionError: at 485px: expected [ Array(2) ] to have a length of +0
  *     but got 2
  */
-it('clips nothing down to 561', async () => {
+it('clips nothing down to 596', async () => {
   await show()
 
-  for (const width of [820, 700, 640, 561]) {
+  for (const width of [820, 700, 640, 596]) {
     await resizeViewport(width)
 
     const clipped = Array.from(document.querySelectorAll<HTMLElement>('.lay-split *'))

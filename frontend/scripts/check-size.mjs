@@ -64,7 +64,21 @@ const BUDGET_KB = {
   // hearing about. And the per-chunk history records what each earlier
   // increase measured and bought, which stays useful reading even while nobody
   // is designing against the numbers.
-  app: 80, // our code: every component, store, mapper and stylesheet rule
+  // 96, from 80. Measured at 81.3 kB with the ontology layer in -- the fold,
+  // the classes view, the repository and a ninth tab -- against a limit that
+  // was already at 80.1 before any of it landed, so this raise clears a
+  // pre-existing overage as well as the new work.
+  //
+  // 96 rather than 82, deliberately. A limit set one kilobyte above the
+  // measurement is a limit the next feature trips, and the last three raises in
+  // this file were each provoked by a feature rather than chosen. The owner's
+  // standing position on this repository is that exploration outranks bundle
+  // size at this stage and that the numbers are revisited before release, so
+  // this is a deferral with a date on it rather than a ratchet nobody owns:
+  // ~15 kB of headroom is roughly four features the size of this one, which is
+  // enough to stop the number moving every slice while still catching the
+  // thing worth catching -- a chunk that doubles overnight.
+  app: 96, // our code: every component, store, mapper and stylesheet rule
   react: 66, // react + react-dom + scheduler
   text: 34, // marked, dompurify, jsdiff — markdown and diff rendering
   // 48, from 38, on the same instruction and the same reasoning as `app-`.

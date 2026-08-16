@@ -169,3 +169,44 @@ it('invites a pass rather than reporting an error when nothing has been found', 
   expect(screen.getByText(/no classes found yet/i)).toBeInTheDocument()
   expect(screen.getByText(/run a discovery pass/i)).toBeInTheDocument()
 })
+
+it('says a class is part of a larger set when the count fell short and nothing was refused', () => {
+  // The "268 occupations ... including" shape, measured 2026-08-15 in
+  // wiki-roman-economy. A shortfall with no rejection means the document
+  // counted members it never went on to name -- which is a sample, not a
+  // failure, and reads as one the moment it is said out loud. Distinct from
+  // the rejection case above, which is a shortfall the pass caused.
+  render(
+    <OntologyClasses
+      classes={[
+        aClass({
+          name: 'Occupation',
+          kind: 'unordered_set',
+          declaredCount: 268,
+          complete: false,
+          members: [{ name: 'fishermen', ordinal: null }],
+          rejectedMembers: [],
+        }),
+      ]}
+      sourceHref={href}
+    />,
+  )
+
+  expect(screen.getByText('1 of 268 stated')).toBeInTheDocument()
+  expect(screen.getByText(/part of a larger set/i)).toBeInTheDocument()
+})
+
+it('does not call a complete class part of a larger set', () => {
+  // Would pass with the shortfall line rendered unconditionally, which is the
+  // plausible wrong version.
+  render(
+    <OntologyClasses
+      classes={[
+        aClass({ declaredCount: 1, complete: true, members: [{ name: 'EASY', ordinal: 0 }] }),
+      ]}
+      sourceHref={href}
+    />,
+  )
+
+  expect(screen.queryByText(/part of a larger set/i)).not.toBeInTheDocument()
+})

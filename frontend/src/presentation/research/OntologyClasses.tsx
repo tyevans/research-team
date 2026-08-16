@@ -45,7 +45,7 @@ const CARD = [
 /** An ordered scale's member: the ordinal is shown because it *is* the
  *  information -- `D C B A S` is not recoverable from anything else on the
  *  row, and a scale drawn without it is a bag with extra steps. */
-const SCALE_MEMBER = 'flex items-baseline gap-1.5 rounded bg-bg-raise px-2 py-1 text-sm'
+const SCALE_MEMBER = 'flex items-baseline gap-2 rounded bg-bg-raise px-2 py-1 text-sm'
 
 /** A set's member: no number, deliberately. A reader shown `01 02 03` beside
  *  an unordered set would read a sequence the document never stated. */
@@ -61,17 +61,16 @@ const Checksum = ({ klass }: { klass: OntologyClass }) => {
       </span>
     )
   }
+  // No `title`. It was written as one and `check-deleted.mjs` refused it,
+  // correctly: a `title` is announced on hover, after a delay the operating
+  // system owns, and on nothing else -- not on focus, not on touch, not to a
+  // screen reader. The checksum is the one thing on this card a reader is meant
+  // to act on, so hiding its meaning behind a mouse is the worst possible place
+  // to put it. What the tooltip said is visible text now (see `Rejections` and
+  // the shortfall line below), which is also the answer that needed no
+  // component.
   return (
-    <span
-      className={klass.complete ? 'text-xs text-fg-faint' : 'text-xs text-accent'}
-      // Read aloud as a sentence rather than as two numbers and a slash: this
-      // is the one element on the card a reader is meant to act on.
-      title={
-        klass.complete
-          ? 'Every member the document counted was found.'
-          : 'The document counted more members than this pass found. See what was rejected below.'
-      }
-    >
+    <span className={klass.complete ? 'text-xs text-fg-faint' : 'text-xs text-accent'}>
       {klass.members.length} of {klass.declaredCount} stated
     </span>
   )
@@ -80,7 +79,7 @@ const Checksum = ({ klass }: { klass: OntologyClass }) => {
 const Members = ({ klass }: { klass: OntologyClass }) => {
   if (klass.kind === 'ordered_scale') {
     return (
-      <ol className="gap-1.5 m-0 flex list-none flex-wrap items-center p-0">
+      <ol className="m-0 flex list-none flex-wrap items-center gap-2 p-0">
         {klass.members.map((member: OntologyMember) => (
           <li key={member.name} className={SCALE_MEMBER}>
             {member.ordinal !== null && (
@@ -93,7 +92,7 @@ const Members = ({ klass }: { klass: OntologyClass }) => {
     )
   }
   return (
-    <ul className="gap-1.5 m-0 flex list-none flex-wrap p-0">
+    <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
       {klass.members.map((member) => (
         <li key={member.name} className={SET_MEMBER}>
           {member.name}
@@ -103,8 +102,25 @@ const Members = ({ klass }: { klass: OntologyClass }) => {
   )
 }
 
+/** What became of the members a stated count promised and the list does not show.
+ *
+ * Two cases, and telling them apart is the whole reason the checksum is worth
+ * rendering. If verification refused a name, saying which one and why turns an
+ * unexplained gap into a judgement a reader can make in a second. If it refused
+ * nothing, the document counted members it never went on to name -- which is
+ * the "268 occupations ... including" shape, and reads as a sample rather than
+ * a set the moment it is said out loud.
+ *
+ * Visible text rather than a tooltip: see `Checksum`. */
 const Rejections = ({ klass }: { klass: OntologyClass }) => {
-  if (klass.rejectedMembers.length === 0) return null
+  if (klass.rejectedMembers.length === 0) {
+    if (klass.complete) return null
+    return (
+      <p className="m-0 mt-2 text-xs text-fg-dim">
+        The document counted more than it named, so this is part of a larger set.
+      </p>
+    )
+  }
   return (
     <p className="m-0 mt-2 text-xs text-fg-dim">
       Not in the document:{' '}

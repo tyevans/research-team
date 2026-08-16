@@ -77,6 +77,14 @@ describe('the facet grammar', () => {
       selection: { facet: 'tree', id: 'e1' },
       hash: '#/p/abc/tree/e1',
     },
+    {
+      // Carries an id like every other plain facet even though the classes view
+      // selects nothing today: the grammar gives every facet an id slot, and
+      // the round trip has to hold for the slot whether or not a view uses it.
+      facet: 'ontology',
+      selection: { facet: 'ontology', id: 'c1' },
+      hash: '#/p/abc/ontology/c1',
+    },
     { facet: 'doc', selection: { facet: 'doc', id: 'd1' }, hash: '#/p/abc/doc/d1' },
     {
       facet: 'file',
