@@ -76,6 +76,143 @@ async def ingest_dated(tmp_path, build_adapter, expression: str):
     return next(e for e in entities if e.name == "Edict of Milan")
 
 
+def answer_dated_in_properties(expression: str) -> dict:
+    """The shape the model actually returns, measured against the real one.
+
+    `temporal_expression` inside `properties`, and the schema field left
+    empty. See `TestTheModelPutsTheDateInProperties` for why this is the
+    ordinary case rather than a malformed answer.
+    """
+    return {
+        "entities": [
+            {
+                "name": "Edict of Thessalonica",
+                "entity_type": "event",
+                "properties": {
+                    "temporal_expression": expression,
+                    "outcome": "Nicene Christianity received normative status",
+                },
+            }
+        ],
+        "relationships": [],
+    }
+
+
+@pytest.mark.asyncio
+class TestTheModelPutsTheDateInProperties:
+    """The defect that actually emptied the timeline.
+
+    Traced against qwen3.8-27b-mtp on the real 'Edict of Milan' article on
+    2026-08-15: across three chunks, *every* `ExtractedEntity` came back with
+    `temporal_expression=None`, while the entities' `properties` held
+    `{"temporal_expression": "AD 380", "outcome": ...}`. The model is
+    answering the prompt; it just files the answer alongside `outcome`,
+    `role` and `creator` -- the properties the domain schema declares -- and
+    those all live in the free-form `properties` dict.
+
+    That is a reasonable reading of the prompt, which says to put the date "in
+    that entity's `temporal_expression` field". The schema's own per-type
+    fields are exactly what `properties` is, so nothing distinguishes this one
+    as belonging somewhere else.
+
+    `_build_extent` reads only the schema field, so the date is dropped before
+    any parsing is attempted. This is upstream of every parsing defect the
+    other tests here cover: those only matter once the field is populated.
+    """
+
+    async def test_a_date_filed_under_properties_still_dates_the_entity(
+        self, tmp_path, build_adapter
+    ):
+        project_id = uuid4()
+        adapter, store, _ = build_adapter(
+            tmp_path,
+            project_id,
+            provider=FakeLlmProvider(
+                by_substring={}, default=answer_dated_in_properties("AD 380")
+            ),
+        )
+        await adapter.ingest(
+            SourceRef(
+                source_id="thessalonica",
+                uri="https://en.wikipedia.org/wiki/Edict_of_Thessalonica",
+                title="Edict of Thessalonica - Wikipedia",
+                text="The Edict of Thessalonica was issued in AD 380. " * 40,
+                published_at="2003-08-25",
+            )
+        )
+        entities = await extracted_entities(store, project_id, "thessalonica")
+        entity = next(e for e in entities if e.name == "Edict of Thessalonica")
+
+        assert entity.temporal is not None
+        assert entity.temporal.start_date.year == 380
+        assert entity.temporal.precision.name == "YEAR"
+
+    async def test_the_schemas_own_properties_are_left_alone(self, tmp_path, build_adapter):
+        """Lifting one key must not disturb the others it sits beside."""
+        project_id = uuid4()
+        adapter, store, _ = build_adapter(
+            tmp_path,
+            project_id,
+            provider=FakeLlmProvider(
+                by_substring={}, default=answer_dated_in_properties("AD 380")
+            ),
+        )
+        await adapter.ingest(
+            SourceRef(
+                source_id="thessalonica",
+                uri="https://en.wikipedia.org/wiki/Edict_of_Thessalonica",
+                title="Edict of Thessalonica - Wikipedia",
+                text="The Edict of Thessalonica was issued in AD 380. " * 40,
+                published_at="2003-08-25",
+            )
+        )
+        entities = await extracted_entities(store, project_id, "thessalonica")
+        entity = next(e for e in entities if e.name == "Edict of Thessalonica")
+
+        assert entity.properties["outcome"] == "Nicene Christianity received normative status"
+
+
+@pytest.mark.asyncio
+class TestARelativeDateIsRefused:
+    """A narrative relative date must not be read against `published_at`.
+
+    'two years earlier' came back on the Edict of Serdica in the same traced
+    run. Resolved against the article's publication date it means 2001; the
+    text means two years before 313. redstring raises
+    `AmbiguousReferenceDateError` only when there is no reference date at all,
+    and for these documents there always is one -- so the wrong answer is the
+    one that parses cleanly.
+
+    This is the same failure as the fabricated day, one level up: a vantage
+    point that is right for a news article is nonsense for an encyclopedia
+    entry narrating antiquity.
+    """
+
+    async def test_two_years_earlier_dates_nothing(self, tmp_path, build_adapter):
+        project_id = uuid4()
+        adapter, store, _ = build_adapter(
+            tmp_path,
+            project_id,
+            provider=FakeLlmProvider(
+                by_substring={}, default=answer_dated_in_properties("two years earlier")
+            ),
+        )
+        await adapter.ingest(
+            SourceRef(
+                source_id="serdica",
+                uri="https://en.wikipedia.org/wiki/Edict_of_Serdica",
+                title="Edict of Serdica - Wikipedia",
+                text="The Edict of Serdica was issued two years earlier. " * 40,
+                published_at="2003-08-25",
+            )
+        )
+        entities = await extracted_entities(store, project_id, "serdica")
+        entity = next(e for e in entities if e.name == "Edict of Thessalonica")
+
+        assert entity.temporal is None or entity.temporal.start_date is None
+        assert entity.properties[RAW_TEMPORAL_PROPERTY] == "two years earlier"
+
+
 @pytest.mark.asyncio
 class TestAnAncientYearIsNotInvented:
     async def test_a_three_digit_year_keeps_year_precision(self, tmp_path, build_adapter):

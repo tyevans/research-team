@@ -64,6 +64,7 @@ from research_team.infrastructure.knowledge.domain_schemas import (
     resolve_domain,
 )
 from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
+from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
 from research_team.infrastructure.knowledge.temporal_expressions import (
     RAW_TEMPORAL_PROPERTY,
     normalize_for_parsing,
@@ -175,8 +176,18 @@ def _with_respelled_dates(extraction):
     entities = []
     changed = False
     for candidate in extraction.entities:
-        raw = candidate.temporal_expression
-        if not raw:
+        # `properties` first, and that is not a fallback -- it is where the
+        # date usually is. Traced against qwen3.8-27b-mtp on the real 'Edict
+        # of Milan' article: across three chunks every `temporal_expression`
+        # field came back None while `properties` held
+        # {"temporal_expression": "AD 380", "outcome": ...}. The model files
+        # the date beside `outcome`, `role` and `creator`, which is where the
+        # domain schema's own per-type properties go, and the prompt's phrase
+        # "that entity's `temporal_expression` field" does nothing to single
+        # it out. The schema field is read second because the model does
+        # sometimes use it, and when it does it is the more direct answer.
+        raw = candidate.properties.get(RAW_TEMPORAL_PROPERTY) or candidate.temporal_expression
+        if not isinstance(raw, str) or not raw.strip():
             entities.append(candidate)
             continue
         changed = True
@@ -656,25 +667,23 @@ class RedstringKnowledge:
         quoted back to a reader, which is what this corpus is for and
         extraction's chunking is not.
 
-        **Deliberately NOT wrapped in `MarkdownTableChunker`**, though the
-        passages this builds are exactly the ones a repeated table header
-        would help -- a quoted row whose columns are unnamed is the motivating
-        complaint. It cannot be done through this call yet:
-        `redstring.extraction.corpus.stored_chunks` builds each `StoredChunk`
-        without carrying `Chunk.metadata` across, so the header would arrive
-        in the stored text with no `synthetic_prefix_chars` to subtract it
-        back off, and `original_text` would silently become the identity.
-        Offsets and text would disagree with nothing to detect it. Verified
-        against `index_documents` itself, not read off the source:
-        `test_redstring_drops_chunk_metadata_on_the_way_into_the_store` fails
-        when upstream starts carrying metadata, which is the signal that this
-        line can be wrapped.
+        Wrapped in `MarkdownTableChunker`, so a quoted passage of table rows
+        carries the header naming its columns -- a row whose cells are unnamed
+        is the complaint this whole path exists to answer.
 
-        The extraction chunker in `composition.py` *is* wrapped, because those
-        chunks go straight to the model and are never stored, so nothing has
-        to survive a round trip.
+        **This requires redstring >= 0.9.2 and fails silently below it.**
+        Until 0.9.2, `redstring.extraction.corpus.stored_chunks` built each
+        `StoredChunk` without carrying `Chunk.metadata` across, so the header
+        reached the corpus inside the stored text with no
+        `synthetic_prefix_chars` to subtract it back off: `original_text`
+        degraded to the identity and every offset into a table chunk pointed
+        at the wrong words, with nothing raising. That is why this line went
+        unwrapped through two commits. The guard against a regression is
+        `test_the_prefix_survives_the_round_trip_into_the_chunk_store`, which
+        drives the real `index_documents` rather than trusting the chunker --
+        if metadata is ever dropped again the failure names the invariant.
 
-        When it is wired, re-chunking is a re-`index`, not a `/rebuild`.
+        Re-chunking is a re-`index`, not a `/rebuild`.
         `/rebuild` folds stored `DocumentChunked` events, which carry the old
         chunk *text* -- it reproduces the old chunking faithfully. A new
         chunker only takes effect when `index_documents` runs again and emits
@@ -701,7 +710,7 @@ class RedstringKnowledge:
             [SourceDocument(id=source.source_id, text=source.text)],
             store=self._chunks,
             tenant_id=self._project_id,
-            chunker=BoundaryPreferenceChunker(),
+            chunker=MarkdownTableChunker(BoundaryPreferenceChunker()),
             event_store=self._event_store,
         )
 

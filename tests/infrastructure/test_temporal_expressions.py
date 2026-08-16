@@ -150,12 +150,60 @@ class TestThingsItMustNotTouch:
     def test_an_expression_already_handled_is_passed_through(self, raw: str) -> None:
         assert normalize_for_parsing(raw) == raw
 
-    @pytest.mark.parametrize("raw", ["", "   ", "sometime later", "during the war"])
+    @pytest.mark.parametrize("raw", ["", "   ", "an unspecified time", "in antiquity"])
     def test_undated_prose_is_passed_through_for_the_parser_to_refuse(self, raw: str) -> None:
         """Not this module's job to decide these are undated.
 
-        It normalises spelling of dates; deciding what is a date at all is the
-        parser's, and duplicating that judgement here would put two
-        disagreeing answers in the codebase.
+        It normalises the spelling of dates, and refuses the two kinds it
+        knows the parser answers *wrongly* -- BC and narrative-relative.
+        Everything else is the parser's judgement, and duplicating it here
+        would put two disagreeing answers in the codebase.
+
+        This case list used to include 'sometime later' and 'during the war'.
+        Both are now refused by `TestNarrativeRelativeIsRefused` below, which
+        is a deliberate narrowing of what "passed through" means: they contain
+        a relative qualifier and no anchor, and against a `reference_date`
+        they resolve to a date derived from when the article was published.
         """
         assert normalize_for_parsing(raw) == raw
+
+
+class TestNarrativeRelativeIsRefused:
+    """A date relative to the story, not to the calendar, must not be parsed.
+
+    Measured on the real 'Edict of Milan' article: the model returned 'two
+    years earlier' for the Edict of Serdica. The article was published in
+    2003 and narrates 313, so resolving that against `published_at` yields
+    2001 -- and it yields it *cleanly*, with no exception, because redstring
+    raises `AmbiguousReferenceDateError` only when a reference date is
+    missing entirely. There is no error for anyone to notice.
+    """
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "two years earlier",
+            "nearly 40 years",
+            "After Galerius's death",
+            "during the time of the kings",
+            "sometime later",
+            "during the war",
+            "shortly afterwards",
+        ],
+    )
+    def test_a_narrative_relative_expression_is_refused(self, raw: str) -> None:
+        assert normalize_for_parsing(raw) is None
+
+    @pytest.mark.parametrize(
+        "raw",
+        ["before 1900", "after 1918", "during the 4th century", "since AD 235"],
+    )
+    def test_a_relative_word_with_a_real_anchor_still_parses(self, raw: str) -> None:
+        """'before'/'after' also open absolute expressions, and those are dates.
+
+        `temporal_rendering._RENDER_PREFIX` renders a `BEFORE` marker, so
+        'before 1900' is an extent this project already knows how to show.
+        Refusing every string containing 'before' would throw those away to
+        catch 'two years earlier'.
+        """
+        assert normalize_for_parsing(raw) is not None

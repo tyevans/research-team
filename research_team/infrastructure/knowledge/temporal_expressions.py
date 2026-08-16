@@ -101,6 +101,52 @@ _LEADING_MARKER = re.compile(
 _BEFORE_CHRIST = re.compile(r"\b(BC|BCE)\b", re.IGNORECASE)
 
 
+#: Expressions anchored to the narrative rather than to a calendar.
+#:
+#: These have to be refused, and the reason is specific to this corpus. A
+#: relative expression resolves against `reference_date`, which extraction
+#: takes from `SourceDocument.published_at`. For a news article that is right.
+#: For an encyclopedia entry written in 2003 and narrating the year 313 it is
+#: nonsense: 'two years earlier' means two years before 313, and resolved
+#: against the article's publication date it silently becomes 2001.
+#:
+#: redstring cannot refuse these itself. `AmbiguousReferenceDateError` fires
+#: only when there is *no* reference date, and these documents always have
+#: one -- so the wrong answer is the one that parses cleanly, with no error to
+#: notice. Measured on the real 'Edict of Milan' article, which returned 'two
+#: years earlier', 'nearly 40 years' and "After Galerius's death".
+#:
+#: Matched as whole words anywhere in the string rather than anchored: the
+#: qualifier is what makes the expression relative, wherever it sits.
+_NARRATIVE_RELATIVE = re.compile(
+    r"\b(earlier|later|ago|afterwards?|thereafter|previous(?:ly)?|subsequent(?:ly)?"
+    r"|following|preceding|after|before|since|during|within|next|last|recent(?:ly)?"
+    r"|then|now|today|yesterday|tomorrow|current(?:ly)?)\b",
+    re.IGNORECASE,
+)
+
+#: A bare span of time, which is a duration and not a date at all.
+#:
+#: 'nearly 40 years' came back from the real article on "the little peace of
+#: the Church". It names how long something lasted, not when it happened, and
+#: it carries no relative *word* for the pattern above to catch -- so it needs
+#: its own rule or it reaches the parser and resolves against `published_at`.
+#:
+#: Ordinals are excluded by construction: '19th century' does not match,
+#: because `\d{1,3}\s+` cannot span the 'th'.
+_BARE_DURATION = re.compile(
+    r"\b\d{1,3}\s+(?:years?|months?|weeks?|days?|decades?|centuries|century)\b",
+    re.IGNORECASE,
+)
+
+#: The exception to the rule above: 'before'/'after' also open an *absolute*
+#: expression -- 'before 1900' is a date this project already renders with a
+#: 'before ' prefix (`temporal_rendering._RENDER_PREFIX`). So a string that
+#: still contains a four-digit year, or an era, is left to the parser even
+#: when a relative word appears in it.
+_HAS_ANCHOR = re.compile(r"\d{3,4}|\b(?:AD|CE|BC|BCE)\b|\bcentury\b", re.IGNORECASE)
+
+
 def normalize_for_parsing(raw: str) -> str | None:
     """`raw` respelled for redstring's parser, or `None` if it must not see it.
 
@@ -116,6 +162,9 @@ def normalize_for_parsing(raw: str) -> str | None:
         unchanged, including text that is not a date.
     """
     if _BEFORE_CHRIST.search(raw):
+        return None
+    relative = _NARRATIVE_RELATIVE.search(raw) or _BARE_DURATION.search(raw)
+    if relative and not _HAS_ANCHOR.search(raw):
         return None
 
     trimmed = raw.strip()
