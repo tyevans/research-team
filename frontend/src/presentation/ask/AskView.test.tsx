@@ -60,6 +60,24 @@ it('links a source citation to the project document it came from', async () => {
   expect(link).toHaveAttribute('href', `#/p/${PROJECT}/doc/s1`)
 })
 
+/** `expandReferences` only runs when `Markdown` is given a `projectId`, and
+ *  every other test in this file supplies the answer text as plain prose --
+ *  none of them can tell a caller that forgot to pass `projectId` through
+ *  from one that remembered. `content.test.tsx` has the same blind spot for
+ *  the reverse reason: it calls `Markdown` directly and hands the prop to
+ *  itself. This test renders through the real `AskTurn`, the way a reader
+ *  reaches it, so it fails if `AskTurn.tsx` stops threading `projectId` to
+ *  `Markdown` -- proved red against a build with that prop removed before
+ *  this was written. */
+it('turns a model-written source reference into a link', async () => {
+  renderAsk({ ask: answering('see [[src:s1]] for the source') })
+
+  await ask('why?')
+
+  const link = await screen.findByRole('link', { name: 's1' })
+  expect(link).toHaveAttribute('href', `#/p/${PROJECT}/doc/s1`)
+})
+
 it('says the page keeps nothing', () => {
   // The contract is ephemerality; a reader who does not know that will expect
   // to find this conversation again tomorrow.

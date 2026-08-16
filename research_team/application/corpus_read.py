@@ -33,6 +33,41 @@ from research_team.domain import MediaRecord, SourceRecord, TextRecord
 LIST_SOURCES_TOOL = "list_sources"
 READ_SOURCE_TOOL = "read_source"
 
+REFERENCE_SYNTAX_PROMPT = (
+    "To point at a source, or a moment inside one, write `[[src:<source_id>]]`. "
+    "Add `@<seconds>` for a moment -- `[[src:keynote-2026@252]]` -- or "
+    "`@<start>-<end>` for a range. The offset is always seconds, as a plain "
+    "integer: write `252`, never `4:12` or `1:04:12`. This is the only way to "
+    "point at a moment, because you cannot write a URL that will resolve to "
+    "one -- the id and the offset are all you can supply, and the reader turns "
+    "them into a link.\n\n"
+    "Only reference a source you have actually read with "
+    f"`{READ_SOURCE_TOOL}`. A reference to one you have not is a guess wearing "
+    "the same shorthand as a real citation, and nothing here can tell them "
+    "apart -- the reader trusts the id and the offset because reading is "
+    "supposed to have come first.\n\n"
+    "Copy `<source_id>` exactly as it appears in "
+    f"`{LIST_SOURCES_TOOL}`/`{READ_SOURCE_TOOL}`'s own output rather than "
+    "retyping it -- an id may only contain letters, digits, `.`, `_`, `#`, "
+    "`:` and `-`, and a character outside that set does not raise an error. "
+    "It just means the reference never becomes a link."
+)
+"""The `[[src:...]]` grammar, in the model's own words, shared by every prompt
+that tells the model it can read a source.
+
+Written once and imported rather than repeated, because the grammar already
+has two other copies that must agree with it -- the parser in
+`frontend/src/infrastructure/rendering/references.ts` and the design's own
+statement of it in `docs/superpowers/specs/2026-08-16-rendering-media-design.md`
+-- and a fourth divergent copy inside a prompt string is the kind of drift
+nothing catches until a model's `[[src:...]]` fails to parse.
+
+Lives beside `READ_SOURCE_TOOL` rather than in the rendering layer: this is
+what the *model* is told, which is an application-layer concern the same way
+the tool names above it are, and `corpus_tools.py`/`ask_agent.py` both import
+it into their own system prompts rather than each writing the grammar out.
+"""
+
 
 class CorpusReadError(Exception):
     """The corpus could not be read. Storage failure, not an absent document."""

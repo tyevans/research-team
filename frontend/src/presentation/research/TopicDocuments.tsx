@@ -141,7 +141,12 @@ export const TopicDocuments = ({
         ))}
       </ul>
       {selected ? (
-        <DocumentBody sessionId={board.sessionId} path={selected.path} scrub={board.at} />
+        <DocumentBody
+          projectId={projectId}
+          sessionId={board.sessionId}
+          path={selected.path}
+          scrub={board.at}
+        />
       ) : null}
     </div>
   )
@@ -155,10 +160,12 @@ export const TopicDocuments = ({
  * than a branch inside it.
  */
 const DocumentBody = ({
+  projectId,
   sessionId,
   path,
   scrub,
 }: {
+  projectId: ProjectId
   sessionId: SessionId
   path: FilePath
   scrub: ScrubPoint
@@ -192,5 +199,5 @@ const DocumentBody = ({
     return <LessonDocument doc={lesson.doc} attempts={attempts} />
   }
 
-  return <Markdown source={contents.data} />
+  return <Markdown source={contents.data} projectId={projectId} />
 }

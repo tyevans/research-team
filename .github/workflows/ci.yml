@@ -21,8 +21,14 @@ name: CI
 on:
   push:
     branches: [main]
+  # No `branches:` filter, deliberately. It used to say `[main]`, which meant a
+  # PR whose base was another feature branch got no CI at all -- and the checks
+  # tab showed nothing rather than a failure, so the PR looked ready. That was
+  # measured on #203, a stacked PR that sat green-looking with zero jobs run;
+  # the fix at the time was to retarget it at main, which is not available to a
+  # stack that genuinely depends on its parent. A stacked PR is exactly as much
+  # a candidate for these four gates as one aimed at main.
   pull_request:
-    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}

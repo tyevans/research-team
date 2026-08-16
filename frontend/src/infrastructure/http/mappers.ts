@@ -769,6 +769,7 @@ export const toDefinitionCitation = (
   sourceId: raw.source_id,
   start: raw.start,
   end: raw.end,
+  atSeconds: raw.at_seconds,
 })
 
 export const toDefinition = (raw: Dto<typeof dto.definitionDto>): Definition => ({

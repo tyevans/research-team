@@ -9,7 +9,7 @@ import { AskView } from '@presentation/ask/AskView.tsx'
 import { Shell } from '@presentation/layout/Shell.tsx'
 import { ProjectView } from '@presentation/project/ProjectView.tsx'
 import { homeHref, type Route } from '@presentation/routing/routes.ts'
-import { useRoute } from '@presentation/routing/use-route.ts'
+import { useRoute, useSeekSeconds } from '@presentation/routing/use-route.ts'
 import { SessionView } from '@presentation/session/SessionView.tsx'
 import { Breadcrumbs } from '@presentation/shell/Breadcrumbs.tsx'
 import { ConnectionBadge, DriftBadge } from '@presentation/shell/ConnectionBadge.tsx'
@@ -39,6 +39,7 @@ export const App = () => (
  * root. `App.test.tsx` is what sees it now. */
 const Console = () => {
   const route = useRoute()
+  const seekSeconds = useSeekSeconds()
   const stream = useStream()
   const container = useContainer()
 
@@ -110,17 +111,29 @@ const Console = () => {
           in the shell rather than the three per-session call sites it
           replaces. It renders nothing when nothing is pending. */}
       <DecisionBar />
-      <CurrentView route={route} store={sessionStore} onCourse={setCourse} />
+      <CurrentView
+        route={route}
+        seekSeconds={seekSeconds}
+        store={sessionStore}
+        onCourse={setCourse}
+      />
     </Shell>
   )
 }
 
 const CurrentView = ({
   route,
+  seekSeconds,
   store,
   onCourse,
 }: {
   route: Route
+  /** The `doc` route's own `?t=`, threaded down rather than re-read: it comes
+   *  from the same hash `route` was parsed from, and reading it twice (once
+   *  here, once lower) would be two parses of one URL that could disagree if
+   *  the hash changed between them. `ProjectView` is the only branch that has
+   *  anywhere to put it -- see its own prop for where it lands. */
+  seekSeconds: number | null
   store: SessionStore
   onCourse: (course: Course | null) => void
 }) => {
@@ -143,7 +156,14 @@ const CurrentView = ({
   // as the one that would delete it. Every facet now reaches a region rather
   // than three of them landing on a page that reads none.
   return (
-    <ProjectView key={id} projectId={id} selection={selection} store={store} onLoaded={onCourse} />
+    <ProjectView
+      key={id}
+      projectId={id}
+      selection={selection}
+      seekSeconds={seekSeconds}
+      store={store}
+      onLoaded={onCourse}
+    />
   )
 }
 
