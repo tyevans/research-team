@@ -7,7 +7,7 @@ import { expect, it, vi } from 'vitest'
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream } from '@application/ports/event-stream.ts'
-import type { TopicRepository } from '@application/ports/repositories.ts'
+import type { MediaProposalRepository, TopicRepository } from '@application/ports/repositories.ts'
 import type { TopicDetail } from '@domain/research/topic.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { ProjectId, TopicId } from '@domain/shared/identifier.ts'
@@ -83,6 +83,35 @@ const fakeTopics = (over: Partial<TopicRepository> = {}): TopicRepository => ({
   ...over,
 })
 
+/** This suite exercises `run` only where a test names it; every other
+ *  method fails loudly if called, matching `fakeTopics`' own convention. */
+const fakeMediaProposals = (
+  over: Partial<MediaProposalRepository> = {},
+): MediaProposalRepository => ({
+  list: vi.fn(() => {
+    throw new Error('TopicManagePane should never call list()')
+  }),
+  accept: vi.fn(() => {
+    throw new Error('TopicManagePane should never call accept()')
+  }),
+  reject: vi.fn(() => {
+    throw new Error('TopicManagePane should never call reject()')
+  }),
+  ignore: vi.fn(() => {
+    throw new Error('TopicManagePane should never call ignore()')
+  }),
+  ignored: vi.fn(() => {
+    throw new Error('TopicManagePane should never call ignored()')
+  }),
+  unignore: vi.fn(() => {
+    throw new Error('TopicManagePane should never call unignore()')
+  }),
+  run: vi.fn(() => {
+    throw new Error('run was not stubbed for this test')
+  }),
+  ...over,
+})
+
 /** A stream that connects and never delivers anything.
  *
  * Not decoration: the pane renders `TopicDocuments`, which subscribes to
@@ -94,6 +123,7 @@ const quietStream: EventStream = { connect: () => {}, disconnect: () => {} }
 const renderPane = (ui: ReactElement, parts: Partial<AppContainer> = {}) => {
   const container = {
     topics: fakeTopics(),
+    mediaProposals: fakeMediaProposals(),
     stream: quietStream,
     ...parts,
   } as unknown as AppContainer
@@ -375,4 +405,21 @@ it('reopens an answered topic back to investigating', async () => {
     'investigating',
     'new evidence surfaced',
   )
+})
+
+it('runs the media curation chain for this exact project and topic', async () => {
+  // Review finding 1 (blocker): nothing in the frontend called
+  // `POST .../topics/{topic_id}/media-proposals` -- every user path dead-ended
+  // at the proposal pane's empty state. This asserts the request actually
+  // goes out with the right ids, not merely that a button renders: a button
+  // wired to the wrong repository method, or to no mutation at all, would
+  // still render and would still fail this.
+  const run = vi.fn().mockResolvedValue({ needs: 2, candidates: 3, ignored: 0, rejectedParses: 0 })
+  renderPane(<TopicManagePane projectId={PROJECT} topic={aTopic()} onClose={vi.fn()} />, {
+    mediaProposals: fakeMediaProposals({ run }),
+  })
+
+  await userEvent.click(screen.getByRole('button', { name: /find media for this topic/i }))
+
+  await waitFor(() => expect(run).toHaveBeenCalledWith(PROJECT, aTopic().topicId))
 })

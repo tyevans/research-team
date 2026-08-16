@@ -691,6 +691,15 @@ export const ignoredMediaDto = z.object({
   hosts: z.array(z.string()).default([]),
 })
 
+/** `POST .../topics/{topic_id}/media-proposals`'s 202 body -- `run_media_curation`'s
+ *  own `content={...}` dict, field-for-field. */
+export const mediaCurationOutcomeDto = z.object({
+  needs: z.number(),
+  candidates: z.number(),
+  ignored: z.number(),
+  rejected_parses: z.number(),
+})
+
 /** One row of `/sources/extraction-queue`'s `finished`: how a document's most
  *  recent extraction went.
  *

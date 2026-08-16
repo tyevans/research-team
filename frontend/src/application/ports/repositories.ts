@@ -385,6 +385,22 @@ export interface MediaProposalRepository {
   ignored(projectId: ProjectId): Promise<IgnoredMedia>
   /** Reverse an ignore at either grain, by the key `ignored` reported. */
   unignore(projectId: ProjectId, grain: 'asset' | 'host', key: string): Promise<void>
+  /** Run the three-stage curation chain once for one topic -- the only way
+   *  any proposal comes to exist. Resolves once the chain has actually run
+   *  (the route answers 202 after appending events, not before starting),
+   *  with the outcome counts the response carries -- `needs`/`candidates`/
+   *  `ignored`/`rejectedParses` -- so a caller can toast something more
+   *  useful than "done". */
+  run(projectId: ProjectId, topicId: string): Promise<MediaCurationOutcome>
+}
+
+/** What one curation run reported, mirroring the route's own `CurationOutcome`
+ *  field-for-field -- see `application/media_curation.py`'s `CurationOutcome`. */
+export interface MediaCurationOutcome {
+  readonly needs: number
+  readonly candidates: number
+  readonly ignored: number
+  readonly rejectedParses: number
 }
 
 /** A media upload. `file` rather than bytes: a `File` streams to the network

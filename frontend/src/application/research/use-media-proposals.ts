@@ -21,6 +21,24 @@ export const useMediaProposals = (projectId: ProjectId) => {
   })
 }
 
+/** Run the three-stage curation chain once for one topic -- the only way any
+ *  proposal comes to exist (see `MediaCurationService.curate`). Invalidates
+ *  the listing on success: the route answers 202 after the events are
+ *  already appended, so a re-read right away sees whatever it produced,
+ *  same as `useAcceptMediaProposal`'s reasoning for invalidating rather than
+ *  writing an optimistic proposal into the cache.
+ */
+export const useRunMediaCuration = (projectId: ProjectId) => {
+  const { mediaProposals } = useContainer()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (topicId: string) => mediaProposals.run(projectId, topicId),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.mediaProposals(projectId) }),
+  })
+}
+
 /** The ignore lists, for the undo list beside the pane. */
 export const useIgnoredMedia = (projectId: ProjectId) => {
   const { mediaProposals } = useContainer()
@@ -61,11 +79,16 @@ export const useRejectMediaProposal = (projectId: ProjectId) => {
 
 /** Ignore the asset or host behind one proposal.
  *
- * Invalidates both keys: the listing, because the card the proposal came
- * from should stop offering it, and the ignore list, because that is the
- * one place the person who just clicked can see -- and undo -- what they
- * did. Missing either invalidation would leave one of the two panes stale
- * until something unrelated happened to refetch it.
+ * Invalidates both keys. The ignore list is what actually changed on the
+ * server -- that is the one place the person who just clicked can see, and
+ * undo, what they did. The listing itself is invalidated too, but ignoring
+ * does not change any proposal's recorded status (`decide` has no
+ * transition for it), so the refetched rows are unchanged; `MediaProposalPane`
+ * is what makes ignoring visible, by filtering the listing against the
+ * (now-updated) ignore list rather than by anything this refetch alone
+ * produces. Invalidating the listing here still matters for the ordinary
+ * case -- a `MediaProposed` from the live feed landing around the same
+ * time -- it just isn't what hides the ignored card.
  */
 export const useIgnoreMediaProposal = (projectId: ProjectId) => {
   const { mediaProposals } = useContainer()

@@ -1,6 +1,9 @@
 import { z } from 'zod'
 
-import type { MediaProposalRepository } from '@application/ports/repositories.ts'
+import type {
+  MediaCurationOutcome,
+  MediaProposalRepository,
+} from '@application/ports/repositories.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
@@ -54,6 +57,20 @@ export class HttpMediaProposalRepository implements MediaProposalRepository {
   async ignored(projectId: ProjectId) {
     const body = await this.http.get(`/api/projects/${seg(projectId)}/ignored`, dto.ignoredMediaDto)
     return toIgnoredMedia(body)
+  }
+
+  async run(projectId: ProjectId, topicId: string): Promise<MediaCurationOutcome> {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/topics/${seg(topicId)}/media-proposals`,
+      {},
+      dto.mediaCurationOutcomeDto,
+    )
+    return {
+      needs: body.needs,
+      candidates: body.candidates,
+      ignored: body.ignored,
+      rejectedParses: body.rejected_parses,
+    }
   }
 
   async unignore(projectId: ProjectId, grain: 'asset' | 'host', key: string) {
