@@ -29,9 +29,20 @@ from research_team.domain.corpus import Corpus, MediaRecord, StoreDerivedText, T
 LOCATOR_KINDS = ("time", "page", "bbox", "char", "byte")
 """Every `kind` a `LocatorSpan.locator` may carry.
 
-Written down here rather than left implicit in the adapter because three later
-readers dispatch on it -- a resolver, a citation renderer and the timeline --
-and a fourth spelling invented at one of them would silently match nothing.
+Written down here rather than left implicit in the adapter. **Nothing
+dispatches on these tags today**, and this docstring claimed three readers did
+-- a resolver, a citation renderer and the timeline -- until a reviewer counted
+them. What actually reads a locator is `locators.resolve`, which checks only
+that `kind` is a `str` and passes unfamiliar spellings straight through
+(deliberately -- see its docstring), and nothing renders them at all. The three
+named readers are sub-project 4's, not this slice's.
+
+So the value here is that the adapter's five `match` arms have one written-down
+vocabulary to agree with, rather than that anything currently switches on it.
+That is still worth the constant: the tags are being *written into stored
+events* now, so a spelling invented later at a reader would silently match
+nothing in every transcript already on disk.
+
 The tag is always explicit: inferring the kind from which keys are present
 makes an unrecognised locator look like whichever known one it shares a key
 with, where an explicit tag makes it visibly unknown.
@@ -107,7 +118,10 @@ class PerceptionCapabilities:
         if not self.asr:
             absent.append("no transcriber (AGENT_TRANSCRIBER_URL)")
         if not self.ffmpeg:
-            absent.append("ffmpeg not found on PATH")
+            # Names both binaries because `ffmpeg_present()` requires both:
+            # an operator told only "ffmpeg" would install it, restart, and
+            # meet the identical 503 with `ffprobe` still missing.
+            absent.append("ffmpeg or ffprobe not found on PATH")
         return tuple(absent)
 
 
@@ -381,6 +395,18 @@ class MediaPerceiver:
     async def unperceived(self, project_id: UUID) -> tuple[str, ...]:
         """Every live medium with no transcript, in listing order.
 
+        **This has no caller yet, and that is deliberate rather than a loose
+        end.** There is no batch-perceive route and no "Transcribe all" control
+        in this slice; the control is a later one's, and `grep` finds only
+        `tests/application/test_perception.py` calling this today. It was
+        written here because the exclusion rule below -- that batch perception
+        must not resurrect a dropped transcript -- was worked out here, against
+        this slice's own fold, and is recorded in the ledger as the longest
+        ruling of the run. Deleting it and re-deriving it beside the future
+        button would mean re-deriving the reasoning too, and the reasoning is
+        the expensive part. Read the guarantee below as describing what batch
+        perception *will* do, not as one anything currently provides.
+
         The mirror of `DocumentExtractor.unextracted`, down to taking the
         listing's order so a "perceive all" walks the page the reader is
         looking at.
@@ -422,13 +448,6 @@ class MediaPerceiver:
 
         Order is the listing's, so a "perceive all" walks the page the reader
         is looking at -- `unextracted`'s reason.
-
-        **Perceivedness is read off `derived_from`, not off the id
-        convention.** `StoreDerivedText.source_id` is unconstrained by design
-        so a second model can perceive one medium under its own id, and a
-        check for `f"{parent}#perceived"` would go on offering perception for a
-        medium that already has a transcript under some other name -- the
-        operator who accepted would get a third.
         """
         # One read at the wider width rather than two reads at two widths.
         # Both sets come out of it -- dropped rows are filtered back out for

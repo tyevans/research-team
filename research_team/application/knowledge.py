@@ -37,6 +37,17 @@ class KnowledgeError(Exception):
 #: application layer cannot import the infrastructure module to reach it.
 #: Dependencies point inward, so the constant moved inward with the second
 #: caller rather than the second caller reaching outward for it.
+#:
+#: **Changing this means changing `DEFAULT_PERCEPTION_MAX_CHARS` in
+#: `infrastructure/config.py` in the same commit.** That constant is the
+#: `Budget` handed to `readeverything.represent`, and it is a *copy* of this
+#: number rather than an import of it, because `config.py` is the edge that
+#: asks nothing of the layers above and importing this module there would
+#: invert that (ruling R1). Derived text lands in `corpus_documents` and is
+#: extracted like any other document, so a drift between the two makes a
+#: transcript truncate at a different length than a document.
+#: `test_perception_max_chars_matches_the_document_cap` is what fails if they
+#: separate -- this comment is the signal, that test is the gate.
 MAX_DOCUMENT_CHARS = 200_000
 
 

@@ -182,5 +182,21 @@ def test_a_transcriber_url_without_a_model_refuses_to_start(monkeypatch):
 
 
 def test_perception_max_chars_matches_the_document_cap(monkeypatch):
+    """The drift guard ruling R1 promised, and it used to be tautological.
+
+    It asserted `perception_max_chars() == DEFAULT_PERCEPTION_MAX_CHARS` --
+    the getter against the constant the getter returns -- and never mentioned
+    `MAX_DOCUMENT_CHARS`, the other half of the pair whose drift is the only
+    thing this test exists to catch. Setting `MAX_DOCUMENT_CHARS` to 100_000
+    left it green while transcripts capped at twice the document cap.
+
+    Importing `application.knowledge` from an `infrastructure` test inverts
+    nothing: R1's rule is that `config.py` must not import upward, and this is
+    a test, which sits above both layers and is the only place the two
+    constants can be compared at all.
+    """
+    from research_team.application.knowledge import MAX_DOCUMENT_CHARS
+
     monkeypatch.delenv("AGENT_PERCEPTION_MAX_CHARS", raising=False)
-    assert config.perception_max_chars() == config.DEFAULT_PERCEPTION_MAX_CHARS
+    assert config.DEFAULT_PERCEPTION_MAX_CHARS == MAX_DOCUMENT_CHARS
+    assert config.perception_max_chars() == MAX_DOCUMENT_CHARS

@@ -93,12 +93,26 @@ backlog candidate instead.
 
 
 def ffmpeg_present() -> bool:
-    """Whether ffmpeg is on PATH. Measured per call, not cached.
+    """Whether *both* ffmpeg and ffprobe are on PATH. Measured per call, not cached.
+
+    Both, not just `ffmpeg`: the spec names the pair ("`ffmpeg` and `ffprobe`
+    are OS binaries") and `readeverything`'s video handling calls `ffprobe` to
+    read a container's duration and streams before `ffmpeg` extracts anything
+    from it. Checking only the first declared `Capability.FFMPEG` present on an
+    install that has one and not the other, and the shortfall then arrived as a
+    degradation from a `represent` already paid for rather than as the 503 the
+    route is there to give. A split install is not hypothetical: several
+    distributions package the two separately, and a `ffmpeg` built without the
+    `ffprobe` binary is a supported upstream configuration.
+
+    Still declared rather than probed, so ruling R2's accepted cost stands
+    unchanged -- a binary that is present but broken reads as available. This
+    widens *which* binaries must be present, not how hard we look at them.
 
     Not cached because the answer is cheap and a long-lived process that had
     ffmpeg installed underneath it should notice.
     """
-    return shutil.which("ffmpeg") is not None
+    return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
 
 
 def _locator_to_dict(locator: object) -> dict[str, object]:

@@ -303,3 +303,180 @@ async def test_the_medium_itself_never_reaches_the_graph(wired):
     assert (await client.get(f"/api/projects/{project}/graph/entities")).json()[
         "entities"
     ] == []
+
+
+async def _row_when(application, project_id: UUID, source_id: str, ready, *, timeout=10.0):
+    """The transcript's row once `ready(row)` holds, or a failure saying it never did.
+
+    A poll rather than `application.corpus_caught_up()`, and the reason is
+    B88 rather than flakiness. `CorpusEditor._store_derived` re-indexes after
+    it stores -- it has to, or the chunk store goes on quoting text the
+    corpus no longer holds -- and indexing appends redstring events that the
+    corpus subscription never processes, so `caught_up` waits for a position
+    it will not reach and times out after ten seconds. Measured on 2026-08-16
+    by deleting the `index` call: the identical assertions pass in 0.8s.
+
+    The corpus event is appended *before* those, so the row does arrive; what
+    is unavailable is the "everything has landed" signal. Polling for the
+    value under test is the honest substitute -- it waits for the fact the
+    test is about rather than for a global barrier that answers a different
+    question.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    row = None
+    while asyncio.get_running_loop().time() < deadline:
+        row = await application.corpus.get(project_id, source_id, include_dropped=True)
+        if row is not None and ready(row):
+            return row
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"{source_id!r} never reached the expected state; last row: {row}")
+
+
+async def _perceived_video(client, queue, application) -> str:
+    """A project holding `vid` and its transcript `vid#perceived`.
+
+    Goes through the HTTP surface rather than seeding rows, for this file's
+    reason and one more: the defect these tests cover was in `CorpusEditor`,
+    which only the routes reach, and a fixture that executed `StoreDerivedText`
+    itself would prove the aggregate accepts a re-store while leaving the
+    editor -- the thing that was broken -- untouched.
+    """
+    created = await client.post("/api/projects", json={"name": f"corpus-{uuid4()}"})
+    assert created.status_code == 200
+    project = created.json()["id"]
+    stored = await client.post(
+        f"/api/projects/{project}/sources/media",
+        files={"file": ("talk.mp4", b"\x00\x00\x00\x18ftypmp42", "video/mp4")},
+        data={"source_id": "vid"},
+    )
+    assert stored.status_code == 201
+    perceived = await client.post(f"/api/projects/{project}/sources/vid/perceive")
+    assert perceived.status_code == 202
+    await queue.wait(UUID(project))
+    await application.corpus_caught_up()
+    return project
+
+
+async def test_a_dropped_transcript_can_be_restored(wired):
+    """Restore works on a transcript, and keeps everything perception recorded.
+
+    The blocking defect of the whole-branch review. `CorpusEditor.restore`
+    resolved the transcript through `read_document` -- correct, it *is* a text
+    row -- and then re-stored it with `StoreSourceDocument`, which the
+    derivedness guard refuses. The console offers Restore on every dropped
+    text row, so pressing it answered with a refusal saying the operator had
+    tried to overwrite a transcript with prose nobody perceived, and the only
+    way back was to pay for the model call again.
+
+    Proved red against the code before the fix: `RESTORE REFUSED: source
+    'vid#perceived' is derived from 'vid'` arrived as a 500, since nothing at
+    the route maps `CommandRejectedError` on that path.
+
+    The provenance assertions are the second half and are not decoration. A
+    restore that re-issued `StoreDerivedText` with the perception fields left
+    at their defaults would put the row back and silently erase what produced
+    it -- the same failure `fetched_at` is carried through to avoid, one field
+    class over. `locator_map` in particular could not be asserted at all until
+    it had a reader, which is why F2 had to land with this.
+    """
+    application, client, queue, _port, _model = wired
+    project = await _perceived_video(client, queue, application)
+    project_id = UUID(project)
+
+    before = await application.corpus.get(project_id, "vid#perceived")
+    assert before is not None
+
+    dropped = await client.post(
+        f"/api/projects/{project}/sources/vid%23perceived/drop",
+        json={"reason": "noisy"},
+    )
+    assert dropped.status_code == 200, dropped.text
+    await application.corpus_caught_up()
+    # Read off the row rather than the listing: `_rows` uses the default
+    # `list_sources`, which hides dropped rows, so the transcript is
+    # legitimately absent from it at this point.
+    gone = await application.corpus.get(project_id, "vid#perceived", include_dropped=True)
+    assert gone is not None and gone.dropped_reason == "noisy"
+    assert "vid#perceived" not in await _rows(client, project)
+
+    restored = await client.post(f"/api/projects/{project}/sources/vid%23perceived/restore")
+    assert restored.status_code == 200, restored.text
+
+    row = await _row_when(
+        application, project_id, "vid#perceived", lambda r: r.dropped_reason is None
+    )
+    assert row.dropped_reason is None
+    assert row.text == TRANSCRIPT
+    assert row.derived_from == "vid"
+    assert row.perceived_with == before.perceived_with
+    assert row.locator_map == before.locator_map
+    assert row.degradations == before.degradations
+
+
+async def test_a_transcripts_title_can_be_revised_and_its_text_cannot(wired):
+    """The other half of the same defect, and the line the fix must not cross.
+
+    Revising took the identical `StoreSourceDocument` path, so a transcript's
+    title could not be corrected at all. It must work -- a title is an
+    ordinary edit whatever produced the text under it.
+
+    The `text` refusal is the opposite requirement and needs its own
+    assertion, because unlike media it cannot be left to the aggregate:
+    `StoreDerivedText` with a changed `text` is exactly the shape a legitimate
+    re-perception has, so `decide` sees nothing wrong and would store a
+    hand-typed paragraph as something a model perceived. 400 with a message
+    naming re-perception, not a silently dropped field.
+
+    Proved red both ways: the title half answered 500 before the fix, and the
+    text half answered 200 with the transcript replaced when the refusal was
+    removed.
+    """
+    application, client, queue, _port, _model = wired
+    project = await _perceived_video(client, queue, application)
+    project_id = UUID(project)
+    original = await application.corpus.get(project_id, "vid#perceived")
+    assert original is not None
+    before_title = original.title
+
+    renamed = await client.patch(
+        f"/api/projects/{project}/sources/vid%23perceived",
+        json={"title": "Ada's talk, transcribed", "note": "check the last minute"},
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    row = await _row_when(
+        application, project_id, "vid#perceived", lambda r: r.title != before_title
+    )
+    assert row.title == "Ada's talk, transcribed"
+    assert row.note == "check the last minute"
+    # The edit changed metadata and nothing else: the transcript and every
+    # field recording how it was produced survive a title fix.
+    assert row.text == TRANSCRIPT
+    assert row.derived_from == "vid"
+    assert row.perceived_with == "asr=whisper-1"
+
+    edited = await client.patch(
+        f"/api/projects/{project}/sources/vid%23perceived",
+        json={"text": "something nobody said"},
+    )
+    assert edited.status_code == 400, edited.text
+    assert "perceive the medium again" in edited.json()["detail"]
+
+    # `uri` and `published_at` go the same way and for a related reason: a
+    # transcript was not fetched from anywhere, so `CorpusDerivedTextStored`
+    # has no field to put them in. Refused rather than dropped, because
+    # answering 200 over a field that went nowhere is the worst of the three
+    # available answers.
+    relocated = await client.patch(
+        f"/api/projects/{project}/sources/vid%23perceived",
+        json={"uri": "https://example.invalid/talk"},
+    )
+    assert relocated.status_code == 400, relocated.text
+    assert "no uri or publication date" in relocated.json()["detail"]
+
+    # No poll: a refused edit appends nothing, so there is no later state to
+    # wait for. Reading immediately is what makes this assertion meaningful --
+    # it is asserting that nothing happened, not that something did.
+    unchanged = await application.corpus.get(project_id, "vid#perceived")
+    assert unchanged is not None
+    assert unchanged.text == TRANSCRIPT

@@ -172,6 +172,21 @@ class CorpusDerivedTextStored(DomainEvent):
     perceived_with: str
     degradations: str
     title: str | None = None
+    note: str | None = None
+    """An operator's annotation, the same field every other source kind has.
+
+    Added when `CorpusEditor.revise` was taught to edit a transcript: without
+    it, a re-store of a derived record had nowhere to carry a note, so a
+    transcript would have been the one source kind nobody could annotate.
+    Additive and defaulted, so every `CorpusDerivedTextStored` written before
+    it existed folds to `note=None` -- which is what those transcripts have.
+
+    No `uri`, `published_at` or `fetched_at` beside it, and that is a
+    distinction rather than an omission: those three are provenance for
+    by-reference content the corpus did not create, and a transcript was not
+    fetched from anywhere. Its provenance is `derived_from` plus
+    `perceived_with`, and the medium it came from carries the rest.
+    """
 
 
 @dataclass(frozen=True)
@@ -243,6 +258,9 @@ class StoreDerivedText:
     perceived_with: str
     degradations: str
     title: str | None = None
+    #: Mirrors `CorpusDerivedTextStored.note`; see there for why a transcript
+    #: has a note and no `uri`.
+    note: str | None = None
 
 
 CorpusCommand = StoreSourceDocument | StoreSourceMedia | StoreDerivedText | DropSourceDocument
@@ -526,6 +544,7 @@ def decide(command: CorpusCommand, state: CorpusState) -> list[DomainEvent]:
                     perceived_with=command.perceived_with,
                     degradations=command.degradations,
                     title=command.title,
+                    note=command.note,
                 )
             ]
 
@@ -768,6 +787,7 @@ def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
                 sha256=event.sha256,
                 char_count=len(event.text),
                 title=event.title,
+                note=event.note,
                 derived_from=event.derived_from,
                 perceived_with=event.perceived_with,
                 # JSON on the event, tuple in the state: the list shape is

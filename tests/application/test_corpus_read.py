@@ -14,7 +14,12 @@ from uuid import uuid4
 import pytest
 
 from research_team.application.corpus_read import MediaHandle, SourceListing
-from research_team.domain.corpus import Corpus, StoreSourceDocument, StoreSourceMedia
+from research_team.domain.corpus import (
+    Corpus,
+    StoreDerivedText,
+    StoreSourceDocument,
+    StoreSourceMedia,
+)
 from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.read_models import CorpusStore
@@ -200,3 +205,78 @@ async def test_read_media_handle_carries_the_media_record(reader) -> None:
     assert handle.record.source_id == "v1"
     assert handle.record.media_type == "video/mp4"
     assert handle.record.byte_count == len(b"payload")
+
+
+async def _store_derived(
+    reader: ProjectCorpusReader,
+    source_id: str,
+    parent: str,
+    text: str,
+    locator_map: str,
+) -> None:
+    """Store a medium and then a transcript of it, the way perception does,
+    folded straight into the reader's store like the two helpers above.
+
+    Both commands go through *one* `Corpus` instance rather than reusing
+    `_store_media`: `decide` refuses `StoreDerivedText` whose parent is not in
+    its own state, and each helper above builds a fresh aggregate, so a second
+    instance would see an empty corpus and reject the transcript.
+    """
+    stat = await reader._blobs.put(_bytes(b"payload"))
+    corpus = Corpus(reader._project_id)
+    corpus.execute(
+        StoreSourceMedia(
+            corpus_id=reader._project_id,
+            source_id=parent,
+            sha256=stat.sha256,
+            media_type="video/mp4",
+            byte_count=stat.byte_count,
+        )
+    )
+    corpus.execute(
+        StoreDerivedText(
+            corpus_id=reader._project_id,
+            source_id=source_id,
+            derived_from=parent,
+            text=text,
+            locator_map=locator_map,
+            perceived_with="vision=gpt-4o",
+            degradations="[]",
+        )
+    )
+    for event in corpus.uncommitted_events:
+        await reader._runner.projection.handle(event)
+
+
+async def test_read_document_hands_back_a_transcripts_locator_map(reader) -> None:
+    """The stored `locator_map` column has a reader.
+
+    It was write-only until `CorpusEditor.restore` needed it: written by
+    `_on_derived_text` and read by nothing, so `locators.resolve` had no way
+    to be handed a stored map outside a test. `locator_map` is deliberately
+    not on `TextRecord` -- it would ride in every snapshot -- so this asserts
+    on `StoredDocument` and would fail if `read_document` built its answer
+    through `to_record` alone.
+
+    Proved red against the previous `StoredDocument(record=..., text=...)`,
+    which answered `None` here.
+    """
+    stored_map = (
+        '[{"char_start": 0, "char_end": 5, '
+        '"locator": {"kind": "time", "start_s": 0.0, "end_s": 1.5}}]'
+    )
+    await _store_derived(reader, "v1#perceived", "v1", "hello", stored_map)
+
+    stored = await reader.read_document("v1#perceived")
+    assert stored is not None
+    assert stored.locator_map == stored_map
+    assert stored.record.derived_from == "v1"
+
+
+async def test_read_document_hands_back_no_locator_map_for_a_fetched_document(reader) -> None:
+    """`None`, not `"[]"`. A fetched document has no map at all, which is a
+    different fact from a perception that produced an empty one."""
+    await _store_text(reader, "s1", "prose")
+    stored = await reader.read_document("s1")
+    assert stored is not None
+    assert stored.locator_map is None

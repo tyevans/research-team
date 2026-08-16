@@ -2932,3 +2932,61 @@ class of reason. Deliberately not done inside the perception slice: it changes
 the environment every test in the repository runs under, and the tests that
 would newly run without embeddings need checking one at a time rather than in
 a feature branch about video.
+
+
+### B90. `MediaPerceiver` writes text without the cap `CorpusEditor._store` enforces
+
+`MAX_DOCUMENT_CHARS` (200_000) is enforced on exactly one of the two paths that
+write text into `corpus_documents`. `CorpusEditor._store` checks it and raises
+`KnowledgeError`, which the PATCH route maps to 400. `MediaPerceiver.perceive`
+executes `StoreDerivedText` on the aggregate directly, and `decide` has no
+opinion on the length of anything — so nothing in this repository bounds a
+transcript.
+
+The only bound is advisory: `Budget(max_chars=config.perception_max_chars())`
+handed to `readeverything.represent`. Reasoned rather than measured — no
+transcript this long has been produced here — but the shape of the risk is
+plain from the code: a `Budget` is a request to the library, and whether it is
+honoured exactly, approximately, or per-segment is the library's business and
+is pinned only by a `<0.3` version cap. A pre-1.0 minor could change it without
+anything here noticing.
+
+What it costs if it happens: an oversized derived row that can never be
+extracted (`store_source`'s own cap refuses it downstream) and can never be
+revised (`_store`'s cap refuses that too) — a row the system wrote and cannot
+subsequently act on. Note that `CorpusEditor._store_derived` deliberately does
+*not* check the cap, for exactly this reason: a restore that enforced it would
+refuse to put back a transcript this system itself produced, which is a worse
+dead end than the one it exists to fix. That comment cross-references this
+entry.
+
+The fix is a check in `MediaPerceiver.perceive` between the port returning and
+the command being executed, raising a named exception the perceive route maps —
+not a truncation, which would store a sentence ending mid-word as if a model
+had produced it. Deliberately not done inside this slice: it needs a route
+status decision and an error type, and the perceive route's exception mapping
+was settled two tasks earlier.
+
+### B91. A running transcription shows no state on its own media row
+
+Between the 202 and the terminal frame — minutes for an hour of audio — a media
+row in the console shows a live "Transcribe" button and nothing else.
+`documentExtraction` returns `unextractable` for every media row, deliberately
+and with a good comment (a video is not a document and must not be offered to
+the extraction queue), and `perceiveBusy` is only true while the HTTP request
+itself is in flight, which is milliseconds.
+
+Not duplicated work, and that is why this is cosmetic rather than a defect: a
+second press is handled correctly, answering 202 with `queued: false` and
+"Already queued for transcription". The extraction pane does show the running
+job, so the state is visible somewhere — just not on the row carrying the
+button that started it.
+
+The gap is the one the split between `busy` and `perceiveBusy` leaves open by
+construction: `busy` tracks the extraction queue, which media is excluded from,
+and `perceiveBusy` tracks a request that has already returned. The fix is a
+third state read off the queue keyed by the *medium's* id (perception enqueues
+under the medium, extraction under the derived id, so the two cannot collide),
+rendered on the media row the way `ExtractionPane` renders a stage. Left for
+the slice that adds the batch "Transcribe all" control, which needs the same
+per-row state and would otherwise build it twice.

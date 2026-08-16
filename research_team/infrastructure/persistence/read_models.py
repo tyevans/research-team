@@ -932,6 +932,12 @@ class CorpusProjection(DeclarativeProjection):
             "sha256": event.sha256,
             "char_count": len(event.text),
             "title": event.title,
+            # Written on every store, including when it is `None`. A
+            # re-perception or a revise that cleared the note has to clear the
+            # column too -- this handler load-and-mutates, so a field left out
+            # of `fields` keeps whatever the previous store put there, which
+            # would make a removed note reappear.
+            "note": event.note,
             "dropped_reason": None,
             "derived_from": event.derived_from,
             "locator_map": event.locator_map,

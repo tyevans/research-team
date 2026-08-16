@@ -121,11 +121,14 @@ export const documentLabel = (source: SourceSummary): string => source.title ?? 
  *
  * **A dropped transcript still counts its medium as perceived**, and that is
  * deliberate rather than an oversight of the `kind === 'text'` test below: this
- * is the same rule `PerceptionService.unperceived` applies on the server, whose
+ * is the same rule `MediaPerceiver.unperceived` applies on the server, whose
  * comment says it in as many words -- a dropped transcript still counts its
  * parent as perceived. So a medium whose transcript was dropped shows
- * "Transcript" here and is excluded from batch perception there, and the two
- * ends agree. Named because they currently agree by coincidence of shape and
+ * "Transcript" here and would be excluded from batch perception there, and the
+ * two ends agree. *Would be*: `unperceived` has no caller yet -- there is no
+ * batch-perceive route in this slice -- so the agreement is between this
+ * function and a rule the server has written down rather than one it currently
+ * runs. Named because they agree by coincidence of shape and
  * nothing else says so: a future reader "fixing" this to skip dropped rows
  * would make the console offer to re-transcribe exactly the media the batch
  * path refuses to touch, and neither side would report a conflict.

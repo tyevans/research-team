@@ -493,4 +493,25 @@ def test_ffmpeg_presence_is_read_from_the_path_not_probed(tmp_path):
     """
     from research_team.infrastructure.perception import ffmpeg_present
 
-    assert ffmpeg_present() is (shutil.which("ffmpeg") is not None)
+    assert ffmpeg_present() is (
+        shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+    )
+
+
+def test_ffmpeg_presence_requires_ffprobe_too(tmp_path, monkeypatch):
+    """One binary of the pair is not the capability.
+
+    `readeverything`'s video path calls `ffprobe` before `ffmpeg`, so an
+    install with only the second declares a capability it cannot deliver and
+    the shortfall surfaces as a degradation from work already paid for. Proved
+    red against the previous `shutil.which("ffmpeg") is not None`, which
+    answered True here.
+    """
+    from research_team.infrastructure.perception import readeverything_adapter
+
+    monkeypatch.setattr(
+        readeverything_adapter.shutil,
+        "which",
+        lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None,
+    )
+    assert readeverything_adapter.ffmpeg_present() is False
