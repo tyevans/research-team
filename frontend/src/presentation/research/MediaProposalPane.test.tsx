@@ -1,15 +1,17 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement, ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
+import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { MediaProposalRepository } from '@application/ports/repositories.ts'
 import type { MediaProposal, MediaProposalGroup } from '@domain/research/media-proposal.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
+import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { MediaProposalPane } from './MediaProposalPane.tsx'
 
 const project = ProjectId('11111111-1111-1111-1111-111111111111')
@@ -68,14 +70,42 @@ const fakeMediaProposals = (
   ...over,
 })
 
+/** Mirrors `DocumentList.test.tsx`'s fake stream: a `connect` that captures
+ *  the listener `StreamProvider` hands it, so a test can push a frame through
+ *  the real fan-out rather than calling a prop the pane does not have. */
+const fakeStream = () => {
+  let listener: EventStreamListener | null = null
+  const stream: EventStream = {
+    connect: (received) => {
+      listener = received
+    },
+    disconnect: () => {
+      listener = null
+    },
+  }
+  return {
+    stream,
+    pushMedia: (projectId: string = project, change = 'MediaProposalStored') =>
+      act(() => {
+        listener?.onFrame({ kind: 'media', projectId, change })
+      }),
+  }
+}
+
+/** `StreamProvider` is not decoration: the pane subscribes to the feed to
+ *  replace its old poll, and a harness without one would exercise a
+ *  component the application never renders. */
 const wrapperFor = (
   mediaProposals: MediaProposalRepository,
+  stream: EventStream = fakeStream().stream,
 ): (({ children }: { children: ReactNode }) => ReactElement) => {
-  const container = { mediaProposals } as unknown as AppContainer
+  const container = { mediaProposals, stream } as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   return ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
-      <ContainerProvider container={container}>{children}</ContainerProvider>
+      <ContainerProvider container={container}>
+        <StreamProvider>{children}</StreamProvider>
+      </ContainerProvider>
     </QueryClientProvider>
   )
 }
@@ -165,6 +195,39 @@ it('rejects with the primary button, and opens ignore only behind a second choic
   await user.click(screen.getByRole('button', { name: 'Ignore…' }))
   expect(screen.getByRole('button', { name: 'Ignore this asset' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Ignore this host' })).toBeInTheDocument()
+})
+
+it('re-reads the listing when a media frame arrives on the live feed, not a poll', async () => {
+  // Pins the fix for the bug in the task brief: `MediaProposals` events were
+  // pushed (`FEED_AGGREGATE_TYPES`) but misrouted -- the server's SSE
+  // generator had no branch for them, so they fell to the generic log-frame
+  // path, which stamps `index: 0`, which `decodeFrame` requires be `>= 1` to
+  // accept a frame as a log entry, so every one was silently dropped. This
+  // asserts the pane actually redraws from the frame, not merely that
+  // `decodeFrame` can produce one -- a fix that only added the frame kind and
+  // never wired the pane to it would leave this red.
+  const feed = fakeStream()
+  const first = [group({ proposals: [proposal({ status: 'accepted' })] })]
+  const second = [
+    group({
+      proposals: [proposal({ status: 'failed', error: 'HTML interstitial, not an image' })],
+    }),
+  ]
+  const list = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second)
+  const mediaProposals = fakeMediaProposals({ list })
+
+  render(<MediaProposalPane projectId={project} />, {
+    wrapper: wrapperFor(mediaProposals, feed.stream),
+  })
+
+  expect(await screen.findByText('Storing…')).toBeInTheDocument()
+  expect(list).toHaveBeenCalledTimes(1)
+
+  feed.pushMedia()
+  await act(() => new Promise((resolve) => setTimeout(resolve, 450)))
+
+  expect(list).toHaveBeenCalledTimes(2)
+  expect(await screen.findByText('Failed: HTML interstitial, not an image')).toBeInTheDocument()
 })
 
 it('lists what is currently ignored, with an undo', async () => {

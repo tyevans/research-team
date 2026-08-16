@@ -1,10 +1,13 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 
 import { useIgnoredMedia, useMediaProposals } from '@application/research/use-media-proposals.ts'
 import { errorMessage } from '@application/ports/errors.ts'
+import { queryKeys } from '@application/queries/keys.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Button, EmptyState, ErrorBox, Loading } from '../common/primitives.tsx'
+import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
 import { IgnoredList } from './IgnoredList.tsx'
 import { MediaProposalCard } from './MediaProposalCard.tsx'
 
@@ -20,6 +23,28 @@ export const MediaProposalPane = ({ projectId }: { projectId: ProjectId }) => {
   const query = useMediaProposals(projectId)
   const ignoredQuery = useIgnoredMedia(projectId)
   const [showIgnored, setShowIgnored] = useState(false)
+  const queryClient = useQueryClient()
+
+  // Refetches on the live feed's `media` frame in place of the poll this pane
+  // used to run every 3s while a proposal sat in `accepted` -- the one state
+  // known to be transient, because accepting answers 202 and the terminal
+  // state (stored or failed) arrives minutes later after a download and a
+  // perception pass. `MediaProposals` events were pushed all along
+  // (`FEED_AGGREGATE_TYPES` in event_store.py) but misrouted: the server's
+  // SSE generator had no branch for them, so they fell to the generic
+  // log-frame path, which stamps `index: 0`, which `decodeFrame` requires be
+  // `>= 1` to accept a frame as a log entry -- every one was silently
+  // dropped. See `media_change` in `presenters.py` for the fix.
+  useFrameRefresh(
+    // Always on: this pane is the one place that reads this query, so being
+    // mounted is the "on screen" test other `useFrameRefresh` callers gate
+    // a flag on.
+    true,
+    (frame) => frame.kind === 'media' && frame.projectId === projectId,
+    () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.mediaProposals(projectId) })
+    },
+  )
 
   if (query.isPending) return <Loading what="media proposals" />
 

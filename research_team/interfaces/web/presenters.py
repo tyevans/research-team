@@ -618,6 +618,39 @@ def corpus_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
     }
 
 
+def media_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
+    """One media-proposal event, as pushed over SSE.
+
+    Mirrors `corpus_change`'s shape and its reasoning: `MediaProposals` is
+    keyed on `project_id` alone (see the aggregate's own module docstring), so
+    `project_id` here is the aggregate id with no lookup, the same free
+    addressing `corpus_change` gets from a corpus sharing its project's UUID.
+
+    Before this presenter existed, `MediaProposals` events fell through to the
+    generic `feed_event` branch in `app.py`'s SSE generator -- which sends
+    `{"session_id": <this same project id>, "index": 0, ...}`. That is not a
+    missing feature, it is actively wrong twice over: the frontend's
+    `decodeFrame` requires `isEventIndex(index) >= 1` for the default "log"
+    branch, so every one of those frames was silently dropped, and the ones
+    that were not would have addressed a project id into the session tree.
+    `MediaProposalPane` polled every 3s while a proposal was `accepted`
+    instead, because accepting answers 202 and the terminal state (stored or
+    failed) arrives minutes later after a download and a perception pass with
+    nothing in the tab to prompt a re-read.
+
+    Carries no proposal, only that one moved -- `corpus_change`'s argument
+    about a document applies here to a proposal row: the pane re-reads
+    `/api/projects/{id}/media-proposals`, which is the one description of
+    a proposal's status, against a wire payload that could disagree with it.
+    """
+    return {
+        "type": "Media",
+        "project_id": str(project_id),
+        "change": type(event).__name__,
+        "occurred_at": event.occurred_at.isoformat(),
+    }
+
+
 def project_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
     """One project event, as pushed over SSE.
 

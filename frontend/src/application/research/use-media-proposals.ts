@@ -6,19 +6,11 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
 
 /** Every proposal in the project, grouped by need.
  *
- * Polled, and only while something is still working -- there is no push
- * channel for this. `FeedFrame` in `event-stream.ts` names every aggregate the
- * server pushes frames for (`log`, `approval`, `activity`, `extraction`,
- * `seeding`, `dispatch`, `topic`, `graph`, `corpus`, `project`), and
- * `MediaProposals` is not among them -- `MediaProposalAccepted`,
- * `MediaProposalStored` and `MediaProposalFailed` are domain events with no
- * frame at all. BACKLOG.md B94 is the shape of what happens without this: a
- * row that shows no state at all for the minutes a transcription takes,
- * because nothing tells it the state changed. Polling is not free, so this
- * is conditional -- `refetchInterval` reads the query's own cached data and
- * returns `false` (no poll) unless a proposal is sitting in `accepted`,
- * which is the one state that is known to be transient. A pane nobody has
- * pressed accept on, which is the common case, never polls.
+ * No poll and no frame subscription here -- the application layer must not
+ * depend on the UI (see `eslint.config.js`'s layering rule), and
+ * `useFrameRefresh` lives in `presentation/shell`. `MediaProposalPane`
+ * invalidates this query's key on the live feed's `media` frame instead; see
+ * its own comment for what that frame replaced.
  */
 export const useMediaProposals = (projectId: ProjectId) => {
   const { mediaProposals } = useContainer()
@@ -26,13 +18,6 @@ export const useMediaProposals = (projectId: ProjectId) => {
   return useQuery({
     queryKey: queryKeys.mediaProposals(projectId),
     queryFn: () => mediaProposals.list(projectId),
-    refetchInterval: (query) => {
-      const groups = query.state.data ?? []
-      const stillWorking = groups.some((group) =>
-        group.proposals.some((proposal) => proposal.status === 'accepted'),
-      )
-      return stillWorking ? 3000 : false
-    },
   })
 }
 

@@ -138,6 +138,7 @@ from research_team.interfaces.web.presenters import (
     graph_change,
     graph_view,
     item_view,
+    media_change,
     neighborhood_view,
     preset_view,
     progress_view,
@@ -3608,6 +3609,15 @@ async def _sse(
                 # the project id with no lookup -- unlike a topic, which is why
                 # a topic frame carries no project at all.
                 payload = corpus_change(item.aggregate_id, item.event)
+            elif item.aggregate_type == MediaProposals.aggregate_type:
+                # A `MediaProposals` aggregate is keyed on `project_id` alone
+                # (see the aggregate's module docstring), so the aggregate id
+                # is the project id with no lookup -- the same free addressing
+                # `corpus_change` gets from a corpus sharing its project's
+                # UUID. Without this branch these events fell to the generic
+                # `feed_event` below, which sent `index: 0` and was silently
+                # dropped by the frontend's log-frame branch.
+                payload = media_change(item.aggregate_id, item.event)
             else:
                 payload = feed_event(
                     item.aggregate_id,

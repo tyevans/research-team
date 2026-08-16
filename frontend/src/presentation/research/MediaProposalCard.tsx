@@ -119,10 +119,10 @@ const ProposalOutcome = ({
   switch (proposal.status) {
     case 'accepted':
       // Stays visible in a working state until `list` reports `stored` or
-      // `failed` -- see `useMediaProposals`'s own comment for why that is a
-      // poll and not a push. BACKLOG.md B94 records the inverse defect
-      // already in this codebase (a media row showing no state at all for
-      // the minutes an hour of audio takes to transcribe) and this is
+      // `failed` -- see `MediaProposalPane`'s own comment for the live-feed
+      // frame that triggers that re-read. BACKLOG.md B94 records the inverse
+      // defect already in this codebase (a media row showing no state at all
+      // for the minutes an hour of audio takes to transcribe) and this is
       // deliberately not that.
       return <span className="text-sm">Storing…</span>
     case 'stored':
