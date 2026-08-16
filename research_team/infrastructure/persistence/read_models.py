@@ -725,6 +725,30 @@ class CorpusMediaRow(ReadModel):
         return uuid5(CORPUS_NAMESPACE, f"{project_id}:{source_id}")
 
 
+def _decode_degradations(value: str) -> tuple[str, ...] | None:
+    """Parse a `degradations` JSON string, or say the shape is wrong.
+
+    Shared by the write side (`_on_derived_text`, deciding what to store) and
+    the read side (`to_record`, deciding what to hand back), so there is one
+    place that knows what "a JSON list of strings" means rather than two that
+    could drift. `None` means the value did not parse to that shape --
+    callers decide what to do about it, since a writer wants to fall back to
+    `UNREADABLE_DEGRADATIONS` and a reader wants the same, for the identical
+    reason `_degradations_from` gives in `corpus.py`: an empty tuple already
+    means "perception was complete", so silently producing `()` -- or, worse,
+    `tuple(json.loads(...))`'s own failure modes, a `ValueError` on bad JSON
+    or a tuple of dict keys on well-formed JSON of the wrong shape -- would
+    misreport a value that could not be read as one that was fine.
+    """
+    try:
+        parsed = json.loads(value)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+        return None
+    return tuple(parsed)
+
+
 def to_record(row: CorpusDocumentRow | CorpusMediaRow) -> SourceRecord:
     """Present a stored row as the aggregate's own no-bytes shape.
 
@@ -762,9 +786,19 @@ def to_record(row: CorpusDocumentRow | CorpusMediaRow) -> SourceRecord:
         # Stored as JSON, wanted as a tuple. `row.degradations` is None for a
         # fetched document (no field to decode) and JSON otherwise -- either
         # the producer's list or `UNREADABLE_DEGRADATIONS` re-encoded by
-        # `_on_derived_text`, which round-trips back to the same marker here
-        # rather than a bare `json.loads` result.
-        degradations=tuple(json.loads(row.degradations)) if row.degradations else (),
+        # `_on_derived_text`. Routed through `_decode_degradations` rather than
+        # a bare `tuple(json.loads(...))`: this build never writes a row whose
+        # `degradations` fails that shape check, but a row is not an event --
+        # nothing here refuses on write the way `decide` does, so a row from a
+        # direct edit or an earlier build's bug is not this build's problem to
+        # rule out. `UNREADABLE_DEGRADATIONS` is the honest answer for that
+        # case too, for the same reason it is the answer for a malformed
+        # event.
+        degradations=(
+            (_decode_degradations(row.degradations) or UNREADABLE_DEGRADATIONS)
+            if row.degradations
+            else ()
+        ),
     )
 
 
@@ -855,23 +889,19 @@ class CorpusProjection(DeclarativeProjection):
         column could not be read at all. Storing the marker instead means
         `to_record` decodes it to the same tuple the aggregate's own
         `_degradations_from` returns for the identical failure in `evolve` --
-        one string, one meaning, whichever side reads it. This branch is not
-        reachable through `decide`, which refuses a malformed payload before
-        an event is ever written; it exists for the same reason
-        `_degradations_from` does, for an event this build did not write --
-        an earlier build, a repair script, or a direct append.
+        one string, one meaning, whichever side reads it, and `to_record`
+        reads through the identical `_decode_degradations` check this handler
+        writes through, so that parity is enforced by sharing the check
+        rather than by two call sites agreeing to write the same logic twice.
+        This branch is not reachable through `decide`, which refuses a
+        malformed payload before an event is ever written; it exists for the
+        same reason `_degradations_from` does, for an event this build did
+        not write -- an earlier build, a repair script, or a direct append.
         """
         row_id = CorpusDocumentRow.row_id(event.aggregate_id, event.source_id)
-        try:
-            parsed_degradations = json.loads(event.degradations)
-            degradations_ok = isinstance(parsed_degradations, list) and all(
-                isinstance(item, str) for item in parsed_degradations
-            )
-        except (ValueError, TypeError):
-            degradations_ok = False
         degradations = (
             event.degradations
-            if degradations_ok
+            if _decode_degradations(event.degradations) is not None
             else json.dumps(list(UNREADABLE_DEGRADATIONS))
         )
         fields = {

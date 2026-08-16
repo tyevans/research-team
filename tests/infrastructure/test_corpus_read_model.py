@@ -899,3 +899,35 @@ async def test_a_replayed_derived_text_event_rewrites_rather_than_duplicates(
     rows = await corpus_store.list_all(project_id)
     assert len(rows) == 1
     assert rows[0].text == "revised transcript"
+
+
+def test_to_record_reads_a_wrong_shaped_degradations_column_as_the_marker() -> None:
+    """`to_record` must not trust a stored `degradations` column any more than
+    `_on_derived_text` trusts an incoming event -- a row is not an event, and
+    nothing refuses a row's shape the way `decide` refuses an event's. Built
+    by hand rather than through the projection precisely to bypass the
+    write-time sanitizer and reach a row `_on_derived_text` would never
+    itself produce, the way an earlier build's bug or a direct edit could.
+
+    Guards against the failure a reviewer caught in `_degradations_from` one
+    task ago and that a bare `tuple(json.loads(...))` on the read side would
+    reintroduce here: well-formed JSON of the wrong shape silently becoming a
+    tuple of dict keys, which is a plausible-looking degradation list nobody
+    ever wrote.
+    """
+    project_id = uuid4()
+    row = CorpusDocumentRow(
+        id=CorpusDocumentRow.row_id(project_id, "vid#perceived"),
+        project_id=project_id,
+        source_id="vid#perceived",
+        text="transcript",
+        sha256="deadbeef",
+        char_count=len("transcript"),
+        derived_from="vid",
+        # Well-formed JSON, wrong shape: an object, not a list of strings.
+        # `tuple(json.loads(...))` would iterate its keys into `("a",)`.
+        degradations='{"a": 1}',
+    )
+    record = to_record(row)
+    assert record.degradations == UNREADABLE_DEGRADATIONS
+    assert record.degradations != ("a",)
