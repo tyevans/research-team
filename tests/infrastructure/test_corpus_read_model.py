@@ -931,3 +931,43 @@ def test_to_record_reads_a_wrong_shaped_degradations_column_as_the_marker() -> N
     record = to_record(row)
     assert record.degradations == UNREADABLE_DEGRADATIONS
     assert record.degradations != ("a",)
+
+
+def test_to_record_reads_an_empty_degradations_column_as_a_complete_perception() -> None:
+    """`[]` is a claim, not an absence, and reading it as the marker is a bug
+    this file shipped.
+
+    `to_record` decoded the column as
+    `_decode_degradations(...) or UNREADABLE_DEGRADATIONS`, and
+    `_decode_degradations("[]")` returns `()` -- falsy. So the *ordinary* case,
+    a perception that missed nothing, fell through to
+    `<degradations could not be read from the event>`, and every clean
+    transcript carried a fabricated degradation all the way to the console
+    (`presenters.py` -> `dto.ts`). Found on 2026-08-16 by the end-to-end test
+    in `tests/integration/test_media_reaches_the_graph.py`; pinned here so the
+    cheap test catches the regression rather than the expensive one.
+
+    Both neighbouring cases are asserted in the same test because the whole
+    defect is a collapse *between* them: a column that was never written
+    (`None`) and one holding `[]` must both read as `()`, while the test above
+    keeps the third case -- junk -- distinct from both. Proved red against the
+    `or` form: this fails on the `"[]"` row and passes on the `None` one.
+    """
+    project_id = uuid4()
+
+    def _row(degradations: str | None) -> CorpusDocumentRow:
+        return CorpusDocumentRow(
+            id=CorpusDocumentRow.row_id(project_id, "vid#perceived"),
+            project_id=project_id,
+            source_id="vid#perceived",
+            text="transcript",
+            sha256="deadbeef",
+            char_count=len("transcript"),
+            derived_from="vid",
+            degradations=degradations,
+        )
+
+    assert to_record(_row("[]")).degradations == ()
+    assert to_record(_row("[]")).degradations != UNREADABLE_DEGRADATIONS
+    # A fetched document has no column at all, and reads the same way.
+    assert to_record(_row(None)).degradations == ()

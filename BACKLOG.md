@@ -2874,3 +2874,61 @@ tests one at a time. Deliberately not done inside the perception slice: it is
 pre-existing infrastructure debt that the slice met rather than caused, and
 rewriting six fixtures inside a feature branch buries the change that branch
 is about.
+
+### B88. A successful extraction never marks its document extracted
+
+Measured on 2026-08-16, twice and independently (once while writing
+`tests/integration/test_media_reaches_the_graph.py`, once by its reviewer):
+extract a stored document over a composed application with the default
+`AGENT_GRAPH_STORE=memory`, and the queue reports
+`{"status": "done", "entities": 2, "relationships": 1}`, the graph really does
+hold the entities — and the corpus row still reads `extracted: False`.
+`application.corpus_caught_up()` raises `TimeoutError` on the position of the
+extraction's own events rather than returning.
+
+**It reproduces with an ordinary fetched text source and no media anywhere in
+the project**, which is the part that matters for blame: this is not the
+perception slice's doing and predates it. The slice only made it visible,
+because the end-to-end test is the first thing to walk the whole path in one
+process.
+
+`CorpusProjection._on_extracted` exists and is correctly `@handles(
+DocumentExtracted)`; what does not happen is the event reaching the
+subscription. The same test proves the subscription is otherwise live — remove
+`@handles(CorpusDerivedTextStored)` and `corpus_caught_up()` times out on
+*that* event instead, so the mechanism works for events the corpus aggregate
+writes and not for redstring's.
+
+What it costs while it stands: "extract all" recomputes the same documents
+forever, since `unextracted` filters on `listing.extracted`, and the console
+keeps offering "Extract" on a document that has a graph. What it costs the
+test suite: `test_a_stored_video_reaches_the_graph_through_its_transcript`
+asserts the queue outcome and the graph contents instead of the flag, and
+carries a paragraph explaining why. That workaround is load-bearing and
+undocumented anywhere else — without this entry the next reader concludes the
+test is wrong.
+
+### B89. A composed-application test that ingests reaches the network by default
+
+`build_application` builds an embedding provider unless `AGENT_VECTOR_STORE` is
+`none`, and the provider's first ingest reaches `AGENT_EMBEDDING_BASE_URL`. So
+any test that composes an application and then extracts anything makes a live
+call — against whatever the developer's or CI's environment happens to point
+at. Measured on 2026-08-16: the first draft of
+`tests/integration/test_media_reaches_the_graph.py` did not hang on a bug, it
+hung on a socket, for the full ten minutes before it was killed.
+
+Nothing fails loudly. The construction is deliberately eager and touches no
+network (its comment in `composition.py` says so and is right), so the reach
+happens minutes later inside redstring, where it looks like a slow model rather
+than a misconfigured test.
+
+The local workaround is one line — `monkeypatch.setenv("AGENT_VECTOR_STORE",
+"none")` — and that is what the test above does. The remedy is to stop relying
+on every future author knowing that: an autouse fixture in `tests/conftest.py`
+alongside `isolate_database`, which already points `AGENT_DB`,
+`AGENT_BLOB_ROOT` and `AGENT_PERCEPTION_ROOT` at `tmp_path` for exactly this
+class of reason. Deliberately not done inside the perception slice: it changes
+the environment every test in the repository runs under, and the tests that
+would newly run without embeddings need checking one at a time rather than in
+a feature branch about video.

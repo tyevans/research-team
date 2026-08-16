@@ -19,12 +19,15 @@ than implied:
 - The chat model, a `FakeMessagesListChatModel` answering with a fixed
   extraction. It is also the extraction model (`_extraction_model` hands an
   injected model straight back), so what runs is redstring's real
-  `build_graph` over a provider that does not think.
+  `build_graph` over a provider that does not think -- and, because it is the
+  same instance, it is where the transcript can be *seen* arriving. See
+  `PromptRecordingModel`.
 
 `AGENT_VECTOR_STORE=none` for the same no-network reason: the default builds
 an embedding provider that reaches `AGENT_EMBEDDING_BASE_URL` on first ingest,
 and without this the test hangs against whatever that happens to be. Measured
--- it is how the first draft of this file behaved.
+-- it is how the first draft of this file behaved. A local workaround, not a
+fix; `BACKLOG.md` B89 is the repository-wide one.
 """
 
 import asyncio
@@ -102,13 +105,43 @@ class FakeTranscriber:
         return PerceptionCapabilities(vision=True, asr=True, ffmpeg=True)
 
 
+class PromptRecordingModel(FakeMessagesListChatModel):
+    """The library's fake, plus a record of every prompt it was shown.
+
+    This is what turns the graph assertion below from an elimination argument
+    into a data-flow one. The model answers the same extraction whatever it is
+    given, so the entity names prove nothing on their own -- but the *prompt*
+    is the one place the perceived text has to appear if it genuinely travelled
+    from the blob, through the port, into `corpus_documents`, out through
+    `DocumentExtractor` and into redstring's chunker. Recording it is cheaper
+    than a provider fake and needs no injection point `build_application` does
+    not already have: `_extraction_model` hands an injected model straight
+    back, so this instance *is* the extraction model.
+
+    A pydantic field rather than a plain attribute, because `BaseChatModel` is
+    a pydantic model and an ordinary `self.seen = []` in `__init__` would be
+    rejected. Pydantic gives each instance its own list, so the mutable default
+    is safe here in a way it would not be on a dataclass.
+
+    `bind_tools` is not overridden the way `ToolAwareFakeChatModel` does it:
+    nothing in this file runs an agent turn, and extraction binds no tools.
+    """
+
+    seen: list[str] = []
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.seen.append("\n".join(str(message.content) for message in messages))
+        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+
 @pytest.fixture
 async def wired(db_path, monkeypatch):
     """A composed application, its HTTP surface, and the queue both share."""
     monkeypatch.setenv("AGENT_VECTOR_STORE", "none")
     port = FakeTranscriber()
+    model = PromptRecordingModel(responses=[AIMessage(content=EXTRACTION)])
     application = build_application(
-        model=FakeMessagesListChatModel(responses=[AIMessage(content=EXTRACTION)]),
+        model=model,
         db_path=db_path,
         perception=port,
     )
@@ -130,7 +163,7 @@ async def wired(db_path, monkeypatch):
     )
     client = AsyncClient(transport=ASGITransport(app=api), base_url="http://test")
     async with client:
-        yield application, client, queue, port
+        yield application, client, queue, port, model
     await application.close()
 
 
@@ -148,11 +181,18 @@ async def test_a_stored_video_reaches_the_graph_through_its_transcript(wired):
 
     **Why the entity is traceable to the transcript rather than to the fake.**
     The model answers the same extraction whatever it is shown, so the entity
-    *names* prove nothing. What proves it is the corpus: the project holds one
-    medium and one derived source, the medium is never extracted (media are
-    filtered out of `unextracted`, and the 202 below names exactly one source
-    id), and the graph is asserted empty before the extraction runs. An entity
-    afterwards therefore came from the perceived text, by elimination.
+    *names* prove nothing. The prompt does: `PromptRecordingModel` keeps every
+    prompt it was handed, and the transcript has to appear in one of them, in
+    full. That is data flow rather than inference -- the sentence the fake port
+    invented for a twelve-byte blob turns up in the text the extraction model
+    was asked about, so it travelled blob -> port -> `corpus_documents` ->
+    `DocumentExtractor` -> redstring's chunker without anything in between
+    substituting for it.
+
+    Two weaker claims are kept alongside it, because they fail differently: the
+    graph is asserted empty before extraction (so a stale graph cannot supply
+    the entity), and the 202 names exactly one source id (so the medium was not
+    extracted as if it were prose).
 
     **What is deliberately not asserted: `extracted` flipping to true.** It
     does not, within ten seconds, and it does not for an ordinary fetched
@@ -162,10 +202,10 @@ async def test_a_stored_video_reaches_the_graph_through_its_transcript(wired):
     event under `AGENT_GRAPH_STORE=memory`, and `corpus_caught_up()` times out
     on the same position. That is a pre-existing gap this slice neither caused
     nor is in a position to fix; asserting it here would make this file red
-    about somebody else's bug and hide the one it is for. Reported alongside
-    the task rather than left silent.
+    about somebody else's bug and hide the one it is for. Filed as `BACKLOG.md`
+    B88, with the measurement, rather than left as a note in one docstring.
     """
-    application, client, queue, port = wired
+    application, client, queue, port, model = wired
     created = await client.post("/api/projects", json={"name": f"corpus-{uuid4()}"})
     assert created.status_code == 200
     project = created.json()["id"]
@@ -222,6 +262,11 @@ async def test_a_stored_video_reaches_the_graph_through_its_transcript(wired):
     assert outcome["status"] == "done", outcome
     assert outcome["entities"] >= 1
 
+    # The data-flow half. Nothing before this line shows the *transcript*
+    # reaching the extraction -- only that an extraction happened for a source
+    # id whose row holds the transcript.
+    assert any(TRANSCRIPT in prompt for prompt in model.seen), model.seen
+
     listed = await client.get(f"/api/projects/{project}/graph/entities")
     assert listed.status_code == 200
     names = {entity["name"] for entity in listed.json()["entities"]}
@@ -240,7 +285,7 @@ async def test_the_medium_itself_never_reaches_the_graph(wired):
     Would pass with the whole perception slice reverted, which is the point --
     it is the invariant the slice had to preserve, not something it added.
     """
-    _application, client, _queue, _port = wired
+    _application, client, _queue, _port, _model = wired
     created = await client.post("/api/projects", json={"name": f"corpus-{uuid4()}"})
     project = created.json()["id"]
     stored = await client.post(
