@@ -18,12 +18,17 @@ from research_team.application.autonomy import GATED_TOOLS
 from research_team.application.corpus_read import (
     LIST_SOURCES_TOOL,
     READ_SOURCE_TOOL,
+    REFERENCE_SYNTAX_PROMPT,
     CorpusReadError,
     SourceListing,
     StoredDocument,
 )
 from research_team.domain import MediaRecord, TextRecord
-from research_team.infrastructure.agent.corpus_tools import build_corpus_tools, format_listing
+from research_team.infrastructure.agent.corpus_tools import (
+    CORPUS_PROMPT,
+    build_corpus_tools,
+    format_listing,
+)
 
 ALPHABET = "abcdefghijklmnopqrstuvwxyz "
 
@@ -316,3 +321,11 @@ async def test_a_negative_start_is_clamped_to_the_beginning(bad: int) -> None:
     tools = _tools(_document("s1", "Alpha."))
     text = await tools[READ_SOURCE_TOOL].ainvoke({"source_id": "s1", "start": bad})
     assert "s1@0-6" in text
+
+
+def test_the_reference_syntax_is_taught_beside_reading_it():
+    """`CORPUS_PROMPT` is what `composition.py` actually appends to every
+    project session's prompt; the grammar has to live inside it, not beside
+    it, or a session never hears the syntax the reading tools just taught it
+    to read a source with."""
+    assert REFERENCE_SYNTAX_PROMPT in CORPUS_PROMPT
