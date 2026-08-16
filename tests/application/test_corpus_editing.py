@@ -10,6 +10,8 @@ the real adapter runs.
 """
 
 import hashlib
+import inspect
+from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,17 +24,30 @@ from research_team.application.corpus_editing import (
     DocumentExists,
     NotDropped,
 )
-from research_team.application.corpus_read import DocumentListing, StoredDocument
+from research_team.application.corpus_read import MediaHandle, SourceListing, StoredDocument
 from research_team.application.document_extraction import UnknownDocument
 from research_team.application.knowledge import MAX_DOCUMENT_CHARS, KnowledgeError, SourceRef
-from research_team.domain.corpus import Corpus, StoreSourceDocument
+from research_team.domain.corpus import (
+    Corpus,
+    MediaRecord,
+    StoreSourceDocument,
+    StoreSourceMedia,
+    TextRecord,
+)
+from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
+
+
+async def chunks(payload: bytes) -> AsyncIterator[bytes]:
+    """A one-chunk stream -- `put` only needs an async iterator, not a real
+    multi-chunk transfer, to exercise the digest and byte count it computes."""
+    yield payload
 
 
 class FakeReader:
     """`CorpusReadPort` over the same in-memory `Corpus` the fake knowledge writes to.
 
     Reads `corpus.state.documents` directly rather than keeping a projection
-    of its own: the state already carries every `DocumentRecord` the fold
+    of its own: the state already carries every `TextRecord` the fold
     produces, and a second copy of that bookkeeping is exactly the kind of
     duplicate `CorpusReadPort`'s docstring warns would disagree with the fold
     eventually. `extracted` is always False -- nothing here exercises it.
@@ -48,10 +63,10 @@ class FakeReader:
         self._project_id = project_id
         self._texts = texts
 
-    async def list_documents(self, *, include_dropped: bool = False) -> list[DocumentListing]:
+    async def list_sources(self, *, include_dropped: bool = False) -> list[SourceListing]:
         corpus = await self._corpus.load_or_create(self._project_id)
         return [
-            DocumentListing(record=record, extracted=False)
+            SourceListing(record=record, extracted=False)
             for record in corpus.state.documents.values()
             if include_dropped or record.dropped_reason is None
         ]
@@ -65,7 +80,34 @@ class FakeReader:
             return None
         if record.dropped_reason is not None and not include_dropped:
             return None
+        if not isinstance(record, TextRecord):
+            # The real reader answers `None` for a media id here -- this
+            # method promises text. Mirrored rather than left to raise a
+            # KeyError off `_texts`, because `revise` and `restore` both
+            # branch on exactly this `None` to reach their media path, and a
+            # fake that answered a `StoredDocument` instead would make that
+            # branch unreachable in every test in this file.
+            return None
         return StoredDocument(record=record, text=self._texts[source_id])
+
+    async def read_media(
+        self, source_id: str, *, include_dropped: bool = False
+    ) -> MediaHandle | None:
+        corpus = await self._corpus.load_or_create(self._project_id)
+        record = corpus.state.documents.get(source_id)
+        if not isinstance(record, MediaRecord):
+            return None
+        if record.dropped_reason is not None and not include_dropped:
+            return None
+
+        def open_blob(start: int = 0) -> AsyncIterator[bytes]:
+            # Nothing in this file reads a blob through the handle; the
+            # editor's media paths want the record and never the bytes. A
+            # factory that raised would be a trap for whoever adds the first
+            # test that does, so it yields nothing instead of lying.
+            return chunks(b"")
+
+        return MediaHandle(record=record, stat=None, open=open_blob)
 
 
 class FakeKnowledge:
@@ -154,7 +196,12 @@ def knowledge(corpus_repo, project_id, texts) -> FakeKnowledge:
 
 
 @pytest.fixture
-def editor(corpus_repo, project_id, texts, knowledge) -> CorpusEditor:
+def blob_store(tmp_path) -> FilesystemBlobStore:
+    return FilesystemBlobStore(tmp_path / "blobs")
+
+
+@pytest.fixture
+def editor(corpus_repo, project_id, texts, knowledge, blob_store) -> CorpusEditor:
     async def open_knowledge(target_project_id: UUID) -> FakeKnowledge:
         return knowledge
 
@@ -162,13 +209,14 @@ def editor(corpus_repo, project_id, texts, knowledge) -> CorpusEditor:
         open_knowledge=open_knowledge,
         readers=lambda target_project_id: FakeReader(corpus_repo, target_project_id, texts),
         corpus=corpus_repo,
+        blobs=blob_store,
     )
 
 
 async def test_store_puts_the_text_in_the_corpus(editor, reader, project_id):
     await editor.store(project_id, "s1", "hello", title="Hello")
 
-    listing = await reader.list_documents()
+    listing = await reader.list_sources()
     assert [row.record.source_id for row in listing] == ["s1"]
     assert listing[0].record.title == "Hello"
 
@@ -183,14 +231,49 @@ async def test_store_refuses_an_id_the_corpus_already_holds(editor, project_id):
         await editor.store(project_id, "s1", "different")
 
 
+async def test_store_refuses_an_id_a_media_source_already_holds(
+    editor, corpus_repo, project_id
+):
+    """One `source_id` namespace, so an upload cannot claim an id a video
+    answers to.
+
+    The check widened from `list_documents` to `list_sources` as part of
+    removing the former, which made this refusal true without anyone asserting
+    it. Fails if the check is ever narrowed back to text -- and the failure
+    that would follow is not a crash: the upload would succeed, two records
+    would answer to `v1`, and a citation naming it could not say which bytes
+    it meant.
+
+    Stores the media by executing on `corpus_repo` directly, which is the
+    repository the editor and `FakeReader` share, because `store_media` does
+    not exist yet (task 5). `CorpusState.documents` is keyed by `source_id`
+    over `SourceRecord`, so the media record lands in the same dict the
+    existence check reads.
+    """
+    corpus = await corpus_repo.load_or_create(project_id)
+    corpus.execute(
+        StoreSourceMedia(
+            corpus_id=project_id,
+            source_id="v1",
+            sha256="0" * 64,
+            media_type="video/mp4",
+            byte_count=2048,
+        )
+    )
+    await corpus_repo.save(corpus)
+
+    with pytest.raises(DocumentExists):
+        await editor.store(project_id, "v1", "text under a taken id")
+
+
 async def test_drop_excludes_the_document_and_keeps_the_record(editor, reader, project_id):
     await editor.store(project_id, "s1", "hello")
 
     await editor.drop(project_id, "s1", "off topic")
 
-    listing = await reader.list_documents(include_dropped=True)
+    listing = await reader.list_sources(include_dropped=True)
     assert listing[0].record.dropped_reason == "off topic"
-    assert await reader.list_documents() == []
+    assert await reader.list_sources() == []
 
 
 async def test_drop_refuses_a_blank_reason(editor, project_id):
@@ -232,7 +315,7 @@ async def test_a_metadata_only_revise_changes_the_title(editor, reader, project_
 
     await editor.revise(project_id, "s1", title="Fixed")
 
-    listing = await reader.list_documents()
+    listing = await reader.list_sources()
     assert listing[0].record.title == "Fixed"
     assert (await reader.read_document("s1")).text == "hello"
 
@@ -317,7 +400,7 @@ async def test_restore_puts_a_dropped_document_back(editor, reader, project_id):
 
     await editor.restore(project_id, "s1")
 
-    listing = await reader.list_documents()
+    listing = await reader.list_sources()
     assert [row.record.source_id for row in listing] == ["s1"]
     assert listing[0].record.title == "Hello"
     assert listing[0].record.dropped_reason is None
@@ -328,3 +411,96 @@ async def test_restore_refuses_a_document_that_is_not_dropped(editor, project_id
 
     with pytest.raises(NotDropped):
         await editor.restore(project_id, "s1")
+
+
+async def test_store_media_puts_the_bytes_in_the_blob_store(editor, blob_store, project_id):
+    """A successful store leaves the bytes retrievable under their digest.
+
+    **This test does not hold the ordering, despite what an earlier draft of it
+    claimed.** Measured by reordering `store_media` to issue the command first
+    and stream after: this test still passed, because on a store that succeeds
+    the blob is there at the end either way. The ordering is held by
+    `test_a_rejected_store_leaves_the_blob_and_no_record` below, which was the
+    only failure under that reordering. What is left here is still worth
+    asserting -- that `put` was called at all, with the whole stream -- and
+    `byte_count` is the part that would fail if a chunk were dropped.
+    """
+    await editor.store_media(project_id, "v1", chunks(b"payload"), "video/mp4")
+
+    stat = await blob_store.stat(hashlib.sha256(b"payload").hexdigest())
+    assert stat is not None and stat.byte_count == 7
+
+
+async def test_a_rejected_store_leaves_the_blob_and_no_record(
+    editor, blob_store, corpus_repo, project_id
+):
+    """The orphan is accepted, deliberately. Assert it rather than pretend.
+
+    Documents the cost so nobody later "fixes" it by reordering the writes and
+    reintroduces the dangling reference -- and it is the *only* test that would
+    catch that reordering, measured by making it: the blob assertion below goes
+    from present to None, and no other test in this file moves.
+
+    The record half is asserted too, because the name promises it: the text
+    record `s1` already held must survive unchanged rather than be superseded
+    by a media one, which is the refusal `decide`'s `_kind_of` guard exists for.
+    """
+    await editor.store(project_id, "s1", "prose")
+
+    with pytest.raises(CommandRejectedError):
+        await editor.store_media(project_id, "s1", chunks(b"payload"), "video/mp4")
+
+    assert await blob_store.stat(hashlib.sha256(b"payload").hexdigest()) is not None
+    corpus = await corpus_repo.load_or_create(project_id)
+    assert corpus.state.documents["s1"].kind == "text"
+
+
+async def test_the_recorded_digest_is_the_one_the_store_computed(editor, project_id):
+    """`store_media` has no digest parameter, and this asserts the consequence.
+
+    The mitigation for the domain taking a digest on trust is that no call site
+    can supply one. If a parameter is ever added, this test still passes -- so
+    it is paired with a signature assertion below, which does not.
+    """
+    record = await editor.store_media(project_id, "v1", chunks(b"payload"), "video/mp4")
+
+    assert record.sha256 == hashlib.sha256(b"payload").hexdigest()
+
+
+def test_store_media_takes_no_digest_from_its_caller() -> None:
+    """The signature is the mitigation, so the signature is asserted.
+
+    Reads as a strange test and is the honest one: `application/blobs.py`
+    claims a wrong digest requires a bug in the store rather than a mistake at
+    a call site, and that claim is only true while this parameter list has no
+    `sha256` in it.
+    """
+    assert "sha256" not in inspect.signature(CorpusEditor.store_media).parameters
+
+
+async def test_a_second_media_store_supersedes_the_first_and_undrops_it(
+    editor, reader, project_id
+):
+    """One `source_id`, different bytes: the record moves and the drop lifts.
+
+    The fold's supersession rule for media, pinned above the projection.
+    `test_corpus_read_model.py` covers a *replay of the same event*, which
+    cannot tell a fresh `MediaRecord` from a preserved one -- the fields are
+    identical either way. Here the second store is genuinely different, so a
+    fold that merged into the existing record instead of rebuilding it would
+    leave the old digest or the old `byte_count` in place, and one that
+    carried `dropped_reason` across would leave the source excluded.
+
+    That last part is what `CorpusEditor.restore`'s media branch rests on:
+    restore is a re-store, and it un-drops only because `evolve` does not
+    carry the field. This test is what goes red if that changes.
+    """
+    await editor.store_media(project_id, "v1", chunks(b"first cut"), "video/mp4")
+    await editor.drop(project_id, "v1", "wrong take")
+
+    await editor.store_media(project_id, "v1", chunks(b"second cut, longer"), "video/mp4")
+
+    record = (await reader.read_media("v1")).record
+    assert record.sha256 == hashlib.sha256(b"second cut, longer").hexdigest()
+    assert record.byte_count == 18
+    assert record.dropped_reason is None

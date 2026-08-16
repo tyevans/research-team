@@ -51,6 +51,10 @@ const fakeDocuments = (over: Partial<DocumentRepository> = {}): DocumentReposito
   restore: vi.fn(() => {
     throw new Error('restore was not stubbed for this test')
   }),
+  contentUrl: (projectId, sourceId) => `/api/projects/${projectId}/sources/${sourceId}/content`,
+  uploadMedia: vi.fn(() => {
+    throw new Error('uploadMedia was not stubbed for this test')
+  }),
   ...over,
 })
 
@@ -60,6 +64,7 @@ const fakeDocuments = (over: Partial<DocumentRepository> = {}): DocumentReposito
 // control was pressed` for the same pattern).
 const create = vi.fn<DocumentRepository['create']>().mockResolvedValue({
   sourceId: 'hello',
+  kind: 'text',
   charCount: 5,
   sha256: 'x',
   uri: null,
@@ -71,7 +76,22 @@ const create = vi.fn<DocumentRepository['create']>().mockResolvedValue({
   extracted: false,
 } as Awaited<ReturnType<DocumentRepository['create']>>)
 
-const documents = fakeDocuments({ create })
+const uploadMedia = vi.fn<DocumentRepository['uploadMedia']>().mockResolvedValue({
+  sourceId: 'keynote',
+  kind: 'media',
+  mediaType: 'video/mp4',
+  byteCount: 12,
+  sha256: 'x',
+  uri: null,
+  title: 'keynote',
+  publishedAt: null,
+  note: null,
+  fetchedAt: null,
+  droppedReason: null,
+  extracted: false,
+} as Awaited<ReturnType<DocumentRepository['uploadMedia']>>)
+
+const documents = fakeDocuments({ create, uploadMedia })
 
 const stream: EventStream = {
   connect: () => {},
@@ -97,6 +117,68 @@ const wrapper = ({ children }: { children: ReactNode }): ReactElement => {
 // would otherwise leak into the next's `toHaveBeenCalledWith` assertion.
 afterEach(() => {
   create.mockClear()
+  uploadMedia.mockClear()
+})
+
+it('posts a picked media file rather than reading it as text', async () => {
+  // `file.text()` on a video decodes megabytes of binary into a string and
+  // stores the mojibake as a document -- which succeeds, and is the failure
+  // this asserts against. The media path never touches `create`.
+  const user = userEvent.setup()
+  render(<DocumentUpload projectId={project} onClose={vi.fn()} />, { wrapper })
+
+  const file = new File(['not really a video'], 'keynote.mp4', { type: 'video/mp4' })
+  await user.upload(screen.getByLabelText('Media file'), file)
+  await waitFor(() => {
+    expect(screen.getByLabelText('Identifier')).toHaveValue('keynote')
+  })
+  await user.click(screen.getByRole('button', { name: 'Add document' }))
+
+  await waitFor(() => {
+    expect(uploadMedia).toHaveBeenCalledWith(project, {
+      sourceId: 'keynote',
+      file,
+      title: 'keynote',
+    })
+  })
+  expect(create).not.toHaveBeenCalled()
+})
+
+it('does not ask for text once a media file is picked', async () => {
+  // The text area is the text path's required field, and a media upload has no
+  // text to give -- leaving it on screen would ask for something that is about
+  // to be ignored, and leaving its guard armed would refuse the upload.
+  const user = userEvent.setup()
+  render(<DocumentUpload projectId={project} onClose={vi.fn()} />, { wrapper })
+
+  await user.upload(
+    screen.getByLabelText('Media file'),
+    new File(['x'], 'keynote.mp4', { type: 'video/mp4' }),
+  )
+
+  await waitFor(() => {
+    expect(screen.queryByLabelText('Text')).not.toBeInTheDocument()
+  })
+})
+
+it('lets a media file be un-picked through the picker that set it', async () => {
+  // The native picker's own "clear" fires a change event with no file. A
+  // handler that only acted on a present file left `media` set while the
+  // control showed nothing: the Text field stayed hidden and the form still
+  // posted multipart with a file the reader believed they had removed. Fails
+  // against `if (file) handleMedia(file)`.
+  const user = userEvent.setup()
+  render(<DocumentUpload projectId={project} onClose={vi.fn()} />, { wrapper })
+
+  const picker = screen.getByLabelText('Media file')
+  await user.upload(picker, new File(['x'], 'keynote.mp4', { type: 'video/mp4' }))
+  await waitFor(() => {
+    expect(screen.queryByLabelText('Text')).not.toBeInTheDocument()
+  })
+
+  await user.upload(picker, [])
+
+  expect(await screen.findByLabelText('Text')).toBeInTheDocument()
 })
 
 it('fills the text and the title from a picked file', async () => {

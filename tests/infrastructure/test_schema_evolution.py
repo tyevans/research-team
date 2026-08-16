@@ -17,7 +17,13 @@ from uuid import uuid4
 
 import aiosqlite
 import pytest
-from eventsource import AggregateNotFoundError, EventTypeNotFoundError, StreamId, collect
+from eventsource import (
+    AggregateNotFoundError,
+    EventTypeNotFoundError,
+    StreamId,
+    collect,
+    replay,
+)
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from pydantic import ValidationError
 
@@ -50,6 +56,7 @@ from research_team.infrastructure.persistence.event_store import (
     build_research_run_repository,
     build_topic_repository,
 )
+from research_team.infrastructure.persistence.read_models import CorpusStore
 from research_team.workflows import hybrid_default
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
@@ -836,3 +843,68 @@ async def test_a_judgement_survives_the_round_trip_with_its_entity_keys_intact(s
     withdrawn_event = events[-1]
     assert isinstance(withdrawn_event, JudgementWithdrawn)
     assert withdrawn_event.judgement_id == held_id
+
+
+async def test_a_build_without_the_media_projection_still_replays(store, db_path):
+    """A new event type is additive: an older build replays a log holding it.
+
+    This is `eventsource.replay`'s documented behaviour -- an event every
+    projection ignores counts as applied -- and it is what "events are not
+    rewritten" depends on. Asserted here rather than assumed, because the same
+    property is the reason a *missing* projection is silent, and a reader of
+    this file should meet both halves in one place.
+
+    `CorpusProjection` (`research_team/infrastructure/persistence/
+    read_models.py`) has no `@handles(CorpusMediaStored)` in this build --
+    Task 3 is where that handler is added -- so the payload below stands in
+    honestly for an older build's log: nothing here constructs the handler and
+    then declines to register it, the handler simply does not exist yet.
+    """
+    project_id = uuid4()
+    # Touches the store first so the `events` table exists to insert into --
+    # the same reason `test_an_auto_run_started_before_the_fetch_grant_existed_
+    # still_loads` above reads an empty stream before writing raw payloads.
+    await collect(store.read_stream(StreamId(project_id, "Corpus")))
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=1,
+        event_type="CorpusDocumentStored",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "Corpus",
+            "aggregate_version": 1,
+            "source_id": "s1",
+            "text": "a paper about corpora",
+            "sha256": "b" * 64,
+        },
+        aggregate_type="Corpus",
+    )
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=2,
+        event_type="CorpusMediaStored",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "Corpus",
+            "aggregate_version": 2,
+            "source_id": "v1",
+            "sha256": "c" * 64,
+            "media_type": "video/mp4",
+            "byte_count": 4096,
+        },
+        aggregate_type="Corpus",
+    )
+
+    corpus = await CorpusStore.open(db_path)
+    report = await replay(store, [corpus.projection], strict=True)
+
+    # The media event was delivered and rejected by nothing -- `applied`
+    # counts it even though `CorpusProjection` has no handler for it.
+    assert report.applied == 2
+    assert not report.failures
+    row = await corpus.get(project_id, "s1")
+    assert row is not None
+    assert row.text == "a paper about corpora"
+    assert row.sha256 == "b" * 64

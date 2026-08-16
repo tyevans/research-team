@@ -14,22 +14,22 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.corpus_read import DocumentListing, StoredDocument
+from research_team.application.corpus_read import SourceListing, StoredDocument
 from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
 from research_team.application.knowledge import ExtractionNote, IngestReport, SourceRef
-from research_team.domain import DocumentRecord
+from research_team.domain import TextRecord
 
 
 class Corpus:
     """One project's stored sources."""
 
-    def __init__(self, *documents: tuple[DocumentRecord, str, bool]) -> None:
+    def __init__(self, *documents: tuple[TextRecord, str, bool]) -> None:
         self._documents = {record.source_id: (record, text) for record, text, _ in documents}
         self._extracted = {record.source_id: done for record, _, done in documents}
 
-    async def list_documents(self, *, include_dropped: bool = False):
+    async def list_sources(self, *, include_dropped: bool = False):
         return [
-            DocumentListing(record=record, extracted=self._extracted[source_id])
+            SourceListing(record=record, extracted=self._extracted[source_id])
             for source_id, (record, _) in self._documents.items()
         ]
 
@@ -66,13 +66,13 @@ class Knowledge:
         )
 
 
-def _record(source_id: str, **overrides) -> DocumentRecord:
+def _record(source_id: str, **overrides) -> TextRecord:
     fields = {
         "source_id": source_id,
         "sha256": "0" * 64,
         "char_count": 12,
     } | overrides
-    return DocumentRecord(**fields)
+    return TextRecord(**fields)
 
 
 def _extractor(corpus: Corpus, knowledge: Knowledge, *, reporters=None) -> DocumentExtractor:

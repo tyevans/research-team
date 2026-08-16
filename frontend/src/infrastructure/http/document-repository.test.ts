@@ -7,6 +7,10 @@ import type { HttpClient } from './http-client.ts'
 
 const row = {
   source_id: 's1',
+  // Required rather than defaulted, and that is the point: `documentDto` is a
+  // discriminated union now, so a row with no `kind` does not parse at all
+  // rather than parsing as text and failing later on a field it lacks.
+  kind: 'text' as const,
   char_count: 5,
   sha256: 'abc',
   uri: null,
@@ -62,6 +66,52 @@ describe('HttpDocumentRepository writes', () => {
       expect.anything(),
     )
     expect(dropped.droppedReason).toBe('off topic')
+  })
+
+  it('posts media as multipart, with the file under the name the route reads', async () => {
+    // The field name is `file` because `upload_media` declares it that way;
+    // anything else is a 422 the browser reports as a validation error about a
+    // field nobody typed. Sent through `postForm` rather than `post`, because
+    // `post` writes a JSON content type and the boundary would be lost.
+    const postForm = vi.fn().mockResolvedValue({
+      source_id: 'keynote',
+      kind: 'media',
+      media_type: 'video/mp4',
+      byte_count: 12,
+      sha256: 'abc',
+      uri: null,
+      title: null,
+      published_at: null,
+      note: null,
+      dropped_reason: null,
+      extracted: false,
+    })
+    const repository = new HttpDocumentRepository({ postForm } as unknown as HttpClient)
+    const file = new File(['x'], 'keynote.mp4', { type: 'video/mp4' })
+
+    const stored = await repository.uploadMedia(project, { sourceId: 'keynote', file })
+
+    const [path, form] = postForm.mock.calls[0] as [string, FormData]
+    expect(path).toBe(`/api/projects/${project}/sources/media`)
+    expect(form.get('file')).toBe(file)
+    expect(form.get('source_id')).toBe('keynote')
+    // Absent rather than empty: FastAPI reads a missing form field as `None`
+    // and an empty string as a title of "".
+    expect(form.get('title')).toBeNull()
+    expect(stored.mediaType).toBe('video/mp4')
+    expect(stored.byteCount).toBe(12)
+  })
+
+  it('builds a content URL through the client, so the base url is applied once', async () => {
+    // Fails if a component builds this path itself: the console is served from
+    // a different origin than the API in development, and a hand-built path
+    // would 404 there while passing every test that never left jsdom.
+    const url = vi.fn((path: string) => `http://api.test${path}`)
+    const repository = new HttpDocumentRepository({ url } as unknown as HttpClient)
+
+    expect(repository.contentUrl(project, SourceId('a b'))).toBe(
+      `http://api.test/api/projects/${project}/sources/a%20b/content`,
+    )
   })
 
   it('posts an empty body to restore', async () => {

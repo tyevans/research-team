@@ -188,8 +188,8 @@ class GraphReadPort(Protocol):
 
     Both methods speak in this module's own `GraphEntity`/`GraphRelationship`
     rather than redstring's `Entity`/`Relationship`, unlike `CorpusReadPort`,
-    which reuses the domain's own `DocumentRecord`. The two cases differ:
-    `DocumentRecord` is *this application's* domain type, defined for the
+    which reuses the domain's own `TextRecord`. The two cases differ:
+    `TextRecord` is *this application's* domain type, defined for the
     corpus aggregate and safe to depend on everywhere. `Entity` and
     `Relationship` belong to redstring, an infrastructure dependency: naming
     them here would make every route and every future consumer of this port

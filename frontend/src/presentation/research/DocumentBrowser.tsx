@@ -1,7 +1,12 @@
 import { useRef } from 'react'
 import clsx from 'clsx'
 
-import { documentLabel, isDropped, type DocumentSummary } from '@domain/research/document.ts'
+import {
+  documentLabel,
+  formatBytes,
+  isDropped,
+  type SourceSummary,
+} from '@domain/research/document.ts'
 import {
   canExtract,
   documentExtraction,
@@ -76,7 +81,7 @@ export const DocumentBrowser = ({
   /** Already filtered. Filtering is a `useMemo` in the hook rather than a
    *  table library: the whole point of trying `react-virtual` first is that a
    *  plain list is all a document browser needs. */
-  documents: readonly DocumentSummary[]
+  documents: readonly SourceSummary[]
   /** How many the corpus holds before filtering, which is what tells "nothing
    *  stored" apart from "nothing matches". The old component could only render
    *  the first, because it returned early on it before the filter existed. */
@@ -250,6 +255,10 @@ export const DocumentBrowser = ({
  */
 const EXTRACTION_NOTE: Record<DocumentExtraction['kind'], string | null> = {
   dropped: null,
+  // Nothing said on a media row: it is not "not extracted yet", it is not the
+  // kind of thing extraction applies to, and a note saying so on every media
+  // row would be a permanent apology in a 340px rail.
+  unextractable: null,
   running: 'Extracting…',
   queued: 'Queued for extraction',
   // The detail rides beside this rather than replacing it -- see the row.
@@ -268,7 +277,7 @@ const DocumentRow = ({
   onOpen,
   onExtract,
 }: {
-  document: DocumentSummary
+  document: SourceSummary
   /** The virtualizer reads this back off the DOM node to know which row it
    *  just measured, so it has to be on the element `measure` is given. */
   index: number
@@ -350,7 +359,16 @@ const DocumentRow = ({
       )}
     >
       <span className="text-sm">{documentLabel(document)}</span>
-      <span className="font-mono text-xs text-fg-dim">{document.charCount} chars</span>
+      {/* Switched on `kind` rather than reading a widened row: "0 chars" under
+          a video reads as an empty document, which is a plausible-looking
+          wrong answer and worse than a blank. The size comes first because it
+          is what tells two recordings apart at a glance; the mimetype is the
+          smaller fact and rides behind it. */}
+      <span className="font-mono text-xs text-fg-dim">
+        {document.kind === 'media'
+          ? `${formatBytes(document.byteCount)} · ${document.mediaType}`
+          : `${String(document.charCount)} chars`}
+      </span>
       {isDropped(document) ? (
         <span className="text-xs text-k-failure">Dropped: {document.droppedReason}</span>
       ) : null}
@@ -390,12 +408,15 @@ const ExtractAction = ({
   busy,
   onExtract,
 }: {
-  document: DocumentSummary
+  document: SourceSummary
   extraction: DocumentExtraction
   busy: boolean
   onExtract: () => void
 }) => {
-  if (extraction.kind === 'dropped') return null
+  // Nothing at all for media too, and for the same reason as dropped: the
+  // server's extract-all excludes it, so an `aria-disabled` button here would
+  // be a promise that pressing it might one day work.
+  if (extraction.kind === 'dropped' || extraction.kind === 'unextractable') return null
   const off = busy || !canExtract(extraction)
   return (
     <span className="flex shrink-0 items-center pr-3 pl-[6px]">

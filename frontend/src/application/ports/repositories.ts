@@ -15,7 +15,12 @@ import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
-import type { DocumentSummary, DocumentText } from '@domain/research/document.ts'
+import type {
+  DocumentText,
+  MediaSummary,
+  SourceSummary,
+  TextSummary,
+} from '@domain/research/document.ts'
 import type { ExtractionQueueBoard } from '@domain/research/extraction-queue.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { Dispatch } from '@domain/research/dispatch.ts'
@@ -258,7 +263,7 @@ export interface DocumentRepository {
   /** Every source this project has stored, dropped ones included -- the
    *  corpus keeps them on purpose, as an audit trail, and hiding them here
    *  would misreport what the project holds. */
-  list(projectId: ProjectId): Promise<readonly DocumentSummary[]>
+  list(projectId: ProjectId): Promise<readonly SourceSummary[]>
   /** One document's text, or a `start`/`end` range of it. Omitting `range`
    *  reads the whole document; the server clamps a range past the end
    *  rather than refusing it, and the offsets in the result are what it
@@ -289,18 +294,60 @@ export interface DocumentRepository {
    *
    * Refused by the server when the corpus already holds the id, rather than
    * superseding it: uploading is creating, and quietly replacing somebody
-   * else's document is not what the word means. */
-  create(projectId: ProjectId, draft: DocumentDraft): Promise<DocumentSummary>
+   * else's document is not what the word means.
+   *
+   * A `TextSummary` and not a `SourceSummary`, for the same reason as
+   * `uploadMedia` below: this route stores text and only text, so a caller
+   * should not have to re-narrow what it just created. Narrowed *here* and
+   * not only in the adapter -- every caller reaches the repository through
+   * this interface, so a union left on the port is a union every caller
+   * still sees, whatever the class returns. */
+  create(projectId: ProjectId, draft: DocumentDraft): Promise<TextSummary>
   /** Change a stored document. Every field is optional and an omitted one is
    *  left alone -- in particular `text`, so correcting a title does not
    *  round-trip the prose, and cannot send back a stale copy of it. */
-  revise(projectId: ProjectId, sourceId: SourceId, edit: DocumentEdit): Promise<DocumentSummary>
+  revise(projectId: ProjectId, sourceId: SourceId, edit: DocumentEdit): Promise<SourceSummary>
   /** Exclude a document, keeping the record and the reason. The corpus keeps
    *  dropped documents on purpose, so this is reversible -- see `restore`. */
-  drop(projectId: ProjectId, sourceId: SourceId, reason: string): Promise<DocumentSummary>
+  drop(projectId: ProjectId, sourceId: SourceId, reason: string): Promise<SourceSummary>
   /** Put a dropped document back. Refused for one that is not dropped, so a
    *  press that did nothing cannot look like one that worked. */
-  restore(projectId: ProjectId, sourceId: SourceId): Promise<DocumentSummary>
+  restore(projectId: ProjectId, sourceId: SourceId): Promise<SourceSummary>
+  /** Store bytes a person is holding: a recording, a scan, a slide deck.
+   *
+   * Multipart rather than a base64 field in `create`'s JSON, which is the
+   * server's reason repeated here because it is what makes this a separate
+   * method: a gigabyte through a JSON parser is held in memory twice over.
+   * Answers a `MediaSummary` and not a `SourceSummary` -- this route stores
+   * media and only media, so a caller does not have to re-narrow what it just
+   * uploaded.
+   *
+   * Unlike `create` there is no 409 on a repeat: a second store under the same
+   * id is a *revision* of a media source. It is refused only when that id
+   * already holds text. */
+  uploadMedia(projectId: ProjectId, draft: MediaDraft): Promise<MediaSummary>
+  /** Where the bytes are, for the elements that fetch their own: a `<video>`
+   *  or an `<img>` takes a URL rather than a promise, and the range requests a
+   *  player makes to seek are the browser's, not this application's.
+   *
+   * On the repository because the base url is the transport's business --
+   * a component building this string itself would be the one place in the
+   * tree that knew a path. Not a promise: nothing is fetched to answer it. */
+  contentUrl(projectId: ProjectId, sourceId: SourceId): string
+}
+
+/** A media upload. `file` rather than bytes: a `File` streams to the network
+ *  without being read into a string first, which is the whole difference
+ *  between uploading a two-hour recording and crashing the tab. */
+export interface MediaDraft {
+  /** The citation key, as on `DocumentDraft` -- and here too it is the thing
+   *  that cannot change afterwards. */
+  sourceId: string
+  file: File
+  uri?: string
+  title?: string
+  note?: string
+  publishedAt?: string
 }
 
 export interface DocumentRange {

@@ -70,6 +70,10 @@ def isolate_database(tmp_path, monkeypatch):
     `~/.research-team/sessions.db`.
     """
     monkeypatch.setenv("AGENT_DB", str(tmp_path / "auto.db"))
+    # And off the real blob root, for the same reason with a louder failure:
+    # a media upload in a test writes actual bytes, and `~/.research-team/blobs`
+    # is content-addressed, so nothing would ever overwrite or clean them up.
+    monkeypatch.setenv("AGENT_BLOB_ROOT", str(tmp_path / "blobs"))
 
 
 @pytest.fixture

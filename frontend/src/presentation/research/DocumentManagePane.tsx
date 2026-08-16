@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { errorMessage } from '@application/ports/errors.ts'
 import { notify } from '@application/notifications/toast-store.ts'
 import { useRestoreDocument } from '@application/research/use-document-writes.ts'
-import type { DocumentSummary } from '@domain/research/document.ts'
+import type { SourceSummary } from '@domain/research/document.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
 import { Button } from '../common/primitives.tsx'
@@ -19,7 +19,7 @@ import { DocumentReader } from './DocumentReader.tsx'
  *
  * `document` is the summary the list already has from `query.data`, not a
  * second fetch -- `DocumentReader` still does its own read for the text, and
- * `DocumentSummary` is what decides whether this document is live or
+ * `SourceSummary` is what decides whether this document is live or
  * dropped. It can be `null` while the list is still loading or the row has
  * been filtered out from under an open document, in which case only the
  * reader renders.
@@ -31,7 +31,7 @@ export const DocumentManagePane = ({
 }: {
   projectId: ProjectId
   sourceId: SourceId
-  document: DocumentSummary | null
+  document: SourceSummary | null
 }) => {
   const restore = useRestoreDocument(projectId)
   const [editing, setEditing] = useState(false)
@@ -72,7 +72,10 @@ export const DocumentManagePane = ({
           onDone={() => setEditing(false)}
         />
       ) : (
-        <DocumentReader projectId={projectId} sourceId={sourceId} />
+        // The summary is handed down rather than fetched again: it is what
+        // says whether this source is text or media, and the reader has to
+        // know that *before* it decides whether to read text at all.
+        <DocumentReader projectId={projectId} sourceId={sourceId} source={document} />
       )}
 
       {dropping ? (

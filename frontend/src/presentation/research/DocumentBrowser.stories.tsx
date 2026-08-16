@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 
-import type { DocumentSummary } from '@domain/research/document.ts'
+import type { TextSummary } from '@domain/research/document.ts'
 import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
 import { SourceId } from '@domain/shared/identifier.ts'
 
@@ -42,9 +42,10 @@ export default meta
 
 type Story = StoryObj<typeof meta>
 
-const document = (index: number, over: Partial<DocumentSummary> = {}): DocumentSummary => ({
+const document = (index: number, over: Partial<TextSummary> = {}): TextSummary => ({
   sourceId: SourceId(`0000000${String(index)}-1111-2222-3333-444444444444`),
   title: `Spacing effects in long-term retention, part ${String(index)}`,
+  kind: 'text',
   charCount: 18_400 + index * 137,
   sha256: 'a'.repeat(64),
   uri: `https://example.org/papers/${String(index)}`,
@@ -56,7 +57,7 @@ const document = (index: number, over: Partial<DocumentSummary> = {}): DocumentS
   ...over,
 })
 
-const DOCUMENTS: readonly DocumentSummary[] = [
+const DOCUMENTS: readonly TextSummary[] = [
   document(1),
   document(2, {
     title:

@@ -14,6 +14,7 @@ Both tests fail with the publisher argument removed again.
 from uuid import uuid4
 
 from research_team.domain.corpus import StoreSourceDocument
+from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 
 
 async def test_a_stored_document_appears_in_the_corpus_read_model(build_application):
@@ -42,7 +43,13 @@ async def test_a_stored_document_appears_in_the_corpus_read_model(build_applicat
     await application.knowledge._corpus.save(corpus)
 
     await application.corpus_caught_up()
-    listings = await application.corpus.list(project)
+    # Through the read port rather than `application.corpus` directly: the
+    # runner's own text-only `list` was deleted, and this is the path
+    # production reads by -- including the blob store the composition root
+    # builds exactly once, so a build that forgot to hand it over fails here
+    # rather than at the first media download.
+    reader = ProjectCorpusReader(application.corpus, project, application.blob_store)
+    listings = await reader.list_sources()
     assert [listing.record.source_id for listing in listings] == ["s1"]
     # Stored but never extracted, which is now a state the listing can express
     # -- and the one every `store_source` from an unattended run leaves behind.

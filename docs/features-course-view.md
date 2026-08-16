@@ -816,8 +816,9 @@ to find out, and only if there is a holding session (D2).
 - **`review_stage` on demand** — pure over the course directory, explicitly noted
   in `workflow-engine.md` §3.1 as callable without an approval in flight.
   Reachable over HTTP only as a read-only side effect of `GET /course`.
-- **No corpus write route.** `ProjectCorpusReader` exposes `list_documents` and
-  `read_document`, both routed. There is no HTTP way to store, drop or re-ingest a
+- **No corpus write route.** `ProjectCorpusReader` exposes `list_sources`,
+  `read_document` and `read_media`; the first two are routed, `read_media` is
+  not yet. There is no HTTP way to store, drop or re-ingest a
   source — agent-tool-only. A browser can read the corpus and never add to it.
 - **No knowledge-graph write route.** `remember` / `unmerge` are gated tools; the
   HTTP graph surface is read-only.

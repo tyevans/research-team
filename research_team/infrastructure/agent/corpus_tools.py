@@ -24,7 +24,7 @@ from research_team.application.corpus_read import (
     READ_SOURCE_TOOL,
     CorpusReadError,
     CorpusReadPort,
-    DocumentListing,
+    SourceListing,
     StoredDocument,
 )
 from research_team.application.corpus_spans import Span, chunk, quote
@@ -42,12 +42,17 @@ MAX_LISTED = 30
 them buries the sentence that says what went wrong."""
 
 
-def format_listing(listings: list[DocumentListing]) -> str:
+def format_listing(listings: list[SourceListing]) -> str:
     """One line per source: what it is, how big, and where it came from.
 
     Metadata only, by contract. Inlining even a snippet of each document would
     make listing a large corpus cost more context than reading the one document
     the agent actually wanted.
+
+    A media source reports its mimetype and byte size rather than a character
+    count it does not have. Printing `0 characters` for one would read as an
+    empty document rather than as a video -- a plausible-looking wrong answer,
+    worse than a line that plainly says "media".
 
     `extracted` is deliberately *not* shown. It is a fact about the graph, and
     a model reading this list is choosing what to read, not what to requeue --
@@ -62,7 +67,13 @@ def format_listing(listings: list[DocumentListing]) -> str:
     lines = [f"{len(listings)} source(s) in this project's corpus:"]
     for listing in listings:
         summary = listing.record
-        parts = [f"{summary.source_id} -- {summary.char_count} chars"]
+        if summary.kind == "media":
+            parts = [
+                f"{summary.source_id} -- media, {summary.media_type}, "
+                f"{summary.byte_count} bytes"
+            ]
+        else:
+            parts = [f"{summary.source_id} -- {summary.char_count} chars"]
         if summary.title:
             parts.append(summary.title)
         if summary.uri:
@@ -138,7 +149,7 @@ def build_corpus_tools(
         traceback about the attempt to be helpful.
         """
         try:
-            summaries = await corpus.list_documents()
+            summaries = await corpus.list_sources()
         except CorpusReadError:
             return f"Use `{LIST_SOURCES_TOOL}` to see what is available."
         if not summaries:
@@ -153,7 +164,7 @@ def build_corpus_tools(
     async def list_sources() -> str:
         """List the source documents stored in this project's corpus."""
         try:
-            summaries = await corpus.list_documents()
+            summaries = await corpus.list_sources()
         except CorpusReadError as error:
             return f"Could not read the corpus: {error}"
         return format_listing(summaries)

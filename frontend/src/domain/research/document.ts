@@ -1,17 +1,14 @@
 import type { SourceId } from '../shared/identifier.ts'
 
-/** One row of a project's document browser: what a source is, not what it
- *  says. Mirrors `source_view` on the wire -- `char_count`, `sha256` and the
- *  rest -- except `droppedReason`, which is `null` for a live document and
- *  set for one the corpus kept only as an audit trail.
+/** What every source carries whatever its bytes are: who it is, where it came
+ *  from, and whether the corpus still counts it.
  *
- * The corpus never actually deletes a source; dropping it just records why.
- * A browser that hid dropped rows would misreport what the project holds, so
- * this type carries the reason rather than a boolean -- there being a reason
- * is what "dropped" means here, and the boolean would be redundant with it. */
-export interface DocumentSummary {
+ * Split out of the two summaries below rather than repeated in both, so a
+ * field added to the wire lands in one place -- and so the helpers that read
+ * only provenance (`isDropped`, `documentLabel`) can say in their signature
+ * that they do not care which kind they were handed. */
+interface SourceProvenance {
   readonly sourceId: SourceId
-  readonly charCount: number
   readonly sha256: string
   readonly uri: string | null
   readonly title: string | null
@@ -23,33 +20,98 @@ export interface DocumentSummary {
    *  field existed. Carried through unconditionally by `revise` and `restore`,
    *  so a form built over this type can show whether an edit disturbed it. */
   readonly fetchedAt: string | null
+  /** `null` for a live source, set for one the corpus kept only as an audit
+   *  trail.
+   *
+   * The corpus never actually deletes a source; dropping it just records why.
+   * A browser that hid dropped rows would misreport what the project holds, so
+   * this carries the reason rather than a boolean -- there being a reason is
+   * what "dropped" means here, and the boolean would be redundant with it. */
   readonly droppedReason: string | null
-  /** Whether this document's text has been folded into the project's graph.
+  /** Whether this source's text has been folded into the project's graph.
    *
    * Not a property of the source record and deliberately cannot be: extraction
    * lives on another aggregate's stream, and the corpus projection joins the
    * two. See `source_view`. False on every row of a database that predates the
    * column until that projection is rebuilt, which is why the wire schema
-   * defaults it rather than requiring it. */
+   * defaults it rather than requiring it -- and false unconditionally on
+   * media, which nothing extracts yet. */
   readonly extracted: boolean
 }
 
+/** A source whose bytes are text: a paper, a page, a note. */
+export interface TextSummary extends SourceProvenance {
+  readonly kind: 'text'
+  readonly charCount: number
+}
+
+/** A source whose bytes are not text: a recording, a scan, a slide deck.
+ *
+ * `mediaType` is the stored mimetype rather than one sniffed at render time --
+ * the server decided it once, at upload, and nothing re-sniffs a stored blob,
+ * so a viewer that guessed again could disagree with the `Content-Type` the
+ * content route actually answers with. */
+export interface MediaSummary extends SourceProvenance {
+  readonly kind: 'media'
+  readonly mediaType: string
+  readonly byteCount: number
+}
+
+/** One row of a project's document browser, whichever shape its bytes are.
+ *
+ * Discriminated on `kind` rather than left as an optional-fields widening: a
+ * `charCount` that is `null` for media invites a component to render "0
+ * characters", which reads as an empty document rather than as a video -- a
+ * plausible-looking wrong answer, which is worse than a crash. The union makes
+ * the compiler ask which one is being rendered, and it mirrors the wire, where
+ * `char_count` and `media_type`/`byte_count` are *absent* on the other kind
+ * rather than null. See `_record_view`. */
+export type SourceSummary = TextSummary | MediaSummary
+
 /** One source's text, with the offsets that make a quote from it checkable.
+ *
+ * Extends `TextSummary` and not `SourceSummary`, which is the type-level
+ * statement of what the route does: `/sources/{id}` answers 404 for a media
+ * source, because its bytes live in the blob store rather than the event log.
+ * A `DocumentText` built over the union would let a caller believe reading
+ * text out of a video is a thing that can succeed.
  *
  * `start`/`end` describe what the server actually returned, not what was
  * asked for -- a range past the end of the document is clamped rather than
  * refused, so a reader paging through a document reads the real bound off
  * the response instead of trusting its own request. */
-export interface DocumentText extends DocumentSummary {
+export interface DocumentText extends TextSummary {
   readonly text: string
   readonly start: number
   readonly end: number
 }
 
-export const isDropped = (document: DocumentSummary): boolean => document.droppedReason !== null
+export const isDropped = (source: SourceSummary): boolean => source.droppedReason !== null
 
-/** A document's own label: its title if it has one, its source id otherwise.
+/** A source's own label: its title if it has one, its source id otherwise.
  *  Both the list and the reader need this, and deriving it twice is how they
- *  would end up disagreeing about what a titleless source is called. */
-export const documentLabel = (document: DocumentSummary): string =>
-  document.title ?? document.sourceId
+ *  would end up disagreeing about what a titleless source is called. Takes
+ *  either kind, for the same reason -- a media row is titleless exactly as
+ *  often as a text one. */
+export const documentLabel = (source: SourceSummary): string => source.title ?? source.sourceId
+
+/** A byte count a person can read, in decimal units.
+ *
+ * Decimal (1000) rather than binary (1024), matching how the operating systems
+ * a reader is likely to be comparing against report the same file -- a 12.5 MB
+ * recording that this called "11.9 MiB" would look like a different file.
+ *
+ * Always one decimal place above a kilobyte, rather than switching to whole
+ * numbers past 10: the alternative reads better in isolation and worse in a
+ * list, where "9.7 MB" above "13 MB" makes the column ragged for no gain. */
+export const formatBytes = (bytes: number): string => {
+  if (bytes < 1000) return `${String(bytes)} B`
+  const units = ['kB', 'MB', 'GB', 'TB']
+  let value = bytes / 1000
+  let unit = 0
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000
+    unit += 1
+  }
+  return `${value.toFixed(1)} ${units[unit] ?? 'TB'}`
+}

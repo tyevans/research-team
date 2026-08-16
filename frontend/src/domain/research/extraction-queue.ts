@@ -1,5 +1,5 @@
 import type { SourceId } from '../shared/identifier.ts'
-import { isDropped, type DocumentSummary } from './document.ts'
+import { isDropped, type SourceSummary } from './document.ts'
 
 /** How one document's most recent extraction went.
  *
@@ -55,6 +55,12 @@ export type DocumentExtraction =
    *  extract-all excludes them, so a control here would offer an action the
    *  bulk path has already decided against. */
   | { readonly kind: 'dropped' }
+  /** Media, which nothing extracts yet. Its own state rather than `idle`,
+   *  because `idle` is what the extract control is offered on: the server's
+   *  `_unextracted` counts `kind == "text"` rows only, so a media row left
+   *  idle would both offer a press extract-all has already decided against
+   *  and inflate the "Extract all (N)" estimate beside it. */
+  | { readonly kind: 'unextractable' }
   | { readonly kind: 'running' }
   | { readonly kind: 'queued' }
   | { readonly kind: 'failed'; readonly detail: string | null }
@@ -83,10 +89,14 @@ export const canExtract = (state: DocumentExtraction): boolean =>
  * on a document that had just been extracted.
  */
 export const documentExtraction = (
-  document: DocumentSummary,
+  document: SourceSummary,
   board: ExtractionQueueBoard,
 ): DocumentExtraction => {
   if (isDropped(document)) return { kind: 'dropped' }
+  // Second, and before the queue is consulted at all: a media source cannot
+  // reach the queue, so any state read out of the board for one would be a
+  // report about a document that is not there.
+  if (document.kind === 'media') return { kind: 'unextractable' }
   if (board.running === document.sourceId) return { kind: 'running' }
   if (board.queued.includes(document.sourceId)) return { kind: 'queued' }
   const outcome = board.finished.find((row) => row.sourceId === document.sourceId)
@@ -103,6 +113,6 @@ export const documentExtraction = (
  * report afterwards is the count the 202 returns, not this one.
  */
 export const unextractedCount = (
-  documents: readonly DocumentSummary[],
+  documents: readonly SourceSummary[],
   board: ExtractionQueueBoard,
 ): number => documents.filter((document) => canExtract(documentExtraction(document, board))).length

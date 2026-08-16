@@ -19,11 +19,11 @@ from research_team.application.corpus_read import (
     LIST_SOURCES_TOOL,
     READ_SOURCE_TOOL,
     CorpusReadError,
-    DocumentListing,
+    SourceListing,
     StoredDocument,
 )
-from research_team.domain import DocumentRecord
-from research_team.infrastructure.agent.corpus_tools import build_corpus_tools
+from research_team.domain import MediaRecord, TextRecord
+from research_team.infrastructure.agent.corpus_tools import build_corpus_tools, format_listing
 
 ALPHABET = "abcdefghijklmnopqrstuvwxyz "
 
@@ -31,12 +31,12 @@ ALPHABET = "abcdefghijklmnopqrstuvwxyz "
 def _document(source_id: str, text: str, **metadata) -> StoredDocument:
     """A stored document, digest and all.
 
-    `DocumentRecord` requires a `sha256` these tests do not care about, so it
+    `TextRecord` requires a `sha256` these tests do not care about, so it
     is computed rather than faked -- a stub digest here would be the one place
     in the system where a record's digest did not describe its bytes.
     """
     return StoredDocument(
-        record=DocumentRecord(
+        record=TextRecord(
             source_id=source_id,
             sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
             char_count=len(text),
@@ -53,13 +53,13 @@ class FakeCorpus:
         self._documents = {document.record.source_id: document for document in documents}
         self._fails = fails
 
-    async def list_documents(self) -> list[DocumentListing]:
+    async def list_sources(self) -> list[SourceListing]:
         if self._fails:
             raise CorpusReadError("the read model is unavailable")
         # `extracted=False` throughout: `format_listing` deliberately does not
         # render it, and a double that varied it would suggest it should.
         return [
-            DocumentListing(record=document.record, extracted=False)
+            SourceListing(record=document.record, extracted=False)
             for document in self._documents.values()
         ]
 
@@ -103,6 +103,38 @@ async def test_listing_names_each_source_with_its_size() -> None:
     assert "https://a.example" in text
     assert "5" in text
     assert "s2" in text
+
+
+def test_listing_a_media_source_says_media_and_never_a_character_count() -> None:
+    """`format_listing` directly, because `FakeCorpus` holds `StoredDocument`s
+    and a media source has no text to store one under.
+
+    Fails if the media branch is dropped and every record is rendered through
+    `char_count`: a `MediaRecord` has none, so the honest failure is an
+    `AttributeError` -- but a branch that reached for a default would print
+    `0 chars` for a video, which reads as an empty document. A model told a
+    source is empty stops trying to use it; a plausible-looking wrong answer
+    is worse here than a crash.
+    """
+    line = format_listing(
+        [
+            SourceListing(
+                record=MediaRecord(
+                    source_id="v1",
+                    sha256="0" * 64,
+                    media_type="video/mp4",
+                    byte_count=2048,
+                    title="A talk",
+                ),
+                extracted=False,
+            )
+        ]
+    )
+    assert "v1" in line
+    assert "video/mp4" in line
+    assert "2048" in line
+    assert "A talk" in line
+    assert "chars" not in line
 
 
 async def test_listing_never_includes_document_text() -> None:

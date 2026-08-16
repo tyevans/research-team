@@ -7,7 +7,7 @@ import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { DocumentRepository } from '@application/ports/repositories.ts'
 import { queryKeys } from '@application/queries/keys.ts'
-import type { DocumentSummary } from '@domain/research/document.ts'
+import type { SourceSummary } from '@domain/research/document.ts'
 import { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
 import {
@@ -19,8 +19,9 @@ import {
 
 const project = ProjectId('11111111-1111-4111-8111-111111111111')
 
-const row: DocumentSummary = {
+const row: SourceSummary = {
   sourceId: SourceId('s1'),
+  kind: 'text',
   charCount: 0,
   sha256: '',
   uri: null,
@@ -65,6 +66,10 @@ const fakeDocuments = (over: Partial<DocumentRepository>): DocumentRepository =>
   }),
   restore: vi.fn(() => {
     throw new Error('restore was not stubbed for this test')
+  }),
+  contentUrl: (projectId, sourceId) => `/api/projects/${projectId}/sources/${sourceId}/content`,
+  uploadMedia: vi.fn(() => {
+    throw new Error('uploadMedia was not stubbed for this test')
   }),
   ...over,
 })

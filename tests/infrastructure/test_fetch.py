@@ -18,11 +18,11 @@ from research_team.application import AutonomyPolicy
 from research_team.application.autonomy import FETCH_TOOL, GATED_TOOLS
 from research_team.application.corpus_read import (
     CorpusReadError,
-    DocumentListing,
+    SourceListing,
     StoredDocument,
 )
 from research_team.application.grants import FetchGrant, GrantRegistry
-from research_team.domain import DocumentRecord
+from research_team.domain import TextRecord
 from research_team.infrastructure.agent import fetch as fetch_module
 from research_team.infrastructure.agent.approval import interrupt_config
 from research_team.infrastructure.agent.fetch import (
@@ -508,14 +508,14 @@ class _StubCorpus:
         self._drop_on_read = drop_on_read
         self.reads: list[str] = []
 
-    async def list_documents(self):
+    async def list_sources(self):
         if self._error:
             raise self._error
         # `extracted=False` throughout: nothing on the `fetch` path reads it,
         # and a double that varied it would imply this port's caller cares
         # which documents have graphs. It does not -- it is matching URLs.
         return [
-            DocumentListing(record=document.record, extracted=False)
+            SourceListing(record=document.record, extracted=False)
             for document in self._documents
         ]
 
@@ -533,7 +533,7 @@ class _StubCorpus:
 
 def _stored(source_id: str, uri: str, text: str = "stored prose") -> StoredDocument:
     return StoredDocument(
-        record=DocumentRecord(
+        record=TextRecord(
             source_id=source_id,
             sha256="0" * 64,
             char_count=len(text),

@@ -2,7 +2,7 @@ import { page } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import { expect, it } from 'vitest'
 
-import type { DocumentSummary } from '@domain/research/document.ts'
+import type { TextSummary } from '@domain/research/document.ts'
 import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
 import { SourceId } from '@domain/shared/identifier.ts'
 
@@ -54,8 +54,9 @@ import { DocumentBrowser } from './DocumentBrowser.tsx'
 /** Enough rows that the scroller really scrolls. An unclipped list is not the
  *  case that shipped, and it is also not the case in which Chromium makes the
  *  scroll container itself focusable — the third test depends on both. */
-const documents: readonly DocumentSummary[] = Array.from({ length: 24 }, (_, index) => ({
+const documents: readonly TextSummary[] = Array.from({ length: 24 }, (_, index) => ({
   sourceId: SourceId(`0000000${String(index).padStart(1, '0')}-1111-1111-1111-111111111111`),
+  kind: 'text',
   charCount: 1200 + index,
   sha256: 'abc',
   uri: null,

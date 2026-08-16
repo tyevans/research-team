@@ -5,12 +5,19 @@ import type {
   DocumentEdit,
   DocumentRange,
   DocumentRepository,
+  MediaDraft,
 } from '@application/ports/repositories.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, query, seg } from './http-client.ts'
-import { toDocumentSummary, toDocumentText, toExtractionQueueBoard } from './mappers.ts'
+import {
+  toDocumentText,
+  toExtractionQueueBoard,
+  toMediaSummary,
+  toSourceSummary,
+  toTextSummary,
+} from './mappers.ts'
 
 export class HttpDocumentRepository implements DocumentRepository {
   constructor(private readonly http: HttpClient) {}
@@ -24,7 +31,7 @@ export class HttpDocumentRepository implements DocumentRepository {
       `/api/projects/${seg(projectId)}/sources${query({ include_dropped: 'true' })}`,
       z.array(dto.documentDto),
     )
-    return rows.map(toDocumentSummary)
+    return rows.map(toSourceSummary)
   }
 
   async read(projectId: ProjectId, sourceId: SourceId, range?: DocumentRange) {
@@ -92,9 +99,13 @@ export class HttpDocumentRepository implements DocumentRepository {
         note: draft.note,
         published_at: draft.publishedAt,
       }),
-      dto.documentDto,
+      // The text shape, not the union, for the same reason as `uploadMedia`: this route
+      // stores text and only text, so a caller does not have to re-narrow what
+      // it just created -- and a media row coming back would be the server
+      // having done something else entirely, which is worth a `ContractError`.
+      dto.textSourceDto,
     )
-    return toDocumentSummary(body)
+    return toTextSummary(body)
   }
 
   async revise(projectId: ProjectId, sourceId: SourceId, edit: DocumentEdit) {
@@ -109,7 +120,7 @@ export class HttpDocumentRepository implements DocumentRepository {
       }),
       dto.documentDto,
     )
-    return toDocumentSummary(body)
+    return toSourceSummary(body)
   }
 
   async drop(projectId: ProjectId, sourceId: SourceId, reason: string) {
@@ -118,7 +129,7 @@ export class HttpDocumentRepository implements DocumentRepository {
       { reason },
       dto.documentDto,
     )
-    return toDocumentSummary(body)
+    return toSourceSummary(body)
   }
 
   async restore(projectId: ProjectId, sourceId: SourceId) {
@@ -127,7 +138,35 @@ export class HttpDocumentRepository implements DocumentRepository {
       {},
       dto.documentDto,
     )
-    return toDocumentSummary(body)
+    return toSourceSummary(body)
+  }
+
+  async uploadMedia(projectId: ProjectId, draft: MediaDraft) {
+    const form = new FormData()
+    form.set('file', draft.file)
+    form.set('source_id', draft.sourceId)
+    // Appended only when set, matching `prune` above and for the same reason:
+    // FastAPI reads an absent form field as `None`, but an empty string as an
+    // empty string -- so sending `title: ''` would store a title of "" where
+    // omitting it stores nothing.
+    if (draft.uri !== undefined) form.set('uri', draft.uri)
+    if (draft.title !== undefined) form.set('title', draft.title)
+    if (draft.note !== undefined) form.set('note', draft.note)
+    if (draft.publishedAt !== undefined) form.set('published_at', draft.publishedAt)
+
+    const body = await this.http.postForm(
+      `/api/projects/${seg(projectId)}/sources/media`,
+      form,
+      // The media shape, not the union: this route stores media, so a text row
+      // coming back would be the server having done something else entirely
+      // and is worth a `ContractError` rather than a silent narrowing.
+      dto.mediaSourceDto,
+    )
+    return toMediaSummary(body)
+  }
+
+  contentUrl(projectId: ProjectId, sourceId: SourceId) {
+    return this.http.url(`/api/projects/${seg(projectId)}/sources/${seg(sourceId)}/content`)
   }
 }
 

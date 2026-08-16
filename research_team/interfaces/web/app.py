@@ -13,12 +13,21 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from eventsource import CommandRejectedError, OptimisticLockError
 from eventsource.application.aggregates.repository import AggregateRepository
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -37,6 +46,7 @@ from research_team.application import (
     build_fork_tree,
 )
 from research_team.application.ask import AskAnswer, AskInFlight, AskService
+from research_team.application.blobs import BlobStorePort
 from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_editing import CorpusEditor, DocumentExists, NotDropped
 from research_team.application.corpus_spans import quote
@@ -169,6 +179,175 @@ KEEPALIVE_SECONDS = 15.0
 
 DISCONNECT_CHECK = 0.5
 """How long we may sit unaware that the browser has gone."""
+
+MAX_UPLOAD_BYTES = 2 * 1024**3
+"""The largest media upload this will accept, in bytes.
+
+Streaming the upload bounds *memory*; only this bounds *disk*. A two-hour
+recording is comfortably under it and a runaway client is not, which is the
+line it is drawn at -- there is no measurement behind the exact number, and
+raising it is a one-line change with no other consequence.
+
+Enforced by wrapping the chunk iterator handed to `BlobStorePort.put`, not by
+checking a total after `put` returns: by then the bytes are already on disk,
+which is the one thing a ceiling exists to prevent. `put`'s own
+`except BaseException` unlinks its temporary file when the wrapper raises
+through it, so a refused upload leaves nothing behind.
+"""
+
+UPLOAD_CHUNK_BYTES = 1024 * 1024
+"""How much is read from the request per iteration, matching
+`FilesystemBlobStore.CHUNK_SIZE` for its reasons."""
+
+
+class _UploadTooLarge(Exception):
+    """The ceiling was crossed mid-stream. Raised from inside `put`'s loop."""
+
+
+#: Leading bytes that identify a format, for the cases a browser gets wrong.
+#: Deliberately short: this is not a content-type database, it is a correction
+#: for `application/octet-stream`, which is what a browser sends for anything
+#: the operating system has no association for -- `.mkv` and `.webm` on a bare
+#: machine, most often. A format missing from here is stored under whatever the
+#: browser said, which is the same behaviour as before sniffing existed.
+_MAGIC_NUMBERS: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+    (b"%PDF-", "application/pdf"),
+    (b"OggS", "audio/ogg"),
+    (b"ID3", "audio/mpeg"),
+    (b"fLaC", "audio/flac"),
+    # EBML, which is Matroska *and* WebM -- the magic number cannot tell them
+    # apart, and reading far enough to find the DocType is more parsing than a
+    # correction for a wrong header is worth. `video/webm` is the deliberate
+    # choice of the two: it is the same container family, it is what a browser
+    # will attempt, and being wrong costs a `<video>` that fails on codec
+    # rather than one that never tries. `video/x-matroska` would be the
+    # honest label for a `.mkv` and Chromium refuses to play it outright, so
+    # the accurate answer is the less useful one here.
+    (b"\x1a\x45\xdf\xa3", "video/webm"),
+)
+
+
+def _sniff_media_type(head: bytes) -> str | None:
+    """What the leading bytes say this is, or `None` if they say nothing.
+
+    The two container formats that cannot be a prefix table are handled first:
+    ISO base media (`.mp4`, `.m4a`, `.mov`) puts `ftyp` at offset 4 behind a
+    length, and RIFF puts its real form at offset 8.
+    """
+    if head[4:8] == b"ftyp":
+        return "video/mp4"
+    if head[:4] == b"RIFF":
+        if head[8:12] == b"WAVE":
+            return "audio/wav"
+        if head[8:12] == b"AVI ":
+            return "video/x-msvideo"
+        return None
+    for prefix, media_type in _MAGIC_NUMBERS:
+        if head.startswith(prefix):
+            return media_type
+    return None
+
+
+class _RangeNotSatisfiable(Exception):
+    """A range starting past the end. 416, with the real length attached."""
+
+    def __init__(self, total: int) -> None:
+        super().__init__(f"range starts past the end of {total} bytes")
+        self.total = total
+
+
+def _parse_byte_range(header: str, total: int) -> tuple[int, int] | None:
+    """`Range: bytes=…` as an inclusive `(start, end)`, or `None` to ignore it.
+
+    `None` for anything this does not understand -- multiple ranges, a unit
+    that is not `bytes`, a malformed header -- because RFC 9110 says a
+    recipient that cannot satisfy a Range must ignore it and answer 200 with
+    the whole representation. Answering 400 instead would break a client that
+    was entitled to ask.
+
+    An end below the start (`bytes=2-1`) is ignored too, and that is a
+    distinction worth keeping straight: RFC 9110 §14.1.1 makes a
+    `last-byte-pos` below `first-byte-pos` an *invalid* byte-range-spec, and
+    an invalid ranges-specifier must be ignored rather than refused. Only a
+    range starting at or past the end is genuinely *unsatisfiable*, and that
+    is what raises `_RangeNotSatisfiable` -- there the client asked for bytes
+    that do not exist and a 200 would silently give it different ones.
+
+    The three forms, all of which a browser sends: `bytes=2-5` (both ends),
+    `bytes=2-` (open-ended, what a `<video>` sends first), and `bytes=-500`
+    (the last 500 bytes, which is how a player finds an MP4's trailing
+    `moov` atom).
+
+    **Every form is decided against `total` in one place, at the bottom.** The
+    suffix branch used to return before reaching it, and against a zero-byte
+    blob that produced `(0, -1)` and a response header of
+    `content-range: bytes 0--1/0` -- not a valid `Content-Range`, and a strict
+    client is entitled to call the response broken.
+    `test_a_suffix_range_against_an_empty_blob_answers_416` is what fails if
+    any branch takes a short cut past the guard again.
+    """
+    unit, _, spec = header.partition("=")
+    if unit.strip().lower() != "bytes" or "," in spec:
+        return None
+    first, sep, last = spec.strip().partition("-")
+    if not sep:
+        return None
+    try:
+        if not first:
+            if not last:
+                return None
+            length = int(last)
+            if length <= 0:
+                return None
+            # Suffix form: the last N bytes, which for a blob shorter than N
+            # begins at byte zero. Its end is `None` -- "to the last byte" --
+            # rather than `total - 1`, so that an empty blob reaches the
+            # unsatisfiable check below instead of arriving there as an end of
+            # -1 that looks like the invalid spec it is not.
+            start, requested_end = max(0, total - length), None
+        else:
+            start = int(first)
+            requested_end = None if not last else int(last)
+    except ValueError:
+        return None
+    if requested_end is not None and requested_end < start:
+        return None
+    if start >= total:
+        raise _RangeNotSatisfiable(total)
+    # An absent end means "to the last byte", and an end past the last byte is
+    # clamped rather than refused -- a client that asks for more than there is
+    # gets what there is, which is what a player expects.
+    return start, total - 1 if requested_end is None else min(requested_end, total - 1)
+
+
+async def _first_bytes(stream: AsyncIterator[bytes], length: int) -> AsyncIterator[bytes]:
+    """The first `length` bytes of a stream, then stop.
+
+    Only the *tail* is trimmed here. The head is `BlobStorePort.open`'s
+    `start`, which is a real `seek` -- this used to discard the prefix chunk
+    by chunk instead, which made a seek into a 400MB film a ~300MB read, per
+    seek, per viewer, while every byte-for-byte test stayed green. The
+    trimming that remains cannot be pushed down the same way: the store reads
+    in megabyte chunks and a range rarely ends on one.
+
+    What a test would fail on: the arithmetic is off-by-one-prone in both
+    directions -- an inclusive end read as exclusive truncates every seek by
+    one byte -- and `test_the_range_forms_a_browser_actually_sends` holds it
+    at both edges, open-ended, suffix and clamped.
+    """
+    sent = 0
+    async for part in stream:
+        remaining = length - sent
+        if len(part) >= remaining:
+            yield part[:remaining]
+            return
+        sent += len(part)
+        yield part
+
 
 DefinitionReaders = Callable[[UUID], Awaitable["DefinitionService | None"]]
 """One project's `DefinitionService`, built on demand, or `None` when this
@@ -466,6 +645,7 @@ def create_app(
     approvals: WebApprovals | None = None,
     activity: TurnActivity | None = None,
     corpus: CorpusRunner | None = None,
+    blob_store: BlobStorePort | None = None,
     research: ResearchSupervisor | None = None,
     workers: WorkerRoster | None = None,
     extraction: ExtractionActivity | None = None,
@@ -735,10 +915,17 @@ def create_app(
         without a corpus read model is a valid thing to serve (as with
         `approvals` and `activity`), and the caller needs to know the server
         cannot answer rather than that the project has nothing.
+
+        `blob_store` is checked alongside `corpus` rather than defaulted to
+        something that opens on first use: `ProjectCorpusReader` now needs one
+        for `read_media`, and a build that wired a corpus read model but no
+        blob store is exactly as unable to answer as one that wired neither --
+        the 503 is honest about that rather than pretending media reads are
+        wired when only text ones are.
         """
-        if corpus is None:
+        if corpus is None or blob_store is None:
             raise HTTPException(status_code=503, detail="no corpus read model is configured")
-        return ProjectCorpusReader(corpus, project_id)
+        return ProjectCorpusReader(corpus, project_id, blob_store)
 
     def _editor() -> CorpusEditor:
         """The corpus's write side, or the same 503 `_reader` answers.
@@ -803,6 +990,160 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(error)) from error
         return await _source_row(project_id, body.source_id)
 
+    @app.post("/api/projects/{project_id}/sources/media", status_code=201)
+    async def upload_media(
+        project_id: UUID,
+        file: Annotated[UploadFile, File()],
+        source_id: Annotated[str | None, Form()] = None,
+        uri: Annotated[str | None, Form()] = None,
+        title: Annotated[str | None, Form()] = None,
+        note: Annotated[str | None, Form()] = None,
+        published_at: Annotated[str | None, Form()] = None,
+    ):
+        """Store bytes a person is holding: a recording, a scan, a slide deck.
+
+        The media twin of `upload_source`, and multipart rather than JSON for
+        the reason the ceiling exists: a base64 field would put a gigabyte
+        through a JSON parser and hold it in memory twice over. The bytes go
+        to the blob store a megabyte at a time and never accumulate here.
+
+        `source_id` defaults to the filename, because a person uploading
+        `keynote.mp4` has already named it and asking twice is friction with
+        no payoff. Unlike `upload_source` there is no 409 on a repeat: a
+        second store under the same id is a *revision* of a media source, and
+        `Corpus.decide` has the only opinion on that -- see
+        `CorpusEditor.store_media`, which declines to re-pay the check.
+
+        **Declared ahead of `/sources/{source_id}/drop` and its siblings for
+        the reason `extract_all_sources` gives**: FastAPI matches in
+        declaration order, and while `media` and `{source_id}/drop` do not
+        currently collide, the neighbourhood is one where they have twice.
+        """
+        await _require_project(project_id)
+        head = await file.read(UPLOAD_CHUNK_BYTES)
+        media_type = file.content_type
+        if not media_type or media_type == "application/octet-stream":
+            # Browsers send `application/octet-stream` for plenty of things
+            # that are not: it is what they fall back to when the operating
+            # system has no association for the extension, which on a bare
+            # machine includes `.mkv` and `.webm`. Storing that verbatim would
+            # make the content route answer with a type no `<video>` will
+            # play, and the record would carry the wrong answer forever --
+            # nothing re-sniffs a stored blob.
+            media_type = _sniff_media_type(head) or media_type or "application/octet-stream"
+
+        async def chunks() -> AsyncIterator[bytes]:
+            """The upload, bounded. See `MAX_UPLOAD_BYTES` on why it raises
+            from inside the loop rather than reporting a total afterwards."""
+            total = 0
+            part = head
+            while part:
+                total += len(part)
+                if total > MAX_UPLOAD_BYTES:
+                    raise _UploadTooLarge(total)
+                yield part
+                part = await file.read(UPLOAD_CHUNK_BYTES)
+
+        try:
+            record = await _editor().store_media(
+                project_id,
+                source_id or file.filename or "upload",
+                chunks(),
+                media_type,
+                uri=uri,
+                title=title,
+                note=note,
+                published_at=published_at,
+            )
+        except _UploadTooLarge as error:
+            raise HTTPException(
+                status_code=413,
+                detail=f"upload exceeds {MAX_UPLOAD_BYTES} bytes",
+            ) from error
+        except CommandRejectedError as error:
+            # `decide`'s one refusal for this command: a `source_id` that
+            # already holds *text*, which `_kind_of` will not let media take
+            # over. There is no blank-id refusal on this path -- that check
+            # lives in `RedstringKnowledge.store_source`, which media
+            # deliberately does not go through (`corpus_editing.py`'s module
+            # docstring) -- so a form field of `"   "` is stored verbatim as a
+            # whitespace id. A literal `""` is unreachable: the fallback chain
+            # above takes the filename and then `"upload"`.
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return await _source_row(project_id, record.source_id)
+
+    @app.get("/api/projects/{project_id}/sources/{source_id}/content")
+    async def read_source_content(project_id: UUID, source_id: str, request: Request):
+        """A media source's actual bytes, whole or in ranges.
+
+        Three refusals, and the distinction between the first two is the point:
+
+        - **404** when `read_media` answers `None`. Either no such id, or an
+          id that holds *text* -- a text source's bytes live in the event log,
+          not the blob store, so this is the wrong route for it rather than a
+          thing that has gone missing.
+        - **410** when the record is here and its blob is not. A dangling
+          reference is a real and different state, and an operator told 404
+          goes looking for an ingest that never happened instead of for bytes
+          that went away.
+        - **416** for a range starting past the end, with `Content-Range:
+          bytes */<length>` so the client can correct itself in one round trip.
+
+        Range support lands here rather than with the citation slice that
+        needs it, because without it a `<video>` will not seek: Chromium
+        treats a response with no `Accept-Ranges` as unseekable and downloads
+        the whole file before it will play at all. The alternative was
+        shipping a player that stalls on a two-hour recording and calling it
+        a later task.
+
+        `include_dropped=True`, matching `read_source`: the console lists
+        dropped rows and lets you open one, and refusing to play the recording
+        somebody is deciding whether to restore is refusing at exactly the
+        wrong moment.
+        """
+        await _require_project(project_id)
+        handle = await _reader(project_id).read_media(source_id, include_dropped=True)
+        if handle is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no media source {source_id!r} in project {project_id}",
+            )
+        if handle.stat is None:
+            raise HTTPException(
+                status_code=410,
+                detail=f"the bytes for {source_id!r} are no longer stored",
+            )
+        total = handle.stat.byte_count
+        headers = {"Accept-Ranges": "bytes"}
+        requested = request.headers.get("range")
+        span = None
+        if requested:
+            try:
+                span = _parse_byte_range(requested, total)
+            except _RangeNotSatisfiable as error:
+                raise HTTPException(
+                    status_code=416,
+                    detail=str(error),
+                    headers={"Content-Range": f"bytes */{total}", "Accept-Ranges": "bytes"},
+                ) from error
+        if span is None:
+            headers["Content-Length"] = str(total)
+            return StreamingResponse(
+                handle.open(), media_type=handle.record.media_type, headers=headers
+            )
+        start, end = span
+        headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+        headers["Content-Length"] = str(end - start + 1)
+        return StreamingResponse(
+            # `open(start)` seeks; `_first_bytes` trims the tail. Reading from
+            # zero and discarding would answer identically and cost the whole
+            # prefix -- see `BlobStorePort.open`.
+            _first_bytes(handle.open(start), end - start + 1),
+            status_code=206,
+            media_type=handle.record.media_type,
+            headers=headers,
+        )
+
     @app.post("/api/projects/{project_id}/sources/{source_id}/drop")
     async def drop_source(project_id: UUID, source_id: str, body: DropReason):
         await _require_project(project_id)
@@ -842,10 +1183,13 @@ def create_app(
         except UnknownDocument as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except KnowledgeError as error:
-            # `_store`'s length cap -- the only guard on this path, since
-            # `decide` has no opinion on document size. Missing until review:
-            # a PATCH over the cap was an unhandled exception and a 500,
-            # where `upload_source` already answered 400 for the same error.
+            # Two guards reach here, and `decide` is neither of them. `_store`'s
+            # length cap: missing until review, when a PATCH over the cap was an
+            # unhandled exception and a 500, where `upload_source` already
+            # answered 400 for the same error. And `revise`'s refusal of a
+            # `text` against a media id -- that one has no other handler, so
+            # `test_patching_text_onto_a_media_source_is_refused` fails here
+            # rather than at the editor if this branch narrows.
             raise HTTPException(status_code=400, detail=str(error)) from error
         return await _source_row(project_id, source_id)
 
@@ -857,7 +1201,7 @@ def create_app(
         `char_count` are computed in the fold and a client that trusted its own
         echo would render a digest nothing verified.
         """
-        for listing in await _reader(project_id).list_documents(include_dropped=True):
+        for listing in await _reader(project_id).list_sources(include_dropped=True):
             if listing.record.source_id == source_id:
                 return source_view(listing)
         raise HTTPException(status_code=404, detail=f"no document {source_id!r}")
@@ -1032,7 +1376,7 @@ def create_app(
         """
         await _require_project(project_id)
         reader = _reader(project_id)
-        summaries = await reader.list_documents(include_dropped=include_dropped)
+        summaries = await reader.list_sources(include_dropped=include_dropped)
         return [source_view(summary) for summary in summaries]
 
     @app.get("/api/projects/{project_id}/sources/{source_id}")

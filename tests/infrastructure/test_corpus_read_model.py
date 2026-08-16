@@ -15,16 +15,21 @@ from redstring import DocumentExtracted
 
 from research_team.domain.corpus import (
     Corpus,
-    DocumentRecord,
+    CorpusDocumentDropped,
+    CorpusDocumentStored,
+    CorpusMediaStored,
     DropSourceDocument,
     StoreSourceDocument,
+    TextRecord,
 )
 from research_team.infrastructure.persistence.event_store import build_corpus_repository
 from research_team.infrastructure.persistence.read_models import (
     CorpusDocumentRow,
+    CorpusMediaRow,
     CorpusProjection,
     CorpusRunner,
     CorpusStore,
+    to_record,
 )
 
 ADVERSARIAL_TEXTS = [
@@ -68,8 +73,43 @@ def rows() -> InMemoryReadModelRepository:
 
 
 @pytest.fixture
-def projection(rows) -> CorpusProjection:
-    return CorpusProjection(rows)
+def media_rows() -> InMemoryReadModelRepository:
+    return InMemoryReadModelRepository(CorpusMediaRow)
+
+
+@pytest.fixture
+def projection(rows, media_rows) -> CorpusProjection:
+    return CorpusProjection(rows, media_rows)
+
+
+@pytest.fixture
+async def corpus_store(db_path):
+    """A real `CorpusStore`, for the media tests -- which drive the
+    projection through `corpus_store.projection.handle` and read back
+    through `corpus_store.get_media`/`list_all`, both of which are only on
+    the store, not on the bare `InMemoryReadModelRepository` fixtures above.
+    """
+    store = await CorpusStore.open(db_path)
+    try:
+        yield store
+    finally:
+        await store.close()
+
+
+def _media_stored(project_id, source_id: str, **overrides) -> CorpusMediaStored:
+    """A `CorpusMediaStored` with sane defaults, for tests that don't care
+    about a specific field -- mirrors `_extracted`'s role below for
+    `DocumentExtracted`.
+    """
+    fields = {
+        "aggregate_id": project_id,
+        "source_id": source_id,
+        "sha256": "c" * 64,
+        "media_type": "video/mp4",
+        "byte_count": 123,
+    }
+    fields.update(overrides)
+    return CorpusMediaStored(**fields)
 
 
 async def _project(projection, events) -> None:
@@ -198,14 +238,16 @@ async def test_rebuilding_from_an_empty_table_reproduces_the_same_rows(rows):
         DropSourceDocument(source_id="s2", reason="duplicate"),
     )
 
-    await _project(CorpusProjection(rows), events)
+    await _project(CorpusProjection(rows, InMemoryReadModelRepository(CorpusMediaRow)), events)
     first = {
         row.id: row.model_dump(exclude={"created_at", "updated_at", "version"})
         for row in await rows.find(None)
     }
 
     rebuilt_rows = InMemoryReadModelRepository(CorpusDocumentRow)
-    await _project(CorpusProjection(rebuilt_rows), events)
+    await _project(
+        CorpusProjection(rebuilt_rows, InMemoryReadModelRepository(CorpusMediaRow)), events
+    )
     second = {
         row.id: row.model_dump(exclude={"created_at", "updated_at", "version"})
         for row in await rebuilt_rows.find(None)
@@ -242,7 +284,7 @@ async def test_the_table_is_created_on_open(db_path):
     """No migration step to forget: opening the store is enough."""
     store = await CorpusStore.open(db_path)
     try:
-        assert await store.list(uuid4()) == []
+        assert await store.list_all(uuid4()) == []
     finally:
         await store.close()
 
@@ -267,12 +309,22 @@ async def test_documents_outlive_the_process(db_path):
 
 
 async def test_listing_carries_metadata_and_never_text(db_path):
-    """A listing must not drag whole corpora through memory.
+    """A listing must not carry document text past `to_record`.
 
-    `list` returns `DocumentListing`, whose `record` is the aggregate's own
-    no-text shape, so the guarantee is structural: there is no field for the
-    text to arrive in. The listing wraps the record rather than widening it
-    precisely so that stays true as read-side facts are added beside it.
+    Narrower than it used to be, and the narrowing is honest rather than a
+    weakening of the assertion. This test read `CorpusStore.list`, which
+    selected nine columns and never touched `text`, so it could claim a
+    listing "must not drag whole corpora through memory" and mean it. `list`
+    is gone (it queried the documents table alone, which is the half-corpus
+    hazard `list_documents` was deleted over) and `list_all` loads whole
+    rows, `text` included -- see its docstring for why that cost was accepted.
+
+    What survives is structural and is the part callers depend on: `to_record`
+    yields a `TextRecord`, which has no field for text to arrive in, so
+    nothing above the read model can see a document's body through a listing.
+    Fails if a listing type is ever widened to carry the text alongside the
+    metadata. It would *not* fail on the memory cost, which no test here
+    measures.
     """
     project_id = uuid4()
     store = await CorpusStore.open(db_path)
@@ -292,17 +344,17 @@ async def test_listing_carries_metadata_and_never_text(db_path):
         ):
             await store.projection.handle(event)
 
-        listed = await store.list(project_id)
+        listed = [to_record(row) for row in await store.list_all(project_id)]
 
-        assert "text" not in DocumentRecord.model_fields
-        assert [listing.record.source_id for listing in listed] == ["s1", "s2"]
-        assert listed[0].record.title == "One"
-        assert listed[0].record.char_count == len("a body")
-        assert listed[1].record.note == "skim only"
+        assert "text" not in TextRecord.model_fields
+        assert [record.source_id for record in listed] == ["s1", "s2"]
+        assert listed[0].title == "One"
+        assert listed[0].char_count == len("a body")
+        assert listed[1].note == "skim only"
         # Stored is not extracted. Both are False here because no
         # `DocumentExtracted` has been handled, which is the state every
         # document sits in between being kept and being queued.
-        assert [listing.extracted for listing in listed] == [False, False]
+        assert [row.extracted_at for row in await store.list_all(project_id)] == [None, None]
     finally:
         await store.close()
 
@@ -325,8 +377,8 @@ async def test_get_and_list_both_refuse_a_dropped_document(db_path):
             await store.projection.handle(event)
 
         assert await store.get(project_id, "s2") is None
-        listed = await store.list(project_id)
-        assert [listing.record.source_id for listing in listed] == ["s1"]
+        listed = await store.list_all(project_id)
+        assert [row.source_id for row in listed] == ["s1"]
     finally:
         await store.close()
 
@@ -366,7 +418,7 @@ async def test_one_project_cannot_read_another_projects_documents(db_path):
             await store.projection.handle(event)
 
         assert await store.get(other, "s1") is None
-        assert await store.list(other) == []
+        assert await store.list_all(other) == []
     finally:
         await store.close()
 
@@ -403,7 +455,8 @@ async def test_the_runner_follows_the_log(db_path, store, publisher):
 
         await runner.caught_up()
         assert (await runner.get(project_id, "s1")).text == "followed"
-        assert [listing.record.title for listing in await runner.list(project_id)] == ["One"]
+        listed = await runner.list_all(project_id)
+        assert [to_record(row).title for row in listed] == ["One"]
     finally:
         await runner.stop()
 
@@ -413,6 +466,25 @@ async def test_a_rebuild_reproduces_the_table_from_the_log(db_path, store, publi
 
     A rebuild that quietly left the checkpoint in place would resume over an
     empty table and look like success until someone read from it.
+
+    The `s1` assertion is the one that makes the listing comparison mean
+    something: two revisions folded to one row, so a rebuild that replayed
+    them as two would change the listing, and a rebuild that replayed neither
+    would empty it.
+
+    **What the equality covers, and what it gave up.** `before` used to be a
+    `list[SourceListing]`, which carried `extracted`; it is now a list of
+    records, and a record has no extraction state -- so the equality alone
+    would not notice a rebuild that dropped `extracted_at` on every row. The
+    `extracted_at` assertion below is added back for that, and it is weaker
+    than the one it replaces: every value here is `None`, because a
+    `DocumentExtracted` lives on another aggregate's stream and this fixture
+    saves only corpus events to the store, so there is no set timestamp for a
+    rebuild to lose. It catches a rebuild that *invents* extraction state, not
+    one that drops it. Catching the latter needs a `DocumentExtracted`
+    persisted in the same event store the rebuild replays -- which is
+    production's arrangement and not this fixture's, and is the thing to build
+    if this column ever moves.
     """
     project_id = uuid4()
     runner = CorpusRunner(store, db_path, publisher)
@@ -435,15 +507,66 @@ async def test_a_rebuild_reproduces_the_table_from_the_log(db_path, store, publi
         corpus.execute(DropSourceDocument(source_id="s2", reason="duplicate"))
         await build_corpus_repository(store, publisher).save(corpus)
         await runner.caught_up()
-        before = await runner.list(project_id)
+        # Records rather than rows. `list_all` returns whole rows, and a row
+        # carries `created_at`/`updated_at` stamped when the projection wrote
+        # it -- a rebuild writes new ones, so raw-row equality fails on the
+        # clock rather than on the content. `to_record` is the shape every
+        # caller above the read model sees, and reproducing *that* is what
+        # "reproduces the table from the log" means.
+        before = [to_record(row) for row in await runner.list_all(project_id)]
 
         await runner.rebuild()
 
-        assert await runner.list(project_id) == before
+        rebuilt = await runner.list_all(project_id)
+        assert [to_record(row) for row in rebuilt] == before
+        assert [row.extracted_at for row in rebuilt] == [None]
         assert (await runner.get(project_id, "s1")).text == "v2 revised"
         assert await runner.get(project_id, "s2") is None
     finally:
         await runner.stop()
+
+
+async def test_truncate_empties_both_tables(db_path):
+    """`truncate` must clear `corpus_media`, not only `corpus_documents`.
+
+    Not an end-to-end rebuild test, deliberately -- one was tried first and
+    rejected because it doesn't actually exercise the bug this guards
+    against. `CorpusMediaRow.row_id` is a pure function of
+    `(project_id, source_id)`, and `_on_media_stored` writes by
+    load-and-mutate onto that same id. So a rebuild that replays the same
+    events onto a media table `truncate` never cleared still converges to
+    the identical final row through the ordinary overwrite path -- there is
+    no revision or ordering of `CorpusMediaStored` events whose *result*
+    would differ depending on whether `truncate` actually ran a `DELETE`
+    against `corpus_media` first. Proved by trying it: with `truncate`'s
+    second `DELETE` temporarily removed, a rebuild test built the same way
+    as `test_a_rebuild_reproduces_the_table_from_the_log` still passed.
+
+    So this asserts on `truncate`'s own effect instead of on a downstream
+    replay that cannot distinguish it from a no-op. It does not exercise
+    `rebuild()`'s wiring -- `test_a_rebuild_reproduces_the_table_from_the_log`
+    already covers that a rebuild reaches `truncate` at all, and this is the
+    other half: that `truncate`, once reached, is not a single `DELETE`.
+    """
+    store = await CorpusStore.open(db_path)
+    try:
+        project_id = uuid4()
+        for event in _events(
+            project_id, StoreSourceDocument(corpus_id=project_id, source_id="s1", text="body")
+        ):
+            await store.projection.handle(event)
+        await store.projection.handle(_media_stored(project_id, "v1"))
+
+        assert await store.get(project_id, "s1") is not None
+        assert await store.get_media(project_id, "v1") is not None
+
+        await store.truncate()
+
+        assert await store.get(project_id, "s1") is None
+        assert await store.get_media(project_id, "v1") is None
+        assert await store.list_all(project_id, include_dropped=True) == []
+    finally:
+        await store.close()
 
 
 async def test_a_corpus_database_written_before_a_field_existed_gains_its_column(db_path):
@@ -478,7 +601,7 @@ async def test_a_corpus_database_written_before_a_field_existed_gains_its_column
         )
         assert "uri" in {row[1] for row in await columns.fetchall()}
         # And it still answers, which is the failure a schema check alone misses.
-        assert await reopened.list(uuid4()) == []
+        assert await reopened.list_all(uuid4()) == []
     finally:
         await reopened.close()
 
@@ -583,3 +706,87 @@ async def test_one_projects_extraction_does_not_mark_anothers_document(projectio
 
     assert (await rows.get(CorpusDocumentRow.row_id(mine, "s1"))).extracted_at is not None
     assert (await rows.get(CorpusDocumentRow.row_id(theirs, "s1"))).extracted_at is None
+
+
+async def test_a_stored_media_event_lands_as_a_row(corpus_store) -> None:
+    """Assert the row, not the call.
+
+    An assertion that the projection "handled" the event, or that a request
+    returned 200, passes with the media handler deleted entirely: an event no
+    projection handles counts as APPLIED. The row is the only thing that does
+    not.
+    """
+    project_id = uuid4()
+    await corpus_store.projection.handle(
+        CorpusMediaStored(
+            aggregate_id=project_id,
+            source_id="v1",
+            sha256="a" * 64,
+            media_type="video/mp4",
+            byte_count=999,
+            title="A talk",
+        )
+    )
+    row = await corpus_store.get_media(project_id, "v1")
+    assert row is not None
+    assert row.sha256 == "a" * 64
+    assert row.byte_count == 999
+    assert row.media_type == "video/mp4"
+    assert row.title == "A talk"
+
+
+async def test_dropping_media_marks_the_media_row(corpus_store) -> None:
+    """One drop event, two tables. Fails if `_on_dropped` only ever looked in
+    `corpus_documents` -- in which case a dropped video keeps listing as live
+    and the console offers to drop it again forever."""
+    project_id = uuid4()
+    await corpus_store.projection.handle(_media_stored(project_id, "v1"))
+    await corpus_store.projection.handle(
+        CorpusDocumentDropped(aggregate_id=project_id, source_id="v1", reason="wrong talk")
+    )
+    assert await corpus_store.get_media(project_id, "v1") is None
+    dropped = await corpus_store.get_media(project_id, "v1", include_dropped=True)
+    assert dropped is not None and dropped.dropped_reason == "wrong talk"
+
+
+async def test_listing_returns_both_kinds_in_one_answer(corpus_store) -> None:
+    """The Documents page renders one table.
+
+    Fails if `list_all` queries only one table, which reads downstream as half
+    a corpus -- and half a corpus looks exactly like a whole one.
+    """
+    project_id = uuid4()
+    await corpus_store.projection.handle(
+        CorpusDocumentStored(
+            aggregate_id=project_id, source_id="s1", text="prose", sha256="b" * 64
+        )
+    )
+    await corpus_store.projection.handle(_media_stored(project_id, "v1"))
+    kinds = sorted(to_record(row).kind for row in await corpus_store.list_all(project_id))
+    assert kinds == ["media", "text"]
+
+
+async def test_a_replayed_media_event_rewrites_rather_than_duplicates(corpus_store) -> None:
+    """Idempotent by overwrite, like both document handlers.
+
+    Replay from a checkpoint that is behind must re-derive the same row rather
+    than accumulate, because that is what makes `rebuild()` safe to reach for.
+    """
+    project_id = uuid4()
+    await corpus_store.projection.handle(_media_stored(project_id, "v1"))
+    await corpus_store.projection.handle(_media_stored(project_id, "v1"))
+    rows = await corpus_store.list_all(project_id)
+    assert len(rows) == 1
+
+
+async def test_dropping_a_source_in_neither_table_still_raises(corpus_store) -> None:
+    """The fallback in `_on_dropped` must still refuse an id that matches
+    nothing, not silently succeed against an invented media row -- the same
+    guarantee `test_dropping_a_source_with_no_row_is_an_error` gives for the
+    document-only path, extended across both tables.
+    """
+    project_id = uuid4()
+    with pytest.raises(LookupError, match="v1"):
+        await corpus_store.projection.handle(
+            CorpusDocumentDropped(aggregate_id=project_id, source_id="v1", reason="mistake")
+        )

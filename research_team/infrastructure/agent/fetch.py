@@ -168,7 +168,7 @@ async def stored_page(corpus: CorpusReadPort, url: str, max_chars: int) -> str |
 
     Matched on `normalize_url` rather than on the stored string, so a URL that
     differs only in scheme case, a default port or a fragment is recognised as
-    the same page. Scanning `list_documents` is O(corpus) per call; a corpus
+    the same page. Scanning `list_sources` is O(corpus) per call; a corpus
     holds hundreds of records at most and the scan is a local read-model
     query, so an index would be machinery bought against a cost nobody has
     measured.
@@ -188,14 +188,20 @@ async def stored_page(corpus: CorpusReadPort, url: str, max_chars: int) -> str |
     """
     target = normalize_url(url)
     try:
-        records = await corpus.list_documents()
+        records = await corpus.list_sources()
     except CorpusReadError:
         return None
     match = next(
         (
             listing.record
             for listing in records
-            if listing.record.uri and normalize_url(listing.record.uri) == target
+            # Text only: a media source at this URL has no text for
+            # `read_document` to return, and matching it here would just
+            # fall through to "unreadable" below for a reason that has
+            # nothing to do with a drop.
+            if listing.record.kind == "text"
+            and listing.record.uri
+            and normalize_url(listing.record.uri) == target
         ),
         None,
     )

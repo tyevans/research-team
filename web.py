@@ -83,6 +83,7 @@ def main() -> None:
             # Was missing: the source routes have been 503ing in this
             # entrypoint while the test fixture wired a corpus and passed.
             corpus=application.corpus,
+            blob_store=application.blob_store,
             workers=application.workers,
             extraction=extraction,
             topics=application.topic_readers,

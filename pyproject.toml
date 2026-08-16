@@ -27,6 +27,12 @@ dependencies = [
     # an undeclared dependency works right up until the day one of those three
     # drops it.
     "pyyaml>=6.0",
+    # FastAPI parses multipart bodies through this and does not depend on it:
+    # `Form`/`UploadFile` raise a RuntimeError at *request* time, not import
+    # time, so a build without it starts cleanly and answers 500 on the first
+    # media upload. Named here because the media route is the only multipart
+    # surface in the app and its absence has exactly one symptom.
+    "python-multipart>=0.0.20",
     # `pgvector` is named rather than left to resolve transitively. It brings
     # `asyncpg`, which `build_vector_store` imports lazily for
     # `AGENT_VECTOR_STORE=pgvector`; without the extra that import worked only
@@ -55,6 +61,9 @@ dependencies = [
     "redstring[llm,neo4j,pgvector]>=0.9.1,<0.10",
     "trafilatura>=2.2.0",
     "uvicorn[standard]>=0.52.1",
+    # The blob store streams to disk with async file handles rather than
+    # blocking the event loop on ordinary `open()` -- see `blob_store.py`.
+    "aiofiles>=24.1",
 ]
 
 [project.optional-dependencies]

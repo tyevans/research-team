@@ -4,7 +4,7 @@ import { errorMessage } from '@application/ports/errors.ts'
 import { notify } from '@application/notifications/toast-store.ts'
 import { useReviseDocument } from '@application/research/use-document-writes.ts'
 import type { DocumentEdit } from '@application/ports/repositories.ts'
-import type { DocumentSummary } from '@domain/research/document.ts'
+import type { SourceSummary } from '@domain/research/document.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Button } from '../common/primitives.tsx'
@@ -26,7 +26,7 @@ export const DocumentEditForm = ({
   onDone,
 }: {
   projectId: ProjectId
-  document: DocumentSummary
+  document: SourceSummary
   onDone: () => void
 }) => {
   const revise = useReviseDocument(projectId)
@@ -118,17 +118,27 @@ export const DocumentEditForm = ({
         />
       </label>
 
-      <label htmlFor={textId} className="flex flex-col gap-1 text-sm">
-        Text
-        <textarea
-          id={textId}
-          className="input w-full"
-          rows={8}
-          placeholder="Leave blank to keep the stored text"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-        />
-      </label>
+      {/* Metadata only for media. A media source has no text to revise, and
+          the server says so -- `CorpusEditor.revise` answers 400 for a `text`
+          against a media id, and `decide`'s `_kind_of` guard would refuse a
+          document store over that id even if it did not. So this is not the
+          only thing standing between a recording and being turned into a
+          document; it is what stops the console offering an edit the server
+          will refuse, because a field that exists and must not be used is an
+          invitation. */}
+      {document.kind === 'media' ? null : (
+        <label htmlFor={textId} className="flex flex-col gap-1 text-sm">
+          Text
+          <textarea
+            id={textId}
+            className="input w-full"
+            rows={8}
+            placeholder="Leave blank to keep the stored text"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+          />
+        </label>
+      )}
 
       <div className="flex justify-end gap-2">
         <Button onClick={onDone}>Cancel</Button>

@@ -107,18 +107,27 @@ class DocumentExtractor:
     async def unextracted(self, project_id: UUID) -> tuple[str, ...]:
         """Every live document with no graph, in listing order.
 
-        Dropped documents are excluded because `list_documents` excludes them
+        Dropped documents are excluded because `list_sources` excludes them
         by default, and that default is the right one here: a drop is a
         judgement that the document should not inform the project, and
         extracting it would put it into the graph the drop was meant to keep
         it out of.
 
+        Media sources are excluded too, and for a different reason: nothing
+        extracts media yet, so every one of them reads `extracted=False` --
+        honestly, per `SourceListing` -- and would otherwise queue for an
+        extraction this codebase has no way to perform.
+
         Order is the listing's, so "extract all" runs the queue in the order
         the page shows -- a progress pane that jumped around a list the reader
         is looking at would be harder to follow than one that walks it.
         """
-        listings = await self._corpus_readers(project_id).list_documents()
-        return tuple(listing.record.source_id for listing in listings if not listing.extracted)
+        listings = await self._corpus_readers(project_id).list_sources()
+        return tuple(
+            listing.record.source_id
+            for listing in listings
+            if listing.record.kind == "text" and not listing.extracted
+        )
 
     async def reindex(self, project_id: UUID) -> int:
         """Put every stored document back through chunk indexing. No model call.
@@ -151,15 +160,21 @@ class DocumentExtractor:
         Dropped documents are excluded, for `unextracted`'s reason: a drop is
         a judgement that the document should not inform the project, and its
         passages would be quoted back to a reader if they were indexed.
+
+        Media sources fall out for free rather than needing their own filter:
+        `read_document` answers `None` for one -- it promises text and a media
+        source has none -- so the loop below skips them exactly the way it
+        skips a document dropped or removed since the listing was taken.
         """
         knowledge = await self._open_knowledge(project_id)
         reader = self._corpus_readers(project_id)
         indexed = 0
-        for listing in await reader.list_documents():
+        for listing in await reader.list_sources():
             stored = await reader.read_document(listing.record.source_id)
             if stored is None:
-                # Dropped or removed between the listing and this read. Not an
-                # error: the listing is a read model and this is a repair.
+                # Dropped, removed, or media -- `read_document` answers None
+                # for all three. Not an error: the listing is a read model
+                # and this is a repair.
                 continue
             record = stored.record
             await knowledge.index(

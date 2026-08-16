@@ -43,19 +43,35 @@ for free, and is honest about the third it does not:
 The alternative was a `force: bool` on `store_source`. It is fewer lines, and
 it turns the adapter's most carefully-reasoned guard into a request parameter
 every future caller opts out of at will.
+
+**A media source reaches the aggregate on a third path**, `_store_media`,
+which `revise` and `restore` fall to when `read_document` answers `None`.
+None of the three things above apply to it -- there is no `store_source` to
+bypass, no prose to cap and no text to index -- so it is a bare re-execution
+of `StoreSourceMedia` off the stored record. It exists because both methods
+resolved only through `read_document`, which promises text, and so answered
+404 for every media source while the console offered Restore and Edit.
 """
 
+from collections.abc import AsyncIterator
 from uuid import UUID
 
 from eventsource.application.aggregates.repository import AggregateRepository
 
+from research_team.application.blobs import BlobStorePort
 from research_team.application.document_extraction import (
     CorpusReaders,
     OpenKnowledge,
     UnknownDocument,
 )
 from research_team.application.knowledge import MAX_DOCUMENT_CHARS, KnowledgeError, SourceRef
-from research_team.domain.corpus import Corpus, DropSourceDocument, StoreSourceDocument
+from research_team.domain.corpus import (
+    Corpus,
+    DropSourceDocument,
+    MediaRecord,
+    StoreSourceDocument,
+    StoreSourceMedia,
+)
 
 
 class DocumentExists(Exception):
@@ -84,10 +100,12 @@ class CorpusEditor:
         open_knowledge: OpenKnowledge,
         readers: CorpusReaders,
         corpus: AggregateRepository[Corpus],
+        blobs: BlobStorePort,
     ) -> None:
         self._open_knowledge = open_knowledge
         self._readers = readers
         self._corpus = corpus
+        self._blobs = blobs
 
     async def store(
         self,
@@ -105,9 +123,19 @@ class CorpusEditor:
         The existence check is this service's and not the aggregate's, because
         the aggregate is right to allow a repeat `source_id` -- that is what a
         revision is. Only *upload* means creation, and only upload can say so.
+
+        It checks `list_sources`, so it refuses an id already held by a *media*
+        source too, not only by a document. That widening came with the move
+        off `list_documents` and is deliberate: text and media share one
+        `source_id` namespace by design, and a check that saw only documents
+        would let an upload silently claim an id a video already answers to --
+        after which two records would disagree about what that id names, and a
+        citation could not say which one it meant. The cost is that "this id
+        is taken" no longer implies "by a document"; the error message says
+        `the corpus already holds`, which is true of both.
         """
         reader = self._readers(project_id)
-        existing = await reader.list_documents(include_dropped=True)
+        existing = await reader.list_sources(include_dropped=True)
         if any(listing.record.source_id == source_id for listing in existing):
             raise DocumentExists(f"the corpus already holds {source_id!r}")
         knowledge = await self._open_knowledge(project_id)
@@ -121,6 +149,71 @@ class CorpusEditor:
                 published_at=published_at,
             )
         )
+
+    async def store_media(
+        self,
+        project_id: UUID,
+        source_id: str,
+        stream: AsyncIterator[bytes],
+        media_type: str,
+        *,
+        uri: str | None = None,
+        title: str | None = None,
+        note: str | None = None,
+        published_at: str | None = None,
+        fetched_at: str | None = None,
+    ) -> MediaRecord:
+        """Stream the bytes to the blob store, then record the claim.
+
+        Bytes first, deliberately: a rejected command then leaves an
+        unreferenced blob, which content addressing makes harmless -- the next
+        store of the same bytes adopts it. The other order would commit a
+        record whose bytes are not there, and a dangling reference is the one
+        failure this design promised to make loud rather than merely rare.
+        Cheap failure (an orphan blob) over expensive one (a record pointing
+        at nothing). `test_a_rejected_store_leaves_the_blob_and_no_record` is
+        what holds the order -- measured, not assumed: reordering the two
+        writes fails that test and only that test, because the blob exists at
+        the end of a *successful* store either way.
+
+        Takes no `sha256`. That absence is the whole mitigation for the domain
+        accepting a digest it did not compute; see `application/blobs.py`.
+        `test_store_media_takes_no_digest_from_its_caller` asserts the
+        signature directly, because it is the signature -- not this
+        docstring -- that keeps the claim true.
+
+        No existence check against text the way `store` has one: `decide`
+        already refuses `StoreSourceMedia` for a `source_id` a text record
+        holds (`corpus.py`'s `_kind_of` guard), and that refusal is the
+        aggregate's exactly as `drop`'s refusals are -- duplicating it here
+        would risk drifting from it, the same reasoning `store`'s own
+        docstring gives for leaving the blank-id and double-drop checks to
+        `decide`. A media `source_id` repeat is not creation the way a text
+        upload is, so there is no "upload means creation" rule to re-pay here.
+        """
+        stat = await self._blobs.put(stream)
+        corpus = await self._corpus.load_or_create(project_id)
+        corpus.execute(
+            StoreSourceMedia(
+                corpus_id=project_id,
+                source_id=source_id,
+                sha256=stat.sha256,
+                media_type=media_type,
+                byte_count=stat.byte_count,
+                uri=uri,
+                title=title,
+                published_at=published_at,
+                note=note,
+                fetched_at=fetched_at,
+            )
+        )
+        await self._corpus.save(corpus)
+        record = corpus.state.documents[source_id]
+        # Narrowing, not a check: `decide` refuses this command outright when
+        # the id holds text, so the only record it can have written here is a
+        # MediaRecord. The assert is what tells the type checker that.
+        assert isinstance(record, MediaRecord)
+        return record
 
     async def drop(self, project_id: UUID, source_id: str, reason: str) -> None:
         """Exclude a document, keeping its record and its text.
@@ -140,7 +233,7 @@ class CorpusEditor:
         what would fail if this checked the specific id instead.
         """
         reader = self._readers(project_id)
-        if not await reader.list_documents(include_dropped=True):
+        if not await reader.list_sources(include_dropped=True):
             raise UnknownDocument(f"no document {source_id!r} in this corpus")
         corpus = await self._corpus.load_or_create(project_id)
         corpus.execute(DropSourceDocument(source_id=source_id, reason=reason))
@@ -183,11 +276,42 @@ class CorpusEditor:
         it on every field this method touches, not only the ones the caller
         asked to change. A metadata-only title fix would otherwise destroy
         the provenance of by-reference content it never meant to disturb.
+
+        **Media falls to its own branch, and it is not a special case bolted
+        on.** `read_document` promises text and answers `None` for a media
+        source by design, so resolving only through it made this method 404
+        for every video in the corpus while the console offered the form --
+        the spec promises patch works on a `source_id` whichever kind it is.
+        A media revise is a re-store of the same claim with changed metadata,
+        which is exactly what `store_media` already writes and what `evolve`
+        already folds; nothing new is needed in the domain.
+
+        `text` is refused rather than ignored for a media source. `decide`'s
+        `_kind_of` guard would refuse `StoreSourceDocument` over a media id
+        anyway, so a recording cannot become a document either way -- but
+        that refusal arrives as a 409 in the aggregate's wording, and
+        silently dropping the field would answer 200 over a change that did
+        not happen.
         """
         reader = self._readers(project_id)
         stored = await reader.read_document(source_id, include_dropped=True)
         if stored is None:
-            raise UnknownDocument(f"no document {source_id!r} in this corpus")
+            handle = await reader.read_media(source_id, include_dropped=True)
+            if handle is None:
+                raise UnknownDocument(f"no document {source_id!r} in this corpus")
+            if text is not None:
+                raise KnowledgeError(
+                    f"{source_id!r} is a media source and has no text to revise"
+                )
+            await self._store_media(
+                project_id,
+                handle.record,
+                uri=uri,
+                title=title,
+                note=note,
+                published_at=published_at,
+            )
+            return
         await self._store(
             project_id,
             SourceRef(
@@ -222,11 +346,26 @@ class CorpusEditor:
         record, and `StoreSourceDocument.fetched_at` defaults to `None`, so
         leaving it out would restore a document with its provenance quietly
         erased -- the opposite of what "unchanged" promises above.
+
+        **Media falls to its own branch**, for the reason `revise` gives:
+        `read_document` answers `None` for a media source, so resolving only
+        through it left re-uploading the same bytes as the only way to
+        un-drop a recording -- which requires the operator to still have the
+        file, in a corpus whose purpose is to *be* the copy of record. The
+        media re-store carries `sha256` and `byte_count` from the stored
+        record, so it points at the blob that is already there and writes no
+        bytes at all.
         """
         reader = self._readers(project_id)
         stored = await reader.read_document(source_id, include_dropped=True)
         if stored is None:
-            raise UnknownDocument(f"no document {source_id!r} in this corpus")
+            handle = await reader.read_media(source_id, include_dropped=True)
+            if handle is None:
+                raise UnknownDocument(f"no document {source_id!r} in this corpus")
+            if handle.record.dropped_reason is None:
+                raise NotDropped(f"{source_id!r} is not dropped")
+            await self._store_media(project_id, handle.record)
+            return
         if stored.record.dropped_reason is None:
             raise NotDropped(f"{source_id!r} is not dropped")
         await self._store(
@@ -241,6 +380,52 @@ class CorpusEditor:
                 fetched_at=stored.record.fetched_at,
             ),
         )
+
+    async def _store_media(
+        self,
+        project_id: UUID,
+        record: MediaRecord,
+        *,
+        uri: str | None = None,
+        title: str | None = None,
+        note: str | None = None,
+        published_at: str | None = None,
+    ) -> None:
+        """Re-store a media claim over itself, with `None` meaning "keep".
+
+        The whole of restore and the metadata half of revise, because for
+        media they are the same write: a second `StoreSourceMedia` under one
+        `source_id` supersedes the record, and `evolve` builds a fresh one
+        that does not carry `dropped_reason` across. Restore is that with
+        nothing changed; revise is that with a field or two replaced.
+
+        No blob work, deliberately. `sha256`, `media_type` and `byte_count`
+        come off the stored record, so this re-points at the bytes that are
+        already there -- an edit that re-derived any of them would need the
+        bytes in hand, and a metadata fix has no business reading a
+        two-gigabyte file.
+
+        Nothing here re-pays what `_store` re-pays: `MAX_DOCUMENT_CHARS` is a
+        cap on prose and there is none, and `index` hangs off the text the
+        chunk store quotes, which media has none of. When something does
+        extract media, this is where that call would have to be added.
+        """
+        corpus = await self._corpus.load_or_create(project_id)
+        corpus.execute(
+            StoreSourceMedia(
+                corpus_id=project_id,
+                source_id=record.source_id,
+                sha256=record.sha256,
+                media_type=record.media_type,
+                byte_count=record.byte_count,
+                uri=record.uri if uri is None else uri,
+                title=record.title if title is None else title,
+                note=record.note if note is None else note,
+                published_at=(record.published_at if published_at is None else published_at),
+                fetched_at=record.fetched_at,
+            )
+        )
+        await self._corpus.save(corpus)
 
     async def _store(self, project_id: UUID, source: SourceRef) -> None:
         """The direct path: the length cap, then command, then index.

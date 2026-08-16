@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 
-import type { DocumentSummary } from './document.ts'
+import type { TextSummary } from './document.ts'
 import { SourceId } from '../shared/identifier.ts'
 import {
   canExtract,
@@ -10,8 +10,9 @@ import {
   type ExtractionQueueBoard,
 } from './extraction-queue.ts'
 
-const doc = (over: Partial<DocumentSummary> = {}): DocumentSummary => ({
+const doc = (over: Partial<TextSummary> = {}): TextSummary => ({
   sourceId: SourceId('s1'),
+  kind: 'text',
   charCount: 10,
   sha256: 'deadbeef',
   uri: null,
@@ -93,6 +94,33 @@ it('counts a just-finished document as extracted before its projection catches u
   })
   expect(documentExtraction(rows[0]!, withDone).kind).toBe('extracted')
   expect(unextractedCount(rows, withDone)).toBe(1)
+})
+
+it('never offers extraction on media, and does not count it as unextracted', () => {
+  // The server's `_unextracted` counts `kind == "text"` rows only, so a media
+  // row left `idle` here would put a pressable "Extract" on a row extract-all
+  // has already decided against, and inflate the count on the button beside
+  // it. Removing the `kind === 'media'` test in `documentExtraction` fails
+  // both assertions.
+  const video = {
+    sourceId: SourceId('m1'),
+    kind: 'media',
+    mediaType: 'video/mp4',
+    byteCount: 12,
+    sha256: 'deadbeef',
+    uri: null,
+    title: null,
+    publishedAt: null,
+    note: null,
+    fetchedAt: null,
+    droppedReason: null,
+    extracted: false,
+  } as const
+
+  const state = documentExtraction(video, emptyExtractionQueue)
+  expect(state.kind).toBe('unextractable')
+  expect(canExtract(state)).toBe(false)
+  expect(unextractedCount([video, doc({ sourceId: SourceId('s1') })], emptyExtractionQueue)).toBe(1)
 })
 
 it('leaves nothing to extract when everything is extracted, queued or dropped', () => {

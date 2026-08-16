@@ -9,7 +9,7 @@ import { ContainerProvider } from '@app/container-context.tsx'
 import { useToasts } from '@application/notifications/toast-store.ts'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { DocumentRepository } from '@application/ports/repositories.ts'
-import type { DocumentSummary } from '@domain/research/document.ts'
+import type { MediaSummary, TextSummary } from '@domain/research/document.ts'
 import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
 import { ProjectId, SessionId, SourceId } from '@domain/shared/identifier.ts'
@@ -37,9 +37,34 @@ const Routed = ({ initial = null }: { initial?: SourceId | null }) => {
   return <DocumentList projectId={PROJECT} open={open} onOpen={setOpen} />
 }
 
-const doc = (over: Partial<DocumentSummary> = {}): DocumentSummary => ({
+/** A text row. `Partial<TextSummary>` rather than `Partial<SourceSummary>`:
+ *  a partial of the union widens to a shape that is neither member -- one
+ *  carrying `charCount` *and* an optional `mediaType` -- which is exactly what
+ *  the union exists to make unrepresentable. */
+const doc = (over: Partial<TextSummary> = {}): TextSummary => ({
   sourceId: SourceId('s1'),
+  kind: 'text',
   charCount: 100,
+  sha256: 'deadbeef',
+  uri: null,
+  title: null,
+  publishedAt: null,
+  note: null,
+  fetchedAt: null,
+  droppedReason: null,
+  extracted: false,
+  ...over,
+})
+
+/** A media row, built separately rather than as `doc({ kind: 'media' })` --
+ *  see `doc` above for why a fixture over the union would be the wrong shape.
+ *  A fixture that can build a row carrying both counts can hide a component
+ *  reading the wrong one. */
+const media = (over: Partial<MediaSummary> = {}): MediaSummary => ({
+  sourceId: SourceId('m1'),
+  kind: 'media',
+  mediaType: 'video/mp4',
+  byteCount: 12_500_000,
   sha256: 'deadbeef',
   uri: null,
   title: null,
@@ -83,6 +108,14 @@ const fakeDocuments = (
   }),
   restore: vi.fn(() => {
     throw new Error('restore was not stubbed for this test')
+  }),
+  // Not a `vi.fn` that throws, unlike its neighbours: the media pane calls
+  // this while *rendering* rather than in an effect, so a throwing stub is an
+  // exception during render and the whole drawer disappears instead of the
+  // test reporting which call was unstubbed.
+  contentUrl: (projectId, sourceId) => `/api/projects/${projectId}/sources/${sourceId}/content`,
+  uploadMedia: vi.fn(() => {
+    throw new Error('uploadMedia was not stubbed for this test')
   }),
   ...over,
 })
@@ -636,4 +669,79 @@ it('ignores a mid-flight extraction note and another project’s frames', async 
   await new Promise((resolve) => setTimeout(resolve, FRAME_DEBOUNCE_MS * 2))
   expect(extractionQueue).toHaveBeenCalledTimes(1)
   expect(list).toHaveBeenCalledTimes(1)
+})
+
+it('shows a media row by its type and size, not a character count', async () => {
+  // A media row rendered through the text path shows "0 characters" -- or, if
+  // the field is simply absent, "undefined chars" -- which reads as an empty
+  // document rather than as a video. The failure this asserts against is a
+  // plausible-looking row, not a crash, which is why it names the size and the
+  // mimetype rather than merely checking that the row rendered at all.
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([media({ title: 'The keynote', byteCount: 12_500_000 })]),
+  )
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+
+  const row = (await screen.findByText('The keynote')).closest('[data-document-row]')
+  expect(row).not.toBeNull()
+  expect(within(row as HTMLElement).getByText(/12\.5 MB/)).toBeInTheDocument()
+  expect(within(row as HTMLElement).getByText(/video\/mp4/)).toBeInTheDocument()
+  expect(within(row as HTMLElement).queryByText(/chars/)).not.toBeInTheDocument()
+})
+
+it('does not offer extraction on a media row, which the server would refuse', async () => {
+  // `_unextracted` on the server counts `kind == "text"` rows only, so a media
+  // row offering "Extract" would offer an action extract-all has already
+  // decided against -- and the header's "Extract all (N)" would promise a
+  // document it cannot take on. Both halves are asserted: the missing control,
+  // and the count that does not include it.
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([doc({ title: 'A paper' }), media({ title: 'The keynote' })]),
+  )
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+
+  const row = (await screen.findByText('The keynote')).closest('[data-document-row]')
+  expect(within(row as HTMLElement).queryByRole('button', { name: 'Extract' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Extract all (1)' })).toBeInTheDocument()
+})
+
+/** Stated plainly: this passed before the media work and would pass with the
+ *  whole of it reverted. `DocumentManagePane` reads only `droppedReason` and
+ *  was already kind-agnostic, so nothing here is evidence that the media path
+ *  was built -- what it pins is the design decision underneath it: one
+ *  `source_id` namespace means one set of actions, and a media row that lost
+ *  them would make a dropped video unrecoverable through the console. Kept as
+ *  a guard against a future change that special-cases the pane by kind. */
+it('offers drop on a media row exactly as on a text one', async () => {
+  const documents = fakeDocuments(
+    vi.fn<DocumentRepository['list']>().mockResolvedValue([media({ title: 'The keynote' })]),
+  )
+
+  renderWithContainer(<Routed initial={SourceId('m1')} />, { documents })
+
+  const dialog = await screen.findByRole('dialog')
+  expect(within(dialog).getByRole('button', { name: 'Drop' })).toBeInTheDocument()
+  expect(within(dialog).getByRole('button', { name: 'Edit' })).toBeInTheDocument()
+})
+
+/** The restore half of the pair above, and the same caveat: green before the
+ *  media work and green with it reverted. It pins that the undo for a drop is
+ *  offered whatever the bytes are, not that anything here is new. */
+it('offers restore on a dropped media row', async () => {
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([media({ title: 'The keynote', droppedReason: 'wrong recording' })]),
+  )
+
+  renderWithContainer(<Routed initial={SourceId('m1')} />, { documents })
+
+  const dialog = await screen.findByRole('dialog')
+  expect(within(dialog).getByRole('button', { name: 'Restore' })).toBeInTheDocument()
 })

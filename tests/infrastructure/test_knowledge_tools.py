@@ -153,7 +153,7 @@ async def test_remember_carries_the_provenance_fetch_returned():
     """`fetch` leads every page with `url:`, `title:` and `date:`. Those are
     the only record of where the text came from, and a corpus that drops them
     cannot recognise a page it already holds -- which is the whole reason
-    `DocumentRecord.uri` exists.
+    `TextRecord.uri` exists.
     """
     report = IngestReport(
         source_id="s1",
