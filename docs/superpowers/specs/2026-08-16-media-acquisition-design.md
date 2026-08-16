@@ -159,10 +159,53 @@ exists.
   it is the only signal we will ever have for tuning stage 3's prompt.
 - `MediaProposalStored` — carries the resulting `source_id`.
 - `MediaProposalFailed` — carries why.
+- `MediaAssetIgnored` / `MediaHostIgnored` — and their inverses,
+  `MediaAssetUnignored` / `MediaHostUnignored`. See below.
 
 **Lifecycle:** `proposed → accepted → stored | failed`, or `proposed →
 rejected`. `decide` refuses accepting twice, accepting something already
 rejected, and any command naming an unknown proposal.
+
+### Rejecting is not blacklisting
+
+These are two different decisions and collapsing them makes both worse.
+
+**Rejecting closes one proposal, and the same asset may be proposed again.** A
+rejection is usually "not for this need" or "not the best of these three", both
+of which are judgements about a moment. A topic researched further, or a
+different need in the same topic, can legitimately want the thing that was
+turned down — and a permanent refusal derived from a momentary judgement is the
+kind of state nobody remembers setting. The rejected record itself stays closed:
+`decide` still refuses accepting it, because a closed decision is closed. A
+fresh `MediaProposed` for the same asset is a new record with a new id.
+
+**Ignoring suppresses it going forward**, and is the explicit way to say never
+again. Two grains, because the useful cases are genuinely different: an *asset*
+(this particular image is wrong, misleading, or already in the corpus) and a
+*host* (this aggregator returns nothing but scraped junk, and I do not want to
+keep saying so one image at a time). The host grain is the one that will get
+used; the asset grain is the one people reach for first.
+
+Keys are `normalize_url` and `urlsplit(...).hostname` respectively —
+`normalize_url` is already this repository's URL key, is total by construction
+against text a model wrote, and lowercases scheme and host while leaving the
+path alone. No new normalization is introduced, and specifically no suffix
+matching on hosts: `example.com` does not cover `cdn.example.com`, for the
+reason `FetchGrant` gives for the same decision — getting suffix matching right
+needs public-suffix knowledge this project does not have, and a person ignoring
+two hosts can name two hosts.
+
+**Where the filter runs: after search, before stage 3.** Not at proposal time,
+which would work but pays a judging call for candidates that are already
+excluded; and not at search time, which is not possible because SearXNG has no
+such parameter. Filtering between the two is also what makes the count
+reportable — the chain can say "6 candidates, 2 ignored" rather than silently
+returning fewer.
+
+Ignoring is reversible, which is why the inverse events exist. A blacklist with
+no way back is a trap that a single misclick sets permanently, and the pane
+needs somewhere to show what is currently suppressed — otherwise "why does this
+never propose anything from Wikimedia" has no answer anywhere in the product.
 
 ## The accept path
 
@@ -231,6 +274,13 @@ A stored card links to `DocumentReader`, which already plays video and audio and
 renders images against the content route. Nothing new is needed to *view* media;
 what was missing was viewing something that is not stored yet.
 
+Reject is the primary action and sits on the card. Ignore is secondary — asset
+or host — because it is the rarer and more consequential of the two, and a
+blacklist entry added by a misaimed click is worse than a rejection added the
+same way. What is currently ignored is listed in the pane, with an undo, for the
+reason given above: a suppression nobody can see is indistinguishable from a
+chain that has stopped working.
+
 **Thumbnails.** Measured: the instance returns raw third-party URLs, so
 rendering them hotlinks the viewer's browser to Bing and leaks IP and referrer
 to whoever indexed the image. This is a different axis from the agent's network
@@ -277,7 +327,15 @@ rather than an inheritance.
 - Chain: a fake `MediaCurationTextPort` returning canned text — six lines, per
   `OntologyTextPort`'s reasoning. A parser test per stage over deliberately
   malformed output, since that is the half that meets a real model.
-- `decide`: each refusal, asserted as a refusal.
+- `decide`: each refusal, asserted as a refusal. Including the one that is
+  deliberately *not* a refusal — a fresh proposal for a previously rejected
+  asset is allowed, and a test that pins it fails if someone "fixes" rejection
+  into a blacklist.
+- Ignore: an ignored asset and an ignored host are both filtered out of a
+  candidate set that otherwise contains them, and both come back after the
+  inverse event. A host test must assert that a sibling subdomain is **not**
+  covered, since no suffix matching is intended and the failure would be
+  invisible — a blacklist that quietly covers more than it says.
 - Accept path: a stored proposal produces a corpus source with the page URL as
   its `uri`; a non-media content-type produces `MediaProposalFailed` and no
   source; an oversized asset produces the same.
@@ -321,4 +379,6 @@ wrong place.
   correct but means an audio-only result would drop its asset the way images
   did. No music payload was captured. Minor, and deferred deliberately.
 - **Deduplication across topics.** Two topics wanting the same image get two
-  proposals. On-demand triggering makes this rare enough to leave.
+  proposals. On-demand triggering makes this rare enough to leave — and note
+  that ignoring is not the workaround for it: ignoring means "never propose
+  this", not "I already have it".
