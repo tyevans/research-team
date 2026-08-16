@@ -401,6 +401,117 @@ async def test_the_failure_reason_names_the_wrong_kind_not_a_generic_failure(
     assert "text/html" in spy.appended[-1].error
 
 
+async def test_a_moved_asset_records_a_failure_rather_than_leaving_the_proposal_stuck(
+    project_id, corpus_repo, proposals_repo, editor
+):
+    """Review finding 2: before the fix, `MediaMoved` *was* caught around
+    `download_media` (unlike the two exceptions below), so this test alone
+    would not have caught the regression -- it is here for completeness of
+    "a test per failure mode" and to guard the exception set from narrowing
+    again by accident.
+    """
+    proposal_id = "p1"
+    await _accept(
+        proposals_repo, project_id, proposal_id, asset_url="https://a.example/moved.jpg"
+    )
+    spy = SpyProposalsRepo(proposals_repo)
+    reads = FakeReads(
+        {proposal_id: _detail(project_id, asset_url="https://a.example/moved.jpg")}
+    )
+    worker = MediaAcceptWorker(
+        reads=reads,
+        proposals=spy,
+        editor=editor,
+        perceiver=FakePerceiver(),
+        client=_redirect_client(),
+    )
+
+    await worker.run(proposal_id=proposal_id)
+
+    proposal_state = await proposals_repo.load_or_create(project_id)
+    assert proposal_state.state.proposals[proposal_id].status == "failed"
+    assert isinstance(spy.appended[-1], MediaProposalFailed)
+    assert "redirected" in spy.appended[-1].error
+
+
+async def test_an_oversized_asset_records_a_failure_instead_of_propagating_uncaught(
+    project_id, corpus_repo, proposals_repo, editor
+):
+    """This is the review's finding 2a, red against the code as it shipped:
+    `MediaTooLarge` is not raised by `download_media` itself -- it is raised
+    from inside `chunks()`, mid-iteration, and the only thing that iterates
+    is `CorpusEditor.store_media`'s `put`, one try block later than the old
+    `except (UnsupportedMedia, MediaMoved, MediaTooLarge)` around
+    `download_media` alone. Against the reverted worker, this exception
+    propagates out of `run` entirely and no `MediaProposalFailed` is ever
+    appended -- the proposal stays `accepted` and the pane renders
+    "Storing…" forever. Proven red by reverting `media_acquisition.py`'s
+    `except MediaTooLarge` clause around `store_media` before writing this.
+    """
+    proposal_id = "p1"
+    await _accept(
+        proposals_repo, project_id, proposal_id, asset_url="https://a.example/huge.jpg"
+    )
+    spy = SpyProposalsRepo(proposals_repo)
+    reads = FakeReads(
+        {proposal_id: _detail(project_id, asset_url="https://a.example/huge.jpg")}
+    )
+    worker = MediaAcceptWorker(
+        reads=reads,
+        proposals=spy,
+        editor=editor,
+        perceiver=FakePerceiver(),
+        client=_image_client(body=b"\xff\xd8\xff" * 100),
+        max_bytes=10,
+    )
+
+    await worker.run(proposal_id=proposal_id)
+
+    corpus = await corpus_repo.load_or_create(project_id)
+    assert proposal_id not in corpus.state.documents
+    proposal_state = await proposals_repo.load_or_create(project_id)
+    assert proposal_state.state.proposals[proposal_id].status == "failed"
+    assert isinstance(spy.appended[-1], MediaProposalFailed)
+    assert "ceiling" in spy.appended[-1].error
+
+
+async def test_a_transport_error_records_a_failure_instead_of_propagating_uncaught(
+    project_id, corpus_repo, proposals_repo, editor
+):
+    """Review finding 2b: `httpx.HTTPError` -- DNS failure, refused
+    connection, TLS error, read timeout -- was not caught at all. Red against
+    the reverted worker for the same reason as the oversized test above: the
+    exception propagates out of `run`, is logged by the route's
+    fire-and-forget wrapper, and no `MediaProposalFailed` is ever recorded.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    proposal_id = "p1"
+    await _accept(
+        proposals_repo, project_id, proposal_id, asset_url="https://unreachable.example/x.jpg"
+    )
+    spy = SpyProposalsRepo(proposals_repo)
+    reads = FakeReads(
+        {proposal_id: _detail(project_id, asset_url="https://unreachable.example/x.jpg")}
+    )
+    worker = MediaAcceptWorker(
+        reads=reads,
+        proposals=spy,
+        editor=editor,
+        perceiver=FakePerceiver(),
+        client=_client(handler),
+    )
+
+    await worker.run(proposal_id=proposal_id)
+
+    proposal_state = await proposals_repo.load_or_create(project_id)
+    assert proposal_state.state.proposals[proposal_id].status == "failed"
+    assert isinstance(spy.appended[-1], MediaProposalFailed)
+    assert "download failed" in spy.appended[-1].error
+
+
 async def test_a_retry_after_a_crash_between_store_and_record_is_treated_as_success(
     project_id, corpus_repo, proposals_repo, editor
 ):

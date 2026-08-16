@@ -830,9 +830,22 @@ def build_application(
     media_curation_text: MediaCurationTextPort | None = None
     media_curation_search: MediaSearchPort | None = None
     if searxng is not None:
+        # `extraction_model` -- the house pattern `ChatModelOntologyText` and
+        # `ChatModelDefinitionText` also follow: one already-built model
+        # instance, reused rather than constructing a second connection to
+        # the same provider. `model_name=config.curation_model()`, not
+        # `config.model_name()`, is the other half: `curation_model()` is a
+        # documented, tested user-facing knob (`AGENT_CURATION_MODEL`, see
+        # `docs/configuration.md`) that was never called anywhere, so setting
+        # it changed no behaviour. The name threaded through here is only
+        # ever used for `LangChainLlmProvider`'s tracing/logging label (see
+        # `ChatModelOntologyText` for the same split) -- it does not select a
+        # different model instance, since `extraction_model` is one shared
+        # client regardless -- but a label that never reflected the
+        # documented override was the bug, not the split itself.
         media_curation_text, media_curation_search = build_curation_ports(
             extraction_model,
-            model_name=config.model_name(),
+            model_name=config.curation_model(),
             searxng_url=searxng,
             limit=config.searxng_results(),
         )
@@ -1760,8 +1773,21 @@ def build_application(
     # exactly how `tests/application/test_media_acquisition.py`'s own fakes
     # work, and the no-network guarantee `build_application`'s docstring
     # already promises for `perception`.
+    # A bare `httpx.AsyncClient()` carries httpx's 5-second default read
+    # timeout, which made `fetch_media.TIMEOUT = httpx.Timeout(30.0)` inert
+    # for every caller through this composition site -- that constant only
+    # applies on the branch where a caller builds its own client, and nothing
+    # here ever did. Downloading a multi-megabyte video under a 5s ceiling is
+    # how "stuck accepted forever" (see `MediaAcceptWorker.run`'s widened
+    # exception handling) got hit routinely rather than rarely: a slow but
+    # otherwise healthy host would trip `httpx.HTTPError` on ordinary size,
+    # not just on an actually-broken one. 30s matches `fetch_media.TIMEOUT`
+    # so the two paths that share `download_media` also share the ceiling
+    # they run it under.
     resolved_media_http_client = (
-        media_http_client if media_http_client is not None else httpx.AsyncClient()
+        media_http_client
+        if media_http_client is not None
+        else httpx.AsyncClient(timeout=httpx.Timeout(30.0))
     )
     media_accept_worker = MediaAcceptWorker(
         reads=media_proposals,

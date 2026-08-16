@@ -313,16 +313,28 @@ class MediaAcceptWorker:
             stream, media_type = await download_media(
                 detail.asset_url, client=self._client, max_bytes=self._max_bytes
             )
-        except (UnsupportedMedia, MediaMoved, MediaTooLarge) as error:
+        except (UnsupportedMedia, MediaMoved) as error:
             # `str(error)` already distinguishes the shapes a person needs
             # told apart: `UnsupportedMedia` names the refused media type
             # ("this asset is the wrong kind"); `MediaMoved` names the
             # Location that was not followed ("this URL moved" -- something
             # a person can act on by re-proposing it, unlike a generic
-            # refusal); `MediaTooLarge` names the ceiling crossed. Collapsing
-            # any of them into a generic "download failed" would lose
-            # exactly the distinction the pane needs to show.
+            # refusal). Collapsing either into a generic "download failed"
+            # would lose exactly the distinction the pane needs to show.
+            #
+            # `MediaTooLarge` is deliberately not caught here -- see the
+            # comment on the second try block below for why it cannot be
+            # raised by this call.
             await self._fail(project_id, proposal_id, str(error))
+            return
+        except httpx.HTTPError as error:
+            # DNS failure, refused connection, TLS error, read timeout -- the
+            # ordinary way an asset URL fails, and previously not caught at
+            # all: it propagated out of `run`, was logged by the route's
+            # fire-and-forget wrapper, and left the proposal stuck `accepted`
+            # forever with nothing for the pane to show. `fetch_media`
+            # catches this around its own download for the same reason.
+            await self._fail(project_id, proposal_id, f"download failed: {error}")
             return
 
         try:
@@ -334,6 +346,22 @@ class MediaAcceptWorker:
                 uri=detail.page_url,
                 title=detail.title or None,
             )
+        except MediaTooLarge as error:
+            # `MediaTooLarge` is raised from inside `download_media`'s
+            # `chunks()` generator, mid-iteration -- and `store_media`'s
+            # `put` is what iterates it, one try block later than the
+            # download call above. Catching it only around `download_media`
+            # (as this used to) never observes it: it propagated out of this
+            # method entirely and the proposal stayed `accepted` forever,
+            # rendering "Storing..." in the pane with no way to clear it.
+            # `fetch_media.fetch` gets this right already -- it catches
+            # `MediaTooLarge` around its own `store_media` call, not around
+            # the download. `stream` is already closed by `download_media`'s
+            # own `finally` by the time this raises, so no explicit
+            # `aclose()` is needed here (unlike the `BaseException` branch
+            # below, which covers failures `store_media` raises on its own).
+            await self._fail(project_id, proposal_id, str(error))
+            return
         except BaseException:
             # `store_media` failing after it started reading `stream` -- a
             # blob-store I/O error, most plausibly -- leaves
@@ -343,6 +371,13 @@ class MediaAcceptWorker:
             # promised to be collected promptly, so the connection would sit
             # open until it happens to be. Close it explicitly rather than
             # trust that.
+            #
+            # This is deliberately a catch-all rather than a named set: an
+            # unexpected failure here is a bug in the storing path, not a
+            # refusal this worker can explain to a person the way the three
+            # named exceptions above can -- it is re-raised, not recorded as
+            # `FailMediaProposal`, so it surfaces loudly rather than as a
+            # misleadingly specific reason.
             await stream.aclose()
             raise
 
