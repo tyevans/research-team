@@ -360,3 +360,64 @@ it('starts a passage at a boundary rather than mid-sentence', async () => {
   // The half-sentence the chunker cut is gone, not merely pushed down.
   expect(screen.queryByText(/ontifices/)).not.toBeInTheDocument()
 })
+
+const DIFFICULTY = {
+  id: 'difficulty',
+  name: 'Difficulty',
+  entityType: 'class',
+  inferred: true,
+}
+
+const CLASS_VIEW: GraphView = {
+  nodes: [DIFFICULTY],
+  links: [],
+  expanded: new Set(['difficulty']),
+}
+
+it('does not fetch a definition for a synthesised class node', async () => {
+  // A discovered class's id comes from the ontology table and belongs to no
+  // stored entity, so the definition route has nothing to define for it and
+  // the usages route has no passages under that id either. Asserting the
+  // fetches do not happen, rather than that an error is handled: a handled
+  // failure still costs two round trips on every click and still writes
+  // spurious entries into a network log a reader may be reading for real ones.
+  const definition = vi.fn().mockResolvedValue(aDefinition())
+  const usages = vi.fn().mockResolvedValue([])
+  renderDetail(
+    <GraphDetail
+      projectId={PROJECT}
+      view={CLASS_VIEW}
+      selected="difficulty"
+      onSelect={noop}
+      onRemove={noop}
+      onClose={noop}
+    />,
+    { definitions: fakeDefinitions({ definition }), usages: fakeUsages({ usages }) },
+  )
+
+  expect(await screen.findByText('Difficulty')).toBeInTheDocument()
+  expect(definition).not.toHaveBeenCalled()
+  await openMentions()
+  expect(usages).not.toHaveBeenCalled()
+})
+
+it('still fetches a definition for an ordinary node', async () => {
+  // Would pass with fetching disabled outright, which is why it is here.
+  const definition = vi.fn().mockResolvedValue(aDefinition())
+  renderDetail(
+    <GraphDetail
+      projectId={PROJECT}
+      view={VIEW}
+      selected="ada"
+      onSelect={noop}
+      onRemove={noop}
+      onClose={noop}
+    />,
+    { definitions: fakeDefinitions({ definition }) },
+  )
+
+  expect(
+    await screen.findByText('Acme Corporation is a supplier of laboratory reagents.'),
+  ).toBeInTheDocument()
+  expect(definition).toHaveBeenCalledTimes(1)
+})

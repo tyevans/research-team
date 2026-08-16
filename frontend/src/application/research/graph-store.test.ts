@@ -237,3 +237,52 @@ it('surfaces a 422 from too deep a request rather than swallowing it', async () 
   expect(graph.getState().error).toBe('depth 3 exceeds the maximum of 2')
   expect(graph.getState().view.nodes).toEqual([])
 })
+
+it('selects a synthesised class node without fetching a neighbourhood for it', async () => {
+  // A discovered class's id comes from the ontology table and belongs to no
+  // stored entity, so `/neighborhood` answers 404 for it and `/definition` has
+  // nothing to define. Asserting the fetch does not happen, rather than that
+  // the error is handled: a handled 404 still costs a round trip on every
+  // click and still writes a spurious failure into the network log a reader
+  // may be reading for real ones.
+  const neighborhood = vi.fn()
+  const graph = store(fakeGraphs({ neighborhood }))
+  graph.setState({
+    view: {
+      nodes: [node({ id: 'difficulty', name: 'Difficulty', entityType: 'class', inferred: true })],
+      links: [],
+      expanded: new Set<string>(),
+    },
+  })
+
+  await graph.getState().expandNode('difficulty')
+
+  expect(neighborhood).not.toHaveBeenCalled()
+  // Still selected: clicking a class means "tell me about this one", and the
+  // panel has plenty to say about it without a request.
+  expect(graph.getState().selected).toBe('difficulty')
+})
+
+it('still fetches a neighbourhood for an ordinary node', async () => {
+  // Would pass with fetching disabled outright, which is why it is here.
+  const neighborhood = vi.fn().mockResolvedValue(hoodOf(node()))
+  const graph = store(fakeGraphs({ neighborhood }))
+
+  await graph.getState().expandNode('ada')
+
+  expect(neighborhood).toHaveBeenCalledTimes(1)
+})
+
+it('does not fetch for a class node it has never drawn', async () => {
+  // The id arrives from the address bar rather than from a click, so nothing
+  // in the view identifies it as synthesised. Guarding only on a node already
+  // on the canvas would leave the pasted-URL path issuing the 404 this exists
+  // to prevent -- and `GraphPane` routes every selection, including the
+  // initial one, through `expandNode`.
+  const neighborhood = vi.fn().mockRejectedValue(new Error('404'))
+  const graph = store(fakeGraphs({ neighborhood }))
+
+  await graph.getState().expandNode('unknown-to-the-view')
+
+  expect(neighborhood).toHaveBeenCalledTimes(1)
+})

@@ -355,6 +355,9 @@ describe('toNeighborhood', () => {
       id: 'ada',
       name: 'Ada Lovelace',
       entityType: 'Person',
+      // Present and false on every node, not only synthesised ones, so a
+      // client never has to read an absent key as "not inferred".
+      inferred: false,
       temporal: null,
     })
     expect(neighborhood.entities).toHaveLength(2)
@@ -508,4 +511,28 @@ describe('toApproval', () => {
       ],
     })
   })
+})
+
+it('carries a class node across as inferred', () => {
+  // The flag decides whether the panel fetches a neighbourhood, so a mapper
+  // that dropped it would leave every class node issuing a 404 on click --
+  // and the drawing would look right the whole time.
+  const node = toGraphNode(
+    dto.graphEntityDto.parse({
+      entity_id: 'difficulty',
+      name: 'Difficulty',
+      entity_type: 'class',
+      inferred: true,
+    }),
+  )
+
+  expect(node.inferred).toBe(true)
+})
+
+it('reads an entity written before the field existed as not inferred', () => {
+  const node = toGraphNode(
+    dto.graphEntityDto.parse({ entity_id: 'ada', name: 'Ada', entity_type: 'Person' }),
+  )
+
+  expect(node.inferred).toBe(false)
 })

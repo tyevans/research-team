@@ -10,6 +10,16 @@ export interface GraphNode {
   readonly id: string
   readonly name: string
   readonly entityType: string
+  /** Whether this node was synthesised by a derivation pass rather than
+   *  extracted from a document -- today, a discovered ontology class.
+   *
+   * Load-bearing beyond display, unlike `GraphLink.inferred`: a synthesised
+   * node's id comes from the ontology table and belongs to no stored entity,
+   * so `/neighborhood` answers 404 for it and `/definition` has nothing to
+   * define. `expandNode` reads this to decide whether to fetch at all.
+   * Optional for the same reason `temporal` is -- every existing test and
+   * construction site predates it. */
+  readonly inferred?: boolean
   /** The entity's date or date range, already formatted for display, or
    *  `null` when it has none. Optional because every existing test and
    *  construction site predates this field. */

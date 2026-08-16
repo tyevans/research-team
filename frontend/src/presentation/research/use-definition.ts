@@ -24,12 +24,21 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
  * definition must not bleed into the newly selected one. See
  * `GraphDetail.tsx` for how `data.stale` becomes the "updating" indicator
  * that tells a reader *why* the text on screen might already be behind. */
-export const useDefinition = (projectId: ProjectId, entityId: string | null) => {
+export const useDefinition = (
+  projectId: ProjectId,
+  entityId: string | null,
+  { enabled = true }: { enabled?: boolean } = {},
+) => {
   const { definitions } = useContainer()
 
   return useQuery({
     queryKey: queryKeys.definition(projectId, entityId ?? ''),
     queryFn: () => definitions.definition(projectId, entityId as string),
-    enabled: entityId !== null,
+    // `enabled` opts a caller out on top of the null check, mirroring
+    // `useUsages`. The caller that needs it is a synthesised class node: its
+    // id comes from the ontology table and names no stored entity, so this
+    // route has nothing to define and would answer for every click with a
+    // failure the reader cannot act on.
+    enabled: entityId !== null && enabled,
   })
 }

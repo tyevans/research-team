@@ -694,6 +694,11 @@ export const graphEntityDto = z.object({
   // this test suite that predates the field is real and should not have to
   // be found and updated just because this one entity gained an attribute.
   temporal: z.string().nullable().default(null),
+  // Defaulted for `temporal`'s reason: fixtures in this suite predate it and
+  // should not have to be found and updated because one entity gained an
+  // attribute. `false` is the honest default -- everything written before this
+  // field existed was extracted from a document, not synthesised.
+  inferred: z.boolean().default(false),
 })
 
 export const graphEntityPageDto = z.object({

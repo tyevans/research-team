@@ -667,6 +667,7 @@ export const toGraphNode = (raw: Dto<typeof dto.graphEntityDto>): GraphNode => (
   id: raw.entity_id,
   name: raw.name,
   entityType: raw.entity_type,
+  inferred: raw.inferred,
   temporal: raw.temporal,
 })
 

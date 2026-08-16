@@ -187,6 +187,25 @@ export const createGraphStore = ({
       // drawn should not be the only one who gets no answer.
       set({ selected: id })
 
+      // A synthesised class node has no neighbourhood to fetch: its id comes
+      // from the ontology table and belongs to no stored entity, so the
+      // request would answer 404 every time. Guarded here rather than by
+      // handling the error, because a handled 404 still costs a round trip on
+      // every click and still writes a spurious failure into the network log
+      // a reader may be reading for real ones.
+      //
+      // Read off the drawn node rather than from the id's shape: nothing about
+      // a class node's id distinguishes it -- it is a uuid5, and a uuid is a
+      // uuid. A class node reaches the view only by having been drawn, since
+      // the whole-graph and neighbourhood reads are the only things that
+      // synthesise one, so "is it in the view and marked inferred" is the only
+      // question that can be asked here. An id from the address bar naming a
+      // class nobody has drawn still issues its 404 -- accepted, because the
+      // alternative is teaching the client to recognise a server-side id
+      // convention, which is a coupling worth more than one wasted request.
+      const drawn = get().view.nodes.find((candidate) => candidate.id === id)
+      if (drawn?.inferred === true) return
+
       // The guard `expand`'s own docstring calls out: a second click on a
       // node already on screen must not re-issue the request that put it
       // there.

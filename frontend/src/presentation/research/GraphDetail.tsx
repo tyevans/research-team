@@ -119,13 +119,26 @@ export const GraphDetail = ({
   // should not wait on the corpus's BM25 lookup before seeing who it is wired
   // to, and a slow edge fetch must not blank the passages that already came
   // back.
-  const usagesQuery = useUsages(projectId, selected, { enabled: mentionsOpen })
+  const node = view.nodes.find((candidate) => candidate.id === selected)
+  // A synthesised class node has nothing behind either route: its id comes
+  // from the ontology table and names no stored entity, so the definition has
+  // nothing to define and the passage search has nothing indexed under it.
+  // Both are disabled rather than left to fail, because a handled failure
+  // still costs two round trips per click and still writes spurious entries
+  // into a network log somebody may be reading for real ones.
+  //
+  // The node lookup moved above these two hooks to make this possible, which
+  // is safe because it reads only `props` -- no hook runs before it and the
+  // early return below still happens after every hook, so the order is
+  // unchanged.
+  const grounded = node?.inferred !== true
+
+  const usagesQuery = useUsages(projectId, selected, { enabled: mentionsOpen && grounded })
   // Deliberately its own query rather than a field the usages fetch also
   // carries -- see `use-definition.ts` for why a cache read and a BM25
   // lookup do not belong on one request.
-  const definitionQuery = useDefinition(projectId, selected)
+  const definitionQuery = useDefinition(projectId, selected, { enabled: grounded })
 
-  const node = view.nodes.find((candidate) => candidate.id === selected)
   // The selection can outlive its node only if something removed it from the
   // view, which nothing does today -- but rendering an empty shell would be a
   // worse answer than rendering nothing.
