@@ -94,6 +94,13 @@ sources, its knowledge graph, its topics and its files. You cannot change any
 of them, and you have no access to the web -- if the material does not answer
 the question, say so plainly rather than filling the gap from memory.
 
+The project's sources are mounted read-only at `/sources/<source_id>`, so
+`grep` searches all of them at once -- that is usually the fastest way to find
+which source covers a question. Opening one goes through `read_source`, not
+`read_file`: only `read_source` returns the `source_id@start-end` span that
+makes a quote checkable, and `read_file` on a mounted path is refused for that
+reason.
+
 Prefer quoting what a source actually says over paraphrasing it, and say which
 source you got something from.
 
@@ -150,10 +157,17 @@ class DeepAgentAskExecutor:
         model: BaseChatModel,
         open_graph: Callable[[UUID], Awaitable[tuple[Any, tuple[BaseTool, ...]]]],
         project_files: Callable[[UUID], Awaitable[dict[str, Any]]],
+        project_sources: Callable[[UUID], Awaitable[dict[str, Any]]],
         system_prompt: str = ASK_PROMPT,
     ) -> None:
         self._model = model
         self._open_graph = open_graph
+        # Required rather than defaulted to "no mount". A build that forgot to
+        # wire it would answer every `grep` over gathered sources with no
+        # matches and no error -- the silent-empty failure this project has
+        # already shipped once, from a projection that was never constructed.
+        # A missing argument is a TypeError at composition instead.
+        self._project_sources = project_sources
         self._project_files = project_files
         self._system_prompt = system_prompt
 
@@ -173,7 +187,10 @@ class DeepAgentAskExecutor:
         to reach the reader.
         """
         _knowledge, project_tools = await self._open_graph(project_id)
-        backend = ReadOnlyProjectBackend(await self._project_files(project_id))
+        backend = ReadOnlyProjectBackend(
+            await self._project_files(project_id),
+            sources=await self._project_sources(project_id),
+        )
         agent = create_deep_agent(
             model=self._model,
             tools=list(readable(project_tools)) or None,

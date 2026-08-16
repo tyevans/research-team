@@ -9,24 +9,35 @@ aggregate as the store. Do not reimplement any inherited method.
 
 from typing import Any
 
-from deepagents.backends.protocol import EditResult
+from deepagents.backends.protocol import EditResult, ReadResult
 from deepagents.backends.state import StateBackend
 
 from research_team.domain import DeleteFile, EditFile, WriteFile
 from research_team.domain.session import Session
+from research_team.infrastructure.agent.source_mount import MountsSources, refusal
 
 
-class EventSourcedBackend(StateBackend):
-    def __init__(self, aggregate: Session) -> None:
+class EventSourcedBackend(MountsSources, StateBackend):
+    def __init__(self, aggregate: Session, sources: dict[str, Any] | None = None) -> None:
         self._aggregate = aggregate
         self._edit_intent: tuple[str, str, bool] | None = None
+        # Defaults to empty so every existing call site keeps its exact
+        # behaviour: with nothing mounted, `/sources/x` is an ordinary scratch
+        # path and the guards below cannot fire.
+        self._sources = dict(sources or {})
 
     # ---- the two seams ----
 
     def _read_files(self) -> dict[str, Any]:
-        return dict(self._aggregate.state.files)
+        return self._merge_sources(dict(self._aggregate.state.files))
 
     def _send_files_update(self, update: dict[str, Any]) -> None:
+        # Before the loop, not inside it. A write reaching a mounted path would
+        # append a `FileWritten` that shadows the corpus for every later read,
+        # and events are not rewritten -- so a guard that refused partway
+        # through would have already made the corruption permanent for the
+        # paths it got to first.
+        self._refuse_mounted_writes(update)
         for path, file_data in update.items():
             if file_data is None:
                 self._aggregate.execute(DeleteFile(path=path))
@@ -43,6 +54,20 @@ class EventSourcedBackend(StateBackend):
                 )
             else:
                 self._aggregate.execute(WriteFile(path=path, file_data=file_data))
+
+    # ---- mounted sources ----
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        """Refuse a mounted corpus document, and name the tool that opens one.
+
+        An intercept-then-defer, like `edit` below, rather than a
+        reimplementation: everything not mounted goes to the superclass
+        untouched. `source_mount.py` has the reason a mounted read is refused
+        at all -- it would return a line-numbered window and earn no citation.
+        """
+        if self._mounted(file_path):
+            return ReadResult(error=refusal(file_path))
+        return super().read(file_path, offset, limit)
 
     # ---- intent capture ----
 
