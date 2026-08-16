@@ -20,7 +20,14 @@ let receivedWidth: number | undefined
 const api = {
   centerAt: vi.fn(),
   zoom: vi.fn((scale?: number) => (scale === undefined ? currentZoom : undefined)),
-  zoomToFit: vi.fn(),
+  // Stands in for the library's own bounding-box read, which `GraphCanvas`
+  // now does its own framing arithmetic on rather than delegating to
+  // `zoomToFit`. See `graph-framing.browser.test.tsx` for why: the library's
+  // fit has no ceiling and framed a single node at 50x.
+  getGraphBbox: vi.fn(() => ({
+    x: [-10, 10] as [number, number],
+    y: [-10, 10] as [number, number],
+  })),
 }
 let currentZoom = 1
 
@@ -72,7 +79,7 @@ beforeEach(() => {
   currentZoom = 1
   api.centerAt.mockClear()
   api.zoom.mockClear()
-  api.zoomToFit.mockClear()
+  api.getGraphBbox.mockClear()
 })
 
 it('hands react-force-graph-2d the same graphData object across a re-render that leaves the view unchanged', () => {
@@ -169,7 +176,7 @@ it('centres an entity selected before the simulation has positioned anything', (
   expect(api.centerAt).toHaveBeenCalledWith(5, 6, expect.any(Number))
   // And it frames the node rather than the whole graph: the reader asked for
   // one entity, not for an overview with that entity somewhere in it.
-  expect(api.zoomToFit).not.toHaveBeenCalled()
+  expect(api.getGraphBbox).not.toHaveBeenCalled()
 })
 
 it('does not re-frame the whole graph while a node is selected', () => {
@@ -188,7 +195,7 @@ it('does not re-frame the whole graph while a node is selected', () => {
   rerender(<GraphCanvas view={grown} selected="ada" onNodeClick={() => {}} />)
   act(() => receivedOnEngineStop?.())
 
-  expect(api.zoomToFit).not.toHaveBeenCalled()
+  expect(api.getGraphBbox).not.toHaveBeenCalled()
 })
 
 it('still frames the whole graph when nothing is selected', () => {
@@ -196,7 +203,12 @@ it('still frames the whole graph when nothing is selected', () => {
 
   act(() => receivedOnEngineStop?.())
 
-  expect(api.zoomToFit).toHaveBeenCalled()
+  // That it *asks for the bounding box* is as far as jsdom can follow this:
+  // the container measures 0x0 with no layout, so `framing` correctly declines
+  // to move a view onto a stage with no room on it and neither `centerAt` nor
+  // `zoom` is reached. What the framing actually resolves to is measured in
+  // `graph-framing.browser.test.tsx`, against a real 900x600 box.
+  expect(api.getGraphBbox).toHaveBeenCalled()
 })
 
 it('does not repeat the move for a selection it has already made', () => {

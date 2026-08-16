@@ -419,6 +419,18 @@ export const GraphBrowser = ({
           <p className={NOTICE}>Some inferred date relationships are not drawn.</p>
         ) : null}
 
+        {/* A graph with entities and no edges between them draws as a field of
+            unconnected dots, which is what a graph whose *edges* failed to load
+            would look like too -- and the reader has no way to tell those
+            apart. Saying it outright is the only thing that does.
+
+            Not folded into `edgesPartial` above: that one says some edges were
+            cut, and this one says there were none to cut. A project with 2,525
+            entities and 8 dated ones hits this, and used to hit it silently. */}
+        {view.nodes.length > 0 && view.links.length === 0 ? (
+          <p className={NOTICE}>No relationships were found between these entities.</p>
+        ) : null}
+
         {searching ? (
           <div className={`px-[8px] py-2 ${PANEL}`}>
             <Loading what="entities" />
