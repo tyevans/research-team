@@ -74,13 +74,18 @@ export const expandReferences = (source: string, projectId: ProjectId): string =
     if (id === undefined) return whole
 
     const href = projectHref(projectId, { facet: 'doc', id })
-    // The W3C media-fragment form (`#t=252`, `#t=252,310`). Chosen so a
-    // reference with an offset seeks even if a later task's seek-on-mount
-    // code never runs: a browser applies `#t=` to a plain `<video src="…">`
-    // with no JavaScript at all, because it's a fragment the media element
-    // itself understands, not a hash this app's own router has to parse.
-    const fragment =
-      start === undefined ? '' : end === undefined ? `#t=${start}` : `#t=${start},${end}`
+    // Not a W3C media fragment (`#t=252`) -- a URL has exactly one fragment,
+    // the text after its first `#`, and this app's href is already a hash
+    // route (`#/p/<id>/doc/<id>`). A second `#t=252` appended after it isn't
+    // a fragment at all, just characters inside the one fragment that already
+    // started; no browser applies it to anything. So the seek can't be free
+    // the way a plain `<video src="…#t=252">` gets it -- it has to be
+    // ordinary JavaScript in the player, which is where it was always going
+    // to happen under a hash router regardless. The offset travels as an
+    // ordinary query string on the hash route instead, which the router
+    // already knows how to parse without any special-casing.
+    const query =
+      start === undefined ? '' : end === undefined ? `?t=${start}` : `?t=${start},${end}`
 
-    return `<a class="font-mono text-sm" href="${href}${fragment}">${id}</a>`
+    return `<a class="font-mono text-sm" href="${href}${query}">${id}</a>`
   })

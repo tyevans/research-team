@@ -13,12 +13,15 @@ describe('expandReferences', () => {
     )
   })
 
-  it('carries a point offset as a media fragment', () => {
-    expect(expandReferences('[[src:keynote@252]]', projectId)).toContain('#t=252')
+  it('carries a point offset as a query parameter on the hash route', () => {
+    // Not a media fragment: a hash-routed href already has its one fragment
+    // spent on the route itself, so a second `#t=` would just be inert
+    // characters inside it. `?t=` is the hash route's own query string.
+    expect(expandReferences('[[src:keynote@252]]', projectId)).toContain('?t=252')
   })
 
   it('carries a range offset', () => {
-    expect(expandReferences('[[src:keynote@252-310]]', projectId)).toContain('#t=252,310')
+    expect(expandReferences('[[src:keynote@252-310]]', projectId)).toContain('?t=252,310')
   })
 
   it.each([
