@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 # sessions. A read that meets a `DocumentExtracted` without this import raises
 # `EventTypeNotFoundError`, including on the "no project at all" path, where
 # nothing else would have pulled redstring in.
+import httpx
 import redstring.events  # noqa: F401
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.observability import Tracer
@@ -58,6 +59,7 @@ from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import KnowledgeError, SourceRef
+from research_team.application.media_acquisition import MediaAcceptWorker
 from research_team.application.media_curation import MediaCurationTextPort, MediaSearchPort
 from research_team.application.ontology_discovery import OntologyDiscoveryService
 from research_team.application.perception import MediaPerceiver, PerceptionPort
@@ -450,6 +452,20 @@ class Application:
     which is synchronous -- see its module docstring for why `build_application`
     does not become `async def` for this one port."""
 
+    _media_http_client: httpx.AsyncClient
+    """The client `media_accept_worker` downloads through. Held here only so
+    `close()` can `aclose()` it -- not a field a route or a test should read;
+    see `media_accept_worker` for the collaborator callers actually want."""
+
+    media_accept_worker: MediaAcceptWorker
+    """Downloads, stores and perceives an accepted media proposal.
+
+    A field for `create_app` to hand to the accept route, mirroring `editor`
+    and `perceiver` above: it closes over collaborators assembled inside
+    `build_application`, so no route could construct one itself. See the
+    long comment where this is built, beside `media_proposal_repository`, for
+    why it lives there and not among the projections above it."""
+
     perceiver: MediaPerceiver
     """Reads a stored medium into a derived text source, over this instance's
     `perception` and corpus repository.
@@ -597,6 +613,10 @@ class Application:
         await self.ontology.stop()
         await self.media_proposals.stop()
         await self.service.close()
+        # Unconditional, whether this client was built here or handed in by a
+        # test: whoever built it, `Application` owns it for its lifetime, and
+        # an unclosed `httpx.AsyncClient` leaks its connection pool.
+        await self._media_http_client.aclose()
         await self.detach_project()
         # Every project this instance ever opened a graph for, not just the
         # one that happened to be attached -- `detach_project` above only
@@ -675,6 +695,7 @@ def build_application(
     grants: GrantRegistry | None = None,
     activity: TurnActivityBuffer | None = None,
     perception: PerceptionPort | None = None,
+    media_http_client: httpx.AsyncClient | None = None,
 ) -> Application:
     """Wire everything over one event store.
 
@@ -709,6 +730,13 @@ def build_application(
     fake here, exactly as the no-network guard tests in this module do, or it
     reaches whatever `AGENT_VISION_MODEL`/`AGENT_TRANSCRIBER_URL` happen to be
     set to in the environment the suite runs in.
+
+    `media_http_client` accepts an existing `httpx.AsyncClient` for
+    `MediaAcceptWorker`'s downloads, for the same reason `perception` does: a
+    test hands in one built over `httpx.MockTransport`
+    (`tests/application/test_media_acquisition.py`'s own `_client` helper) so
+    accepting a proposal never reaches the network. `None` builds a real
+    client, owned by this `Application` and closed in `close()`.
     """
     resolved_path = db_path if db_path is not None else config.default_db_path()
     resolved_model = model if model is not None else build_model()
@@ -1686,6 +1714,34 @@ def build_application(
     media_proposal_repository = AggregateRepository(
         repository.store, MediaProposals, event_publisher=repository.publisher
     )
+    # Task 11b: the accept route (below, in `create_app`) only appends
+    # `MediaProposalAccepted` and answers 202 -- nothing downstream of it
+    # calls `MediaAcceptWorker` unless this build hands it one. Built here,
+    # after `media_proposal_repository`, `editor` and `media_perceiver` all
+    # exist, rather than beside the other projections above: those three are
+    # exactly the collaborators the worker needs, and `media_proposals` (the
+    # runner just above) already satisfies `MediaProposalReadPort` on its own
+    # -- see `MediaProposalRunner.get` -- so no separate read adapter is
+    # built either. The same "construct once, in one place" reasoning that
+    # motivates gathering the projections applies here too: a worker built
+    # somewhere else, or not at all, is a worker nobody notices is missing
+    # until an accepted proposal never turns into a source.
+    #
+    # `media_http_client` is a parameter, mirroring `perception` above, so a
+    # test can inject an `httpx.MockTransport` and never reach the network --
+    # exactly how `tests/application/test_media_acquisition.py`'s own fakes
+    # work, and the no-network guarantee `build_application`'s docstring
+    # already promises for `perception`.
+    resolved_media_http_client = (
+        media_http_client if media_http_client is not None else httpx.AsyncClient()
+    )
+    media_accept_worker = MediaAcceptWorker(
+        reads=media_proposals,
+        proposals=media_proposal_repository,
+        editor=editor,
+        perceiver=media_perceiver,
+        client=resolved_media_http_client,
+    )
 
     def topic_reader(target_project_id: UUID) -> TopicReadPort:
         """This project's `TopicReadPort`, over the one repository above.
@@ -1925,6 +1981,8 @@ def build_application(
         editor=editor,
         perception=resolved_perception,
         perceiver=media_perceiver,
+        media_accept_worker=media_accept_worker,
+        _media_http_client=resolved_media_http_client,
         _initial_project_id=project_id,
     )
 

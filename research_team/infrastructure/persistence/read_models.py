@@ -64,6 +64,7 @@ from redstring.events.streams import DOCUMENT_CATEGORY
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.application import SessionSummary, SummaryHealth
+from research_team.application.media_acquisition import AcceptedProposal
 from research_team.domain import (
     UNREADABLE_DEGRADATIONS,
     CorpusDerivedTextStored,
@@ -2689,6 +2690,15 @@ class MediaProposalStore:
         rows = [await self._rows.get(row_id) for row_id in ids]
         return [row for row in rows if row is not None]
 
+    async def get_by_proposal_id(self, proposal_id: str) -> MediaProposalRow | None:
+        """One proposal, keyed the way `AcceptMediaProposal`/`StoreMediaProposal`
+        name it -- by `proposal_id` alone, not `(project_id, id)`.
+        `MediaProposalRow.row_id` already derives the storage key from just
+        `proposal_id` for this reason (see its docstring); this is the direct
+        `self._rows.get` that reasoning exists to enable, with no scan.
+        """
+        return await self._rows.get(MediaProposalRow.row_id(proposal_id))
+
     async def ignored_assets(self, project_id: UUID) -> set[str]:
         cursor = await self._connection.execute(
             f"SELECT asset_key FROM {MediaIgnoredAssetRow.table_name()} "
@@ -2788,6 +2798,28 @@ class MediaProposalRunner:
 
     async def for_project(self, project_id: UUID) -> list[MediaProposalRow]:
         return await self._started().for_project(project_id)
+
+    async def get(self, proposal_id: str) -> AcceptedProposal | None:
+        """Satisfies `MediaAcceptWorker`'s `MediaProposalReadPort` directly off
+        this projection, rather than through a separate adapter -- this runner
+        is already handed to routes as the read side of proposals
+        (`list_media_proposals` reads `for_project` off it the same way), so
+        composition hands the accept worker this same instance for `reads`.
+
+        Returns whatever the row currently says regardless of `status`: the
+        worker is only ever invoked after `AcceptMediaProposal` has already
+        landed, and re-deriving that check here would be a second place for
+        the two to disagree about what "accepted" means.
+        """
+        row = await self._started().get_by_proposal_id(proposal_id)
+        if row is None:
+            return None
+        return AcceptedProposal(
+            project_id=str(row.project_id),
+            page_url=row.page_url,
+            asset_url=row.asset_url,
+            title=row.title,
+        )
 
     async def ignored_assets(self, project_id: UUID) -> set[str]:
         return await self._started().ignored_assets(project_id)

@@ -62,7 +62,7 @@ from research_team.application.graph_read import (
     GraphReadPort,
 )
 from research_team.application.knowledge import ExtractionNote, KnowledgeError
-from research_team.application.media_acquisition import MAX_UPLOAD_BYTES
+from research_team.application.media_acquisition import MAX_UPLOAD_BYTES, MediaAcceptWorker
 from research_team.application.media_curation import (
     MediaCurationService,
     MediaCurationTextPort,
@@ -702,6 +702,7 @@ def create_app(
     perceiver: MediaPerceiver | None = None,
     media_proposals: MediaProposalRunner | None = None,
     media_proposal_repository: AggregateRepository[MediaProposals] | None = None,
+    media_accept_worker: MediaAcceptWorker | None = None,
     curation_text: MediaCurationTextPort | None = None,
     curation_search: MediaSearchPort | None = None,
 ) -> FastAPI:
@@ -714,6 +715,16 @@ def create_app(
     offers for that.
     """
     app = FastAPI(title="research-team", docs_url="/api/docs", lifespan=lifespan)
+
+    # Strong references for `accept_media_proposal`'s fire-and-forget worker
+    # runs (Task 11b). `asyncio.create_task` only *weakly* holds its task --
+    # nothing else in this closure keeps one alive -- and the event loop is
+    # free to garbage-collect a task nobody references, mid-download, with no
+    # warning beyond a `Task was destroyed but it is pending` log line. Kept
+    # here rather than on `app.state` because nothing outside this module
+    # needs to see it; discarded from its own completion callback so the set
+    # does not grow for the life of the process.
+    media_accept_tasks: set[asyncio.Task] = set()
 
     async def _load(session_id: UUID):
         try:
@@ -1903,10 +1914,29 @@ def create_app(
 
     @app.post("/api/projects/{project_id}/media-proposals/{proposal_id}/accept")
     async def accept_media_proposal(project_id: UUID, proposal_id: str):
-        """Record the decision only. 202, not a download: the fetch that
-        turns an accepted proposal into a stored source is Wave 3's
-        `StoreMediaProposal`, and does not exist in this build -- accepting
-        here unblocks that later step without performing it.
+        """Record the decision, then hand the download off to `MediaAcceptWorker`.
+
+        Still 202, and still answered before anything is fetched: the append
+        below is the only part this request waits on. `MediaAcceptWorker.run`
+        is scheduled with `asyncio.create_task` rather than awaited, because it
+        downloads and perceives -- an hour of audio is minutes of transcription
+        -- and a route that waited on that would be a route that times out.
+        `media_accept_tasks` is what keeps the scheduled task alive; see its
+        comment above `create_app`'s body for why a bare `create_task` is not
+        enough on its own.
+
+        No queue, unlike `ExtractionQueue`/`DispatchQueue`: those serialize
+        because running two of a kind at once means racing writes to a shared
+        resource (one extraction pass per project) or asking twice for the same
+        research. An accept has neither problem -- each proposal downloads and
+        stores into its own corpus row, `source_id=proposal_id`, so two accepts
+        for two different proposals racing costs nothing a queue would have
+        saved. `MediaAcceptWorker`'s own docstring is what makes even the
+        crash-and-retry case safe without one.
+
+        A logged exception, not a crashed task, is where a bug in the worker
+        that is *not* one of its four named refusals ends up: nothing awaits
+        this task, so nothing else would ever see it raise.
         """
         await _require_project(project_id)
         if media_proposal_repository is None:
@@ -1919,6 +1949,23 @@ def create_app(
         except CommandRejectedError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         await media_proposal_repository.save(aggregate)
+
+        if media_accept_worker is not None:
+
+            async def _run_accept_worker() -> None:
+                try:
+                    await media_accept_worker.run(proposal_id)
+                except Exception:
+                    logger.exception(
+                        "media accept worker failed for proposal %s in project %s",
+                        proposal_id,
+                        project_id,
+                    )
+
+            task = asyncio.create_task(_run_accept_worker())
+            media_accept_tasks.add(task)
+            task.add_done_callback(media_accept_tasks.discard)
+
         return JSONResponse(
             status_code=202, content={"proposal_id": proposal_id, "status": "accepted"}
         )
