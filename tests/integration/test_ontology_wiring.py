@@ -14,6 +14,15 @@ exists to catch. It can only be caught by asking a composed application, and
 only by asserting a *row* -- an assertion that the pass "succeeded" passes
 perfectly against a build with no projection wired.
 
+**It has already earned that twice, and both defects were invisible to the unit
+suite for the same reason.** The recorder appended without publishing, so no
+projection ever saw the event; and `OntologyRunner.caught_up` compared against
+the store's global end, which it could never reach. Every unit test missed both
+because each builds its own store holding only the events it appended, and each
+publishes by hand -- so neither the delivery path nor the wait had anything to
+get wrong. Those are properties of a *composed* system, and only a composed
+system can be asked about them.
+
 **What is still faked, stated rather than implied.** The model is a
 `FakeMessagesListChatModel`, so what is proven about `ChatModelOntologyText` is
 that composition hands it the model and that its reply reaches

@@ -118,6 +118,21 @@ class OntologyDiscovered(DomainEvent):
     nothing for a decider to decide, and routing through `Corpus` would fold
     derived data into the aggregate that owns the verbatim source text.
 
+    **Appending directly means publishing directly, and that half is easy to
+    miss.** Every other writer in this codebase goes through
+    `AggregateRepository(event_publisher=...)`, which appends *and* publishes;
+    a writer with no aggregate gets neither for free. `SubscriptionManager`
+    catches a projection up from the store and then transitions to live events
+    **from the bus**, so an append nobody publishes reaches a running
+    projection only on a restart or a rebuild.
+
+    Left out, nothing raises and nothing logs: the write succeeds, the caller
+    gets the number it expected, and every read of the projected table comes
+    back empty. That is how this shipped for one commit, and it was invisible
+    to the unit suite because those tests publish by hand. If you are writing a
+    second aggregate-less recorder, this is the paragraph you needed --
+    `infrastructure/knowledge/ontology_recorder.py` is the worked example.
+
     One stream per project (`aggregate_id` is the project id). `project_id` is
     also a field, because a projection reads the payload and should not have to
     know that the two happen to be equal -- `SessionStarted.project_id` carries

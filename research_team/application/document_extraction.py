@@ -150,10 +150,20 @@ class DocumentExtractor:
         records that a source was examined separately from any class rows it
         produced.
 
-        **Text only.** The corpus holds media under the same `source_id`
-        namespace, and discovery reads a document's text -- there is nothing for
-        it to read in a video. Filtered the same way `unextracted` filters, so
-        the two sweeps agree about what a document is.
+        **Text only, and media is *excluded* rather than examined.** The corpus
+        holds media under the same `source_id` namespace, and discovery reads a
+        document's text -- there is nothing for it to read in a video. Filtered
+        the same way `unextracted` filters, so the two sweeps agree about what a
+        document is.
+
+        The cost is silence, and it is worth naming because nothing else says
+        it: a media source never appears here, never gets a pass, and never
+        appears in the examined set either -- so a reader asking "why was this
+        never grouped" gets no answer from either list. It is not "examined and
+        found nothing", which is what its absence from this list would
+        otherwise imply. Nothing is built for that today; if it becomes a
+        question people actually ask, the answer is a reason on the listing
+        rather than a wider filter here.
 
         Order is the listing's, matching `unextracted` above and for the same
         reason.
