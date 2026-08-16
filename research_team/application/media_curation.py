@@ -466,6 +466,36 @@ def _host_of(url: str) -> str:
     return (urlsplit(url).hostname or "").lower()
 
 
+class CurationUnavailable(Exception):
+    """A port `MediaCurationService.curate` depends on failed to answer.
+
+    Raised from `curate` when `self._text.generate` or `self._search.search`
+    raises anything at all -- an unreachable SearXNG instance or an
+    unreachable model endpoint are the two most likely operational failures
+    of this feature, and previously neither was caught: the exception
+    propagated straight out of `curate`, through `run_media_curation`, past
+    the route's only `except CommandRejectedError`, and surfaced as an
+    unhandled 500 with a stack trace in the log and no detail in the
+    response.
+
+    **Deliberately reported, not swallowed into an empty outcome.** Treating
+    a transport failure as "zero needs, zero candidates" would be
+    indistinguishable from a topic that genuinely has nothing worth
+    proposing -- exactly the false-negative shape CLAUDE.md's extraction
+    notes warn about ("nothing raises, the reply parses successfully, the
+    count is just quietly short"). A person re-running the chain deserves to
+    know the run never actually happened, not a plausible-looking zero. The
+    route maps this to 502/503 rather than 500 so the response at least says
+    which side of the boundary failed, instead of looking like an
+    unrelated bug in this codebase.
+
+    The original exception is chained (`raise ... from error`) so the cause
+    is still in the log for whoever debugs the outage; only the *shape*
+    reaching the route changes, from "opaque 500" to "named, reportable
+    failure".
+    """
+
+
 @dataclass(frozen=True)
 class CurationOutcome:
     """What one `curate` call did, as counts a caller can report or log.
@@ -504,9 +534,28 @@ class MediaCurationService:
         topics: TopicReadPort,
     ) -> None:
         self._text = text
-        self._search = search
+        self._search_port = search
         self._proposals = proposals
         self._topics = topics
+
+    async def _generate(self, prompt: str) -> str:
+        """`self._text.generate`, with a transport failure named rather than
+        left to propagate as whatever exception the port's own
+        implementation happens to raise -- see `CurationUnavailable`.
+        """
+        try:
+            return await self._text.generate(prompt)
+        except Exception as error:
+            raise CurationUnavailable(
+                f"the curation model failed to answer: {error}"
+            ) from error
+
+    async def _search(self, query: str, categories: str) -> tuple[SearchResult, ...]:
+        """`self._search.search`, mirroring `_generate`'s wrapping."""
+        try:
+            return await self._search_port.search(query, categories)
+        except Exception as error:
+            raise CurationUnavailable(f"search failed: {error}") from error
 
     async def curate(self, project_id: UUID, topic_id: UUID) -> CurationOutcome:
         # A topic nobody has opened (a stale link, a wrong id) has nothing
@@ -521,7 +570,7 @@ class MediaCurationService:
 
         aggregate = await self._proposals.load_or_create(project_id)
 
-        needs, rejected = parse_needs(await self._text.generate(_needs_prompt(topic)))
+        needs, rejected = parse_needs(await self._generate(_needs_prompt(topic)))
         aggregate.execute(
             IdentifyMediaNeeds(
                 project_id=str(project_id),
@@ -552,13 +601,13 @@ class MediaCurationService:
 
         for need in needs:
             terms, terms_rejected = parse_terms(
-                await self._text.generate(_terms_prompt(need)), need_id=need.need_id
+                await self._generate(_terms_prompt(need)), need_id=need.need_id
             )
             rejected += terms_rejected
 
             pool: list[tuple[SearchResult, str]] = []
             for query in terms:
-                for result in await self._search.search(query.text, query.categories):
+                for result in await self._search(query.text, query.categories):
                     pool.append((result, query.text))
 
             # The ignore filter runs here: after search, before stage 3. Not
@@ -583,7 +632,7 @@ class MediaCurationService:
                 continue
 
             judgements, judge_rejected = parse_judgements(
-                await self._text.generate(_judge_prompt(need, [r for r, _ in kept])),
+                await self._generate(_judge_prompt(need, [r for r, _ in kept])),
                 need_id=need.need_id,
             )
             rejected += judge_rejected

@@ -64,6 +64,7 @@ from research_team.application.graph_read import (
 from research_team.application.knowledge import ExtractionNote, KnowledgeError
 from research_team.application.media_acquisition import MAX_UPLOAD_BYTES, MediaAcceptWorker
 from research_team.application.media_curation import (
+    CurationUnavailable,
     MediaCurationService,
     MediaCurationTextPort,
     MediaSearchPort,
@@ -1889,6 +1890,16 @@ def create_app(
             outcome = await service.curate(project_id, topic_id)
         except CommandRejectedError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+        except CurationUnavailable as error:
+            # An unreachable SearXNG instance or an unreachable model
+            # endpoint -- the two most likely operational failures of this
+            # feature -- previously propagated uncaught to an unhandled 500.
+            # 502: this route is itself acting as a gateway to two other
+            # services, and the failure is theirs, not a defect in this
+            # route's own logic -- the honest report the review asked for,
+            # rather than treating the run as though it produced zero
+            # candidates.
+            raise HTTPException(status_code=502, detail=str(error)) from error
         return JSONResponse(
             status_code=202,
             content={

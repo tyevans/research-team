@@ -23,6 +23,7 @@ from research_team.application.media_curation import (
     MAX_CANDIDATES_PER_NEED,
     MAX_NEEDS_PER_TOPIC,
     MAX_QUERIES_PER_NEED,
+    CurationUnavailable,
     MediaCurationService,
     SearchResult,
     parse_judgements,
@@ -36,6 +37,7 @@ from research_team.domain.media_proposals import (
     IgnoreMediaHost,
     MediaNeedsIdentified,
     MediaProposals,
+    MediaProposed,
 )
 
 
@@ -407,3 +409,80 @@ async def test_curate_does_nothing_for_a_topic_this_project_does_not_have(
     assert (outcome.needs, outcome.candidates, outcome.ignored) == (0, 0, 0)
     assert port.prompts == []
     assert harness.published_events == []
+
+
+async def test_a_proposed_event_carries_the_judges_reason_and_the_query_that_found_it(
+    project_id, topic_id, proposals_repo, harness
+):
+    """Review test gap 7: no existing test pinned the index -> result mapping,
+    or that `reason`/`query` on `MediaProposed` are the judge's actual reason
+    and the query that produced the candidate, rather than something else
+    threaded through by coincidence. `test_running_the_chain_answers_202_with_outcome_counts`
+    (route level) and `test_an_ignored_asset_is_filtered_before_the_judging_call`
+    (prompt-shape level) only check counts -- neither would catch
+    `ProposeMedia(..., page_url=result.url, asset_url=result.asset_url, ...)`
+    in `MediaCurationService.curate` being written with `result.url` swapped
+    for `result.asset_url`, or `reason`/`query` swapped for each other.
+
+    A distinctive result (`url` and `asset_url` deliberately different, unlike
+    `_result`'s helper above) and a distinctive judge reason make that swap
+    visible: this test is red if either field lands wrong.
+    """
+    port = FakeTextPort(
+        [
+            _needs_json(1),
+            _terms_json(1),
+            json.dumps([{"index": 0, "keep": True, "reason": "shows the aqueduct's arches"}]),
+        ]
+    )
+    search = FakeSearchPort(
+        [
+            SearchResult(
+                title="Pont du Gard",
+                url="https://example.com/gallery/pont-du-gard",
+                snippet="a Roman aqueduct bridge",
+                kind="image",
+                asset_url="https://cdn.example.com/pont-du-gard-full.jpg",
+                detail="",
+                thumbnail_url="https://cdn.example.com/pont-du-gard-thumb.jpg",
+            )
+        ]
+    )
+
+    service = _service(port, search, proposals_repo, topic_id=topic_id)
+    outcome = await service.curate(project_id, topic_id)
+
+    assert outcome.candidates == 1
+    proposed = [e for e in harness.published_events if isinstance(e, MediaProposed)]
+    assert len(proposed) == 1
+    event = proposed[0]
+    # `page_url` is the page a reader would cite -- `result.url` -- not the
+    # CDN asset that happened to serve it, matching `MediaAcceptWorker`'s own
+    # reasoning for the same split.
+    assert event.page_url == "https://example.com/gallery/pont-du-gard"
+    assert event.asset_url == "https://cdn.example.com/pont-du-gard-full.jpg"
+    assert event.reason == "shows the aqueduct's arches"
+    assert event.query == "query 0"
+
+
+async def test_curate_reports_a_transport_failure_rather_than_letting_it_propagate_as_a_500(
+    project_id, topic_id, proposals_repo
+):
+    """Review finding 5: `curate` caught nothing from its ports, so an
+    unreachable model endpoint or SearXNG instance surfaced as an unhandled
+    500. This is red against the reverted code, where the underlying
+    `RuntimeError` propagates uncaught instead of being wrapped.
+    """
+
+    class BrokenTextPort:
+        model_name = "fake-text-model"
+
+        async def generate(self, prompt: str) -> str:
+            raise RuntimeError("connection refused")
+
+    search = FakeSearchPort([])
+
+    with pytest.raises(CurationUnavailable):
+        await _service(BrokenTextPort(), search, proposals_repo, topic_id=topic_id).curate(
+            project_id, topic_id
+        )
