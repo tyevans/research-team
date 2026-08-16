@@ -10,6 +10,7 @@ import type {
   Usage,
   WholeGraph,
 } from '@domain/knowledge/graph.ts'
+import type { OntologyClass } from '@domain/knowledge/ontology.ts'
 import type { Timeline } from '@domain/knowledge/timeline.ts'
 import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
@@ -416,6 +417,23 @@ export interface DefinitionsRepository {
    *  `Definition`'s own docstring -- so a caller does not need a catch
    *  block to tell an undefinable entity from a network failure. */
   definition(projectId: ProjectId, entityId: string): Promise<Definition>
+}
+
+export interface OntologyRepository {
+  /** Every class a discovery pass has found in this project.
+   *
+   * Empty is a real answer, not an error: a project nobody has run a pass on
+   * has no classes. The server answers 503 rather than an empty list when it
+   * is unwired, so a caller that gets `[]` can trust it. */
+  classes(projectId: ProjectId): Promise<readonly OntologyClass[]>
+
+  /** Read one document for the classes it states, and say how many were found.
+   *
+   * `null` means the document was not read -- an unreadable reply, or one over
+   * the server's size ceiling -- where `0` means it was read and states none.
+   * The two are kept apart because only one of them should stop anyone
+   * retrying. */
+  discover(projectId: ProjectId, sourceId: string): Promise<number | null>
 }
 
 export interface TimelineRepository {

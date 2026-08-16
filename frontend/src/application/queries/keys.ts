@@ -84,6 +84,10 @@ export const queryKeys = {
    *  and a shared key would make a definition refetch invalidate the
    *  passages too, and vice versa. */
   definition: (project: ProjectId, entityId: string) => ['definition', project, entityId] as const,
+  /** One project's discovered classes. Keyed on the project alone: the view
+   *  shows all of them at once, and a per-class key would be a cache entry
+   *  nothing ever reads on its own. */
+  ontology: (project: ProjectId) => ['ontology', project] as const,
 
   file: (session: SessionId, path: FilePath, at: ScrubPoint) =>
     ['file', session, path.value, ScrubPoint.toNullable(at)] as const,

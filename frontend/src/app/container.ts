@@ -5,6 +5,7 @@ import type {
   AskRepository,
   AutonomyRepository,
   DefinitionsRepository,
+  OntologyRepository,
   DocumentRepository,
   ExtractionRepository,
   GraphRepository,
@@ -23,6 +24,7 @@ import type {
 import { HttpAskRepository } from '@infrastructure/http/ask-repository.ts'
 import { HttpAutonomyRepository } from '@infrastructure/http/autonomy-repository.ts'
 import { HttpDefinitionsRepository } from '@infrastructure/http/definitions-repository.ts'
+import { HttpOntologyRepository } from '@infrastructure/http/ontology-repository.ts'
 import { HttpDocumentRepository } from '@infrastructure/http/document-repository.ts'
 import { HttpGraphRepository } from '@infrastructure/http/graph-repository.ts'
 import { HttpClient } from '@infrastructure/http/http-client.ts'
@@ -65,6 +67,7 @@ export interface Container {
   readonly graphs: GraphRepository
   readonly usages: UsagesRepository
   readonly definitions: DefinitionsRepository
+  readonly ontology: OntologyRepository
   readonly timelines: TimelineRepository
   readonly workers: WorkerRepository
   readonly extractions: ExtractionRepository
@@ -95,6 +98,7 @@ export const createContainer = (baseUrl = ''): Container => {
     graphs: new HttpGraphRepository(http),
     usages: new HttpUsagesRepository(http),
     definitions: new HttpDefinitionsRepository(http),
+    ontology: new HttpOntologyRepository(http),
     timelines: new HttpTimelineRepository(http),
     workers: new HttpWorkerRepository(http),
     extractions: new HttpExtractionRepository(http),

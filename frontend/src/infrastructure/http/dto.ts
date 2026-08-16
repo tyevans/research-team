@@ -701,6 +701,36 @@ export const graphEntityDto = z.object({
   inferred: z.boolean().default(false),
 })
 
+const ontologyMemberDto = z.object({
+  name: z.string(),
+  ordinal: z.number().nullable().default(null),
+})
+
+const ontologyClassDto = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.string(),
+  declaredCount: z.number().nullable().default(null),
+  memberCount: z.number().default(0),
+  parentClassId: z.string().nullable().default(null),
+  evidence: z.object({ sourceId: z.string(), start: z.number(), end: z.number() }),
+  rejectedMembers: z.array(z.object({ name: z.string(), reason: z.string() })).default([]),
+  stale: z.boolean().default(false),
+  members: z.array(ontologyMemberDto).default([]),
+})
+
+export const ontologyDto = z.object({ classes: z.array(ontologyClassDto).default([]) })
+
+export const ontologyPassDto = z.object({
+  sourceId: z.string(),
+  // Nullable and *not* defaulted to 0: `null` means the document was not read
+  // (unreadable reply, or over the size ceiling) and `0` means it was read and
+  // states no classes. Defaulting would collapse the two, and the whole reason
+  // the server keeps them apart is that only one of them should stop anyone
+  // retrying.
+  found: z.number().nullable(),
+})
+
 export const graphEntityPageDto = z.object({
   entities: z.array(graphEntityDto).default([]),
   next_after: maybe(z.string()),
