@@ -21,10 +21,13 @@ this slice's job is to make the 4:12 *recoverable* rather than to draw it.
 The library does more than transcribe, and the design below is shaped by what
 it hands over rather than by what this repository would have built alone.
 Everything in this section was **measured against `readeverything` installed
-from PyPI**, not read off its documentation: first on 2026-08-15 against 0.1.0,
-then re-taken on 2026-08-16 against 0.2.0 when the pin moved. Every result
-below reproduced byte-identically across the two, and an `__all__` diff removed
-nothing and added only `TranscriptCue` to the exported surface.
+from PyPI**, not read off its documentation, and re-taken at every version
+move rather than assumed to carry: 0.1.0 on 2026-08-15, then 0.2.0 and 0.3.0
+on 2026-08-16. **Every result below reproduced byte-identically across all
+three.** An `__all__` diff removed nothing at either step; 0.2.0 added
+`TranscriptCue`, and 0.3.0 added sixteen names for archive, container and
+Office handling plus two defaulted keyword arguments to `build_perception`
+(`containers`, `archives`). Nothing this design depends on changed shape.
 
 `build_perception(root, *, vision=None, transcriber=None, ...)` returns a
 `Perception` over a filesystem root. `Perception.represent(uri, budget)`
@@ -338,7 +341,7 @@ runners and on the development machine (ffmpeg 6.1.1, verified 2026-08-15).
 ### Dependency
 
 ```toml
-"readeverything[documents,images,remote-transcription,vision]>=0.2.0,<0.3",
+"readeverything[documents,images,remote-transcription,vision]>=0.3.0,<0.4",
 ```
 
 Capped below the next minor, for the reason `eventsource-py` and `redstring`
@@ -346,12 +349,21 @@ are: pre-1.0, and a minor is where breaking renames land. The extras add
 `pillow` and `pypdfium2` as new weight; `remote-transcription` is `httpx`,
 already present, and `vision` is `langchain-openai`, already present.
 
-**Written against 0.2.0, the current PyPI release.** The first draft of this
-spec was measured against 0.1.0; the pin moved to 0.2.0 on 2026-08-16 and every
-measurement was re-taken rather than assumed to carry. They did carry — same
-text, same spans, same degradations — and no signature this design depends on
-changed. Measured against what `uv sync` resolves, never against a source tree,
-because a source tree is not what CI installs.
+**Written against 0.3.0, the current PyPI release.** The first draft was
+measured against 0.1.0 and the pin has moved twice since, each time with the
+measurements re-taken rather than assumed to carry. They carried both times —
+same text, same spans, same degradations, and no signature this design depends
+on changed shape. Measured against what `uv sync` resolves, never against a
+source tree, because a source tree is not what CI installs.
+
+**What 0.3.0 adds is out of scope here and worth knowing anyway.** It brings
+archive and container handling — `ZipArchiveOpener`, `TarArchiveOpener`,
+`NestedSource`, a `ContainerLimits` guard against decompression bombs — and
+Office document handlers. `build_perception` enables container walking by
+default (`walk_members=True`), so a `.zip` or a `.docx` stored as a medium
+would now be walked where before it fell to `BinaryHandler`. Nothing in this
+slice uploads either, and no behaviour here changes for video, audio or
+images; the acquisition sub-project is where that surface becomes interesting.
 
 ## Testing
 

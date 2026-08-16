@@ -73,7 +73,17 @@ dependencies = [
     # `documents` add pillow and pypdfium2, which are new weight bought for
     # image and PDF handling. ffmpeg/ffprobe are OS binaries and are
     # deliberately not represented here.
-    "readeverything[documents,images,remote-transcription,vision]>=0.2.0,<0.3",
+    #
+    # 0.3.0 is the second bump this branch made and, unusually for a pre-1.0
+    # minor, a purely additive one: an `__all__` diff removes nothing, adds
+    # sixteen names for archive/container and Office handling, and gives
+    # `build_perception` two defaulted keyword arguments. Every signature this
+    # project depends on is unchanged, and all three of the spec's measurements
+    # were re-taken against it rather than assumed to carry -- byte-identical.
+    # The one behaviour change to know about is not one we exercise: container
+    # walking is on by default, so a `.zip` or `.docx` stored as a medium would
+    # now be walked where it previously fell to `BinaryHandler`.
+    "readeverything[documents,images,remote-transcription,vision]>=0.3.0,<0.4",
 ]
 
 [project.optional-dependencies]

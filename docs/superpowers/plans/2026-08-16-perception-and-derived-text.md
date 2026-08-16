@@ -6,13 +6,13 @@
 
 **Architecture:** A new `CorpusDerivedTextStored` event carries the rendered text, a JSON locator map and the capability fingerprint that produced it. Derived text is a `TextRecord` with `derived_from` set, not a third union arm, so every existing text reader works on it unchanged. Perception is a port over `readeverything.Perception` built against the blob root, which is usable directly as a filesystem root because content sniffing identifies extensionless digest-named files.
 
-**Tech Stack:** Python 3.13, pydantic, eventsource-py, `readeverything==0.2.x`, FastAPI, SQLite read models, React/TypeScript frontend.
+**Tech Stack:** Python 3.13, pydantic, eventsource-py, `readeverything==0.3.x`, FastAPI, SQLite read models, React/TypeScript frontend.
 
 **Spec:** `docs/superpowers/specs/2026-08-16-perception-and-derived-text-design.md`
 
 ## Global Constraints
 
-- **The dependency line is exactly** `"readeverything[documents,images,remote-transcription,vision]>=0.2.0,<0.3",`. Capped below the next minor: pre-1.0, a minor is where breaking renames land.
+- **The dependency line is exactly** `"readeverything[documents,images,remote-transcription,vision]>=0.3.0,<0.4",`. Capped below the next minor: pre-1.0, a minor is where breaking renames land.
 - **No test may make a network request.** No test may reference `192.168.1.14` or any other host. Use `readeverything.testing`'s `FakeTranscriber` / `FakeVision`, or `httpx.MockTransport` through `RemoteWhisperTranscriber`'s `transport=` seam.
 - **Every projection test asserts a row or a field value, never a 2xx or "it did not raise."** An event no projection handles counts as APPLIED, so a missing handler yields an empty read model and a green suite. This is the repository's most-repeated failure.
 - **Every column added to `corpus_documents` is nullable.** `apply_schema` reconciles an added nullable column onto a populated table and refuses a required one with no default.
@@ -77,7 +77,7 @@ In `pyproject.toml`, inside `[project].dependencies`, add — with this comment,
     # `documents` add pillow and pypdfium2, which are new weight bought for
     # image and PDF handling. ffmpeg/ffprobe are OS binaries and are
     # deliberately not represented here.
-    "readeverything[documents,images,remote-transcription,vision]>=0.2.0,<0.3",
+    "readeverything[documents,images,remote-transcription,vision]>=0.3.0,<0.4",
 ```
 
 Then run `uv sync` and commit `uv.lock` in the same commit.
