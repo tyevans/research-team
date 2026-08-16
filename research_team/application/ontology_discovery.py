@@ -25,8 +25,9 @@ are opposite conclusions about whether to trust the pass.
 """
 
 import json
-from typing import Any
+from typing import Any, Protocol
 
+from research_team.application.corpus_read import CorpusReadPort
 from research_team.domain.ontology import (
     DiscoveredClass,
     DiscoveredMember,
@@ -261,3 +262,91 @@ def _members(
             DiscoveredMember(name=name, ordinal=ordinal if isinstance(ordinal, int) else None)
         )
     return members, rejected
+
+
+class OntologyTextPort(Protocol):
+    """Turning a prompt into text, with the name of whatever did it.
+
+    One method and one property, mirroring `DefinitionTextPort` and for the
+    identical reason: anything wider would put LangChain's vocabulary in this
+    layer's contract, which is what `tests/test_architecture.py` exists to
+    prevent, and would make the fake in the test suite a mock of a chat model
+    rather than six lines.
+    """
+
+    @property
+    def model_name(self) -> str: ...
+
+    async def generate(self, prompt: str) -> str: ...
+
+
+class OntologyRecordPort(Protocol):
+    """Appending the discovery event, without naming an event store here.
+
+    The application layer states what it needs recorded; where that lands is
+    infrastructure's business -- the same division `KnowledgePort.ingest` keeps
+    between "extract this document" and redstring's own append.
+    """
+
+    async def record(
+        self, source_id: str, model_version: str, classes: list[DiscoveredClass]
+    ) -> None: ...
+
+
+class OntologyDiscoveryService:
+    """One document's classes: read it, ask, verify, record.
+
+    Bound to one project through the `CorpusReadPort` and the recorder it is
+    handed, never through a parameter -- the same implicit binding
+    `GraphReadPort` documents at length, and for the same reason: a project id
+    a caller can pass is a knob that can be turned to the wrong project.
+    """
+
+    def __init__(
+        self,
+        *,
+        corpus: CorpusReadPort,
+        model: OntologyTextPort,
+        recorder: OntologyRecordPort,
+    ) -> None:
+        self._corpus = corpus
+        self._model = model
+        self._recorder = recorder
+
+    async def discover(self, source_id: str) -> int | None:
+        """How many classes were recorded, or `None` when nothing was.
+
+        **An empty result is recorded, and that is not the same as `None`.**
+        Zero says "examined, states no classes" and takes the document off the
+        sweep. `None` says "not examined" and leaves it on. Two of the three
+        `None` paths below are transient -- a reply that failed to parse, and a
+        document over the ceiling that a windowed pass would later reach -- so
+        recording either as "done" would retire a document nobody has actually
+        looked at.
+
+        The three `None` cases are deliberately not distinguished in the return
+        type. They differ in cause and agree in consequence: nothing recorded,
+        still ungrouped, and retry is the answer to all three. A richer result
+        would be three cases every caller has to handle in order to do one
+        thing.
+        """
+        document = await self._corpus.read_document(source_id)
+        if document is None:
+            return None
+        if len(document.text) > MAX_DISCOVERY_CHARS:
+            # Before the model call, not after: refusing afterwards would cost
+            # exactly as much as doing the work.
+            return None
+
+        proposals = parse_ontology(await self._model.generate(build_prompt(document.text)))
+        if proposals is None:
+            return None
+
+        # Reached with `proposals == []` (the model said there are none) and
+        # with a list every member of which fails verification (the model said
+        # there are some and the document disagreed). Both are "examined,
+        # states none": the reply was understood, and re-running would produce
+        # the same answer at the same cost.
+        classes = verify_classes(proposals, document_text=document.text, source_id=source_id)
+        await self._recorder.record(source_id, self._model.model_name, classes)
+        return len(classes)
