@@ -45,7 +45,12 @@ REFERENCE_SYNTAX_PROMPT = (
     f"`{READ_SOURCE_TOOL}`. A reference to one you have not is a guess wearing "
     "the same shorthand as a real citation, and nothing here can tell them "
     "apart -- the reader trusts the id and the offset because reading is "
-    "supposed to have come first."
+    "supposed to have come first.\n\n"
+    "Copy `<source_id>` exactly as it appears in "
+    f"`{LIST_SOURCES_TOOL}`/`{READ_SOURCE_TOOL}`'s own output rather than "
+    "retyping it -- an id may only contain letters, digits, `.`, `_`, `#`, "
+    "`:` and `-`, and a character outside that set does not raise an error. "
+    "It just means the reference never becomes a link."
 )
 """The `[[src:...]]` grammar, in the model's own words, shared by every prompt
 that tells the model it can read a source.

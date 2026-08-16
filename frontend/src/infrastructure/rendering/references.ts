@@ -6,21 +6,28 @@ import { projectHref } from '../../presentation/routing/routes.ts'
  *  everything a model can write to point at a source, and at a moment inside
  *  it. See the design's "The reference syntax".
  *
- * `<id>` is restricted to letters, digits, `.`, `_`, `#` and `-`. That is not
- * the full range `source_id` permits -- `corpus.py`'s `StoreDerivedText`
+ * `<id>` is restricted to letters, digits, `.`, `_`, `#`, `-` and `:`. That is
+ * not the full range `source_id` permits -- `corpus.py`'s `StoreDerivedText`
  * docstring says plainly that the domain leaves `source_id` unconstrained,
  * because naming is the caller's to choose. The restriction here is narrower
  * on purpose: it covers the shapes ids actually take in this codebase (slugs
- * like `wiki-trajan`, uploaded filenames, and the `#perceived` suffix
- * `perception.py`'s `DERIVED_SUFFIX` appends), while excluding a space, a
- * quote, or a slash -- characters that would either fail to round-trip through
- * this shorthand or have no business appearing in a citation id. An id outside
- * this set simply does not match, which is what "renders as literal text"
- * means for the case where a source genuinely has such an id: the shorthand
- * does not reach it, and the reader still has the visible `[[src:...]]` text
- * to report.
+ * like `wiki-trajan`, uploaded filenames, the `#perceived` suffix
+ * `perception.py`'s `DERIVED_SUFFIX` appends, and `fetch_media.py`'s
+ * `f"fetch:{digest}"`), while excluding a space, a quote, or a slash --
+ * characters that would either fail to round-trip through this shorthand or
+ * have no business appearing in a citation id. An id outside this set simply
+ * does not match, which is what "renders as literal text" means for the case
+ * where a source genuinely has such an id: the shorthand does not reach it,
+ * and the reader still has the visible `[[src:...]]` text to report.
+ *
+ * `:` was added after review found `fetch_media.py:71` minting ids with one
+ * and this file's original charset silently rejecting every reference to
+ * them -- the exact "degrades to invisible text" failure this design exists
+ * to avoid, reached from a direction neither sub-project's tests could see on
+ * their own. Widening was chosen over renaming what `fetch_media` produces,
+ * which would also orphan every id already stored.
  */
-const ID_CHARS = 'A-Za-z0-9_.#-'
+const ID_CHARS = 'A-Za-z0-9_.#:-'
 
 /** Matches, in order of position, whichever of these comes first: a fenced
  *  code block, an inline code span, or a well-formed reference not sitting
@@ -83,7 +90,13 @@ const TOKEN = new RegExp(
  *  text -- the matched id, interpolated below -- break out of its `<a>...</a>`
  *  text node. `ID_CHARS` already excludes all four, so this currently never
  *  fires; it exists so that stays true if `ID_CHARS` is ever widened without
- *  the widener remembering this coupling. See the charset comment above. */
+ *  the widener remembering this coupling. See the charset comment above.
+ *
+ *  Checked, not assumed, when `:` was added to `ID_CHARS`: `:` is not one of
+ *  the four here, so it needs no HTML-text escaping, and in the other sink --
+ *  the href -- it goes through `encodeURIComponent` inside `projectHref`
+ *  (`encodeURIComponent(':')` is `'%3A'`), so it cannot alter the URL's
+ *  structure there either. Both sinks stay safe with `:` admitted. */
 const escapeText = (text: string): string =>
   text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
 

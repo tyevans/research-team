@@ -77,6 +77,18 @@ describe('expandReferences', () => {
     expect(expandReferences('nothing to see here', projectId)).toBe('nothing to see here')
   })
 
+  it('links a fetch_media id, which contains a colon', () => {
+    // fetch_media.py mints ids as f"fetch:{digest}" -- ID_CHARS excluded `:`
+    // until this was found in review, so every source the agent acquires
+    // through its own fetch tool had an id the parser silently rejected: a
+    // reference to one rendered as literal text, no error, nothing to grep
+    // for but the visible `[[src:...]]` itself.
+    const id = 'fetch:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08'
+    expect(expandReferences(`[[src:${id}]]`, projectId)).toContain(
+      'href="#/p/' + projectId + '/doc/' + encodeURIComponent(id) + '"',
+    )
+  })
+
   it('never interpolates the id into the href unescaped', () => {
     // The id charset already forbids `<`/`>`/`"`, but this pins the promise at
     // the level the security argument is made at: the href comes from

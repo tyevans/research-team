@@ -329,3 +329,13 @@ def test_the_reference_syntax_is_taught_beside_reading_it():
     it, or a session never hears the syntax the reading tools just taught it
     to read a source with."""
     assert REFERENCE_SYNTAX_PROMPT in CORPUS_PROMPT
+
+
+def test_the_prompt_states_the_id_charset():
+    """Found in review: without this, a model could write an id containing a
+    disqualifying character and produce a silently dead reference -- no
+    error, just a `[[src:...]]` that never becomes a link. `:` is named
+    explicitly because `fetch_media.py` mints ids containing one
+    (`f"fetch:{digest}"`), and the frontend charset was widened to admit it."""
+    assert "`:`" in REFERENCE_SYNTAX_PROMPT
+    assert "does not raise an error" in REFERENCE_SYNTAX_PROMPT
