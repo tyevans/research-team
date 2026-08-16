@@ -1836,20 +1836,6 @@ def build_application(
     # motivates gathering the projections applies here too: a worker built
     # somewhere else, or not at all, is a worker nobody notices is missing
     # until an accepted proposal never turns into a source.
-    #
-    # B98: `resolved_media_http_client` and `media_accept_worker` used to be
-    # built here, immediately after `media_perceiver`. Nothing built from
-    # them is used eagerly between here and the `Application(...)` call at
-    # the end of this function -- both names are only read from inside
-    # closures (`open_graph`'s `fetch_media` below, and `Application`'s own
-    # field) that Python resolves at call time, not at definition time -- so
-    # anything raising in the ~250 lines of this function between the old
-    # site and `Application(...)` left the client constructed with no owner
-    # to close it: `Application.close()` is unconditional but only exists
-    # once an `Application` does. Moved to directly precede
-    # `Application(...)`, where the full comment now lives, instead of
-    # wrapped in `try/finally`: the window closes by construction rather
-    # than by a handler that would itself need testing.
 
     def topic_reader(target_project_id: UUID) -> TopicReadPort:
         """This project's `TopicReadPort`, over the one repository above.
@@ -2055,10 +2041,23 @@ def build_application(
         summaries=SummaryProjects(summaries),
     )
 
-    # Built last, deliberately (B98: see the comment at this pair's old
-    # site, beside `media_perceiver`, for why the move). `media_http_client`
-    # is a parameter, mirroring `perception` elsewhere in this function, so a
-    # test can inject an `httpx.MockTransport` and never reach the network --
+    # Built last, deliberately: this used to be built ~250 lines earlier,
+    # immediately after `media_perceiver`, where nothing built from
+    # `resolved_media_http_client`/`media_accept_worker` was used before the
+    # `Application(...)` call at the end of this function -- both names are
+    # only read from inside closures (`open_graph`'s `fetch_media` below,
+    # and `Application`'s own field) that Python resolves at call time, not
+    # at definition time. Anything raising between the old site and
+    # `Application(...)` left the client constructed with no owner to close
+    # it, since `Application.close()` is unconditional but only exists once
+    # an `Application` does. Moved here, directly preceding
+    # `Application(...)`, instead of wrapped in `try/finally`: the window
+    # closes by construction rather than by a handler that would itself
+    # need testing (see `fece941`'s commit message for the full reasoning).
+    #
+    # `media_http_client` is a parameter, mirroring `perception` elsewhere in
+    # this function, so a test can inject an `httpx.MockTransport` and never
+    # reach the network --
     # exactly how `tests/application/test_media_acquisition.py`'s own fakes
     # work, and the no-network guarantee `build_application`'s docstring
     # already promises for `perception`.

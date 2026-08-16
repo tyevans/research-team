@@ -174,7 +174,7 @@ async def test_capabilities_reflect_configuration_when_nothing_is_injected(
 async def test_a_raise_late_in_build_application_never_constructs_the_media_client(
     monkeypatch,
 ):
-    """B98: the media `httpx.AsyncClient` used to be built early in
+    """The media `httpx.AsyncClient` used to be built early in
     `build_application`, roughly a thousand lines and one raise-shaped
     function above `Application(...)`. Anything raising in that window left
     the client constructed with no owner to close it -- `Application.close()`
@@ -221,6 +221,9 @@ async def test_a_raise_late_in_build_application_never_constructs_the_media_clie
     with pytest.raises(_Boom):
         composition.build_application()
 
-    assert built == []
+    # Close first, then assert: a loop after the assertion never runs when
+    # the assertion passes, and is skipped when it fails, so it leaves
+    # anything unexpectedly built open on either outcome.
     for client in built:
         await client.aclose()
+    assert built == []

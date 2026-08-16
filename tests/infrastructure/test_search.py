@@ -321,12 +321,12 @@ def test_format_results_rejects_a_non_dict_payload_without_raising():
 
 
 def test_format_results_skips_a_result_that_is_not_a_dict():
-    """B96: the payload-level guard above is total, but a well-formed payload
+    """The payload-level guard above is total, but a well-formed payload
     carrying a malformed *result* (`{"results": ["oops"]}`) is not -- a bare
     string has no `.get`, so `_parse_one` raised `AttributeError` and the
     exception escaped both of `web_search`'s `except` clauses. No captured
-    instance has sent this (see BACKLOG.md B96); it is defended because the
-    payload guard already treats an instance as a foreign system.
+    instance has sent this; it is defended because the payload guard already
+    treats an instance as a foreign system.
     """
     payload = {
         "results": [
@@ -339,6 +339,12 @@ def test_format_results_skips_a_result_that_is_not_a_dict():
 
     assert "Good" in text
     assert "https://good.example" in text
+    # Not just "the good one is present" -- the bad one must produce no row at
+    # all, not a coerced placeholder. A skip yields exactly one block; an
+    # implementation that turned "oops" into an "(untitled)" entry instead
+    # would still satisfy the assertions above.
+    assert "\n\n" not in text
+    assert "(untitled)" not in text
 
 
 async def test_a_json_array_response_is_an_ordinary_tool_error_not_a_turn_failure():

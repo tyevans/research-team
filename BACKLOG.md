@@ -3164,59 +3164,6 @@ rendered on the media row the way `ExtractionPane` renders a stage. Left for
 the slice that adds the batch "Transcribe all" control, which needs the same
 per-row state and would otherwise build it twice.
 
-### B95. Two corpus routes turn a domain refusal into a 500
-
-`app.py`'s restore route maps only `UnknownDocument` and `NotDropped`; the
-PATCH (revise) route maps only `UnknownDocument` and `KnowledgeError`. Neither
-maps `CommandRejectedError`, which is what `Corpus.decide` raises for every
-refusal it makes — so a refusal the domain states clearly reaches the caller as
-a server error with no message.
-
-Found on 2026-08-16 by the perception slice's final review, which reported the
-restore-a-transcript defect as a 409 and was corrected by the implementer: it
-was a **500**. That is the shape of the problem — the reviewer assumed a mapped
-refusal because the domain refuses clearly, and only reproducing it showed the
-route drops the distinction.
-
-**No reachable case survives today.** The derivedness guards that exposed it
-were fixed in that same pass, and no other `CommandRejectedError` currently
-escapes either route. So this is latent rather than live, which is exactly why
-it is here: the next domain guard added to `StoreSourceDocument`,
-`StoreSourceMedia` or `StoreDerivedText` becomes a silent 500 at two routes,
-and nothing will fail to say so. The media slice's `upload_source` already
-maps this correctly and is the pattern to copy.
-
-Cheap to fix and cheaper to fix now than to rediscover: one `except` arm each,
-plus a test per route that a refused command answers 409 rather than 500.
-
-### B96. `format_results` is total for a bad payload but not for a bad result
-
-`research_team/infrastructure/agent/search.py`. The docstring's totality claim
-is about the payload — a list, a string or a null where a results object was
-expected all return `_MALFORMED_PAYLOAD` rather than raising, and
-`test_format_results_rejects_a_non_dict_payload_without_raising` pins it. The
-claim does not extend one level down: `{"results": ["oops"]}` is a well-formed
-payload carrying a result that is not a dict, and `result.get(...)` raises
-`AttributeError` on it. The exception escapes `web_search`'s `except ValueError`
-and `except httpx.HTTPError` both, so it ends the turn rather than returning a
-notice the model can act on.
-
-Found on 2026-08-15 while widening the same function for media results, and
-deliberately not fixed there: that change was scoped to which keys are read, and
-a totality fix belongs with its own test rather than smuggled in beside an
-unrelated one.
-
-**No instance is known to send this.** Every one of the 353 media results and 29
-general results captured that day carried a dict. It is here for the reason the
-payload guard exists at all — an instance is a foreign system, `.json()`
-promises only valid JSON, and a proxy that serializes an error page is not bound
-by SearXNG's schema. The cost of being wrong is asymmetric: a skipped result is
-still a result set, and a raised `AttributeError` is a lost turn.
-
-One `isinstance(result, dict)` guard in the loop, skipping what fails it, plus a
-test that a payload mixing a good result with a string still renders the good
-one.
-
 ### B97. An accepted media proposal does not survive a restart
 
 `research_team/interfaces/web/app.py`'s accept route appends
@@ -3251,19 +3198,3 @@ The safety of a re-run is already load-bearing and already pinned:
 idempotent, because `decide` cannot arbitrate between two `source_id`s claiming
 to be one proposal's result.
 
-### B98. `build_application` can leak an HTTP client if it raises partway
-
-`research_team/composition.py`. The media `httpx.AsyncClient` is constructed
-early in `build_application` and closed in `Application.close()`, which is
-unconditional and correct on every path — *once an `Application` exists*. The
-function is around a thousand lines, and anything raising between the client's
-construction and the `Application(...)` call leaves it unclosed with no owner.
-
-Pre-existing in shape rather than introduced here, and named now because this is
-the change that first gave that window a resource with a real cost to leak: a
-connection pool, not a dataclass. Found 2026-08-16 by Task 11b's reviewer.
-
-A `try/finally` around the construction, or building the client last, both fix
-it. Building it last is probably right and probably annoying, since the ordering
-in that function is already constrained by what closes over what — which is why
-this is written down rather than done in passing.
