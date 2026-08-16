@@ -167,6 +167,11 @@ const mount = async () => {
   await vi.waitFor(() => expect(root.querySelector('[data-fake-canvas]')).not.toBeNull())
 
   const results = root.querySelector<HTMLElement>('[data-result-scroll]')!
+  // `[data-edge-scroll]` is the drawer's body, not the edge `<ul>`. The list
+  // used to own the only scroller in the panel, which left every section above
+  // it -- definition, mentions -- overflowing the drawer with nowhere to scroll
+  // to; the scrolling moved out to the body and this hook moved with it, so
+  // these measurements stay pointed at whatever actually clips the rows.
   const edges = root.querySelector<HTMLElement>('[data-edge-scroll]')!
   // The precondition, asserted rather than assumed: with no overflow there is
   // no clip, and both ring assertions below would pass against the defect.
@@ -194,7 +199,7 @@ it('keeps a search result row inside the results panel it is clipped by', async 
   expect(ring.right).toBeLessThanOrEqual(clip.right)
 })
 
-it('keeps an entity-detail edge row inside the edge list it is clipped by', async () => {
+it('keeps an entity-detail edge row inside the drawer body it is clipped by', async () => {
   const { edges, root } = await mount()
   const row = root.querySelectorAll<HTMLElement>('[data-edge-row]')[3]!
   focus(row)

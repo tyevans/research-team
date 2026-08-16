@@ -11,6 +11,7 @@ import {
 } from '@domain/research/document.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
+import { Markdown } from '../common/content.tsx'
 import { ErrorBox, Loading } from '../common/primitives.tsx'
 
 /** Whichever way this source can be shown: its text fetched, or its bytes
@@ -86,11 +87,26 @@ const TextRead = ({ projectId, sourceId }: { projectId: ProjectId; sourceId: Sou
       {document.droppedReason ? (
         <p className="m-0 mb-[8px] text-xs text-k-failure">Dropped: {document.droppedReason}</p>
       ) : null}
-      {/* No `m-0`, deliberately: `.document-reader-text` never reset the user
-          agent's 1em block margin either, and this build imports no preflight,
-          so the paragraph has always had it. Adding the reset here would be an
-          undeclared spacing change riding along on a dressing change. */}
-      <p className="max-w-[68ch] text-sm leading-[1.65] whitespace-pre-wrap">{document.text}</p>
+      {/* Rendered, not shown raw. The corpus stores markdown -- pages arrive
+          converted, and the extraction prompt is written against that -- so a
+          `whitespace-pre-wrap` paragraph was showing `##`, `[text](url)` and
+          table pipes as literal characters on the one screen whose whole job
+          is reading the document.
+
+          **This changes what a document with no markdown in it looks like.**
+          `whitespace-pre-wrap` honoured every newline; `marked` runs with
+          `breaks: false`, so a single newline inside a paragraph now folds
+          into a space and only a blank line starts a new one. For markdown
+          that is correct and is the point. For a plain-text source whose line
+          breaks were meaningful -- a poem, a log -- it is a regression, and
+          the fix if one turns up is a per-document choice about which it is,
+          not `breaks: true`, which would break every real markdown document
+          instead.
+
+          `md-bare` because the `<article>` above already owns the padding and
+          the measure; see `markdown.css`. The measure moves here from the old
+          paragraph, unchanged. */}
+      <Markdown className="md-bare max-w-[68ch] text-sm leading-[1.65]" source={document.text} />
     </article>
   )
 }
