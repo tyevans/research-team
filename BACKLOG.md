@@ -2773,6 +2773,75 @@ R1 closing means vector search is now _possible_, not present: there is still
 no `AGENT_VECTOR_STORE` and no recall path. That is a feature to spec, not a
 workaround to delete, and it does not belong in this section.
 
+### B86. `BoundaryPreferenceChunker` advances one character at a time when a chunk ends inside the overlap
+
+Open as of redstring **0.9.2**. This is a defect in the chunker *this project
+contributed upstream*, and it is what `RedstringKnowledge.index` uses at its
+defaults — so it is shaping the chunk corpus retrieval reads today.
+
+**What happens.** The next chunk starts at `end - overlap`. When a chunk ends
+at or before the overlap distance, that is at or before the previous start, and
+the chunker falls back to advancing a single character instead. It then grinds
+forward one character per chunk until it escapes, emitting a run of
+near-identical chunks that differ only by a leading character.
+
+A short leading paragraph is all it takes, because the first cut lands on a
+paragraph boundary. A document beginning `# Title\n\nSome prose here.\n\n` — 27
+characters — produces 26 of them before recovering.
+
+**Reproduction**, bare chunker, no wrapper involved:
+
+```python
+from redstring.extraction.chunkers import BoundaryPreferenceChunker
+
+text = "# Title\n\nSome prose here.\n\n" + "".join(
+    f"| row {i} | {'x' * 60} |\n" for i in range(300)
+)
+for overlap in (0, 26, 27, 50, 200):
+    result = BoundaryPreferenceChunker().chunk(text, 3000, overlap)
+    print(overlap, len(result.chunks), [c.start_char for c in result.chunks[:5]])
+```
+
+```
+0     9 chunks  [0, 27, 2988, 5948, 8929]
+26   35 chunks  [0, 1, 2, 3, 4]
+27   35 chunks  [0, 1, 2, 3, 4]
+50   35 chunks  [0, 1, 2, 3, 4]
+200  35 chunks  [0, 1, 2, 3, 4]
+```
+
+The parameter isolates it exactly: `overlap=0` gives nine sane chunks, and the
+degenerate run appears the moment the overlap reaches the length of that first
+27-character chunk. The default is **200**, so production is always on the
+wrong side of it. Measured 2026-08-15 on redstring 0.9.2.
+
+**What it costs the corpus.** Every degenerate chunk is stored — they have
+distinct text, so content-addressed `chunk_id` gives each its own row, and
+nothing dedupes them. They are near-duplicates of one short passage, so BM25
+sees that passage `overlap` times over, and a lexical query matching it can
+return a page of results that are all the same sentence shifted by one
+character. The waste is bounded (roughly `overlap` extra chunks per affected
+document, near the start) but the retrieval-quality effect is not obviously
+bounded, and nothing in this repository would notice: `corpus_spans.py`'s
+property tests assert that concatenating a no-overlap chunking reproduces the
+input, which this does not violate.
+
+**How it was found.** Not by looking for it. It inflated a chunk count taken
+while measuring the markdown table chunker: the 131k `sekaipedia-list-of-songs`
+document was reported as 855 corpus chunks, of which 627 gained a table header.
+Both numbers are wrong in the same direction, and the entry in commit `8ca9b6e`
+that cites them should be read with this in mind. That document no longer
+exists in any surviving copy, so those figures cannot be re-taken.
+
+**The fix is upstream, not here.** A chunk that cannot advance by `end -
+overlap` should clamp the overlap to something smaller than the chunk it is
+overlapping with, rather than falling back to a one-character step —
+`min(overlap, len(previous) - 1)` would do, and a chunker that emits a chunk
+shorter than the overlap should probably not overlap it at all. Do not work
+around it here by passing an explicit `overlap_size`: that hides the defect on
+one call site and leaves it for `corpus_spans.py`, the extraction path, and
+every future caller.
+
 ### B80. Binary document upload
 
 The corpus stores `text: str` and nothing in this tree decodes any binary
