@@ -1768,34 +1768,19 @@ def build_application(
     # somewhere else, or not at all, is a worker nobody notices is missing
     # until an accepted proposal never turns into a source.
     #
-    # `media_http_client` is a parameter, mirroring `perception` above, so a
-    # test can inject an `httpx.MockTransport` and never reach the network --
-    # exactly how `tests/application/test_media_acquisition.py`'s own fakes
-    # work, and the no-network guarantee `build_application`'s docstring
-    # already promises for `perception`.
-    # A bare `httpx.AsyncClient()` carries httpx's 5-second default read
-    # timeout, which made `fetch_media.TIMEOUT = httpx.Timeout(30.0)` inert
-    # for every caller through this composition site -- that constant only
-    # applies on the branch where a caller builds its own client, and nothing
-    # here ever did. Downloading a multi-megabyte video under a 5s ceiling is
-    # how "stuck accepted forever" (see `MediaAcceptWorker.run`'s widened
-    # exception handling) got hit routinely rather than rarely: a slow but
-    # otherwise healthy host would trip `httpx.HTTPError` on ordinary size,
-    # not just on an actually-broken one. 30s matches `fetch_media.TIMEOUT`
-    # so the two paths that share `download_media` also share the ceiling
-    # they run it under.
-    resolved_media_http_client = (
-        media_http_client
-        if media_http_client is not None
-        else httpx.AsyncClient(timeout=httpx.Timeout(30.0))
-    )
-    media_accept_worker = MediaAcceptWorker(
-        reads=media_proposals,
-        proposals=media_proposal_repository,
-        editor=editor,
-        perceiver=media_perceiver,
-        client=resolved_media_http_client,
-    )
+    # B98: `resolved_media_http_client` and `media_accept_worker` used to be
+    # built here, immediately after `media_perceiver`. Nothing built from
+    # them is used eagerly between here and the `Application(...)` call at
+    # the end of this function -- both names are only read from inside
+    # closures (`open_graph`'s `fetch_media` below, and `Application`'s own
+    # field) that Python resolves at call time, not at definition time -- so
+    # anything raising in the ~250 lines of this function between the old
+    # site and `Application(...)` left the client constructed with no owner
+    # to close it: `Application.close()` is unconditional but only exists
+    # once an `Application` does. Moved to directly precede
+    # `Application(...)`, where the full comment now lives, instead of
+    # wrapped in `try/finally`: the window closes by construction rather
+    # than by a handler that would itself need testing.
 
     def topic_reader(target_project_id: UUID) -> TopicReadPort:
         """This project's `TopicReadPort`, over the one repository above.
@@ -1999,6 +1984,38 @@ def build_application(
         # for the turns it finds, and asking the service would fold a session
         # per running turn to learn something a read-model column already says.
         summaries=SummaryProjects(summaries),
+    )
+
+    # Built last, deliberately (B98: see the comment at this pair's old
+    # site, beside `media_perceiver`, for why the move). `media_http_client`
+    # is a parameter, mirroring `perception` elsewhere in this function, so a
+    # test can inject an `httpx.MockTransport` and never reach the network --
+    # exactly how `tests/application/test_media_acquisition.py`'s own fakes
+    # work, and the no-network guarantee `build_application`'s docstring
+    # already promises for `perception`.
+    #
+    # A bare `httpx.AsyncClient()` carries httpx's 5-second default read
+    # timeout, which made `fetch_media.TIMEOUT = httpx.Timeout(30.0)` inert
+    # for every caller through this composition site -- that constant only
+    # applies on the branch where a caller builds its own client, and nothing
+    # here ever did. Downloading a multi-megabyte video under a 5s ceiling is
+    # how "stuck accepted forever" (see `MediaAcceptWorker.run`'s widened
+    # exception handling) got hit routinely rather than rarely: a slow but
+    # otherwise healthy host would trip `httpx.HTTPError` on ordinary size,
+    # not just on an actually-broken one. 30s matches `fetch_media.TIMEOUT`
+    # so the two paths that share `download_media` also share the ceiling
+    # they run it under.
+    resolved_media_http_client = (
+        media_http_client
+        if media_http_client is not None
+        else httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+    )
+    media_accept_worker = MediaAcceptWorker(
+        reads=media_proposals,
+        proposals=media_proposal_repository,
+        editor=editor,
+        perceiver=media_perceiver,
+        client=resolved_media_http_client,
     )
 
     return Application(
