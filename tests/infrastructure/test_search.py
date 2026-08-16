@@ -18,6 +18,7 @@ from research_team.infrastructure.agent.search import (
     SearchAttempts,
     build_search_tool,
     format_results,
+    parse_results,
 )
 from research_team.infrastructure.agent.search_middleware import SearchAttemptsMiddleware
 
@@ -212,6 +213,39 @@ def test_searxng_highlight_markers_are_stripped():
     assert "" not in text
     assert "" not in text
     assert "Trajan's Column | Britannica" in text
+
+
+def test_parse_results_carries_the_thumbnail_that_format_results_hides():
+    """`thumbnail_url` is the whole reason this function is separate: the
+    pane needs it and the model must not see it. Fails if `parse_results`
+    is a thin wrapper that drops what `format_results` does not print.
+    """
+    parsed = parse_results({"results": [IMAGE_RESULT]}, limit=5)
+    assert parsed[0].thumbnail_url == IMAGE_RESULT["thumbnail_src"]
+    assert parsed[0].thumbnail_url not in format_results({"results": [IMAGE_RESULT]}, limit=5)
+
+
+def test_parse_results_falls_back_through_thumbnail_then_asset():
+    """`thumbnail_src` was absent on 46 of 262 captured image results and
+    `thumbnail` is frequently an empty string, so the fallback is measured,
+    not defensive.
+    """
+    no_src = {k: v for k, v in IMAGE_RESULT.items() if k != "thumbnail_src"}
+    assert (
+        parse_results({"results": [{**no_src, "thumbnail": "https://t.example/x"}]}, limit=5)[
+            0
+        ].thumbnail_url
+        == "https://t.example/x"
+    )
+    assert (
+        parse_results({"results": [{**no_src, "thumbnail": ""}]}, limit=5)[0].thumbnail_url
+        == no_src["img_src"]
+    )
+
+
+def test_parse_results_returns_none_for_a_payload_that_is_not_a_results_object():
+    for junk in ([], "oops", None):
+        assert parse_results(junk, limit=5) is None
 
 
 async def test_a_query_reaches_the_instance_and_comes_back_formatted():
