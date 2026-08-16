@@ -282,6 +282,15 @@ against `declared_count` and a re-run is not needed merely because a name
 drifted. Deleting the row instead would make an unrelated re-extraction look
 like a discovery failure.
 
+**A fourth field exists for §6 alone and would not otherwise be stored:
+`rejected_members`**, a list of `name` + `reason` on the class row. Verification
+(below) drops members the model named that do not occur in the document. Dropping
+them silently is what makes a class unjudgeable: the reader sees "5 of 6 stated"
+and cannot tell whether the model invented a sixth member or the document really
+is short one. Recording the rejection turns an unexplained gap into a legible
+one. It costs a JSON column on a table with one row per class per document, which
+is the cheapest thing in this design.
+
 Resolution is by `normalized_name` against the project's entities. It will
 sometimes fail — "S rank" in the table versus "S-rank" in prose is exactly the
 kind of drift the corpus produces. That is a known, bounded imprecision and it
@@ -430,7 +439,49 @@ exactly like a drawing with none to miss — the note at
 `graph_reader.py:66-75` about why the cap's verdict is returned rather than
 recomputed from a length applies unchanged.
 
-## 6. The ontology view
+## 6. The ontology view, and judging whether it is right
+
+**This is a requirement, not a nicety.** Everything this pass produces is a
+model judgement, and a model judgement nobody can check is worse than no
+judgement — it adds confident-looking structure to a graph whose whole value is
+that it came from documents. The test the design has to pass: *a reader who
+suspects a class is wrong must be able to settle it without reading the code and
+without re-running anything.*
+
+Three things make that possible, and each is a build obligation rather than a
+hope.
+
+**Every class opens the sentence it came from.** `evidence_start`/`evidence_end`
+are offsets into a document `GET /api/projects/{project_id}/sources/{source_id}`
+already serves (`app.py:1038`), and the frontend already has a document reader.
+Clicking a class's evidence must open that document scrolled to the span and
+highlight it — not merely show the quoted text inline. Quoted text proves the
+model wrote a sentence; opening the document proves the sentence is *in the
+document*, which is the different and stronger claim. This reuses
+`corpus_spans.Span` (`corpus_spans.py:40`) rather than inventing a citation
+shape, for the reason its own docstring gives: a citation that survives
+re-chunking is one a reader can still follow a month later.
+
+**Every class shows its own arithmetic.** `declared_count` vs `member_count` is
+a claim the reader can check against the sentence in front of them — "6 of 6
+stated", or a visible "5 of 6 stated" — and `rejected_members` says what
+happened to the difference, with the reason each was dropped. A class that found
+five of six with no explanation is exactly the case that erodes trust in the
+whole feature; a class that says "APPEND — named by the model, not found in the
+document" is one the reader can adjudicate in a second.
+
+**Nothing derived is drawn like something asserted.** Class nodes and
+`instance_of` edges carry `inferred=True` and reach the canvas through the same
+dashed, `--link-inferred` treatment temporal edges already use, and the ontology
+view marks classes derived in that same visual language. A class presented like
+an asserted fact is precisely the confusion `derivation` exists to prevent
+(`graph_read.py:121-128`).
+
+What is deliberately *not* built here is an accept/reject control. Judging that
+a class is wrong and recording that judgement are different features; the second
+belongs to the judgements mechanism (`domain/judgements.py`), and putting a human
+verdict into a derived table is the confusion §9 already rules out. This pass
+owes the reader enough to decide — not a place to write the decision down.
 
 Layer 2's payoff is a rendering the graph canvas cannot give, and the reason is
 that a force-directed layout has no way to draw *order*. Five `instance_of`
@@ -525,6 +576,11 @@ The failure shapes these have to distinguish, per `CLAUDE.md`:
   class is stored *and* marked incomplete. Both halves: dropping it loses four
   true memberships, and storing it silently is the failure §4 says is worse
   than no class.
+- **A model reply naming a member that is not in the document**, asserting the
+  member is absent from `ontology_memberships` *and present in*
+  `rejected_members` with its reason. Only the first half is a correctness
+  test; the second half is what §6 depends on, and an implementation that
+  silently drops the member passes the first half alone.
 - **An ordered scale whose ordinals are not alphabetical.** `D C B A S` is the
   case. Ordinals matching alphabetical order would also pass under an
   implementation that never read the ordering and sorted the members.
