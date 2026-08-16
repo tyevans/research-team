@@ -24,6 +24,48 @@ export const activity = (over: Partial<AskActivity> = {}): AskActivity => ({
   ...over,
 })
 
+/** An assistant frame that dispatched one call, shaped as langchain sends it.
+ *
+ * `id` is not decoration: it is what a result frame's `tool_call_id` points
+ * at, and a fixture without one would make every pairing test pass by
+ * accident on the "no id, no join" path. */
+export const assistantCall = ({
+  name,
+  args = {},
+  id,
+  messageId = `call:${id}`,
+}: {
+  name: string
+  args?: Record<string, unknown>
+  id: string
+  messageId?: string
+}): AskActivity => ({
+  messageId,
+  kind: 'assistant',
+  payload: { type: 'ai', data: { tool_calls: [{ name, args, id }] } },
+  isError: false,
+})
+
+/** The result frame that answers one call. */
+export const toolResult = ({
+  name,
+  callId,
+  content,
+  isError = false,
+  messageId = `result:${callId}`,
+}: {
+  name: string
+  callId: string
+  content: string
+  isError?: boolean
+  messageId?: string
+}): AskActivity => ({
+  messageId,
+  kind: 'tool',
+  payload: { type: 'tool', data: { name, content, tool_call_id: callId } },
+  isError,
+})
+
 export const turn = (over: Partial<AskTurn> = {}): AskTurn => ({
   question: 'What did the two 2019 papers actually disagree about?',
   answer:
