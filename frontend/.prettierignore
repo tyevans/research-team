@@ -4,3 +4,11 @@ coverage
 ../research_team/interfaces/web/static
 node_modules
 package-lock.json
+
+# Agent scratch, written by tooling rather than by hand. Untracked, so CI never
+# sees it -- but `format:check` walks the whole tree, so a single session note
+# halts the first step of `npm run verify` and takes the rest of the chain with
+# it. Two agents hit that separately on 2026-08-15 and each worked around it,
+# which is how the frontend chain went a whole session without being run end to
+# end. Ignoring the path is cheaper than rewriting files nobody authored.
+.claude/tackline
