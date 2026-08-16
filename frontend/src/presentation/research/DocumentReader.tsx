@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { queryKeys } from '@application/queries/keys.ts'
@@ -34,13 +34,20 @@ export const DocumentReader = ({
   projectId,
   sourceId,
   source,
+  seekSeconds = null,
 }: {
   projectId: ProjectId
   sourceId: SourceId
   source: SourceSummary | null
+  /** The moment a citation pointed at, carried in from the `?t=` query on the
+   *  `doc` route -- see `references.ts`'s `expandReferences` and
+   *  `GraphDetail`'s citation links, which are the two things that produce
+   *  it. `null` for the ordinary "just opened the document" case, and for
+   *  every text source: there is nothing to seek in prose. */
+  seekSeconds?: number | null
 }) => {
   if (source?.kind === 'media') {
-    return <MediaView projectId={projectId} source={source} />
+    return <MediaView projectId={projectId} source={source} seekSeconds={seekSeconds} />
   }
   return <TextRead projectId={projectId} sourceId={sourceId} />
 }
@@ -125,7 +132,15 @@ const TextRead = ({ projectId, sourceId }: { projectId: ProjectId; sourceId: Sou
  * inside Ask answers needs a reference syntax that does not exist yet, and a
  * general component built now would be designing that syntax by accident.
  */
-const MediaView = ({ projectId, source }: { projectId: ProjectId; source: MediaSummary }) => {
+const MediaView = ({
+  projectId,
+  source,
+  seekSeconds,
+}: {
+  projectId: ProjectId
+  source: MediaSummary
+  seekSeconds: number | null
+}) => {
   const { documents } = useContainer()
   const url = documents.contentUrl(projectId, source.sourceId)
   const label = documentLabel(source)
@@ -135,7 +150,7 @@ const MediaView = ({ projectId, source }: { projectId: ProjectId; source: MediaS
       {source.droppedReason ? (
         <p className="m-0 text-xs text-k-failure">Dropped: {source.droppedReason}</p>
       ) : null}
-      <Player url={url} label={label} mediaType={source.mediaType} />
+      <Player url={url} label={label} mediaType={source.mediaType} seekSeconds={seekSeconds} />
       {/* The digest beside the bytes rather than hidden behind an edit form:
           it is what proves the recording being watched is the one on record,
           and this is the one place a reader is looking at both. */}
@@ -146,7 +161,44 @@ const MediaView = ({ projectId, source }: { projectId: ProjectId; source: MediaS
   )
 }
 
-const Player = ({ url, label, mediaType }: { url: string; label: string; mediaType: string }) => {
+const Player = ({
+  url,
+  label,
+  mediaType,
+  seekSeconds,
+}: {
+  url: string
+  label: string
+  mediaType: string
+  seekSeconds: number | null
+}) => {
+  // `currentTime` rather than `#t=<n>` on the `src`: this element's `src` is
+  // the content route, and a media fragment appended there would ask the
+  // *server* to satisfy the range with `Range`/`Accept-Ranges`, which the
+  // route already supports but only by re-requesting the whole element from
+  // scratch. Setting `currentTime` on the already-mounted element seeks the
+  // one request that is already in flight instead.
+  //
+  // Effect runs once per mount (empty deps), not once per `seekSeconds`
+  // change: this reader is unmounted and remounted when the open document
+  // changes (its `key` is the source id, in the callers), so "seek on mount"
+  // is the whole of what "seek to the cited moment" means here. Re-seeking
+  // on every prop change would fight a reader who has since scrubbed
+  // elsewhere in the same clip.
+  // `HTMLMediaElement` -- the base both `<video>` and `<audio>` share -- kept
+  // in a plain mutable ref rather than one from `useRef<HTMLVideoElement>`:
+  // that type is specific to `<video>`'s own `ref` prop and rejects an
+  // `<audio>` element structurally, even though both share `currentTime`.
+  const el = useRef<HTMLMediaElement | null>(null)
+  const setRef = (node: HTMLMediaElement | null) => {
+    el.current = node
+  }
+  useEffect(() => {
+    if (seekSeconds === null) return
+    if (el.current) el.current.currentTime = seekSeconds
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // The one place a dangling reference is met by a person. The port
   // distinguishes "no such source" from "record here, bytes gone" and the
   // content route answers 410 for the second, but a `<video>` handed a 410
@@ -189,6 +241,7 @@ const Player = ({ url, label, mediaType }: { url: string; label: string; mediaTy
       // worse than the honest gap. Revisit when transcription lands.
       // eslint-disable-next-line jsx-a11y/media-has-caption
       <video
+        ref={setRef}
         data-testid="media-player"
         controls
         src={url}
@@ -202,6 +255,7 @@ const Player = ({ url, label, mediaType }: { url: string; label: string; mediaTy
       // Same trade as the video above, for the same missing transcript.
       // eslint-disable-next-line jsx-a11y/media-has-caption
       <audio
+        ref={setRef}
         data-testid="media-player"
         controls
         src={url}
