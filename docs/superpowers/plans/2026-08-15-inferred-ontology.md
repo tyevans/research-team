@@ -19,6 +19,7 @@
 - **If a test would pass with the change reverted, say so in its docstring** rather than leaving it as reassurance.
 - **No backwards compatibility is required.** Pre-release: break data, events and contracts rather than migrating.
 - **`entity_type` for a class node is the literal string `"class"`.** `relationship_type` for a membership edge is the literal string `"instance_of"`. Both are fixed vocabulary; do not vary them between tasks.
+- **Evidence spans are offsets into `corpus_documents.text`, never into chunk text.** Nothing in this feature resolves a span through a chunk, so a chunker that repeats table headers — breaking `chunk.text == original[start_char:end_char]` — costs this feature nothing. What this feature *does* require is that **`corpus_documents.text` remains the verbatim original, with no synthetic text written back into it.** If that ever stops holding, every evidence span silently points at the wrong words, and the "open the source document at the span" obligation (spec §6) becomes a lie that renders correctly.
 - **Do not build a shared type with the temporal lane's `temporal_expression`.** The two share a principle — when a pipeline stage discards model output, record what was discarded and why, or the discard rate cannot be measured — and temporal loses output at the *parse* step where discovery loses it at the *verify* step. The payloads differ (a raw string against a name-and-reason pair) and the two are being built concurrently in separate lanes, so a shared abstraction agreed mid-flight would couple two subsystems on a noticed similarity rather than a shared requirement. See the spec's §6 for the full argument and the cheaper convergence available later.
 - **Every inferred artefact carries `inferred=True`.** A derived thing that draws like an asserted thing is the defect this whole feature is arranged to avoid.
 
@@ -1899,7 +1900,9 @@ uv run ruff format --check .
 uv run python -m research_team.infrastructure.persistence.local_copy /tmp/claude-1000/probe.db
 ```
 
-Then start the app against the printed `AGENT_DB=` line and fetch `GET /api/projects/3881dec0-6d7c-4418-aaa0-f45d2a97032a/graph`. Expected: 200, unchanged from before this task, with no class nodes — the pass has not been run against that database yet. **Use `local_copy`, not `cp`**: a hand-copied database will not open, because every checkpoint's position token carries a store id derived from the database path, and `PositionForeignError` is raised before a single event replays. Do not "fix" that by deleting the checkpoints — an empty `projection_checkpoints` replays the whole log, which is `/rebuild` by another name and hides exactly the resume-near-the-end behaviour this step exists to exercise.
+Then start the app against the printed `AGENT_DB=` line and fetch `GET /api/projects/3881dec0-6d7c-4418-aaa0-f45d2a97032a/graph`. Expected: 200, unchanged from before this task, with no class nodes — the pass has not been run against that database yet.
+
+**If no real database exists, this step cannot be performed and must not be recorded as passed.** As of 2026-08-15 18:03 `~/.research-team/sessions.db` was absent. The whole value of this step is exercising a projection that resumes near the *end* of a long log against rows written before the change; a database created this morning exercises none of it and passing it proves nothing. If there is no real database to copy, say so in the commit message and leave the step unchecked rather than substituting a fresh one — "it works on my fresh database" is the sound of the bug this step exists to catch. **Use `local_copy`, not `cp`**: a hand-copied database will not open, because every checkpoint's position token carries a store id derived from the database path, and `PositionForeignError` is raised before a single event replays. Do not "fix" that by deleting the checkpoints — an empty `projection_checkpoints` replays the whole log, which is `/rebuild` by another name and hides exactly the resume-near-the-end behaviour this step exists to exercise.
 
 - [ ] **Step 9: Commit**
 
@@ -2188,9 +2191,28 @@ Start the app against the printed `AGENT_DB=` line, then `POST /api/projects/{id
 
 **A copy, not the real database.** This makes paid model calls and writes events; running it against `~/.research-team/sessions.db` puts derived events in the user's real log before anyone has judged whether the pass is any good.
 
+**Check first that a real database exists, and say which one you measured.** As of 2026-08-15 18:03, `~/.research-team/sessions.db` was gone — the directory held only an empty `blobs/`, and no `sessions.db` existed anywhere under `/home/ty`. It may have been re-created since, deliberately or otherwise. This matters for the gate rather than merely for logistics: **the spec's opening measurements — 116 `category` entities, 71 plural head words, zero enumerating sentences — were taken from the database as it stood before that point.** A corpus re-extracted under a changed schema or a changed temporal representation is a different graph, and a class count taken over it is not directly comparable to those numbers.
+
+So: state in the findings which database was measured and when it was built. If it is a rebuild, the spec's counts are a prior, not a baseline, and the comparison has to be re-taken rather than assumed to carry over. Silently treating the two as one corpus is how a gate gets decided on evidence from a graph that no longer exists.
+
 - [ ] **Step 2: Record the counts**
 
 For each project: classes found, members resolved vs unresolved, classes whose `declared_count` disagreed with `member_count`, and classes dropped by verification. Note the date and that these are measured, not reasoned.
+
+**Report resolved and unresolved members separately, and do not add them together.** They indict different things, and conflating them is how a defect in another subsystem quietly vetoes layer 3:
+
+| Symptom | What it indicts |
+|---|---|
+| Few **classes** found | This pass, or the corpus genuinely states none — the expected Ancient Rome result |
+| Classes found, members largely **unresolved** | Extraction or chunking, *not* this pass |
+
+The second row is a live risk. Extraction chunks at 2,000 characters with a sliding window (`config.py:37`), and a markdown table split across chunks leaves rows with no header. If that suppressed entity extraction from table rows, this pass still finds the class — it reads the whole document — but its members resolve to nothing and store null `entity_id`s. A count that merged the two would read as "discovery found little" when the truth was "discovery found it and the graph had nothing to attach it to". **State which of the two the number is, in the findings document, in those words.**
+
+- [ ] **Step 2a: Note what this pass could not examine at all**
+
+List every document skipped for exceeding `MAX_DISCOVERY_CHARS` (Task 4), with its size. Known case: `sekaipedia-list-of-songs` in Project SEKAI is **131,701 characters** against a 40,000 ceiling, so it is refused outright — and it is mostly one large markdown table, which is the shape this feature is best at. A gate decided without that list would be reading a count taken over a corpus with its most promising document silently absent.
+
+The answer if the skipped list is substantial is **not** to raise the ceiling reflexively. It is the windowed pass the spec leaves deliberately unbuilt, which needs its own design because window boundaries reintroduce the split-table problem. Report the list; do not fix it here.
 
 - [ ] **Step 3: Judge the output by hand**
 
