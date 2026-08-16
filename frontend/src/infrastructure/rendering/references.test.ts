@@ -48,6 +48,31 @@ describe('expandReferences', () => {
     expect(expandReferences('`[[src:keynote]]`', projectId)).toBe('`[[src:keynote]]`')
   })
 
+  it('runs an unclosed fence to the end of the input, per CommonMark', () => {
+    // Found in review: with only the closed-fence alternative, an unclosed
+    // ``` falls through to the inline-code alternative (which eats two of
+    // the three backticks as an empty span), and the reference inside gets
+    // scanned as ordinary text and turned into a live link -- exactly the
+    // guarantee this function exists to give code blocks. CommonMark's own
+    // rule for an unterminated fence is that it runs to end of input.
+    const source = '```\n[[src:keynote@252]]'
+    expect(expandReferences(source, projectId)).toBe(source)
+  })
+
+  it('leaves everything after an unclosed fence alone too', () => {
+    const source = '```\n[[src:keynote@252]]\nstill fenced [[src:other]]'
+    expect(expandReferences(source, projectId)).toBe(source)
+  })
+
+  it('leaves a reference inside a markdown link label alone', () => {
+    // Transforming this would nest an <a> the pre-pass built inside the <a>
+    // `marked` builds for the surrounding [label](url) -- invalid markup.
+    // The lookaround is same-line and single-level (see references.ts); this
+    // pins the bounded case it actually catches.
+    const source = 'see [context [[src:keynote@252]] here](https://example.com)'
+    expect(expandReferences(source, projectId)).toBe(source)
+  })
+
   it('does not touch text with no references', () => {
     expect(expandReferences('nothing to see here', projectId)).toBe('nothing to see here')
   })
