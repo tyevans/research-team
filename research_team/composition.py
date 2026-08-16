@@ -81,6 +81,7 @@ from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import ProjectState, Session, current_stage_of
 from research_team.domain.commands import RecordStageReview, WriteFile
+from research_team.domain.media_proposals import MediaProposals
 from research_team.domain.research_run import Budget
 from research_team.domain.topic import Topic
 from research_team.domain.workflow import Preset
@@ -168,6 +169,7 @@ from research_team.infrastructure.persistence.definition_cache import ProjectDef
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
 from research_team.infrastructure.persistence.read_models import (
     EntityDefinitionRunner,
+    MediaProposalRunner,
     OntologyRunner,
 )
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
@@ -258,6 +260,26 @@ class Application:
     so no caller can run a pass against a project it was not handed. Synchronous
     and never `None`, unlike `definition_readers` -- see `ontology_discoverer`
     in `build_application` for why nothing it needs can be absent."""
+
+    media_proposals: MediaProposalRunner
+    """Keeps the proposal tables following the log. Idle until `start()`.
+
+    A field for `check_telemetry`'s reason -- a projection nobody would
+    otherwise start, and `rebuild()`/`failures()` have to be reachable when
+    the tables disagree with the log. Like `ontology`, nothing reads *through*
+    this runner to write: `MediaCurationService` appends to the event store
+    via `media_proposal_repository` below and the projection does the writing."""
+
+    media_proposal_repository: AggregateRepository[MediaProposals]
+    """The `MediaProposals` aggregate repository, for `MediaCurationService`.
+
+    Exposed directly rather than behind a factory, mirroring `topic_repository`:
+    a `MediaProposals` aggregate is keyed on `project_id` alone, so there is no
+    per-project object to assemble and nothing a factory would buy here. Built
+    over this instance's own event store (`repository.store`/`.publisher`), the
+    same one `media_proposals` above subscribes to -- a repository built over a
+    different store would let a curation and the projection reading it disagree
+    about what was ever appended."""
 
     check_telemetry_readers: Callable[[UUID], CheckTelemetryReadPort]
     """One project's `CheckTelemetryReadPort`, built fresh per call.
@@ -472,6 +494,7 @@ class Application:
         await self.check_telemetry.start()
         await self.definitions.start()
         await self.ontology.start()
+        await self.media_proposals.start()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
@@ -557,6 +580,7 @@ class Application:
         await self.check_telemetry.stop()
         await self.definitions.stop()
         await self.ontology.stop()
+        await self.media_proposals.stop()
         await self.service.close()
         await self.detach_project()
         # Every project this instance ever opened a graph for, not just the
@@ -806,6 +830,17 @@ def build_application(
     # runner, so the read route and the projection share a connection here for
     # the ordinary reason rather than to keep a cache honest.
     ontology = OntologyRunner(
+        repository.store, resolved_path, repository.publisher, resolved_tracer
+    )
+    # The seventh, built here for the reason stated above `check_telemetry`:
+    # "all [N] projections over this store are constructed in one place and
+    # started by one line in `start()`. A projection wired somewhere else is a
+    # projection somebody forgets to start." Measured directly on this one --
+    # `EntityDefinitionRunner`'s absence once shipped a fully green suite
+    # behind an empty read model, and `tests/integration/
+    # test_media_proposals_reach_the_read_model.py` exists to catch the same
+    # failure here.
+    media_proposals = MediaProposalRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
 
@@ -1609,6 +1644,16 @@ def build_application(
     topic_repository = build_topic_repository(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store
     )
+    # Unsnapshotted, unlike `topic_repository` above -- `MediaProposals` has no
+    # `build_media_proposal_repository` helper yet because nothing needing a
+    # snapshot policy has been written against it, mirroring the bare
+    # `AggregateRepository` construction `tests/application/
+    # test_media_curation.py` already uses over `harness.event_store`. Built
+    # over `repository.store`/`.publisher` so `MediaCurationService`'s writes
+    # and `media_proposals`'s subscription above read and write the same log.
+    media_proposal_repository = AggregateRepository(
+        repository.store, MediaProposals, event_publisher=repository.publisher
+    )
 
     def topic_reader(target_project_id: UUID) -> TopicReadPort:
         """This project's `TopicReadPort`, over the one repository above.
@@ -1829,6 +1874,8 @@ def build_application(
         definition_readers=definition_reader,
         ontology=ontology,
         ontology_discoverers=ontology_discoverer,
+        media_proposals=media_proposals,
+        media_proposal_repository=media_proposal_repository,
         graphs=graphs,
         topic_readers=topic_reader,
         topic_repository=topic_repository,
