@@ -336,6 +336,35 @@ it('does not seek when no second is requested', async () => {
   expect((player as HTMLMediaElement).currentTime).toBe(0)
 })
 
+it('seeks again for a second citation into the same source, without remounting', async () => {
+  // The case task 4's review found unreachable-until-wired and now reachable:
+  // `DocumentList.tsx` keys this reader on the *source id*, and two
+  // citations into the same source at different offsets share that key --
+  // so a second click updates `seekSeconds` on the already-mounted reader
+  // rather than remounting it. An effect with empty deps would have fired
+  // once for the first offset and never again; this is the test that would
+  // have caught that and does catch a regression back to it.
+  const documents = fakeDocuments(
+    vi.fn(() => {
+      throw new Error('read() must not be called for media')
+    }),
+  )
+
+  const { rerender } = renderWithContainer(
+    <DocumentReader projectId={PROJECT} sourceId={MEDIA} source={media()} seekSeconds={100} />,
+    { documents },
+  )
+
+  const player = await screen.findByTestId('media-player')
+  expect((player as HTMLMediaElement).currentTime).toBe(100)
+
+  rerender(
+    <DocumentReader projectId={PROJECT} sourceId={MEDIA} source={media()} seekSeconds={300} />,
+  )
+
+  expect((player as HTMLMediaElement).currentTime).toBe(300)
+})
+
 it('seeks to second zero, not skipping the seek because it is falsy', async () => {
   // The same falsy trap as the citation link: `0` is a real requested
   // second, and `if (seekSeconds)` would silently do nothing here. Spying on

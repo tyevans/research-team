@@ -179,12 +179,19 @@ const Player = ({
   // scratch. Setting `currentTime` on the already-mounted element seeks the
   // one request that is already in flight instead.
   //
-  // Effect runs once per mount (empty deps), not once per `seekSeconds`
-  // change: this reader is unmounted and remounted when the open document
-  // changes (its `key` is the source id, in the callers), so "seek on mount"
-  // is the whole of what "seek to the cited moment" means here. Re-seeking
-  // on every prop change would fight a reader who has since scrubbed
-  // elsewhere in the same clip.
+  // **Depends on `seekSeconds`, not empty deps -- a mount does not track a
+  // new offset within one source.** A first version here ran once per mount
+  // on the premise that `DocumentList.tsx` keys this reader on the open
+  // document and would remount for every new citation. That premise is
+  // false for the case that matters: the key is the *source id*, and two
+  // citations into the same source at different offsets share it. Clicking
+  // the second one updates `seekSeconds` in place with no remount, and an
+  // empty-deps effect would never see the new value -- the player would sit
+  // wherever the first citation left it. Depending on the value is what
+  // makes the second click seek at all; a `React.key` on the offset was the
+  // other way to force this and was rejected because it ties this
+  // component's identity to a transient number rather than to the document
+  // it is actually reading.
   // `HTMLMediaElement` -- the base both `<video>` and `<audio>` share -- kept
   // in a plain mutable ref rather than one from `useRef<HTMLVideoElement>`:
   // that type is specific to `<video>`'s own `ref` prop and rejects an
@@ -196,8 +203,7 @@ const Player = ({
   useEffect(() => {
     if (seekSeconds === null) return
     if (el.current) el.current.currentTime = seekSeconds
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [seekSeconds])
 
   // The one place a dangling reference is met by a person. The port
   // distinguishes "no such source" from "record here, bytes gone" and the
