@@ -40,15 +40,44 @@ from research_team.domain.ontology import (
 #: would drop a document's second half silently and report success, which is
 #: the failure mode this whole feature is arranged against.
 #:
-#: Sized so the SEKAI songs document (4,890 characters, measured 2026-08-15) is
-#: comfortable and a long wiki article still fits. **Not tuned against a
-#: corpus-wide measurement, because none has been taken** -- and one document
-#: already known to exceed it is `sekaipedia-list-of-songs` at 131,701
-#: characters, which is mostly one large markdown table and therefore exactly
-#: the shape this pass is best at. Take the measurement before raising this;
-#: the answer to a long list of refusals is the windowed pass, not a bigger
-#: number.
-MAX_DISCOVERY_CHARS = 40_000
+#: **Deliberately equal to `MAX_DOCUMENT_CHARS`**, the cap the corpus itself
+#: enforces on a stored document. That is the whole justification, and it is
+#: the reason this is not a round number chosen for comfort: if a document is
+#: in the corpus at all, this pass can read it. Any smaller value creates a
+#: class of document that a project holds and this feature silently cannot
+#: examine -- and the refusals do not fall evenly, which is the part that made
+#: the first number actively harmful.
+#:
+#: The first number was 40,000, and the measurement that condemned it was taken
+#: on 2026-08-15 against the recovery database: **6 of 15 documents exceeded
+#: it, holding 70% of the corpus by text.** Among them were
+#: `wiki-roman-religion` (173,258) and `wiki-roman-economy` (82,764), which
+#: between them hold 100 of Ancient Rome's 116 `category` entities -- so the
+#: ceiling refused precisely the documents most likely to contain classes, and
+#: a class count taken under it would have reported "this corpus states no
+#: classes" when what happened is that nobody read it. A cap that biases the
+#: evidence toward its own designer's prediction is worse than no cap.
+#:
+#: **What it costs: one larger model call per document, not per chunk.** This
+#: pass makes exactly one call whatever the document's length -- it does not
+#: chunk, by design (see the module docstring on the table header). So the cost
+#: of raising it is a longer prompt on the few documents that need one, not a
+#: multiplier on all of them.
+#:
+#: **What would make this wrong later**, in the order it is likely to happen: a
+#: model whose context window cannot hold 200,000 characters of prompt, which
+#: is where the refusal would start being a real limit rather than a formality;
+#: or `MAX_DOCUMENT_CHARS` rising, at which point this must rise with it or
+#: quietly reintroduce the gap. It is not pinned to that constant in code --
+#: importing it would point the application layer at a sibling for a number
+#: that is a judgement rather than a shared fact -- so the two are kept equal
+#: by this comment and by whoever reads it next.
+#:
+#: The windowed pass stays **deliberately unbuilt**. It is what a document
+#: genuinely larger than a context window needs, and its boundaries reintroduce
+#: the split-table problem this pass exists to avoid, so it wants its own
+#: design rather than an increment here.
+MAX_DISCOVERY_CHARS = 200_000
 
 _KINDS = frozenset({"ordered_scale", "unordered_set", "taxonomy"})
 
