@@ -53,7 +53,7 @@ from research_team.application.corpus_editing import CorpusEditor, DocumentExist
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
 from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
-from research_team.application.entity_definitions import DefinitionService
+from research_team.application.entity_definitions import DefinitionService, serve_citations
 from research_team.application.grading import GradingError, grade
 from research_team.application.graph_read import (
     MAX_GRAPH_NODES,
@@ -2403,7 +2403,18 @@ def create_app(
             # see `definition_reader` in `composition.py`. The same 503 the
             # usages route above answers for the same absence.
             raise HTTPException(status_code=503, detail="no chunk store is configured")
-        return definition_view(await service.define(entity_id))
+        definition = await service.define(entity_id)
+        served = None
+        if definition is not None and corpus is not None and blob_store is not None:
+            # Resolved here rather than inside `DefinitionService`, so a
+            # `Definition` fetched from cache is never the thing that goes
+            # stale -- see `ServedCitation`'s docstring. `corpus`/`blob_store`
+            # are checked rather than routed through `_reader` (which 503s):
+            # a build with a definition service but no corpus read model
+            # should still answer with a definition, just without moments,
+            # not lose the whole route over a field it only decorates.
+            served = await serve_citations(_reader(project_id), definition.citations)
+        return definition_view(definition, served)
 
     @app.post("/api/projects/{project_id}/sources/{source_id}/ontology")
     async def discover_ontology(project_id: UUID, source_id: str):
