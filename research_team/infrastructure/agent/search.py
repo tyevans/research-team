@@ -192,8 +192,77 @@ class SearchAttempts:
         return self._current().total >= MAX_SEARCHES_PER_TURN
 
 
+_HIGHLIGHT = str.maketrans("", "", "")
+"""SearXNG wraps every term matching the query in U+E000/U+E001 before it
+serializes a result -- private-use codepoints its own templates turn into
+`<span>`s and nothing else has any meaning for.
+
+Measured 2026-08-15 against a real instance: present in 29 of 262 results for
+one image query, 0 of 29 for a general one and 0 of 91 for a video one. So it
+is engine-specific (duckduckgo images) rather than universal, which is why it
+reached the model unnoticed for as long as it did -- most searches never see
+it, and the ones that do render as an invisible glyph rather than as mojibake.
+"""
+
+
+def _text(result: dict, key: str) -> str:
+    """One field as clean text, or "" if it isn't one.
+
+    Separate from an inline `str(result.get(key, ""))` because that idiom
+    defends against a *missing* key and not a present-and-null one, and a real
+    instance sends both. Measured in the same capture: `publishedDate` was null
+    in 262 of 262 image results, `img_format` in 35, `thumbnail` in 22 of 91
+    videos, `iframe_src` in 1. `str(None)` is the four characters "None", which
+    on the media line below would read to the model as an asset URL.
+    """
+    value = result.get(key)
+    if not isinstance(value, str):
+        # Not `str(value)`: a number would survive that, but so would None and
+        # every dict a future API change might nest here. A field that isn't
+        # text is a field this function has nothing to say about.
+        return ""
+    return value.translate(_HIGHLIGHT).strip()
+
+
+def _media_line(result: dict) -> str | None:
+    """The asset behind a media result, or None if this isn't one.
+
+    Branching on `template` rather than on which keys are present, because
+    presence does not imply a value: 20 of 262 captured image results carry
+    `iframe_src` as an empty string and `length` as null. `template` was set on
+    every one of the 353 media results captured, and is what SearXNG itself
+    dispatches on.
+
+    An asset with no URL takes no line at all. `image: ` with nothing after it
+    would assert an asset exists, and a line that renders empty would put a
+    blank line inside a block -- which the "\\n\\n" join reads as a separator.
+    """
+    template = _text(result, "template")
+    if template == "images.html":
+        asset, detail = _text(result, "img_src"), _text(result, "resolution")
+        label = "image"
+    elif template == "videos.html":
+        asset, detail = _text(result, "iframe_src"), _text(result, "length")
+        label = "video"
+    else:
+        return None
+    if not asset:
+        return None
+    # `resolution` is passed through verbatim and deliberately not parsed:
+    # engines disagree on its spelling within a single response -- "533 x 800"
+    # from DuckDuckGo and "1060x1600" (U+00D7, no spaces) from Bing, measured
+    # in the same capture. There is nothing to gain from normalizing a string
+    # the model reads and nothing downstream computes on.
+    return f"{label}: {asset}" + (f" ({detail})" if detail else "")
+
+
 def format_results(payload: object, limit: int) -> str:
     """Flatten a SearXNG payload to title/url/snippet, capped at `limit`.
+
+    A media result takes a fourth line naming the asset, because for images and
+    videos `url` is the *page* the thing was found on and not the thing: an
+    image search rendered with the three text lines is a list of gallery pages
+    with every asset silently dropped, which is what this did before 2026-08-15.
 
     Total by construction: an instance is a foreign system, and `response.json()`
     only promises valid JSON, not a dict shaped the way SearXNG's docs say --
@@ -214,10 +283,14 @@ def format_results(payload: object, limit: int) -> str:
         # Every field is normalized to a non-empty placeholder: a blank line
         # inside a block, from an empty url or snippet, would read as a block
         # separator to anything counting on the "\n\n" join below.
-        title = str(result.get("title", "")).strip() or "(untitled)"
-        url = str(result.get("url", "")).strip() or "(no url)"
-        snippet = " ".join(str(result.get("content", "")).split()) or "(no snippet)"
-        blocks.append(f"{title}\n{url}\n{snippet}")
+        title = _text(result, "title") or "(untitled)"
+        url = _text(result, "url") or "(no url)"
+        snippet = " ".join(_text(result, "content").split()) or "(no snippet)"
+        lines = [title, url, snippet]
+        media = _media_line(result)
+        if media is not None:
+            lines.append(media)
+        blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
 
