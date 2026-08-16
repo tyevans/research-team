@@ -204,6 +204,13 @@ class CorpusEditor:
         writes fails that test and only that test, because the blob exists at
         the end of a *successful* store either way.
 
+        The orphan that leaves behind is now reclaimable, and only by hand:
+        `infrastructure/persistence/blob_sweep.py` is an operator-run
+        mark-and-sweep, reporting by default and deleting only under
+        `--remove`. It is deliberately on no timer, because the two writes
+        below are not one transaction -- see B85 and that module's docstring
+        for the grace period that stands in for the transaction there is not.
+
         Takes no `sha256`. That absence is the whole mitigation for the domain
         accepting a digest it did not compute; see `application/blobs.py`.
         `test_store_media_takes_no_digest_from_its_caller` asserts the

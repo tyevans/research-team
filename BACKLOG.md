@@ -1246,39 +1246,46 @@ in as many words that it would **not** fail on the memory cost. There is no test
 anywhere that would. `list_all`'s own docstring names itself as the line to come
 back to.
 
-### B85. Nothing sweeps a blob no record points at
+### B85. The blob sweep is operator-run; nothing reclaims automatically
 
-`CorpusEditor.store_media` writes the bytes before it executes the command, on
-purpose: a rejected store then leaves an unreferenced blob, which content
-addressing makes harmless -- the next store of the same bytes adopts it -- and
-the other order would commit a record pointing at bytes that are not there,
-the one failure this design promised to make loud rather than merely rare.
-The accepted cost is that nothing ever deletes the orphan. A second source is
-supersession: a media source re-stored under one `source_id` with *different*
-bytes leaves the first blob referenced by nothing, and so does a drop, since
-`by_digest` releases a dropped source's digest.
+**Mostly closed.** `research_team/infrastructure/persistence/blob_sweep.py`
+is the mark-and-sweep this entry asked for: every digest under the blob root
+that no `corpus_media` row names, older than
+`config.blob_sweep_grace_seconds()` (a day by default). It reports by default
+and deletes only under `--remove`, in the style of `local_copy.py`.
 
-The spec accepts this explicitly (no GC in that slice), so it is not a
-divergence -- it is here because the acceptance otherwise lives only in
-`store_media`'s docstring, and this is where this repository keeps work it
-decided not to do.
+The grace period is what stands in for the transaction that does not exist.
+`CorpusEditor.store_media` writes bytes before it saves the record, on
+purpose, and the two writes are not atomic -- so a blob with no row may be a
+store in flight rather than an orphan, and youth is the only thing that tells
+them apart. That makes the window improbable, not impossible: a process
+suspended between the two writes for longer than the grace period still loses
+its blob. Reasoned, not measured, and deliberately generous.
 
-**The sweep is cheap to write and is deliberately not written.** The
-`corpus_media` table carries `sha256` for exactly this: a mark-and-sweep is
-"every digest under the blob root that no `corpus_media` row names". What
-makes it more than a `for` loop is that the two writes are not in one
-transaction. A sweep running between `put` and the command's save would
-delete the bytes of a store in flight, so it needs either a grace period on
-mtime or a quiescent window -- and choosing between those needs a number
-nobody has: how much space this actually wastes on a real corpus. A rejected
-media store is rare (`decide` refuses only a kind flip), and re-store and drop
-are operator actions, so the honest guess is "very little", which is exactly
-the guess a measurement should replace before anyone builds a deleter.
+**What remains, and why it is the right call.** Nothing reclaims
+automatically. There is no timer and no call from `Application.start()`, which
+is the difference between this and B99's accept sweep: that one only *adds*
+and is safe to re-run unattended, this one destroys. An unattended deleter
+would need the residual risk above to be measured rather than reasoned, and
+B85's original point still stands -- nobody knows how much space this actually
+wastes on a real corpus, so the prize for automating it is unquantified while
+the downside is user data.
 
-Until then the recovery is manual and safe in one direction only: a blob that
-no row names can be removed by hand, and a row whose blob is gone answers 410
-rather than lying. That asymmetry is what makes deferring this cost space
-rather than correctness.
+Two smaller residuals:
+
+- **A dropped source keeps its bytes.** The projection marks a dropped row
+  rather than deleting it, so the digest is still named and the sweep never
+  touches it -- even though `by_digest` released it inside the aggregate.
+  Reclaiming those needs a decision about whether a drop is reversible, and
+  nothing has made one.
+- **A stale `.incoming-*` temporary is never removed.** It sits outside the
+  fan-out directories by construction, because sweeping one would truncate an
+  upload in progress. `put`'s `except BaseException` is the only cleanup, so a
+  process killed mid-upload leaves one forever.
+
+Supersession -- the other orphan source this entry named -- *is* reclaimed;
+`test_a_superseded_digest_becomes_a_candidate_and_the_new_one_does_not` pins
+it.
 
 ## Entity definitions and usages
 
