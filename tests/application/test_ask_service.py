@@ -9,6 +9,8 @@ from collections.abc import Sequence
 from uuid import uuid4
 
 import pytest
+from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.testing import InMemoryTestHarness
 
 from research_team.application.ask import (
     AskAnswer,
@@ -19,6 +21,7 @@ from research_team.application.ask import (
     ConversationRegistry,
 )
 from research_team.application.ports import ActivityDelta, ActivityReporter
+from research_team.domain.ask_conversation import AskConversation
 
 
 class FakeExecutor:
@@ -49,6 +52,13 @@ def service(executor, **kwargs) -> AskService:
         executor=executor,
         conversations=ConversationRegistry(now=lambda: 0.0, **kwargs),
         now=lambda: 0.0,
+        # A real repository over an in-memory store rather than a fake: the
+        # append is now part of what `ask` does on success, and a stub that
+        # accepted anything would let a malformed command through unnoticed.
+        # What this file is about is the streaming and the guard, so what the
+        # stream ends up holding is `tests/application/test_ask_persistence.py`'s
+        # business, not this one's.
+        transcripts=AggregateRepository(InMemoryTestHarness().event_store, AskConversation),
     )
 
 

@@ -162,6 +162,7 @@ from research_team.infrastructure.persistence import (
     EventStoreSessionRepository,
     SessionSummaryRunner,
     TopicRunner,
+    build_ask_conversation_repository,
     build_corpus_repository,
     build_judgements_repository,
     build_learner_progress_repository,
@@ -1736,6 +1737,11 @@ def build_application(
         ),
         conversations=ConversationRegistry(now=time.monotonic),
         now=time.monotonic,
+        # The durable half of the same record. Wired here rather than
+        # defaulted inside the service for `progress`'s reason above: which
+        # store an aggregate lands in is the decision this root exists to
+        # make. No snapshot store -- see the builder's docstring.
+        transcripts=build_ask_conversation_repository(repository.store, repository.publisher),
     )
 
     # Built here for `ask_service`'s reason, and it is the same reason: this

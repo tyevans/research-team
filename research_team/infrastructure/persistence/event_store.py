@@ -156,6 +156,28 @@ def build_project_repository(
     )
 
 
+def build_ask_conversation_repository(
+    store: SQLiteEventStore,
+    publisher: InMemoryEventBus | None = None,
+) -> AggregateRepository[AskConversation]:
+    """Persisted asks, over the same log as everything else.
+
+    Published like its neighbours even though `AskConversation` is in
+    `UNROUTED_AGGREGATE_TYPES`: publishing is what `read_since`'s local
+    append flag watches, and the scoping decision is made there, once, rather
+    than by half-wiring the bus here.
+
+    **No snapshots, unlike `ResearchRun` and `Project`.** A conversation
+    appends two events on its first turn and one per turn after, and the
+    surface is a person typing -- a stream long enough for the threshold to
+    matter is a chat of fifty questions, and the fold over it is a counter and
+    two ids. The snapshot store is not even taken as an argument, so nobody
+    reads its absence as an oversight. Revisit if `AskConversationState` ever
+    grows the turns themselves rather than a count of them.
+    """
+    return AggregateRepository(store, AskConversation, event_publisher=publisher)
+
+
 def build_research_run_repository(
     store: SQLiteEventStore,
     publisher: InMemoryEventBus | None = None,

@@ -2,8 +2,13 @@
 
 A parallel path to `SessionService`, not a caller of it. Sessions are
 event-sourced, hold a project exclusively, and fork a filesystem when they
-join one; an asking surface wants none of that, so it gets its own path and
-persists nothing.
+join one; an asking surface wants none of that, so it gets its own path.
+
+It used to persist nothing, and that sentence stood here. It now appends to
+an `AskConversation` stream per conversation --
+`docs/superpowers/specs/2026-08-16-ask-persistence-design.md` -- which is off
+the project's stream and off its feed, so the property this module was built
+around still holds where it was actually wanted.
 
 Nothing in this module may import a framework. `tests/test_architecture.py`
 holds the application layer to `eventsource` alone, so the LangChain side of
@@ -14,11 +19,19 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from typing import Literal, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
+
+from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application.ports import ActivityNote, ActivityReporter
+from research_team.domain.ask_conversation import (
+    AskConversation,
+    RecordAskTurn,
+    StartAskConversation,
+)
 
 Role = Literal["user", "assistant"]
 
@@ -56,6 +69,19 @@ class Conversation:
     project_id: UUID
     messages: tuple[AskMessage, ...] = ()
     used_at: float = 0.0
+    #: The stream this conversation is recorded on. Minted here, by the
+    #: server, and deliberately *not* `chat_id`: that string arrives from the
+    #: browser, and while a checked key into a bounded in-memory dict can be
+    #: whatever the caller says, an aggregate id, a row key and a URL segment
+    #: cannot -- the identical hazard as letting a model pick an id, which
+    #: this codebase has already ruled against once.
+    #:
+    #: A fresh `Conversation` therefore gets a fresh stream. That is what
+    #: eviction means now: a chat the registry dropped resumes with no
+    #: history and records onto a new stream, exactly as it lost its history
+    #: before. Making eviction re-read the old stream is the read-through
+    #: cache the spec declined; the registry stays a cache in front.
+    conversation_id: UUID = field(default_factory=uuid4)
 
     def appended(self, *messages: AskMessage, at: float) -> "Conversation":
         return replace(self, messages=(*self.messages, *messages), used_at=at)
@@ -154,10 +180,17 @@ class AskService:
         executor: AskExecutor,
         conversations: ConversationRegistry,
         now: Callable[[], float],
+        transcripts: AggregateRepository[AskConversation],
     ) -> None:
         self._executor = executor
         self._conversations = conversations
         self._now = now
+        # Required rather than defaulted to None: an ask that silently stops
+        # persisting because a call site forgot an argument is the failure
+        # this codebase has shipped six times -- a component built, green, and
+        # connected to nothing. A missing repository is a TypeError at
+        # composition, which is the earliest anyone can be told.
+        self._transcripts = transcripts
         self._running: set[str] = set()
 
     def forget(self, chat_id: str) -> None:
@@ -214,6 +247,14 @@ class AskService:
             # it silently loses an exchange the reader did see, which
             # `test_an_answer_the_reader_kept_is_remembered_even_if_it_stops_there`
             # fails on.
+            # The append shares that window and that reasoning: it is the same
+            # statement, promoted from "the only record" to "the durable one".
+            # A failure here fails the ask, and that is the cost the spec takes
+            # explicitly -- the in-memory registry could not fail this way.
+            # Swallowing it would mean a reader shown an answer the history
+            # pane will never list, which is worse than an error they can
+            # retry.
+            await self._record(conversation, question=question, answer=answer)
             self._conversations.put(
                 conversation.appended(
                     AskMessage(role="user", text=question),
@@ -226,6 +267,40 @@ class AskService:
             # Freed last, so the guard means what its docstring says: the slot
             # is held until the answer has actually been handed over.
             self._running.discard(chat_id)
+
+    async def _record(
+        self, conversation: Conversation, *, question: str, answer: AskAnswer
+    ) -> None:
+        """Append this exchange to the conversation's own stream.
+
+        Whether to start the stream is decided from the registry's copy rather
+        than by loading and inspecting the aggregate: an empty `messages` is
+        exactly "no turn has been recorded under this id", because the id is
+        minted with the `Conversation` and dies with it. Loading first would
+        cost a replay per turn to learn something the caller already holds,
+        and `decide` refuses a double start anyway if that ever stops being
+        true.
+        """
+        if conversation.messages:
+            aggregate = await self._transcripts.load(conversation.conversation_id)
+        else:
+            aggregate = self._transcripts.create_new(conversation.conversation_id)
+            aggregate.execute(
+                StartAskConversation(
+                    conversation_id=conversation.conversation_id,
+                    project_id=conversation.project_id,
+                    opened_at=datetime.now(UTC),
+                )
+            )
+        aggregate.execute(
+            RecordAskTurn(
+                conversation_id=conversation.conversation_id,
+                question=question,
+                answer=answer.text,
+                citations=tuple((c.kind, c.id) for c in answer.citations),
+            )
+        )
+        await self._transcripts.save(aggregate)
 
     @staticmethod
     async def _drain(

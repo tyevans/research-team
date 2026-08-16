@@ -1,13 +1,20 @@
-"""The ask routes, and the claim that asking writes nothing.
+"""The ask routes: streaming, the busy guard, and forgetting a chat.
 
-The position assertion is the load-bearing one: it is what makes 'ephemeral'
-a property of the system rather than a promise in a document.
+This docstring used to say the file's load-bearing assertion was a position
+assertion proving the ask wrote nothing. There is no position assertion here
+and there has not been for some time -- that claim lives in
+`tests/integration/test_ask_writes_nothing.py`, which now scopes it to the
+project's own stream and feed because the ask does write, to its own
+`AskConversation` stream
+(`docs/superpowers/specs/2026-08-16-ask-persistence-design.md`).
 """
 
 import asyncio
 import json
 from uuid import uuid4
 
+from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.testing import InMemoryTestHarness
 from fastapi.testclient import TestClient
 
 from research_team.application.ask import (
@@ -18,6 +25,7 @@ from research_team.application.ask import (
     ConversationRegistry,
 )
 from research_team.application.ports import ActivityDelta, ActivityMessage
+from research_team.domain.ask_conversation import AskConversation
 from research_team.interfaces.web.app import AskRequest, create_app
 
 SOME_ANSWER = AskAnswer(text="an answer")
@@ -47,6 +55,13 @@ def ask_service(executor) -> AskService:
         executor=executor,
         conversations=ConversationRegistry(now=lambda: 0.0),
         now=lambda: 0.0,
+        # A real repository over an in-memory store rather than a fake: the
+        # append is now part of what `ask` does on success, and a stub that
+        # accepted anything would let a malformed command through unnoticed.
+        # What this file is about is the streaming and the guard, so what the
+        # stream ends up holding is `tests/application/test_ask_persistence.py`'s
+        # business, not this one's.
+        transcripts=AggregateRepository(InMemoryTestHarness().event_store, AskConversation),
     )
 
 
