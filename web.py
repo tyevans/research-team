@@ -136,6 +136,12 @@ def main() -> None:
             # `ontology`/`ontology_discoverers` above close for that pair.
             media_proposals=application.media_proposals,
             media_proposal_repository=application.media_proposal_repository,
+            # The worker the accept route (above) hands off to -- Task 11b.
+            # Without this, accepting a proposal here still appends the event
+            # and answers 202, but nothing ever downloads or stores it: the
+            # same gap the two comments above this one close for ontology and
+            # media-proposals, one route further down the same lifecycle.
+            media_accept_worker=application.media_accept_worker,
             # `None`/`None` together when this install has no SearXNG
             # instance -- see `media_curation_text`'s docstring in
             # `composition.py`. Passed through rather than rebuilt here so
