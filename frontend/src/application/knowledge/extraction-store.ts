@@ -37,14 +37,21 @@ export interface ExtractionState {
 
 export type ExtractionStore = ReturnType<typeof createExtractionStore>
 
-/** The two stages that end an extraction.
+/** The stages that end a job on a source row.
  *
- * Exported because `use-extraction-queue.ts` has to recognise the same two to
+ * Exported because `use-extraction-queue.ts` has to recognise the same set to
  * know when a document's row should be re-read, and spelling them a second
  * time is how the two would come to disagree the next time a stage is added.
  * The list is deliberately *not* every stage -- see `toStage`, which treats an
- * unrecognised one as `extracting` rather than as terminal. */
-export const TERMINAL: readonly string[] = ['consolidated', 'failed']
+ * unrecognised one as `extracting` rather than as terminal.
+ *
+ * `perceived` is here and `perceiving` is not, mirroring `_TERMINAL` in
+ * `interfaces/web/extraction.py`. Being terminal is what makes the row re-read
+ * when a transcription finishes -- which is the whole point of the frame, since
+ * a finished perception has written a new derived source into the listing and
+ * nothing else announces it. Without it the pane holds `perceiving` until a
+ * reload. */
+export const TERMINAL: readonly string[] = ['consolidated', 'failed', 'perceived']
 
 export const createExtractionStore = ({
   extractions,

@@ -85,6 +85,34 @@ it('starts a new extraction when the source changes', () => {
   expect(extraction.getState().current?.stages.map((s) => s.stage)).toEqual(['storing'])
 })
 
+/** Perception's two stages, and the defect this was written against.
+ *
+ * The server learned `perceiving` and `perceived` a task before the client
+ * did, and three client-side lists mirror its literal: the `ExtractionStage`
+ * union, `STAGES` in `mappers.ts`, and `TERMINAL` here. None of the three is
+ * enforced by the compiler against the server, and missing them fails
+ * *silently* in the worst possible direction -- `toStage` maps anything it does
+ * not recognise to `extracting`, deliberately, so an unknown stage is never
+ * mistaken for a terminal one. The visible result was a finished transcription
+ * labelled `extracting` forever, with nothing anywhere reporting a problem.
+ *
+ * Both halves are asserted because each pins a different list. The label
+ * fails if the union or `STAGES` is missing them; the move to `last` fails if
+ * `TERMINAL` is. Reverting all three leaves this reading `extracting` and
+ * still current.
+ */
+it('reads perception’s stages, ending on perceived', () => {
+  const extraction = store()
+  extraction.getState().handleFrame(frame({ stage: 'perceiving' }))
+
+  expect(extraction.getState().current?.stage).toBe('perceiving')
+
+  extraction.getState().handleFrame(frame({ stage: 'perceived' }))
+
+  expect(extraction.getState().current).toBeNull()
+  expect(extraction.getState().last?.stage).toBe('perceived')
+})
+
 it('rebuilds from the catch-up route after a reconnect', async () => {
   // The frames carry no feed position, so this is the only recovery path.
   const extractions = {

@@ -443,6 +443,12 @@ const STAGES: readonly ExtractionStage[] = [
   'consolidating',
   'consolidated',
   'failed',
+  // Not in the ingest's order, because they are not on the ingest's walk:
+  // perception is a separate job reporting through the same channel, and it
+  // emits `perceiving` then either `perceived` or `failed`. Listed last rather
+  // than interleaved so the sequence above still reads as one walk.
+  'perceiving',
+  'perceived',
 ]
 
 /** An unrecognised stage reads as `extracting` rather than being dropped.

@@ -109,6 +109,31 @@ export const useExtractDocument = (projectId: ProjectId) => {
   })
 }
 
+/** Queue one stored medium to be perceived into a text source.
+ *
+ * Beside the extract mutations rather than in `use-document-writes.ts`,
+ * because it is a queue operation and not a corpus write: it queues into the
+ * same place `extract` does and reports through the same `ExtractionActivity`
+ * frames, so the hook that has to know about that queue is this file.
+ *
+ * Invalidates only the queue, deliberately. The listing does not change until
+ * the perception *finishes* and writes the derived source, which is minutes
+ * later and announced by the terminal `perceived` frame -- `useExtractionQueue`
+ * above invalidates the corpus on that, and that is the read which makes the
+ * transcript row appear. Invalidating the listing here as well would be a read
+ * of a corpus that provably has not moved yet.
+ */
+export const usePerceiveDocument = (projectId: ProjectId) => {
+  const { documents } = useContainer()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (sourceId: SourceId) => documents.perceive(projectId, sourceId),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.extractionQueue(projectId) }),
+  })
+}
+
 /** Queue every stored document that has no graph yet. */
 export const useExtractAll = (projectId: ProjectId) => {
   const { documents } = useContainer()

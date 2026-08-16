@@ -7,6 +7,7 @@ import { expect, it, vi } from 'vitest'
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import { useToasts } from '@application/notifications/toast-store.ts'
+import { ApiError } from '@application/ports/errors.ts'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { DocumentRepository } from '@application/ports/repositories.ts'
 import type { MediaSummary, TextSummary } from '@domain/research/document.ts'
@@ -99,6 +100,10 @@ const fakeDocuments = (
     .fn<DocumentRepository['extractionQueue']>()
     .mockResolvedValue(emptyExtractionQueue),
   cancelExtraction: vi.fn<DocumentRepository['cancelExtraction']>().mockResolvedValue(0),
+  // Answers `true` by default, as `extract` does and for the same reason: the
+  // press taking the medium on is the ordinary case, and a test about
+  // something else should not have to stub it to reach a row.
+  perceive: vi.fn<DocumentRepository['perceive']>().mockResolvedValue(true),
   create: vi.fn(() => {
     throw new Error('create was not stubbed for this test')
   }),
@@ -746,4 +751,130 @@ it('offers restore on a dropped media row', async () => {
 
   const dialog = await screen.findByRole('dialog')
   expect(within(dialog).getByRole('button', { name: 'Restore' })).toBeInTheDocument()
+})
+
+/** Perception's one control, on the one row that has something to perceive.
+ *
+ * A medium nobody has transcribed is the only state where pressing this does
+ * work, and the press has to reach the *perceive* route rather than the
+ * extract one -- they queue into the same place on the server and the client
+ * asking for the wrong one would transcribe nothing while looking like it
+ * had. Both halves are asserted for that reason.
+ */
+it('offers Transcribe on a medium nothing has been derived from', async () => {
+  const perceive = vi.fn<DocumentRepository['perceive']>().mockResolvedValue(true)
+  const documents = fakeDocuments(
+    vi.fn<DocumentRepository['list']>().mockResolvedValue([media({ title: 'The keynote' })]),
+    { perceive },
+  )
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+
+  const row = (await screen.findByText('The keynote')).closest('[data-document-row]')
+  await userEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Transcribe' }))
+
+  expect(perceive).toHaveBeenCalledWith(PROJECT, 'm1')
+})
+
+/** The other side of the same row, and the reason the control is conditional
+ *  rather than always-on.
+ *
+ * A second transcription of an already-transcribed medium writes a second
+ * derived source under the same id -- work the reader did not ask for, over a
+ * source they can already read. So the row stops offering the press and offers
+ * the transcript instead, which is the thing they actually wanted. The link
+ * opens the *derived* source's id, not the medium's: opening the medium again
+ * would be the control doing nothing visible.
+ *
+ * The pairing is discovered from the listing rather than carried on the media
+ * row -- `derived_from` is on the text arm, mirroring the server -- so this
+ * also pins that the browser joins the two rows rather than waiting for a
+ * field the wire does not have.
+ */
+it('links a transcribed medium to its transcript instead of offering the press', async () => {
+  const documents = fakeDocuments(
+    vi.fn<DocumentRepository['list']>().mockResolvedValue([
+      media({ sourceId: SourceId('m1'), title: 'The keynote' }),
+      doc({
+        sourceId: SourceId('m1#perceived'),
+        title: 'The keynote (transcript)',
+        derivedFrom: 'm1',
+      }),
+    ]),
+  )
+  const onOpen = vi.fn()
+  renderWithContainer(<DocumentList projectId={PROJECT} open={null} onOpen={onOpen} />, {
+    documents,
+  })
+
+  const row = (await screen.findByText('The keynote')).closest('[data-document-row]')
+  expect(within(row as HTMLElement).queryByRole('button', { name: 'Transcribe' })).toBeNull()
+
+  await userEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Transcript' }))
+  expect(onOpen).toHaveBeenCalledWith('m1#perceived')
+})
+
+/** What the perception could not do, in the words the server chose.
+ *
+ * A transcript with no frame descriptions in it is not a broken transcript and
+ * not a complete one, and nothing on the row distinguishes those two but this
+ * line -- the char count is as healthy either way. Rendered as plain text
+ * beneath the title rather than behind a disclosure, because a reader deciding
+ * whether to trust a quote from it has to meet the caveat without going
+ * looking for one.
+ */
+it('shows a derived source’s degradations on its row', async () => {
+  const documents = fakeDocuments(
+    vi.fn<DocumentRepository['list']>().mockResolvedValue([
+      doc({
+        sourceId: SourceId('m1#perceived'),
+        title: 'The keynote (transcript)',
+        derivedFrom: 'm1',
+        degradations: ['no vision model configured', 'frames were not described'],
+      }),
+    ]),
+  )
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+
+  const row = (await screen.findByText('The keynote (transcript)')).closest('[data-document-row]')
+  expect(
+    within(row as HTMLElement).getByText('no vision model configured; frames were not described'),
+  ).toBeInTheDocument()
+})
+
+/** The refusal has to arrive in the server's own words.
+ *
+ * A 503 from this route names what the install is short of -- the vision model
+ * environment variable, or ffmpeg -- and that naming is the entire reason the
+ * route answers 503 rather than 501. A generic "could not transcribe" throws
+ * the one actionable sentence away and leaves the operator with nowhere to go,
+ * which is the failure this pins. Asserts the exact string, not a substring
+ * match on part of it: a message that got truncated or wrapped in an apology
+ * would still contain the variable name.
+ */
+it('renders a 503 from the perceive route in the server’s own words', async () => {
+  const perceive = vi
+    .fn<DocumentRepository['perceive']>()
+    .mockRejectedValue(
+      new ApiError(
+        'this install cannot perceive media: AGENT_VISION_MODEL is not set; ffmpeg is not on PATH',
+        503,
+      ),
+    )
+  const documents = fakeDocuments(
+    vi.fn<DocumentRepository['list']>().mockResolvedValue([media({ title: 'The keynote' })]),
+    { perceive },
+  )
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+
+  const row = (await screen.findByText('The keynote')).closest('[data-document-row]')
+  await userEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Transcribe' }))
+
+  await waitFor(() =>
+    expect(useToasts.getState().toasts.at(-1)?.message).toBe(
+      'this install cannot perceive media: AGENT_VISION_MODEL is not set; ffmpeg is not on PATH',
+    ),
+  )
 })

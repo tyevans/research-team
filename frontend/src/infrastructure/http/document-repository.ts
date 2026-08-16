@@ -84,6 +84,22 @@ export class HttpDocumentRepository implements DocumentRepository {
     return body.cancelled
   }
 
+  async perceive(projectId: ProjectId, sourceId: SourceId) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/sources/${seg(sourceId)}/perceive`,
+      {},
+      // The same inline one-field schema as `extract`, because it is the same
+      // 202: `source_id` comes back and is dropped, the caller having named it.
+      // Everything this route refuses -- 404, two 409s, 410, 503 -- arrives as
+      // an `ApiError` carrying the server's `detail`, which is where the useful
+      // words are. Nothing is caught here on purpose: a repository that turned
+      // the 503 into `false` would lose the one sentence naming what the
+      // install is short of.
+      z.object({ queued: z.boolean() }),
+    )
+    return body.queued
+  }
+
   async create(projectId: ProjectId, draft: DocumentDraft) {
     const body = await this.http.post(
       `/api/projects/${seg(projectId)}/sources`,

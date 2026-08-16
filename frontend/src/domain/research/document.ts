@@ -106,6 +106,31 @@ export const isDropped = (source: SourceSummary): boolean => source.droppedReaso
  *  often as a text one. */
 export const documentLabel = (source: SourceSummary): string => source.title ?? source.sourceId
 
+/** Which medium each derived text source came from, keyed by the medium.
+ *
+ * The join has to happen on this side because the wire carries the edge only
+ * one way: `derived_from` is on the text arm, mirroring the server, where
+ * media is the thing that gets derived *from* and never the derived thing.
+ * A media row therefore cannot say whether anything has been perceived out of
+ * it, and the listing is the only place both ends are visible at once.
+ *
+ * Computed over the *whole* corpus rather than the filtered view, for the same
+ * reason `extractableCount` is: a filter matching the recording and not its
+ * transcript would otherwise make a transcribed medium offer to be transcribed
+ * again, which is real duplicated work rather than a cosmetic error.
+ *
+ * Last one wins on a duplicate, which the server should never produce -- the
+ * derived id is the medium's plus `#perceived`, so there is one per medium.
+ * Nothing here refuses a second: a `Map` picking one arbitrarily is a strictly
+ * better answer than a throw on a listing the reader wanted to see. */
+export const derivedSources = (rows: readonly SourceSummary[]): ReadonlyMap<string, SourceId> => {
+  const derived = new Map<string, SourceId>()
+  for (const row of rows) {
+    if (row.kind === 'text' && row.derivedFrom !== null) derived.set(row.derivedFrom, row.sourceId)
+  }
+  return derived
+}
+
 /** A byte count a person can read, in decimal units.
  *
  * Decimal (1000) rather than binary (1024), matching how the operating systems

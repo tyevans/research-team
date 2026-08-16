@@ -88,6 +88,9 @@ const Browser = () => (
       onExtract={() => {}}
       onExtractAll={() => {}}
       onCancelExtraction={() => {}}
+      derived={new Map()}
+      perceiveBusy={false}
+      onPerceive={() => {}}
       onAdd={() => {}}
     />
   </div>
