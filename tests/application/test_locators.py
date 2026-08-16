@@ -98,14 +98,31 @@ def test_a_reversed_span_resolves_to_nothing_rather_than_raising() -> None:
     assert resolve(TWO_SEGMENTS, 12, 4) == ()
 
 
-def test_a_locator_whose_kind_is_not_in_the_vocabulary_is_left_out() -> None:
-    """Every reader of a locator dispatches on `kind`, and none has a default
-    arm that could render one it has never heard of. Dropping it here keeps
-    the failure in one place with one fix -- add the spelling to
-    `LOCATOR_KINDS` -- rather than in three renderers that each fall through
-    differently."""
-    unknown = _map((0, 10, {"kind": "waveform", "start_s": 0.0}))
-    assert resolve(unknown, 0, 5) == ()
+def test_a_locator_whose_kind_is_unfamiliar_is_passed_through() -> None:
+    """This test was the other way round for one round of review, and the
+    inversion is the finding.
+
+    Dropping an unrecognised kind produces a citation with no anchor, which a
+    reader cannot tell from a quote that genuinely spans no segment. Passing
+    it through produces a locator a renderer can name as unknown. The
+    obligation this buys is on the renderers -- each needs a default arm --
+    and it is written into their briefs, because nothing here can enforce it.
+    """
+    unfamiliar = _map((0, 10, {"kind": "waveform", "start_s": 0.0}))
+    assert resolve(unfamiliar, 0, 5) == ({"kind": "waveform", "start_s": 0.0},)
+
+
+def test_a_locator_with_no_kind_at_all_is_left_out() -> None:
+    """The half that still drops. Untagged is unresolvable by anybody, where
+    mis-tagged is merely unfamiliar here; `LOCATOR_KINDS` says the tag is
+    always explicit so that an unknown locator is visibly unknown rather than
+    inferred from whichever known kind it shares a key with. Passing an
+    untagged one on would hand a renderer exactly that inference to make."""
+    untagged = _map(
+        (0, 10, {"start_s": 0.0, "end_s": 4.0}),
+        (0, 10, {"kind": 7, "start_s": 0.0}),
+    )
+    assert resolve(untagged, 0, 5) == ()
 
 
 def test_every_declared_kind_survives_the_filter() -> None:

@@ -19,8 +19,6 @@ that shows no moment when it should show one.
 
 import json
 
-from research_team.application.perception import LOCATOR_KINDS
-
 __all__ = ["resolve"]
 
 
@@ -85,11 +83,25 @@ def _segments(locator_map: str) -> list[tuple[int, int, dict[str, object]]]:
     objects" is everything a caller is entitled to assume and the rest is
     checked here.
 
-    An unrecognised `kind` is dropped rather than passed through. Three
-    readers dispatch on the tag and none has a default arm that could render a
-    spelling it has never heard of, so passing one on moves the failure into
-    whichever renderer meets it first, differently in each. Dropping it keeps
-    the fix in one place: add the spelling to `LOCATOR_KINDS`.
+    **Two cases that look like one, and are not.** An element whose `locator`
+    carries no `kind` at all is dropped: untagged is unresolvable by anybody,
+    and `LOCATOR_KINDS`' own docstring says the tag is always explicit
+    precisely so an unrecognised locator is visibly unknown rather than
+    silently mistaken for whichever known kind it shares a key with.
+
+    An element whose `kind` is a spelling this build does not know is
+    **passed through unchanged**. This module used to drop those too, and that
+    was wrong: dropping produces a citation with no anchor, which is
+    indistinguishable from a quote that genuinely spans no segment -- the
+    wrong-answer-that-looks-right failure this repository keeps guarding
+    against. A renderer handed an unfamiliar kind can at least say so.
+
+    The obligation that makes pass-through worth anything is on the readers,
+    not here: **every consumer that dispatches on `kind` needs a default arm**
+    that names the locator as unrecognised rather than discarding it. Without
+    that, this change relocates the silence instead of ending it. Nothing in
+    this module can enforce it, which is why it is written down as a
+    requirement on the later briefs rather than as a comment nobody reads.
     """
     try:
         parsed = json.loads(locator_map)
@@ -110,7 +122,10 @@ def _segments(locator_map: str) -> list[tuple[int, int, dict[str, object]]]:
             continue
         if not isinstance(segment_end, int) or isinstance(segment_end, bool):
             continue
-        if not isinstance(locator, dict) or locator.get("kind") not in LOCATOR_KINDS:
+        if not isinstance(locator, dict) or not isinstance(locator.get("kind"), str):
+            # Untagged, or tagged with something that is not a spelling at
+            # all. Not the same case as an unfamiliar spelling, which passes
+            # through -- see the docstring above.
             continue
         segments.append((segment_start, segment_end, locator))
     return segments

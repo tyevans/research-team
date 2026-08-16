@@ -23,7 +23,7 @@ from uuid import UUID
 from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application.document_extraction import CorpusReaders, UnknownDocument
-from research_team.domain.corpus import Corpus, MediaRecord, StoreDerivedText
+from research_team.domain.corpus import Corpus, MediaRecord, StoreDerivedText, TextRecord
 
 LOCATOR_KINDS = ("time", "page", "bbox", "char", "byte")
 """Every `kind` a `LocatorSpan.locator` may carry.
@@ -162,6 +162,42 @@ class NotPerceivable(Exception):
     """
 
 
+class SourceDropped(Exception):
+    """The medium is here and somebody excluded it.
+
+    Its own type because the alternative was answering "no such source", which
+    is the conflation `CorpusReadPort.read_media` exists to forbid: an operator
+    told a recording does not exist goes looking for an ingest that never
+    happened, rather than at the drop somebody made on purpose. Reached here by
+    a route that docstring did not anticipate -- `read_media` hides a dropped
+    row by default and `read_document` answers None for media, so both reads
+    fail and the honest reason is in neither answer.
+
+    Refusing rather than perceiving is `unextracted`'s reasoning: a drop is a
+    judgement that the source should not inform the project, and a transcript
+    of it would be extracted into the graph the drop was meant to keep it out
+    of.
+    """
+
+
+class MediaBytesMissing(Exception):
+    """The record is here and its blob is not: a dangling reference.
+
+    Detected here rather than at the route, and the reason is which layer
+    holds the handle. `perceive` already has the `MediaHandle`; the route has
+    only a project and a `source_id`, so answering 410 from up there would mean
+    issuing a second `read_media` purely to inspect `stat` -- a second read of
+    one record, in the layer this application deliberately keeps out of the
+    business of assembling readers.
+
+    Advisory by nature, and that is not an argument against it: the blob can
+    vanish between this check and the read either way. What it buys is that the
+    operator sees the same answer the content route gives one click away (410,
+    "the bytes are no longer stored") instead of a library traceback from
+    inside the perceiving adapter.
+    """
+
+
 class PerceptionUnavailable(Exception):
     """This install has no model that could read a medium.
 
@@ -245,14 +281,29 @@ class MediaPerceiver:
         reader = self._corpus_readers(project_id)
         handle = await reader.read_media(source_id)
         if handle is None:
-            # `read_media` answers None both for an id nobody claimed and for
-            # one holding text, so the second read is what tells them apart.
-            # It costs a query on the failure path only.
+            # Three states arrive here as one `None`, and every extra read
+            # below is on the failure path only. Text: `read_media` declines
+            # it, `read_document` finds it. Dropped media: `read_media` hides
+            # it by default, and only the second read with `include_dropped`
+            # can tell it from an id nobody ever claimed -- which is the
+            # distinction `CorpusReadPort.read_media`'s docstring insists on
+            # and which this method got wrong until a reviewer measured it.
             if await reader.read_document(source_id, include_dropped=True) is not None:
                 raise NotPerceivable(
                     f"source {source_id!r} holds text; there is nothing in it to perceive"
                 )
+            dropped = await reader.read_media(source_id, include_dropped=True)
+            if dropped is not None:
+                raise SourceDropped(
+                    f"source {source_id!r} was dropped: {dropped.record.dropped_reason}"
+                )
             raise UnknownDocument(f"no media source {source_id!r} in project {project_id}")
+
+        if handle.stat is None:
+            # Before the capability check and before the port, because it is
+            # free and the other two are not: there is no reading to be had
+            # from bytes that are gone, whatever this install can do.
+            raise MediaBytesMissing(f"the bytes for {source_id!r} are no longer stored")
 
         capabilities = self._port.capabilities()
         if not capabilities.any_model():
@@ -319,29 +370,66 @@ class MediaPerceiver:
         medium that already has a transcript under some other name -- the
         operator who accepted would get a third.
 
-        Dropped sources are excluded because `list_sources` excludes them by
-        default, and that default is right here for `unextracted`'s reason: a
-        drop is a judgement that the source should not inform the project, and
-        perceiving it would produce text that goes on to be extracted.
+        **The two sets are drawn from the listing at different widths, and
+        that asymmetry is the whole of this method's care.** A *dropped medium*
+        is not a candidate, for `unextracted`'s reason: a drop is a judgement
+        that the source should not inform the project, and a transcript of it
+        would be extracted into the graph the drop was meant to keep it out of.
+        But a *dropped transcript* still counts its parent as perceived, and
+        the default listing cannot say so because it hides the row.
 
-        A *dropped transcript* still counts its parent as perceived, and that
-        is the honest reading rather than an oversight: the listing this walks
-        does not show it, so the parent looks unperceived here while the
-        aggregate still holds a derived record under that id, and re-perceiving
-        would supersede a transcript somebody deliberately excluded. Left as
-        is because the case needs a decision this task has no basis for making
-        -- see the task report; the failure it produces is a medium that stays
-        in the queue, not a wrong write.
+        What the narrower reading would cost is a wrong write, not a stalled
+        queue -- this docstring claimed the opposite until a reviewer measured
+        it. Superseding a derived source does not merely replace the text: the
+        `CorpusDerivedTextStored` fold builds a fresh `TextRecord` carrying no
+        `dropped_reason`, so the exclusion is erased and the transcript returns
+        to the listing, to chunking and to extraction. A batch "perceive all"
+        that re-offered such a parent would undo an operator's deliberate
+        exclusion with nobody having asked for it.
+
+        **An explicit single `perceive` may still un-drop, and that is
+        accepted rather than deferred.** It is not an anomaly of this feature;
+        it is the same property every source in this corpus has.
+        `CorpusEditor.restore` is *implemented* as a re-store and says so, on
+        the strength of `evolve` not carrying `dropped_reason` across, guarded
+        by `test_storing_over_a_dropped_source_id_brings_it_back`. Refusing it
+        only for derived text would make perception the one source kind whose
+        re-store behaves differently, for a rule nothing else obeys. What is
+        closed here is the path where nobody chose it: batch perception can no
+        longer reach the case at all.
+
+        Order is the listing's, so a "perceive all" walks the page the reader
+        is looking at -- `unextracted`'s reason.
+
+        **Perceivedness is read off `derived_from`, not off the id
+        convention.** `StoreDerivedText.source_id` is unconstrained by design
+        so a second model can perceive one medium under its own id, and a
+        check for `f"{parent}#perceived"` would go on offering perception for a
+        medium that already has a transcript under some other name -- the
+        operator who accepted would get a third.
         """
-        listings = await self._corpus_readers(project_id).list_sources()
+        # One read at the wider width rather than two reads at two widths.
+        # Both sets come out of it -- dropped rows are filtered back out for
+        # the candidates below -- and the alternative pays a second projection
+        # query to have the default listing do that filtering implicitly. The
+        # cost of this shape is that "dropped media are excluded" is now a
+        # condition a reader has to see here, where it used to be inherited
+        # from `list_sources`' default; it is spelled out rather than implied
+        # for exactly that reason.
+        listings = await self._corpus_readers(project_id).list_sources(include_dropped=True)
         perceived = {
-            derived_from
+            listing.record.derived_from
             for listing in listings
-            if (derived_from := getattr(listing.record, "derived_from", None)) is not None
+            # `isinstance` rather than `getattr(..., "derived_from", None)`:
+            # `SourceRecord` is a discriminated union of two shapes the type
+            # checker can see, and a `getattr` would quietly report every
+            # medium as unperceived if the field were ever renamed.
+            if isinstance(listing.record, TextRecord) and listing.record.derived_from
         }
         return tuple(
             listing.record.source_id
             for listing in listings
             if isinstance(listing.record, MediaRecord)
+            and listing.record.dropped_reason is None
             and listing.record.source_id not in perceived
         )

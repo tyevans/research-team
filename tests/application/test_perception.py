@@ -28,20 +28,24 @@ from eventsource import DomainEvent, ExpectedVersion, StreamId
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
+from research_team.application.blobs import BlobStat
 from research_team.application.corpus_read import MediaHandle, SourceListing, StoredDocument
 from research_team.application.document_extraction import UnknownDocument
 from research_team.application.locators import resolve
 from research_team.application.perception import (
     LocatorSpan,
+    MediaBytesMissing,
     MediaPerceiver,
     NotPerceivable,
     Perceived,
     PerceptionCapabilities,
     PerceptionUnavailable,
+    SourceDropped,
     derived_source_id,
 )
 from research_team.domain.corpus import (
     Corpus,
+    CorpusDocumentDropped,
     CorpusDocumentStored,
     CorpusMediaStored,
     MediaRecord,
@@ -100,11 +104,27 @@ class FakeReader:
     for `test_corpus_editing.py`'s reason: the fold already carries every
     record, and a second copy of that bookkeeping would eventually disagree
     with it.
+
+    **`stat` is a real `BlobStat` unless a test asks otherwise**, and the
+    default used to be the other way round. `stat is None` is this
+    repository's spelling of "the record is here and the bytes are gone" --
+    `app.py` answers 410 on it -- so a fake that returned it unconditionally
+    modelled a corpus in which every blob had been deleted, and the whole
+    suite ran green against the one state a correct perceiver must refuse.
+    Adding that refusal turned thirteen tests red at once, which reads as the
+    fix breaking things rather than as the fixture having described the wrong
+    world. `dangling` names the ids that really are missing their bytes.
     """
 
-    def __init__(self, corpus: AggregateRepository[Corpus], project_id: UUID) -> None:
+    def __init__(
+        self,
+        corpus: AggregateRepository[Corpus],
+        project_id: UUID,
+        dangling: frozenset[str] = frozenset(),
+    ) -> None:
         self._corpus = corpus
         self._project_id = project_id
+        self._dangling = dangling
 
     async def list_sources(self, *, include_dropped: bool = False) -> list[SourceListing]:
         corpus = await self._corpus.load_or_create(self._project_id)
@@ -142,7 +162,12 @@ class FakeReader:
             return
             yield b""
 
-        return MediaHandle(record=record, stat=None, open=lambda start=0: _no_bytes())
+        stat = (
+            None
+            if source_id in self._dangling
+            else BlobStat(sha256=record.sha256, byte_count=record.byte_count)
+        )
+        return MediaHandle(record=record, stat=stat, open=lambda start=0: _no_bytes())
 
 
 @pytest.fixture
@@ -278,6 +303,62 @@ async def test_perceiving_stores_a_derived_source_under_the_parent(
     assert derived[0].record.derived_from == "vid"
 
 
+async def test_a_dropped_medium_is_refused_as_dropped_and_not_as_missing(
+    corpus_repo, harness, port, project_id, seeded
+):
+    """ "No such source" and "a source you excluded" are different answers,
+    and this method gave the first one for the second case until a reviewer
+    measured it.
+
+    Both reads at their default width answer `None` for a dropped medium --
+    `read_media` hides it, `read_document` declines it as media -- so the
+    conflation `CorpusReadPort.read_media`'s docstring forbids was reachable
+    by a route that docstring never anticipated. An operator told a recording
+    does not exist goes looking for an ingest that never happened.
+    """
+    await _seed(
+        harness,
+        project_id,
+        CorpusDocumentDropped(aggregate_id=project_id, source_id="vid", reason="off-topic"),
+    )
+    perceiver = _build(corpus_repo, port)
+
+    with pytest.raises(SourceDropped) as raised:
+        await perceiver.perceive(project_id, "vid")
+
+    assert "off-topic" in str(raised.value)
+    assert port.calls == []
+
+
+async def test_a_medium_whose_bytes_are_gone_is_refused_as_gone(
+    corpus_repo, port, project_id, seeded
+):
+    """A dangling reference: the record is here and the blob is not.
+
+    Detected in the perceiver because the perceiver is what holds the
+    `MediaHandle`; the route has only a project and a `source_id`, and would
+    need a second `read_media` purely to inspect `stat` in order to answer
+    410. Its own type so Task 7 can map it to the same 410 the content route
+    already gives, instead of the operator meeting a traceback from inside
+    the perceiving library.
+
+    This is also the one test that asks `FakeReader` for `stat=None`. Every
+    other test in this file used to get it by default, which meant the whole
+    suite ran against a corpus whose blobs had all been deleted.
+    """
+    perceiver = MediaPerceiver(
+        port=port,
+        corpus_readers=lambda target: FakeReader(corpus_repo, target, frozenset({"vid"})),
+        corpus=corpus_repo,
+        max_chars=lambda: MAX_CHARS,
+    )
+
+    with pytest.raises(MediaBytesMissing):
+        await perceiver.perceive(project_id, "vid")
+
+    assert port.calls == []
+
+
 async def test_the_derived_source_carries_the_text_and_the_locators(
     perceiver, corpus, project_id
 ):
@@ -411,6 +492,80 @@ async def test_unperceived_lists_media_with_no_transcript_and_stops_listing_it(
     await perceiver.perceive(project_id, "vid")
 
     assert "vid" not in await perceiver.unperceived(project_id)
+
+
+async def test_unperceived_does_not_re_offer_a_medium_whose_transcript_was_dropped(
+    perceiver, harness, project_id
+):
+    """The batch hole, and it was a wrong write rather than a stalled queue.
+
+    Superseding a dropped derived source does not merely replace its text:
+    `evolve` builds a fresh `TextRecord` with no `dropped_reason`, so the
+    exclusion is erased and the transcript comes back to the listing, to
+    chunking and to extraction. A "perceive all" that re-offered this parent
+    would undo an operator's deliberate exclusion with nobody having chosen
+    it -- so the parent has to stay out of the queue while the transcript
+    exists in *any* state, which the default listing cannot express because it
+    hides the dropped row.
+    """
+    await perceiver.perceive(project_id, "vid")
+    await _seed(
+        harness,
+        project_id,
+        CorpusDocumentDropped(
+            aggregate_id=project_id, source_id="vid#perceived", reason="a bad reading"
+        ),
+    )
+
+    assert "vid" not in await perceiver.unperceived(project_id)
+
+
+async def test_unperceived_does_not_offer_a_dropped_medium(perceiver, harness, project_id):
+    """The other width, and the other direction. A drop is a judgement that
+    the source should not inform the project, and a transcript of it would be
+    extracted into the graph the drop was meant to keep it out of. This is the
+    condition that used to be inherited from `list_sources`' default and is now
+    spelled out, because the perceived set needs the wider listing."""
+    await _seed(
+        harness,
+        project_id,
+        CorpusDocumentDropped(aggregate_id=project_id, source_id="vid", reason="off-topic"),
+    )
+
+    assert await perceiver.unperceived(project_id) == ()
+
+
+async def test_an_explicit_perceive_still_un_drops_its_transcript(
+    perceiver, corpus, harness, project_id
+):
+    """Accepted, and asserted so that it is a decision rather than a surprise.
+
+    This is not perception behaving oddly; it is the property every source in
+    this corpus has. `CorpusEditor.restore` is *implemented* as a re-store on
+    exactly this mechanism -- `evolve` builds a fresh record and does not carry
+    `dropped_reason` across, guarded by
+    `test_storing_over_a_dropped_source_id_brings_it_back` -- so refusing it
+    only for derived text would make perception the one kind whose re-store
+    behaves differently. The path where nobody chose it is closed by
+    `test_unperceived_does_not_re_offer_a_medium_whose_transcript_was_dropped`
+    above; this one costs an explicit call naming the medium.
+    """
+    await perceiver.perceive(project_id, "vid")
+    await _seed(
+        harness,
+        project_id,
+        CorpusDocumentDropped(
+            aggregate_id=project_id, source_id="vid#perceived", reason="a bad reading"
+        ),
+    )
+    assert not [
+        x for x in await corpus.list_sources() if x.record.source_id == "vid#perceived"
+    ]
+
+    await perceiver.perceive(project_id, "vid")
+
+    restored = _find(await corpus.list_sources(), "vid#perceived")
+    assert restored.record.dropped_reason is None
 
 
 async def test_unperceived_lists_no_text_source(perceiver, project_id):
