@@ -102,6 +102,167 @@ class TestCenturies:
         assert extent.start_date.year == 1801
 
 
+class TestHedgedCenturies:
+    """A century wrapped in a qualifier is still a century.
+
+    Every expression here is real model output from the 2026-08-15 runs
+    against qwen3.8-27b-mtp, and every one of them parses to `None`
+    unnormalised -- the qualifier alone is what defeats the parser.
+
+    **They resolve to the whole century, not to a third of it.** 'early 2nd
+    century' does mean the early part, and emitting 0101-0133 for it was
+    considered and rejected: the thirds are a convention this code would be
+    inventing, and the repository's rule is that a guessed date is worse than
+    a vague one. Widening is safe -- the band contains the truth -- where
+    narrowing asserts edges the text never gave. The cost is real and worth
+    stating: 'early 2nd century' and 'late 2nd century' draw identical bands.
+    The entity keeps the model's wording, so the label still distinguishes
+    them even when the geometry does not.
+    """
+
+    @pytest.mark.parametrize(
+        ("raw", "first", "last"),
+        [
+            ("around the mid-2nd century AD", 101, 200),
+            ("by the late 2nd century AD", 101, 200),
+            ("during the 4th century", 301, 400),
+            ("early 3rd century AD", 201, 300),
+            ("the late 1st century", 1, 100),
+            ("mid 5th century CE", 401, 500),
+        ],
+    )
+    def test_a_qualified_century_spans_that_century(
+        self, raw: str, first: int, last: int
+    ) -> None:
+        extent = parsed(raw)
+        assert extent is not None
+        assert extent.start_date.year == first
+        assert extent.end_date.year == last
+
+    def test_a_qualified_century_is_marked_uncertain(self) -> None:
+        """The qualifier is a hedge and the extent has to say so.
+
+        Drawn as an exact band, 'around the mid-2nd century' asserts a
+        hundred-year certainty the text did not offer.
+        """
+        extent = parsed("around the mid-2nd century AD")
+        assert extent.uncertainty.name in {"APPROXIMATE", "CIRCA"}
+
+
+class TestTheHundredsForm:
+    """'200s' fabricates a date rather than failing, which is the worse mode.
+
+    Measured with `reference_date` 2005-05-31: bare '200s' parses to
+    2005-05-30 at DAY precision -- the reference date, less a day. 'mid-200s',
+    which is what the Roman economy article actually returned, yields `None`.
+    So the safe spelling is the one the corpus produced and the dangerous one
+    is a keystroke away.
+
+    Read as the century, 200-299, on the historical convention: 'the 200s' in
+    a text about Rome is the third century, not the decade 200-209. That
+    reading is wrong for a sentence about the 2000s, which is why this is
+    scoped to three digits -- a four-digit '1990s' is already handled
+    correctly by the parser as a decade and is left alone.
+    """
+
+    def test_the_hundreds_span_their_century(self) -> None:
+        extent = parsed("mid-200s")
+        assert extent is not None
+        assert extent.start_date.year == 200
+        assert extent.end_date.year == 299
+
+    def test_a_bare_hundreds_is_not_the_reference_date(self) -> None:
+        """Fails unnormalised with 2005-05-30, DAY."""
+        extent = parsed("200s")
+        assert extent is not None
+        assert extent.start_date.year == 200
+        assert extent.precision.name == "YEAR"
+
+    def test_a_modern_decade_is_left_alone(self) -> None:
+        """'1990s' already parses as 1990-1999 and must not become a century."""
+        extent = parsed("the 1990s")
+        assert extent.start_date.year == 1990
+        assert extent.end_date.year == 1999
+
+    def test_a_three_digit_decade_is_left_to_the_parser(self) -> None:
+        """'250s' is a decade, not a century, and this rule must not claim it.
+
+        The trailing '00' is what separates the two readings. Left unchanged
+        rather than handled, so if the parser ever learns the form it is not
+        fighting a rewrite here.
+        """
+        assert normalize_for_parsing("250s") == "250s"
+
+    def test_the_span_is_hedged_rather_than_exact(self) -> None:
+        """A century derived from 'mid-200s' is not an exact claim about 299.
+
+        A bare '0200-0299' parses EXACT, which would assert both edges. Fails
+        without the 'around' the normaliser prepends.
+        """
+        assert parsed("mid-200s").uncertainty.name == "APPROXIMATE"
+
+
+class TestShortYearRanges:
+    """A span of ancient years needs the same padding a single one does.
+
+    '130-170' yields `None` where '0130-0170' parses, for the same reason a
+    bare '313' misparses: the parser's range branch wants four digits. The
+    corpus produced these as regnal spans -- 'r. 249-251' on Decius and
+    'r. 253-268' on Gallienus, from the Edict of Milan article.
+
+    The 'r.' is dropped rather than interpreted. A reign is not the same claim
+    as an event, but it is the only date those entities carry, and the extent
+    it denotes is exactly the years given.
+    """
+
+    @pytest.mark.parametrize(
+        ("raw", "first", "last"),
+        [
+            ("249-251", 249, 251),
+            ("r. 249-251", 249, 251),
+            ("r. 253-268", 253, 268),
+            ("270-275 AD", 270, 275),
+        ],
+    )
+    def test_a_short_range_spans_its_years(self, raw: str, first: int, last: int) -> None:
+        extent = parsed(raw)
+        assert extent is not None
+        assert extent.start_date.year == first
+        assert extent.end_date.year == last
+
+    def test_a_modern_range_is_unchanged(self) -> None:
+        """'2009-2014' already parses; padding it must be a no-op."""
+        extent = parsed("2009-2014")
+        assert extent.start_date.year == 2009
+        assert extent.end_date.year == 2014
+
+    def test_a_backwards_range_is_left_alone(self) -> None:
+        """The normaliser does not emit a spelling it knows is incoherent.
+
+        **This test passes with the guard reverted**, and the docstring it
+        replaces claimed otherwise -- that emitting '0251-0249' would raise
+        `ValueError` out of `TemporalExtent` and cost the whole chunk.
+        Measured on redstring 0.9.2: the parser returns `None` for it, so the
+        entity ends up undated either way and nothing is lost.
+
+        Kept because the guard asserts something about this function rather
+        than about the parser: what it returns is meant to be a better
+        spelling of its input, and emitting a backwards range on the
+        expectation that something downstream will refuse it is a dependency
+        on behaviour no test here pins.
+        """
+        assert normalize_for_parsing("251-249") == "251-249"
+
+    def test_a_bc_range_is_still_refused(self) -> None:
+        """The range rule must not reach past the BC guard.
+
+        '91-88 BC' is two years that cannot be represented; matching the digits
+        and dropping the era would date it to AD 91-88 -- which is also
+        backwards, and would raise rather than merely mislead.
+        """
+        assert normalize_for_parsing("91-88 BC") is None
+
+
 class TestUncertaintyIsNotLost:
     def test_circa_survives_normalising_the_year(self) -> None:
         """Normalising must not eat the marker that qualifies the date.

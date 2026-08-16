@@ -11,12 +11,18 @@ has to happen in the *input*, before redstring's own pipeline reaches its
 parser -- there is no seam on the other side, because `map_extraction` runs
 inside `build_graph` and writes the store and the event together.
 
-**Why it exists.** Measured on 2026-08-15 against the real database, project
-"Ancient Rome": 2,525 entities, 8 with a temporal extent. Not because the
-model stayed silent -- commit d2aa97c had already added the prompt asking for
-dates, and these documents were extracted after it landed -- but because the
-parser destroys what the model returns. Two behaviours, both measured against
-`parse_temporal` directly with `reference_date` set to the article's
+**Why it exists, and what it is *not* the fix for.** Measured on 2026-08-15
+against the real database, project "Ancient Rome": 2,525 entities, 8 with a
+temporal extent. That rate is **not** what this module fixes. Its cause was
+that the model files the date in `properties` and `_build_extent` reads only
+the schema field, so nothing reached the parser at all -- see `CLAUDE.md`'s
+Extraction section and `redstring_adapter._DatingProvider`.
+
+This module fixes what happens *once* an expression arrives. Every defect
+below is real and every one of them was measured, but they were all downstream
+of an empty field, which is why fixing them first moved the rate almost not at
+all. They matter now because the lift made them reachable. All measured
+against `parse_temporal` directly, with `reference_date` set to the article's
 `published_at`, which is what extraction passes:
 
   '313'          -> 0313-08-25, DAY precision
@@ -57,7 +63,15 @@ this module fixes is the AD-era rate, not the whole one.
 **The rewriting is deliberately narrow.** Anything that is not one of the
 measured failures is returned unchanged, including prose that is not a date at
 all. Deciding what counts as a date is the parser's judgement, and making it
-twice in two places is how the two answers start to disagree.
+twice in two places is how the two answers start to disagree. The two
+exceptions are the kinds the parser answers *wrongly* rather than not at all
+-- BC, which it drops, and narrative-relative, which it resolves against the
+publication date -- and both return `None` rather than a rewrite.
+
+**Every rule here is a workaround for a redstring defect, and redstring is
+this project's own library.** `BACKLOG.md` B87 lists the four, with the
+measurements; the first two would let most of this module be deleted. It is
+worth knowing that before adding a fifth rule.
 """
 
 import re
@@ -81,10 +95,75 @@ _ERA_YEAR = re.compile(r"^(?:(AD|CE)\s+(\d{1,4})|(\d{1,4})\s*(AD|CE))$", re.IGNO
 #: and day into.
 _SHORT_YEAR = re.compile(r"^(\d{1,3})$")
 
-#: An ordinal century, with an optional leading article and an optional AD/CE
-#: suffix, both of which defeat the parser on their own.
+#: A span of years, with an optional regnal 'r.' and an optional era suffix.
+#:
+#: The parser's range branch wants four digits on both sides: '130-170' yields
+#: None where '0130-0170' parses. The corpus produced these as reigns --
+#: 'r. 249-251' (Decius) and 'r. 253-268' (Gallienus) from the Edict of Milan
+#: article. The 'r.' is dropped rather than interpreted; a reign is a
+#: different claim from an event, but it is the only date those entities
+#: carry and the years it names are exactly the extent.
+#:
+#: Both dash forms, because the model uses the en dash as readily as the
+#: hyphen -- '91-88 BC' came back with one.
+_YEAR_RANGE = re.compile(
+    # U+2013 and U+2014 as escapes rather than literals: ruff's RUF001 reads a
+    # literal en or em dash as a typo for a hyphen and fails the lint gate.
+    # Both are genuinely needed -- the model returned a BC range punctuated
+    # with an en dash, so a hyphen-only class would miss it.
+    r"^(?:r\.?\s*)?(\d{1,4})\s*[-\u2013\u2014]\s*(\d{1,4})(?:\s+(?:AD|CE))?$",
+    re.IGNORECASE,
+)
+
+#: An ordinal century, however it is hedged.
+#:
+#: The parser accepts a bare '19th century' and nothing else: a leading
+#: article, a leading preposition, a position qualifier, or an era suffix each
+#: defeat it alone, and real output stacks all four ('around the mid-2nd
+#: century AD'). Every part outside the capture group is discarded.
+#:
+#: **The qualifier is dropped, not honoured.** 'early 2nd century' resolves to
+#: the whole of 101-200 rather than to its first third. The thirds would be a
+#: convention invented here, and a wider band contains the truth where a
+#: narrower one asserts edges the text never gave -- the same reasoning that
+#: makes a guessed date worse than a vague one. The cost is that 'early' and
+#: 'late' draw identically; the entity keeps the model's wording, so the label
+#: still separates them.
 _CENTURY = re.compile(
-    r"^(?:the\s+)?(\d{1,2}(?:st|nd|rd|th))\s+century(?:\s+(?:AD|CE))?$", re.IGNORECASE
+    r"^(?:(?:in|during|by|from|around|about|circa|throughout)\s+)?"
+    r"(?:the\s+)?"
+    r"(?:(?:early|mid|middle|late|beginning\s+of|end\s+of|first\s+half\s+of"
+    r"|second\s+half\s+of|latter\s+half\s+of)[\s-]+)?"
+    r"(?:the\s+)?"
+    r"(\d{1,2}(?:st|nd|rd|th))\s+centur(?:y|ies)"
+    r"(?:\s+(?:AD|CE))?$",
+    re.IGNORECASE,
+)
+
+#: 'the 200s', 'mid-200s' -- a three-digit century written as a span.
+#:
+#: Refused rather than passed through, because the bare form is the dangerous
+#: one. Measured with `reference_date` 2005-05-31: '200s' parses to
+#: **2005-05-30 at DAY precision** -- the reference date less a day -- while
+#: 'mid-200s', which is what the corpus actually produced, yields None. The
+#: safe spelling is the one that happened to appear and the fabricating one is
+#: a keystroke away.
+#:
+#: Read as 200-299, the historical convention: 'the 200s' in a text about Rome
+#: is the third century, not the decade 200-209.
+#:
+#: Anchored on a trailing '00s' rather than on digit count, which is what
+#: separates the two readings: '200s' ends in two zeros and means the century,
+#: '250s' does not and means the decade 250-259. Only the century form is
+#: claimed here; a three-digit decade is left to the parser. A four-digit
+#: '1990s' cannot match either, and is already read correctly as a decade.
+_HUNDREDS = re.compile(
+    r"^(?:(?:in|during|by|around|about|circa)\s+)?"
+    r"(?:the\s+)?"
+    r"(?:(?:early|mid|middle|late)[\s-]+)?"
+    r"(?:the\s+)?"
+    r"(\d{1,2})00s$",
+    re.IGNORECASE,
 )
 
 #: Written before the year, and preserved: the parser detects uncertainty on
@@ -190,7 +269,46 @@ def normalize_for_parsing(raw: str) -> str | None:
 
     century = _CENTURY.match(body)
     if century is not None:
-        return f"{marker}{century.group(1).lower()} century"
+        # Not `f"{marker}..."`: the parser marks a century APPROXIMATE by
+        # itself, and any leading marker here is part of the hedge the century
+        # rule already discarded. Re-attaching 'around' would only replace
+        # APPROXIMATE with the near-identical CIRCA.
+        return f"{century.group(1).lower()} century"
+
+    hundreds = _HUNDREDS.match(body)
+    if hundreds is not None:
+        first = int(hundreds.group(1)) * 100
+        # A zero-padded range, because that is the only span form the parser
+        # accepts: '130-170' yields None where '0130-0170' parses. The end is
+        # the last year of the century rather than the next century's first,
+        # so '200s' cannot be read as reaching into the 300s.
+        #
+        # 'around' rather than a bare range: a range parses EXACT, and a
+        # hundred-year span derived from 'mid-200s' is a hedge, not an exact
+        # claim about 200 and 299. The century rule above gets APPROXIMATE
+        # from the parser for free; this form has to ask for it.
+        return f"around {first:04d}-{first + 99:04d}"
+
+    year_range = _YEAR_RANGE.match(body)
+    if year_range is not None:
+        first, last = int(year_range.group(1)), int(year_range.group(2))
+        # A backwards range is left alone rather than emitted. **This changes
+        # no outcome today** -- measured on redstring 0.9.2, '0251-0249'
+        # returns None from the parser rather than raising, so emitting it and
+        # refusing it leave the entity equally undated. An earlier version of
+        # this comment claimed the emitted form would raise `ValueError` out
+        # of `TemporalExtent` and cost the whole chunk; that was reasoned from
+        # the model's validator and never run, and it is wrong -- the range
+        # branch rejects it before an extent is built.
+        #
+        # Kept anyway, for one honest reason: this function's contract is that
+        # what it returns is a better spelling of the input, and '0251-0249'
+        # is not a better spelling of anything. Emitting a form we know to be
+        # incoherent and relying on the parser to refuse it makes this code
+        # depend on a behaviour nothing here tests.
+        if first <= last:
+            return f"{marker}{first:04d}-{last:04d}"
+        return raw
 
     era_year = _ERA_YEAR.match(body)
     if era_year is not None:
