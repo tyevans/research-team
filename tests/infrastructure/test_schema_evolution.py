@@ -854,10 +854,19 @@ async def _write_corpus_log(store, db_path, project_id) -> None:
     Written straight into the table rather than through the aggregate, for
     this file's usual reason -- today's model would add today's fields. The
     document payload is genuinely old-shaped (no `uri`, `title`,
-    `published_at`, `note` or `fetched_at`); the media and derived payloads
-    carry every field their events declare, because both events are new and
-    have no earlier shape to reproduce. What they are here to prove is not a
-    widened payload but a *log* an older build has to survive.
+    `published_at`, `note` or `fetched_at`), and the media payload carries
+    every field its event declares, because `CorpusMediaStored` has had one
+    shape since it was written.
+
+    **The derived payload deliberately omits `note`, and that omission is the
+    point rather than an oversight.** `CorpusDerivedTextStored` shipped with
+    `title` alone; `note` was added afterwards, in the final fix pass, so that
+    a transcript would not be the one source kind nobody could annotate. This
+    payload is therefore the genuinely old shape of that event, and
+    `test_a_corpus_log_replays_into_the_read_model` asserts `note is None` to
+    hold it -- without that assertion the coverage is incidental, and a later
+    tidy that "completes" this payload would delete the only proof that an
+    event stored before the field existed still folds.
     """
     # Touches the store first so the `events` table exists to insert into --
     # the same reason `test_an_auto_run_started_before_the_fetch_grant_existed_
@@ -997,3 +1006,8 @@ async def test_a_derived_text_payload_reads_back_as_a_text_row_pointing_at_its_m
     assert derived.derived_from == "v1"
     assert derived.text == "A talk about otters."
     assert derived.perceived_with == "vision=v1,asr=w1"
+    # The payload predates `note` -- see `_write_corpus_log`. Asserted rather
+    # than left implicit, because this is the only place proving a
+    # `CorpusDerivedTextStored` written before that field existed still folds,
+    # and an unasserted omission is one tidy away from being "completed".
+    assert derived.note is None

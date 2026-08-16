@@ -2899,6 +2899,20 @@ subscription. The same test proves the subscription is otherwise live — remove
 *that* event instead, so the mechanism works for events the corpus aggregate
 writes and not for redstring's.
 
+**The mechanism, measured on 2026-08-16 rather than reasoned:** `_store_derived`
+re-indexes, indexing appends redstring events, and the corpus subscription never
+processes those — so `caught_up` waits ten seconds for a position it will never
+reach. Deleting the `index` call makes the same assertions pass in 0.8s. That is
+the measurement to start from, and it points at the redstring-event delivery
+path rather than at anything in `CorpusProjection`.
+
+The uncovered half is worth knowing before touching it: **no test fails if the
+`index` call is dropped from `_store_derived`, nor from `_store`.** So the call
+that makes `corpus_caught_up()` unusable is also unguarded, and a fix that
+removes or moves it would go green either way. Whoever takes this should write
+that test first — it is load-bearing in two directions and currently protected
+in neither.
+
 What it costs while it stands: "extract all" recomputes the same documents
 forever, since `unextracted` filters on `listing.extracted`, and the console
 keeps offering "Extract" on a document that has a graph. What it costs the
@@ -2990,3 +3004,28 @@ under the medium, extraction under the derived id, so the two cannot collide),
 rendered on the media row the way `ExtractionPane` renders a stage. Left for
 the slice that adds the batch "Transcribe all" control, which needs the same
 per-row state and would otherwise build it twice.
+
+### B92. Two corpus routes turn a domain refusal into a 500
+
+`app.py`'s restore route maps only `UnknownDocument` and `NotDropped`; the
+PATCH (revise) route maps only `UnknownDocument` and `KnowledgeError`. Neither
+maps `CommandRejectedError`, which is what `Corpus.decide` raises for every
+refusal it makes — so a refusal the domain states clearly reaches the caller as
+a server error with no message.
+
+Found on 2026-08-16 by the perception slice's final review, which reported the
+restore-a-transcript defect as a 409 and was corrected by the implementer: it
+was a **500**. That is the shape of the problem — the reviewer assumed a mapped
+refusal because the domain refuses clearly, and only reproducing it showed the
+route drops the distinction.
+
+**No reachable case survives today.** The derivedness guards that exposed it
+were fixed in that same pass, and no other `CommandRejectedError` currently
+escapes either route. So this is latent rather than live, which is exactly why
+it is here: the next domain guard added to `StoreSourceDocument`,
+`StoreSourceMedia` or `StoreDerivedText` becomes a silent 500 at two routes,
+and nothing will fail to say so. The media slice's `upload_source` already
+maps this correctly and is the pattern to copy.
+
+Cheap to fix and cheaper to fix now than to rediscover: one `except` arm each,
+plus a test per route that a refused command answers 409 rather than 500.

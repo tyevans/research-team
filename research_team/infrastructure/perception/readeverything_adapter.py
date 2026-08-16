@@ -121,9 +121,16 @@ def _locator_to_dict(locator: object) -> dict[str, object]:
     The `kind` is written explicitly rather than inferred from which keys are
     present. Inference would make an unrecognised locator look like whichever
     known one it shares a key with -- `ByteRange` and `CharSpan` are both
-    `start`/`end` and mean entirely different things -- and this vocabulary is
-    what three later readers dispatch on. See `LOCATOR_KINDS` in
+    `start`/`end` and mean entirely different things. See `LOCATOR_KINDS` in
     `application/perception.py`, which is the canonical list.
+
+    **Nothing dispatches on the tag yet.** An earlier draft of this comment
+    claimed three later readers did; there are none. `locators.resolve` passes
+    an unfamiliar kind straight through rather than switching on it, and the
+    console does not render locators at all in this slice. The tag is written
+    now because it is cheap now and unrecoverable later -- once a map is
+    stored untagged, no reader can tell a `ByteRange` from a `CharSpan` after
+    the fact.
 
     Raises on an unknown locator type rather than emitting an untagged dict: a
     new locator kind added upstream should stop here, where the mapping lives,
