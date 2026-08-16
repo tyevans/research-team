@@ -79,18 +79,41 @@ _ACCEPTED_PREFIXES = ("image/", "video/", "audio/")
 
 
 class UnsupportedMedia(Exception):
-    """The URL did not answer with `image/*`, `video/*` or `audio/*`.
+    """The URL answered with a content-type outside `image/*`, `video/*` or
+    `audio/*`.
 
-    Also raised for a redirect: this module does not follow one (see
-    `download_media`'s docstring for why), and a 3xx response has no media
-    type of its own to report, so the Location is folded into the message
-    instead of inventing one.
+    Not raised for a redirect any more -- see `MediaMoved` below, added in
+    review: a `media_type` of `""` was indistinguishable from a genuinely
+    missing content-type, so a caller could only tell "this asset is the
+    wrong kind" from "this URL moved" by parsing a message string.
     """
 
-    def __init__(self, media_type: str, *, detail: str | None = None):
+    def __init__(self, media_type: str):
         self.media_type = media_type
-        message = detail or f"unsupported media type: {media_type or '(none)'}"
-        super().__init__(message)
+        super().__init__(f"unsupported media type: {media_type or '(none)'}")
+
+
+class MediaMoved(Exception):
+    """The URL answered with a redirect, which this module does not follow.
+
+    `fetch.py` makes the same choice when a grant is in play, for a reason
+    that applies here without a grant in the picture at all: an unattended
+    acquisition following a redirect would be leaving the process to a
+    second address nobody judged, on the same authority that only covered
+    the first one.
+
+    Its own type rather than folding into `UnsupportedMedia` (as it used to)
+    because the two answer different questions a caller needs told apart:
+    "this asset is the wrong kind" is a dead end, "this URL moved" is
+    something a person can act on -- re-propose `location`. A caller with the
+    authority to follow it can also just re-issue the call against
+    `location` directly, which is a decision rather than something this
+    primitive makes silently.
+    """
+
+    def __init__(self, location: str):
+        self.location = location
+        super().__init__(f"that URL redirected to {location}, which was not followed")
 
 
 class MediaTooLarge(Exception):
@@ -112,13 +135,7 @@ async def download_media(
 ) -> tuple[AsyncIterator[bytes], str]:
     """Fetch `url`'s bytes, refusing anything that is not image/video/audio.
 
-    Redirects are not followed. `fetch.py` makes the same choice when a
-    grant is in play and for a reason that applies here without a grant in
-    the picture at all: an unattended acquisition following a redirect would
-    be leaving the process to a second address nobody judged, on the same
-    authority that only covered the first one. The caller sees the Location
-    in `UnsupportedMedia` and can re-issue the call against it deliberately,
-    which is a decision rather than something this primitive makes silently.
+    Redirects are not followed -- see `MediaMoved`'s docstring for why.
 
     The content-type check happens on the response headers, before any of
     the body is read. Streaming a gigabyte to discover it was an HTML
@@ -126,6 +143,17 @@ async def download_media(
     what it was meant to avoid; `httpx.AsyncClient.send(..., stream=True)`
     returns headers without pulling the body, so the check and the refusal
     both happen before a single byte of it is asked for.
+
+    **The returned iterator owns the underlying httpx response and closes it
+    in a `finally`, on the generator's own exhaustion or an explicit
+    `aclose()` -- never on anything else.** A caller must fully drain it or
+    close it explicitly. Abandoning it partway -- for instance because a
+    caller downstream (a corpus store, `CorpusEditor.store_media`'s `put`)
+    raised mid-write -- leaves the generator suspended and the connection
+    open until garbage collection gets to it, which asyncio does not promise
+    will happen promptly, or at all, for a suspended coroutine. See
+    `MediaAcceptWorker.run` for the caller that has to handle this
+    deliberately.
     """
     request = client.build_request("GET", url, headers=_HEADERS)
     response = await client.send(request, stream=True)
@@ -133,9 +161,7 @@ async def download_media(
     if response.is_redirect:
         location = response.headers.get("location", "(no Location header)")
         await response.aclose()
-        raise UnsupportedMedia(
-            "", detail=f"that URL redirected to {location}, which was not followed"
-        )
+        raise MediaMoved(location)
 
     content_type = response.headers.get("content-type", "")
     media_type = content_type.split(";")[0].strip().lower()
@@ -210,9 +236,9 @@ class MediaAcceptWorker:
 
     The four steps run in this order and for this reason each:
 
-    1. **Download**, under `max_bytes`. `UnsupportedMedia` and `MediaTooLarge`
-       are the two ways it can fail, and both are refusals this worker can
-       explain -- see `_fail`.
+    1. **Download**, under `max_bytes`. `UnsupportedMedia`, `MediaMoved` and
+       `MediaTooLarge` are the three ways it can fail, and all three are
+       refusals this worker can explain -- see `_fail`.
     2. **`CorpusEditor.store_media`**, with `uri=detail.page_url`. The *page*
        URL, not `detail.asset_url` the download just fetched: provenance is
        where a thing was found, not the CDN path it happened to be served
@@ -285,14 +311,15 @@ class MediaAcceptWorker:
             stream, media_type = await download_media(
                 detail.asset_url, client=self._client, max_bytes=self._max_bytes
             )
-        except (UnsupportedMedia, MediaTooLarge) as error:
-            # `str(error)` already distinguishes the two shapes a person
-            # needs told apart: `UnsupportedMedia` names the refused media
-            # type ("this asset is the wrong kind") or, for a redirect, the
-            # Location that was not followed ("this URL moved"); `MediaTooLarge`
-            # names the ceiling crossed. Collapsing either into a generic
-            # "download failed" would lose exactly the distinction the pane
-            # needs to show.
+        except (UnsupportedMedia, MediaMoved, MediaTooLarge) as error:
+            # `str(error)` already distinguishes the shapes a person needs
+            # told apart: `UnsupportedMedia` names the refused media type
+            # ("this asset is the wrong kind"); `MediaMoved` names the
+            # Location that was not followed ("this URL moved" -- something
+            # a person can act on by re-proposing it, unlike a generic
+            # refusal); `MediaTooLarge` names the ceiling crossed. Collapsing
+            # any of them into a generic "download failed" would lose
+            # exactly the distinction the pane needs to show.
             await self._fail(project_id, proposal_id, str(error))
             return
 

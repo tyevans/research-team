@@ -25,6 +25,7 @@ from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.media_acquisition import (
     AcceptedProposal,
     MediaAcceptWorker,
+    MediaMoved,
     MediaTooLarge,
     UnsupportedMedia,
     download_media,
@@ -126,14 +127,17 @@ async def test_a_body_over_the_ceiling_is_refused():
 async def test_a_redirect_is_reported_rather_than_followed():
     """Mirrors `fetch.py`'s decision on the read side: a redirect is
     reported rather than resolved automatically, so a caller with the
-    authority to follow it can decide to. Surfaced as `UnsupportedMedia`
-    naming the Location, since there is no media type to report yet.
+    authority to follow it can decide to. Surfaced as its own `MediaMoved`,
+    not `UnsupportedMedia` -- a `media_type` of `""` would be indistinguishable
+    from a genuinely missing content-type, and a caller needs to tell "this
+    asset is the wrong kind" apart from "this URL moved" without parsing a
+    message string. Fails if the redirect collapses back into `UnsupportedMedia`.
     """
-    with pytest.raises(UnsupportedMedia) as excinfo:
+    with pytest.raises(MediaMoved) as excinfo:
         await download_media(
             "https://a.example/x.jpg", client=_redirect_client(), max_bytes=10_000
         )
-    assert "https://a.example/real.jpg" in str(excinfo.value)
+    assert excinfo.value.location == "https://a.example/real.jpg"
 
 
 # --- MediaAcceptWorker -------------------------------------------------
@@ -449,3 +453,65 @@ async def test_an_unknown_proposal_id_is_a_no_op(
     )
 
     await worker.run(proposal_id="never-proposed")  # must not raise
+
+
+class _BlobsFailingMidStream:
+    """A `BlobStorePort` double that reads one chunk of the stream `put` is
+    handed, then raises -- simulating a blob-store I/O error partway
+    through `store_media`'s write, the scenario `download_media`'s docstring
+    warns about: abandoning the returned generator partway leaks the
+    underlying httpx connection unless the caller closes it explicitly.
+    """
+
+    def __init__(self):
+        self.captured_stream = None
+
+    async def put(self, stream):
+        self.captured_stream = stream
+        await stream.__anext__()
+        raise RuntimeError("disk full")
+
+
+async def test_a_corpus_store_raising_mid_write_closes_the_download_stream(
+    project_id, proposals_repo
+):
+    """This is the test that would fail if someone later removes the
+    `try/except BaseException: await stream.aclose()` around `store_media`
+    in `MediaAcceptWorker.run` -- without it, `download_media`'s generator
+    is left suspended mid-iteration when `put` raises, and its `finally`
+    (which closes the httpx response) never runs until GC gets to it, which
+    is not promised to happen promptly or at all for a suspended coroutine.
+    A closed async generator's `ag_frame` is `None`, which is what a caller
+    that *did* close it leaves behind.
+    """
+    proposal_id = "p1"
+    await _accept(
+        proposals_repo, project_id, proposal_id, asset_url="https://cdn.example/trajan.jpg"
+    )
+    reads = FakeReads(
+        {proposal_id: _detail(project_id, asset_url="https://cdn.example/trajan.jpg")}
+    )
+    blobs = _BlobsFailingMidStream()
+
+    async def open_knowledge(target_project_id: UUID):
+        raise NotImplementedError("store_media does not call open_knowledge")
+
+    failing_editor = CorpusEditor(
+        open_knowledge=open_knowledge,
+        readers=lambda target_project_id: None,
+        corpus=AggregateRepository(InMemoryTestHarness().event_store, Corpus),
+        blobs=blobs,
+    )
+    worker = MediaAcceptWorker(
+        reads=reads,
+        proposals=proposals_repo,
+        editor=failing_editor,
+        perceiver=FakePerceiver(),
+        client=_image_client(),
+    )
+
+    with pytest.raises(RuntimeError, match="disk full"):
+        await worker.run(proposal_id=proposal_id)
+
+    assert blobs.captured_stream is not None
+    assert blobs.captured_stream.ag_frame is None
