@@ -155,6 +155,33 @@ async def test_a_patch_on_an_unknown_source_is_404(app_and_client):
     assert response.status_code == 404
 
 
+async def test_a_refusal_from_decide_answers_409_not_500_on_revise(app_and_client, monkeypatch):
+    """B95's second route: `revise_source` mapped only `UnknownDocument` and
+    `KnowledgeError`, not `CommandRejectedError`. Same provocation as the
+    restore case above -- `Corpus.decide` patched to refuse unconditionally,
+    since no live caller currently reaches a `CommandRejectedError` here.
+    Red without the `except` arm: 500.
+    """
+    _app, client = app_and_client
+    project = await _new_project(client)
+    await client.post(
+        f"/api/projects/{project}/sources", json={"source_id": "s1", "text": "hello"}
+    )
+
+    from research_team.domain.corpus import Corpus, CommandRejectedError
+
+    def _refuse(command, state):
+        raise CommandRejectedError("decide refused for this test")
+
+    monkeypatch.setattr(Corpus, "decide", staticmethod(_refuse))
+
+    response = await client.patch(
+        f"/api/projects/{project}/sources/s1", json={"title": "x"}
+    )
+
+    assert response.status_code == 409
+
+
 async def test_drop_excludes_the_document_and_restore_puts_it_back(app_and_client):
     _app, client = app_and_client
     project = await _new_project(client)
@@ -194,6 +221,37 @@ async def test_restore_refuses_a_document_that_is_not_dropped(app_and_client):
     await client.post(
         f"/api/projects/{project}/sources", json={"source_id": "s1", "text": "hello"}
     )
+
+    response = await client.post(f"/api/projects/{project}/sources/s1/restore", json={})
+
+    assert response.status_code == 409
+
+
+async def test_a_refusal_from_decide_answers_409_not_500_on_restore(app_and_client, monkeypatch):
+    """B95: `restore_source` mapped only `UnknownDocument` and `NotDropped`,
+    not `CommandRejectedError` -- which is what `Corpus.decide` raises for
+    every refusal it makes. No reachable case survives today (the entry says
+    so), so this provokes one that isn't reachable through the HTTP surface:
+    `Corpus.decide` is patched to refuse unconditionally, standing in for
+    whatever future guard on `StoreSourceDocument`/`StoreDerivedText` would
+    otherwise become a silent 500 here. Red without the `except` arm: 500.
+    """
+    _app, client = app_and_client
+    project = await _new_project(client)
+    await client.post(
+        f"/api/projects/{project}/sources", json={"source_id": "s1", "text": "hello"}
+    )
+    dropped = await client.post(
+        f"/api/projects/{project}/sources/s1/drop", json={"reason": "off topic"}
+    )
+    assert dropped.status_code == 200
+
+    from research_team.domain.corpus import Corpus, CommandRejectedError
+
+    def _refuse(command, state):
+        raise CommandRejectedError("decide refused for this test")
+
+    monkeypatch.setattr(Corpus, "decide", staticmethod(_refuse))
 
     response = await client.post(f"/api/projects/{project}/sources/s1/restore", json={})
 
