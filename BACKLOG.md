@@ -3164,37 +3164,79 @@ rendered on the media row the way `ExtractionPane` renders a stage. Left for
 the slice that adds the batch "Transcribe all" control, which needs the same
 per-row state and would otherwise build it twice.
 
-### B97. An accepted media proposal does not survive a restart
+### B99. No periodic sweep for an accept that dies mid-run
 
-`research_team/interfaces/web/app.py`'s accept route appends
-`MediaProposalAccepted`, answers 202, and hands the download to
-`asyncio.create_task`. That task does not survive process death.
+`Application.start()`'s reconciliation (designed in
+`docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`,
+`composition.py:555`) runs once, at startup. It fixes the case a process that
+died and restarted, but not the case where the process never dies: an accept
+whose `asyncio.create_task` raises, hangs, or is silently dropped by the event
+loop stays `accepted` with no source for as long as the process stays up,
+because nothing after startup looks at it again.
 
-So a process that dies after the event is appended — the 202 is already
-sent — and before `MediaAcceptWorker` finishes leaves the proposal
-permanently `accepted`, with no source ever created. **Nothing on the next
-startup detects it.** There is no reconciliation pass, no status distinguishing
-"accepted and running" from "accepted and abandoned", and no operator signal;
-the review pane shows a card that is working and always will be.
+Deliberately deferred by the spec rather than an oversight — a periodic sweep
+is a different shape of problem than the crash case the spec was scoped to. It
+needs an interval to poll on, a jitter policy so every process in a
+multi-instance deployment doesn't sweep in lockstep, and a story for what
+happens when two processes sweep the same proposal at once (the crash case
+sidesteps this: only one process is ever running). None of that follows from
+the accept-is-safe-to-rerun property the spec already established; it would
+need its own design.
 
-Found on 2026-08-16 by Task 11b's reviewer, on a question asked specifically
-because a fire-and-forget hand-off had just been chosen over a queue. The
-hand-off itself was the right call and is not what is wrong here: two accepted
-proposals share no per-project resource, so the serialization a queue buys is
-not needed, and `MediaAcceptWorker` already treats an "already stored" refusal
-as its own success signal, which is what makes a re-run safe. What is missing
-is anything that re-runs it.
+The fix is a background task in `Application` alongside the projections'
+runners, re-using `MediaAcceptReconciler` (already re-run-safe — see
+`StoreMediaProposal`'s refusal of an already-stored proposal, which is what
+makes a re-run idempotent rather than dangerous) on a timer instead of once at
+`start()`.
 
-The reviewer's suggested fix is the cheap one and the reads it needs already
-exist: on startup, diff accepted proposals against the sources that resulted
-and re-schedule the gap. Worth doing before anyone accepts media they care
-about, and worth its own thought rather than being bolted onto the end of the
-acquisition wave — "reconcile on startup" is a durable-work pattern this
-codebase does not otherwise have, and inventing it in a hurry is how it ends up
-per-feature.
+### B100. `build_application` still leaks the event store, blob store, and every projection runner on a partial build
 
-The safety of a re-run is already load-bearing and already pinned:
-`StoreMediaProposal` against an already-stored proposal is refused rather than
-idempotent, because `decide` cannot arbitrate between two `source_id`s claiming
-to be one proposal's result.
+`research_team/composition.py`. The batch-1 review's B98 fixed the specific
+leak it found — the media `httpx.AsyncClient` is now built last, so a raise
+anywhere earlier in `build_application` can no longer construct one with no
+owner to close. The window itself is unchanged: a raise at `WorkerRoster` (or
+anywhere else in the function's body) still abandons the SQLite event store,
+the blob store, and every projection runner constructed above that point,
+none of which have anything closing them either.
+
+Worth recording precisely because B98 reads, superficially, like it settled
+this. It didn't — its own test
+(`tests/test_composition.py::test_a_raise_late_in_build_application_never_constructs_the_media_client`)
+*demonstrates* the wider leak rather than testing it: it builds the event
+store, blob store and every runner before the raise, walks away from all of
+them, and only asserts on the one thing (the HTTP client) that the fix
+addressed. Nothing catches a future reader concluding from that test's name
+and green status that `build_application` no longer leaks on a partial build.
+
+A `try/finally` (or an `AsyncExitStack` collecting each resource as it's
+built and closing everything in reverse order on any exception) is the
+general fix; B98's "build it last" was cheaper only because there was exactly
+one resource with nothing between its construction and `Application(...)`.
+Every other resource here doesn't have that luxury — there's meaningful
+construction between the event store and the return statement — so the fix
+has to actually unwind, not just reorder.
+
+### B101. Nothing asserts the reconciler runs after `caught_up()`, not before
+
+`Application.start()` (`composition.py`, near line 555) calls
+`self.media_proposals.start()`, then the projection's `caught_up()`, then the
+reconciler — in that order, deliberately: the design spec
+(`docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`) rules
+that the reconciler must read a caught-up projection, or it diffs against
+proposals the log hasn't replayed into the read model yet and reconciles
+correctly-pending accepts it was never supposed to touch.
+
+`tests/integration/test_accept_reconciliation.py` asserts against a composed
+`Application` and would fail if the reconciler call were removed entirely —
+but a test that swapped the two lines, running the reconciler *before*
+`caught_up()`, would still pass. The fixture's projection catches up fast
+enough in-process that the reconciler finds the row settled either way; the
+ordering bug the spec is actually worried about only shows up when the
+projection is still mid-replay at the moment the reconciler reads it.
+
+Reported by the Task 4 implementer as a known gap rather than found by review.
+Proving the ordering would need a projection stalled on purpose — a fake
+`caught_up()` that blocks until released, with the test asserting the
+reconciler's read happens after release, not before. Worth doing before this
+ordering is treated as tested rather than merely stated.
 

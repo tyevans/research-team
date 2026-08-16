@@ -553,7 +553,7 @@ class Application:
         await self.definitions.start()
         await self.ontology.start()
         await self.media_proposals.start()
-        # Reconcile proposals a crash left `accepted` -- B97, designed in
+        # Reconcile proposals a crash left `accepted` -- designed in
         # `docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`.
         # Here rather than in `web.py`'s lifespan, which is the spec's central
         # ruling: `web.py` carries three "was missing -- these routes have been

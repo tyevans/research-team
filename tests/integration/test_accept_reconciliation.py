@@ -1,6 +1,6 @@
 """Reconciliation reaching `MediaAcceptWorker` from `Application.start()`.
 
-The defect (`BACKLOG.md` B97, designed in
+The defect (designed in
 `docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`): a
 proposal accepted just before the process dies stays `accepted` forever,
 because the download was handed to `asyncio.create_task` and nothing re-runs
