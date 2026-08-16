@@ -8,7 +8,7 @@ from research_team.application.ontology_discovery import (
     parse_ontology,
     verify_classes,
 )
-from research_team.domain.corpus import DocumentRecord
+from research_team.domain.corpus import TextRecord
 
 SONGS = (
     "There are six difficulties available in the game: EASY, NORMAL, HARD, "
@@ -216,7 +216,7 @@ class _FakeCorpus:
         if text is None:
             return None
         return StoredDocument(
-            record=DocumentRecord(source_id=source_id, sha256="x", char_count=len(text)),
+            record=TextRecord(source_id=source_id, sha256="x", char_count=len(text)),
             text=text,
         )
 
