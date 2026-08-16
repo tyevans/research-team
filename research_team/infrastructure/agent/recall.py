@@ -35,7 +35,8 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from urllib.parse import urlsplit, urlunsplit
+
+from research_team.domain.urls import normalize_url
 
 CAPACITY = 128
 """How many responses are held. Entries are page bodies of up to `MAX_CHARS`,
@@ -50,8 +51,6 @@ nothing, so without expiry a long-lived process would pin a stale result set
 and present it as current for as long as it ran. An hour is short enough that
 a page which changed is re-read within a working session, and long enough to
 cover the case this exists for."""
-
-_DEFAULT_PORTS = {"http": "80", "https": "443"}
 
 
 def normalize_query(request: str) -> str:
@@ -68,38 +67,14 @@ def normalize_query(request: str) -> str:
     return " ".join(folded.split())
 
 
-def normalize_url(url: str) -> str:
-    """A URL, folded only where two spellings address the same resource.
-
-    Scheme and host are case-insensitive by RFC 3986 and are folded. A default
-    port is equivalent to no port and is dropped. A fragment never reaches the
-    server at all, so two URLs differing only in one are one request. An empty
-    path is `/`.
-
-    The path, query and everything else are left exactly alone. Paths are
-    case-sensitive on any server that says they are, and folding one would
-    merge two genuinely different pages -- which is the same failure as
-    merging two search queries, arriving through a different door.
-
-    Total, because both callers hand it text the model wrote: the URL passed
-    to `fetch`, and every `uri` in the corpus, which `remember` accepts as free
-    text. `urlsplit(...).port` raises `ValueError` on a port that is not a
-    number in range, so one stored document with `uri="http://host:port/x"`
-    would otherwise raise on every `fetch` in that project forever. A string
-    this malformed matches nothing, which is the right outcome; returning it
-    unparsed costs a redundant request, while raising costs the whole turn.
-    """
-    trimmed = url.strip()
-    try:
-        parts = urlsplit(trimmed)
-        host = parts.hostname or ""
-        port = parts.port
-    except ValueError:
-        return trimmed
-    if port is not None and _DEFAULT_PORTS.get(parts.scheme.lower()) != str(port):
-        host = f"{host}:{port}"
-    return urlunsplit((parts.scheme.lower(), host, parts.path or "/", parts.query, ""))
-
+# `normalize_url` used to be defined here. It moved to
+# `research_team/domain/urls.py` when `MediaProposals.decide` (domain layer)
+# needed the same fold for its `ignored_assets` keys -- the domain cannot
+# import infrastructure (tests/test_architecture.py enforces the direction),
+# and duplicating the function would let the two copies drift. Imported above
+# so every existing caller of `recall.normalize_url` (`fetch.py`, its tests,
+# `query_key` below) is untouched; see `urls.py` for the function's own
+# docstring, unchanged by the move.
 
 _FIELD = "\x1f"
 """Separates the query from the parameters in a search key.
