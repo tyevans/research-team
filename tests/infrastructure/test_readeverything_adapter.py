@@ -7,6 +7,7 @@ reached a real transcriber would pass only on the machine that has one, and
 would pin this suite to somebody's LAN address.
 """
 
+import asyncio
 import hashlib
 import shutil
 from pathlib import Path
@@ -31,6 +32,7 @@ from research_team.application.perception import LOCATOR_KINDS
 from research_team.infrastructure.perception import (
     ReadEverythingPerception,
     build_perception_adapter,
+    readeverything_adapter,
 )
 from research_team.infrastructure.perception.readeverything_adapter import _locator_to_dict
 
@@ -75,8 +77,24 @@ def _adapter(
 
     The agreement is not incidental: `build_perception` raises `DomainError`
     when an explicitly supplied `CapabilitySet` declares a VISION revision that
-    differs from `vision.model_id`, so the two are derived from one value here
-    exactly as `build_perception_adapter` derives them from one setting.
+    differs from `vision.model_id`.
+
+    **This helper does not stand in for the factory, and an earlier version of
+    this docstring claimed it did.** That claim is how the factory shipped
+    declaring the raw config string while injecting an `openai/`-prefixed
+    model. Callers here pass both sides explicitly; what the factory does with
+    one configured value is only tested by tests that call
+    `build_perception_adapter`.
+
+    `artifact_root` is named after the blob root rather than being a fixed
+    `perception` beside it. `tmp_path.parent` is the per-run pytest directory
+    shared by every test in the run, so a fixed name there would give every
+    test one artifact cache -- inert today, since an image reading writes no
+    artifacts at all (measured 2026-08-16), and a cross-test cache hit the
+    moment a video fixture appears. Not placed *inside* the blob root either:
+    `test_it_reads_a_blob_by_digest_with_no_copy` asserts that tree is
+    byte-for-byte unchanged, and an artifact landing there would fail it for
+    the wrong reason.
     """
     return ReadEverythingPerception(
         blob_root=blob_root,
@@ -85,7 +103,7 @@ def _adapter(
         vision_model=vision_model,
         transcriber_model=transcriber_model,
         ffmpeg=ffmpeg,
-        artifact_root=blob_root.parent / "perception",
+        artifact_root=blob_root.parent / f"{blob_root.name}-perception",
     )
 
 
@@ -308,6 +326,140 @@ async def test_a_transcriber_is_reachable_through_a_mock_transport(tmp_path):
 
     assert adapter.capabilities().asr is True
     assert adapter.capabilities().vision is False
+
+
+def _configure(monkeypatch, tmp_path) -> None:
+    """Point config at `tmp_path` and clear every perception variable.
+
+    Cleared rather than assumed absent: a developer with `AGENT_VISION_MODEL`
+    exported would otherwise get different tests than CI.
+    """
+    monkeypatch.setenv("AGENT_BLOB_ROOT", str(tmp_path / "blobs"))
+    monkeypatch.setenv("AGENT_PERCEPTION_ROOT", str(tmp_path / "perception"))
+    for name in ("AGENT_VISION_MODEL", "AGENT_TRANSCRIBER_URL", "AGENT_TRANSCRIBER_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_the_factory_declares_the_built_vision_models_own_id(monkeypatch, tmp_path):
+    """The declared VISION revision must be the *constructed* model's `model_id`.
+
+    This is the regression test for a shipped bug. `build_openai_vision_model`
+    prefixes its argument unconditionally -- `AGENT_VISION_MODEL=qwen2.5-vl`
+    becomes `model_id == "openai/qwen2.5-vl"` (measured 2026-08-16 against
+    0.2.0) -- so a factory that declared the raw config string handed
+    `build_perception` two disagreeing values and raised `DomainError` on the
+    first perceive of every vision-configured install.
+
+    Both halves are asserted: that the declaration equals the model's id, and
+    that the prefix is really there, so this stays a test of the wiring rather
+    than a tautology if the library ever stops prefixing.
+
+    Construction makes no network call -- verified in review with
+    `socket.socket.connect` patched to raise. Caution about that is what kept
+    this branch untested and let the bug ship.
+    """
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("AGENT_VISION_MODEL", "qwen2.5-vl")
+    monkeypatch.setenv("AGENT_BASE_URL", "http://vision.invalid/v1/")
+
+    adapter = build_perception_adapter()
+
+    declared = adapter._capability_set.revisions[Capability.VISION]
+    assert declared == adapter._vision.model_id
+    assert declared == "openai/qwen2.5-vl"
+    assert adapter.capabilities().vision is True
+
+
+async def test_a_vision_configured_install_perceives_rather_than_refusing(
+    monkeypatch, tmp_path
+):
+    """End to end through the factory: the `DomainError` must not be raised.
+
+    The assertion above compares two strings; this one runs the comparison
+    `build_perception` itself makes. It is the shape that reproduced the bug,
+    so it is the shape kept. No request is made: the PNG is routed to the image
+    handler, whose vision call is never reached for a `Budget` this small --
+    and the base url points at `.invalid`, so a request would fail loudly
+    rather than silently succeed against something real.
+    """
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("AGENT_VISION_MODEL", "qwen2.5-vl")
+    monkeypatch.setenv("AGENT_BASE_URL", "http://vision.invalid/v1/")
+    blob_root = tmp_path / "blobs"
+    blob_root.mkdir(parents=True, exist_ok=True)
+    digest = _write_blob(blob_root, PNG_BYTES)
+
+    adapter = build_perception_adapter()
+    perceived = await adapter.perceive(sha256=digest, max_chars=1000)
+
+    assert perceived.text
+
+
+def test_the_factory_declares_the_built_transcribers_own_id(monkeypatch, tmp_path):
+    """ASR is taken off the object too, and there it is prevention not repair.
+
+    The library's agreement check covers VISION only -- measured 2026-08-16 --
+    so a mismatched ASR revision raises nothing and simply keys the artifact
+    cache on a string no model reported. `RemoteWhisperTranscriber` does not
+    rewrite `model_id` today, so this test would also pass against the config
+    string; it is here so that stops being what the correctness depends on.
+    """
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("AGENT_TRANSCRIBER_URL", "http://transcriber.invalid/")
+    monkeypatch.setenv("AGENT_TRANSCRIBER_MODEL", "whisper-large-v3")
+
+    adapter = build_perception_adapter()
+
+    declared = adapter._capability_set.revisions[Capability.ASR]
+    assert declared == adapter._transcriber.model_id
+    assert adapter.capabilities().asr is True
+    assert adapter.capabilities().vision is False
+
+
+def test_a_transcriber_url_without_a_model_refuses_to_start(monkeypatch, tmp_path):
+    """Loud at startup, because the ASR revision is what invalidates a transcript.
+
+    `config.transcriber_model()` has no default on purpose -- a default would
+    let a swapped model reuse the previous one's cache entries silently. This
+    pins that the factory lets that raise through rather than quietly building
+    an install with a transcriber URL and no ASR.
+    """
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("AGENT_TRANSCRIBER_URL", "http://transcriber.invalid/")
+
+    with pytest.raises(ValueError, match="AGENT_TRANSCRIBER_MODEL"):
+        build_perception_adapter()
+
+
+async def test_concurrent_first_perceives_build_one_perception(tmp_path, monkeypatch):
+    """Five cold callers, one build. The in-lock re-check is what this pins.
+
+    `test_the_perception_is_built_once_and_reused` is sequential and is
+    satisfied entirely by the lock-free fast path: deleting the re-check
+    *inside* the lock -- the exact regression the lock exists for -- leaves it
+    green. Measured in review: 5 concurrent perceives give 1 build here and 5
+    against the variant with the re-check removed.
+
+    The `sleep(0)` inside the counted build is what makes the race reachable:
+    without a suspension point every coroutine would run the build to
+    completion before the next was scheduled, and the naive variant would pass.
+    """
+    digest = _write_blob(tmp_path, PNG_BYTES)
+    adapter = _adapter(tmp_path, vision_model=FakeVision().model_id, vision=FakeVision())
+
+    builds = 0
+    real = readeverything_adapter.build_perception
+
+    async def counting(*args, **kwargs):
+        nonlocal builds
+        builds += 1
+        await asyncio.sleep(0)
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(readeverything_adapter, "build_perception", counting)
+    await asyncio.gather(*(adapter.perceive(sha256=digest, max_chars=1000) for _ in range(5)))
+
+    assert builds == 1
 
 
 def test_the_factory_starts_an_install_that_has_neither_model(monkeypatch, tmp_path):

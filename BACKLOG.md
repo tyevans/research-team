@@ -2823,3 +2823,26 @@ pair is `GET /sources/extraction-queue` above `GET /sources/{source_id}` —
 same method, same segment count — where a reordering really would parse
 `extraction-queue` as a source id and 404. The general constraint is still
 real for the file, which is why the entry stands.
+
+### B84. Nothing records which ffmpeg produced a video reading
+
+`FFMPEG_REVISION = "present"` in
+`infrastructure/perception/readeverything_adapter.py` deliberately keeps the
+ffmpeg version out of the perception fingerprint, so an ffmpeg upgrade does not
+invalidate every stored reading. That decision stands and the reasoning is at
+the constant. What it leaves behind is a hole on the other side: the version is
+not recorded *anywhere*, so a disputed frame description cannot be traced to
+the decoder that produced its pixels.
+
+`readeverything`'s own `BinaryProbe` records the full banner when it discovers
+rather than being handed a declaration (`ffmpeg version 6.1.1-3ubuntu5 ...`,
+measured 2026-08-16), so the value is a single `ffmpeg -version` at adapter
+construction — once per process, not per perception. The reason this is
+deferred rather than done is where it would have to be stored: a reading's
+provenance, which means a new field on the derived-text event, and that is a
+domain change behind the perception tasks rather than inside them.
+
+Worth doing before the corpus has much video in it. Frame extraction is not
+neutral — seek behaviour, scaler defaults and decoder fixes change the pixels
+handed to the VLM — so "same model, same video, different description" is
+possible today and would be unattributable.

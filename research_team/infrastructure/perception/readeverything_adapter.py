@@ -61,9 +61,34 @@ A constant rather than a version number because `shutil.which` is the only
 question asked -- see the module docstring on declaring rather than probing.
 The consequence to know is that upgrading ffmpeg does *not* move the
 fingerprint, so a reading taken with ffmpeg 6 is reused after an upgrade to 7.
-Accepted: frame decoding is not where the semantic content of a reading comes
-from, and paying a full re-perception of every medium for a point release
-would be worse.
+
+**This deliberately overrides a choice the library made the other way.**
+`readeverything`'s own `BinaryProbe`, left to discover rather than handed a
+declaration, records the full banner -- `ffmpeg version 6.1.1-3ubuntu5
+Copyright (c) 2000-2023 the FFmpeg developers` (measured 2026-08-16) -- and
+`_capabilities_handlers_can_use` documents the principle: a capability a
+handler consults belongs in the fingerprint, so the cache stays honest about
+what it depends on. `VideoHandler` does consult FFMPEG, so the library's
+position is that a video reading depends on which ffmpeg produced its frames,
+and it is not wrong: seek behaviour, scaler defaults and decoder fixes change
+the pixels handed to the VLM.
+
+Overridden anyway, because stability of stored readings is worth more here
+than cache precision. Ubuntu bumps ffmpeg under a long-lived install without
+anyone deciding to, and re-perceiving an entire corpus of video on a point
+release is a large, real cost against a small, mostly-theoretical difference.
+
+**The choice is sticky, which is the part to weigh before changing it.** Once
+readings are stored keyed on `"present"`, moving to a version string
+invalidates every one of them at once -- the migration gets more expensive
+every day the corpus grows, so this is not a decision that stays cheap to
+revisit. And the information is currently lost rather than merely kept out of
+the key: **nothing anywhere records which ffmpeg produced a reading**, so a
+disputed frame description cannot be traced to a decoder. The remedy that was
+preferred and not taken is provenance rather than fingerprint -- one `ffmpeg
+-version` at construction, stored on the reading -- which needs a new event
+field, and that is a domain change two tasks behind this one. Filed as a
+backlog candidate instead.
 """
 
 
@@ -87,8 +112,27 @@ def _locator_to_dict(locator: object) -> dict[str, object]:
     `application/perception.py`, which is the canonical list.
 
     Raises on an unknown locator type rather than emitting an untagged dict: a
-    new locator kind added upstream should stop the build here, where the
-    mapping lives, instead of reaching a resolver that would drop it.
+    new locator kind added upstream should stop here, where the mapping lives,
+    instead of reaching a resolver that would drop it. That is defensible only
+    because of the pin -- `pyproject.toml` caps `readeverything` below 0.3, so
+    a new member of the `Locator` union cannot arrive without a deliberate
+    bump, and the raise therefore fires under the developer running the upgrade
+    rather than under a user uploading a file.
+
+    **The cost, which is not small.** This is a runtime stop inside the
+    perception of a real medium, not a build-time one: the blast radius is a
+    whole reading lost -- upload to 500 -- rather than one span. And it is
+    data-dependent, so an upgrade whose test corpus happens to contain no
+    medium yielding the new locator passes CI and fires later on the first PDF
+    of an unusual shape.
+
+    The alternative considered: emit `{"kind": "unknown", "type":
+    type(locator).__name__}`, add `"unknown"` to `LOCATOR_KINDS`, and let the
+    three readers skip it -- which keeps the text of the reading and arguably
+    satisfies "an unknown kind is visibly unknown" better than raising does.
+    Rejected while the pin holds, because a silently skipped span is a citation
+    that quietly cannot be resolved, and under a pin the loud version is paid
+    by someone who can fix it. Revisit this the moment the cap moves.
     """
     match locator:
         case TimeSpan(start_s=start_s, end_s=end_s):
@@ -255,12 +299,24 @@ def build_perception_adapter() -> ReadEverythingPerception:
     because both are optional and an unset one is a reportable degradation
     rather than an error.
 
-    The vision model id is read once and used twice -- as the declared VISION
-    revision and as the model passed to `build_openai_vision_model` -- so the
-    `DomainError` `build_perception` raises on disagreement cannot be reached
-    from here. That is the point of the single read;
-    `test_the_declared_capability_set_matches_the_configured_models` is what
-    fails if the two are ever wired from different places.
+    **The declared revisions come off the constructed models, never off the
+    configuration string.** This shipped wrong once and broke every install
+    that had vision configured: `build_openai_vision_model` prefixes its
+    argument unconditionally, so `AGENT_VISION_MODEL=qwen2.5-vl` yields
+    `model_id == "openai/qwen2.5-vl"` (measured 2026-08-16 against 0.2.0),
+    `build_perception` compared the declared `qwen2.5-vl` against it and raised
+    `DomainError` on the first perceive of every vision-configured install.
+    Reading the id back off the object is the only wiring where the two cannot
+    diverge -- any transformation the library applies is applied before the
+    declaration is taken. `test_the_factory_declares_the_built_vision_models_own_id`
+    is what fails if this reverts to the config string.
+
+    The same is done for ASR, and there it is prevention rather than repair:
+    the library's agreement check covers VISION only (measured), so a mismatched
+    ASR revision would raise nothing and simply key the artifact cache on a
+    string no model reported. `RemoteWhisperTranscriber` happens not to rewrite
+    `model_id` today -- in equals out -- so taking it off the object costs
+    nothing and stops depending on that staying true.
     """
     vision_model = config.vision_model()
     vision = (
@@ -289,6 +345,6 @@ def build_perception_adapter() -> ReadEverythingPerception:
         artifact_root=config.perception_root(),
         vision=vision,
         transcriber=transcriber,
-        vision_model=vision_model,
-        transcriber_model=transcriber_model,
+        vision_model=vision.model_id if vision else None,
+        transcriber_model=transcriber.model_id if transcriber else None,
     )
