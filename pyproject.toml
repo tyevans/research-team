@@ -73,7 +73,7 @@ dependencies = [
     # `documents` add pillow and pypdfium2, which are new weight bought for
     # image and PDF handling. ffmpeg/ffprobe are OS binaries and are
     # deliberately not represented here.
-    "readeverything[remote-transcription,images,documents,vision]>=0.1.0,<0.2",
+    "readeverything[documents,images,remote-transcription,vision]>=0.2.0,<0.3",
 ]
 
 [project.optional-dependencies]

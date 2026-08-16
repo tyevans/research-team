@@ -6,13 +6,13 @@
 
 **Architecture:** A new `CorpusDerivedTextStored` event carries the rendered text, a JSON locator map and the capability fingerprint that produced it. Derived text is a `TextRecord` with `derived_from` set, not a third union arm, so every existing text reader works on it unchanged. Perception is a port over `readeverything.Perception` built against the blob root, which is usable directly as a filesystem root because content sniffing identifies extensionless digest-named files.
 
-**Tech Stack:** Python 3.13, pydantic, eventsource-py, `readeverything==0.1.x`, FastAPI, SQLite read models, React/TypeScript frontend.
+**Tech Stack:** Python 3.13, pydantic, eventsource-py, `readeverything==0.2.x`, FastAPI, SQLite read models, React/TypeScript frontend.
 
 **Spec:** `docs/superpowers/specs/2026-08-16-perception-and-derived-text-design.md`
 
 ## Global Constraints
 
-- **The dependency line is exactly** `"readeverything[remote-transcription,images,documents,vision]>=0.1.0,<0.2",`. Capped below the next minor: pre-1.0, a minor is where breaking renames land.
+- **The dependency line is exactly** `"readeverything[documents,images,remote-transcription,vision]>=0.2.0,<0.3",`. Capped below the next minor: pre-1.0, a minor is where breaking renames land.
 - **No test may make a network request.** No test may reference `192.168.1.14` or any other host. Use `readeverything.testing`'s `FakeTranscriber` / `FakeVision`, or `httpx.MockTransport` through `RemoteWhisperTranscriber`'s `transport=` seam.
 - **Every projection test asserts a row or a field value, never a 2xx or "it did not raise."** An event no projection handles counts as APPLIED, so a missing handler yields an empty read model and a green suite. This is the repository's most-repeated failure.
 - **Every column added to `corpus_documents` is nullable.** `apply_schema` reconciles an added nullable column onto a populated table and refuses a required one with no default.
@@ -77,7 +77,7 @@ In `pyproject.toml`, inside `[project].dependencies`, add — with this comment,
     # `documents` add pillow and pypdfium2, which are new weight bought for
     # image and PDF handling. ffmpeg/ffprobe are OS binaries and are
     # deliberately not represented here.
-    "readeverything[remote-transcription,images,documents,vision]>=0.1.0,<0.2",
+    "readeverything[documents,images,remote-transcription,vision]>=0.2.0,<0.3",
 ```
 
 Then run `uv sync` and commit `uv.lock` in the same commit.
@@ -654,15 +654,18 @@ class PerceptionPort(Protocol):
 
 Use `readeverything.testing`'s fakes and a real temporary root; **no network**.
 
+**`FakeVision()` takes no constructor arguments and `FakeTranscriber(duration_s: float = 3.0)` takes one — verified against 0.2.0 on 2026-08-16.** Neither lets you choose the text it returns or its `model_id`, so write the assertions against what they actually produce rather than against a string you passed in.
+
 ```python
 async def test_it_reads_a_blob_by_digest_with_no_copy(tmp_path):
-    """The blob store's own tree is the perception root. Measured 2026-08-15:
-    content sniffing identifies an extensionless digest-named file, so the uri
-    is `ab/abc...` and nothing is materialised anywhere."""
+    """The blob store's own tree is the perception root. Measured 2026-08-15
+    and re-taken against 0.2.0 on 2026-08-16: content sniffing identifies an
+    extensionless digest-named file, so the uri is `ab/abc...` and nothing is
+    materialised anywhere."""
     digest = _write_blob(tmp_path, PNG_BYTES)
-    adapter = await build_test_adapter(tmp_path, vision=FakeVision("a red square"))
+    adapter = build_test_adapter(tmp_path, vision=FakeVision())
     perceived = await adapter.perceive(sha256=digest, max_chars=1000)
-    assert "red square" in perceived.text
+    assert perceived.text
     assert perceived.locators[0].char_start == 0
 
 
@@ -680,15 +683,17 @@ async def test_capabilities_report_what_is_missing(tmp_path):
     assert any("AGENT_VISION_MODEL" in m for m in adapter.capabilities().missing())
 
 
-async def test_the_fingerprint_changes_when_the_model_does(tmp_path):
+def test_the_fingerprint_changes_when_the_configured_model_does(tmp_path):
     """It is what invalidates a derived transcript. If it did not move with the
-    model, two models' readings would be indistinguishable in the corpus."""
-    one = await build_test_adapter(tmp_path, vision=FakeVision("x", model_id="v1"))
-    two = await build_test_adapter(tmp_path, vision=FakeVision("x", model_id="v2"))
-    assert one.capabilities() != two.capabilities() or _fingerprint(one) != _fingerprint(two)
-```
+    model, two models' readings would be indistinguishable in the corpus.
 
-Check `FakeVision`'s actual constructor signature before writing these — it is `readeverything.testing.FakeVision` and this plan does not assume its parameter names.
+    Varies the *configured* revision, not the fake: the CapabilitySet is
+    constructed from configuration rather than probed (see the ruling above),
+    so the configured model id is the thing the fingerprint is a function of."""
+    one = _fingerprint_for(vision_model="v1")
+    two = _fingerprint_for(vision_model="v2")
+    assert one != two
+```
 
 - [ ] **Step 3: Run and watch fail**
 

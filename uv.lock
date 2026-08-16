@@ -1783,16 +1783,16 @@ wheels = [
 
 [[package]]
 name = "readeverything"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "charset-normalizer" },
     { name = "puremagic" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2f/69/3284c7abd6d6805d24c6bbc757d1d6b26667724b4e3ba239d1b6959819a6/readeverything-0.1.0.tar.gz", hash = "sha256:75da12f35b2bc23df00d7d5f330dbb0830810f9537751818650bd313fa3bbdad", size = 547747, upload-time = "2026-08-15T22:57:48.05Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8c/80/af66f703ea27fe2bbb24db713d8d97ec29f78734fe6eb076391c2339e93d/readeverything-0.2.0.tar.gz", hash = "sha256:6994dbb05939eb737ef79a707f201efe888fbbfce78357b636f001dbc28b9a8a", size = 571331, upload-time = "2026-08-16T00:31:04.127Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a5/0d/07032b4a592e18541c4ad7e5a9426aeba78a42d3a739fc694cced333b0e5/readeverything-0.1.0-py3-none-any.whl", hash = "sha256:0225306c44dff07271cfc88424116aabf93ceb8d8bb6d4280dd9289b8c791761", size = 145263, upload-time = "2026-08-15T22:57:46.483Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/99/642af1be9e7748d754a4f5a2e9ad515738c0498d958f43d50781fb2d3d02/readeverything-0.2.0-py3-none-any.whl", hash = "sha256:0ea48fe106cd658c51f1e4546e0819ddbd250c99f52d1324530cea4d09cf3101", size = 150498, upload-time = "2026-08-16T00:31:02.734Z" },
 ]
 
 [package.optional-dependencies]
@@ -1984,7 +1984,7 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'tracing'", specifier = ">=1.0,<2.0" },
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "readeverything", extras = ["remote-transcription", "images", "documents", "vision"], specifier = ">=0.1.0,<0.2" },
+    { name = "readeverything", extras = ["documents", "images", "remote-transcription", "vision"], specifier = ">=0.2.0,<0.3" },
     { name = "redstring", extras = ["llm", "neo4j", "pgvector"], specifier = ">=0.9.1,<0.10" },
     { name = "trafilatura", specifier = ">=2.2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.1" },

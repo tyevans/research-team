@@ -20,8 +20,11 @@ this slice's job is to make the 4:12 *recoverable* rather than to draw it.
 
 The library does more than transcribe, and the design below is shaped by what
 it hands over rather than by what this repository would have built alone.
-Everything in this section was **measured on 2026-08-15 against
-`readeverything==0.1.0` from PyPI**, not read off its documentation.
+Everything in this section was **measured against `readeverything` installed
+from PyPI**, not read off its documentation: first on 2026-08-15 against 0.1.0,
+then re-taken on 2026-08-16 against 0.2.0 when the pin moved. Every result
+below reproduced byte-identically across the two, and an `__all__` diff removed
+nothing and added only `TranscriptCue` to the exported surface.
 
 `build_perception(root, *, vision=None, transcriber=None, ...)` returns a
 `Perception` over a filesystem root. `Perception.represent(uri, budget)`
@@ -335,7 +338,7 @@ runners and on the development machine (ffmpeg 6.1.1, verified 2026-08-15).
 ### Dependency
 
 ```toml
-"readeverything[remote-transcription,images,documents,vision]>=0.1.0,<0.2",
+"readeverything[documents,images,remote-transcription,vision]>=0.2.0,<0.3",
 ```
 
 Capped below the next minor, for the reason `eventsource-py` and `redstring`
@@ -343,10 +346,12 @@ are: pre-1.0, and a minor is where breaking renames land. The extras add
 `pillow` and `pypdfium2` as new weight; `remote-transcription` is `httpx`,
 already present, and `vision` is `langchain-openai`, already present.
 
-**The PyPI release is 0.1.0 and the working copy elsewhere is an unreleased
-0.2.0.** This spec is written against 0.1.0 because that is what
-`uv sync` can resolve, and every measurement above was taken against 0.1.0
-installed from PyPI rather than against the source tree.
+**Written against 0.2.0, the current PyPI release.** The first draft of this
+spec was measured against 0.1.0; the pin moved to 0.2.0 on 2026-08-16 and every
+measurement was re-taken rather than assumed to carry. They did carry — same
+text, same spans, same degradations — and no signature this design depends on
+changed. Measured against what `uv sync` resolves, never against a source tree,
+because a source tree is not what CI installs.
 
 ## Testing
 
