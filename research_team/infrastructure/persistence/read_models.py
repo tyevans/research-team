@@ -1658,14 +1658,19 @@ class OntologyClassRow(ReadModel):
 
 
 class OntologyMembershipRow(ReadModel):
-    """One member of one class.
+    """One member of one class, as the document spelled it.
 
-    `entity_id` is nullable on purpose and it is the staleness contract. A
-    member the pass named but that resolves to no entity today keeps its row
-    with a null id: it is dropped from the drawing, because there is nothing
-    to draw it against, and retained in the class, so `member_count` still
-    checks out against `declared_count` and a re-run is not needed merely
-    because a name drifted. Deleting the row instead would make an unrelated
+    **No entity id, deliberately.** The first design stored one and it was
+    wrong in the way redstring's ADR 0005 warns about: re-extraction remints
+    entity ids with no invalidation event, so a stored id would name an entity
+    that no longer exists, and nothing here would know. `ProjectGraphReader`
+    resolves the name against the entities it is already holding, on every
+    read -- which costs no extra query and cannot go stale.
+
+    So the name is the whole record. A member that matches no entity today is
+    still a member: its row keeps `member_count` honest against the class's
+    `declared_count`, and the next read resolves it if extraction later
+    produces the entity. Deleting it instead would make an unrelated
     re-extraction look like a discovery failure.
     """
 
@@ -1674,7 +1679,6 @@ class OntologyMembershipRow(ReadModel):
     project_id: UUID
     class_id: UUID
     member_name: str
-    entity_id: UUID | None = None
     ordinal: int | None = None
 
     @staticmethod
@@ -1803,7 +1807,6 @@ class OntologyStore:
                         project_id=project_id,
                         class_id=class_id,
                         member_name=member.name,
-                        entity_id=None,
                         ordinal=member.ordinal,
                     )
                 )

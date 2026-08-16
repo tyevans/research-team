@@ -1773,7 +1773,7 @@ def create_app(
         if graphs is None:
             raise HTTPException(status_code=503, detail="no graph read model is configured")
         store = await graphs.open(project_id)
-        return ProjectGraphReader(project_id=project_id, store=store)
+        return ProjectGraphReader(project_id=project_id, store=store, ontology=ontology)
 
     @app.get("/api/projects/{project_id}/graph")
     async def read_graph(project_id: UUID, limit: int = MAX_GRAPH_NODES):
@@ -2021,11 +2021,7 @@ def create_app(
                     "rejectedMembers": json.loads(row.rejected_members),
                     "stale": row.stale,
                     "members": [
-                        {
-                            "name": member.member_name,
-                            "ordinal": member.ordinal,
-                            "entityId": str(member.entity_id) if member.entity_id else None,
-                        }
+                        {"name": member.member_name, "ordinal": member.ordinal}
                         for member in members
                     ],
                 }

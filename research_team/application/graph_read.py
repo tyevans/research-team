@@ -63,6 +63,14 @@ MAX_GRAPH_NODES = 5_000
 #: nothing between `infer_relations` and the canvas bounds edges otherwise.
 MAX_INFERRED_EDGES = 2_000
 
+#: How many discovered classes reach one drawing. Separate from
+#: `MAX_GRAPH_NODES`, which counts redstring entities and cannot see these at
+#: all -- a class node is synthesised on read rather than stored. Low relative
+#: to the node cap because a class is a hub: 200 classes averaging ten members
+#: each is 2,000 edges on their own, which is `MAX_INFERRED_EDGES` spent before
+#: a single temporal edge is drawn.
+MAX_ONTOLOGY_CLASSES = 200
+
 #: How many usages `GET .../usages` will hand back in one call. Not a
 #: legibility bound the way `MAX_GRAPH_NODES` is -- a list of passages
 #: renders fine at any length -- but `UsageReader.usages` runs one BM25
@@ -91,6 +99,17 @@ class GraphEntity:
     entity_id: str
     name: str
     entity_type: str
+    inferred: bool = False
+    """Synthesised by a derivation pass rather than extracted from a document.
+
+    True only for the class nodes an ontology pass produced. Load-bearing
+    beyond display: a class node's `entity_id` is derived from the ontology
+    table and belongs to no redstring entity, so a client that fetches
+    `/neighborhood` or `/definition` on click must not fetch for this node --
+    the first answers 404 and the second has nothing to define. Defaulted, so
+    every existing construction site and test is unaffected, exactly as
+    `GraphRelationship.inferred` was.
+    """
     temporal: str | None = None
     """When this entity happened, rendered for reading. `None` when undated.
 

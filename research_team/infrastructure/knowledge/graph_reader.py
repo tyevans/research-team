@@ -17,6 +17,7 @@ from research_team.application.graph_read import (
     MAX_GRAPH_NODES,
     MAX_INFERRED_EDGES,
     MAX_NEIGHBORHOOD_DEPTH,
+    MAX_ONTOLOGY_CLASSES,
     EntityPage,
     Graph,
     GraphEntity,
@@ -59,6 +60,94 @@ def _to_graph_entity(entity: Any) -> GraphEntity:
         # `TemporalRelation` carries extents and no entities to ask.
         temporal=entity_extent_label(entity),
     )
+
+
+def _class_node_id(class_row: Any) -> str:
+    """A class's node id on the canvas: its read-model row id, as a string.
+
+    Reused rather than minted fresh on each read, so a class keeps the same id
+    between two fetches and the browser's force layout keeps its position --
+    `graph.ts` preserves node identity for exactly that reason. It cannot
+    collide with a redstring entity id: `OntologyClassRow.row_id` is a uuid5
+    under this feature's own namespace.
+    """
+    return str(class_row.id)
+
+
+def _ontology_layer(
+    class_rows: list[Any],
+    members_by_class: dict[Any, list[Any]],
+    entities_by_name: dict[str, str],
+) -> tuple[tuple[GraphEntity, ...], tuple[GraphRelationship, ...], bool]:
+    """Class nodes and `instance_of` edges over the entities already on the canvas.
+
+    **Membership is resolved here, on read, by normalised name** -- not stored
+    on the membership row. That was the first design and it was wrong in the
+    way redstring's ADR 0005 warns about: a stored entity id goes stale the
+    moment re-extraction remints it, with no invalidation event, and the row
+    would then name an entity that no longer exists. Resolving against the
+    entity set the caller is *already holding* costs nothing extra and cannot
+    go stale, which is the one property the temporal edges have that this
+    layer looked like it had to give up.
+
+    `entities_by_name` is built from the entities the caller is about to
+    return, not the project's whole graph. A member the pass named that
+    matches no entity -- because extraction never produced one, or because the
+    node cap excluded it -- draws nothing, since an edge to a node the caller
+    was not given is exactly the dangling reference the stored-edge filter
+    exists to prevent. The membership row survives regardless, so the class's
+    `member_count` still checks out against its `declared_count` and a re-run
+    is not needed merely because a name drifted.
+
+    A class none of whose members survive is dropped whole. A class node with
+    no edges is a bare hub: a name floating unattached, asserting a grouping of
+    nothing.
+
+    `instance_of` rather than `is_a` or `member_of`, both of which
+    `research_corpus.yaml` already declares as asserted types. Reusing one
+    would not be a correctness bug -- the browser keys links on
+    `source|target|type|inferred`, so the two cannot collide -- but a reader
+    filtering the graph by `is_a` would get a silent mix of what documents
+    asserted and what this pass judged.
+    """
+    nodes: list[GraphEntity] = []
+    edges: list[GraphRelationship] = []
+    for class_row in class_rows[:MAX_ONTOLOGY_CLASSES]:
+        node_id = _class_node_id(class_row)
+        drawable = [
+            (member, entities_by_name[member.member_name.strip().lower()])
+            for member in members_by_class.get(class_row.id, [])
+            if member.member_name.strip().lower() in entities_by_name
+        ]
+        if not drawable:
+            continue
+        nodes.append(
+            GraphEntity(
+                entity_id=node_id,
+                name=class_row.name,
+                entity_type="class",
+                inferred=True,
+            )
+        )
+        # Provenance, not arithmetic -- the one place this derivation differs
+        # from the temporal one. A temporal edge's working is two extents and a
+        # verb; a class edge's working is "the document said so, here". So the
+        # derivation names the source and the offsets, which is what the view
+        # opens the document at.
+        derivation = (
+            f"{class_row.source_id} [{class_row.evidence_start}-{class_row.evidence_end}]"
+        )
+        edges.extend(
+            GraphRelationship(
+                source_id=entity_id,
+                target_id=node_id,
+                relationship_type="instance_of",
+                inferred=True,
+                derivation=derivation,
+            )
+            for _member, entity_id in drawable
+        )
+    return tuple(nodes), tuple(edges), len(class_rows) > MAX_ONTOLOGY_CLASSES
 
 
 def _to_graph_relationship(relationship: Any) -> GraphRelationship:
@@ -114,9 +203,41 @@ class ProjectGraphReader:
     was handed, not by anything a caller passes per call.
     """
 
-    def __init__(self, *, project_id: UUID, store: Any) -> None:
+    def __init__(self, *, project_id: UUID, store: Any, ontology: Any = None) -> None:
         self._project_id = project_id
         self._store = store
+        # Optional so every construction site that predates the ontology layer
+        # keeps working unchanged. The cost of that default is real and is not
+        # hidden: a site that forgets to pass one draws no classes and reports
+        # no error, which is the silent-empty failure this feature is arranged
+        # against. `tests/integration/test_ontology_graph_wiring.py` is what
+        # closes it, by asking a *composed* application for a class node rather
+        # than trusting any construction site to be right.
+        self._ontology = ontology
+
+    async def _classes(
+        self, drawn: list[Any]
+    ) -> tuple[tuple[GraphEntity, ...], tuple[GraphRelationship, ...], bool]:
+        """This project's discovered classes, joined to the entities being drawn.
+
+        One indexed query plus one per class, where `_inferred_edges` is pure
+        arithmetic over entities already in hand. That is the honest cost of
+        the ontology layer being a persisted judgement rather than a computed
+        one: it cannot be recomputed on every read, so it has to be fetched.
+        It is not the expensive thing on this path -- `find_entities` above
+        already returns the tenant's entire entity set.
+        """
+        if self._ontology is None:
+            return (), (), False
+        class_rows = await self._ontology.classes_for(self._project_id)
+        members = {row.id: await self._ontology.members_for(row.id) for row in class_rows}
+        # Last spelling wins on a duplicate normalised name. Two entities that
+        # normalise the same are what `Consolidator` exists to merge, and
+        # picking one arbitrarily is better than drawing the class twice --
+        # but it is arbitrary, and worth revisiting if a real corpus produces
+        # a member name that legitimately names two distinct entities.
+        by_name = {entity.normalized_name: str(entity.id) for entity in drawn}
+        return _ontology_layer(class_rows, members, by_name)
 
     async def _without_aliases(self, entities: list[Any]) -> list[Any]:
         """`entities` with everything merged away removed.
@@ -240,11 +361,16 @@ class ProjectGraphReader:
         # not on the canvas, so a temporal edge to it would be exactly the
         # dangling reference `returned_ids` above exists to prevent.
         inferred, inferred_truncated = _inferred_edges(kept)
+        # After `_inferred_edges`, and folded into one truncation verdict
+        # rather than reporting its own: a reader told "some computed lines
+        # were dropped" does not care which pass dropped them, and two flags
+        # would be two things to check for one fact.
+        class_nodes, class_edges, classes_truncated = await self._classes(kept)
         return Graph(
-            entities=tuple(_to_graph_entity(entity) for entity in kept),
-            relationships=edges + inferred,
+            entities=tuple(_to_graph_entity(entity) for entity in kept) + class_nodes,
+            relationships=edges + inferred + class_edges,
             truncated=len(entities) > capped,
-            inferred_truncated=inferred_truncated,
+            inferred_truncated=inferred_truncated or classes_truncated,
         )
 
     async def neighborhood(self, entity_id: str, *, depth: int = 1) -> Neighborhood | None:
@@ -295,8 +421,15 @@ class ProjectGraphReader:
         # risk of a silently short list here is judged acceptable rather
         # than proven safe.
         inferred, _inferred_truncated = _inferred_edges([root, *neighbors])
+        # Over root plus neighbours, same as the stored edges above, so a class
+        # only appears here when at least one of its members is in view. A
+        # reader who opened one difficulty sees the scale it belongs to and the
+        # siblings that came with it -- and a class whose members are all
+        # elsewhere draws nothing, which is `_ontology_layer`'s bare-hub rule
+        # doing the same job at a different radius.
+        class_nodes, class_edges, _classes_truncated = await self._classes([root, *neighbors])
         return Neighborhood(
             root=_to_graph_entity(root),
-            entities=tuple(_to_graph_entity(entity) for entity in neighbors),
-            relationships=edges + inferred,
+            entities=tuple(_to_graph_entity(entity) for entity in neighbors) + class_nodes,
+            relationships=edges + inferred + class_edges,
         )

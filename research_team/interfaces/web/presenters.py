@@ -769,11 +769,19 @@ def entity_view(entity: GraphEntity) -> dict[str, Any]:
     for an entity with no extent, a string for one that has it -- rather
     than reshaped here, so there is one place, not two, that decides what a
     temporal edge is allowed to compare.
+
+    `inferred` travels with every node, not only synthesised ones, for
+    `relationship_view`'s reason: a client should never have to read an
+    absent key as `false`. It matters more here than there, because it is not
+    only a display flag -- a synthesised class node's id belongs to no stored
+    entity, so a client that fetches `/neighborhood` or `/definition` on click
+    must not fetch for one. See `GraphEntity.inferred`.
     """
     return {
         "entity_id": entity.entity_id,
         "name": entity.name,
         "entity_type": entity.entity_type,
+        "inferred": entity.inferred,
         "temporal": entity.temporal,
     }
 

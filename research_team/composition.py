@@ -1598,7 +1598,9 @@ def build_application(
         if chunk_store is None:
             return None
         return DefinitionService(
-            graph=ProjectGraphReader(project_id=target_project_id, store=store),
+            graph=ProjectGraphReader(
+                project_id=target_project_id, store=store, ontology=ontology
+            ),
             usages=UsageReader(store, chunk_store, target_project_id),
             cache=ProjectDefinitionCache(definition_invalidation, target_project_id),
             # The extraction model, not a second client -- see
