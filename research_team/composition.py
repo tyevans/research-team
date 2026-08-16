@@ -58,6 +58,7 @@ from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import KnowledgeError, SourceRef
+from research_team.application.media_curation import MediaCurationTextPort, MediaSearchPort
 from research_team.application.ontology_discovery import OntologyDiscoveryService
 from research_team.application.perception import MediaPerceiver, PerceptionPort
 from research_team.application.ports import GateReview
@@ -113,6 +114,7 @@ from research_team.infrastructure.agent.knowledge_tools import (
     KNOWLEDGE_PROMPT,
     build_knowledge_tools,
 )
+from research_team.infrastructure.agent.media_curation_adapter import build_curation_ports
 from research_team.infrastructure.agent.ontology_model import ChatModelOntologyText
 from research_team.infrastructure.agent.recall import PageMemo, Recall
 from research_team.infrastructure.agent.search import (
@@ -280,6 +282,19 @@ class Application:
     same one `media_proposals` above subscribes to -- a repository built over a
     different store would let a curation and the projection reading it disagree
     about what was ever appended."""
+
+    media_curation_text: MediaCurationTextPort | None
+    """The chain's text port, or `None` when this install has no model to
+    curate with. Paired with `media_curation_search` below rather than
+    exposed only as a bundle, mirroring `corpus`/`blob_store`: `create_app`
+    takes each optional dependency on its own name, and a route checks each
+    the way `_reader` checks `corpus` and `blob_store` together."""
+
+    media_curation_search: MediaSearchPort | None
+    """The chain's search port, `None` exactly when `searxng` above is --
+    `build_curation_ports` needs a SearXNG instance the same way
+    `build_search_tool` does, and a build with no instance configured has
+    nothing for either to search."""
 
     check_telemetry_readers: Callable[[UUID], CheckTelemetryReadPort]
     """One project's `CheckTelemetryReadPort`, built fresh per call.
@@ -775,6 +790,23 @@ def build_application(
         prompt_suffix += SEARCH_PROMPT
     else:
         prompt_suffix += NO_SEARCH_CLAUSE
+
+    # `None`/`None` when `searxng` is, matching `search_attempts` above: the
+    # curation chain's search port needs the same instance the agent's own
+    # `web_search` tool does, and a build with neither configured has nothing
+    # for `MediaCurationService` to search with either. The text port is
+    # gated the same way rather than built unconditionally, so the pair
+    # answers `create_app`'s 503 check together instead of one half being
+    # present for a service the other half can never actually run.
+    media_curation_text: MediaCurationTextPort | None = None
+    media_curation_search: MediaSearchPort | None = None
+    if searxng is not None:
+        media_curation_text, media_curation_search = build_curation_ports(
+            extraction_model,
+            model_name=config.model_name(),
+            searxng_url=searxng,
+            limit=config.searxng_results(),
+        )
 
     if project_id is not None:
         # A `project_id=` at build time scopes the whole application to that
@@ -1876,6 +1908,8 @@ def build_application(
         ontology_discoverers=ontology_discoverer,
         media_proposals=media_proposals,
         media_proposal_repository=media_proposal_repository,
+        media_curation_text=media_curation_text,
+        media_curation_search=media_curation_search,
         graphs=graphs,
         topic_readers=topic_reader,
         topic_repository=topic_repository,
