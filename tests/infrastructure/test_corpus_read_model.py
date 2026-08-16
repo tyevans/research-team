@@ -7,6 +7,7 @@ table is lossy in any byte, every citation in every course artifact is wrong
 and nothing else in the system would notice.
 """
 
+import json
 from uuid import uuid4
 
 import pytest
@@ -14,7 +15,9 @@ from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 from redstring import DocumentExtracted
 
 from research_team.domain.corpus import (
+    UNREADABLE_DEGRADATIONS,
     Corpus,
+    CorpusDerivedTextStored,
     CorpusDocumentDropped,
     CorpusDocumentStored,
     CorpusMediaStored,
@@ -790,3 +793,109 @@ async def test_dropping_a_source_in_neither_table_still_raises(corpus_store) -> 
         await corpus_store.projection.handle(
             CorpusDocumentDropped(aggregate_id=project_id, source_id="v1", reason="mistake")
         )
+
+
+def _derived_text_stored(project_id, source_id: str, **overrides) -> CorpusDerivedTextStored:
+    """A `CorpusDerivedTextStored` with sane defaults, mirroring `_media_stored`."""
+    fields = {
+        "aggregate_id": project_id,
+        "source_id": source_id,
+        "derived_from": "vid",
+        "text": "[0:00:01.0] (speech) hello",
+        "sha256": "deadbeef",
+        "locator_map": (
+            '[{"char_start": 0, "char_end": 26, '
+            '"locator": {"kind": "time", "start_s": 1.0, "end_s": 2.0}}]'
+        ),
+        "perceived_with": "fingerprint123",
+        "degradations": '["no vision model configured"]',
+    }
+    fields.update(overrides)
+    return CorpusDerivedTextStored(**fields)
+
+
+async def test_a_derived_source_lands_in_the_documents_table_with_its_map(
+    corpus_store,
+) -> None:
+    """Asserts the row and the map, because an assertion that the projection
+    "ran" passes with the handler deleted -- an event no projection handles
+    counts as applied.
+    """
+    project_id = uuid4()
+    await corpus_store.projection.handle(_derived_text_stored(project_id, "vid#perceived"))
+
+    row = await corpus_store.get(project_id, "vid#perceived")
+    assert row is not None
+    assert row.derived_from == "vid"
+    assert row.perceived_with == "fingerprint123"
+    assert json.loads(row.locator_map)[0]["locator"]["start_s"] == 1.0
+    assert row.text == "[0:00:01.0] (speech) hello"
+    assert row.char_count == len("[0:00:01.0] (speech) hello")
+
+
+async def test_a_fetched_document_leaves_the_derived_columns_null(corpus_store) -> None:
+    """The columns are nullable and a plain document is what makes them so."""
+    project_id = uuid4()
+    await corpus_store.projection.handle(
+        CorpusDocumentStored(
+            aggregate_id=project_id, source_id="paper", text="prose", sha256="b" * 64
+        )
+    )
+    row = await corpus_store.get(project_id, "paper")
+    assert row is not None
+    assert row.derived_from is None
+    assert row.locator_map is None
+    assert row.perceived_with is None
+    assert row.degradations is None
+
+
+async def test_to_record_carries_derivedness_back_out(corpus_store) -> None:
+    project_id = uuid4()
+    await corpus_store.projection.handle(
+        _derived_text_stored(
+            project_id,
+            "vid#perceived",
+            degradations='["a gap"]',
+        )
+    )
+    row = await corpus_store.get(project_id, "vid#perceived")
+    record = to_record(row)
+    assert record.kind == "text"
+    assert record.derived_from == "vid"
+    assert record.perceived_with == "fingerprint123"
+    assert record.degradations == ("a gap",)
+
+
+async def test_an_unreadable_stored_degradations_reads_as_the_marker(corpus_store) -> None:
+    """A row that predates or otherwise carries an unparsable `degradations`
+    column must not read back as `()` -- `TextRecord.degradations` docstring
+    says empty means a complete perception, and a column that could not be
+    read is not that. The projection stores the domain's own
+    `UNREADABLE_DEGRADATIONS` marker rather than nulling the column, so this
+    case is indistinguishable from the one `_degradations_from` guards in the
+    aggregate's own fold -- one string, one meaning, wherever it is read.
+    """
+    project_id = uuid4()
+    await corpus_store.projection.handle(
+        _derived_text_stored(project_id, "vid#perceived", degradations="not json")
+    )
+    row = await corpus_store.get(project_id, "vid#perceived")
+    assert row is not None
+    assert json.loads(row.degradations) == list(UNREADABLE_DEGRADATIONS)
+    record = to_record(row)
+    assert record.degradations == UNREADABLE_DEGRADATIONS
+    assert record.degradations != ()
+
+
+async def test_a_replayed_derived_text_event_rewrites_rather_than_duplicates(
+    corpus_store,
+) -> None:
+    """Idempotent by overwrite, matching the media and document handlers."""
+    project_id = uuid4()
+    await corpus_store.projection.handle(_derived_text_stored(project_id, "vid#perceived"))
+    await corpus_store.projection.handle(
+        _derived_text_stored(project_id, "vid#perceived", text="revised transcript")
+    )
+    rows = await corpus_store.list_all(project_id)
+    assert len(rows) == 1
+    assert rows[0].text == "revised transcript"

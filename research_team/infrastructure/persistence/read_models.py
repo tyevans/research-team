@@ -64,6 +64,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.application import SessionSummary, SummaryHealth
 from research_team.domain import (
+    UNREADABLE_DEGRADATIONS,
+    CorpusDerivedTextStored,
     CorpusDocumentDropped,
     CorpusDocumentStored,
     CorpusMediaStored,
@@ -622,6 +624,26 @@ class CorpusDocumentRow(ReadModel):
     note: str | None = None
     fetched_at: str | None = None
     dropped_reason: str | None = None
+    derived_from: str | None = None
+    """The media source this was perceived from, or None for a fetched
+    document -- mirrors `TextRecord.derived_from` exactly; see its docstring
+    for why this is not a third kind of row."""
+    locator_map: str | None = None
+    """JSON, read whole and never queried into. The locator union
+    (`TimeSpan | PageRef | BBox | CharSpan | ByteRange`) belongs to
+    `readeverything` and will grow arms there; a structured column here would
+    make every arm it adds a schema change in this repository, for a query
+    nobody makes -- resolving one offset needs every segment in the map, so
+    there is no partial read that would justify decomposing it. Nullable
+    because a fetched document has no map at all, not an empty one."""
+    perceived_with: str | None = None
+    """The capability fingerprint that produced this transcript, or None for
+    a fetched document. Mirrors `TextRecord.perceived_with`."""
+    degradations: str | None = None
+    """JSON list of strings, or the JSON encoding of `UNREADABLE_DEGRADATIONS`
+    if the event's own field could not be read -- see `_on_derived_text` for
+    why null is not used for that case. None (not `"[]"`) for a fetched
+    document, which is a different fact from "perception was complete"."""
     extracted_at: str | None = None
     """When this document's text was last folded into the graph, or None.
 
@@ -735,6 +757,14 @@ def to_record(row: CorpusDocumentRow | CorpusMediaRow) -> SourceRecord:
         note=row.note,
         fetched_at=row.fetched_at,
         dropped_reason=row.dropped_reason,
+        derived_from=row.derived_from,
+        perceived_with=row.perceived_with,
+        # Stored as JSON, wanted as a tuple. `row.degradations` is None for a
+        # fetched document (no field to decode) and JSON otherwise -- either
+        # the producer's list or `UNREADABLE_DEGRADATIONS` re-encoded by
+        # `_on_derived_text`, which round-trips back to the same marker here
+        # rather than a bare `json.loads` result.
+        degradations=tuple(json.loads(row.degradations)) if row.degradations else (),
     )
 
 
@@ -794,6 +824,70 @@ class CorpusProjection(DeclarativeProjection):
             # the person who can requeue it. Ordering makes this safe rather
             # than lucky: `ingest` stores before it extracts, so the
             # `DocumentExtracted` that follows sets the field again.
+            "extracted_at": None,
+        }
+        existing = await self._rows.get(row_id)
+        if existing is None:
+            await self._rows.save(CorpusDocumentRow(id=row_id, **fields))
+            return
+        for name, value in fields.items():
+            setattr(existing, name, value)
+        await self._rows.save(existing)
+
+    @handles(CorpusDerivedTextStored)
+    async def _on_derived_text(self, event: CorpusDerivedTextStored) -> None:
+        """Write a transcript into `corpus_documents`, not a new table.
+
+        A derived source *is* a text source -- it chunks, it quotes, it
+        extracts -- so every existing text reader has to find it here, not in
+        a parallel place that would need its own `get`/`list_all`/extraction
+        wiring to match. Load-and-mutate, matching `_on_stored` and
+        `_on_media_stored`: the version counter climbs on a re-perception
+        rather than resetting.
+
+        **`degradations` is stored as the marker, not as null, when the
+        event's own field will not parse.** The two candidates were: null
+        the column, or store `UNREADABLE_DEGRADATIONS` (JSON-encoded, since
+        the column is JSON text). Null loses the distinction `TextRecord`
+        depends on -- its docstring says an *empty* `degradations` means "a
+        complete perception", so a NULL that `to_record` decoded as `()`
+        would read back as a clean transcript when the truth is that this
+        column could not be read at all. Storing the marker instead means
+        `to_record` decodes it to the same tuple the aggregate's own
+        `_degradations_from` returns for the identical failure in `evolve` --
+        one string, one meaning, whichever side reads it. This branch is not
+        reachable through `decide`, which refuses a malformed payload before
+        an event is ever written; it exists for the same reason
+        `_degradations_from` does, for an event this build did not write --
+        an earlier build, a repair script, or a direct append.
+        """
+        row_id = CorpusDocumentRow.row_id(event.aggregate_id, event.source_id)
+        try:
+            parsed_degradations = json.loads(event.degradations)
+            degradations_ok = isinstance(parsed_degradations, list) and all(
+                isinstance(item, str) for item in parsed_degradations
+            )
+        except (ValueError, TypeError):
+            degradations_ok = False
+        degradations = (
+            event.degradations
+            if degradations_ok
+            else json.dumps(list(UNREADABLE_DEGRADATIONS))
+        )
+        fields = {
+            "project_id": event.aggregate_id,
+            "source_id": event.source_id,
+            "text": event.text,
+            "sha256": event.sha256,
+            "char_count": len(event.text),
+            "title": event.title,
+            "dropped_reason": None,
+            "derived_from": event.derived_from,
+            "locator_map": event.locator_map,
+            "perceived_with": event.perceived_with,
+            "degradations": degradations,
+            # Same reasoning as `_on_stored`: new bytes mean any existing
+            # graph describes text this source no longer has.
             "extracted_at": None,
         }
         existing = await self._rows.get(row_id)
