@@ -29,6 +29,9 @@ from research_team.application.media_curation import (
     parse_needs,
     parse_terms,
 )
+from research_team.application.topic_attention import TopicAttention
+from research_team.application.topic_read import SubQuestionView, TopicDetail, TopicView
+from research_team.application.topics import TopicSummary
 from research_team.domain.media_proposals import (
     IgnoreMediaHost,
     MediaNeedsIdentified,
@@ -234,6 +237,47 @@ class FakeSearchPort:
         return self._results
 
 
+def _topic_detail(topic_id, *, question: str = "what did Rome eat?") -> TopicDetail:
+    """A `TopicDetail` with content stage 1's prompt can be checked against --
+    a distinctive `question` a test can look for verbatim in what the fake
+    text port received, the way `_result`'s url is what a prompt is checked
+    for elsewhere in this module.
+    """
+    summary = TopicSummary(
+        topic_id=topic_id,
+        question=question,
+        status="open",
+        sources=1,
+        findings=1,
+        open_sub_questions=1,
+    )
+    attention = TopicAttention(topic_id=topic_id, findings=())
+    return TopicDetail(
+        view=TopicView(summary=summary, attention=attention),
+        rationale="",
+        scope="diet and food supply of the city of Rome",
+        sub_questions=(SubQuestionView(key="q1", question="what grain?", answer=None),),
+        source_ids=("s1",),
+        findings=("the annona distributed grain",),
+        contested=False,
+    )
+
+
+class FakeTopicPort:
+    """`TopicReadPort` over one canned `TopicDetail`, or `None` for every id
+    not explicitly given one -- mirrors the real port's contract that a
+    topic nobody opened reads as absence, not an error."""
+
+    def __init__(self, topics: dict) -> None:
+        self._topics = topics
+
+    async def list_topics(self) -> list[TopicView]:
+        raise NotImplementedError("unused by MediaCurationService")
+
+    async def read_topic(self, topic_id) -> TopicDetail | None:
+        return self._topics.get(topic_id)
+
+
 @pytest.fixture
 def project_id():
     return uuid4()
@@ -259,8 +303,15 @@ def proposals_repo(harness) -> AggregateRepository[MediaProposals]:
     )
 
 
-def _service(text, search, proposals_repo) -> MediaCurationService:
-    return MediaCurationService(text=text, search=search, proposals=proposals_repo)
+def _service(text, search, proposals_repo, topics=None, topic_id=None) -> MediaCurationService:
+    # A caller that doesn't care about stage 1's prompt content gets a topic
+    # for free, keyed to whatever `topic_id` it passes to `curate` -- most
+    # tests in this module are about the chain after stage 1, not about it.
+    if topics is None:
+        topics = FakeTopicPort({topic_id: _topic_detail(topic_id)} if topic_id else {})
+    return MediaCurationService(
+        text=text, search=search, proposals=proposals_repo, topics=topics
+    )
 
 
 async def test_an_ignored_asset_is_filtered_before_the_judging_call(
@@ -287,7 +338,8 @@ async def test_an_ignored_asset_is_filtered_before_the_judging_call(
         [_result("https://bad.example/x.jpg"), _result("https://ok.example/y.jpg")]
     )
 
-    outcome = await _service(port, search, proposals_repo).curate(project_id, topic_id)
+    service = _service(port, search, proposals_repo, topic_id=topic_id)
+    outcome = await service.curate(project_id, topic_id)
 
     assert outcome.ignored == 1
     # One surviving candidate reached the judge -- one "https://" in its prompt.
@@ -306,8 +358,52 @@ async def test_needs_are_recorded_even_when_every_search_returns_nothing(
     port = FakeTextPort([_needs_json(2), _terms_json(1), _terms_json(1)])
     search = FakeSearchPort([])
 
-    outcome = await _service(port, search, proposals_repo).curate(project_id, topic_id)
+    service = _service(port, search, proposals_repo, topic_id=topic_id)
+    outcome = await service.curate(project_id, topic_id)
 
     assert outcome.needs == 2
     assert outcome.candidates == 0
     assert any(isinstance(e, MediaNeedsIdentified) for e in harness.published_events)
+
+
+async def test_stage_1_is_prompted_with_the_topics_own_content(
+    project_id, topic_id, proposals_repo
+):
+    """Stage 1 has to see *this* topic's question, or it can only invent
+    generic needs -- indistinguishable, by eye, from any other topic's reply.
+    This asserts on the prompt the fake text port actually received, not
+    merely that `curate` returned something: a return-value-only assertion
+    would still pass with `TopicReadPort` unwired and the prompt built from
+    the bare id, which is the bug this test exists to catch.
+    """
+    question = "what did the eruption of Vesuvius destroy?"
+    topics = FakeTopicPort({topic_id: _topic_detail(topic_id, question=question)})
+    port = FakeTextPort([_needs_json(0)])
+    search = FakeSearchPort([])
+
+    await _service(port, search, proposals_repo, topics=topics).curate(project_id, topic_id)
+
+    assert question in port.prompts[0]
+
+
+async def test_curate_does_nothing_for_a_topic_this_project_does_not_have(
+    project_id, topic_id, proposals_repo, harness
+):
+    """`TopicReadPort.read_topic` answers `None` for a stale link or a
+    hand-edited id, the same as it would for a real caller -- and there is
+    nothing for stage 1 to read in that case. Fails if `curate` runs the
+    chain anyway against an empty prompt: the text port would be called and
+    `MediaNeedsIdentified` would be published for a topic that does not
+    exist.
+    """
+    port = FakeTextPort([])
+    search = FakeSearchPort([])
+    topics = FakeTopicPort({})
+
+    outcome = await _service(port, search, proposals_repo, topics=topics).curate(
+        project_id, topic_id
+    )
+
+    assert (outcome.needs, outcome.candidates, outcome.ignored) == (0, 0, 0)
+    assert port.prompts == []
+    assert harness.published_events == []

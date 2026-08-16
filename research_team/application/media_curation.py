@@ -37,6 +37,7 @@ from uuid import UUID, uuid4
 
 from eventsource.application.aggregates.repository import AggregateRepository
 
+from research_team.application.topic_read import TopicDetail, TopicReadPort
 from research_team.domain.media_proposals import (
     IdentifyMediaNeeds,
     MediaProposals,
@@ -391,20 +392,39 @@ def parse_judgements(text: str, *, need_id: str = "") -> tuple[list[Judgement], 
     return kept, rejected
 
 
-def _needs_prompt(topic_id: UUID) -> str:
-    """Stage 1's prompt.
+def _needs_prompt(topic: TopicDetail) -> str:
+    """Stage 1's prompt: the topic's own content, not its id.
 
-    Asks against nothing but the topic's id: this task's `curate` signature
-    is `(project_id, topic_id)`, with no port here for the topic's question,
-    scope or findings the design's "Stage 1" section describes prompting
-    against. Wiring that content in is a caller concern for whoever builds
-    the route this service sits behind, not a widening of this signature --
-    see task 6's `build_curation_ports`, which supplies the model and search
-    adapters this prompt is sent through.
+    A need is a judgement about *this* topic's material -- what it asked,
+    what it has found, what a diagram or photo would add that its prose
+    findings don't. A prompt built from a bare identifier carries none of
+    that, so the only needs it could produce are generic ones the model
+    invents rather than ones the topic actually supports -- indistinguishable,
+    by eye, from every other topic's stage 1 reply. `question`, `scope` and
+    `findings` are the fields `TopicDetail` carries for exactly this: see
+    "Stage 1" in the design doc.
+
+    Sub-questions are included, each marked answered or open. Stage 1 is
+    asked to find what would be *better seen than read*, and a sub-question
+    already answered in prose is a signal that its ground is covered --
+    without them, the model could not tell "still open" from "answered
+    already", and might propose media for something the topic has already
+    settled.
     """
+    findings = "\n".join(f"- {f}" for f in topic.findings) or "(none yet)"
+    sub_questions = (
+        "\n".join(
+            f"- [{'answered' if sq.resolved else 'open'}] {sq.question}"
+            for sq in topic.sub_questions
+        )
+        or "(none)"
+    )
     return (
-        "What about this topic would be better seen or heard than read? "
-        f"Topic id: {topic_id}.\n"
+        "What about this topic would be better seen or heard than read?\n"
+        f"Question: {topic.view.summary.question}\n"
+        f"Scope: {topic.scope}\n"
+        f"Sub-questions:\n{sub_questions}\n"
+        f"Findings so far:\n{findings}\n"
         'Answer with JSON: [{"medium": ..., "description": ..., "why": ...}]. '
         "If nothing here would, answer []."
     )
@@ -481,15 +501,27 @@ class MediaCurationService:
         text: MediaCurationTextPort,
         search: MediaSearchPort,
         proposals: AggregateRepository[MediaProposals],
+        topics: TopicReadPort,
     ) -> None:
         self._text = text
         self._search = search
         self._proposals = proposals
+        self._topics = topics
 
     async def curate(self, project_id: UUID, topic_id: UUID) -> CurationOutcome:
+        # A topic nobody has opened (a stale link, a wrong id) has nothing
+        # for stage 1 to read -- answered the same way `TopicReadPort.read_topic`
+        # answers it, `None`, rather than running a chain against an empty
+        # prompt and calling that "examined". Nothing is loaded or appended:
+        # there is no aggregate write worth making for a topic this project
+        # doesn't have.
+        topic = await self._topics.read_topic(topic_id)
+        if topic is None:
+            return CurationOutcome(needs=0, candidates=0, ignored=0, rejected_parses=0)
+
         aggregate = await self._proposals.load_or_create(project_id)
 
-        needs, rejected = parse_needs(await self._text.generate(_needs_prompt(topic_id)))
+        needs, rejected = parse_needs(await self._text.generate(_needs_prompt(topic)))
         aggregate.execute(
             IdentifyMediaNeeds(
                 project_id=str(project_id),
