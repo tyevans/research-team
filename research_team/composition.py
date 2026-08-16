@@ -58,6 +58,7 @@ from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import KnowledgeError, SourceRef
+from research_team.application.ontology_discovery import OntologyDiscoveryService
 from research_team.application.ports import GateReview
 from research_team.application.prompts import (
     DEFAULT_PROMPT_ROOT,
@@ -110,6 +111,7 @@ from research_team.infrastructure.agent.knowledge_tools import (
     KNOWLEDGE_PROMPT,
     build_knowledge_tools,
 )
+from research_team.infrastructure.agent.ontology_model import ChatModelOntologyText
 from research_team.infrastructure.agent.recall import PageMemo, Recall
 from research_team.infrastructure.agent.search import (
     SEARCH_PROMPT,
@@ -132,6 +134,7 @@ from research_team.infrastructure.agent.workflow_tools import (
 )
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
+from research_team.infrastructure.knowledge.ontology_recorder import EventStoreOntologyRecorder
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.knowledge.stores import (
@@ -159,7 +162,10 @@ from research_team.infrastructure.persistence.check_telemetry_reader import (
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.definition_cache import ProjectDefinitionCache
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
-from research_team.infrastructure.persistence.read_models import EntityDefinitionRunner
+from research_team.infrastructure.persistence.read_models import (
+    EntityDefinitionRunner,
+    OntologyRunner,
+)
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.telemetry import build_tracer
 from research_team.workflows import PRESETS
@@ -231,6 +237,23 @@ class Application:
     definitions -- and awaitable because building one opens that project's
     graph store. See `definition_reader` in `build_application` for why the
     cache inside it is process-wide while the graph beside it is not."""
+
+    ontology: OntologyRunner
+    """Keeps the discovered-class tables following the log. Idle until `start()`.
+
+    A field for `check_telemetry`'s reason -- a projection nobody would
+    otherwise start -- and because `rebuild()` has to be reachable when the
+    tables disagree with the log. Unlike `definitions`, nothing reads *through*
+    this runner to write: the discovery service appends to the event store and
+    the projection does the writing, so this is the read side only."""
+
+    ontology_discoverers: Callable[[UUID], OntologyDiscoveryService]
+    """One project's `OntologyDiscoveryService`, built fresh per call.
+
+    A factory for `topic_readers`' reason: the project is bound at construction,
+    so no caller can run a pass against a project it was not handed. Synchronous
+    and never `None`, unlike `definition_readers` -- see `ontology_discoverer`
+    in `build_application` for why nothing it needs can be absent."""
 
     check_telemetry_readers: Callable[[UUID], CheckTelemetryReadPort]
     """One project's `CheckTelemetryReadPort`, built fresh per call.
@@ -423,6 +446,7 @@ class Application:
         await self.topics.start()
         await self.check_telemetry.start()
         await self.definitions.start()
+        await self.ontology.start()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
@@ -485,6 +509,7 @@ class Application:
         have seen a moment earlier anyway.
         """
         await self.definitions.caught_up()
+        await self.ontology.caught_up()
 
     async def close(self) -> None:
         """Stop anything still running, then let go of the store.
@@ -506,6 +531,7 @@ class Application:
         await self.topics.stop()
         await self.check_telemetry.stop()
         await self.definitions.stop()
+        await self.ontology.stop()
         await self.service.close()
         await self.detach_project()
         # Every project this instance ever opened a graph for, not just the
@@ -731,6 +757,13 @@ def build_application(
     # go on serving text the invalidator had already marked untrustworthy,
     # which is precisely the state `stale` exists to make impossible.
     definition_invalidation = EntityDefinitionRunner(
+        repository.store, resolved_path, repository.publisher, resolved_tracer
+    )
+    # The sixth, and unlike its neighbour above it is *only* a projection: the
+    # discovery service writes through the event store, not through this
+    # runner, so the read route and the projection share a connection here for
+    # the ordinary reason rather than to keep a cache honest.
+    ontology = OntologyRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
 
@@ -1573,6 +1606,31 @@ def build_application(
             model=ChatModelDefinitionText(extraction_model, model_name=config.model_name()),
         )
 
+    def ontology_discoverer(target_project_id: UUID) -> OntologyDiscoveryService:
+        """This project's `OntologyDiscoveryService`.
+
+        Synchronous and never `None`, unlike `definition_reader` above, and the
+        difference is what each one needs. A definition needs the graph and the
+        chunk store, so it has to await `graphs.open` and can fail when
+        chunking is off. Discovery needs the document text and a model: the
+        corpus reader is constructed from a runner that is already open, and
+        the recorder writes to the event store directly. Nothing here can be
+        absent, so there is no `None` for a route to render as 503.
+
+        That also means the `open`-before-`chunks` ordering bug documented on
+        `definition_reader` cannot occur here -- this factory does not touch
+        `graphs` at all. Checked rather than assumed.
+        """
+        return OntologyDiscoveryService(
+            corpus=ProjectCorpusReader(corpus, target_project_id, blob_store),
+            # The extraction model, not a second client -- see
+            # `ChatModelOntologyText` for why, and for what that costs.
+            model=ChatModelOntologyText(extraction_model, model_name=config.model_name()),
+            recorder=EventStoreOntologyRecorder(
+                repository.store, repository.publisher, target_project_id
+            ),
+        )
+
     def check_telemetry_reader(target_project_id: UUID) -> CheckTelemetryReadPort:
         """This project's `CheckTelemetryReadPort`, over the one runner above.
 
@@ -1705,6 +1763,8 @@ def build_application(
         check_telemetry_readers=check_telemetry_reader,
         definitions=definition_invalidation,
         definition_readers=definition_reader,
+        ontology=ontology,
+        ontology_discoverers=ontology_discoverer,
         graphs=graphs,
         topic_readers=topic_reader,
         topic_repository=topic_repository,

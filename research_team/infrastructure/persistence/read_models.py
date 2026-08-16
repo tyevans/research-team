@@ -60,6 +60,7 @@ from pydantic import Field, field_validator
 # path opts out of the only compatibility promise the library makes, which is
 # how 0.8.0 broke six imports here. See PR #180.
 from redstring import DocumentExtracted, EntitiesMerged
+from redstring.events.streams import DOCUMENT_CATEGORY
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.application import SessionSummary, SummaryHealth
@@ -80,7 +81,11 @@ from research_team.domain import (
     TurnFailed,
     UserMessageSent,
 )
-from research_team.domain.ontology import DiscoveredClass, OntologyDiscovered
+from research_team.domain.ontology import (
+    ONTOLOGY_AGGREGATE_TYPE,
+    DiscoveredClass,
+    OntologyDiscovered,
+)
 
 LOCAL_RETRY_POLICY = ExponentialBackoffRetryPolicy(
     config=RetryConfig(max_retries=2, initial_delay=0.05, max_delay=1.0)
@@ -2084,31 +2089,62 @@ class OntologyRunner:
         await self.caught_up()
 
     async def caught_up(self, timeout: float = 10.0) -> None:
-        """Block until this projection has seen everything appended so far.
+        """Block until this projection has consumed every event it subscribes to.
 
-        Compares against `current_position()`, the store's *global* end, which
-        `SessionSummaryRunner.caught_up` documents at length as the wrong
-        comparison for a subscription scoped to one aggregate type -- any
-        append of another type moves the end to a position that projection
-        will never reach. It is the right comparison here for the reason that
-        makes this projection unusual: it subscribes to `OntologyDiscovered`
-        *and* to redstring's `DocumentExtracted`, so the two event types that
-        move this store in ordinary use are both ones it consumes. The
-        remaining risk is a `Session` or `Project` append landing last, which
-        is why the loop has a deadline rather than waiting forever.
+        **Not a comparison against `current_position()`, the store's global
+        end**, which is what an earlier draft of this method did and what
+        `SessionSummaryRunner.caught_up` documents at length as wrong for a
+        scoped subscription: any append of a type this projection ignores moves
+        the end to a position it will never reach, and the wait then runs its
+        full timeout every time.
+
+        That draft justified the global comparison by arguing this projection
+        consumes both of the event types that move the store in ordinary use.
+        **It does not.** Storing a document appends `CorpusDocumentStored` and
+        redstring's `DocumentChunked`, neither of them subscribed here -- and
+        storing a document is the ordinary prelude to discovering an ontology
+        in it, so the mistake was on the main path rather than in a corner.
+        `tests/integration/test_ontology_wiring.py` caught it, because it
+        stores a document before running a pass; no unit test could, because
+        each builds its own store holding only the events it appended.
+
+        So this reads the remaining work per aggregate type instead, scoped and
+        starting from what the subscription has already processed -- empty in
+        the common case rather than a scan of the log. Two reads, because this
+        projection subscribes to two streams: its own `Ontology` events and
+        redstring's document category.
+
+        Filtered by event *type* as well, because the aggregate type is not
+        fine enough on its own: `DocumentChunked` shares the document category
+        with `DocumentExtracted` and is not handled here, so a scope-only read
+        would never drain and every wait would still time out -- the same
+        failure one level down, and the reason this is a filter rather than the
+        two-line version `SessionSummaryRunner` gets away with.
         """
         if self._manager is None:
             return
-        target = await self._store.current_position()
-        if target is None:
-            return
+        handled = (OntologyDiscovered.__name__, DocumentExtracted.__name__)
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
-            reached = self._subscription.last_processed_position
-            if reached is not None and not reached < target:
+            remaining = []
+            for aggregate_type in (ONTOLOGY_AGGREGATE_TYPE, DOCUMENT_CATEGORY):
+                remaining += [
+                    envelope
+                    for envelope in await collect(
+                        self._store.read_all(
+                            from_position=self._subscription.last_processed_position,
+                            options=FeedReadOptions(aggregate_type=aggregate_type),
+                        )
+                    )
+                    if type(envelope.event).__name__ in handled
+                ]
+            if not remaining:
                 return
             await asyncio.sleep(0.01)
-        raise TimeoutError(f"the ontology projection did not reach {target} within {timeout}s")
+        raise TimeoutError(
+            f"the ontology projection did not consume every {ONTOLOGY_AGGREGATE_TYPE} "
+            f"and {DOCUMENT_CATEGORY} event within {timeout}s"
+        )
 
     async def stop(self) -> None:
         if self._manager is not None:

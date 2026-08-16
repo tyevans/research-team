@@ -10,7 +10,7 @@ the full reasoning.
 
 from uuid import UUID
 
-from eventsource import ExpectedVersion, StreamId
+from eventsource import ExpectedVersion, InMemoryEventBus, StreamId
 from eventsource.adapters.sqlite import SQLiteEventStore
 
 from research_team.domain.ontology import (
@@ -28,8 +28,11 @@ class EventStoreOntologyRecorder:
     to is the one it was handed.
     """
 
-    def __init__(self, store: SQLiteEventStore, project_id: UUID) -> None:
+    def __init__(
+        self, store: SQLiteEventStore, publisher: InMemoryEventBus, project_id: UUID
+    ) -> None:
         self._store = store
+        self._publisher = publisher
         self._project_id = project_id
 
     async def record(
@@ -61,3 +64,18 @@ class EventStoreOntologyRecorder:
             # documents' events carries no meaning to lose.
             ExpectedVersion.any_(),
         )
+        # **Appending is not delivering, and the difference is silent.**
+        # `SubscriptionManager` catches a projection up from the store and then
+        # transitions to live events *from the bus*, so an append nobody
+        # publishes reaches a running projection only on a restart or a
+        # rebuild. Every other writer in this codebase gets this for free from
+        # `AggregateRepository(event_publisher=...)`; this recorder deliberately
+        # has no aggregate, so it has to do the publishing half itself.
+        #
+        # Left out, the failure is exactly the one this feature is arranged
+        # against: `discover` returns the number it found, nothing raises,
+        # nothing logs, and every class request answers with an empty list.
+        # It shipped that way through a green unit suite, which published by
+        # hand, and was caught by `tests/integration/test_ontology_wiring.py`
+        # asking a composed application for a row.
+        await self._publisher.publish([event])

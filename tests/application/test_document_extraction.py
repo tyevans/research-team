@@ -18,6 +18,7 @@ from research_team.application.corpus_read import SourceListing, StoredDocument
 from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
 from research_team.application.knowledge import ExtractionNote, IngestReport, SourceRef
 from research_team.domain import TextRecord
+from research_team.domain.corpus import MediaRecord
 
 
 class Corpus:
@@ -26,12 +27,17 @@ class Corpus:
     def __init__(self, *documents: tuple[TextRecord, str, bool]) -> None:
         self._documents = {record.source_id: (record, text) for record, text, _ in documents}
         self._extracted = {record.source_id: done for record, _, done in documents}
+        self._media: list[SourceListing] = []
+
+    def add_media(self, record, *, extracted: bool) -> None:
+        """A non-text source in the same namespace, for the `kind` filter."""
+        self._media.append(SourceListing(record=record, extracted=extracted))
 
     async def list_sources(self, *, include_dropped: bool = False):
         return [
             SourceListing(record=record, extracted=self._extracted[source_id])
             for source_id, (record, _) in self._documents.items()
-        ]
+        ] + self._media
 
     async def read_document(self, source_id: str):
         found = self._documents.get(source_id)
@@ -193,6 +199,62 @@ async def test_unextracted_is_empty_when_everything_has_a_graph():
     corpus = Corpus((_record("s1"), "one", True), (_record("s2"), "two", True))
 
     assert await _extractor(corpus, Knowledge()).unextracted(uuid4()) == ()
+
+
+async def test_ungrouped_names_extracted_documents_no_pass_has_examined():
+    """Extracted, because a document with no entities has no members for a
+    class to resolve against -- grouping one would produce a class every one of
+    whose memberships is unresolvable.
+
+    Not examined, because a document the pass read and found nothing in is
+    done, not pending. Conflating that with "has no classes" would re-run every
+    barren document on every sweep, at model cost, which is the whole reason
+    the examined set is recorded separately from the class rows.
+    """
+    corpus = Corpus(
+        (_record("s1"), "one", True),
+        (_record("s2"), "two", True),
+        (_record("s3"), "three", False),
+    )
+
+    pending = await _extractor(corpus, Knowledge()).ungrouped(uuid4(), examined={"s1"})
+
+    assert pending == ("s2",)
+
+
+async def test_ungrouped_skips_media_even_when_it_is_extracted():
+    """The corpus holds media under the same `source_id` namespace, and
+    discovery reads a document's *text* -- there is nothing to read in a video.
+
+    Would pass with the `kind` filter removed only if no media source were ever
+    marked extracted, which is not a property this listing guarantees. The
+    filter matches `unextracted`'s, so the two sweeps agree about what a
+    document is.
+    """
+    corpus = Corpus((_record("s1"), "one", True))
+    corpus.add_media(
+        MediaRecord(source_id="clip", sha256="0" * 64, media_type="video/mp4", byte_count=10),
+        extracted=True,
+    )
+
+    pending = await _extractor(corpus, Knowledge()).ungrouped(uuid4(), examined=set())
+
+    assert pending == ("s1",)
+
+
+async def test_ungrouped_is_empty_when_every_extracted_document_was_examined():
+    """Passes with the change reverted -- it asserts an absence.
+
+    Kept for the reason its `unextracted` counterpart is kept: it is what makes
+    a project-wide sweep answer 0 rather than re-running a corpus that is
+    already fully grouped, and that is the press people make most often once
+    they have used the button once.
+    """
+    corpus = Corpus((_record("s1"), "one", True), (_record("s2"), "two", True))
+
+    extractor = _extractor(corpus, Knowledge())
+
+    assert await extractor.ungrouped(uuid4(), examined={"s1", "s2"}) == ()
 
 
 async def test_reindex_puts_every_stored_document_through_indexing():
