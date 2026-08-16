@@ -3164,106 +3164,79 @@ rendered on the media row the way `ExtractionPane` renders a stage. Left for
 the slice that adds the batch "Transcribe all" control, which needs the same
 per-row state and would otherwise build it twice.
 
-### B95. Two corpus routes turn a domain refusal into a 500
+### B99. No periodic sweep for an accept that dies mid-run
 
-`app.py`'s restore route maps only `UnknownDocument` and `NotDropped`; the
-PATCH (revise) route maps only `UnknownDocument` and `KnowledgeError`. Neither
-maps `CommandRejectedError`, which is what `Corpus.decide` raises for every
-refusal it makes — so a refusal the domain states clearly reaches the caller as
-a server error with no message.
+`Application.start()`'s reconciliation (designed in
+`docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`,
+`composition.py:555`) runs once, at startup. It fixes the case a process that
+died and restarted, but not the case where the process never dies: an accept
+whose `asyncio.create_task` raises, hangs, or is silently dropped by the event
+loop stays `accepted` with no source for as long as the process stays up,
+because nothing after startup looks at it again.
 
-Found on 2026-08-16 by the perception slice's final review, which reported the
-restore-a-transcript defect as a 409 and was corrected by the implementer: it
-was a **500**. That is the shape of the problem — the reviewer assumed a mapped
-refusal because the domain refuses clearly, and only reproducing it showed the
-route drops the distinction.
+Deliberately deferred by the spec rather than an oversight — a periodic sweep
+is a different shape of problem than the crash case the spec was scoped to. It
+needs an interval to poll on, a jitter policy so every process in a
+multi-instance deployment doesn't sweep in lockstep, and a story for what
+happens when two processes sweep the same proposal at once (the crash case
+sidesteps this: only one process is ever running). None of that follows from
+the accept-is-safe-to-rerun property the spec already established; it would
+need its own design.
 
-**No reachable case survives today.** The derivedness guards that exposed it
-were fixed in that same pass, and no other `CommandRejectedError` currently
-escapes either route. So this is latent rather than live, which is exactly why
-it is here: the next domain guard added to `StoreSourceDocument`,
-`StoreSourceMedia` or `StoreDerivedText` becomes a silent 500 at two routes,
-and nothing will fail to say so. The media slice's `upload_source` already
-maps this correctly and is the pattern to copy.
+The fix is a background task in `Application` alongside the projections'
+runners, re-using `MediaAcceptReconciler` (already re-run-safe — see
+`StoreMediaProposal`'s refusal of an already-stored proposal, which is what
+makes a re-run idempotent rather than dangerous) on a timer instead of once at
+`start()`.
 
-Cheap to fix and cheaper to fix now than to rediscover: one `except` arm each,
-plus a test per route that a refused command answers 409 rather than 500.
+### B100. `build_application` still leaks the event store, blob store, and every projection runner on a partial build
 
-### B96. `format_results` is total for a bad payload but not for a bad result
+`research_team/composition.py`. The batch-1 review's B98 fixed the specific
+leak it found — the media `httpx.AsyncClient` is now built last, so a raise
+anywhere earlier in `build_application` can no longer construct one with no
+owner to close. The window itself is unchanged: a raise at `WorkerRoster` (or
+anywhere else in the function's body) still abandons the SQLite event store,
+the blob store, and every projection runner constructed above that point,
+none of which have anything closing them either.
 
-`research_team/infrastructure/agent/search.py`. The docstring's totality claim
-is about the payload — a list, a string or a null where a results object was
-expected all return `_MALFORMED_PAYLOAD` rather than raising, and
-`test_format_results_rejects_a_non_dict_payload_without_raising` pins it. The
-claim does not extend one level down: `{"results": ["oops"]}` is a well-formed
-payload carrying a result that is not a dict, and `result.get(...)` raises
-`AttributeError` on it. The exception escapes `web_search`'s `except ValueError`
-and `except httpx.HTTPError` both, so it ends the turn rather than returning a
-notice the model can act on.
+Worth recording precisely because B98 reads, superficially, like it settled
+this. It didn't — its own test
+(`tests/test_composition.py::test_a_raise_late_in_build_application_never_constructs_the_media_client`)
+*demonstrates* the wider leak rather than testing it: it builds the event
+store, blob store and every runner before the raise, walks away from all of
+them, and only asserts on the one thing (the HTTP client) that the fix
+addressed. Nothing catches a future reader concluding from that test's name
+and green status that `build_application` no longer leaks on a partial build.
 
-Found on 2026-08-15 while widening the same function for media results, and
-deliberately not fixed there: that change was scoped to which keys are read, and
-a totality fix belongs with its own test rather than smuggled in beside an
-unrelated one.
+A `try/finally` (or an `AsyncExitStack` collecting each resource as it's
+built and closing everything in reverse order on any exception) is the
+general fix; B98's "build it last" was cheaper only because there was exactly
+one resource with nothing between its construction and `Application(...)`.
+Every other resource here doesn't have that luxury — there's meaningful
+construction between the event store and the return statement — so the fix
+has to actually unwind, not just reorder.
 
-**No instance is known to send this.** Every one of the 353 media results and 29
-general results captured that day carried a dict. It is here for the reason the
-payload guard exists at all — an instance is a foreign system, `.json()`
-promises only valid JSON, and a proxy that serializes an error page is not bound
-by SearXNG's schema. The cost of being wrong is asymmetric: a skipped result is
-still a result set, and a raised `AttributeError` is a lost turn.
+### B101. Nothing asserts the reconciler runs after `caught_up()`, not before
 
-One `isinstance(result, dict)` guard in the loop, skipping what fails it, plus a
-test that a payload mixing a good result with a string still renders the good
-one.
+`Application.start()` (`composition.py`, near line 555) calls
+`self.media_proposals.start()`, then the projection's `caught_up()`, then the
+reconciler — in that order, deliberately: the design spec
+(`docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`) rules
+that the reconciler must read a caught-up projection, or it diffs against
+proposals the log hasn't replayed into the read model yet and reconciles
+correctly-pending accepts it was never supposed to touch.
 
-### B97. An accepted media proposal does not survive a restart
+`tests/integration/test_accept_reconciliation.py` asserts against a composed
+`Application` and would fail if the reconciler call were removed entirely —
+but a test that swapped the two lines, running the reconciler *before*
+`caught_up()`, would still pass. The fixture's projection catches up fast
+enough in-process that the reconciler finds the row settled either way; the
+ordering bug the spec is actually worried about only shows up when the
+projection is still mid-replay at the moment the reconciler reads it.
 
-`research_team/interfaces/web/app.py`'s accept route appends
-`MediaProposalAccepted`, answers 202, and hands the download to
-`asyncio.create_task`. That task does not survive process death.
+Reported by the Task 4 implementer as a known gap rather than found by review.
+Proving the ordering would need a projection stalled on purpose — a fake
+`caught_up()` that blocks until released, with the test asserting the
+reconciler's read happens after release, not before. Worth doing before this
+ordering is treated as tested rather than merely stated.
 
-So a process that dies after the event is appended — the 202 is already
-sent — and before `MediaAcceptWorker` finishes leaves the proposal
-permanently `accepted`, with no source ever created. **Nothing on the next
-startup detects it.** There is no reconciliation pass, no status distinguishing
-"accepted and running" from "accepted and abandoned", and no operator signal;
-the review pane shows a card that is working and always will be.
-
-Found on 2026-08-16 by Task 11b's reviewer, on a question asked specifically
-because a fire-and-forget hand-off had just been chosen over a queue. The
-hand-off itself was the right call and is not what is wrong here: two accepted
-proposals share no per-project resource, so the serialization a queue buys is
-not needed, and `MediaAcceptWorker` already treats an "already stored" refusal
-as its own success signal, which is what makes a re-run safe. What is missing
-is anything that re-runs it.
-
-The reviewer's suggested fix is the cheap one and the reads it needs already
-exist: on startup, diff accepted proposals against the sources that resulted
-and re-schedule the gap. Worth doing before anyone accepts media they care
-about, and worth its own thought rather than being bolted onto the end of the
-acquisition wave — "reconcile on startup" is a durable-work pattern this
-codebase does not otherwise have, and inventing it in a hurry is how it ends up
-per-feature.
-
-The safety of a re-run is already load-bearing and already pinned:
-`StoreMediaProposal` against an already-stored proposal is refused rather than
-idempotent, because `decide` cannot arbitrate between two `source_id`s claiming
-to be one proposal's result.
-
-### B98. `build_application` can leak an HTTP client if it raises partway
-
-`research_team/composition.py`. The media `httpx.AsyncClient` is constructed
-early in `build_application` and closed in `Application.close()`, which is
-unconditional and correct on every path — *once an `Application` exists*. The
-function is around a thousand lines, and anything raising between the client's
-construction and the `Application(...)` call leaves it unclosed with no owner.
-
-Pre-existing in shape rather than introduced here, and named now because this is
-the change that first gave that window a resource with a real cost to leak: a
-connection pool, not a dataclass. Found 2026-08-16 by Task 11b's reviewer.
-
-A `try/finally` around the construction, or building the client last, both fix
-it. Building it last is probably right and probably annoying, since the ordering
-in that function is already constrained by what closes over what — which is why
-this is written down rather than done in passing.

@@ -1220,6 +1220,15 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(error)) from error
         except NotDropped as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+        except CommandRejectedError as error:
+            # `Corpus.decide`'s refusal for a `StoreSourceDocument` or
+            # `StoreDerivedText` this restore re-stores. No reachable case
+            # exists today -- the derivedness guards that could have
+            # triggered this were fixed before this arm was needed -- but
+            # the next guard added to either command would otherwise land
+            # here as an unhandled exception and a 500, matching
+            # `upload_source`'s pattern.
+            raise HTTPException(status_code=409, detail=str(error)) from error
         return await _source_row(project_id, source_id)
 
     @app.patch("/api/projects/{project_id}/sources/{source_id}")
@@ -1237,6 +1246,15 @@ def create_app(
             )
         except UnknownDocument as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        except CommandRejectedError as error:
+            # `decide`'s refusal, which `KnowledgeError` below does not
+            # catch. No reachable case exists today -- the derivedness
+            # guards that could have triggered this were fixed before this
+            # arm was needed -- but the next guard on
+            # `StoreSourceDocument`/`StoreSourceMedia`/`StoreDerivedText`
+            # would otherwise land here as an unhandled exception and a 500,
+            # matching `upload_source`'s pattern.
+            raise HTTPException(status_code=409, detail=str(error)) from error
         except KnowledgeError as error:
             # Two guards reach here, and `decide` is neither of them. `_store`'s
             # length cap: missing until review, when a PATCH over the cap was an
