@@ -80,6 +80,7 @@ from research_team.domain import (
     TurnFailed,
     UserMessageSent,
 )
+from research_team.domain.ontology import DiscoveredClass
 
 LOCAL_RETRY_POLICY = ExponentialBackoffRetryPolicy(
     config=RetryConfig(max_retries=2, initial_delay=0.05, max_delay=1.0)
@@ -1594,3 +1595,314 @@ class EntityDefinitionRunner:
         if self._engine is not None:
             await self._engine.dispose()
             self._engine = None
+
+
+ONTOLOGY_NAMESPACE = UUID("3f7b21c9-6d84-5e02-a1b7-9c4e0f83d216")
+"""Distinct from `DEFINITION_NAMESPACE` and `CORPUS_NAMESPACE` for the reason
+stated on those: three tables keyed on unrelated things that are all just
+strings by the time `uuid5` sees them must not be able to collide on `id`."""
+
+
+class OntologyClassRow(ReadModel):
+    """One class discovered in one document, with what it was derived from.
+
+    Entirely derived, unlike `EntityDefinitionRow`: every column here is
+    rewritten by replaying the log, where a definition's `text` comes from a
+    service's `put` and a replay could not restore it. That is why this
+    table's rebuild may truncate and the definition runner's may not.
+
+    Keyed on `(project_id, source_id, name)`. Two documents each stating "six
+    difficulties" therefore produce two rows, deliberately -- merging them is
+    the entity-identity problem redstring's `Consolidator` exists for and
+    should reuse it, not grow a private version here.
+    """
+
+    __table_name__ = "ontology_classes"
+
+    project_id: UUID
+    source_id: str
+    name: str
+    kind: str
+    """`ordered_scale` | `unordered_set` | `taxonomy`, as a plain string.
+
+    Not the event's `Literal`: a column that refused an unknown value would
+    put a replay in the DLQ over a payload the log has already accepted, and
+    the log is not rewritable. Validation belongs at the point the value is
+    believed -- `verify_classes` -- not at the point it is re-read.
+    """
+    declared_count: int | None = None
+    member_count: int = 0
+    """What was actually stored, recorded rather than counted from the
+    membership table on read. A number derived by a join would always agree
+    with itself, including after a half-finished write; two independently
+    recorded numbers can disagree, which is the entire point of a checksum."""
+    parent_class_id: UUID | None = None
+    evidence_start: int = 0
+    evidence_end: int = 0
+    rejected_members: str = "[]"
+    """JSON array of `{name, reason}`. A string column for the same reason
+    `EntityDefinitionRow.citations` is one: it is handed whole to a browser
+    that renders it, and decoding here would be work with no reader."""
+    model: str = ""
+    generated_at: str = ""
+    stale: bool = False
+
+    @staticmethod
+    def row_id(project_id: UUID, source_id: str, name: str) -> UUID:
+        return uuid5(ONTOLOGY_NAMESPACE, f"{project_id}:{source_id}:{name}")
+
+
+class OntologyMembershipRow(ReadModel):
+    """One member of one class.
+
+    `entity_id` is nullable on purpose and it is the staleness contract. A
+    member the pass named but that resolves to no entity today keeps its row
+    with a null id: it is dropped from the drawing, because there is nothing
+    to draw it against, and retained in the class, so `member_count` still
+    checks out against `declared_count` and a re-run is not needed merely
+    because a name drifted. Deleting the row instead would make an unrelated
+    re-extraction look like a discovery failure.
+    """
+
+    __table_name__ = "ontology_memberships"
+
+    project_id: UUID
+    class_id: UUID
+    member_name: str
+    entity_id: UUID | None = None
+    ordinal: int | None = None
+
+    @staticmethod
+    def row_id(class_id: UUID, member_name: str) -> UUID:
+        return uuid5(ONTOLOGY_NAMESPACE, f"{class_id}:{member_name}")
+
+
+class OntologyExaminedRow(ReadModel):
+    """That a discovery pass looked at this source, whatever it found.
+
+    A separate row rather than a flag on a class, because the case it exists
+    for is the one with *no* class: a document the pass read and found nothing
+    in has nowhere else to record that it was read. Without this, "states no
+    classes" and "never examined" are the same observation, and the `ungrouped`
+    sweep re-runs every barren document on every pass, at model cost.
+    """
+
+    __table_name__ = "ontology_examined"
+
+    project_id: UUID
+    source_id: str
+
+    @staticmethod
+    def row_id(project_id: UUID, source_id: str) -> UUID:
+        return uuid5(ONTOLOGY_NAMESPACE, f"examined:{project_id}:{source_id}")
+
+
+class OntologyStore:
+    """The three ontology tables and the connection they share.
+
+    One store rather than one per table, unlike the rest of this module,
+    because they are written and cleared together: replacing a source's classes
+    must delete that source's memberships in the same breath. Two stores over
+    two connections would make that two transactions with a window between them
+    in which a class has no members and the canvas draws a bare hub.
+    """
+
+    def __init__(
+        self,
+        connection: aiosqlite.Connection,
+        classes: ReadModelRepository[OntologyClassRow],
+        members: ReadModelRepository[OntologyMembershipRow],
+        examined: ReadModelRepository[OntologyExaminedRow],
+    ) -> None:
+        self._connection = connection
+        self._classes = classes
+        self._members = members
+        self._examined = examined
+
+    @classmethod
+    async def open(cls, db_path: str, tracer=None) -> "OntologyStore":
+        connection = await aiosqlite.connect(db_path)
+        await apply_schema(connection, OntologyClassRow)
+        await apply_schema(connection, OntologyMembershipRow)
+        await apply_schema(connection, OntologyExaminedRow)
+        # `apply_schema` reconciles columns and not indexes -- the same note as
+        # on `EntityDefinitionStore.open`. `members_for` runs once per class on
+        # every graph read, so an unindexed membership table would put a
+        # project's whole canvas behind one scan per class.
+        for statement in (
+            f"CREATE INDEX IF NOT EXISTS idx_ontology_classes_project "
+            f"ON {OntologyClassRow.table_name()}(project_id, source_id)",
+            f"CREATE INDEX IF NOT EXISTS idx_ontology_members_class "
+            f"ON {OntologyMembershipRow.table_name()}(class_id)",
+            f"CREATE INDEX IF NOT EXISTS idx_ontology_examined_project "
+            f"ON {OntologyExaminedRow.table_name()}(project_id)",
+        ):
+            await connection.execute(statement)
+        await connection.commit()
+        return cls(
+            connection,
+            SQLiteReadModelRepository(connection, OntologyClassRow, tracer),
+            SQLiteReadModelRepository(connection, OntologyMembershipRow, tracer),
+            SQLiteReadModelRepository(connection, OntologyExaminedRow, tracer),
+        )
+
+    async def replace_for_source(
+        self,
+        project_id: UUID,
+        source_id: str,
+        classes: list[DiscoveredClass],
+        *,
+        model: str,
+        generated_at: str,
+    ) -> None:
+        """Store this source's classes, discarding whatever it held before.
+
+        Replacement rather than upsert: the pass is re-run whenever its prompt
+        changes, and a re-run that no longer finds a class has to remove it. An
+        upsert would leave behind every class any past prompt ever produced,
+        and the canvas would accumulate one hub per attempt.
+
+        An empty `classes` still clears and still records the source as
+        examined -- see `OntologyExaminedRow`.
+        """
+        await self._forget_source(project_id, source_id)
+        for klass in classes:
+            class_id = OntologyClassRow.row_id(project_id, source_id, klass.name)
+            await self._classes.save(
+                OntologyClassRow(
+                    id=class_id,
+                    project_id=project_id,
+                    source_id=source_id,
+                    name=klass.name,
+                    kind=klass.kind,
+                    declared_count=klass.declared_count,
+                    member_count=len(klass.members),
+                    parent_class_id=(
+                        OntologyClassRow.row_id(project_id, source_id, klass.parent_name)
+                        if klass.parent_name
+                        else None
+                    ),
+                    evidence_start=klass.evidence.start,
+                    evidence_end=klass.evidence.end,
+                    rejected_members=json.dumps(
+                        [rejected.model_dump() for rejected in klass.rejected_members]
+                    ),
+                    model=model,
+                    generated_at=generated_at,
+                )
+            )
+            for member in klass.members:
+                await self._members.save(
+                    OntologyMembershipRow(
+                        id=OntologyMembershipRow.row_id(class_id, member.name),
+                        project_id=project_id,
+                        class_id=class_id,
+                        member_name=member.name,
+                        entity_id=None,
+                        ordinal=member.ordinal,
+                    )
+                )
+        await self._examined.save(
+            OntologyExaminedRow(
+                id=OntologyExaminedRow.row_id(project_id, source_id),
+                project_id=project_id,
+                source_id=source_id,
+            )
+        )
+
+    async def _forget_source(self, project_id: UUID, source_id: str) -> None:
+        """Delete one source's classes and their memberships.
+
+        Memberships are found through their classes rather than by a
+        `source_id` of their own: a membership belongs to a class, and giving
+        it a second copy of the class's source would be a second thing that can
+        disagree. The cost is one extra query, on a table indexed for it.
+        """
+        for row in await self._classes_for_source(project_id, source_id):
+            for member in await self.members_for(row.id):
+                await self._members.delete(member.id)
+            await self._classes.delete(row.id)
+
+    async def _classes_for_source(
+        self, project_id: UUID, source_id: str
+    ) -> list[OntologyClassRow]:
+        return [
+            row for row in await self.classes_for(project_id) if row.source_id == source_id
+        ]
+
+    async def classes_for(self, project_id: UUID) -> list[OntologyClassRow]:
+        """Every class in a project, newest table order.
+
+        Goes through the repository rather than a projected SELECT, unlike
+        `CorpusStore.list`: a class row is a few short strings, where a corpus
+        row is an entire document, so there is nothing here worth the extra
+        column list to avoid loading.
+        """
+        cursor = await self._connection.execute(
+            f"SELECT id FROM {OntologyClassRow.table_name()} "
+            "WHERE project_id = ? AND deleted_at IS NULL ORDER BY name",
+            (str(project_id),),
+        )
+        try:
+            ids = [UUID(row[0]) for row in await cursor.fetchall()]
+        finally:
+            await cursor.close()
+        rows = [await self._classes.get(row_id) for row_id in ids]
+        return [row for row in rows if row is not None]
+
+    async def members_for(self, class_id: UUID) -> list[OntologyMembershipRow]:
+        """One class's members, in the order the text gave them.
+
+        Ordered by `ordinal` with nulls last, so an ordered scale reads as the
+        document stated it and an unordered set keeps a stable arrival order
+        rather than an arbitrary one. Sorting an unordered set by name here
+        would read a sequence into a bag.
+        """
+        cursor = await self._connection.execute(
+            f"SELECT id FROM {OntologyMembershipRow.table_name()} "
+            "WHERE class_id = ? AND deleted_at IS NULL "
+            "ORDER BY ordinal IS NULL, ordinal, member_name",
+            (str(class_id),),
+        )
+        try:
+            ids = [UUID(row[0]) for row in await cursor.fetchall()]
+        finally:
+            await cursor.close()
+        rows = [await self._members.get(row_id) for row_id in ids]
+        return [row for row in rows if row is not None]
+
+    async def sources_with_classes(self, project_id: UUID) -> set[str]:
+        """Every source a pass has examined, whatever it found.
+
+        Named for what callers ask it -- "which sources are done" -- and
+        deliberately answering from `ontology_examined` rather than from the
+        class table, which would answer a different and wrong question. See
+        `OntologyExaminedRow`.
+        """
+        cursor = await self._connection.execute(
+            f"SELECT source_id FROM {OntologyExaminedRow.table_name()} "
+            "WHERE project_id = ? AND deleted_at IS NULL",
+            (str(project_id),),
+        )
+        try:
+            return {row[0] for row in await cursor.fetchall()}
+        finally:
+            await cursor.close()
+
+    async def mark_stale_for_source(self, project_id: UUID, source_id: str) -> None:
+        """Flag a source's classes as no longer trustworthy, without discarding
+        them -- the same contract `EntityDefinitionStore.mark_stale` keeps, and
+        for the same reason: stale text stays visible, labelled, until
+        something replaces it.
+
+        A source with no classes is a no-op, not an error. This is called from
+        a projection reacting to every extraction in the log, and most
+        documents have never been examined; raising here would put routine
+        extraction in the DLQ.
+        """
+        for row in await self._classes_for_source(project_id, source_id):
+            row.stale = True
+            await self._classes.save(row)
+
+    async def close(self) -> None:
+        await self._connection.close()

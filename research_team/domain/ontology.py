@@ -24,6 +24,17 @@ from uuid import UUID
 from eventsource import DomainEvent, register_event
 from pydantic import BaseModel, Field
 
+ONTOLOGY_AGGREGATE_TYPE = "Ontology"
+"""The stream these events are appended to, named rather than spelled twice.
+
+Every other aggregate type in this codebase is reachable as
+`SomeAggregate.aggregate_type`, and `UNROUTED_AGGREGATE_TYPES` in
+`persistence/event_store.py` is written that way throughout. There is no
+`Ontology` aggregate to ask -- deliberately, see `OntologyDiscovered` -- so the
+constant stands in for the class attribute, and the feed-coverage guard has
+something to name that cannot drift from the event's own default.
+"""
+
 
 class EvidenceSpan(BaseModel):
     """Where in a document the class was stated, as half-open offsets.
@@ -118,7 +129,7 @@ class OntologyDiscovered(DomainEvent):
     being able to tell them apart.
     """
 
-    aggregate_type: str = "Ontology"
+    aggregate_type: str = ONTOLOGY_AGGREGATE_TYPE
     project_id: UUID
     source_id: str
     model_version: str
