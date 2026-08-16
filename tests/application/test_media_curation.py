@@ -1,19 +1,38 @@
-"""The three stage parsers: tolerant of junk, blind to nothing usable.
+"""The three stage parsers, and the chain that drives them: tolerant of junk,
+blind to nothing usable.
 
 Mirrors `tests/application/test_ontology_discovery.py`'s treatment of
 `_members_from` -- each parser is exercised for a dropped-and-counted item, a
 prose reply that yields nothing, and the per-topic/per-need cap.
+
+The service tests below use a real `MediaProposals` aggregate over a real
+`AggregateRepository`, the way `test_corpus_editing.py` uses a real `Corpus`:
+`decide`'s ignore guards are the aggregate's, not this service's, and a
+hand-written fake state would have to reimplement them correctly to prove the
+service reads what the aggregate actually holds rather than a copy of it.
 """
 
 import json
+from uuid import uuid4
+
+import pytest
+from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.testing import InMemoryTestHarness
 
 from research_team.application.media_curation import (
     MAX_CANDIDATES_PER_NEED,
     MAX_NEEDS_PER_TOPIC,
     MAX_QUERIES_PER_NEED,
+    MediaCurationService,
+    SearchResult,
     parse_judgements,
     parse_needs,
     parse_terms,
+)
+from research_team.domain.media_proposals import (
+    IgnoreMediaHost,
+    MediaNeedsIdentified,
+    MediaProposals,
 )
 
 
@@ -156,3 +175,139 @@ def test_parse_judgements_accepts_the_keyed_form_identically_to_the_bare_array()
     keyed = parse_judgements(json.dumps({"judgements": [_judgement(0), _judgement(1)]}))
     assert [j.index for j in keyed[0]] == [j.index for j in bare[0]]
     assert keyed[1] == bare[1]
+
+
+# --- MediaCurationService -----------------------------------------------
+
+
+def _needs_json(n: int) -> str:
+    return json.dumps([_need(i) for i in range(n)])
+
+
+def _terms_json(n: int) -> str:
+    return json.dumps([_term(i) for i in range(n)])
+
+
+def _judgements_json(n: int) -> str:
+    return json.dumps([_judgement(i) for i in range(n)])
+
+
+def _result(url: str) -> SearchResult:
+    return SearchResult(
+        title="a result",
+        url=url,
+        snippet="",
+        kind="image",
+        asset_url=url,
+        detail="",
+        thumbnail_url="",
+    )
+
+
+class FakeTextPort:
+    """Six lines, per `MediaCurationTextPort`'s own reasoning: canned replies
+    returned in call order, not a mock of a chat model. `prompts` records what
+    each call was asked, so a test can inspect what stage 3 was shown without
+    the service exposing anything for that purpose alone."""
+
+    def __init__(self, replies: list[str]) -> None:
+        self._replies = list(replies)
+        self.prompts: list[str] = []
+
+    @property
+    def model_name(self) -> str:
+        return "fake-text-model"
+
+    async def generate(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return self._replies.pop(0)
+
+
+class FakeSearchPort:
+    """Returns the same canned results for every query -- nothing under test
+    here depends on distinguishing one query's results from another's."""
+
+    def __init__(self, results: list[SearchResult]) -> None:
+        self._results = tuple(results)
+
+    async def search(self, query: str, categories: str) -> tuple[SearchResult, ...]:
+        return self._results
+
+
+@pytest.fixture
+def project_id():
+    return uuid4()
+
+
+@pytest.fixture
+def topic_id():
+    return uuid4()
+
+
+@pytest.fixture
+def harness() -> InMemoryTestHarness:
+    return InMemoryTestHarness()
+
+
+@pytest.fixture
+def proposals_repo(harness) -> AggregateRepository[MediaProposals]:
+    # `event_publisher=harness.event_bus` so `harness.published_events` can
+    # answer "was a `MediaNeedsIdentified` ever written", without this test
+    # module reaching into the event store's stream-id rendering to find out.
+    return AggregateRepository(
+        harness.event_store, MediaProposals, event_publisher=harness.event_bus
+    )
+
+
+def _service(text, search, proposals_repo) -> MediaCurationService:
+    return MediaCurationService(text=text, search=search, proposals=proposals_repo)
+
+
+async def test_an_ignored_asset_is_filtered_before_the_judging_call(
+    project_id, topic_id, proposals_repo
+):
+    """Filtering after search and before stage 3 is what stops us paying a
+    model call for candidates already excluded -- and what makes the count
+    reportable. Fails if the filter moves to proposal time: the judge port
+    would then see two candidates rather than one, i.e. two `https://`
+    occurrences in the judge prompt instead of one.
+
+    The ignored host comes from the aggregate's own state, not a constructor
+    or method argument -- `IgnoreMediaHost` is executed against the same
+    repository the service reads from, so this proves the service consults
+    the aggregate it must load anyway to append, not a second source of
+    truth for what is ignored.
+    """
+    aggregate = await proposals_repo.load_or_create(project_id)
+    aggregate.execute(IgnoreMediaHost(project_id=str(project_id), host="bad.example"))
+    await proposals_repo.save(aggregate)
+
+    port = FakeTextPort([_needs_json(1), _terms_json(1), _judgements_json(1)])
+    search = FakeSearchPort(
+        [_result("https://bad.example/x.jpg"), _result("https://ok.example/y.jpg")]
+    )
+
+    outcome = await _service(port, search, proposals_repo).curate(project_id, topic_id)
+
+    assert outcome.ignored == 1
+    # One surviving candidate reached the judge -- one "https://" in its prompt.
+    assert len(port.prompts[2].split("https://")) == 2
+
+
+async def test_needs_are_recorded_even_when_every_search_returns_nothing(
+    project_id, topic_id, proposals_repo, harness
+):
+    """The one structural cost in the chain, and the thing it buys: "we
+    looked for a gradient diagram and found none" is a fact rather than a
+    silence. Fails if needs are only written alongside proposals -- with no
+    candidate ever proposed, there would be nothing to save and no
+    `MediaNeedsIdentified` published.
+    """
+    port = FakeTextPort([_needs_json(2), _terms_json(1), _terms_json(1)])
+    search = FakeSearchPort([])
+
+    outcome = await _service(port, search, proposals_repo).curate(project_id, topic_id)
+
+    assert outcome.needs == 2
+    assert outcome.candidates == 0
+    assert any(isinstance(e, MediaNeedsIdentified) for e in harness.published_events)

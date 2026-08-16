@@ -32,6 +32,17 @@ job of adapting to a foreign system, which belongs in infrastructure, and
 import json
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
+from urllib.parse import urlsplit
+from uuid import UUID, uuid4
+
+from eventsource.application.aggregates.repository import AggregateRepository
+
+from research_team.domain.media_proposals import (
+    IdentifyMediaNeeds,
+    MediaProposals,
+    ProposeMedia,
+)
+from research_team.domain.urls import normalize_url
 
 MAX_NEEDS_PER_TOPIC = 4
 """Stage 1's cap on how many things a topic is allowed to want seen or heard.
@@ -378,3 +389,202 @@ def parse_judgements(text: str, *, need_id: str = "") -> tuple[list[Judgement], 
         if len(kept) == MAX_CANDIDATES_PER_NEED:
             break
     return kept, rejected
+
+
+def _needs_prompt(topic_id: UUID) -> str:
+    """Stage 1's prompt.
+
+    Asks against nothing but the topic's id: this task's `curate` signature
+    is `(project_id, topic_id)`, with no port here for the topic's question,
+    scope or findings the design's "Stage 1" section describes prompting
+    against. Wiring that content in is a caller concern for whoever builds
+    the route this service sits behind, not a widening of this signature --
+    see task 6's `build_curation_ports`, which supplies the model and search
+    adapters this prompt is sent through.
+    """
+    return (
+        "What about this topic would be better seen or heard than read? "
+        f"Topic id: {topic_id}.\n"
+        'Answer with JSON: [{"medium": ..., "description": ..., "why": ...}]. '
+        "If nothing here would, answer []."
+    )
+
+
+def _terms_prompt(need: MediaNeed) -> str:
+    """Stage 2's prompt: one need, its own call, per the module docstring."""
+    return (
+        f"Need: {need.description}\nWhy: {need.why}\nMedium: {need.medium}\n"
+        'Give search terms as JSON: [{"text": ..., "categories": "images"|"videos"}]. '
+        "If none come to mind, answer []."
+    )
+
+
+def _judge_prompt(need: MediaNeed, results: list[SearchResult]) -> str:
+    """Stage 3's prompt: the pool for one need, indexed by position.
+
+    The index in each line is what `parse_judgements` reads back -- a judged
+    item names a position in *this* listing, not any id of the result.
+    """
+    lines = [
+        f"{i}. {r.title} -- {r.url} ({r.kind}): {r.snippet}" for i, r in enumerate(results)
+    ]
+    return (
+        f"Need: {need.description}\nWhy: {need.why}\n"
+        "Which of these results serve the need? Judge only what is listed.\n"
+        + "\n".join(lines)
+        + '\nAnswer with JSON: [{"index": ..., "keep": true|false, "reason": ...}].'
+    )
+
+
+def _host_of(url: str) -> str:
+    """The same comparison key `domain/media_proposals.py`'s `_host_of` uses
+    for `ignored_hosts` -- duplicated rather than imported because that
+    function is private to the aggregate module, and this filter must agree
+    with `decide`'s own key derivation or an asset filtered here could still
+    be proposed there, or vice versa.
+    """
+    return (urlsplit(url).hostname or "").lower()
+
+
+@dataclass(frozen=True)
+class CurationOutcome:
+    """What one `curate` call did, as counts a caller can report or log.
+
+    `ignored` and `rejected_parses` exist so a silent shortfall is never the
+    only signal something happened -- "6 candidates, 2 ignored" is a fact a
+    person can act on; a bare "4 candidates" is not.
+    """
+
+    needs: int
+    candidates: int
+    ignored: int
+    rejected_parses: int
+
+
+class MediaCurationService:
+    """Runs the three-stage chain for one topic and turns survivors into
+    `MediaProposed` events.
+
+    Takes an `AggregateRepository[MediaProposals]` rather than a narrower
+    read/append port pair: the ignore filter below reads `ignored_assets` and
+    `ignored_hosts` from the aggregate's own state, and this service has to
+    load the aggregate anyway in order to append proposals to it. A
+    constructor or method parameter carrying the ignored sets would be a
+    second source of truth for what is ignored, alongside the one `decide`
+    already enforces -- the two could disagree, and disagreeing is worse than
+    either being wrong alone.
+    """
+
+    def __init__(
+        self,
+        *,
+        text: MediaCurationTextPort,
+        search: MediaSearchPort,
+        proposals: AggregateRepository[MediaProposals],
+    ) -> None:
+        self._text = text
+        self._search = search
+        self._proposals = proposals
+
+    async def curate(self, project_id: UUID, topic_id: UUID) -> CurationOutcome:
+        aggregate = await self._proposals.load_or_create(project_id)
+
+        needs, rejected = parse_needs(await self._text.generate(_needs_prompt(topic_id)))
+        aggregate.execute(
+            IdentifyMediaNeeds(
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                needs=json.dumps(
+                    [
+                        {
+                            "need_id": need.need_id,
+                            "medium": need.medium,
+                            "description": need.description,
+                            "why": need.why,
+                        }
+                        for need in needs
+                    ]
+                ),
+                model_version=self._text.model_name,
+            )
+        )
+        # Saved before any search runs -- the one structural cost the chain
+        # pays, and what it buys: a need survives a search that returns
+        # nothing, is re-searchable later without re-running stage 1, and is
+        # what a review pane groups proposals under. See the design's "Stage
+        # 1" section and the module docstring above `MediaNeed`.
+        await self._proposals.save(aggregate)
+
+        candidates = 0
+        ignored = 0
+
+        for need in needs:
+            terms, terms_rejected = parse_terms(
+                await self._text.generate(_terms_prompt(need)), need_id=need.need_id
+            )
+            rejected += terms_rejected
+
+            pool: list[tuple[SearchResult, str]] = []
+            for query in terms:
+                for result in await self._search.search(query.text, query.categories):
+                    pool.append((result, query.text))
+
+            # The ignore filter runs here: after search, before stage 3. Not
+            # at proposal time, which would pay a model call judging
+            # candidates already excluded; not at search time, which SearXNG
+            # cannot express (it has no notion of this project's ignore
+            # list). Running it between the two is also what makes the count
+            # reportable -- the outcome says "N candidates, M ignored" rather
+            # than silently returning fewer.
+            kept: list[tuple[SearchResult, str]] = []
+            for result, query_text in pool:
+                asset_ignored = (
+                    normalize_url(result.asset_url) in aggregate.state.ignored_assets
+                )
+                host_ignored = _host_of(result.asset_url) in aggregate.state.ignored_hosts
+                if asset_ignored or host_ignored:
+                    ignored += 1
+                    continue
+                kept.append((result, query_text))
+
+            if not kept:
+                continue
+
+            judgements, judge_rejected = parse_judgements(
+                await self._text.generate(_judge_prompt(need, [r for r, _ in kept])),
+                need_id=need.need_id,
+            )
+            rejected += judge_rejected
+
+            for judgement in judgements:
+                if not 0 <= judgement.index < len(kept):
+                    # The judge was shown exactly `len(kept)` results and
+                    # answers by position in that listing; an index outside
+                    # it points at nothing shown and is dropped the way every
+                    # parser here drops what it cannot trust, rather than
+                    # raising or guessing which candidate was meant.
+                    continue
+                result, query_text = kept[judgement.index]
+                aggregate.execute(
+                    ProposeMedia(
+                        project_id=str(project_id),
+                        proposal_id=str(uuid4()),
+                        need_id=need.need_id,
+                        topic_id=str(topic_id),
+                        page_url=result.url,
+                        asset_url=result.asset_url,
+                        thumbnail_url=result.thumbnail_url,
+                        kind=result.kind,
+                        title=result.title,
+                        reason=judgement.reason,
+                        query=query_text,
+                    )
+                )
+                candidates += 1
+
+        if candidates:
+            await self._proposals.save(aggregate)
+
+        return CurationOutcome(
+            needs=len(needs), candidates=candidates, ignored=ignored, rejected_parses=rejected
+        )
