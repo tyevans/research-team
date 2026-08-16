@@ -58,18 +58,64 @@ because both change what the design has to do:
 | Ancient Rome (`cf4d9a61…`) | 2,525 | 116 |
 | budgeting (`bbb418fd…`) | 174 | 45 |
 
-The Ancient Rome 116 were read, not sampled. They are overwhelmingly *social
-groups and occupations* — `plebeians`, `freedmen`, `fullones`, `salt merchants
-(salinatores)`, `goldsmiths (aurifices)`, `Church Fathers`. A handful are
-enumerable (`Official cults` / `Non-official but lawful cults` is a genuine
-two-member partition the text states). Most are the model reaching for
-`category` because the surface form was a plural noun phrase.
+The Ancient Rome 116 were read in full, not sampled, and then counted rather
+than characterised — an earlier draft of this section said "overwhelmingly
+social groups and occupations", which is a judgement, and the numbers below are
+what it was standing on. Measured 2026-08-15:
+
+| | |
+|---|---|
+| `category` entities | 116, across 5 documents (67 `wiki-roman-religion`, 33 `wiki-roman-economy`, 13 `wiki-imperial-cult`, 2, 1) |
+| Plural head word | **71 of 116** (mechanical: last word ends in `s`, not `ss`) |
+| Enumerating sentences (`There are/were <number>…`) in any of the 5 documents | **0** |
+| Most `category` names co-occurring in one sentence | 6 — and that sentence is prose, not a list |
+
+The names themselves: `plebeians`, `freedmen`, `fullones`, `Vestals`,
+`augurs`, `haruspices`, `salt merchants (salinatores)`, `goldsmiths
+(aurifices)`, `teamsters (asinarii or muliones)`, `Church Fathers`, `Diaspora
+Jews`, `Roman provinces`, `Antonine dynasty`, `Luxurious commodities`.
+
+The zero is the number that matters. The SEKAI document has one enumerating
+sentence and it is the whole basis of this feature; five Ancient Rome documents
+have none. The 6-name co-occurrence is not a counter-example — the sentence is
+*"The Romans looked for common ground between their major gods and those of the
+Greeks…"*, which mentions six things the extractor typed as `category` and
+enumerates nothing.
+
+**Two near-misses were checked by opening the source, and both sharpen the
+design rather than softening the finding.**
+
+- `Official cults` / `Non-official but lawful cults` looked like a genuine
+  two-member partition and is not. The source says *"Official cults were state
+  funded… Non-official but lawful cults were funded by private individuals."*
+  That is a **contrast in prose**: no group name, no count, no list. A pass
+  obeying the rules in §4 should produce nothing here, and if it produces a
+  class it has invented the name. An earlier draft of this section called it "a
+  genuine two-member partition the text states"; that was too generous and is
+  corrected.
+- `wiki-roman-economy` **does** contain a count and a list: *"Inscriptions
+  record 268 different occupations in the city of Rome… attested for a wide
+  range of occupations, **including** fishermen (piscatores), salt merchants
+  (salinatores), olive oil dealers (olivarii)…"* — nine members named against a
+  declared 268.
+
+That second one is the most useful thing this measurement produced, because it
+names a failure mode the design did not previously have an answer for.
+**"Including" marks an open list.** "There are six difficulties: EASY, NORMAL,
+HARD, EXPERT, MASTER, and APPEND" is closed and exhaustive; "attested for a
+wide range of occupations, including…" is a *sample*, and treating it as a class
+would assert that Rome had nine occupations. So §4's prompt has to distinguish
+closure, and the checksum is the safety net when it fails to: a class reporting
+**9 of 268** renders, without any further machinery, as obviously a sample
+rather than a set. That is `declared_count` earning its place a second time, in
+a case it was not designed for.
 
 **This is the single most important finding in the document and it corrects the
 brief's premise for layer 3.** Ontology discovery will not fix `category` in
-Ancient Rome, because `category` there is not a flattened set of classes — it
-is a bucket for plurals, and there is no class hiding in `fullones` to
-discover. Layer 3 is therefore justified as *giving discovered classes somewhere
+Ancient Rome. With zero enumerating sentences across five documents, there is
+almost nothing for a text-reading pass to find — and there is no class hiding
+in `fullones` to discover, because `fullones` is one occupation the text
+mentions, not a group the text names and lists. Layer 3 is therefore justified as *giving discovered classes somewhere
 to land so re-extraction stops flattening them again*, and not as a repair of
 `category`. The `category` bucket is a separate defect with a separate fix
 (narrower types, or a prompt that says what to do with a plural noun phrase),
@@ -334,6 +380,19 @@ resolved ids are not derivable from the log alone.
   adds none.
 - The extraction model, shared, not a second client (`composition.py:1537`).
 
+**The prompt must ask for closed enumerations only, and the checksum catches
+what it misses.** Measured in `wiki-roman-economy` (opening section): *"attested
+for a wide range of occupations, **including** fishermen…"* names nine members
+against a declared 268. "Including", "such as" and "for example" mark a list the
+document is *sampling*, not stating; a class built from one asserts that Rome
+had nine occupations. So the prompt says to report a class only where the
+document gives the members it has, and not where it offers examples of a larger
+set. That instruction will not always be obeyed — a schema shapes prompts and
+does not enforce output — which is why the safety net matters: `9 of 268` reads
+as a sample on sight, with no further machinery. Discovery keeps such a class
+rather than dropping it, because the reader can see what it is; §6 is what makes
+that legible.
+
 **Verification, which entity definitions could not do and this can.** `_verified`
 in `entity_definitions.py:215` drops citations that do not lie inside a supplied
 passage. The same check applies here and is stronger, because there is more to
@@ -476,6 +535,31 @@ dashed, `--link-inferred` treatment temporal edges already use, and the ontology
 view marks classes derived in that same visual language. A class presented like
 an asserted fact is precisely the confusion `derivation` exists to prevent
 (`graph_read.py:121-128`).
+
+### The same idea as `temporal_expression`, and why it is not the same type
+
+The temporal lane is preserving `temporal_expression` — the model's own wording,
+kept beside the parsed extent — so that a parse failure is countable instead of
+invisible. That is the same principle as `rejected_members` and it is worth
+naming: **when a pipeline stage discards model output, record what was discarded
+and why, or the discard rate cannot be measured.** Temporal loses output at the
+*parse* step; discovery loses it at the *verify* step. Both were previously
+silent, and in both cases the silence is what let a defect run.
+
+`evidence` is **not** the same idea and should not be folded in with it.
+`temporal_expression` and `rejected_members` are model output preserved against
+a lossy step. `evidence` is a pointer into the source document — offsets checked
+to lie inside the text — and it makes the model's *claim* checkable rather than
+its *discards* countable. Two different jobs that happen to serve one goal.
+
+**A shared type is deliberately not proposed.** The payloads differ (a raw
+string against a name-and-reason pair), the owners differ, and the two are being
+built concurrently in separate lanes — a shared abstraction agreed mid-flight
+would couple two subsystems on a similarity noticed rather than a requirement
+shared. The convergence worth having is cheaper and available later: if both
+discard sets become queryable, "how often does temporal parsing fail" and "how
+often does the model invent a member" are the same question asked twice, and
+*that* is the point to consider one home for them. Not before.
 
 What is deliberately *not* built here is an accept/reject control. Judging that
 a class is wrong and recording that judgement are different features; the second

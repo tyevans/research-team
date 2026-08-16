@@ -19,6 +19,7 @@
 - **If a test would pass with the change reverted, say so in its docstring** rather than leaving it as reassurance.
 - **No backwards compatibility is required.** Pre-release: break data, events and contracts rather than migrating.
 - **`entity_type` for a class node is the literal string `"class"`.** `relationship_type` for a membership edge is the literal string `"instance_of"`. Both are fixed vocabulary; do not vary them between tasks.
+- **Do not build a shared type with the temporal lane's `temporal_expression`.** The two share a principle — when a pipeline stage discards model output, record what was discarded and why, or the discard rate cannot be measured — and temporal loses output at the *parse* step where discovery loses it at the *verify* step. The payloads differ (a raw string against a name-and-reason pair) and the two are being built concurrently in separate lanes, so a shared abstraction agreed mid-flight would couple two subsystems on a noticed similarity rather than a shared requirement. See the spec's §6 for the full argument and the cheaper convergence available later.
 - **Every inferred artefact carries `inferred=True`.** A derived thing that draws like an asserted thing is the defect this whole feature is arranged to avoid.
 
 ---
@@ -52,7 +53,17 @@
 | `tests/infrastructure/test_schema_evolution.py` | One case for the new event. |
 | `frontend/src/domain/knowledge/graph.ts` | `GraphNode.inferred`. |
 
-**A note on task boundaries.** Tasks 1–3 are backend storage, 4–6 are the pass itself, 7–8 are the read path, 9–10 are the frontend, 11 is the measurement that gates layer 3. Layer 3 (schema refinement) is deliberately **not in this plan** — the spec gates it on Task 11's count, and a plan that builds per-project schema machinery before that count is machinery bought on a promise it may not keep. It gets its own plan if the count justifies it.
+**A note on task boundaries.** Tasks 1–3 are backend storage, 4–6 are the pass itself, 7–8 are the read path, 9–10 are the frontend, 11 is the measurement that gates layer 3.
+
+## STOP: the layer 3 checkpoint
+
+**This plan ends at Task 11. Do not build layer 3 — schema refinement — as part of it.**
+
+The user approved this gate explicitly. Layer 3 needs per-project schema selection, which does not exist today: `config.knowledge_domain()` reads one process-wide env var (`config.py:207`), nothing on the `Project` aggregate carries a schema id, and adding one is the largest single cost in the design. It is only worth paying if more than one project actually produces classes.
+
+**Task 11 produces the number. Then stop, report it, and wait for a decision.** The order is: build the counting → look at the number → only then decide whether to build the machinery. An executor who finishes Task 10, sees "schema refinement" in the spec and starts writing YAML generators has skipped the gate — which is exactly the failure this checkpoint is placed to prevent, and it is placed here, in the file structure section, rather than in a footnote at the bottom for that reason.
+
+The prediction on record, so it can be scored rather than quietly forgotten: SEKAI yields a handful of classes, Ancient Rome and budgeting yield near zero. The evidence is in the spec's opening section — five Ancient Rome documents contain **zero** enumerating sentences, measured 2026-08-15. If the prediction holds, the recommendation is to defer layer 3 indefinitely. If it does not hold, say so plainly.
 
 ---
 
@@ -902,6 +913,23 @@ def test_the_prompt_carries_the_document_and_forbids_outside_knowledge():
     assert "only" in prompt.lower()
 
 
+def test_the_prompt_rules_out_open_lists_and_bare_contrasts():
+    """Measured 2026-08-15 in `wiki-roman-economy`: "attested for a wide range
+    of occupations, including fishermen..." names nine members against a
+    declared 268. A class built from it asserts Rome had nine occupations.
+
+    A prompt-content assertion is weak -- a schema shapes prompts and does not
+    enforce output -- so this is not the defence, it is the first half of it.
+    The second half is the checksum: `9 of 268` reads as a sample on sight,
+    and that is what `test_a_class_that_samples_a_larger_set_is_kept_and_shown`
+    in Task 10 pins.
+    """
+    prompt = build_prompt(SONGS)
+
+    assert "including" in prompt
+    assert "Official cults" in prompt  # the contrast counter-example
+
+
 def test_a_fenced_reply_is_read_anyway():
     """'Answer with JSON and nothing else' is followed most of the time and
     not all of it -- the same tolerance `entity_definitions._parse` needs."""
@@ -1053,6 +1081,17 @@ sentence that enumerates them, a table whose header names them, or a section
 that introduces them as a set. Report only classes the document names. Do not
 group things yourself, do not use anything you know about this subject from
 outside the document, and do not report a class the document merely implies.
+
+Report a class only where the document gives the members it has, not where it
+offers examples of a larger set. "There are six difficulties: EASY, NORMAL,
+HARD, EXPERT, MASTER, and APPEND" states its members. "attested for a wide
+range of occupations, including fishermen, salt merchants, olive oil dealers"
+gives three examples of many and is not a class. "including", "such as", "for
+example" and "among others" all mark a list you should not report.
+
+Two things contrasted are not a class either. "Official cults were state
+funded. Non-official cults were funded by private individuals" names no group
+and lists no members; it is a sentence about two things, not a set.
 
 For each class give:
   - name: what the document calls the group, in its own words.
@@ -1719,7 +1758,17 @@ a separate decision."
 - Consumes: `OntologyRunner.classes_for` / `.members_for` (Task 3).
 - Produces: `GraphEntity.inferred: bool = False`; `MAX_ONTOLOGY_CLASSES: int = 200`; class nodes with `entity_type="class"` and edges with `relationship_type="instance_of"`.
 
-**This task touches files the `temporal` lane owned. Re-read `graph_reader.py` and `graph_read.py` before writing anything** — this plan was written against the versions at `334ff85` and the DTOs may have moved.
+**This task touches files the `temporal` lane owned, and that lane is doing a cutover, not a patch. Re-read `graph_reader.py`, `graph_read.py` and `temporal_rendering.py` before writing anything** — this plan was written against the versions at `334ff85`.
+
+What is known to be changing, as of 2026-08-15: `temporal` found that redstring's parser was destroying extraction's output in two ways — BC dates are structurally unparseable (`parse_temporal` has no BC branch, and `datetime.MINYEAR == 1` means no pre-1 AD year is storable at all), and AD dates were being *fabricated*, with `AD 476` acquiring a month and day from the source article's publication date and stored at DAY precision. Both are in the real database now. The fix is a signed-year interval type replacing `datetime` in the temporal representation, so:
+
+- **`GraphEntity.temporal` may change shape** — assume it does. This task adds `GraphEntity.inferred` beside it; add the field, do not reformat what is around it.
+- **`temporal_rendering.render_extent` almost certainly changed.** `_to_graph_entity` calls it. Do not touch that call.
+- **`TimelineBand` may emit numbers rather than ISO strings.** Outside this task entirely; do not follow it.
+
+None of this touches the class layer, which carries no dates — the risk is collision in the same functions, not conflicting semantics. If a code block below no longer matches the file, **port the reasoning, not the diff**; the reasoning is what this plan is for.
+
+Confirm rather than assume that `read_models.py:1261` is untouched, since the case for a separate pass (spec §3) rests on `EntityDefinitionProjection` staling every entity in a `DocumentExtracted`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2019,6 +2068,23 @@ it('reports a class whose members fall short of its declared count', () => {
 
   expect(folded[0].complete).toBe(false)
 })
+
+it('keeps a class that samples a much larger set, and shows both numbers', () => {
+  // Measured 2026-08-15: wiki-roman-economy declares 268 occupations and names
+  // nine. The prompt asks the model not to report open lists; when it does
+  // anyway, "9 of 268" is what makes the class self-evidently a sample. Kept
+  // rather than dropped at some ratio threshold -- a threshold would be a
+  // number nobody could justify, and the reader can see 9 of 268 for what it
+  // is faster than any rule could classify it.
+  const folded = foldOntology({
+    classes: [{ name: 'Occupation', kind: 'unordered_set', declaredCount: 268,
+                memberCount: 9, /* nine members */ }],
+  })
+
+  expect(folded[0].complete).toBe(false)
+  expect(folded[0].declaredCount).toBe(268)
+  expect(folded[0].members).toHaveLength(9)
+})
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -2132,7 +2198,9 @@ Open each class's evidence in the source document. The question is not "did it f
 
 - [ ] **Step 4: Recommend**
 
-The spec's prediction, from reading all 116 Ancient Rome `category` entities on 2026-08-15: SEKAI yields several, the other two yield near zero, because Roman occupations and budgeting expense categories are not enumerated-with-a-count sets. **If that holds, recommend deferring layer 3** — per-project schema machinery built for one document is machinery bought on a promise it cannot keep. If it does not hold, say so plainly; the prediction was a prediction.
+The spec's prediction, measured 2026-08-15 rather than reasoned: SEKAI yields several classes, the other two yield near zero. The evidence is **zero enumerating sentences across all five Ancient Rome documents**, against one in the SEKAI document that is the whole basis of this feature. Expect at most one Rome candidate — `wiki-roman-economy`'s "268 different occupations… including" — and expect it to render as `9 of 268`, which is the checksum correctly identifying a sample rather than a set.
+
+**If the prediction holds, recommend deferring layer 3** — per-project schema machinery built for one document is machinery bought on a promise it cannot keep. If it does not hold, say so plainly; the prediction was a prediction, and it is written down here so it can be scored rather than quietly forgotten.
 
 - [ ] **Step 5: Commit the findings**
 
