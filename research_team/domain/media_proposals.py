@@ -70,6 +70,11 @@ class MediaProposed(DomainEvent):
     `query` is carried because a proposal nobody can trace back to the search
     that found it is unauditable -- the design doc's phrase for exactly this
     field.
+
+    `thumbnail_url` defaults to `""`: not every search result carries one, and
+    "" means the same thing an absent key does -- no thumbnail was found --
+    so an old payload written before this field existed loads the same way a
+    proposal with no thumbnail written today would.
     """
 
     aggregate_type: str = "MediaProposals"
@@ -79,7 +84,7 @@ class MediaProposed(DomainEvent):
     topic_id: str
     page_url: str
     asset_url: str
-    thumbnail_url: str | None
+    thumbnail_url: str = ""
     kind: str
     title: str
     reason: str
