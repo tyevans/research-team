@@ -20,6 +20,7 @@ from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 
 from research_team.application import FeedEntry
 from research_team.domain import Corpus, EntityJudgements, Project, Session
+from research_team.domain.ask_conversation import AskConversation
 from research_team.domain.learner import LearnerProgress
 from research_team.domain.media_proposals import MediaProposals
 from research_team.domain.ontology import ONTOLOGY_AGGREGATE_TYPE
@@ -74,6 +75,7 @@ UNROUTED_AGGREGATE_TYPES = frozenset(
         LearnerProgress.aggregate_type,
         EntityJudgements.aggregate_type,
         ONTOLOGY_AGGREGATE_TYPE,
+        AskConversation.aggregate_type,
     }
 )
 """Aggregate types deliberately kept off the feed, and the other half of the guard.
@@ -112,6 +114,17 @@ pump, a `decodeFrame` case and a store cost more than they buy until somebody
 is watching two tabs. Revisit when the ontology view becomes something left
 open while a sweep runs across a project's documents, because then the missing
 repaint is the whole point of having it open.
+
+`AskConversation` is off for `LearnerProgress`'s exact reason: the asking
+client is already receiving its answer through the ask's own stream -- the
+generator that yields the turn back to the tab that asked it -- so a feed
+frame would arrive at the one client that does not need telling. It costs a
+second tab: a history pane open on the same project while another tab is
+mid-conversation does not repaint, because nothing on that path reaches
+`read_since`. Revisit when a history pane is actually built and is meant to
+be left open while another tab asks -- the missing repaint only matters once
+something is watching for it, the same condition `Ontology`'s paragraph
+above names for its own pane.
 
 None is a *correctness* argument, and if any grows a pane the answer is
 to move it into `FEED_AGGREGATE_TYPES` and give `_sse` a branch -- not to
