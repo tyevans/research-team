@@ -56,7 +56,10 @@ from research_team.infrastructure.persistence.event_store import (
     build_research_run_repository,
     build_topic_repository,
 )
-from research_team.infrastructure.persistence.read_models import CorpusStore
+from research_team.infrastructure.persistence.read_models import (
+    CorpusStore,
+    SessionSummaryStore,
+)
 from research_team.workflows import hybrid_default
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
@@ -845,22 +848,17 @@ async def test_a_judgement_survives_the_round_trip_with_its_entity_keys_intact(s
     assert withdrawn_event.judgement_id == held_id
 
 
-async def test_a_build_without_the_media_projection_still_replays(store, db_path):
-    """A new event type is additive: an older build replays a log holding it.
+async def _write_corpus_log(store, db_path, project_id) -> None:
+    """A three-event corpus log: a document, a medium, and a text derived from it.
 
-    This is `eventsource.replay`'s documented behaviour -- an event every
-    projection ignores counts as applied -- and it is what "events are not
-    rewritten" depends on. Asserted here rather than assumed, because the same
-    property is the reason a *missing* projection is silent, and a reader of
-    this file should meet both halves in one place.
-
-    `CorpusProjection` (`research_team/infrastructure/persistence/
-    read_models.py`) has no `@handles(CorpusMediaStored)` in this build --
-    Task 3 is where that handler is added -- so the payload below stands in
-    honestly for an older build's log: nothing here constructs the handler and
-    then declines to register it, the handler simply does not exist yet.
+    Written straight into the table rather than through the aggregate, for
+    this file's usual reason -- today's model would add today's fields. The
+    document payload is genuinely old-shaped (no `uri`, `title`,
+    `published_at`, `note` or `fetched_at`); the media and derived payloads
+    carry every field their events declare, because both events are new and
+    have no earlier shape to reproduce. What they are here to prove is not a
+    widened payload but a *log* an older build has to survive.
     """
-    project_id = uuid4()
     # Touches the store first so the `events` table exists to insert into --
     # the same reason `test_an_auto_run_started_before_the_fetch_grant_existed_
     # still_loads` above reads an empty stream before writing raw payloads.
@@ -896,15 +894,106 @@ async def test_a_build_without_the_media_projection_still_replays(store, db_path
         },
         aggregate_type="Corpus",
     )
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=3,
+        event_type="CorpusDerivedTextStored",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "Corpus",
+            "aggregate_version": 3,
+            "source_id": "v1#perceived",
+            "derived_from": "v1",
+            "text": "A talk about otters.",
+            "sha256": "d" * 64,
+            "locator_map": json.dumps(
+                [
+                    {
+                        "char_start": 0,
+                        "char_end": 20,
+                        "locator": {"kind": "time", "start_s": 0.0, "end_s": 8.0},
+                    }
+                ]
+            ),
+            "perceived_with": "vision=v1,asr=w1",
+            "degradations": json.dumps([]),
+        },
+        aggregate_type="Corpus",
+    )
+
+
+async def test_a_build_without_the_corpus_projection_still_replays(store, db_path):
+    """A new event type is additive: an older build replays a log holding it.
+
+    This is `eventsource.replay`'s documented behaviour -- an event every
+    projection ignores counts as applied -- and it is what "events are not
+    rewritten" depends on. Asserted here rather than assumed, because the same
+    property is the reason a *missing* projection is silent, and a reader of
+    this file should meet both halves in one place.
+
+    **This test used to be `test_a_build_without_the_media_projection_still_
+    replays` and used to be dishonest.** Its docstring said `CorpusProjection`
+    had no `@handles(CorpusMediaStored)` "in this build", so the media payload
+    stood in for an older build's log. That handler now exists
+    (`read_models.py`, `_on_media_stored`), and so does one for
+    `CorpusDerivedTextStored` -- the test kept passing while demonstrating the
+    opposite of what it claimed, because every event in its log was handled.
+    Restructured rather than re-worded: the named property is worth keeping,
+    and the only honest way to keep it is to replay against a projection that
+    genuinely subscribes to none of these events. `SessionSummaryProjection`
+    is that projection, in shipped code -- nothing here constructs a handler
+    and then declines to register it. What the corpus projection *does* make
+    of the same log is the test that follows.
+
+    Proved red by hand before being trusted: `strict=True` with a projection
+    whose `handle()` raises turns this into a `ReplayError`, so the assertion
+    is on delivery rather than on the absence of an exception.
+    """
+    project_id = uuid4()
+    await _write_corpus_log(store, db_path, project_id)
+
+    sessions = await SessionSummaryStore.open(db_path)
+    report = await replay(store, [sessions.projection], strict=True)
+
+    # All three were delivered and rejected by nothing. `applied` counts an
+    # event no projection subscribes to, which is the whole claim.
+    assert report.applied == 3
+    assert not report.failures
+
+
+async def test_a_derived_text_payload_reads_back_as_a_text_row_pointing_at_its_medium(
+    store, db_path
+):
+    """The other half: the build that *does* handle these events reads them.
+
+    The derived row is the one worth checking. It lands in
+    `corpus_documents` beside ordinary prose rather than in a table of its
+    own, and it has to stay distinguishable from prose once it is there --
+    `derived_from` is the field carrying that distinction, and a row that
+    lost it would be a transcript indistinguishable from something a human
+    wrote, which is the unfalsifiable-provenance failure
+    `CorpusDerivedTextStored` exists to prevent.
+
+    Asserts the row's fields, not `report.applied`: an event no projection
+    handles counts as applied, so a count alone would pass against a build
+    with `_on_derived_text` deleted. Measured -- commenting out that handler
+    leaves the test above green and turns this one's `row is not None` red.
+    """
+    project_id = uuid4()
+    await _write_corpus_log(store, db_path, project_id)
 
     corpus = await CorpusStore.open(db_path)
     report = await replay(store, [corpus.projection], strict=True)
 
-    # The media event was delivered and rejected by nothing -- `applied`
-    # counts it even though `CorpusProjection` has no handler for it.
-    assert report.applied == 2
     assert not report.failures
-    row = await corpus.get(project_id, "s1")
-    assert row is not None
-    assert row.text == "a paper about corpora"
-    assert row.sha256 == "b" * 64
+    document = await corpus.get(project_id, "s1")
+    assert document is not None
+    assert document.text == "a paper about corpora"
+    assert document.sha256 == "b" * 64
+    assert document.derived_from is None
+    derived = await corpus.get(project_id, "v1#perceived")
+    assert derived is not None
+    assert derived.derived_from == "v1"
+    assert derived.text == "A talk about otters."
+    assert derived.perceived_with == "vision=v1,asr=w1"

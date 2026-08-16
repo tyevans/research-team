@@ -93,9 +93,14 @@ export const documentExtraction = (
   board: ExtractionQueueBoard,
 ): DocumentExtraction => {
   if (isDropped(document)) return { kind: 'dropped' }
-  // Second, and before the queue is consulted at all: a media source cannot
-  // reach the queue, so any state read out of the board for one would be a
-  // report about a document that is not there.
+  // Second, and before the queue is consulted at all. A medium *does* reach
+  // the queue now -- `perceive` enqueues under the medium's own source id --
+  // but it reaches it to be perceived, never to be extracted, and the board
+  // is one board with no field distinguishing the two. So a state read out of
+  // it for a medium would be a transcription reported as "Extracting...",
+  // which is the wrong account of what is happening and offers a control that
+  // does nothing. The derived text source queues on its own and is where the
+  // extraction progress belongs.
   if (document.kind === 'media') return { kind: 'unextractable' }
   if (board.running === document.sourceId) return { kind: 'running' }
   if (board.queued.includes(document.sourceId)) return { kind: 'queued' }

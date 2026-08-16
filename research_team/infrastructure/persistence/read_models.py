@@ -749,6 +749,20 @@ def _decode_degradations(value: str) -> tuple[str, ...] | None:
     return tuple(parsed)
 
 
+def _degradations_of(stored: str | None) -> tuple[str, ...]:
+    """A row's `degradations` column as a tuple, keeping `[]` distinct from junk.
+
+    Three cases, and the middle one is the one a `or` collapses: no column at
+    all (a fetched document -- `()`), a column holding `[]` (a perception that
+    missed nothing -- also `()`, and it must not be reported as unreadable),
+    and a column that will not parse (`UNREADABLE_DEGRADATIONS`).
+    """
+    if not stored:
+        return ()
+    decoded = _decode_degradations(stored)
+    return decoded if decoded is not None else UNREADABLE_DEGRADATIONS
+
+
 def to_record(row: CorpusDocumentRow | CorpusMediaRow) -> SourceRecord:
     """Present a stored row as the aggregate's own no-bytes shape.
 
@@ -794,11 +808,18 @@ def to_record(row: CorpusDocumentRow | CorpusMediaRow) -> SourceRecord:
         # rule out. `UNREADABLE_DEGRADATIONS` is the honest answer for that
         # case too, for the same reason it is the answer for a malformed
         # event.
-        degradations=(
-            (_decode_degradations(row.degradations) or UNREADABLE_DEGRADATIONS)
-            if row.degradations
-            else ()
-        ),
+        # `is None` and not `or`, and the distinction is a shipped bug rather
+        # than a style point. `_decode_degradations("[]")` returns `()`, which
+        # is falsy, so `or UNREADABLE_DEGRADATIONS` fired on the *ordinary*
+        # case -- a complete perception, nothing missed -- and every clean
+        # transcript listed one degradation reading "<degradations could not be
+        # read from the event>". Measured on 2026-08-16 by the end-to-end test
+        # in `tests/integration/test_media_reaches_the_graph.py`, which is the
+        # first thing to look at a derived row that degraded nothing; the write
+        # side below (`_on_derived_text`) already used `is not None` and was
+        # right. The comment above this one explains why the marker exists at
+        # all, and it stays true -- it just must not be reached from `[]`.
+        degradations=_degradations_of(row.degradations),
     )
 
 

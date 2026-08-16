@@ -2846,3 +2846,31 @@ Worth doing before the corpus has much video in it. Frame extraction is not
 neutral — seek behaviour, scaler defaults and decoder fixes change the pixels
 handed to the VLM — so "same model, same video, different description" is
 possible today and would be unattributable.
+
+### B87. Six browser-test fixtures cast their container to `Container`, and the cast is what breaks them
+
+`project-narrow-research`, `project-responsive`, `project-tracks`,
+`session-responsive`, `ProjectView` and `project-stacked` (all
+`.browser.test.tsx`) each build their container literal and then write
+`as unknown as Container`. The cast is there because the literals are partial
+— they carry the handful of fields the test's own assertions need — but
+`as unknown as` does not narrow the check, it removes it: the literal is no
+longer compared against `Container` at all, so a field the component starts
+reading is neither added by the compiler's complaint nor missing in any way a
+gate can see.
+
+The failure it produces is a runtime `TypeError` inside the render, naming a
+property rather than a fixture. Task 8 of the perception slice hit exactly
+that: two of the six crashed when a new field was read, they were fixed by
+adding the field to those two, and the other four were left — not because they
+are sound, but because they happen not to render the component that reads it
+yet. Nothing distinguishes the four that are fine from the four that are one
+new field away.
+
+The remedy is a typed fixture helper — one `buildContainer(overrides)` that
+returns a real `Container` with defaults, so a literal is checked and a new
+required field fails `npm run verify` in one place instead of crashing six
+tests one at a time. Deliberately not done inside the perception slice: it is
+pre-existing infrastructure debt that the slice met rather than caused, and
+rewriting six fixtures inside a feature branch buries the change that branch
+is about.
