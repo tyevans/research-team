@@ -115,7 +115,11 @@ Expected: FAIL, `AttributeError: module ... has no attribute 'transcriber_url'`
 
 - [ ] **Step 4: Implement**
 
-Add to `research_team/infrastructure/config.py`. `MAX_DOCUMENT_CHARS` lives in `research_team/application/knowledge.py:40`; import it there rather than repeating the number, and if that import is circular, define `DEFAULT_PERCEPTION_MAX_CHARS = 200_000` beside the other defaults with a comment saying which constant it must track and why it is copied.
+Add to `research_team/infrastructure/config.py`.
+
+**Define `DEFAULT_PERCEPTION_MAX_CHARS = 200_000` locally, beside the other defaults. Do not import `MAX_DOCUMENT_CHARS`.** It lives in `research_team/application/knowledge.py:40`, and `infrastructure/config.py` importing from `application/` inverts the dependency direction this repository maintains — the module's own docstring calls it the edge that no layer below asks anything of, and it imports only `os` and `pathlib` today. The cost is two constants that must track each other; pay it down with a comment in the new one naming the other and saying they must move together. Drift between them makes a transcript truncate at a different length than a document, which is visible rather than silent.
+
+The test above should then assert against `200_000` directly, or against `config.DEFAULT_PERCEPTION_MAX_CHARS`, rather than importing the application constant into a config test.
 
 ```python
 def transcriber_url() -> str | None:
@@ -723,7 +727,17 @@ class ReadEverythingPerception:
 
 Convert each `LocatorSegment` to a `LocatorSpan` with a `dict` locator tagged by kind — `{"kind": "time", "start_s": ..., "end_s": ...}`, `{"kind": "page", "page": ...}`, `{"kind": "bbox", ...}`, `{"kind": "char", ...}`, `{"kind": "byte", ...}`. Tag explicitly rather than relying on which keys are present, so the resolver in Task 5 can dispatch without guessing and an unknown kind is visibly unknown.
 
-Write a module-level `build_perception_adapter()` factory that reads config, constructs `RemoteWhisperTranscriber` only when a URL is set, `build_openai_vision_model` only when a vision model is set, passes `artifacts=FilesystemArtifactStore(root=config.perception_root())`, and derives `PerceptionCapabilities` from the probed `CapabilitySet`. Note in its docstring that `build_perception` is `async` and probes binaries at construction, so this is awaited once at composition rather than per request.
+**Capabilities are declared from configuration, not probed, and `Perception` is built lazily.** This is the shape, and the reasoning belongs in the code:
+
+- `capabilities()` is synchronous and derives from `AGENT_VISION_MODEL`, `AGENT_TRANSCRIBER_URL` and `shutil.which("ffmpeg")`. It must be synchronous because the route checks it before enqueuing anything, and `build_perception` is `async def`.
+- The `CapabilitySet` handed to `build_perception` is constructed explicitly — `CapabilitySet.of({Capability.VISION: vision_model_id, Capability.ASR: transcriber_model_id, Capability.FFMPEG: "present"})`, omitting whichever is absent — so `fingerprint()` is computable without awaiting a probe.
+- `build_perception` is awaited on **first `perceive`**, memoized behind an `asyncio.Lock`, not at construction.
+
+The alternative — making `build_application` async — was rejected: it would change every caller in the repository, REPL, web and tests, for one port. The cost of this choice is that a binary present but broken reads as available, so the failure arrives as a degradation from a later `represent` rather than as a 503 up front. That is a worse error message rather than a wrong answer.
+
+**`build_perception` validates an explicitly supplied `capabilities` against `vision.model_id` and raises `DomainError` when they disagree** — so the VISION revision must be exactly the model id passed to `build_openai_vision_model`. Write a test for that agreement; getting it wrong fails at startup, which is the good case, but only if something proves the two are wired from one value.
+
+Write a module-level `build_perception_adapter()` factory that reads config, constructs `RemoteWhisperTranscriber` only when a URL is set, `build_openai_vision_model` only when a vision model is set, and passes `artifacts=FilesystemArtifactStore(root=config.perception_root())`. It is synchronous.
 
 - [ ] **Step 5: Run the tests**
 
@@ -862,17 +876,19 @@ git commit -m "Perceive a medium into a text source the graph already knows how 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-async def test_no_transcriber_is_constructed_without_configuration(monkeypatch):
+def test_no_transcriber_is_constructed_without_configuration(monkeypatch):
     """The no-network guard, at the seam where a network client would be born."""
     monkeypatch.delenv("AGENT_TRANSCRIBER_URL", raising=False)
     monkeypatch.delenv("AGENT_VISION_MODEL", raising=False)
-    app = await build_application(...)
+    app = build_application(...)
     assert app.perception.capabilities().any_model() is False
 ```
 
 - [ ] **Step 2: Wire it**
 
-`build_perception_adapter()` is awaited once in `build_application` and its result held on `Application`. `MediaPerceiver` is constructed beside `document_extractor`, sharing `corpus_readers` and the corpus repository.
+`build_application` gains `perception: PerceptionPort | None = None`, matching the optional-port precedent already there (`approvals`, `extractions`, `grants`, `activity`) and for the same reason: a test needs to supply a fake so nothing reaches a network. `None` calls `build_perception_adapter()`, which is **synchronous** — see Task 4, capabilities are declared from configuration and the library's `Perception` is built lazily on first use, precisely so `build_application` does not have to become async.
+
+`MediaPerceiver` is constructed beside `document_extractor`, sharing `corpus_readers` and the corpus repository.
 
 **Construct it where `CorpusRunner` is constructed and register the projection handler in the same change.** A build with the perceiver wired and the projection handler missing serves every perceive request as a 202 and stores nothing visible — `CLAUDE.md` records this exact failure from the entity-definitions work.
 
