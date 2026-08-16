@@ -62,6 +62,7 @@ from research_team.application.graph_read import (
     GraphReadPort,
 )
 from research_team.application.knowledge import ExtractionNote, KnowledgeError
+from research_team.application.media_acquisition import MAX_UPLOAD_BYTES
 from research_team.application.media_curation import (
     MediaCurationService,
     MediaCurationTextPort,
@@ -208,20 +209,12 @@ KEEPALIVE_SECONDS = 15.0
 DISCONNECT_CHECK = 0.5
 """How long we may sit unaware that the browser has gone."""
 
-MAX_UPLOAD_BYTES = 2 * 1024**3
-"""The largest media upload this will accept, in bytes.
-
-Streaming the upload bounds *memory*; only this bounds *disk*. A two-hour
-recording is comfortably under it and a runaway client is not, which is the
-line it is drawn at -- there is no measurement behind the exact number, and
-raising it is a one-line change with no other consequence.
-
-Enforced by wrapping the chunk iterator handed to `BlobStorePort.put`, not by
-checking a total after `put` returns: by then the bytes are already on disk,
-which is the one thing a ceiling exists to prevent. `put`'s own
-`except BaseException` unlinks its temporary file when the wrapper raises
-through it, so a refused upload leaves nothing behind.
-"""
+# MAX_UPLOAD_BYTES used to be defined here. It moved to
+# `application/media_acquisition.py` because `MediaAcceptWorker`'s download
+# path needs the identical ceiling and the application layer may not import
+# from this one (`tests/test_architecture.py`) -- see that module's docstring
+# for the full reasoning. Imported, not redefined, so there is exactly one
+# ceiling for both an interactive upload and an unattended accept to agree on.
 
 UPLOAD_CHUNK_BYTES = 1024 * 1024
 """How much is read from the request per iteration, matching

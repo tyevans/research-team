@@ -15,16 +15,53 @@ transcribe" unless the HTML is refused before it is ever stored. A corpus row
 with HTML bytes and an empty transcript is worse than no row at all: it reads
 as a successful acquisition.
 
-`max_bytes` is a parameter rather than an import of `MAX_UPLOAD_BYTES` from
-`interfaces/web/app.py` -- the application layer names no framework and
-imports nothing from an outer layer (`tests/test_architecture.py`). Callers
-pass that same constant in; this module only enforces whatever ceiling it is
-given.
+`max_bytes` is a parameter, not a constant baked into `download_media` itself,
+because two different callers care about two different questions with the
+same shape: an interactive upload and an unattended accept both want *a*
+ceiling, but only one of them is this repository's own upload limit.
+`MAX_UPLOAD_BYTES` below is that shared ceiling. It used to live in
+`interfaces/web/app.py`, which worked while only the upload route needed it;
+`MediaAcceptWorker` needs the identical number and the application layer may
+not import from an outer layer (`tests/test_architecture.py`), so the
+constant moved down to where both callers can reach it. `app.py` now imports
+it from here rather than defining a second one -- two ceilings that happen to
+agree today is a bug waiting for the day someone changes one of them.
 """
 
+import contextlib
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Protocol
+from uuid import UUID
 
 import httpx
+from eventsource import CommandRejectedError
+from eventsource.application.aggregates.repository import AggregateRepository
+
+from research_team.application.corpus_editing import CorpusEditor
+from research_team.application.perception import (
+    MediaBytesMissing,
+    NotPerceivable,
+    PerceptionUnavailable,
+    SourceDropped,
+)
+from research_team.domain.media_proposals import (
+    FailMediaProposal,
+    MediaProposals,
+    StoreMediaProposal,
+)
+
+MAX_UPLOAD_BYTES = 2 * 1024**3
+"""The largest media this build will accept, from an upload or a download.
+
+Streaming bounds *memory*; only this bounds *disk*. A two-hour recording is
+comfortably under it and a runaway response is not, which is the line it is
+drawn at -- there is no measurement behind the exact number, and raising it
+is a one-line change with no other consequence. See `upload_media` in
+`app.py` for the enforcement on that path and `download_media` above for
+this one; both raise from inside their chunk loop rather than after reading
+the whole body, for the same reason.
+"""
 
 _HEADERS = {
     # Identical string to `infrastructure/agent/fetch.py`'s `_HEADERS`.
@@ -122,3 +159,209 @@ async def download_media(
             await response.aclose()
 
     return chunks(), media_type
+
+
+@dataclass(frozen=True)
+class AcceptedProposal:
+    """What `MediaAcceptWorker` needs to know about one accepted proposal.
+
+    A narrow projection of `MediaProposalRow`, not that type itself: this
+    module may not import `infrastructure/persistence/read_models.py`
+    (`tests/test_architecture.py`), and the worker has no use for the fields
+    that exist for the review pane -- `reason`, `thumbnail_url`, `query`.
+    `project_id` is `str` rather than `UUID` because it is threaded straight
+    into `StoreMediaProposal`/`FailMediaProposal`, which are dataclasses
+    typed that way to match every other command in `media_proposals.py`.
+    """
+
+    project_id: str
+    page_url: str
+    asset_url: str
+    title: str
+
+
+class MediaProposalReadPort(Protocol):
+    """Looks up one accepted proposal's details, by id.
+
+    `None` for an id the read model has never seen -- a dispatch racing
+    ahead of its own projection, or a caller holding a stale id -- rather
+    than raising, because there is nothing this worker could report the
+    failure *against*: `FailMediaProposal` needs a `project_id` this read is
+    the only source of, and `decide` refuses the command for an unknown
+    proposal anyway. `run` treats it as nothing to do.
+    """
+
+    async def get(self, proposal_id: str) -> AcceptedProposal | None: ...
+
+
+class MediaPerceiverPort(Protocol):
+    """The one method `MediaAcceptWorker` uses off `MediaPerceiver`.
+
+    A structural protocol rather than importing `MediaPerceiver` itself: nothing
+    here needs its `PerceptionReport`, and a narrower dependency is a smaller
+    fake in this module's tests.
+    """
+
+    async def perceive(self, project_id: UUID, source_id: str) -> object: ...
+
+
+class MediaAcceptWorker:
+    """Runs after a person accepts a proposal: download, store, perceive, record.
+
+    The four steps run in this order and for this reason each:
+
+    1. **Download**, under `max_bytes`. `UnsupportedMedia` and `MediaTooLarge`
+       are the two ways it can fail, and both are refusals this worker can
+       explain -- see `_fail`.
+    2. **`CorpusEditor.store_media`**, with `uri=detail.page_url`. The *page*
+       URL, not `detail.asset_url` the download just fetched: provenance is
+       where a thing was found, not the CDN path it happened to be served
+       from -- a reader citing this source wants the gallery page, not a
+       signed S3 URL that may not resolve tomorrow.
+    3. **Perception, eagerly**, so the source is never visible in a
+       half-perceived state a moment after it exists. Best-effort, not a
+       gate: `NotPerceivable`, `SourceDropped`, `MediaBytesMissing` and
+       `PerceptionUnavailable` are all outcomes `perceive_source`'s own route
+       already treats as ordinary (404/410/503, not 500), and failing the
+       whole accept over "this install has no vision model configured" would
+       discard a source that downloaded and stored correctly, over a
+       capability question a person can revisit later through that same
+       route. An exception *not* in that set is a bug in the perceiving path
+       and is left to propagate -- the difference between "the source is
+       fine, perception can wait" and "something is broken" is exactly the
+       set of named types.
+    4. **Record the outcome** -- `StoreMediaProposal` on success,
+       `FailMediaProposal` on a download refusal.
+
+    **A worker retrying after a crash must treat an "already stored" refusal
+    as its own success signal.** `StoreMediaProposal` against a proposal
+    already `stored` is refused by `decide`, not made idempotent -- `decide`
+    cannot arbitrate between two different `source_id`s both claiming to be
+    one proposal's result (see the controller ruling in the task-11 brief).
+    So a crash between a successful `store_media`/perceive and the append
+    that would have recorded it leaves the proposal `accepted`; a re-run
+    downloads and stores again (harmless -- `source_id` is `proposal_id`,
+    content-addressed, so a re-fetch of unchanged bytes lands on the same
+    blob) and then reaches `StoreMediaProposal` a second time, which
+    `decide` now refuses because the first append this time *did* land. That
+    refusal is read back and, if the state it refused against is already
+    `stored`, treated as success rather than surfaced as an error --
+    anything else refusing is a genuine problem and is not swallowed the
+    same way.
+    """
+
+    def __init__(
+        self,
+        *,
+        reads: MediaProposalReadPort,
+        proposals: AggregateRepository[MediaProposals],
+        editor: CorpusEditor,
+        perceiver: MediaPerceiverPort,
+        client: httpx.AsyncClient,
+        max_bytes: int = MAX_UPLOAD_BYTES,
+    ) -> None:
+        self._reads = reads
+        self._proposals = proposals
+        self._editor = editor
+        self._perceiver = perceiver
+        self._client = client
+        self._max_bytes = max_bytes
+
+    async def run(self, proposal_id: str) -> None:
+        detail = await self._reads.get(proposal_id)
+        if detail is None:
+            return
+
+        project_id = UUID(detail.project_id)
+        # The proposal's own id, not a freshly minted one: it is already
+        # unique (`decide`'s "unknown proposal" guard makes `proposal_id`
+        # unique domain-wide, per `MediaProposalRow.row_id`'s docstring), and
+        # reusing it is what makes a re-run's `store_media` land on the same
+        # `source_id` rather than creating a second corpus row for a retried
+        # accept.
+        source_id = proposal_id
+
+        try:
+            stream, media_type = await download_media(
+                detail.asset_url, client=self._client, max_bytes=self._max_bytes
+            )
+        except (UnsupportedMedia, MediaTooLarge) as error:
+            # `str(error)` already distinguishes the two shapes a person
+            # needs told apart: `UnsupportedMedia` names the refused media
+            # type ("this asset is the wrong kind") or, for a redirect, the
+            # Location that was not followed ("this URL moved"); `MediaTooLarge`
+            # names the ceiling crossed. Collapsing either into a generic
+            # "download failed" would lose exactly the distinction the pane
+            # needs to show.
+            await self._fail(project_id, proposal_id, str(error))
+            return
+
+        try:
+            await self._editor.store_media(
+                project_id,
+                source_id,
+                stream,
+                media_type,
+                uri=detail.page_url,
+                title=detail.title or None,
+            )
+        except BaseException:
+            # `store_media` failing after it started reading `stream` -- a
+            # blob-store I/O error, most plausibly -- leaves
+            # `download_media`'s generator suspended mid-iteration. Its own
+            # `finally` closes the underlying response only on exhaustion or
+            # an explicit `aclose()`; an abandoned suspended generator is not
+            # promised to be collected promptly, so the connection would sit
+            # open until it happens to be. Close it explicitly rather than
+            # trust that.
+            await stream.aclose()
+            raise
+
+        await self._perceive_eagerly(project_id, source_id)
+        await self._record_stored(project_id, proposal_id, source_id)
+
+    async def _perceive_eagerly(self, project_id: UUID, source_id: str) -> None:
+        # Ordinary, named outcomes -- see the class docstring's step 3. The
+        # source is stored correctly either way; perception can be retried
+        # later through `perceive_source`.
+        with contextlib.suppress(
+            NotPerceivable, SourceDropped, MediaBytesMissing, PerceptionUnavailable
+        ):
+            await self._perceiver.perceive(project_id, source_id)
+
+    async def _record_stored(self, project_id: UUID, proposal_id: str, source_id: str) -> None:
+        aggregate = await self._proposals.load_or_create(project_id)
+        try:
+            aggregate.execute(
+                StoreMediaProposal(
+                    project_id=str(project_id), proposal_id=proposal_id, source_id=source_id
+                )
+            )
+        except CommandRejectedError:
+            # See the class docstring's crash-retry paragraph: refused
+            # because a previous run already recorded this is this worker's
+            # own success, not an error. Any other refused state (rejected,
+            # failed by a previous run) is a real problem and is re-raised.
+            reloaded = await self._proposals.load_or_create(project_id)
+            if reloaded.state.proposals[proposal_id].status == "stored":
+                return
+            raise
+        await self._proposals.save(aggregate)
+
+    async def _fail(self, project_id: UUID, proposal_id: str, error: str) -> None:
+        aggregate = await self._proposals.load_or_create(project_id)
+        try:
+            aggregate.execute(
+                FailMediaProposal(
+                    project_id=str(project_id), proposal_id=proposal_id, error=error
+                )
+            )
+        except CommandRejectedError:
+            # Mirrors `_record_stored`'s crash-retry handling: a re-run that
+            # fails identically after a previous run already recorded the
+            # failure should not raise over its own prior work.
+            reloaded = await self._proposals.load_or_create(project_id)
+            if reloaded.state.proposals[proposal_id].status == "failed":
+                return
+            raise
+        await self._proposals.save(aggregate)
