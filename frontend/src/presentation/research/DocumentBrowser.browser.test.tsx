@@ -2,7 +2,7 @@ import { page } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import { expect, it } from 'vitest'
 
-import type { TextSummary } from '@domain/research/document.ts'
+import type { SourceSummary, TextSummary } from '@domain/research/document.ts'
 import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
 import { SourceId } from '@domain/shared/identifier.ts'
 
@@ -58,6 +58,8 @@ const documents: readonly TextSummary[] = Array.from({ length: 24 }, (_, index) 
   sourceId: SourceId(`0000000${String(index).padStart(1, '0')}-1111-1111-1111-111111111111`),
   kind: 'text',
   charCount: 1200 + index,
+  derivedFrom: null,
+  degradations: [],
   sha256: 'abc',
   uri: null,
   title: `A paper about topic number ${index}`,
@@ -86,6 +88,88 @@ const Browser = () => (
       onExtract={() => {}}
       onExtractAll={() => {}}
       onCancelExtraction={() => {}}
+      derived={new Map()}
+      perceiveBusy={false}
+      onPerceive={() => {}}
+      onAdd={() => {}}
+    />
+  </div>
+)
+
+/** A corpus with media in it, kept separate from `documents` above rather than
+ *  folded into it.
+ *
+ * The four ring measurements below index into `rows` by position and one of
+ * them names "topic number 0"; prepending a media row would shift all of them
+ * and appending one would put it past the virtualizer's window. A second
+ * fixture costs a few lines and leaves those measurements untouched.
+ *
+ * Two media rows, because the two branches draw different controls at the same
+ * edge: one with no transcript (Transcribe) and one with (Transcript). The
+ * first medium's title is deliberately long enough to wrap in a 340px rail --
+ * that is the case where a `shrink-0` action and a `min-w-0` title either hold
+ * their bargain or the button gets squeezed off the edge, and a short title
+ * would never exercise it.
+ */
+const withMedia: readonly SourceSummary[] = [
+  {
+    sourceId: SourceId('aaaaaaaa-1111-1111-1111-111111111111'),
+    kind: 'media',
+    mediaType: 'video/mp4',
+    byteCount: 12_500_000,
+    sha256: 'abc',
+    uri: null,
+    title:
+      'The opening keynote, recorded in a room with poor acoustics, and titled at the length conference organisers favour',
+    publishedAt: null,
+    note: null,
+    fetchedAt: null,
+    droppedReason: null,
+    extracted: false,
+  },
+  {
+    sourceId: SourceId('bbbbbbbb-1111-1111-1111-111111111111'),
+    kind: 'media',
+    mediaType: 'audio/mpeg',
+    byteCount: 4_200_000,
+    sha256: 'def',
+    uri: null,
+    title: 'A short interview',
+    publishedAt: null,
+    note: null,
+    fetchedAt: null,
+    droppedReason: null,
+    extracted: false,
+  },
+  ...documents,
+]
+
+const MediaBrowser = () => (
+  <div style={{ width: '340px', height: '220px', display: 'flex' }}>
+    <DocumentBrowser
+      documents={withMedia}
+      total={withMedia.length}
+      filter=""
+      onFilterChange={() => {}}
+      onOpen={() => {}}
+      queue={emptyExtractionQueue}
+      extractableCount={documents.length}
+      queueSize={0}
+      busy={false}
+      cancelling={false}
+      onExtract={() => {}}
+      onExtractAll={() => {}}
+      onCancelExtraction={() => {}}
+      derived={
+        new Map([
+          [
+            'bbbbbbbb-1111-1111-1111-111111111111',
+            SourceId('bbbbbbbb-1111-1111-1111-111111111111#perceived'),
+          ],
+        ])
+      }
+      perceiveBusy={false}
+      onPerceive={() => {}}
       onAdd={() => {}}
     />
   </div>
@@ -212,6 +296,96 @@ it('gives the scroller itself a ring it can keep, because it can be focused', as
   expect(ring.left).toBeGreaterThanOrEqual(box.left)
   expect(ring.right).toBeLessThanOrEqual(box.right)
   expect(ring.bottom).toBeLessThanOrEqual(box.bottom)
+})
+
+/** A media row carries an action button for the first time, and that is a new
+ *  340px geometry no jsdom test can judge.
+ *
+ * Before perception, `ExtractAction` returned `null` for every media row
+ * (`documentExtraction` answers `unextractable` for media before the board is
+ * even consulted), so a media row was title-only and owned the full rail width.
+ * It now carries Transcribe or Transcript at the right edge -- the edge the
+ * scroller clips hardest -- beside a title long enough to wrap.
+ *
+ * The jsdom suite cannot see any of this: it lays nothing out, so every rect is
+ * 0x0 and `shrink-0` versus `min-w-0` is not a question it can be asked. It
+ * would report a button squeezed to zero width, or one pushed clean past the
+ * clip, as a perfectly good row -- `getByRole` finds it either way.
+ *
+ * Four things measured rather than reasoned, all at the 1440x900 viewport
+ * `vite.config.ts` sets:
+ *
+ * - the control's focus ring stays inside the scroller's clip, as the extract
+ *   action's does, because it is the same composition at the same edge;
+ * - the row does not scroll horizontally, which is what a title refusing to
+ *   shrink below its content would cause;
+ * - the button keeps a real width rather than being crushed by the long title,
+ *   which is `shrink-0` holding against `min-w-0`;
+ * - the long title actually wrapped, so the case above was genuinely exercised
+ *   and did not pass because everything happened to fit on one line.
+ *
+ * **Measured on 2026-08-15, not reasoned.** Scroller clip `1..270`
+ * horizontally; the Transcribe button's ring reaches `187.97..263.30`, so
+ * 6.7px inside the clip on the right. Button 69.33px wide with its right edge
+ * at 260.30. Row `scrollWidth` 269 against `clientWidth` 269 — no overflow.
+ * Row 123.75px tall with a 90px title, so the title wrapped to five lines and
+ * the shrink bargain was genuinely under load. The geometry is sound with
+ * room to spare; nothing needed fixing.
+ */
+it('keeps a media row’s transcription control inside the rail beside a wrapping title', async () => {
+  await render(<MediaBrowser />)
+  const scroller = document.querySelector('[data-document-scroll]') as HTMLElement
+  const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-document-row]'))
+  expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight)
+
+  const row = rows[0]!
+  const control = row.querySelector<HTMLElement>('.btn')!
+  expect(control.textContent).toBe('Transcribe')
+
+  const clip = clipBox(scroller)
+
+  // The ring, the same question the extract action's test asks one element
+  // over. The button carries the global *outward* `:focus-visible` rather than
+  // `RING_INWARD`, so it reaches 3px past its own border box and needs the
+  // `pr-3` to buy that room.
+  focus(control)
+  const ring = ringBox(control)
+  expect(ring.drawn).toBe(true)
+  expect(ring.left).toBeGreaterThanOrEqual(clip.left)
+  expect(ring.right).toBeLessThanOrEqual(clip.right)
+
+  // No horizontal overflow: a title that refused to shrink below its content
+  // would push the action out of the rail rather than wrap.
+  expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth)
+
+  // The button is not crushed. A `shrink-0` that stopped applying would leave
+  // it present, focusable and a couple of pixels wide.
+  expect(control.getBoundingClientRect().width).toBeGreaterThan(40)
+
+  // And the precondition for all three: the title really did wrap. Without
+  // this, a fixture whose title happened to fit would pass every assertion
+  // above while measuring the easy case.
+  const title = row.querySelector<HTMLElement>('[data-document-open] span')!
+  expect(title.getBoundingClientRect().height).toBeGreaterThan(20)
+})
+
+/** The other branch at the same edge. A transcribed medium draws "Transcript"
+ *  where the untranscribed one draws "Transcribe" -- a wider word in the same
+ *  slot, so the clip question is worth asking again rather than assumed from
+ *  its neighbour. */
+it('keeps a transcribed medium’s link inside the rail too', async () => {
+  await render(<MediaBrowser />)
+  const scroller = document.querySelector('[data-document-scroll]') as HTMLElement
+  const row = Array.from(document.querySelectorAll<HTMLElement>('[data-document-row]'))[1]!
+  const control = row.querySelector<HTMLElement>('.btn')!
+  expect(control.textContent).toBe('Transcript')
+
+  focus(control)
+  const ring = ringBox(control)
+  const clip = clipBox(scroller)
+  expect(ring.drawn).toBe(true)
+  expect(ring.right).toBeLessThanOrEqual(clip.right)
+  expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth)
 })
 
 it('still opens the document it was asked to open', async () => {

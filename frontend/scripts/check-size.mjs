@@ -64,7 +64,29 @@ const BUDGET_KB = {
   // hearing about. And the per-chunk history records what each earlier
   // increase measured and bought, which stays useful reading even while nobody
   // is designing against the numbers.
-  app: 80, // our code: every component, store, mapper and stylesheet rule
+  //
+  // 84, from 80: perception reaching the console. Measured at 80.1 kB, which
+  // is what tripped this gate. (An earlier draft of this note blamed the
+  // remaining slack on "media perception's backend landing", which is not a
+  // thing that can happen -- no Python change moves the `app` chunk. What
+  // consumed the 80 raise's room was ordinary frontend work across the
+  // intervening features, and this note does not identify which; the honest
+  // statement is the measurement.) What the 0.3 kB bought: a Transcribe control on a
+  // medium nothing has been derived from, the link to the transcript on one
+  // that has, the degradations line under a derived source, the perceive
+  // mutation and its repository call, and the join between a medium and its
+  // transcript that the wire cannot carry (`derived_from` is on the text arm).
+  // Deliberately no player, no cue list and no seeking -- those need a locator
+  // syntax another sub-project owns, and half of one built here would be built
+  // twice.
+  //
+  // Sized at 84 rather than 81 on the same standing instruction the 57->80
+  // note records: exploration outranks bundle size at this stage, and a raise
+  // with 0.9 kB of slack is a raise that fires again on the next ordinary
+  // change, which is not what this gate is for. 3.9 kB is roughly a dozen more
+  // controls of this size. Still worth revisiting before release, along with
+  // every other number here.
+  app: 84, // our code: every component, store, mapper and stylesheet rule
   react: 66, // react + react-dom + scheduler
   text: 34, // marked, dompurify, jsdiff — markdown and diff rendering
   // 48, from 38, on the same instruction and the same reasoning as `app-`.

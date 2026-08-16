@@ -2982,3 +2982,209 @@ rewritten, so every document already in a graph keeps its empty or fabricated
 dates until it is extracted again. The Edict of Milan keeps its 0313-08-25
 until then. This is a user decision, not an automatic consequence of the fix
 landing -- and it costs model calls over the whole corpus.
+
+### B89. Nothing records which ffmpeg produced a video reading
+
+`FFMPEG_REVISION = "present"` in
+`infrastructure/perception/readeverything_adapter.py` deliberately keeps the
+ffmpeg version out of the perception fingerprint, so an ffmpeg upgrade does not
+invalidate every stored reading. That decision stands and the reasoning is at
+the constant. What it leaves behind is a hole on the other side: the version is
+not recorded *anywhere*, so a disputed frame description cannot be traced to
+the decoder that produced its pixels.
+
+`readeverything`'s own `BinaryProbe` records the full banner when it discovers
+rather than being handed a declaration (`ffmpeg version 6.1.1-3ubuntu5 ...`,
+measured 2026-08-16), so the value is a single `ffmpeg -version` at adapter
+construction — once per process, not per perception. The reason this is
+deferred rather than done is where it would have to be stored: a reading's
+provenance, which means a new field on the derived-text event, and that is a
+domain change behind the perception tasks rather than inside them.
+
+Worth doing before the corpus has much video in it. Frame extraction is not
+neutral — seek behaviour, scaler defaults and decoder fixes change the pixels
+handed to the VLM — so "same model, same video, different description" is
+possible today and would be unattributable.
+
+### B90. Six browser-test fixtures cast their container to `Container`, and the cast is what breaks them
+
+`project-narrow-research`, `project-responsive`, `project-tracks`,
+`session-responsive`, `ProjectView` and `project-stacked` (all
+`.browser.test.tsx`) each build their container literal and then write
+`as unknown as Container`. The cast is there because the literals are partial
+— they carry the handful of fields the test's own assertions need — but
+`as unknown as` does not narrow the check, it removes it: the literal is no
+longer compared against `Container` at all, so a field the component starts
+reading is neither added by the compiler's complaint nor missing in any way a
+gate can see.
+
+The failure it produces is a runtime `TypeError` inside the render, naming a
+property rather than a fixture. Task 8 of the perception slice hit exactly
+that: two of the six crashed when a new field was read, they were fixed by
+adding the field to those two, and the other four were left — not because they
+are sound, but because they happen not to render the component that reads it
+yet. Nothing distinguishes the four that are fine from the four that are one
+new field away.
+
+The remedy is a typed fixture helper — one `buildContainer(overrides)` that
+returns a real `Container` with defaults, so a literal is checked and a new
+required field fails `npm run verify` in one place instead of crashing six
+tests one at a time. Deliberately not done inside the perception slice: it is
+pre-existing infrastructure debt that the slice met rather than caused, and
+rewriting six fixtures inside a feature branch buries the change that branch
+is about.
+
+### B91. A successful extraction never marks its document extracted
+
+Measured on 2026-08-16, twice and independently (once while writing
+`tests/integration/test_media_reaches_the_graph.py`, once by its reviewer):
+extract a stored document over a composed application with the default
+`AGENT_GRAPH_STORE=memory`, and the queue reports
+`{"status": "done", "entities": 2, "relationships": 1}`, the graph really does
+hold the entities — and the corpus row still reads `extracted: False`.
+`application.corpus_caught_up()` raises `TimeoutError` on the position of the
+extraction's own events rather than returning.
+
+**It reproduces with an ordinary fetched text source and no media anywhere in
+the project**, which is the part that matters for blame: this is not the
+perception slice's doing and predates it. The slice only made it visible,
+because the end-to-end test is the first thing to walk the whole path in one
+process.
+
+`CorpusProjection._on_extracted` exists and is correctly `@handles(
+DocumentExtracted)`; what does not happen is the event reaching the
+subscription. The same test proves the subscription is otherwise live — remove
+`@handles(CorpusDerivedTextStored)` and `corpus_caught_up()` times out on
+*that* event instead, so the mechanism works for events the corpus aggregate
+writes and not for redstring's.
+
+**The mechanism, measured on 2026-08-16 rather than reasoned:** `_store_derived`
+re-indexes, indexing appends redstring events, and the corpus subscription never
+processes those — so `caught_up` waits ten seconds for a position it will never
+reach. Deleting the `index` call makes the same assertions pass in 0.8s. That is
+the measurement to start from, and it points at the redstring-event delivery
+path rather than at anything in `CorpusProjection`.
+
+The uncovered half is worth knowing before touching it: **no test fails if the
+`index` call is dropped from `_store_derived`, nor from `_store`.** So the call
+that makes `corpus_caught_up()` unusable is also unguarded, and a fix that
+removes or moves it would go green either way. Whoever takes this should write
+that test first — it is load-bearing in two directions and currently protected
+in neither.
+
+What it costs while it stands: "extract all" recomputes the same documents
+forever, since `unextracted` filters on `listing.extracted`, and the console
+keeps offering "Extract" on a document that has a graph. What it costs the
+test suite: `test_a_stored_video_reaches_the_graph_through_its_transcript`
+asserts the queue outcome and the graph contents instead of the flag, and
+carries a paragraph explaining why. That workaround is load-bearing and
+undocumented anywhere else — without this entry the next reader concludes the
+test is wrong.
+
+### B92. A composed-application test that ingests reaches the network by default
+
+`build_application` builds an embedding provider unless `AGENT_VECTOR_STORE` is
+`none`, and the provider's first ingest reaches `AGENT_EMBEDDING_BASE_URL`. So
+any test that composes an application and then extracts anything makes a live
+call — against whatever the developer's or CI's environment happens to point
+at. Measured on 2026-08-16: the first draft of
+`tests/integration/test_media_reaches_the_graph.py` did not hang on a bug, it
+hung on a socket, for the full ten minutes before it was killed.
+
+Nothing fails loudly. The construction is deliberately eager and touches no
+network (its comment in `composition.py` says so and is right), so the reach
+happens minutes later inside redstring, where it looks like a slow model rather
+than a misconfigured test.
+
+The local workaround is one line — `monkeypatch.setenv("AGENT_VECTOR_STORE",
+"none")` — and that is what the test above does. The remedy is to stop relying
+on every future author knowing that: an autouse fixture in `tests/conftest.py`
+alongside `isolate_database`, which already points `AGENT_DB`,
+`AGENT_BLOB_ROOT` and `AGENT_PERCEPTION_ROOT` at `tmp_path` for exactly this
+class of reason. Deliberately not done inside the perception slice: it changes
+the environment every test in the repository runs under, and the tests that
+would newly run without embeddings need checking one at a time rather than in
+a feature branch about video.
+
+
+### B93. `MediaPerceiver` writes text without the cap `CorpusEditor._store` enforces
+
+`MAX_DOCUMENT_CHARS` (200_000) is enforced on exactly one of the two paths that
+write text into `corpus_documents`. `CorpusEditor._store` checks it and raises
+`KnowledgeError`, which the PATCH route maps to 400. `MediaPerceiver.perceive`
+executes `StoreDerivedText` on the aggregate directly, and `decide` has no
+opinion on the length of anything — so nothing in this repository bounds a
+transcript.
+
+The only bound is advisory: `Budget(max_chars=config.perception_max_chars())`
+handed to `readeverything.represent`. Reasoned rather than measured — no
+transcript this long has been produced here — but the shape of the risk is
+plain from the code: a `Budget` is a request to the library, and whether it is
+honoured exactly, approximately, or per-segment is the library's business and
+is pinned only by a `<0.3` version cap. A pre-1.0 minor could change it without
+anything here noticing.
+
+What it costs if it happens: an oversized derived row that can never be
+extracted (`store_source`'s own cap refuses it downstream) and can never be
+revised (`_store`'s cap refuses that too) — a row the system wrote and cannot
+subsequently act on. Note that `CorpusEditor._store_derived` deliberately does
+*not* check the cap, for exactly this reason: a restore that enforced it would
+refuse to put back a transcript this system itself produced, which is a worse
+dead end than the one it exists to fix. That comment cross-references this
+entry.
+
+The fix is a check in `MediaPerceiver.perceive` between the port returning and
+the command being executed, raising a named exception the perceive route maps —
+not a truncation, which would store a sentence ending mid-word as if a model
+had produced it. Deliberately not done inside this slice: it needs a route
+status decision and an error type, and the perceive route's exception mapping
+was settled two tasks earlier.
+
+### B94. A running transcription shows no state on its own media row
+
+Between the 202 and the terminal frame — minutes for an hour of audio — a media
+row in the console shows a live "Transcribe" button and nothing else.
+`documentExtraction` returns `unextractable` for every media row, deliberately
+and with a good comment (a video is not a document and must not be offered to
+the extraction queue), and `perceiveBusy` is only true while the HTTP request
+itself is in flight, which is milliseconds.
+
+Not duplicated work, and that is why this is cosmetic rather than a defect: a
+second press is handled correctly, answering 202 with `queued: false` and
+"Already queued for transcription". The extraction pane does show the running
+job, so the state is visible somewhere — just not on the row carrying the
+button that started it.
+
+The gap is the one the split between `busy` and `perceiveBusy` leaves open by
+construction: `busy` tracks the extraction queue, which media is excluded from,
+and `perceiveBusy` tracks a request that has already returned. The fix is a
+third state read off the queue keyed by the *medium's* id (perception enqueues
+under the medium, extraction under the derived id, so the two cannot collide),
+rendered on the media row the way `ExtractionPane` renders a stage. Left for
+the slice that adds the batch "Transcribe all" control, which needs the same
+per-row state and would otherwise build it twice.
+
+### B95. Two corpus routes turn a domain refusal into a 500
+
+`app.py`'s restore route maps only `UnknownDocument` and `NotDropped`; the
+PATCH (revise) route maps only `UnknownDocument` and `KnowledgeError`. Neither
+maps `CommandRejectedError`, which is what `Corpus.decide` raises for every
+refusal it makes — so a refusal the domain states clearly reaches the caller as
+a server error with no message.
+
+Found on 2026-08-16 by the perception slice's final review, which reported the
+restore-a-transcript defect as a 409 and was corrected by the implementer: it
+was a **500**. That is the shape of the problem — the reviewer assumed a mapped
+refusal because the domain refuses clearly, and only reproducing it showed the
+route drops the distinction.
+
+**No reachable case survives today.** The derivedness guards that exposed it
+were fixed in that same pass, and no other `CommandRejectedError` currently
+escapes either route. So this is latent rather than live, which is exactly why
+it is here: the next domain guard added to `StoreSourceDocument`,
+`StoreSourceMedia` or `StoreDerivedText` becomes a silent 500 at two routes,
+and nothing will fail to say so. The media slice's `upload_source` already
+maps this correctly and is the pattern to copy.
+
+Cheap to fix and cheaper to fix now than to rediscover: one `except` arm each,
+plus a test per route that a refused command answers 409 rather than 500.

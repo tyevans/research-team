@@ -49,6 +49,26 @@ class StoredDocument:
 
     record: TextRecord
     text: str
+    locator_map: str | None = None
+    """Where each stretch of a transcript came from in its medium, as the JSON
+    that was stored, or `None` for a fetched document -- which has no map at
+    all, not an empty one.
+
+    Here rather than on `TextRecord`, and the split is the point. `TextRecord`
+    is the aggregate's own shape and lives in `CorpusState`, which gave up
+    document text precisely so snapshots would stay constant-sized; a locator
+    map is one entry per segment of a transcript and would put that cost
+    straight back. This type already carries the text for the same reason it
+    can carry this -- it is a read-side answer, built per query and never
+    folded.
+
+    Written by `_on_derived_text` since the perception slice landed and read by
+    nothing until now: `CorpusEditor.restore` is its first caller, because
+    restoring a dropped transcript means re-issuing `StoreDerivedText` with the
+    whole record intact, and a restore that could not read the map back would
+    have to either zero it or refuse. `application/locators.py` is what turns
+    it into locators; sub-project 4 is what will ask it to.
+    """
 
 
 @dataclass(frozen=True)

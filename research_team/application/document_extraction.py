@@ -113,10 +113,16 @@ class DocumentExtractor:
         extracting it would put it into the graph the drop was meant to keep
         it out of.
 
-        Media sources are excluded too, and for a different reason: nothing
-        extracts media yet, so every one of them reads `extracted=False` --
-        honestly, per `SourceListing` -- and would otherwise queue for an
-        extraction this codebase has no way to perform.
+        Media sources are excluded too, and the reason has changed while the
+        filter has not. A medium is still never extracted -- every one of them
+        reads `extracted=False`, honestly, per `SourceListing` -- but it now
+        reaches the graph *through* its derived text: `MediaPerceiver` stores
+        a transcript as an ordinary text source, and that source queues here
+        on its own, with no filter widened and no media branch added. The
+        `kind == "text"` test below is the whole of it, which is the part
+        worth writing down: the thing to resist is teaching this method about
+        media, because the moment it knows, a video and its transcript are two
+        queue entries for one extraction.
 
         Order is the listing's, so "extract all" runs the queue in the order
         the page shows -- a progress pane that jumped around a list the reader

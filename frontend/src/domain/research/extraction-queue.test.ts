@@ -14,6 +14,8 @@ const doc = (over: Partial<TextSummary> = {}): TextSummary => ({
   sourceId: SourceId('s1'),
   kind: 'text',
   charCount: 10,
+  derivedFrom: null,
+  degradations: [],
   sha256: 'deadbeef',
   uri: null,
   title: null,

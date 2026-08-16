@@ -443,6 +443,12 @@ const STAGES: readonly ExtractionStage[] = [
   'consolidating',
   'consolidated',
   'failed',
+  // Not in the ingest's order, because they are not on the ingest's walk:
+  // perception is a separate job reporting through the same channel, and it
+  // emits `perceiving` then either `perceived` or `failed`. Listed last rather
+  // than interleaved so the sequence above still reads as one walk.
+  'perceiving',
+  'perceived',
 ]
 
 /** An unrecognised stage reads as `extracting` rather than being dropped.
@@ -623,12 +629,20 @@ export const toSourceSummary = (raw: Dto<typeof dto.documentDto>): SourceSummary
         mediaType: raw.media_type,
         byteCount: raw.byte_count,
       }
-    : { ...toSourceProvenance(raw), kind: 'text', charCount: raw.char_count }
+    : {
+        ...toSourceProvenance(raw),
+        kind: 'text',
+        charCount: raw.char_count,
+        derivedFrom: raw.derived_from,
+        degradations: raw.degradations,
+      }
 
 export const toTextSummary = (raw: Dto<typeof dto.textSourceDto>): TextSummary => ({
   ...toSourceProvenance(raw),
   kind: 'text',
   charCount: raw.char_count,
+  derivedFrom: raw.derived_from,
+  degradations: raw.degradations,
 })
 
 export const toMediaSummary = (raw: Dto<typeof dto.mediaSourceDto>): MediaSummary => ({

@@ -85,7 +85,7 @@ async def composed(db_path):
 
 
 async def test_a_pass_reports_what_it_found(composed):
-    application, client, project_id = composed
+    _application, client, project_id = composed
 
     response = await client.post(f"/api/projects/{project_id}/sources/songs/ontology")
 
@@ -127,7 +127,7 @@ async def test_a_project_nobody_has_passed_over_has_no_classes(composed):
     it is what makes the empty state a real answer rather than an error, and
     because it is the answer a misconfigured build would also give, which is
     why the 503 test below exists beside it."""
-    application, client, project_id = composed
+    _application, client, project_id = composed
 
     body = (await client.get(f"/api/projects/{project_id}/ontology")).json()
 
@@ -135,7 +135,7 @@ async def test_a_project_nobody_has_passed_over_has_no_classes(composed):
 
 
 async def test_an_unknown_source_is_404(composed):
-    application, client, project_id = composed
+    _application, client, project_id = composed
 
     response = await client.post(f"/api/projects/{project_id}/sources/nope/ontology")
 

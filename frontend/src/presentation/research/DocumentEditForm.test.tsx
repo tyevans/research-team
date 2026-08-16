@@ -21,6 +21,8 @@ const doc = (over: Partial<TextSummary> = {}): TextSummary => ({
   sourceId: SourceId('s1'),
   kind: 'text',
   charCount: 100,
+  derivedFrom: null,
+  degradations: [],
   sha256: 'deadbeef',
   uri: null,
   title: 'A Paper',
@@ -50,6 +52,9 @@ const fakeDocuments = (over: Partial<DocumentRepository> = {}): DocumentReposito
   }),
   cancelExtraction: vi.fn(() => {
     throw new Error('cancelExtraction was not stubbed for this test')
+  }),
+  perceive: vi.fn(() => {
+    throw new Error('perceive was not stubbed for this test')
   }),
   create: vi.fn(() => {
     throw new Error('create was not stubbed for this test')
@@ -123,4 +128,43 @@ it('shows the identifier and does not let it be edited', async () => {
 
   expect(screen.getByText('s1')).toBeInTheDocument()
   expect(screen.queryByLabelText('Identifier')).not.toBeInTheDocument()
+})
+
+it('withholds Text, URI and Published from a transcript, and keeps Title and Note', async () => {
+  // A derived source is a text row, so nothing about `kind` distinguishes it
+  // here -- `derivedFrom` is the whole signal. The server refuses a `text`
+  // against a derived id (400, naming re-perception) and refuses `uri` and
+  // `publishedAt` because a transcript was not fetched from anywhere; a field
+  // that exists and must not be used is an invitation to meet that refusal.
+  //
+  // Title and Note are asserted present in the same test on purpose: the
+  // failure this guards against in the other direction is a fix that hides
+  // the whole form for a transcript, which would leave a transcript's title
+  // permanently wrong -- the second half of the same defect.
+  render(
+    <DocumentEditForm
+      projectId={project}
+      document={doc({ derivedFrom: 'vid' })}
+      onDone={vi.fn()}
+    />,
+    { wrapper },
+  )
+
+  expect(screen.queryByLabelText('Text')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('URI')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Published')).not.toBeInTheDocument()
+  expect(screen.getByLabelText('Title')).toBeInTheDocument()
+  expect(screen.getByLabelText('Note')).toBeInTheDocument()
+})
+
+it('keeps all four fields on an ordinary fetched document', async () => {
+  // The control for the test above. Without it, hiding the fields
+  // unconditionally would pass every assertion there.
+  render(<DocumentEditForm projectId={project} document={doc()} onDone={vi.fn()} />, {
+    wrapper,
+  })
+
+  expect(screen.getByLabelText('Text')).toBeInTheDocument()
+  expect(screen.getByLabelText('URI')).toBeInTheDocument()
+  expect(screen.getByLabelText('Published')).toBeInTheDocument()
 })

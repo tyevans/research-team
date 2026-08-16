@@ -23,6 +23,8 @@ const row: SourceSummary = {
   sourceId: SourceId('s1'),
   kind: 'text',
   charCount: 0,
+  derivedFrom: null,
+  degradations: [],
   sha256: '',
   uri: null,
   title: null,
@@ -54,6 +56,9 @@ const fakeDocuments = (over: Partial<DocumentRepository>): DocumentRepository =>
   }),
   cancelExtraction: vi.fn(() => {
     throw new Error('cancelExtraction was not stubbed for this test')
+  }),
+  perceive: vi.fn(() => {
+    throw new Error('perceive was not stubbed for this test')
   }),
   create: vi.fn(() => {
     throw new Error('create was not stubbed for this test')

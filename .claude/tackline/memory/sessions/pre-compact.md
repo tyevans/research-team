@@ -1,17 +1,15 @@
 ## Pre-Compact Snapshot
-**Time**: 2026-08-13T05:33:58Z
+**Time**: 2026-08-16T00:15:28Z
 
 ### Recent Commits
-64b9bbf Close phase 4 by declining all four of the components it was named for
-b0cf6e3 Let a notification be reached, and let go of without losing your place
-330ffa3 Sweep the console for the clipped focus ring, and fix the two it found
-f85aca1 Draw the file list's focus ring where the reader can actually see it
-65c6631 The spec says what the build charged, and gets tracked so it can (#152)
+720478a Merge remote-tracking branch 'origin/main' into media-in-the-corpus
+b3da578 Name both guards on the revise path, not just the older one
+756ed07 Rebuild the console for the player's error state
+999eb13 Correct a comment that claimed a guard, drop a dead fake, file the orphans
+e30a740 Say when a media source's bytes do not arrive, instead of a black box
 
 ### Working Tree
-?? .claude/
-?? memory/
-?? package-lock.json
+ M .claude/tackline/memory/sessions/pre-compact.md
 
 ### Open Questions
 (fill in before context is lost)

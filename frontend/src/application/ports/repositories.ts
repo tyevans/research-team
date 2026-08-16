@@ -290,6 +290,22 @@ export interface DocumentRepository {
    *  project. Answers how many went, so a caller can report the number rather
    *  than guessing from a queue it re-reads a moment later. */
   cancelExtraction(projectId: ProjectId): Promise<number>
+  /** Queue one stored medium to be perceived into a text source.
+   *
+   * Shaped exactly like `extract` -- a boolean off a 202 -- because it queues
+   * into the same place: perception rides `ExtractionActivity` and waits
+   * behind whatever else the project has running, rather than owning a second
+   * queue and a second pane to watch it in. So `false` means the same thing
+   * here as there: the queue already holds this source, which is not an error.
+   *
+   * The refusals are the interesting part and they are all rejections, not
+   * return values: 404 for no such medium, 409 for an id holding text or for a
+   * dropped source, 410 for a record whose blob is gone, and 503 when the
+   * install has no vision model and no transcriber. The 503 names *which* --
+   * `AGENT_VISION_MODEL`, ffmpeg -- and a caller that replaces that message
+   * with one of its own throws away the only sentence an operator can act on.
+   * Report `ApiError.message` verbatim. */
+  perceive(projectId: ProjectId, sourceId: SourceId): Promise<boolean>
   /** Store a document a person is holding.
    *
    * Refused by the server when the corpus already holds the id, rather than

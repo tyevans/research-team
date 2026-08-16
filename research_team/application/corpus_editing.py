@@ -44,6 +44,31 @@ The alternative was a `force: bool` on `store_source`. It is fewer lines, and
 it turns the adapter's most carefully-reasoned guard into a request parameter
 every future caller opts out of at will.
 
+**A derived source reaches it on a fourth**, `_store_derived`, and it is
+there for the same reason `_store_media` is: `read_document` *does* answer for
+a transcript -- a derived source is a text row -- so both methods resolved it
+happily and then executed `StoreSourceDocument`, which `decide` refuses
+outright for a derived id. The console offers Restore on every dropped text
+row, so pressing it on a dropped transcript answered 409 saying the operator
+had tried to overwrite a transcript with prose nobody perceived, which is not
+what they did. A transcript's title was equally uneditable.
+
+The fix keeps the guard and re-issues the right command: a re-store of a
+derived record is `StoreDerivedText` carrying `derived_from`, `locator_map`,
+`perceived_with` and `degradations` through unchanged, exactly as "unchanged"
+already promises for `fetched_at`. Reading `locator_map` back is what needed
+adding -- the column was write-only until this caller existed; see
+`StoredDocument.locator_map`.
+
+The one thing `revise` refuses on that path is `text`. Hand-editing a
+transcript would make it prose nobody perceived and nobody wrote, which is the
+provenance hole the derivedness guard exists to close -- and unlike media it
+cannot be left to `decide`, because `StoreDerivedText` with an edited `text`
+is a shape the aggregate accepts (it is what a re-perception looks like). So
+the refusal is this layer's, and it names re-perceiving as the way to change
+a transcript. `DocumentEditForm` withholds the Text field for a derived source
+the same way it already does for a media one.
+
 **A media source reaches the aggregate on a third path**, `_store_media`,
 which `revise` and `restore` fall to when `read_document` answers `None`.
 None of the three things above apply to it -- there is no `store_source` to
@@ -53,12 +78,14 @@ resolved only through `read_document`, which promises text, and so answered
 404 for every media source while the console offered Restore and Edit.
 """
 
+import json
 from collections.abc import AsyncIterator
 from uuid import UUID
 
 from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application.blobs import BlobStorePort
+from research_team.application.corpus_read import StoredDocument
 from research_team.application.document_extraction import (
     CorpusReaders,
     OpenKnowledge,
@@ -69,6 +96,7 @@ from research_team.domain.corpus import (
     Corpus,
     DropSourceDocument,
     MediaRecord,
+    StoreDerivedText,
     StoreSourceDocument,
     StoreSourceMedia,
 )
@@ -292,6 +320,18 @@ class CorpusEditor:
         that refusal arrives as a 409 in the aggregate's wording, and
         silently dropping the field would answer 200 over a change that did
         not happen.
+
+        **A derived source takes the same shape and one extra refusal.** Its
+        metadata is ordinary -- a transcript's title is as correctable as any
+        other source's, and refusing the whole method for a derived id (which
+        is what the derivedness guard did before this branch, by accident)
+        left a transcript's title permanently wrong. But `text` is refused,
+        and here the refusal has to be ours: for media, `decide`'s `_kind_of`
+        guard would catch it anyway and this layer only improves the message,
+        whereas `StoreDerivedText` with a changed `text` is precisely the
+        shape a legitimate re-perception has, so the aggregate cannot tell an
+        edit from a reading. Nothing below this line would stop a hand-typed
+        paragraph from being stored as something a model perceived.
         """
         reader = self._readers(project_id)
         stored = await reader.read_document(source_id, include_dropped=True)
@@ -310,6 +350,33 @@ class CorpusEditor:
                 title=title,
                 note=note,
                 published_at=published_at,
+            )
+            return
+        if stored.record.derived_from is not None:
+            if text is not None:
+                raise KnowledgeError(
+                    f"{source_id!r} is a transcript of "
+                    f"{stored.record.derived_from!r} and its text cannot be "
+                    f"edited; perceive the medium again to change it"
+                )
+            if uri is not None or published_at is not None:
+                # Refused rather than dropped, for the reason the media branch
+                # refuses `text`: answering 200 over a field that went nowhere
+                # is the worst of the three available answers. A transcript has
+                # no `uri` or `published_at` -- see
+                # `CorpusDerivedTextStored.note` for why those two are absent
+                # from the event while `note` is on it -- so there is nothing
+                # here to write them to.
+                raise KnowledgeError(
+                    f"{source_id!r} is a transcript; it was not fetched from "
+                    f"anywhere, so it has no uri or publication date. Those "
+                    f"belong to {stored.record.derived_from!r}."
+                )
+            await self._store_derived(
+                project_id,
+                stored,
+                title=title,
+                note=note,
             )
             return
         await self._store(
@@ -347,6 +414,16 @@ class CorpusEditor:
         leaving it out would restore a document with its provenance quietly
         erased -- the opposite of what "unchanged" promises above.
 
+        **A derived source falls to its own branch**, and unlike media it does
+        so from *inside* the text path rather than past it: `read_document`
+        answers for a transcript, so `stored` is a real `StoredDocument` and
+        everything above this point applies unchanged. Only the command
+        differs -- `StoreDerivedText` rather than `StoreSourceDocument`, which
+        the derivedness guard refuses. Before that branch existed, Restore on
+        a dropped transcript answered 409 accusing the operator of overwriting
+        a transcript with prose, and the only way back was to pay for the
+        model call again.
+
         **Media falls to its own branch**, for the reason `revise` gives:
         `read_document` answers `None` for a media source, so resolving only
         through it left re-uploading the same bytes as the only way to
@@ -368,6 +445,9 @@ class CorpusEditor:
             return
         if stored.record.dropped_reason is None:
             raise NotDropped(f"{source_id!r} is not dropped")
+        if stored.record.derived_from is not None:
+            await self._store_derived(project_id, stored)
+            return
         await self._store(
             project_id,
             SourceRef(
@@ -426,6 +506,91 @@ class CorpusEditor:
             )
         )
         await self._corpus.save(corpus)
+
+    async def _store_derived(
+        self,
+        project_id: UUID,
+        stored: StoredDocument,
+        *,
+        title: str | None = None,
+        note: str | None = None,
+    ) -> None:
+        """Re-store a transcript over itself, with `None` meaning "keep".
+
+        `_store_media`'s shape for the same two callers, and `_store`'s
+        obligations minus one. Restore is this with nothing changed; the
+        metadata half of revise is this with a field replaced.
+
+        **The perception fields are carried, not defaulted.** `derived_from`,
+        `locator_map`, `perceived_with` and `degradations` all come off the
+        stored record, exactly as `fetched_at` is carried on the fetched-
+        document path and for the identical reason: `StoreDerivedText` has no
+        way to say "leave this alone", so a re-store that omitted one would
+        zero a transcript's provenance as the side effect of correcting its
+        title. `derived_from` in particular cannot be re-derived from anything
+        here, and `decide` refuses a re-store that changes it -- so getting it
+        wrong is a 409 rather than silent damage, which is the good case.
+
+        **`text` is never a parameter.** A derived source's text is what a
+        model perceived; the only thing entitled to replace it is another
+        perception. `revise` refuses a caller's `text` before reaching here,
+        and this signature is what keeps that refusal from being one `if` away
+        from being bypassed.
+
+        **No `MAX_DOCUMENT_CHARS` check, unlike `_store`, and this is the one
+        place the two paths deliberately differ.** `MediaPerceiver` does not
+        enforce the cap on the way in (B93), so a transcript longer than it can
+        already be stored -- and a restore that checked the cap would refuse to
+        put back a transcript this system itself wrote, which is a worse dead
+        end than the one this branch exists to fix. The cap belongs where the
+        text is *produced*; adding it here would only make an existing row
+        unrestorable.
+
+        `index` *is* re-paid, exactly as `_store` re-pays it: the chunk store
+        quotes this text like any other document's, and a restore that skipped
+        it would leave `corpus_spans.quote` unable to find a transcript that is
+        back in the corpus.
+        """
+        record = stored.record
+        corpus = await self._corpus.load_or_create(project_id)
+        corpus.execute(
+            StoreDerivedText(
+                corpus_id=project_id,
+                source_id=record.source_id,
+                # Narrowing for the type checker, not a check: this method's
+                # two callers both test `derived_from is not None` first, and
+                # `decide` would refuse a `StoreDerivedText` that tried to make
+                # a non-derived row derived anyway.
+                derived_from=record.derived_from or "",
+                text=stored.text,
+                # `or` and not `is None`, and the fallbacks are load-bearing
+                # rather than defensive. Both fields are non-null on every row
+                # this build writes; a row from an earlier build -- one stored
+                # before `locator_map` had a column, or repaired by hand -- can
+                # still be missing them, and `StoreDerivedText` types both as
+                # required `str`. Refusing the restore in that case would make
+                # exactly the permanent dead end this method exists to remove,
+                # for a transcript whose text is intact. So the fallbacks are
+                # the empty map and the empty fingerprint: a locator that
+                # resolves to nothing and a reading that names no model, both
+                # of which are *true* of a row that never recorded either.
+                locator_map=stored.locator_map or "[]",
+                perceived_with=record.perceived_with or "",
+                degradations=json.dumps(list(record.degradations)),
+                title=record.title if title is None else title,
+                note=record.note if note is None else note,
+            )
+        )
+        await self._corpus.save(corpus)
+        knowledge = await self._open_knowledge(project_id)
+        await knowledge.index(
+            SourceRef(
+                source_id=record.source_id,
+                text=stored.text,
+                title=record.title if title is None else title,
+                note=record.note if note is None else note,
+            )
+        )
 
     async def _store(self, project_id: UUID, source: SourceRef) -> None:
         """The direct path: the length cap, then command, then index.

@@ -64,6 +64,26 @@ dependencies = [
     # The blob store streams to disk with async file handles rather than
     # blocking the event loop on ordinary `open()` -- see `blob_store.py`.
     "aiofiles>=24.1",
+    # Perception over stored media: renders a video, audio file or image to
+    # text plus a locator map from character offsets to time spans and
+    # regions. Capped below the next minor for the reason eventsource-py and
+    # redstring are -- pre-1.0, and a minor is where the breaking renames
+    # land. The extras: `remote-transcription` is httpx (already present),
+    # `vision` is langchain-openai (already present), and `images` and
+    # `documents` add pillow and pypdfium2, which are new weight bought for
+    # image and PDF handling. ffmpeg/ffprobe are OS binaries and are
+    # deliberately not represented here.
+    #
+    # 0.3.0 is the second bump this branch made and, unusually for a pre-1.0
+    # minor, a purely additive one: an `__all__` diff removes nothing, adds
+    # sixteen names for archive/container and Office handling, and gives
+    # `build_perception` two defaulted keyword arguments. Every signature this
+    # project depends on is unchanged, and all three of the spec's measurements
+    # were re-taken against it rather than assumed to carry -- byte-identical.
+    # The one behaviour change to know about is not one we exercise: container
+    # walking is on by default, so a `.zip` or `.docx` stored as a medium would
+    # now be walked where it previously fell to `BinaryHandler`.
+    "readeverything[documents,images,remote-transcription,vision]>=0.3.0,<0.4",
 ]
 
 [project.optional-dependencies]

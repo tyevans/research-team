@@ -108,6 +108,14 @@ def main() -> None:
             # `app_and_client` in the tests wires one and passes -- the same
             # gap `corpus` and `topic_repository` closed above it.
             editor=application.editor,
+            # Both halves of perception, and both from the application rather
+            # than built here: `perceiver` holds the corpus repository the
+            # editor holds, and `perception` is the very port it perceives
+            # through -- a second adapter built at this call site would answer
+            # the route's capability check from a different reading of the
+            # environment than the job's.
+            perception=application.perception,
+            perceiver=application.perceiver,
             # The factory, not a service: one per project, built on demand.
             # This is the instance whose cache is the same table
             # `application.definitions` marks stale, which is the only reason

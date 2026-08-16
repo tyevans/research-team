@@ -47,6 +47,8 @@ const document = (index: number, over: Partial<TextSummary> = {}): TextSummary =
   title: `Spacing effects in long-term retention, part ${String(index)}`,
   kind: 'text',
   charCount: 18_400 + index * 137,
+  derivedFrom: null,
+  degradations: [],
   sha256: 'a'.repeat(64),
   uri: `https://example.org/papers/${String(index)}`,
   publishedAt: '2019-04-02',
@@ -83,6 +85,9 @@ const base = {
   onExtract: () => {},
   onExtractAll: () => {},
   onCancelExtraction: () => {},
+  derived: new Map<string, SourceId>(),
+  perceiveBusy: false,
+  onPerceive: () => {},
   onAdd: () => {},
 }
 

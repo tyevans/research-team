@@ -6,7 +6,28 @@
  * is visible here.
  */
 export type ExtractionStage =
-  'storing' | 'extracting' | 'extracted' | 'consolidating' | 'consolidated' | 'failed'
+  | 'storing'
+  | 'extracting'
+  | 'extracted'
+  | 'consolidating'
+  | 'consolidated'
+  | 'failed'
+  // Perception's two, and they are on this union rather than on one of their
+  // own because the server put them on `ExtractionStage` -- a transcription is
+  // a second slow thing happening to a source row, reported through
+  // `ExtractionActivity` and waiting in the same queue. `perceived` is
+  // terminal; a perception that fails reports `failed`, like an extraction
+  // that does.
+  //
+  // Three client-side lists mirror the server's literal and all three have to
+  // learn a stage together: this union, `STAGES` in `mappers.ts`, and
+  // `TERMINAL` in `extraction-store.ts`. Missing the first two is not a type
+  // error -- `toStage` falls back to `extracting` for anything it does not
+  // recognise -- so a finished transcription simply reads as "extracting"
+  // forever, which is what shipped between the server learning these and this
+  // line being written.
+  | 'perceiving'
+  | 'perceived'
 
 export interface ExtractionFrame {
   readonly type: 'Extraction'
