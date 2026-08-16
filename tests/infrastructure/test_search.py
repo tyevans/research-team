@@ -18,6 +18,7 @@ from research_team.infrastructure.agent.search import (
     SearchAttempts,
     build_search_tool,
     format_results,
+    parse_results,
 )
 from research_team.infrastructure.agent.search_middleware import SearchAttemptsMiddleware
 
@@ -80,6 +81,184 @@ def test_two_results_are_joined_by_a_blank_line():
     }
     text = format_results(payload, limit=5)
     assert text == ("One\nhttps://a.example\nFirst.\n\nTwo\nhttps://b.example\nSecond.")
+
+
+#: Cut from a real response, not invented. Captured 2026-08-15 from the
+#: instance at `AGENT_SEARXNG_URL`, `categories=images`, q="trajans column"
+#: (262 results) and `categories=videos`, q="roman aqueduct engineering" (91).
+#: Trimmed to the keys under test; every value below is verbatim.
+#:
+#: The reason these are measured rather than written: the whole class of bug
+#: this file guards against is reading the wrong key, which a hand-written
+#: fixture agrees with by construction. See `CLAUDE.md` on
+#: `temporal_expression`.
+IMAGE_RESULT = {
+    "template": "images.html",
+    "url": "https://www.britannica.com/topic/Trajans-Column",
+    "title": "Trajan's Column | Britannica",
+    "content": "Trajan's Column | Britannica",
+    "thumbnail_src": "https://tse1.mm.bing.net/th/id/OIP.yjSX65QwAPCzEEa0jQlklwHaLH",
+    "img_src": "https://cdn.britannica.com/43/146743-050-990B1FB1/Trajan-Column.jpg",
+    "resolution": "533 x 800",
+}
+
+VIDEO_RESULT = {
+    "template": "videos.html",
+    "url": "https://www.youtube.com/watch?v=kLCDoHIp_XA",
+    "title": "Roman Engineering - Aqueducts",
+    "content": "The documentary recalls the construction of the aqueduct of Neamasus.",
+    "thumbnail": "https://tse2.mm.bing.net/th/id/OVP.5-YfBoNtmWT5fpUqSYy67AHgFo",
+    "iframe_src": "https://www.youtube-nocookie.com/embed/kLCDoHIp_XA",
+    "length": "56:48",
+}
+
+
+def test_an_image_result_names_the_asset_and_its_resolution():
+    """The `url` of an image result is the *page*; `img_src` is the image.
+
+    Fails with the media line absent -- which is what shipped before this,
+    and why an image search returned a list of gallery pages with every
+    asset dropped.
+    """
+    text = format_results({"results": [IMAGE_RESULT]}, limit=5)
+    assert text == (
+        "Trajan's Column | Britannica\n"
+        "https://www.britannica.com/topic/Trajans-Column\n"
+        "Trajan's Column | Britannica\n"
+        "image: https://cdn.britannica.com/43/146743-050-990B1FB1/Trajan-Column.jpg "
+        "(533 x 800)"
+    )
+
+
+def test_a_video_result_names_its_embed_and_length():
+    text = format_results({"results": [VIDEO_RESULT]}, limit=5)
+    assert text.endswith("video: https://www.youtube-nocookie.com/embed/kLCDoHIp_XA (56:48)")
+
+
+def test_a_text_result_renders_exactly_as_it_did_before_media_was_understood():
+    """The regression that matters. A result with no `template` takes no new
+    line, and its three are byte-identical to what shipped for a year.
+    """
+    text = format_results(PAYLOAD, limit=1)
+    assert text == "Event sourcing\nhttps://a.example\nA log."
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        # Every one of these was observed null in the captured payloads:
+        # `img_format` in 35 of 262 image results, `iframe_src` in 1 of 91
+        # videos, `length` in 20, `thumbnail` in 22, `publishedDate` in all
+        # 262 images. A present-and-null key is not a missing one, and
+        # `.get(key, "")` does not defend against it -- `str(None)` is the
+        # four characters "None", which would reach the model as a URL.
+        ("img_src", None),
+        ("resolution", None),
+        ("title", None),
+        ("content", None),
+    ],
+)
+def test_a_null_field_never_renders_as_the_string_none(field, value):
+    text = format_results({"results": [{**IMAGE_RESULT, field: value}]}, limit=5)
+    assert "None" not in text
+
+
+def test_an_image_without_a_resolution_still_renders_one_clean_line():
+    """`resolution` is present on 196 of 262 captured image results. The
+    parenthetical goes, the line stays.
+    """
+    result = {k: v for k, v in IMAGE_RESULT.items() if k != "resolution"}
+    text = format_results({"results": [result]}, limit=5)
+    assert text.endswith(
+        "image: https://cdn.britannica.com/43/146743-050-990B1FB1/Trajan-Column.jpg"
+    )
+
+
+def test_an_image_result_with_an_empty_iframe_is_not_read_as_a_video():
+    """20 of 262 image results carry `iframe_src` as an empty string and
+    `length` as null -- the keys are there, the values are not. Branching on
+    `template` rather than on which keys exist is what makes this a
+    non-event; this fails if anyone sniffs keys instead.
+    """
+    result = {**IMAGE_RESULT, "iframe_src": "", "length": None}
+    text = format_results({"results": [result]}, limit=5)
+    assert "video:" not in text
+    assert "image:" in text
+
+
+def test_a_media_result_with_no_asset_url_takes_no_media_line():
+    """A line reading `image: ` with nothing after it is worse than no line:
+    it asserts an asset exists. Note this must not become a blank line
+    either -- `format_results` joins blocks on "\\n\\n".
+    """
+    result = {k: v for k, v in IMAGE_RESULT.items() if k != "img_src"}
+    text = format_results({"results": [result]}, limit=5)
+    assert "image:" not in text
+    assert "\n\n" not in text
+
+
+def test_searxng_highlight_markers_are_stripped():
+    """SearXNG wraps terms matching the query in U+E000/U+E001, private-use
+    codepoints with no meaning outside its own templates. Measured in 29 of
+    262 image results and 0 of 29 general ones, so it is engine-specific
+    (duckduckgo images) -- which is why it went unnoticed while reaching the
+    model on every search that happened to hit that engine.
+    """
+    result = {
+        **IMAGE_RESULT,
+        "title": "Trajan's Column | Britannica",
+        "content": "Trajan's Column",
+    }
+    text = format_results({"results": [result]}, limit=5)
+    assert "" not in text
+    assert "" not in text
+    assert "Trajan's Column | Britannica" in text
+
+
+def test_parse_results_carries_the_thumbnail_that_format_results_hides():
+    """`thumbnail_url` is the whole reason this function is separate: the
+    pane needs it and the model must not see it. Fails if `parse_results`
+    is a thin wrapper that drops what `format_results` does not print.
+    """
+    parsed = parse_results({"results": [IMAGE_RESULT]}, limit=5)
+    assert parsed[0].thumbnail_url == IMAGE_RESULT["thumbnail_src"]
+    assert parsed[0].thumbnail_url not in format_results({"results": [IMAGE_RESULT]}, limit=5)
+
+
+def test_parse_results_falls_back_through_thumbnail_then_asset():
+    """`thumbnail_src` was absent on 46 of 262 captured image results and
+    `thumbnail` is frequently an empty string, so the fallback is measured,
+    not defensive.
+    """
+    no_src = {k: v for k, v in IMAGE_RESULT.items() if k != "thumbnail_src"}
+    assert (
+        parse_results({"results": [{**no_src, "thumbnail": "https://t.example/x"}]}, limit=5)[
+            0
+        ].thumbnail_url
+        == "https://t.example/x"
+    )
+    assert (
+        parse_results({"results": [{**no_src, "thumbnail": ""}]}, limit=5)[0].thumbnail_url
+        == no_src["img_src"]
+    )
+
+
+def test_parse_results_falls_back_to_img_src_for_a_video_not_its_own_iframe():
+    """`iframe_src` is an embed URL, not an image -- landing it in the pane's
+    `<img src>` renders broken. `img_src` was present on 91 of 91 captured
+    video results and carries the poster frame, so the third fallback is
+    that specific field for every kind, not "this result's asset".
+    """
+    no_thumb = {k: v for k, v in VIDEO_RESULT.items() if k != "thumbnail"}
+    result = {**no_thumb, "img_src": "https://poster.example/frame.jpg"}
+    parsed = parse_results({"results": [result]}, limit=5)
+    assert parsed[0].thumbnail_url == "https://poster.example/frame.jpg"
+    assert parsed[0].thumbnail_url != VIDEO_RESULT["iframe_src"]
+
+
+def test_parse_results_returns_none_for_a_payload_that_is_not_a_results_object():
+    for junk in ([], "oops", None):
+        assert parse_results(junk, limit=5) is None
 
 
 async def test_a_query_reaches_the_instance_and_comes_back_formatted():

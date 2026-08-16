@@ -3188,3 +3188,31 @@ maps this correctly and is the pattern to copy.
 
 Cheap to fix and cheaper to fix now than to rediscover: one `except` arm each,
 plus a test per route that a refused command answers 409 rather than 500.
+
+### B96. `format_results` is total for a bad payload but not for a bad result
+
+`research_team/infrastructure/agent/search.py`. The docstring's totality claim
+is about the payload — a list, a string or a null where a results object was
+expected all return `_MALFORMED_PAYLOAD` rather than raising, and
+`test_format_results_rejects_a_non_dict_payload_without_raising` pins it. The
+claim does not extend one level down: `{"results": ["oops"]}` is a well-formed
+payload carrying a result that is not a dict, and `result.get(...)` raises
+`AttributeError` on it. The exception escapes `web_search`'s `except ValueError`
+and `except httpx.HTTPError` both, so it ends the turn rather than returning a
+notice the model can act on.
+
+Found on 2026-08-15 while widening the same function for media results, and
+deliberately not fixed there: that change was scoped to which keys are read, and
+a totality fix belongs with its own test rather than smuggled in beside an
+unrelated one.
+
+**No instance is known to send this.** Every one of the 353 media results and 29
+general results captured that day carried a dict. It is here for the reason the
+payload guard exists at all — an instance is a foreign system, `.json()`
+promises only valid JSON, and a proxy that serializes an error page is not bound
+by SearXNG's schema. The cost of being wrong is asymmetric: a skipped result is
+still a result set, and a raised `AttributeError` is a lost turn.
+
+One `isinstance(result, dict)` guard in the loop, skipping what fails it, plus a
+test that a payload mixing a good result with a string still renders the good
+one.
