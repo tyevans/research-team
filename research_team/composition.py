@@ -131,6 +131,7 @@ from research_team.infrastructure.agent.workflow_tools import (
     build_workflow_tools,
 )
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
+from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.knowledge.stores import (
@@ -1305,7 +1306,18 @@ def build_application(
             # Overlap and the boundary flags are left at redstring's defaults:
             # only the size is ours to choose, and passing the others would
             # freeze values we have no reason to hold against upstream's.
-            chunker=SlidingWindowChunker(default_chunk_size=config.extraction_chunk_size()),
+            # Wrapped so a chunk of table rows reaches the model with the
+            # header naming its columns; without it, every chunk after the
+            # first of a long table is rows whose cells mean nothing. This
+            # does not change the chunk size -- `MarkdownTableChunker` makes
+            # no boundary decisions, it only prepends a header the delegate's
+            # cut left behind -- but a header-carrying chunk does exceed
+            # `extraction_chunk_size` by the header's length. See that
+            # module's docstring for why that was preferred to shrinking the
+            # budget, and for the measurement.
+            chunker=MarkdownTableChunker(
+                SlidingWindowChunker(default_chunk_size=config.extraction_chunk_size())
+            ),
             # `graphs.chunks(...)`, not a second `build_chunk_store()` call:
             # `graphs.open` above already built this project's chunk store and
             # folded it in the same replay pass as the graph (see

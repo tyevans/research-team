@@ -8,6 +8,8 @@ off makes every citation of a table row point at neighbouring words, and
 nothing raises.
 """
 
+from uuid import uuid4
+
 import pytest
 from redstring.extraction.chunkers import BoundaryPreferenceChunker, SlidingWindowChunker
 
@@ -19,6 +21,7 @@ from research_team.infrastructure.knowledge.markdown_table_chunker import (
 )
 
 HEADER = "| Rank | Reward |\n|---|---|\n"
+TENANT_ID = uuid4()
 
 
 def table(rows: int, *, prefix: str = "", suffix: str = "") -> str:
@@ -139,3 +142,45 @@ def test_chunker_type_names_the_delegate(chunker):
 def test_blank_text_still_yields_no_chunks(chunker):
     """The delegate's contract, which wrapping must not change."""
     assert chunker.chunk("", max_chunk_size=500, overlap_size=0).chunks == []
+
+
+async def test_redstring_drops_chunk_metadata_on_the_way_into_the_store():
+    """**Upstream gap: `metadata` does not survive `index_documents`.**
+
+    `redstring.extraction.corpus.stored_chunks` builds each `StoredChunk`
+    without passing `chunk.metadata` through, even though `StoredChunk` has a
+    `metadata` field. So a chunk indexed into the corpus arrives with the
+    header prepended to its text and **no `synthetic_prefix_chars` to subtract
+    it back off** -- `original_text` silently becomes the identity, and the
+    offsets disagree with the text again.
+
+    That is why `RedstringKnowledge.index` does NOT wrap its chunker: the
+    representation this module depends on cannot survive the trip. The
+    extraction path is unaffected, because those chunks go straight to the
+    model and are never stored.
+
+    This test asserts upstream's *current* behaviour, so it fails when
+    redstring starts carrying metadata -- which is the signal that
+    `index` can be wrapped. Fix it by wiring the chunker, not by deleting
+    this.
+    """
+    from eventsource import InMemoryEventStore
+    from redstring import InMemoryChunkStore, SourceDocument, index_documents
+
+    text = table(200)
+    store = InMemoryChunkStore(dimension=8)
+    await index_documents(
+        [SourceDocument(id="doc-1", text=text)],
+        store=store,
+        tenant_id=TENANT_ID,
+        chunker=MarkdownTableChunker(BoundaryPreferenceChunker()),
+        event_store=InMemoryEventStore(),
+    )
+
+    stored = await store.get_by_source("doc-1", TENANT_ID)
+    carrying = [chunk for chunk in stored if HEADER in chunk.text]
+    assert carrying, "fixture produced no header-carrying chunk, so this proves nothing"
+    assert all(SYNTHETIC_PREFIX_CHARS not in chunk.metadata for chunk in carrying)
+    assert any(chunk.text != text[chunk.start_char : chunk.end_char] for chunk in carrying), (
+        "the disagreement this test exists to record"
+    )

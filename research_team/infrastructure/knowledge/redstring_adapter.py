@@ -656,6 +656,35 @@ class RedstringKnowledge:
         quoted back to a reader, which is what this corpus is for and
         extraction's chunking is not.
 
+        **Deliberately NOT wrapped in `MarkdownTableChunker`**, though the
+        passages this builds are exactly the ones a repeated table header
+        would help -- a quoted row whose columns are unnamed is the motivating
+        complaint. It cannot be done through this call yet:
+        `redstring.extraction.corpus.stored_chunks` builds each `StoredChunk`
+        without carrying `Chunk.metadata` across, so the header would arrive
+        in the stored text with no `synthetic_prefix_chars` to subtract it
+        back off, and `original_text` would silently become the identity.
+        Offsets and text would disagree with nothing to detect it. Verified
+        against `index_documents` itself, not read off the source:
+        `test_redstring_drops_chunk_metadata_on_the_way_into_the_store` fails
+        when upstream starts carrying metadata, which is the signal that this
+        line can be wrapped.
+
+        The extraction chunker in `composition.py` *is* wrapped, because those
+        chunks go straight to the model and are never stored, so nothing has
+        to survive a round trip.
+
+        When it is wired, re-chunking is a re-`index`, not a `/rebuild`.
+        `/rebuild` folds stored `DocumentChunked` events, which carry the old
+        chunk *text* -- it reproduces the old chunking faithfully. A new
+        chunker only takes effect when `index_documents` runs again and emits
+        a fresh `DocumentChunked`; it will, because `chunking_signature` is
+        `f"{chunker_type}:{chunking_digest(...)}"` and both halves change.
+        The projection folds that with `replace_source`, which deletes the
+        chunks of that source that are not in the new set -- so the old rows
+        are replaced rather than orphaned, despite chunk ids being
+        content-addressed over the text.
+
         Reads `source.text` directly rather than re-reading it back out of
         the corpus: every caller of `index` already has the text in hand (it
         is a required field of `SourceRef`), and a round trip through the
