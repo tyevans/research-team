@@ -48,6 +48,7 @@ from research_team.domain.judgements import (
     JudgementWithdrawn,
     WithdrawJudgement,
 )
+from research_team.domain.media_proposals import MediaProposed
 from research_team.domain.ontology import OntologyDiscovered
 from research_team.domain.research_run import ResearchRunStarted
 from research_team.domain.topic import OpenTopic, TopicInvestigated
@@ -1077,3 +1078,63 @@ async def test_an_ontology_written_before_rejected_members_existed_still_loads(s
     assert discovered.classes[0].declared_count == 6
     assert discovered.classes[0].members[0].name == "EASY"
     assert discovered.classes[0].evidence.start == 100
+
+
+async def test_a_media_proposal_written_before_thumbnail_url_existed_still_loads(
+    store, db_path
+):
+    """`thumbnail_url` was not part of `MediaProposed`'s first shape.
+
+    Absence has to mean "no thumbnail was found", not "unknown" -- a required
+    field here would make every proposal a pre-thumbnail build ever wrote
+    unreadable the moment the field landed, which is exactly the failure mode
+    `domain/events.py` opens by naming. This is not a deliberate break (see
+    the field's docstring in `media_proposals.py`): the field should simply
+    tolerate absence, the same way `rejected_members` does above.
+
+    Writes the payload with the key absent, which is the only shape that
+    proves the default fills in -- constructing the event through today's
+    model would supply it.
+
+    Builds nothing from a repository: `MediaProposals` has no dedicated
+    repository builder yet (this PR is deliberately inert -- nothing is
+    wired), so the event is read straight off its stream, same as the
+    `Ontology` case above.
+    """
+    project_id = uuid4()
+    # Applies the schema lazily, same reason as the ontology and
+    # research-run cases: `events` does not exist yet to insert into.
+    await collect(store.read_stream(StreamId(project_id, "MediaProposals")))
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=1,
+        event_type="MediaProposed",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "MediaProposals",
+            "aggregate_version": 1,
+            "project_id": str(project_id),
+            "proposal_id": "prop-1",
+            "need_id": "need-1",
+            "topic_id": "topic-1",
+            "page_url": "https://example.com/page",
+            "asset_url": "https://example.com/asset.jpg",
+            "kind": "image",
+            "title": "An asset",
+            "reason": "it fit the need",
+            "query": "example query",
+        },
+        aggregate_type="MediaProposals",
+    )
+
+    stream = StreamId(project_id, "MediaProposals")
+    events = [envelope.event for envelope in await collect(store.read_stream(stream))]
+
+    proposed = events[0]
+    assert isinstance(proposed, MediaProposed)
+    assert proposed.thumbnail_url == ""
+    # The rest of the payload survives the default filling in, which is what
+    # separates "the field defaulted" from "the whole event failed to parse".
+    assert proposed.proposal_id == "prop-1"
+    assert proposed.asset_url == "https://example.com/asset.jpg"

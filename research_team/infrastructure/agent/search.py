@@ -12,6 +12,7 @@ strategies exist to clean up afterwards, and it is cheaper not to make the mess.
 
 from contextvars import ContextVar
 from dataclasses import dataclass
+from typing import Literal
 
 import httpx
 from langchain_core.tools import BaseTool, tool
@@ -192,32 +193,175 @@ class SearchAttempts:
         return self._current().total >= MAX_SEARCHES_PER_TURN
 
 
+_HIGHLIGHT = str.maketrans("", "", "")
+"""SearXNG wraps every term matching the query in U+E000/U+E001 before it
+serializes a result -- private-use codepoints its own templates turn into
+`<span>`s and nothing else has any meaning for.
+
+Measured 2026-08-15 against a real instance: present in 29 of 262 results for
+one image query, 0 of 29 for a general one and 0 of 91 for a video one. So it
+is engine-specific (duckduckgo images) rather than universal, which is why it
+reached the model unnoticed for as long as it did -- most searches never see
+it, and the ones that do render as an invisible glyph rather than as mojibake.
+"""
+
+
+def _text(result: dict, key: str) -> str:
+    """One field as clean text, or "" if it isn't one.
+
+    Separate from an inline `str(result.get(key, ""))` because that idiom
+    defends against a *missing* key and not a present-and-null one, and a real
+    instance sends both. Measured in the same capture: `publishedDate` was null
+    in 262 of 262 image results, `img_format` in 35, `thumbnail` in 22 of 91
+    videos, `iframe_src` in 1. `str(None)` is the four characters "None", which
+    on the media line below would read to the model as an asset URL.
+    """
+    value = result.get(key)
+    if not isinstance(value, str):
+        # Not `str(value)`: a number would survive that, but so would None and
+        # every dict a future API change might nest here. A field that isn't
+        # text is a field this function has nothing to say about.
+        return ""
+    return value.translate(_HIGHLIGHT).strip()
+
+
+@dataclass(frozen=True)
+class SearchResult:
+    """One SearXNG result, flattened to the fields the media pipeline needs.
+
+    `thumbnail_url` is the whole reason this type exists apart from the string
+    `format_results` renders: the review pane needs an image to show for a
+    media result, and the model must never see that URL -- it costs context
+    for something only a human-facing pane reads. Getting it by re-parsing
+    `format_results`' prose would mean scraping a string built for a different
+    reader; this is built once and rendered from, in both directions.
+
+    All fields are `str`, never `None` -- a field absent from a real payload
+    (see `_text`) becomes `""`, not a sentinel a caller has to check for.
+    """
+
+    title: str
+    url: str
+    snippet: str
+    kind: Literal["image", "video", "other"]
+    asset_url: str
+    detail: str
+    thumbnail_url: str
+
+
+def parse_results(payload: object, limit: int) -> tuple[SearchResult, ...] | None:
+    """A SearXNG payload as structured data, capped at `limit`.
+
+    Returns `None` for a payload that isn't a results object -- the same
+    "total by construction" reasoning `format_results` used to carry directly:
+    an instance is a foreign system, and `response.json()` only promises valid
+    JSON, not the dict shape SearXNG's docs describe. `format_results` turns
+    `None` into `_MALFORMED_PAYLOAD`; a caller consuming the data has to decide
+    for itself what a malformed instance means for it, which is why this
+    doesn't collapse the two cases into an empty tuple.
+    """
+    if not isinstance(payload, dict):
+        return None
+    results = payload.get("results") or []
+    return tuple(_parse_one(result) for result in results[:limit])
+
+
+def _parse_one(result: dict) -> SearchResult:
+    """One SearXNG result dict to `SearchResult`.
+
+    Branches on `template` rather than on which keys are present, because
+    presence does not imply a value: 20 of 262 captured image results carry
+    `iframe_src` as an empty string and `length` as null. `template` was set on
+    every one of the 353 media results captured, and is what SearXNG itself
+    dispatches on.
+    """
+    title = _text(result, "title") or "(untitled)"
+    url = _text(result, "url") or "(no url)"
+    snippet = " ".join(_text(result, "content").split()) or "(no snippet)"
+    template = _text(result, "template")
+    kind: Literal["image", "video", "other"]
+    if template == "images.html":
+        kind, asset, detail = "image", _text(result, "img_src"), _text(result, "resolution")
+    elif template == "videos.html":
+        kind, asset, detail = "video", _text(result, "iframe_src"), _text(result, "length")
+    else:
+        kind, asset, detail = "other", "", ""
+    # `thumbnail_src` was absent on 46 of 262 captured image results, and
+    # `thumbnail` is frequently an empty string where it is present -- both
+    # measured on the same capture as everything else in this file. The third
+    # fallback is `img_src` specifically, not "this result's asset": for a
+    # video, the asset is `iframe_src`, an embed URL rather than an image, and
+    # landing that in an `<img src>` in the review pane renders broken.
+    # `img_src` was present on 91 of 91 captured video results and carries the
+    # poster frame, so it is a real fallback rather than a guess -- and for a
+    # non-media result it is simply absent, so the chain ends at `""` there.
+    thumbnail = (
+        _text(result, "thumbnail_src")
+        or _text(result, "thumbnail")
+        or _text(result, "img_src")
+    )
+    return SearchResult(
+        title=title,
+        url=url,
+        snippet=snippet,
+        kind=kind,
+        asset_url=asset,
+        detail=detail,
+        thumbnail_url=thumbnail,
+    )
+
+
+def _media_line(result: SearchResult) -> str | None:
+    """The asset behind a media result, or None if this isn't one.
+
+    An asset with no URL takes no line at all. `image: ` with nothing after it
+    would assert an asset exists, and a line that renders empty would put a
+    blank line inside a block -- which the "\\n\\n" join reads as a separator.
+    """
+    if result.kind == "other" or not result.asset_url:
+        return None
+    # `resolution` (and `length`) are passed through verbatim and deliberately
+    # not parsed: engines disagree on their spelling within a single response
+    # -- "533 x 800" from DuckDuckGo and "1060x1600" (U+00D7, no spaces) from
+    # Bing, measured in the same capture. There is nothing to gain from
+    # normalizing a string the model reads and nothing downstream computes on.
+    parenthetical = f" ({result.detail})" if result.detail else ""
+    return f"{result.kind}: {result.asset_url}" + parenthetical
+
+
 def format_results(payload: object, limit: int) -> str:
     """Flatten a SearXNG payload to title/url/snippet, capped at `limit`.
 
-    Total by construction: an instance is a foreign system, and `response.json()`
-    only promises valid JSON, not a dict shaped the way SearXNG's docs say --
-    a proxy error page rendered as JSON, or a future API change, can hand back
-    a list, a string, or null just as easily. A missing key inside a well-formed
-    payload is an ordinary thing for a search instance to send, not an exception
-    for the agent to reason about; a payload that isn't a dict at all gets the
-    same treatment, not a crash.
+    A media result takes a fourth line naming the asset, because for images and
+    videos `url` is the *page* the thing was found on and not the thing: an
+    image search rendered with the three text lines is a list of gallery pages
+    with every asset silently dropped, which is what this did before 2026-08-15.
+
+    A pure renderer over `parse_results` since 2026-08-16 -- the model-facing
+    string and the pipeline's structured data are built from one parse rather
+    than two, so a field either function reads can't drift out of step with
+    what the other reports for the same result.
     """
-    if not isinstance(payload, dict):
+    parsed = parse_results(payload, limit)
+    if parsed is None:
+        # `_MALFORMED_PAYLOAD` returned by identity, not rebuilt here:
+        # `build_search_tool` compares it with `is not` to decide whether to
+        # cache, and an equal-but-distinct string would silently start caching
+        # error pages.
         return _MALFORMED_PAYLOAD
-    results = payload.get("results") or []
-    chosen = results[:limit]
-    if not chosen:
+    if not parsed:
         return "No results."
     blocks = []
-    for result in chosen:
-        # Every field is normalized to a non-empty placeholder: a blank line
-        # inside a block, from an empty url or snippet, would read as a block
-        # separator to anything counting on the "\n\n" join below.
-        title = str(result.get("title", "")).strip() or "(untitled)"
-        url = str(result.get("url", "")).strip() or "(no url)"
-        snippet = " ".join(str(result.get("content", "")).split()) or "(no snippet)"
-        blocks.append(f"{title}\n{url}\n{snippet}")
+    for result in parsed:
+        # Every field is normalized to a non-empty placeholder in `_parse_one`:
+        # a blank line inside a block, from an empty url or snippet, would
+        # read as a block separator to anything counting on the "\n\n" join
+        # below.
+        lines = [result.title, result.url, result.snippet]
+        media = _media_line(result)
+        if media is not None:
+            lines.append(media)
+        blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
 
