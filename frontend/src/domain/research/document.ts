@@ -119,6 +119,17 @@ export const documentLabel = (source: SourceSummary): string => source.title ?? 
  * transcript would otherwise make a transcribed medium offer to be transcribed
  * again, which is real duplicated work rather than a cosmetic error.
  *
+ * **A dropped transcript still counts its medium as perceived**, and that is
+ * deliberate rather than an oversight of the `kind === 'text'` test below: this
+ * is the same rule `PerceptionService.unperceived` applies on the server, whose
+ * comment says it in as many words -- a dropped transcript still counts its
+ * parent as perceived. So a medium whose transcript was dropped shows
+ * "Transcript" here and is excluded from batch perception there, and the two
+ * ends agree. Named because they currently agree by coincidence of shape and
+ * nothing else says so: a future reader "fixing" this to skip dropped rows
+ * would make the console offer to re-transcribe exactly the media the batch
+ * path refuses to touch, and neither side would report a conflict.
+ *
  * Last one wins on a duplicate, which the server should never produce -- the
  * derived id is the medium's plus `#perceived`, so there is one per medium.
  * Nothing here refuses a second: a `Map` picking one arbitrarily is a strictly

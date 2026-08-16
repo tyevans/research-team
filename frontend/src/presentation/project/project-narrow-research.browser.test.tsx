@@ -135,6 +135,13 @@ const container = () =>
           publishedAt: null,
           note: null,
           droppedReason: null,
+          // Both required by `TextSummary` and both absent here until the row
+          // rendering started reading them, at which point this fixture threw
+          // on `degradations.length`. The container is `as unknown as
+          // Container`, so nothing typechecks these literals -- the cast that
+          // makes the fixture short also makes it able to go stale silently.
+          derivedFrom: null,
+          degradations: [],
         },
         ...DOCUMENTS,
       ]),
@@ -148,6 +155,8 @@ const container = () =>
         publishedAt: null,
         note: null,
         droppedReason: null,
+        derivedFrom: null,
+        degradations: [],
         // Long enough that the reader has something to scroll; the drawer's
         // *width* is the subject and its content only has to be real.
         text: 'A paragraph of the source. '.repeat(400),

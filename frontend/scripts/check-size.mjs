@@ -66,9 +66,12 @@ const BUDGET_KB = {
   // is designing against the numbers.
   //
   // 84, from 80: perception reaching the console. Measured at 80.1 kB, which
-  // is what tripped this gate -- the 80 raise above left 0.2 kB by the time
-  // media perception's backend landed, so this is the first ordinary feature
-  // to cross it since. What the 0.3 kB bought: a Transcribe control on a
+  // is what tripped this gate. (An earlier draft of this note blamed the
+  // remaining slack on "media perception's backend landing", which is not a
+  // thing that can happen -- no Python change moves the `app` chunk. What
+  // consumed the 80 raise's room was ordinary frontend work across the
+  // intervening features, and this note does not identify which; the honest
+  // statement is the measurement.) What the 0.3 kB bought: a Transcribe control on a
   // medium nothing has been derived from, the link to the transcript on one
   // that has, the degradations line under a derived source, the perceive
   // mutation and its repository call, and the join between a medium and its

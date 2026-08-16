@@ -776,6 +776,34 @@ it('offers Transcribe on a medium nothing has been derived from', async () => {
   expect(perceive).toHaveBeenCalledWith(PROJECT, 'm1')
 })
 
+/** A dropped medium offers nothing, which is an assertion of absence and so
+ *  the kind that rots quietly if never written down.
+ *
+ * The route answers 409 for a dropped source and says to restore it first, so
+ * a control here would be a promise the server has already refused. Not an
+ * `aria-disabled` button with a tooltip either, unlike the extract control's
+ * off states: those become pressable when the queue drains, and this one
+ * cannot become pressable without a restore, which is a different action in a
+ * different place -- the drawer's, which `offers restore on a dropped media
+ * row` covers.
+ *
+ * Stated plainly: this passes with `PerceiveAction` deleted entirely. It pins
+ * the refusal, not the feature; the two tests around it are the red ones.
+ */
+it('offers no transcription control on a dropped medium', async () => {
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([media({ title: 'The keynote', droppedReason: 'wrong recording' })]),
+  )
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+
+  const row = (await screen.findByText('The keynote')).closest('[data-document-row]')
+  expect(within(row as HTMLElement).queryByRole('button', { name: 'Transcribe' })).toBeNull()
+  expect(within(row as HTMLElement).queryByRole('button', { name: 'Transcript' })).toBeNull()
+})
+
 /** The other side of the same row, and the reason the control is conditional
  *  rather than always-on.
  *

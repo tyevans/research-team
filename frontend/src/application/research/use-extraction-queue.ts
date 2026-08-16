@@ -116,12 +116,19 @@ export const useExtractDocument = (projectId: ProjectId) => {
  * same place `extract` does and reports through the same `ExtractionActivity`
  * frames, so the hook that has to know about that queue is this file.
  *
- * Invalidates only the queue, deliberately. The listing does not change until
- * the perception *finishes* and writes the derived source, which is minutes
- * later and announced by the terminal `perceived` frame -- `useExtractionQueue`
- * above invalidates the corpus on that, and that is the read which makes the
- * transcript row appear. Invalidating the listing here as well would be a read
- * of a corpus that provably has not moved yet.
+ * Invalidates only the queue, deliberately: the press queues the medium and
+ * changes nothing about the corpus, which does not move until the perception
+ * *finishes* minutes later. Invalidating the listing here would be a read of a
+ * corpus that provably has not changed.
+ *
+ * What re-reads the listing when it does finish is **not** this hook and not
+ * the terminal frame -- an earlier version of this comment said it was, and a
+ * reviewer refuted it. `StoreDerivedText` is a `Corpus` aggregate event, every
+ * one of those is pushed generically as a `Corpus` frame, and
+ * `useDocumentRefresh` invalidates the listing on any of them. That path is
+ * independent of `TERMINAL` and fires slightly earlier, because the corpus save
+ * precedes the terminal note. The terminal frame's own job here is the queue
+ * board and the extraction pane.
  */
 export const usePerceiveDocument = (projectId: ProjectId) => {
   const { documents } = useContainer()

@@ -46,11 +46,23 @@ export type ExtractionStore = ReturnType<typeof createExtractionStore>
  * unrecognised one as `extracting` rather than as terminal.
  *
  * `perceived` is here and `perceiving` is not, mirroring `_TERMINAL` in
- * `interfaces/web/extraction.py`. Being terminal is what makes the row re-read
- * when a transcription finishes -- which is the whole point of the frame, since
- * a finished perception has written a new derived source into the listing and
- * nothing else announces it. Without it the pane holds `perceiving` until a
- * reload. */
+ * `interfaces/web/extraction.py`.
+ *
+ * What its absence cost, measured against the code rather than assumed -- an
+ * earlier draft of this comment claimed the wrong one and a reviewer refuted
+ * it. A stage that never reaches terminal leaves `current` uncleared, so the
+ * extraction pane shows a finished transcription as a permanently running job
+ * labelled `extracting`; and `isTerminalExtraction` never fires, so the queue
+ * board is never re-read and the Documents header keeps saying "1 extracting
+ * or queued" with a live Stop button, forever.
+ *
+ * What it did **not** cost, because this is the claim that was wrong: the
+ * transcript row appearing in the listing does not depend on this. A finished
+ * perception executes `StoreDerivedText` against the `Corpus` aggregate, every
+ * `Corpus` event is pushed generically as a `Corpus` frame, and
+ * `useDocumentRefresh` invalidates the listing on *any* corpus frame for the
+ * project -- before the terminal frame, in fact, since the save precedes it.
+ * The row would have appeared regardless. */
 export const TERMINAL: readonly string[] = ['consolidated', 'failed', 'perceived']
 
 export const createExtractionStore = ({
