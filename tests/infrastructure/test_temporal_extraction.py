@@ -176,19 +176,65 @@ class TestTheModelPutsTheDateInProperties:
 class TestARelativeDateIsRefused:
     """A narrative relative date must not be read against `published_at`.
 
-    'two years earlier' came back on the Edict of Serdica in the same traced
-    run. Resolved against the article's publication date it means 2001; the
-    text means two years before 313. redstring raises
-    `AmbiguousReferenceDateError` only when there is no reference date at all,
-    and for these documents there always is one -- so the wrong answer is the
-    one that parses cleanly.
+    A relative expression resolves against `reference_date`, which extraction
+    takes from `published_at`. On an encyclopedia article published in 2003
+    and narrating antiquity that is nonsense, and it is nonsense that parses
+    cleanly: redstring raises `AmbiguousReferenceDateError` only when there is
+    no reference date at all, and for these documents there always is one, so
+    nothing is raised for anyone to notice. Measured against redstring 0.9.2
+    with `reference_date` 2003-08-25:
 
-    This is the same failure as the fabricated day, one level up: a vantage
-    point that is right for a news article is nonsense for an encyclopedia
-    entry narrating antiquity.
+        '40 years ago'     -> 1963-08-25, DAY
+        'three days later' -> 2003-08-28, DAY
+        'last year'        -> 2002-08-25, DAY
+
+    Same failure as the fabricated day, one level up: a vantage point that is
+    right for a news article is wrong for one narrating the fourth century.
+
+    **The two expressions the real article actually returned -- 'two years
+    earlier' and 'nearly 40 years' -- are refused by the parser on its own**,
+    and an earlier version of this class tested one of those and therefore
+    proved nothing. The forms below are the ones that fabricate. That the
+    corpus happened to produce the harmless spelling is luck, not safety:
+    'two years earlier' and 'two years ago' mean the same thing and only one
+    of them is dropped.
     """
 
-    async def test_two_years_earlier_dates_nothing(self, tmp_path, build_adapter):
+    @pytest.mark.parametrize("expression", ["40 years ago", "three days later", "last year"])
+    async def test_a_relative_expression_dates_nothing(
+        self, tmp_path, build_adapter, expression: str
+    ):
+        """Each of these dates the entity from `published_at` without the fix."""
+        project_id = uuid4()
+        adapter, store, _ = build_adapter(
+            tmp_path,
+            project_id,
+            provider=FakeLlmProvider(
+                by_substring={}, default=answer_dated_in_properties(expression)
+            ),
+        )
+        await adapter.ingest(
+            SourceRef(
+                source_id="serdica",
+                uri="https://en.wikipedia.org/wiki/Edict_of_Serdica",
+                title="Edict of Serdica - Wikipedia",
+                text=f"The Edict of Serdica was issued {expression}. " * 40,
+                published_at="2003-08-25",
+            )
+        )
+        entities = await extracted_entities(store, project_id, "serdica")
+        entity = next(e for e in entities if e.name == "Edict of Thessalonica")
+
+        assert entity.temporal is None or entity.temporal.start_date is None
+        assert entity.properties[RAW_TEMPORAL_PROPERTY] == expression
+
+    async def test_the_wording_the_article_used_is_kept(self, tmp_path, build_adapter):
+        """'two years earlier' is refused by the parser anyway.
+
+        **This passes with the refusal reverted**, and is here for the second
+        assertion rather than the first: whichever way the expression is
+        dropped, the model's wording has to survive it.
+        """
         project_id = uuid4()
         adapter, store, _ = build_adapter(
             tmp_path,

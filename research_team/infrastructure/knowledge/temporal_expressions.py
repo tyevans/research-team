@@ -106,15 +106,23 @@ _BEFORE_CHRIST = re.compile(r"\b(BC|BCE)\b", re.IGNORECASE)
 #: These have to be refused, and the reason is specific to this corpus. A
 #: relative expression resolves against `reference_date`, which extraction
 #: takes from `SourceDocument.published_at`. For a news article that is right.
-#: For an encyclopedia entry written in 2003 and narrating the year 313 it is
-#: nonsense: 'two years earlier' means two years before 313, and resolved
-#: against the article's publication date it silently becomes 2001.
+#: For an encyclopedia entry written in 2003 and narrating the fourth century
+#: it is nonsense, and it is nonsense that parses cleanly:
+#: `AmbiguousReferenceDateError` fires only when there is *no* reference date,
+#: and these documents always have one, so there is no error to notice.
+#: Measured against redstring 0.9.2 with `reference_date` 2003-08-25:
 #:
-#: redstring cannot refuse these itself. `AmbiguousReferenceDateError` fires
-#: only when there is *no* reference date, and these documents always have
-#: one -- so the wrong answer is the one that parses cleanly, with no error to
-#: notice. Measured on the real 'Edict of Milan' article, which returned 'two
-#: years earlier', 'nearly 40 years' and "After Galerius's death".
+#:     '40 years ago'     -> 1963-08-25, DAY
+#:     'three days later' -> 2003-08-28, DAY
+#:     'last year'        -> 2002-08-25, DAY
+#:
+#: **The expressions the real article returned are not those.** It gave 'two
+#: years earlier', 'nearly 40 years' and "After Galerius's death", and the
+#: parser refuses all three on its own -- an earlier version of this comment
+#: claimed 'two years earlier' became 2001, which was reasoned rather than
+#: measured and is wrong. The rule stays because the distinction is a spelling
+#: accident: 'two years earlier' is dropped and 'two years ago' fabricates,
+#: and nothing stops the next document using the second one.
 #:
 #: Matched as whole words anywhere in the string rather than anchored: the
 #: qualifier is what makes the expression relative, wherever it sits.
@@ -129,8 +137,13 @@ _NARRATIVE_RELATIVE = re.compile(
 #:
 #: 'nearly 40 years' came back from the real article on "the little peace of
 #: the Church". It names how long something lasted, not when it happened, and
-#: it carries no relative *word* for the pattern above to catch -- so it needs
-#: its own rule or it reaches the parser and resolves against `published_at`.
+#: it carries no relative *word* for the pattern above to catch.
+#:
+#: The parser happens to refuse that exact spelling, so this rule changes
+#: nothing for it -- '40 years ago' is the one that resolves, to 1963-08-25.
+#: The rule is here because a duration and a date are different kinds of
+#: answer, and letting durations through to be refused by luck means the
+#: first spelling the parser *does* accept becomes a wrong date silently.
 #:
 #: Ordinals are excluded by construction: '19th century' does not match,
 #: because `\d{1,3}\s+` cannot span the 'th'.

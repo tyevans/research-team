@@ -171,17 +171,39 @@ class TestThingsItMustNotTouch:
 class TestNarrativeRelativeIsRefused:
     """A date relative to the story, not to the calendar, must not be parsed.
 
-    Measured on the real 'Edict of Milan' article: the model returned 'two
-    years earlier' for the Edict of Serdica. The article was published in
-    2003 and narrates 313, so resolving that against `published_at` yields
-    2001 -- and it yields it *cleanly*, with no exception, because redstring
-    raises `AmbiguousReferenceDateError` only when a reference date is
-    missing entirely. There is no error for anyone to notice.
+    Resolved against `published_at` these yield a date derived from when the
+    article was written, cleanly and with no exception -- redstring raises
+    `AmbiguousReferenceDateError` only when a reference date is missing
+    entirely, and these documents always have one. Measured against redstring
+    0.9.2 with `reference_date` 2003-08-25:
+
+        '40 years ago'     -> 1963-08-25, DAY
+        'three days later' -> 2003-08-28, DAY
+        'last year'        -> 2002-08-25, DAY
+
+    The parametrised list below is wider than that, and most of it is
+    belt-and-braces: 'two years earlier', 'nearly 40 years' and "After
+    Galerius's death" -- the three the real article actually returned -- are
+    refused by the parser unaided, so for those the rule changes the
+    *normaliser's* answer without changing the extracted graph at all. (This
+    class asserts the normaliser's answer, so those cases do go red without
+    the rule; the end-to-end behaviour they stand for does not.) They are kept
+    because the difference is a spelling accident.
+    'two years earlier' is dropped and 'two years ago' fabricates; they mean
+    the same thing, and which one a document uses is not something this
+    project controls.
+
+    The first three are the cases that fail without the rule.
     """
 
     @pytest.mark.parametrize(
         "raw",
         [
+            # These fabricate a date without the rule.
+            "40 years ago",
+            "three days later",
+            "last year",
+            # These the parser already refuses; kept for the reason above.
             "two years earlier",
             "nearly 40 years",
             "After Galerius's death",
