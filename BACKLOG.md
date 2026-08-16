@@ -3182,31 +3182,6 @@ rendered on the media row the way `ExtractionPane` renders a stage. Left for
 the slice that adds the batch "Transcribe all" control, which needs the same
 per-row state and would otherwise build it twice.
 
-### B99. No periodic sweep for an accept that dies mid-run
-
-`Application.start()`'s reconciliation (designed in
-`docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`,
-`composition.py:555`) runs once, at startup. It fixes the case a process that
-died and restarted, but not the case where the process never dies: an accept
-whose `asyncio.create_task` raises, hangs, or is silently dropped by the event
-loop stays `accepted` with no source for as long as the process stays up,
-because nothing after startup looks at it again.
-
-Deliberately deferred by the spec rather than an oversight — a periodic sweep
-is a different shape of problem than the crash case the spec was scoped to. It
-needs an interval to poll on, a jitter policy so every process in a
-multi-instance deployment doesn't sweep in lockstep, and a story for what
-happens when two processes sweep the same proposal at once (the crash case
-sidesteps this: only one process is ever running). None of that follows from
-the accept-is-safe-to-rerun property the spec already established; it would
-need its own design.
-
-The fix is a background task in `Application` alongside the projections'
-runners, re-using `MediaAcceptReconciler` (already re-run-safe — see
-`StoreMediaProposal`'s refusal of an already-stored proposal, which is what
-makes a re-run idempotent rather than dangerous) on a timer instead of once at
-`start()`.
-
 ### B100. `build_application` still leaks the event store, blob store, and every projection runner on a partial build
 
 `research_team/composition.py`. The batch-1 review's B98 fixed the specific

@@ -95,9 +95,20 @@ the defect being fixed.
 - **Nothing reconciles during a long-lived process.** A task that dies while the
   process survives — cancelled, or killed by an exception the worker does not
   name — waits for the next restart. A periodic sweep is the obvious extension
-  and is deliberately not built: it needs an interval, a jitter policy and a
-  story about two processes sweeping at once, none of which the crash case
+  and is deliberately not built here: it needs an interval, a jitter policy and
+  a story about two processes sweeping at once, none of which the crash case
   needs.
+
+  **Since built, as `BACKLOG.md` B99** — `Application._sweep_reconciliation`,
+  re-using this same reconciler on a timer. The three open questions were
+  answered: the interval is `AGENT_MEDIA_RECONCILE_INTERVAL`, defaulting to
+  five minutes; the sleep is full jitter, a uniform draw from `[0, interval]`,
+  so instances do not fall into lockstep; and two processes sweeping one
+  proposal needs no locking, because `StoreMediaProposal`'s refusal of an
+  already-stored proposal — the property this document already leans on — is
+  what makes the loser of that race record nothing and report success. The
+  sweep is scheduled after `caught_up()` for the same reason the startup pass
+  is, and cancelled in `close()` alongside it.
 - **No operator surface.** There is no route to trigger reconciliation and no
   count in the pane. Both are reasonable and neither is required to close the
   hole.

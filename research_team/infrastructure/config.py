@@ -74,6 +74,10 @@ DEFAULT_NEO4J_USER = "neo4j"
 #: than silent, but still a bug.
 DEFAULT_PERCEPTION_MAX_CHARS = 200_000
 
+#: Seconds between periodic reconciliation sweeps -- see
+#: `media_reconcile_interval_seconds` below for why this number.
+DEFAULT_MEDIA_RECONCILE_INTERVAL_SECONDS = 300.0
+
 
 def default_db_path() -> str:
     """Where sessions live. Sessions persist across runs and are resumable."""
@@ -610,3 +614,22 @@ def perception_root() -> Path:
     path = Path(configured) if configured else Path.home() / ".research-team" / "perception"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def media_reconcile_interval_seconds() -> float:
+    """How long between periodic sweeps for proposals stuck at `accepted`.
+
+    Five minutes. The sweep costs one read of the accepted set per interval
+    against a set that is normally empty, so the interval is chosen for how
+    long a stranded proposal may sit looking like it is working, not for the
+    cost of asking -- a review pane showing a card that is downloading and is
+    not is tolerable for minutes and not for hours. Reasoned, not measured:
+    nothing here has run long enough in anger to have a distribution of how
+    often an accept's task is actually lost.
+
+    A sweep that overruns its interval cannot pile up -- the loop in
+    `Application` sleeps *between* sweeps rather than on a fixed schedule --
+    so lowering this trades wasted reads for latency and nothing else.
+    """
+    configured = os.getenv("AGENT_MEDIA_RECONCILE_INTERVAL", "").strip()
+    return float(configured) if configured else DEFAULT_MEDIA_RECONCILE_INTERVAL_SECONDS
