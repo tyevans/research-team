@@ -43,15 +43,22 @@ class FakePerception:
         self,
         capabilities: PerceptionCapabilities | None = None,
         degradations: tuple[str, ...] = (),
+        error: Exception | None = None,
     ) -> None:
         self._capabilities = capabilities or PerceptionCapabilities(
             vision=True, asr=True, ffmpeg=True
         )
         self._degradations = degradations
+        # Deliberately something the route maps nowhere: the mapped refusals
+        # all happen before the enqueue, so the only failure a *job* can meet
+        # is one nothing anticipated -- a model timing out, ffmpeg dying.
+        self._error = error
         self.calls: list[str] = []
 
     async def perceive(self, *, sha256: str, max_chars: int) -> Perceived:
         self.calls.append(sha256)
+        if self._error is not None:
+            raise self._error
         return Perceived(
             text="A talk about otters.",
             locators=(LocatorSpan(0, 20, {"kind": "time", "start_s": 0.0, "end_s": 8.0}),),
@@ -228,6 +235,42 @@ async def test_the_progress_pane_hears_perceiving_then_perceived(wired):
     stages = [frame["stage"] for frame in activity.last(UUID(project))]
     assert stages == ["perceiving", "perceived"]
     assert activity.in_flight(UUID(project)) is None
+
+
+async def test_a_perception_that_dies_says_so_on_the_pane_and_in_the_queue(build):
+    """The one failure a job can meet, and the only thing that will ever say so.
+
+    Every refusal the route knows about is answered before the enqueue, so a
+    job only ever fails on something unanticipated -- a model timing out,
+    ffmpeg dying mid-file. Nothing durable records that a perception was even
+    attempted, so without this note the pane sits on `perceiving` forever and
+    the person who pressed the button is never told. Deleting the `except` arm
+    of `_perception_of` passes every other test in this file, which is why
+    this one exists.
+
+    Both accounts are asserted: the frame, and the queue's own `finished`
+    outcome. They come from different places -- the note is reported by the
+    job, the outcome is recorded by `_drain` from the re-raise -- and either
+    could be dropped without the other noticing.
+    """
+    port = FakePerception(error=RuntimeError("the transcriber went away"))
+    application, queue, activity, client = await build(port)
+    project = await _new_project(client)
+    await _upload_media(client, project, "vid")
+
+    response = await client.post(f"/api/projects/{project}/sources/vid/perceive")
+    assert response.status_code == 202, "the route cannot know this will fail"
+    await _settle(application, queue, project)
+
+    frames = activity.last(UUID(project))
+    assert [frame["stage"] for frame in frames] == ["perceiving", "failed"]
+    assert "the transcriber went away" in frames[-1]["detail"]
+    assert activity.in_flight(UUID(project)) is None
+    outcome = queue.finished(UUID(project))[0]
+    assert outcome["status"] == "failed"
+    # And nothing was stored: a derived row for a perception that did not
+    # happen is the dangling reference the whole design refuses.
+    assert "vid#perceived" not in await _rows(client, project)
 
 
 async def test_an_unconfigured_install_answers_503_and_names_what_is_missing(unconfigured):
