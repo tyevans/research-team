@@ -28,10 +28,13 @@ export const DocumentManagePane = ({
   projectId,
   sourceId,
   document,
+  seekSeconds = null,
 }: {
   projectId: ProjectId
   sourceId: SourceId
   document: SourceSummary | null
+  /** The route's `?t=`, passed straight through to `DocumentReader`. */
+  seekSeconds?: number | null
 }) => {
   const restore = useRestoreDocument(projectId)
   const [editing, setEditing] = useState(false)
@@ -75,7 +78,12 @@ export const DocumentManagePane = ({
         // The summary is handed down rather than fetched again: it is what
         // says whether this source is text or media, and the reader has to
         // know that *before* it decides whether to read text at all.
-        <DocumentReader projectId={projectId} sourceId={sourceId} source={document} />
+        <DocumentReader
+          projectId={projectId}
+          sourceId={sourceId}
+          source={document}
+          seekSeconds={seekSeconds}
+        />
       )}
 
       {dropping ? (

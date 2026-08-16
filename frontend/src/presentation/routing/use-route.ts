@@ -1,6 +1,6 @@
 import { useHashLocation } from 'wouter/use-hash-location'
 
-import { parseRoute, type Route } from './routes.ts'
+import { parseRoute, parseSeekSeconds, type Route } from './routes.ts'
 
 /** The current route, and how to change it.
  *
@@ -13,6 +13,17 @@ import { parseRoute, type Route } from './routes.ts'
 export const useRoute = (): Route => {
   const [path] = useHashLocation()
   return parseRoute(path)
+}
+
+/** The `?t=` seek off the current hash, or `null` -- a citation's own moment,
+ *  read independently of `useRoute` rather than folded into `Route` itself:
+ *  every facet but `doc` has no player to seek, and widening the union for
+ *  one facet's query parameter would make every other route's reader guard
+ *  against a field that can never apply to it. See `parseSeekSeconds`'s own
+ *  docstring for what counts as well-formed. */
+export const useSeekSeconds = (): number | null => {
+  const [path] = useHashLocation()
+  return parseSeekSeconds(path)
 }
 
 /** Navigation as a plain function, for the handlers that are not components.
