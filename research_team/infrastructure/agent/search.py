@@ -18,6 +18,7 @@ import httpx
 from langchain_core.tools import BaseTool, tool
 
 from research_team.application import SEARCH_TOOL
+from research_team.application.media_curation import SearchResult
 from research_team.infrastructure.agent.recall import Recall, Recalled, describe_age, query_key
 
 TIMEOUT = httpx.Timeout(10.0)
@@ -223,30 +224,6 @@ def _text(result: dict, key: str) -> str:
         # text is a field this function has nothing to say about.
         return ""
     return value.translate(_HIGHLIGHT).strip()
-
-
-@dataclass(frozen=True)
-class SearchResult:
-    """One SearXNG result, flattened to the fields the media pipeline needs.
-
-    `thumbnail_url` is the whole reason this type exists apart from the string
-    `format_results` renders: the review pane needs an image to show for a
-    media result, and the model must never see that URL -- it costs context
-    for something only a human-facing pane reads. Getting it by re-parsing
-    `format_results`' prose would mean scraping a string built for a different
-    reader; this is built once and rendered from, in both directions.
-
-    All fields are `str`, never `None` -- a field absent from a real payload
-    (see `_text`) becomes `""`, not a sentinel a caller has to check for.
-    """
-
-    title: str
-    url: str
-    snippet: str
-    kind: Literal["image", "video", "other"]
-    asset_url: str
-    detail: str
-    thumbnail_url: str
 
 
 def parse_results(payload: object, limit: int) -> tuple[SearchResult, ...] | None:
