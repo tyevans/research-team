@@ -67,6 +67,9 @@ const fakeMediaProposals = (
   unignore: vi.fn(() => {
     throw new Error('unignore was not stubbed for this test')
   }),
+  run: vi.fn(() => {
+    throw new Error('run was not stubbed for this test')
+  }),
   ...over,
 })
 
@@ -251,4 +254,48 @@ it('lists what is currently ignored, with an undo', async () => {
   const undoButtons = screen.getAllByRole('button', { name: 'Undo' })
   await user.click(undoButtons[0]!)
   expect(unignore).toHaveBeenCalledWith(project, 'host', 'spam.example')
+})
+
+it('filters an ignored asset out of the listing, rather than leaving its card unchanged', async () => {
+  // Review finding 4: `ignore_media_proposal` appends the ignore event but
+  // leaves the proposal at `proposed`, so the row the server returns is
+  // byte-identical after ignoring. This would fail if the pane stopped
+  // reading `ignored.assets` and simply re-rendered whatever `list` returned.
+  const mediaProposals = fakeMediaProposals({
+    list: vi.fn().mockResolvedValue([
+      group({
+        proposals: [
+          proposal({ proposalId: 'ignored-one', assetUrl: 'https://example.com/pic.jpg' }),
+          proposal({ proposalId: 'kept-one', assetUrl: 'https://example.com/other.jpg' }),
+        ],
+      }),
+    ]),
+    ignored: vi
+      .fn<MediaProposalRepository['ignored']>()
+      .mockResolvedValue({ assets: ['https://example.com/pic.jpg'], hosts: [] }),
+  })
+
+  render(<MediaProposalPane projectId={project} />, { wrapper: wrapperFor(mediaProposals) })
+
+  await screen.findByText('A picture of the thing')
+  expect(screen.getAllByText('A picture of the thing')).toHaveLength(1)
+})
+
+it('filters every proposal from an ignored host out of the listing', async () => {
+  const mediaProposals = fakeMediaProposals({
+    list: vi.fn().mockResolvedValue([
+      group({
+        proposals: [proposal({ proposalId: 'p1', assetUrl: 'https://spam.example/pic.jpg' })],
+      }),
+    ]),
+    ignored: vi
+      .fn<MediaProposalRepository['ignored']>()
+      .mockResolvedValue({ assets: [], hosts: ['spam.example'] }),
+  })
+
+  render(<MediaProposalPane projectId={project} />, { wrapper: wrapperFor(mediaProposals) })
+
+  // The group had exactly one proposal, and it was filtered -- so the group
+  // itself drops out and the pane falls back to its empty state.
+  expect(await screen.findByText('No media has been proposed yet')).toBeInTheDocument()
 })
