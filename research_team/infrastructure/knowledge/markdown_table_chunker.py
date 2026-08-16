@@ -85,6 +85,15 @@ provides. If this chunker earns its place upstream, as
 `BoundaryPreferenceChunker` did after living here first, a real field is the
 better home and the metadata key is what should be replaced.
 
+**That extension point only became load-bearing in redstring 0.9.2.** Before
+it, `extraction.corpus.stored_chunks` built each `StoredChunk` without carrying
+`Chunk.metadata` across, so a header prepended on the way into the chunk corpus
+arrived with no prefix recorded and `original_text` degraded to the identity --
+citations into table rows pointing at the wrong words, with nothing raising.
+0.9.2 carries it. The floor is not enforced by the pin (`>=0.9.1`) but by
+`test_the_prefix_survives_the_round_trip_into_the_chunk_store`, which drives the
+real `index_documents`; that is the guard to keep if this module is ever moved.
+
 ## What counts as a table
 
 A GitHub-flavoured markdown table: a row line, then a delimiter line whose

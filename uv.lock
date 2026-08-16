@@ -1683,7 +1683,7 @@ wheels = [
 
 [[package]]
 name = "redstring"
-version = "0.9.1"
+version = "0.9.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dateparser" },
@@ -1693,9 +1693,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/80/b4/cf387e0a609c7c8917fcbeb57c256c612943d63536f1b9541bbe3322a717/redstring-0.9.1.tar.gz", hash = "sha256:9c824da19237475d2d1fddeab745f8569083296a464f6627af3ee1665c73007b", size = 1954628, upload-time = "2026-08-15T00:21:30.284Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/cd/b706102da4872f2ce72cf6ffe5d4758cf6912e3ca7d65ee6e9de1019950b/redstring-0.9.2.tar.gz", hash = "sha256:495959e02201d3ac0898b5bbe960406317476ac0855ab3655ec4c466ebc850ef", size = 1956649, upload-time = "2026-08-16T02:23:01.824Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/92/faf14d07e3e6cb48cc03833740f9db6a33bdc62d9cde7503af57fefe34ef/redstring-0.9.1-py3-none-any.whl", hash = "sha256:6d9cc6f5a97eaca32a2bcfa4400824e83bade8213d7502c00d96dccf7811e0ac", size = 427160, upload-time = "2026-08-15T00:21:27.974Z" },
+    { url = "https://files.pythonhosted.org/packages/be/d3/017858e7428eb7a987c73f5f44ad060b34a55fe61162ec2452be665e670a/redstring-0.9.2-py3-none-any.whl", hash = "sha256:213110bf334ab2c17e7b75eed66c8d4973e8c4760cbfed950c673391da1dc381", size = 427673, upload-time = "2026-08-16T02:23:00.306Z" },
 ]
 
 [package.optional-dependencies]

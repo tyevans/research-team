@@ -144,25 +144,26 @@ def test_blank_text_still_yields_no_chunks(chunker):
     assert chunker.chunk("", max_chunk_size=500, overlap_size=0).chunks == []
 
 
-async def test_redstring_drops_chunk_metadata_on_the_way_into_the_store():
-    """**Upstream gap: `metadata` does not survive `index_documents`.**
+async def test_the_prefix_survives_the_round_trip_into_the_chunk_store():
+    """**The guarantee `original_text` rests on, end to end through the store.**
 
-    `redstring.extraction.corpus.stored_chunks` builds each `StoredChunk`
-    without passing `chunk.metadata` through, even though `StoredChunk` has a
-    `metadata` field. So a chunk indexed into the corpus arrives with the
-    header prepended to its text and **no `synthetic_prefix_chars` to subtract
-    it back off** -- `original_text` silently becomes the identity, and the
-    offsets disagree with the text again.
+    Chunking is only half the job: the corpus is what retrieval reads, and a
+    header that reaches it without `synthetic_prefix_chars` alongside is
+    indistinguishable from text the document really contained at that offset.
+    So this drives the real `index_documents` -- the one path into the chunk
+    corpus -- rather than calling the chunker and trusting the rest.
 
-    That is why `RedstringKnowledge.index` does NOT wrap its chunker: the
-    representation this module depends on cannot survive the trip. The
-    extraction path is unaffected, because those chunks go straight to the
-    model and are never stored.
+    This test used to assert the opposite. Until redstring 0.9.2,
+    `redstring.extraction.corpus.stored_chunks` built each `StoredChunk`
+    without passing `chunk.metadata` across, which is why
+    `RedstringKnowledge.index` went unwrapped through two commits; 0.9.2
+    carries it, and this is the same test turned over. Kept in that form
+    deliberately: if a later redstring drops metadata again, the failure
+    lands here, naming the invariant, rather than surfacing as citations that
+    quietly point at the wrong words.
 
-    This test asserts upstream's *current* behaviour, so it fails when
-    redstring starts carrying metadata -- which is the signal that
-    `index` can be wrapped. Fix it by wiring the chunker, not by deleting
-    this.
+    Fails against redstring < 0.9.2. Verified by running it on 0.9.1, where
+    the first assertion below is the one that breaks.
     """
     from eventsource import InMemoryEventStore
     from redstring import InMemoryChunkStore, SourceDocument, index_documents
@@ -178,9 +179,12 @@ async def test_redstring_drops_chunk_metadata_on_the_way_into_the_store():
     )
 
     stored = await store.get_by_source("doc-1", TENANT_ID)
-    carrying = [chunk for chunk in stored if HEADER in chunk.text]
-    assert carrying, "fixture produced no header-carrying chunk, so this proves nothing"
-    assert all(SYNTHETIC_PREFIX_CHARS not in chunk.metadata for chunk in carrying)
-    assert any(chunk.text != text[chunk.start_char : chunk.end_char] for chunk in carrying), (
-        "the disagreement this test exists to record"
-    )
+    carrying = [chunk for chunk in stored if chunk.metadata.get(SYNTHETIC_PREFIX_CHARS)]
+    assert carrying, "no chunk reached the store with a prefix recorded"
+    assert all(chunk.metadata[TABLE_HEADER] == HEADER for chunk in carrying)
+    # The invariant itself, against the document the offsets index. `original_text`
+    # takes a redstring `Chunk`, and these are `StoredChunk`s -- same two fields,
+    # different type -- so the subtraction is spelled out here rather than reusing it.
+    for chunk in stored:
+        prefix = chunk.metadata.get(SYNTHETIC_PREFIX_CHARS, 0)
+        assert chunk.text[prefix:] == text[chunk.start_char : chunk.end_char]
