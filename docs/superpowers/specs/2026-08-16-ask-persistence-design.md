@@ -105,6 +105,16 @@ B49 is not built here. This spec makes it cheap; it does not spend it.
   behind a 200**, not a refusal (`CLAUDE.md`, and `eventsource.replay`'s own
   docstring) — so its tests assert that a row exists and carries the value the
   event held, never that the request succeeded.
+- **The conversation id is minted by the server, not the browser.** Today's
+  `chat_id` comes from the browser (`ConversationRegistry.get` checks the
+  project it was opened under "rather than trusting it, which is also what a
+  guessed id deserves"). That check is adequate for a key into a bounded
+  in-memory dict and is *not* adequate once the same string is an aggregate id,
+  a row key and a URL segment — the identical hazard as letting a model pick an
+  id, which this codebase has already ruled against once. The server mints a
+  UUID on first use and returns it; the browser's string, if any, becomes a
+  client-side label and never reaches storage.
+
 - **`ConversationRegistry` stays**, in front. It is a cache with a good eviction
   policy, and reading a conversation back through a projection on every turn of
   a live chat is the stuttering-log trade this repository has already made twice
