@@ -58,6 +58,7 @@ from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import KnowledgeError, SourceRef
+from research_team.application.media_curation import MediaCurationTextPort, MediaSearchPort
 from research_team.application.ontology_discovery import OntologyDiscoveryService
 from research_team.application.perception import MediaPerceiver, PerceptionPort
 from research_team.application.ports import GateReview
@@ -81,6 +82,7 @@ from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import ProjectState, Session, current_stage_of
 from research_team.domain.commands import RecordStageReview, WriteFile
+from research_team.domain.media_proposals import MediaProposals
 from research_team.domain.research_run import Budget
 from research_team.domain.topic import Topic
 from research_team.domain.workflow import Preset
@@ -112,6 +114,7 @@ from research_team.infrastructure.agent.knowledge_tools import (
     KNOWLEDGE_PROMPT,
     build_knowledge_tools,
 )
+from research_team.infrastructure.agent.media_curation_adapter import build_curation_ports
 from research_team.infrastructure.agent.ontology_model import ChatModelOntologyText
 from research_team.infrastructure.agent.recall import PageMemo, Recall
 from research_team.infrastructure.agent.search import (
@@ -168,6 +171,7 @@ from research_team.infrastructure.persistence.definition_cache import ProjectDef
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
 from research_team.infrastructure.persistence.read_models import (
     EntityDefinitionRunner,
+    MediaProposalRunner,
     OntologyRunner,
 )
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
@@ -258,6 +262,39 @@ class Application:
     so no caller can run a pass against a project it was not handed. Synchronous
     and never `None`, unlike `definition_readers` -- see `ontology_discoverer`
     in `build_application` for why nothing it needs can be absent."""
+
+    media_proposals: MediaProposalRunner
+    """Keeps the proposal tables following the log. Idle until `start()`.
+
+    A field for `check_telemetry`'s reason -- a projection nobody would
+    otherwise start, and `rebuild()`/`failures()` have to be reachable when
+    the tables disagree with the log. Like `ontology`, nothing reads *through*
+    this runner to write: `MediaCurationService` appends to the event store
+    via `media_proposal_repository` below and the projection does the writing."""
+
+    media_proposal_repository: AggregateRepository[MediaProposals]
+    """The `MediaProposals` aggregate repository, for `MediaCurationService`.
+
+    Exposed directly rather than behind a factory, mirroring `topic_repository`:
+    a `MediaProposals` aggregate is keyed on `project_id` alone, so there is no
+    per-project object to assemble and nothing a factory would buy here. Built
+    over this instance's own event store (`repository.store`/`.publisher`), the
+    same one `media_proposals` above subscribes to -- a repository built over a
+    different store would let a curation and the projection reading it disagree
+    about what was ever appended."""
+
+    media_curation_text: MediaCurationTextPort | None
+    """The chain's text port, or `None` when this install has no model to
+    curate with. Paired with `media_curation_search` below rather than
+    exposed only as a bundle, mirroring `corpus`/`blob_store`: `create_app`
+    takes each optional dependency on its own name, and a route checks each
+    the way `_reader` checks `corpus` and `blob_store` together."""
+
+    media_curation_search: MediaSearchPort | None
+    """The chain's search port, `None` exactly when `searxng` above is --
+    `build_curation_ports` needs a SearXNG instance the same way
+    `build_search_tool` does, and a build with no instance configured has
+    nothing for either to search."""
 
     check_telemetry_readers: Callable[[UUID], CheckTelemetryReadPort]
     """One project's `CheckTelemetryReadPort`, built fresh per call.
@@ -472,6 +509,7 @@ class Application:
         await self.check_telemetry.start()
         await self.definitions.start()
         await self.ontology.start()
+        await self.media_proposals.start()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
@@ -557,6 +595,7 @@ class Application:
         await self.check_telemetry.stop()
         await self.definitions.stop()
         await self.ontology.stop()
+        await self.media_proposals.stop()
         await self.service.close()
         await self.detach_project()
         # Every project this instance ever opened a graph for, not just the
@@ -752,6 +791,23 @@ def build_application(
     else:
         prompt_suffix += NO_SEARCH_CLAUSE
 
+    # `None`/`None` when `searxng` is, matching `search_attempts` above: the
+    # curation chain's search port needs the same instance the agent's own
+    # `web_search` tool does, and a build with neither configured has nothing
+    # for `MediaCurationService` to search with either. The text port is
+    # gated the same way rather than built unconditionally, so the pair
+    # answers `create_app`'s 503 check together instead of one half being
+    # present for a service the other half can never actually run.
+    media_curation_text: MediaCurationTextPort | None = None
+    media_curation_search: MediaSearchPort | None = None
+    if searxng is not None:
+        media_curation_text, media_curation_search = build_curation_ports(
+            extraction_model,
+            model_name=config.model_name(),
+            searxng_url=searxng,
+            limit=config.searxng_results(),
+        )
+
     if project_id is not None:
         # A `project_id=` at build time scopes the whole application to that
         # project, not just sessions started through `start_in_project` --
@@ -806,6 +862,17 @@ def build_application(
     # runner, so the read route and the projection share a connection here for
     # the ordinary reason rather than to keep a cache honest.
     ontology = OntologyRunner(
+        repository.store, resolved_path, repository.publisher, resolved_tracer
+    )
+    # The seventh, built here for the reason stated above `check_telemetry`:
+    # "all [N] projections over this store are constructed in one place and
+    # started by one line in `start()`. A projection wired somewhere else is a
+    # projection somebody forgets to start." Measured directly on this one --
+    # `EntityDefinitionRunner`'s absence once shipped a fully green suite
+    # behind an empty read model, and `tests/integration/
+    # test_media_proposals_reach_the_read_model.py` exists to catch the same
+    # failure here.
+    media_proposals = MediaProposalRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
 
@@ -1609,6 +1676,16 @@ def build_application(
     topic_repository = build_topic_repository(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store
     )
+    # Unsnapshotted, unlike `topic_repository` above -- `MediaProposals` has no
+    # `build_media_proposal_repository` helper yet because nothing needing a
+    # snapshot policy has been written against it, mirroring the bare
+    # `AggregateRepository` construction `tests/application/
+    # test_media_curation.py` already uses over `harness.event_store`. Built
+    # over `repository.store`/`.publisher` so `MediaCurationService`'s writes
+    # and `media_proposals`'s subscription above read and write the same log.
+    media_proposal_repository = AggregateRepository(
+        repository.store, MediaProposals, event_publisher=repository.publisher
+    )
 
     def topic_reader(target_project_id: UUID) -> TopicReadPort:
         """This project's `TopicReadPort`, over the one repository above.
@@ -1829,6 +1906,10 @@ def build_application(
         definition_readers=definition_reader,
         ontology=ontology,
         ontology_discoverers=ontology_discoverer,
+        media_proposals=media_proposals,
+        media_proposal_repository=media_proposal_repository,
+        media_curation_text=media_curation_text,
+        media_curation_search=media_curation_search,
         graphs=graphs,
         topic_readers=topic_reader,
         topic_repository=topic_repository,

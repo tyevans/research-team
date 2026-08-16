@@ -425,6 +425,26 @@ def chunk_store() -> str:
     return configured
 
 
+def curation_model() -> str:
+    """Which model runs the media-curation chain.
+
+    **Not necessarily `AGENT_MODEL`, for `embedding_model`'s reason:** curation
+    is a distinct role -- deciding what a topic needs seen or heard, phrasing
+    a search term, judging a pool of results -- and pointing it at a name
+    tuned for a different job is a decision, not a neutral default. Unlike
+    `embedding_model`, this one *does* default to the chat model
+    (`model_name()`) rather than raising or picking a guessed name of its
+    own: curation's replies are read the way the agent's own JSON-shaped
+    replies already are (see `MediaCurationTextPort`), so the chat model is a
+    reasonable thing to point it at until there is a reason to want
+    something else. The default is a convenience, not a claim that the two
+    roles are the same thing -- an install that wants curation cheaper, or
+    faster, or on a different endpoint entirely sets `AGENT_CURATION_MODEL`
+    and the two stop moving together.
+    """
+    return os.getenv("AGENT_CURATION_MODEL", "").strip() or model_name()
+
+
 def embeddings_enabled() -> bool:
     """Whether anything should embed. A convenience over `vector_store`, not a knob."""
     return vector_store() != "none"

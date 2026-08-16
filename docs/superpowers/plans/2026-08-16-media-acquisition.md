@@ -291,7 +291,17 @@ Write the equivalent three for `parse_terms` and `parse_judgements`.
 - Test: `tests/application/test_media_curation.py`
 
 **Interfaces:**
+- Consumes: `TopicReadPort` (`application/topic_read.py:88`) — its view carries `question`, `scope`, `sub_questions`, `findings`, `source_ids`.
 - Produces: `MediaCurationService.curate(project_id: UUID, topic_id: UUID) -> CurationOutcome` with `CurationOutcome(needs: int, candidates: int, ignored: int, rejected_parses: int)`.
+
+**Corrected mid-execution.** The first draft of this task passed only a topic
+*id* and left stage 1's prompt with nothing to reason about — the chain would
+have asked a model what imagery serves a topic it cannot see, making every
+later stage garbage-in. The spec always said the prompt carries the topic's
+question, scope and findings; the plan simply failed to wire the port that
+already existed. A test must assert the topic's question reaches the text
+port's prompt, not merely that `curate` returns something — the weaker
+assertion passes with the port unwired, which is the whole defect.
 
 **The fake port is six lines**, per `OntologyTextPort`'s reasoning — a list of canned responses returned in order. Do not mock a chat model.
 
