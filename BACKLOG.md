@@ -2824,7 +2824,7 @@ same method, same segment count — where a reordering really would parse
 `extraction-queue` as a source id and 404. The general constraint is still
 real for the file, which is why the entry stands.
 
-### B84. Nothing records which ffmpeg produced a video reading
+### B86. Nothing records which ffmpeg produced a video reading
 
 `FFMPEG_REVISION = "present"` in
 `infrastructure/perception/readeverything_adapter.py` deliberately keeps the
