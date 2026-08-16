@@ -155,7 +155,9 @@ async def test_a_patch_on_an_unknown_source_is_404(app_and_client):
     assert response.status_code == 404
 
 
-async def test_a_refusal_from_decide_answers_409_not_500_on_revise(app_and_client, monkeypatch):
+async def test_a_refusal_from_decide_answers_409_not_500_on_revise(
+    app_and_client, monkeypatch
+):
     """B95's second route: `revise_source` mapped only `UnknownDocument` and
     `KnowledgeError`, not `CommandRejectedError`. Same provocation as the
     restore case above -- `Corpus.decide` patched to refuse unconditionally,
@@ -168,16 +170,14 @@ async def test_a_refusal_from_decide_answers_409_not_500_on_revise(app_and_clien
         f"/api/projects/{project}/sources", json={"source_id": "s1", "text": "hello"}
     )
 
-    from research_team.domain.corpus import Corpus, CommandRejectedError
+    from research_team.domain.corpus import CommandRejectedError, Corpus
 
     def _refuse(command, state):
         raise CommandRejectedError("decide refused for this test")
 
     monkeypatch.setattr(Corpus, "decide", staticmethod(_refuse))
 
-    response = await client.patch(
-        f"/api/projects/{project}/sources/s1", json={"title": "x"}
-    )
+    response = await client.patch(f"/api/projects/{project}/sources/s1", json={"title": "x"})
 
     assert response.status_code == 409
 
@@ -227,7 +227,9 @@ async def test_restore_refuses_a_document_that_is_not_dropped(app_and_client):
     assert response.status_code == 409
 
 
-async def test_a_refusal_from_decide_answers_409_not_500_on_restore(app_and_client, monkeypatch):
+async def test_a_refusal_from_decide_answers_409_not_500_on_restore(
+    app_and_client, monkeypatch
+):
     """B95: `restore_source` mapped only `UnknownDocument` and `NotDropped`,
     not `CommandRejectedError` -- which is what `Corpus.decide` raises for
     every refusal it makes. No reachable case survives today (the entry says
@@ -246,7 +248,7 @@ async def test_a_refusal_from_decide_answers_409_not_500_on_restore(app_and_clie
     )
     assert dropped.status_code == 200
 
-    from research_team.domain.corpus import Corpus, CommandRejectedError
+    from research_team.domain.corpus import CommandRejectedError, Corpus
 
     def _refuse(command, state):
         raise CommandRejectedError("decide refused for this test")

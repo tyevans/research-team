@@ -247,9 +247,7 @@ def parse_results(payload: object, limit: int) -> tuple[SearchResult, ...] | Non
     # totality this function already promises for the payload itself: a
     # skipped result is still a result set, where a raised exception was a
     # lost turn.
-    return tuple(
-        _parse_one(result) for result in results[:limit] if isinstance(result, dict)
-    )
+    return tuple(_parse_one(result) for result in results[:limit] if isinstance(result, dict))
 
 
 def _parse_one(result: dict) -> SearchResult:
