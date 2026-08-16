@@ -19,6 +19,7 @@ import { Split } from '../layout/Split.tsx'
 import { DocumentList } from '../research/DocumentList.tsx'
 import { EntityTreePane } from '../research/EntityTreePane.tsx'
 import { GraphPane } from '../research/GraphPane.tsx'
+import { MediaProposalPane } from '../research/MediaProposalPane.tsx'
 import { TimelinePane } from '../research/TimelinePane.tsx'
 import { TopicList } from '../research/TopicList.tsx'
 import { projectHref, sessionSelection, type Facet, type Selection } from '../routing/routes.ts'
@@ -103,6 +104,7 @@ export const regionOf = (facet: Facet): Region => {
     case 'timeline':
     case 'tree':
     case 'doc':
+    case 'media':
     case 'artifact':
     case 'finding':
       return 'material'
@@ -130,7 +132,7 @@ export const regionOf = (facet: Facet): Region => {
  * about material that arrived from outside the course, so they sit after.
  */
 type MaterialFacet =
-  'session' | 'artifact' | 'file' | 'finding' | 'doc' | 'entity' | 'tree' | 'timeline'
+  'session' | 'artifact' | 'file' | 'finding' | 'doc' | 'media' | 'entity' | 'tree' | 'timeline'
 
 /** Exported so `project-tracks.browser.test.tsx` can compare the strip it
  *  measures against the strip that was declared — a count taken from the
@@ -152,6 +154,10 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   { id: 'file', label: 'Workspace' },
   { id: 'finding', label: 'Findings' },
   { id: 'doc', label: 'Documents' },
+  // Directly after Documents: a proposal is a candidate for the same corpus
+  // that tab lists, one step earlier in its life -- see `MediaProposalPane`'s
+  // own docstring for why it is not folded into that tab instead.
+  { id: 'media', label: 'Media' },
   { id: 'entity', label: 'Graph' },
   // Directly after Graph, not at the end: the tree is the graph's own material
   // read a second way (a list instead of a drawing), same as Timeline is a
@@ -599,6 +605,14 @@ export const ProjectView = ({
               open={openDoc}
               onOpen={(sourceId) => select({ facet: 'doc', id: sourceId })}
             />
+          </TabPanel>
+
+          {/* `overflow-auto` here, unlike `doc` beside it: this panel has no
+              virtualizer of its own to own the scroll, and a proposal list
+              longer than the pane needs somewhere to scroll or the tail of
+              the last need's group runs off the bottom of the page. */}
+          <TabPanel value="media" className="min-h-0 flex-1 overflow-auto">
+            <MediaProposalPane projectId={projectId} />
           </TabPanel>
 
           <TabPanel value="entity" className="flex min-h-0 flex-1 flex-col">

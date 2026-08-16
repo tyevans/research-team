@@ -78,6 +78,7 @@ describe('the facet grammar', () => {
       hash: '#/p/abc/tree/e1',
     },
     { facet: 'doc', selection: { facet: 'doc', id: 'd1' }, hash: '#/p/abc/doc/d1' },
+    { facet: 'media', selection: { facet: 'media', id: 'p1' }, hash: '#/p/abc/media/p1' },
     {
       facet: 'file',
       selection: { facet: 'file', id: FilePath.of('a/b.md') },
