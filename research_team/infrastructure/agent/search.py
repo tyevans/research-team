@@ -288,12 +288,18 @@ def _parse_one(result: dict) -> SearchResult:
         kind, asset, detail = "other", "", ""
     # `thumbnail_src` was absent on 46 of 262 captured image results, and
     # `thumbnail` is frequently an empty string where it is present -- both
-    # measured on the same capture as everything else in this file. Falling
-    # back to the asset itself means the pane always has something to show
-    # for a media result rather than nothing, and never fabricates a URL for
-    # a non-media one: `asset` is `""` there, so the fallback chain ends at
-    # `""` too.
-    thumbnail = _text(result, "thumbnail_src") or _text(result, "thumbnail") or asset
+    # measured on the same capture as everything else in this file. The third
+    # fallback is `img_src` specifically, not "this result's asset": for a
+    # video, the asset is `iframe_src`, an embed URL rather than an image, and
+    # landing that in an `<img src>` in the review pane renders broken.
+    # `img_src` was present on 91 of 91 captured video results and carries the
+    # poster frame, so it is a real fallback rather than a guess -- and for a
+    # non-media result it is simply absent, so the chain ends at `""` there.
+    thumbnail = (
+        _text(result, "thumbnail_src")
+        or _text(result, "thumbnail")
+        or _text(result, "img_src")
+    )
     return SearchResult(
         title=title,
         url=url,

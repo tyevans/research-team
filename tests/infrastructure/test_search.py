@@ -243,6 +243,19 @@ def test_parse_results_falls_back_through_thumbnail_then_asset():
     )
 
 
+def test_parse_results_falls_back_to_img_src_for_a_video_not_its_own_iframe():
+    """`iframe_src` is an embed URL, not an image -- landing it in the pane's
+    `<img src>` renders broken. `img_src` was present on 91 of 91 captured
+    video results and carries the poster frame, so the third fallback is
+    that specific field for every kind, not "this result's asset".
+    """
+    no_thumb = {k: v for k, v in VIDEO_RESULT.items() if k != "thumbnail"}
+    result = {**no_thumb, "img_src": "https://poster.example/frame.jpg"}
+    parsed = parse_results({"results": [result]}, limit=5)
+    assert parsed[0].thumbnail_url == "https://poster.example/frame.jpg"
+    assert parsed[0].thumbnail_url != VIDEO_RESULT["iframe_src"]
+
+
 def test_parse_results_returns_none_for_a_payload_that_is_not_a_results_object():
     for junk in ([], "oops", None):
         assert parse_results(junk, limit=5) is None
