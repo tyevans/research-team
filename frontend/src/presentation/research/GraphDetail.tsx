@@ -345,7 +345,11 @@ export const GraphDetail = ({
                       the commit message. `mention-snippet.browser.test.tsx`
                       measures what the browser actually does with it, because
                       jsdom does not reparent and so cannot see this at all. */}
-                      <Markdown className="md-bare text-sm" source={passageStart(usage.text)} />
+                      <Markdown
+                        className="md-bare text-sm"
+                        source={passageStart(usage.text)}
+                        projectId={projectId}
+                      />
                     </a>
                   </li>
                 ))}

@@ -113,7 +113,11 @@ const TextRead = ({ projectId, sourceId }: { projectId: ProjectId; sourceId: Sou
           `md-bare` because the `<article>` above already owns the padding and
           the measure; see `markdown.css`. The measure moves here from the old
           paragraph, unchanged. */}
-      <Markdown className="md-bare max-w-[68ch] text-sm leading-[1.65]" source={document.text} />
+      <Markdown
+        className="md-bare max-w-[68ch] text-sm leading-[1.65]"
+        source={document.text}
+        projectId={projectId}
+      />
     </article>
   )
 }

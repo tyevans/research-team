@@ -20,8 +20,15 @@ describe('expandReferences', () => {
     expect(expandReferences('[[src:keynote@252]]', projectId)).toContain('?t=252')
   })
 
-  it('carries a range offset', () => {
-    expect(expandReferences('[[src:keynote@252-310]]', projectId)).toContain('?t=252,310')
+  it('carries a range offset as its start, in the form parseSeekSeconds accepts', () => {
+    // `expandReferences` used to emit `?t=252,310` for a range, and
+    // `parseSeekSeconds` (routes.ts) reads one number with `Number(raw)` --
+    // `Number('252,310')` is `NaN`, so that URL seeked nowhere. A range
+    // reference now collapses to its start, the same shape a point offset
+    // produces, so the two ends of this round trip agree.
+    const html = expandReferences('[[src:keynote@252-310]]', projectId)
+    expect(html).toContain('?t=252"')
+    expect(html).not.toContain(',')
   })
 
   it.each([

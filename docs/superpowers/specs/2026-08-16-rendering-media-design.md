@@ -83,10 +83,15 @@ rather than to silence.
 - **A range is `start-end`**, and a bare `@252` is a point. A point is what a
   citation usually wants; a range is what a quote spanning several segments
   produces.
-- **The id charset is restricted** to what `source_id` already permits, and a
-  reference whose id fails that check is **not resolved and not linked** — it
-  renders as its literal text. Validation is not a nicety here: the id becomes
-  part of a URL we construct.
+- **The id charset is restricted**, and narrower than `source_id` itself
+  permits — `corpus.py`'s `StoreDerivedText` docstring leaves `source_id`
+  unconstrained, but the implementation admits only letters, digits, `.`,
+  `_`, `#`, `-` and `:` (`references.ts`'s `ID_CHARS`). That covers every
+  shape an id actually takes in this codebase (slugs, uploaded filenames, the
+  `#perceived` suffix, `fetch_media.py`'s `fetch:<digest>`) while excluding a
+  space, a quote, or a slash. A reference whose id fails that check is **not
+  resolved and not linked** — it renders as its literal text. Validation is
+  not a nicety here: the id becomes part of a URL we construct.
 
 ## Resolution, and where the URL comes from
 
@@ -119,10 +124,17 @@ that state and it is honest.
 
 ## Seeking
 
-A reference carrying an offset appends the media fragment the content route
-already supports, and `DocumentReader` seeks on it. A reference without one
-opens the source at its start, which is what a document reference has always
-meant.
+A reference carrying an offset does **not** append a media fragment
+(`#t=252`) to the content route — a hash-routed URL already has its one
+fragment spent on the route itself (`#/p/<id>/doc/<id>`), so a second `#t=`
+would just be inert characters inside the fragment that already started. The
+offset instead travels as an ordinary `?t=` query string on that hash route
+(`references.ts`), which `parseSeekSeconds` (`routes.ts`) reads and
+`DocumentReader` seeks on. A range offset (`@start-end`) collapses to its
+start — there is no second field in `?t=` for an end to occupy, and a reader
+seeking to where a quote begins is what "seeking" means for a reference. A
+reference with no offset opens the source at its start, which is what a
+document reference has always meant.
 
 For a **citation** — which has `{sourceId, start, end}` and no offset — the
 offset is derived: `locators.resolve` over the stored `locator_map`, taking the

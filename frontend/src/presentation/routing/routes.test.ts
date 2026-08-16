@@ -5,6 +5,8 @@ import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { FilePath } from '@domain/shared/file-path.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
+import { expandReferences } from '../../infrastructure/rendering/references.ts'
+
 import {
   FACETS,
   parseRoute,
@@ -98,10 +100,25 @@ describe('parseSeekSeconds', () => {
     expect(parseSeekSeconds('#/p/abc/doc/x?t=')).toBeNull()
     expect(parseSeekSeconds('#/p/abc/doc/x?t=soon')).toBeNull()
     expect(parseSeekSeconds('#/p/abc/doc/x?t=-5')).toBeNull()
-    // A range, not a moment -- `expandReferences` never emits this shape for
-    // a query (only for an inline reference's own `@start-end`), so a `,`
-    // here is not this app's own output and is treated the same as junk.
+    // A range, not a moment. This *was* documented here as a shape
+    // `expandReferences` never emits -- false: it emitted exactly this for
+    // `[[src:x@5-10]]` until references.ts collapsed a range to its start,
+    // and every reference with an end seeked nowhere as a result. `,` is
+    // still rejected -- there is no second field for an end to occupy -- but
+    // it is rejected because a comma-bearing `t` is invalid input, not
+    // because this app never produces one.
     expect(parseSeekSeconds('#/p/abc/doc/x?t=5,10')).toBeNull()
+  })
+
+  it('accepts a range reference expansion and seeks to its start', () => {
+    // Pins the round trip BLOCKER 2 was about: expandReferences(id@252-310)
+    // -> a URL -> parseSeekSeconds. Importing expandReferences here (rather
+    // than hand-writing the query) is deliberate -- a hand-written `?t=252`
+    // would pass even if the two files drifted again.
+    const html = expandReferences('[[src:x@252-310]]', ProjectId('abc'))
+    const href = /href="([^"]+)"/.exec(html)?.[1]
+    expect(href).toBeDefined()
+    expect(parseSeekSeconds(href!)).toBe(252)
   })
 })
 

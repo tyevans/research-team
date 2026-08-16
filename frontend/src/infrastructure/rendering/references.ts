@@ -120,7 +120,7 @@ const escapeText = (text: string): string =>
  * still links, to the document page's own "not found" state.
  */
 export const expandReferences = (source: string, projectId: ProjectId): string =>
-  source.replace(TOKEN, (whole, id: string | undefined, start?: string, end?: string) => {
+  source.replace(TOKEN, (whole, id: string | undefined, start?: string, _end?: string) => {
     // No `id` capture means this match was a fence or inline-code
     // alternative, not a reference -- hand it back untouched, syntax and all.
     if (id === undefined) return whole
@@ -136,8 +136,17 @@ export const expandReferences = (source: string, projectId: ProjectId): string =
     // to happen under a hash router regardless. The offset travels as an
     // ordinary query string on the hash route instead, which the router
     // already knows how to parse without any special-casing.
-    const query =
-      start === undefined ? '' : end === undefined ? `?t=${start}` : `?t=${start},${end}`
+    // A range reference (`@start-end`) seeks to its start and nothing more:
+    // `?t=` is parsed by `parseSeekSeconds` in routes.ts, which reads one
+    // number and rejects anything else (`Number('252,310')` is `NaN`) --
+    // there is no second field for an end to occupy, and emitting `end` here
+    // used to produce a `?t=252,310` that function then refused, so a range
+    // reference seeked nowhere. The end is simply dropped rather than encoded
+    // some other way: the start is where the quote the reference points at
+    // begins, which is what seeking means for a reference, and a player has
+    // no use for "and stop at 310" today. `references.test.ts` pins that a
+    // range collapses to its start's `?t=`.
+    const query = start === undefined ? '' : `?t=${start}`
 
     return `<a class="font-mono text-sm" href="${href}${query}">${escapeText(id)}</a>`
   })
