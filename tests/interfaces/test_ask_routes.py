@@ -11,7 +11,7 @@ project's own stream and feed because the ask does write, to its own
 
 import asyncio
 import json
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
@@ -104,7 +104,24 @@ def test_activity_is_streamed_before_the_answer():
     )
 
     kinds = [frame["type"] for frame in frames(response)]
-    assert kinds == ["delta", "message", "answer"]
+    # `conversation` leads every ask: the page is told which stream its
+    # questions are being recorded on before any of them is answered, because
+    # the id it minted itself is not the one anything is stored under.
+    assert kinds == ["conversation", "delta", "message", "answer"]
+
+
+def test_the_conversation_id_leads_the_stream():
+    """Without this frame nothing ever returns the server-minted id, and the
+    history routes list conversations the page that produced them cannot
+    name. Fails if `AskConversationOpened` stops being yielded or stops being
+    rendered."""
+    response = client(ask_service(StubExecutor())).post(
+        f"/api/projects/{uuid4()}/ask", json={"chat_id": "c", "question": "why?"}
+    )
+
+    first = frames(response)[0]
+    assert first["type"] == "conversation"
+    assert UUID(first["conversation_id"])
 
 
 def test_a_failing_executor_reports_an_error_frame_rather_than_a_dead_stream():
@@ -193,7 +210,11 @@ async def test_closing_the_stream_cancels_the_model_call():
     )
 
     response = await endpoint(uuid4(), AskRequest(chat_id="c", question="why?"))
-    assert await response.body_iterator.__anext__()  # the first note; now parked
+    # Two frames: the conversation id, then the executor's first note. Only
+    # the second means the executor is running, which is the precondition for
+    # abandoning the stream to prove anything.
+    assert await response.body_iterator.__anext__()
+    assert await response.body_iterator.__anext__()  # now parked
     await response.body_iterator.aclose()
 
     assert Parking.cancelled

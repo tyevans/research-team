@@ -58,6 +58,31 @@ class Citation:
 
 
 @dataclass(frozen=True)
+class AskConversationOpened:
+    """The stream this ask is being recorded on, told to whoever asked.
+
+    The id is minted server-side (see `Conversation.conversation_id`) and
+    nothing else would ever return it: the registry is keyed by the browser's
+    `chat_id`, and a client that only ever saw its own string could read a
+    stored conversation back only by guessing. Persisting an ask that no
+    client can name again is half a feature.
+
+    Yielded **first**, before any activity, rather than carried on the answer:
+    a conversation whose second turn fails still has a first turn on disk, and
+    a reader who walked away mid-answer still has the link. The cost is that a
+    client can be handed an id for a stream with nothing on it yet -- a failed
+    first turn appends nothing -- so the id is a name for a conversation, not
+    a promise that a row exists.
+
+    Echoing it back to resume a conversation is the frontend's work and is not
+    built here: `AskService.ask` takes no conversation id, and a browser that
+    wants to continue one gets what it gets from the registry today.
+    """
+
+    conversation_id: UUID
+
+
+@dataclass(frozen=True)
 class AskAnswer:
     text: str
     citations: tuple[Citation, ...] = ()
@@ -182,8 +207,9 @@ class AskExecutor(Protocol):
     ) -> AskAnswer: ...
 
 
-AskNote = ActivityNote | AskAnswer
-"""What `AskService.ask` yields: activity as it happens, then one answer last."""
+AskNote = AskConversationOpened | ActivityNote | AskAnswer
+"""What `AskService.ask` yields: the conversation id first, then activity as
+it happens, then one answer last."""
 
 
 class AskService:
@@ -217,6 +243,11 @@ class AskService:
         self._running.add(chat_id)
         try:
             conversation = self._conversations.get(chat_id, project_id)
+            # Announced before anything else happens, including before the
+            # executor is started -- see `AskConversationOpened`. A reader who
+            # walks away during the answer has still been told where to find
+            # the turns that were already recorded.
+            yield AskConversationOpened(conversation_id=conversation.conversation_id)
             # The queue is what turns a callback-shaped reporter into an
             # iterator: the executor pushes notes from whatever task it runs
             # on, and the loop below drains them while awaiting the answer.

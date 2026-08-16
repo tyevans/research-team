@@ -21,7 +21,7 @@ from uuid import uuid4
 from eventsource import StreamId, collect
 from langchain_core.messages import AIMessage
 
-from research_team.application.ask import AskAnswer
+from research_team.application.ask import AskAnswer, AskConversationOpened
 from research_team.domain import CreateProject, Project
 from research_team.domain.corpus import StoreSourceDocument
 from tests.conftest import ToolAwareFakeChatModel
@@ -69,8 +69,11 @@ async def test_asking_appends_nothing_to_the_project_s_stream_or_feed(build_appl
     assert await project_stream(application, project) == stream_before
     assert await application.service._repository.read_since(before) == []
     # Both halves, because a generator that yielded nothing would satisfy the
-    # position assertion perfectly and prove nothing about the ask.
-    assert notes == [AskAnswer(text="an answer")]
+    # position assertion perfectly and prove nothing about the ask. The first
+    # note is the conversation id the ask is being recorded under -- announced
+    # before anything else, and off the project's stream like the rest of it.
+    assert notes[1:] == [AskAnswer(text="an answer")]
+    assert isinstance(notes[0], AskConversationOpened)
 
 
 async def test_the_real_executor_opens_a_graph_and_still_appends_nothing(build_application):
