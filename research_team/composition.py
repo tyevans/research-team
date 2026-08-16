@@ -112,6 +112,7 @@ from research_team.infrastructure.agent.fetch import (
     FETCH_PROMPT,
     build_fetch_tool,
 )
+from research_team.infrastructure.agent.fetch_media import build_fetch_media_tool
 from research_team.infrastructure.agent.knowledge_tools import (
     KNOWLEDGE_PROMPT,
     build_knowledge_tools,
@@ -1525,8 +1526,35 @@ def build_application(
         # with one more place to look: this project's own sources, which is
         # the only lookup that can return something citable.
         project_fetch = build_fetch_tool(recall=recall, corpus=reader, pages=pages)
+        # Unlike `project_fetch` above, `fetch_media` has no ungranted,
+        # project-less form to shadow: `fetch` can run and simply not save
+        # (`_keeper` below is the thing that decides that), but a
+        # `fetch_media` that cannot store what it downloads is the exact
+        # defect this tool was built to fix -- see `build_fetch_media_tool`'s
+        # own refusal. So it exists only from here, once a project is
+        # attached, rather than being registered unconditionally alongside
+        # the base `fetch` in `tools` above and reaching for a project it
+        # might not have.
+        #
+        # `editor` and `resolved_media_http_client` are both closed over from
+        # the outer `build_application` scope, defined further down in this
+        # function (`editor` beside `document_extractor`,
+        # `resolved_media_http_client` beside `media_accept_worker`) --
+        # ordinary in a nested `async def`, since Python resolves a closure's
+        # free variables at call time, and `open_graph` is never called until
+        # `build_application` has finished assembling both. Reusing the
+        # worker's own client rather than building a second one is what
+        # keeps "the connection pool a model's direct fetch uses" and "the
+        # one an accepted proposal's download uses" the same pool, not two
+        # that happen to agree on configuration today.
+        fetch_media = build_fetch_media_tool(
+            client=resolved_media_http_client,
+            editor=editor,
+            project_id=target_project_id,
+        )
         return knowledge, (
             project_fetch,
+            fetch_media,
             # The reporter is per-project and so is this closure, which is why
             # it is made here rather than passed in already bound. None when
             # nothing is listening: a build with no web layer has nobody to
