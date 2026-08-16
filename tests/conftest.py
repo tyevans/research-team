@@ -74,6 +74,10 @@ def isolate_database(tmp_path, monkeypatch):
     # a media upload in a test writes actual bytes, and `~/.research-team/blobs`
     # is content-addressed, so nothing would ever overwrite or clean them up.
     monkeypatch.setenv("AGENT_BLOB_ROOT", str(tmp_path / "blobs"))
+    # And off the real perception cache, for `blob_root`'s reason: without
+    # this a test that perceives media writes cache files into the
+    # developer's real `~/.research-team/perception` and nothing fails.
+    monkeypatch.setenv("AGENT_PERCEPTION_ROOT", str(tmp_path / "perception"))
 
 
 @pytest.fixture

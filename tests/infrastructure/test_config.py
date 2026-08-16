@@ -163,3 +163,24 @@ def test_the_extraction_throughput_knobs_are_overridable(monkeypatch):
     monkeypatch.setenv("AGENT_EXTRACTION_CHUNK_SIZE", "3000")
     assert config.extraction_concurrency() == 1
     assert config.extraction_chunk_size() == 3_000
+
+
+def test_transcription_is_off_until_a_url_is_set(monkeypatch):
+    monkeypatch.delenv("AGENT_TRANSCRIBER_URL", raising=False)
+    assert config.transcriber_url() is None
+
+
+def test_a_transcriber_url_without_a_model_refuses_to_start(monkeypatch):
+    """The server reports no model name -- measured against whisper.cpp on
+    2026-08-15 -- so there is nothing to infer one from, and the name is the
+    ASR revision inside the capability fingerprint. Defaulting it would let
+    two models' output share one cache key."""
+    monkeypatch.setenv("AGENT_TRANSCRIBER_URL", "http://localhost:8083")
+    monkeypatch.delenv("AGENT_TRANSCRIBER_MODEL", raising=False)
+    with pytest.raises(ValueError, match="AGENT_TRANSCRIBER_MODEL"):
+        config.transcriber_model()
+
+
+def test_perception_max_chars_matches_the_document_cap(monkeypatch):
+    monkeypatch.delenv("AGENT_PERCEPTION_MAX_CHARS", raising=False)
+    assert config.perception_max_chars() == config.DEFAULT_PERCEPTION_MAX_CHARS
