@@ -64,6 +64,15 @@ from research_team.infrastructure.knowledge.domain_schemas import (
     resolve_domain,
 )
 from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
+from research_team.infrastructure.knowledge.temporal_expressions import (
+    RAW_TEMPORAL_PROPERTY,
+    normalize_for_parsing,
+)
+
+#: Re-exported: written here, defined next to the normalisation it compensates
+#: for, and read by `temporal_rendering.py`. Named in `__all__`-less code, so
+#: this assignment is what stops a linter calling the import unused.
+_ = RAW_TEMPORAL_PROPERTY
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +134,63 @@ class _CountingProvider:
         self._calls += 1
         self._announce(self._calls)
         return await self._inner.extract(text, schema, system_prompt=system_prompt)
+
+
+class _DatingProvider:
+    """An `LlmProvider` that respells dates on the way back from the model.
+
+    **The only seam available.** The correction has to land between the model
+    answering and redstring parsing, and `map_extraction` runs inside
+    `build_graph`, which writes the graph store and builds the
+    `DocumentExtracted` event together. Correcting the entities afterwards
+    would fix the event and leave the store disagreeing with it, so the
+    correction goes in the input where there is exactly one copy of it.
+
+    Wraps `_CountingProvider` rather than replacing it: counting calls and
+    respelling dates are unrelated jobs, and one class doing both would be
+    harder to read than two doing one each. See
+    `temporal_expressions.py` for what is respelled and the measurements
+    behind each rule.
+    """
+
+    def __init__(self, inner: LlmProvider) -> None:
+        self._inner = inner
+
+    @property
+    def model(self) -> str:
+        return self._inner.model
+
+    async def extract(self, text, schema, *, system_prompt=None):
+        answer = await self._inner.extract(text, schema, system_prompt=system_prompt)
+        return _with_respelled_dates(answer)
+
+
+def _with_respelled_dates(extraction):
+    """`extraction` with every entity's temporal expression normalised.
+
+    Rebuilt by `model_copy` rather than mutated: the pipeline holds the same
+    answer object for gleaning and carryover, and editing it in place would
+    make what a later stage reads depend on whether this ran first.
+    """
+    entities = []
+    changed = False
+    for candidate in extraction.entities:
+        raw = candidate.temporal_expression
+        if not raw:
+            entities.append(candidate)
+            continue
+        changed = True
+        entities.append(
+            candidate.model_copy(
+                update={
+                    "temporal_expression": normalize_for_parsing(raw),
+                    "properties": {**candidate.properties, RAW_TEMPORAL_PROPERTY: raw},
+                }
+            )
+        )
+    if not changed:
+        return extraction
+    return extraction.model_copy(update={"entities": entities})
 
 
 def _reporting(report: ExtractionReporter | None, source_id: str):
@@ -363,14 +429,16 @@ class RedstringKnowledge:
             # is acceptable: adjudication is per-merge and each merge already
             # has its own `consolidating` note, so nothing goes unreported --
             # only the model-call tally understates by those calls.
-            counting = _CountingProvider(
-                self._provider, lambda calls: announce("extracting", model_calls=calls)
+            wrapped = _DatingProvider(
+                _CountingProvider(
+                    self._provider, lambda calls: announce("extracting", model_calls=calls)
+                )
             )
             async with tenant_scope(self._project_id):
                 embeddings, vectors = await self._embedding_pair()
                 built = await build_graph(
                     document,
-                    provider=counting,
+                    provider=wrapped,
                     store=self._store,
                     tenant_id=self._project_id,
                     domain=self._domain,

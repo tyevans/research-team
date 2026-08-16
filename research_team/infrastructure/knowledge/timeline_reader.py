@@ -29,7 +29,9 @@ from research_team.application.timeline_read import (
     TimelineInterval,
 )
 from research_team.infrastructure.knowledge.temporal_interval import extent_bounds
-from research_team.infrastructure.knowledge.temporal_rendering import render_extent
+from research_team.infrastructure.knowledge.temporal_rendering import (
+    entity_extent_label,
+)
 
 
 def _to_band(entity: Any) -> TimelineBand | None:
@@ -52,7 +54,7 @@ def _to_band(entity: Any) -> TimelineBand | None:
         # modules disagree about what "undated" is -- and an empty label is a
         # visible defect where a `None` in a `str` field is a type error at
         # some distance from its cause.
-        extent=render_extent(entity.temporal) or "",
+        extent=entity_extent_label(entity) or "",
         start=lower.isoformat() if lower is not None else None,
         end=upper.isoformat() if upper is not None else None,
         precision=getattr(getattr(entity.temporal, "precision", None), "name", ""),
