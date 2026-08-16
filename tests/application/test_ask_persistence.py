@@ -128,6 +128,42 @@ async def test_a_second_turn_appends_to_the_same_stream(transcripts):
     assert [event.question for event in events[1:]] == ["first?", "second?"]
 
 
+async def test_a_chat_id_reused_under_another_project_starts_its_own_stream(transcripts):
+    """B's question must not land on the conversation A started.
+
+    `RecordAskTurn` carries no `project_id`, so `decide` has nothing to
+    compare and cannot refuse this -- the check lives one layer out, in
+    `ConversationRegistry.get`, which treats a project mismatch as absence
+    because the chat id came from the browser. That guard used to protect a
+    cache; it now decides which *stream* a turn is appended to, which is the
+    stronger job, and this test is what says so.
+
+    Absence rather than refusal, matching today's behaviour: B gets a fresh
+    conversation on a fresh stream. A's stream is left with exactly the one
+    turn it earned.
+    """
+    ask = service(FakeExecutor(), transcripts)
+    project_a, project_b = uuid4(), uuid4()
+
+    await drain(ask.ask(project_id=project_a, chat_id="c", question="a's question"))
+    conversation_a = ask._conversations.get("c", project_a).conversation_id
+    await drain(ask.ask(project_id=project_b, chat_id="c", question="b's question"))
+
+    on_a = await events_on(transcripts, conversation_a)
+    assert [getattr(event, "question", None) for event in on_a] == [None, "a's question"]
+    # And B's turn did land somewhere -- on its own stream, under its own
+    # project. Without this, deleting the append entirely would pass the half
+    # above.
+    started = [
+        event
+        for event in await all_events(transcripts)
+        if event.aggregate_id != conversation_a
+    ]
+    assert [
+        event.project_id for event in started if isinstance(event, AskConversationStarted)
+    ] == [project_b]
+
+
 async def test_a_failed_ask_appends_nothing(transcripts):
     """The executor raises: no conversation started, no turn recorded.
 

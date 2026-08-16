@@ -117,6 +117,19 @@ class ConversationRegistry:
         # A chat id arrives from the browser, so the project it was opened
         # under is checked rather than trusted; a mismatch is treated as
         # absence, which is also what a guessed id deserves.
+        #
+        # **This check now decides which stream a turn is appended to, not
+        # just which cache entry is returned.** `RecordAskTurn` carries no
+        # `project_id`, so `AskConversation.decide` has nothing to compare and
+        # cannot refuse a turn recorded onto another project's conversation --
+        # there is no second line of defence behind this one. Absence is kept
+        # as the answer rather than a refusal because it is what happens today
+        # and the caller has an obvious next move: the mismatched chat starts
+        # a fresh conversation on a fresh stream, and the other project's
+        # stream is untouched.
+        # `test_a_chat_id_reused_under_another_project_starts_its_own_stream`
+        # fails if this clause goes -- checked by deleting it, and B's
+        # question landed on A's stream.
         if (
             held is None
             or held.project_id != project_id
