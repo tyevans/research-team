@@ -3464,6 +3464,13 @@ async def test_allow_all_records_exactly_the_changes_it_made(client, service):
     """One event per level that really moved, never one per gated tool: a log
     claiming eight decisions where a person made one is as unreadable as one
     that omitted them.
+
+    `fetch_media` now appears in `changed` alongside `fetch` -- intended, not
+    drift: it floors at `ask` for the same reason `fetch` does (a network
+    tool a model can point at any URL, see `TOOL_FLOORS`), so allow-all
+    genuinely relaxes it too. It is the first floored tool where "allow all"
+    means authorizing megabytes to disk and, downstream, a perception pass --
+    worth a person seeing named in the log, not folded into a count.
     """
     session_id = await _new_session(client)
     await client.post(
@@ -3473,13 +3480,14 @@ async def test_allow_all_records_exactly_the_changes_it_made(client, service):
 
     body = (await client.post(f"/api/sessions/{session_id}/autonomy/allow-all")).json()
 
-    assert body["changed"] == {"write_file": "auto", "fetch": "auto"}
+    assert body["changed"] == {"write_file": "auto", "fetch": "auto", "fetch_media": "auto"}
     events = await service.history(UUID(session_id))
     changes = [event for event in events if isinstance(event, AutonomyChanged)]
     assert [(change.tool_name, change.level) for change in changes] == [
         ("write_file", "deny"),
         # `GATED_TOOLS` order, which is the order `relax_all` walks.
         ("fetch", "auto"),
+        ("fetch_media", "auto"),
         ("write_file", "auto"),
     ]
 

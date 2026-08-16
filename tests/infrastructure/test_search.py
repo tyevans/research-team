@@ -742,10 +742,17 @@ def test_the_counter_resets_at_the_turn_boundary() -> None:
 
 def test_the_bound_does_not_touch_the_autonomy_policy() -> None:
     """B24 rejects counting as a permission mechanism by name. This test fails
-    if the bound is ever implemented as a gate."""
-    from research_team.application.autonomy import TOOL_FLOORS
+    if the bound is ever implemented as a gate.
 
-    assert TOOL_FLOORS == {"fetch": "ask", "advance_stage": "ask"}
+    Asserts `SEARCH_TOOL`'s absence from `TOOL_FLOORS`, not the dict's exact
+    contents: the claim here is specifically about the search bound, and an
+    exact-equality literal would fail every time an unrelated tool (most
+    recently `fetch_media`) gained a floor of its own -- a change this test
+    has no opinion about and should not need editing for.
+    """
+    from research_team.application.autonomy import SEARCH_TOOL, TOOL_FLOORS
+
+    assert SEARCH_TOOL not in TOOL_FLOORS
 
 
 async def test_two_concurrent_turns_do_not_bound_each_other() -> None:
