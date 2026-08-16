@@ -58,6 +58,7 @@ mistake at a call site.
 """
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Annotated, Literal
 from uuid import UUID
@@ -126,6 +127,43 @@ class CorpusMediaStored(DomainEvent):
     fetched_at: str | None = None
 
 
+@register_event
+class CorpusDerivedTextStored(DomainEvent):
+    """What a perception model made of a stored medium.
+
+    A separate event from `CorpusDocumentStored` because a derived source has
+    to stay permanently distinguishable from a fetched one: a quote from a
+    transcript is a quote from a model's reading of an audio track, and
+    provenance that cannot tell those apart is the unfalsifiable-provenance
+    failure this module exists to prevent, one level up.
+
+    `locator_map` is JSON rather than a structured field because the locator
+    union (`TimeSpan | PageRef | BBox | CharSpan | ByteRange`) belongs to
+    `readeverything` and will evolve there. A structured field here would make
+    every locator kind it adds a schema change in this repository, in exchange
+    for queries nobody makes -- the map is read whole or not at all, since
+    resolving one offset needs every segment.
+
+    `perceived_with` is `CapabilitySet.fingerprint()`: which models, at which
+    revisions, produced this. Two transcripts of one video from two models are
+    two different claims, and this is the field that says so.
+
+    Additive: a build that predates this event ignores it in `evolve` and
+    replays cleanly, which is what "events already written are not rewritten"
+    buys. Nothing about `CorpusDocumentStored`'s shape changes.
+    """
+
+    aggregate_type: str = "Corpus"
+    source_id: str
+    derived_from: str
+    text: str
+    sha256: str
+    locator_map: str
+    perceived_with: str
+    degradations: str
+    title: str | None = None
+
+
 @dataclass(frozen=True)
 class StoreSourceDocument:
     #: Which corpus to store into. Storing is what brings a corpus into
@@ -164,7 +202,27 @@ class StoreSourceMedia:
     fetched_at: str | None = None
 
 
-CorpusCommand = StoreSourceDocument | StoreSourceMedia | DropSourceDocument
+@dataclass(frozen=True)
+class StoreDerivedText:
+    """Store what perception made of a medium.
+
+    Carries `corpus_id` for `StoreSourceMedia`'s reason -- though unlike that
+    one this can never be the creation command, since it requires a media
+    source to already exist. Carried anyway so the three store commands have
+    one shape; a command that omitted it would invite the question of why.
+    """
+
+    corpus_id: UUID
+    source_id: str
+    derived_from: str
+    text: str
+    locator_map: str
+    perceived_with: str
+    degradations: str
+    title: str | None = None
+
+
+CorpusCommand = StoreSourceDocument | StoreSourceMedia | StoreDerivedText | DropSourceDocument
 
 
 class SourceRecordBase(BaseModel):
@@ -201,6 +259,24 @@ class TextRecord(SourceRecordBase):
 
     kind: Literal["text"] = "text"
     char_count: int
+    derived_from: str | None = None
+    """The media source this was perceived from, or None for a fetched document.
+
+    Not a third arm of `SourceRecord`. A derived source *is* text for every
+    purpose a reader has -- it chunks, it quotes, it extracts -- and the
+    discriminator's job is to answer "can I read this as prose". The cost is
+    that this is a nullable field the type checker cannot force anyone to
+    consider, and it is paid down in exactly one place: `decide` refuses any
+    store that would change a source's derivedness, so nothing can quietly
+    become or stop being a transcript.
+    """
+    perceived_with: str | None = None
+    """The capability fingerprint that produced it. None for a fetched document."""
+    degradations: tuple[str, ...] = ()
+    """What the perception could not do -- "no vision model configured; frames
+    were not described". Empty for a fetched document and for a complete
+    perception; a reader cannot tell those two apart from here, and does not
+    need to, because `derived_from` already does."""
 
 
 class MediaRecord(SourceRecordBase):
@@ -272,6 +348,41 @@ def decide(command: CorpusCommand, state: CorpusState) -> list[DomainEvent]:
     """
     corpus_id = state.corpus_id
     match command, state:
+        # Both derivedness guards come before the kind guards below, and the
+        # order is presently inert rather than load-bearing -- measured, not
+        # reasoned: moving this pair beneath the kind guards leaves all 30
+        # tests in `tests/domain/test_corpus.py` green. The two kind guards
+        # match `StoreSourceDocument`-onto-media and `StoreSourceMedia`-onto-
+        # text, and neither pattern can intercept either case here: a derived
+        # record's kind is "text", not "media", and no kind guard mentions
+        # `StoreDerivedText` at all. The task brief claimed the ordering was
+        # what keeps a derivedness clash from being reported as a kind clash;
+        # that is not true of this code as it stands.
+        #
+        # Kept in this order anyway, because it is the order that stays correct
+        # if a kind guard ever widens -- a guard added for
+        # `StoreSourceMedia`-onto-derived, say, would match before the
+        # derivedness refusal and answer with the less specific message. The
+        # cost of the placement is zero and the failure it forecloses is silent.
+        case StoreSourceDocument(source_id=source_id), _ if _is_derived(state, source_id):
+            raise CommandRejectedError(
+                f"source {source_id!r} is derived from "
+                f"{_derived_from(state, source_id)!r}; storing a fetched document "
+                "under it would overwrite a transcript with prose nobody perceived"
+            )
+
+        # Named rather than written inline as `_kind_of(...) is not None and
+        # not _is_derived(...)`: `ruff format` breaks that guard across three
+        # lines with the call head stranded on the `case`, and the predicate is
+        # the kind of thing a reader wants a name for regardless.
+        case StoreDerivedText(source_id=source_id), _ if _holds_something_not_derived(
+            state, source_id
+        ):
+            raise CommandRejectedError(
+                f"source {source_id!r} is not derived; storing perceived text "
+                "under it would replace a source with a reading of another one"
+            )
+
         case StoreSourceDocument(source_id=source_id), _ if (
             _kind_of(state, source_id) == "media"
         ):
@@ -321,6 +432,34 @@ def decide(command: CorpusCommand, state: CorpusState) -> list[DomainEvent]:
                 )
             ]
 
+        case StoreDerivedText(derived_from=parent), _:
+            parent_record = state.documents.get(parent)
+            if parent_record is None:
+                raise CommandRejectedError(f"unknown source {parent!r}")
+            if parent_record.kind != "media":
+                raise CommandRejectedError(
+                    f"source {parent!r} holds text; there is nothing in it to perceive"
+                )
+            return [
+                CorpusDerivedTextStored(
+                    # From the command for the same reason the two stores above
+                    # read it from theirs -- though this one can never be the
+                    # creation command, since it needs a media source to exist.
+                    aggregate_id=command.corpus_id,
+                    source_id=command.source_id,
+                    derived_from=command.derived_from,
+                    text=command.text,
+                    # Computed, not supplied: this *is* text and the domain has
+                    # the bytes, so `by_digest` stays a fact here. Media's
+                    # supplied digest is the exception, not the pattern.
+                    sha256=hashlib.sha256(command.text.encode("utf-8")).hexdigest(),
+                    locator_map=command.locator_map,
+                    perceived_with=command.perceived_with,
+                    degradations=command.degradations,
+                    title=command.title,
+                )
+            ]
+
         # Storing is the only thing an empty corpus can do, since storing is
         # what brings it into existence.
         case _, CorpusState(status="new"):
@@ -356,6 +495,35 @@ def _kind_of(state: CorpusState, source_id: str) -> str | None:
     """
     record = state.documents.get(source_id)
     return None if record is None else record.kind
+
+
+def _is_derived(state: CorpusState, source_id: str) -> bool:
+    """Whether a source id already holds perceived text rather than fetched.
+
+    `getattr` rather than an isinstance narrow because `MediaRecord` has no
+    such field and never will: media is the thing perceived, not the result.
+    A free id is not derived, which is what makes the `StoreDerivedText` guard
+    above fall through to the main case for a first perception.
+    """
+    record = state.documents.get(source_id)
+    return record is not None and getattr(record, "derived_from", None) is not None
+
+
+def _holds_something_not_derived(state: CorpusState, source_id: str) -> bool:
+    """Whether the id is already taken by something that is not perceived text.
+
+    A *free* id is not "not derived" for this purpose -- it is the ordinary
+    first perception, and answering True here would refuse every transcript
+    that has ever been stored. The two conditions are one predicate because
+    getting either half alone wrong produces that failure.
+    """
+    return _kind_of(state, source_id) is not None and not _is_derived(state, source_id)
+
+
+def _derived_from(state: CorpusState, source_id: str) -> str | None:
+    """Which medium a source was perceived from, for naming it in a refusal."""
+    record = state.documents.get(source_id)
+    return getattr(record, "derived_from", None)
 
 
 def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
@@ -412,6 +580,37 @@ def evolve(state: CorpusState, event: DomainEvent) -> CorpusState:
                 published_at=event.published_at,
                 note=event.note,
                 fetched_at=event.fetched_at,
+            )
+            return state.model_copy(
+                update={
+                    "corpus_id": event.aggregate_id,
+                    "status": "created",
+                    "documents": {**state.documents, event.source_id: record},
+                    "by_digest": by_digest,
+                }
+            )
+
+        case CorpusDerivedTextStored():
+            previous = state.documents.get(event.source_id)
+            by_digest = dict(state.by_digest)
+            if previous is not None and by_digest.get(previous.sha256) == event.source_id:
+                # Identical supersession to `CorpusDocumentStored`: re-perceiving
+                # a video under the same derived id has to release the previous
+                # transcript's digest exactly as a re-fetch does, or the old
+                # bytes go on claiming an id that no longer holds them.
+                del by_digest[previous.sha256]
+            by_digest.setdefault(event.sha256, event.source_id)
+            record = TextRecord(
+                source_id=event.source_id,
+                sha256=event.sha256,
+                char_count=len(event.text),
+                title=event.title,
+                derived_from=event.derived_from,
+                perceived_with=event.perceived_with,
+                # JSON on the event, tuple in the state: the list shape is
+                # what the producer speaks and the immutable one is what a
+                # pydantic state can hold without a shared mutable default.
+                degradations=tuple(json.loads(event.degradations)),
             )
             return state.model_copy(
                 update={

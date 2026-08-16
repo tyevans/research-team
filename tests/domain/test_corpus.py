@@ -1,14 +1,18 @@
+import hashlib
 from uuid import UUID, uuid4
 
 import pytest
 from eventsource import CommandRejectedError, DomainEvent
 
 from research_team.domain.corpus import (
+    CorpusDerivedTextStored,
     CorpusDocumentDropped,
     CorpusDocumentStored,
     CorpusMediaStored,
+    CorpusState,
     DropSourceDocument,
     MediaRecord,
+    StoreDerivedText,
     StoreSourceDocument,
     StoreSourceMedia,
     TextRecord,
@@ -16,6 +20,15 @@ from research_team.domain.corpus import (
     evolve,
     initial_state,
 )
+
+CORPUS_ID = uuid4()
+"""One id for the derived-text tests, where the existing tests each mint their own.
+
+Those tests predate any helper that builds multi-source state; these build a
+medium and then perceive it, and threading a freshly minted id through four
+helpers per test would be noise around the thing under test. The id's value is
+never asserted on here -- `test_media_creates_a_corpus_the_way_a_document_does`
+is what pins that the event's id reaches the state."""
 
 
 def _stored(corpus_id, source_id="s1", text="hello", **kwargs):
@@ -56,8 +69,6 @@ def test_the_digest_is_derived_from_the_bytes_not_supplied():
     wrong one is invisible until two different documents collide in it.
     """
     corpus_id = uuid4()
-    import hashlib
-
     event = _stored(corpus_id, text="hello")
 
     assert event.sha256 == hashlib.sha256(b"hello").hexdigest()
@@ -331,3 +342,216 @@ def _store_media(corpus_id: UUID, source_id: str) -> StoreSourceMedia:
         media_type="video/mp4",
         byte_count=1234,
     )
+
+
+def _store_derived(
+    source_id: str,
+    derived_from: str,
+    text: str = "said something",
+    degradations: str = "[]",
+) -> StoreDerivedText:
+    return StoreDerivedText(
+        corpus_id=CORPUS_ID,
+        source_id=source_id,
+        derived_from=derived_from,
+        text=text,
+        locator_map="[]",
+        perceived_with="abc123",
+        degradations=degradations,
+    )
+
+
+def _with_media(state: CorpusState, source_id: str, sha256: str = "a" * 64) -> CorpusState:
+    """Fold a medium into an existing state.
+
+    Goes through `decide` rather than constructing the event, so a state built
+    here is one the aggregate could actually have reached. `sha256` is a
+    parameter because two media under one digest would collide in `by_digest`
+    and quietly make a supersession assertion mean something else.
+    """
+    command = StoreSourceMedia(
+        corpus_id=CORPUS_ID,
+        source_id=source_id,
+        sha256=sha256,
+        media_type="video/mp4",
+        byte_count=1234,
+    )
+    return evolve(state, decide(command, state)[0])
+
+
+def _state_with_media(source_id: str) -> CorpusState:
+    return _with_media(initial_state(), source_id)
+
+
+def _state_with_text(source_id: str, text: str = "prose") -> CorpusState:
+    state = initial_state()
+    command = StoreSourceDocument(corpus_id=CORPUS_ID, source_id=source_id, text=text)
+    return evolve(state, decide(command, state)[0])
+
+
+def _evolve_derived(
+    state: CorpusState, source_id: str, derived_from: str, text: str = "first"
+) -> CorpusState:
+    return evolve(state, decide(_store_derived(source_id, derived_from, text=text), state)[0])
+
+
+def test_derived_text_must_name_a_source_that_exists() -> None:
+    """A derived source pointing at nothing is provenance that cannot be checked.
+
+    Red before the change with an ImportError on `StoreDerivedText`; red after
+    the command existed but before the `derived_from` lookup, because the
+    aggregate would have happily emitted an event naming a source it did not
+    hold.
+    """
+    state = _state_with_media("vid")
+    with pytest.raises(CommandRejectedError, match="unknown source 'nope'"):
+        decide(_store_derived(source_id="nope#perceived", derived_from="nope"), state)
+
+
+def test_derived_text_must_name_media_not_text() -> None:
+    """A transcript of a text document is a category error, and the aggregate
+    is the only place that can see it -- the state holds every source's kind."""
+    state = _state_with_text("paper")
+    with pytest.raises(CommandRejectedError, match="holds text"):
+        decide(_store_derived(source_id="paper#perceived", derived_from="paper"), state)
+
+
+def test_a_plain_document_cannot_be_overwritten_by_a_derived_one() -> None:
+    """Supersession by source_id means "a re-fetch is a revision". A transcript
+    landing on a document's id is not a revision, for the same reason a video
+    landing on one is not."""
+    state = _state_with_text("notes")  # a plain document at that exact id
+    state = _with_media(state, "vid")
+    with pytest.raises(CommandRejectedError, match="not derived"):
+        decide(_store_derived(source_id="notes", derived_from="vid"), state)
+
+
+def test_a_derived_document_cannot_be_overwritten_by_a_plain_one() -> None:
+    """The refusal in the other direction, written separately because it is a
+    separate branch and one passing proves nothing about the other."""
+    state = _state_with_media("vid")
+    state = _evolve_derived(state, source_id="vid#perceived", derived_from="vid")
+    with pytest.raises(CommandRejectedError, match="derived"):
+        decide(
+            StoreSourceDocument(
+                corpus_id=CORPUS_ID, source_id="vid#perceived", text="hand written"
+            ),
+            state,
+        )
+
+
+def test_the_refusal_names_derivedness_not_kind() -> None:
+    """Perceiving a medium onto its own id is refused for derivedness, not kind.
+
+    The brief asked for this to be proved by moving the two derivedness guards
+    below the existing kind guards and watching it go red. **It does not go
+    red** -- measured on 2026-08-15, all 30 tests stay green with the pair
+    relocated -- because no kind guard's pattern can match either new case; see
+    the comment above them in `decide`. So this test does not pin the ordering.
+
+    What it does pin is the message: a caller who aims a transcript at the very
+    medium it came from is told the id is not derived, which is the actionable
+    half, rather than told the id holds media, which they already knew. It goes
+    red if the `StoreDerivedText` guard's condition is narrowed to text-only
+    records, which is the plausible way this refusal gets lost.
+    """
+    state = _state_with_media("vid")
+    with pytest.raises(CommandRejectedError, match="is not derived") as raised:
+        decide(_store_derived(source_id="vid", derived_from="vid"), state)
+    assert "holds media" not in str(raised.value)
+
+
+def test_re_perceiving_supersedes_rather_than_accumulating() -> None:
+    """Re-perceiving under one derived id is a revision, exactly as a re-fetch is.
+
+    The `by_digest` half is the part that would fail silently: without the
+    supersession branch the first transcript's digest keeps claiming this id
+    forever, and a later ingest of those same bytes is deduplicated against a
+    transcript the corpus no longer holds.
+    """
+    state = _state_with_media("vid")
+    state = _evolve_derived(state, source_id="vid#perceived", derived_from="vid", text="first")
+    first_digest = state.documents["vid#perceived"].sha256
+
+    events = decide(
+        _store_derived(source_id="vid#perceived", derived_from="vid", text="second"), state
+    )
+    state = evolve(state, events[0])
+
+    record = state.documents["vid#perceived"]
+    assert isinstance(record, TextRecord)
+    assert record.char_count == len("second")
+    assert record.derived_from == "vid"
+    assert len(state.documents) == 2  # the media and its one transcript
+    assert first_digest not in state.by_digest
+    assert state.by_digest[record.sha256] == "vid#perceived"
+
+
+def test_the_digest_of_derived_text_is_computed_not_supplied() -> None:
+    """It is text and the aggregate has the bytes, so `by_digest` stays a fact.
+    Media supplies its digest only because the domain never sees a video."""
+    state = _state_with_media("vid")
+    events = decide(
+        _store_derived(source_id="vid#perceived", derived_from="vid", text="hello"), state
+    )
+    assert isinstance(events[0], CorpusDerivedTextStored)
+    assert events[0].sha256 == hashlib.sha256(b"hello").hexdigest()
+
+
+def test_a_stored_transcript_carries_its_perception_provenance() -> None:
+    """`evolve` has to land the three new fields, not merely accept the event.
+
+    An event no projection -- or no `evolve` case -- handles is APPLIED, not
+    rejected, so an assertion that the fold "succeeded" would pass with the
+    whole case deleted. These are assertions about the data.
+    """
+    state = _state_with_media("vid")
+    state = _evolve_derived(state, source_id="vid#perceived", derived_from="vid")
+    record = state.documents["vid#perceived"]
+    assert isinstance(record, TextRecord)
+    assert record.kind == "text"  # derived text is prose for every reader
+    assert record.derived_from == "vid"
+    assert record.perceived_with == "abc123"
+    assert record.degradations == ()
+
+
+def test_degradations_survive_the_fold_as_a_tuple() -> None:
+    """The JSON-to-tuple conversion, pinned. Empty is the uninteresting case."""
+    state = _state_with_media("vid")
+    state = evolve(
+        state,
+        decide(
+            _store_derived(
+                source_id="vid#perceived",
+                derived_from="vid",
+                degradations='["no vision model configured; frames were not described"]',
+            ),
+            state,
+        )[0],
+    )
+    record = state.documents["vid#perceived"]
+    assert isinstance(record, TextRecord)
+    assert record.degradations == ("no vision model configured; frames were not described",)
+
+
+def test_a_fetched_document_is_not_derived() -> None:
+    """The default that keeps every existing document out of the new refusals.
+
+    Would pass with `decide` reverted; it is about `TextRecord`'s defaults, and
+    it is what stops `_is_derived` reporting True for the whole existing corpus.
+    """
+    state = _state_with_text("paper")
+    record = state.documents["paper"]
+    assert isinstance(record, TextRecord)
+    assert record.derived_from is None
+    assert record.perceived_with is None
+    assert record.degradations == ()
+
+
+def test_a_transcript_can_be_dropped_like_any_other_source() -> None:
+    """One `source_id` namespace, one drop command -- derivedness does not fork it."""
+    state = _state_with_media("vid")
+    state = _evolve_derived(state, source_id="vid#perceived", derived_from="vid")
+    drop = DropSourceDocument(source_id="vid#perceived", reason="bad audio")
+    state = evolve(state, decide(drop, state)[0])
+    assert state.documents["vid#perceived"].dropped_reason == "bad audio"
