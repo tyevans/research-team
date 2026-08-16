@@ -21,6 +21,7 @@ import pytest
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
+from research_team.application import media_acquisition
 from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.media_acquisition import (
     AcceptedProposal,
@@ -515,3 +516,79 @@ async def test_a_corpus_store_raising_mid_write_closes_the_download_stream(
 
     assert blobs.captured_stream is not None
     assert blobs.captured_stream.ag_frame is None
+
+
+class _FakeStream:
+    """A minimal stand-in for `download_media`'s returned generator, whose
+    only job is to record whether `aclose()` was called on it -- direct
+    evidence of closure, rather than `ag_frame is None`'s indirect one.
+    """
+
+    def __init__(self, chunks: list[bytes]):
+        self._chunks = iter(chunks)
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> bytes:
+        try:
+            return next(self._chunks)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+async def test_a_corpus_store_raising_mid_write_calls_aclose_on_the_stream(
+    project_id, proposals_repo, editor, monkeypatch
+):
+    """Direct evidence for the `try/except BaseException: await stream.aclose()`
+    around `store_media` in `MediaAcceptWorker.run`: a fake stream that
+    records whether `aclose()` was called, rather than only asserting the
+    exception propagated -- propagation alone passes with the handler
+    removed (`except BaseException: raise` with no `aclose()` still
+    re-raises), so it would not have caught the regression this exists to
+    catch. Proven red by temporarily removing the `aclose()` call: this test
+    is the one that failed, and only this one.
+    """
+    proposal_id = "p1"
+    await _accept(
+        proposals_repo, project_id, proposal_id, asset_url="https://cdn.example/trajan.jpg"
+    )
+    reads = FakeReads(
+        {proposal_id: _detail(project_id, asset_url="https://cdn.example/trajan.jpg")}
+    )
+    fake_stream = _FakeStream([b"\xff\xd8\xff"])
+
+    async def fake_download_media(url, *, client, max_bytes):
+        return fake_stream, "image/jpeg"
+
+    monkeypatch.setattr(media_acquisition, "download_media", fake_download_media)
+
+    class BlobsRaisingOnPut:
+        async def put(self, stream):
+            raise RuntimeError("disk full")
+
+    async def open_knowledge(target_project_id: UUID):
+        raise NotImplementedError("store_media does not call open_knowledge")
+
+    failing_editor = CorpusEditor(
+        open_knowledge=open_knowledge,
+        readers=lambda target_project_id: None,
+        corpus=AggregateRepository(InMemoryTestHarness().event_store, Corpus),
+        blobs=BlobsRaisingOnPut(),
+    )
+    worker = MediaAcceptWorker(
+        reads=reads,
+        proposals=proposals_repo,
+        editor=failing_editor,
+        perceiver=FakePerceiver(),
+        client=_image_client(),
+    )
+
+    with pytest.raises(RuntimeError, match="disk full"):
+        await worker.run(proposal_id=proposal_id)
+
+    assert fake_stream.closed is True

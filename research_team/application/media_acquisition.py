@@ -28,7 +28,7 @@ it from here rather than defining a second one -- two ceilings that happen to
 agree today is a bug waiting for the day someone changes one of them.
 """
 
-import contextlib
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol
@@ -62,6 +62,8 @@ is a one-line change with no other consequence. See `upload_media` in
 this one; both raise from inside their chunk loop rather than after reading
 the whole body, for the same reason.
 """
+
+logger = logging.getLogger(__name__)
 
 _HEADERS = {
     # Identical string to `infrastructure/agent/fetch.py`'s `_HEADERS`.
@@ -344,17 +346,31 @@ class MediaAcceptWorker:
             await stream.aclose()
             raise
 
-        await self._perceive_eagerly(project_id, source_id)
+        await self._perceive_eagerly(project_id, proposal_id, source_id)
         await self._record_stored(project_id, proposal_id, source_id)
 
-    async def _perceive_eagerly(self, project_id: UUID, source_id: str) -> None:
+    async def _perceive_eagerly(
+        self, project_id: UUID, proposal_id: str, source_id: str
+    ) -> None:
         # Ordinary, named outcomes -- see the class docstring's step 3. The
-        # source is stored correctly either way; perception can be retried
-        # later through `perceive_source`.
-        with contextlib.suppress(
-            NotPerceivable, SourceDropped, MediaBytesMissing, PerceptionUnavailable
-        ):
+        # source is stored correctly either way, so this logs rather than
+        # fails the accept -- but a silent suppression would make a stored
+        # medium with no derived text (inert in the graph: it answers no
+        # questions) indistinguishable, in the review pane, from a fully
+        # successful acquisition. `MediaPerceiver.unperceived` is how this
+        # is meant to be found and cleared later -- it already answers
+        # "which media has no derived text", and a field on the proposal
+        # duplicating that fact is a second source of truth for it.
+        try:
             await self._perceiver.perceive(project_id, source_id)
+        except (NotPerceivable, SourceDropped, MediaBytesMissing, PerceptionUnavailable):
+            logger.warning(
+                "eager perception failed for proposal %s, source %s in project %s",
+                proposal_id,
+                source_id,
+                project_id,
+                exc_info=True,
+            )
 
     async def _record_stored(self, project_id: UUID, proposal_id: str, source_id: str) -> None:
         aggregate = await self._proposals.load_or_create(project_id)
