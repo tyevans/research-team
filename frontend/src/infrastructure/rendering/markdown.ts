@@ -31,6 +31,14 @@ const marked = new Marked({
  */
 const SAFE_SCHEME = /^(https?:|mailto:)/i
 
+/** This app's own hash routes (`#/p/<id>/doc/<id>`), the one other href shape
+ * a link built by *our own code* — never model text — can carry. A `[[src:...]]`
+ * reference expands to one of these before this file ever sees it (see
+ * `references.ts`). No scheme means nothing for a browser to execute; the
+ * leading `#` is what tells it apart from a scheme-relative or protocol-
+ * relative string DOMPurify would otherwise be right to distrust. */
+const SAFE_HASH_ROUTE = /^#\//
+
 let hooked = false
 
 const installHooks = (): void => {
@@ -43,6 +51,12 @@ const installHooks = (): void => {
       node.setAttribute('target', '_blank')
       node.setAttribute('rel', 'noopener noreferrer')
       node.setAttribute('title', href)
+      node.classList.add('md-link')
+      return
+    }
+    // An in-app link, not an external one — no new tab, no rel, and no title
+    // duplicating the href a reader can already see in the status bar.
+    if (href && SAFE_HASH_ROUTE.test(href)) {
       node.classList.add('md-link')
       return
     }

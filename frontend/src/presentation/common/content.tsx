@@ -1,8 +1,10 @@
 import clsx from 'clsx'
 import { useMemo } from 'react'
 
+import type { ProjectId } from '@domain/shared/identifier.ts'
 import { computeDiff, elisionLabel, splitLines } from '@infrastructure/rendering/diff.ts'
 import { isEmptyMarkdown, renderMarkdown } from '@infrastructure/rendering/markdown.ts'
+import { expandReferences } from '@infrastructure/rendering/references.ts'
 
 /** Markdown, rendered and sanitised.
  *
@@ -10,13 +12,36 @@ import { isEmptyMarkdown, renderMarkdown } from '@infrastructure/rendering/markd
  * and the html it is given came from `renderMarkdown`, which runs it through
  * DOMPurify with a closed tag allow-list. Everything model-authored that
  * reaches the page goes through this component, which makes the claim
- * checkable by grep rather than by reading every renderer.
+ * checkable by grep rather than by reading every renderer. `expandReferences`
+ * runs first and `renderMarkdown` runs second, unchanged, over its output —
+ * that order is the security argument: nothing the pre-pass produces skips
+ * sanitisation, it only ever adds an `<a>` for `renderMarkdown`'s own
+ * allow-list to accept or strip.
+ *
+ * `projectId` is optional because two callers -- `FileView` and the lesson
+ * widgets -- have no project in scope. With none given, a `[[src:...]]`
+ * reference simply doesn't expand and renders as the literal text it already
+ * falls back to for an unresolvable or malformed one; that is an existing
+ * route to an existing behaviour, not a new state.
  *
  * Memoised on the source: a conversation re-renders on every stream frame, and
  * re-parsing every assistant message each time is the difference between a
- * smooth log and a stuttering one. */
-export const Markdown = ({ source, className }: { source: string; className?: string }) => {
-  const html = useMemo(() => renderMarkdown(source), [source])
+ * smooth log and a stuttering one. The reference pre-pass lives inside that
+ * same memo rather than a second one -- two memos over one input would be two
+ * chances to invalidate differently. */
+export const Markdown = ({
+  source,
+  projectId,
+  className,
+}: {
+  source: string
+  projectId?: ProjectId
+  className?: string
+}) => {
+  const html = useMemo(
+    () => renderMarkdown(projectId ? expandReferences(source, projectId) : source),
+    [source, projectId],
+  )
   if (isEmptyMarkdown(source)) {
     return (
       <div className={clsx('md', className)}>

@@ -50,6 +50,17 @@ describe('renderMarkdown — sanitisation', () => {
     expect(html).toContain('target="_blank"')
   })
 
+  it('keeps an in-app hash-route link, without the external-link decoration', () => {
+    // Exercises the same hook a `[[src:...]]` reference relies on
+    // (`content.tsx` expands one into exactly this href shape before this
+    // function ever sees the source) — written against raw markdown here
+    // because that hook has no other coverage of the safe, non-http case.
+    const html = renderMarkdown('[keynote](#/p/1/doc/keynote?t=252)')
+    expect(html).toContain('href="#/p/1/doc/keynote?t=252"')
+    expect(html).not.toContain('target="_blank"')
+    expect(html).not.toContain('rel="noopener')
+  })
+
   it('keeps a mailto link', () => {
     const html = renderMarkdown('<mailto:a@b.com>')
     expect(html).toContain('href="mailto:a@b.com"')
