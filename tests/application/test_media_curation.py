@@ -129,3 +129,30 @@ def test_parse_judgements_drops_items_the_model_marked_keep_false():
 def test_parse_judgements_honours_the_cap():
     judgements, _ = parse_judgements(json.dumps([_judgement(i) for i in range(10)]))
     assert len(judgements) == MAX_CANDIDATES_PER_NEED
+
+
+def test_parse_needs_accepts_the_keyed_form_identically_to_the_bare_array():
+    """Models wrap lists in a keyed object routinely, and `ontology_discovery.py`
+    asks for exactly that shape -- a parser that only reads a bare array turns
+    a perfectly good answer into "no needs", indistinguishable from the model
+    genuinely declining. This would pass if `parse_needs` accepted only the
+    bare-array form and this test fed it one; it feeds the keyed form instead,
+    so it is red until the parser reads both."""
+    bare = parse_needs(json.dumps([_need(0), _need(1)]))
+    keyed = parse_needs(json.dumps({"needs": [_need(0), _need(1)]}))
+    assert [n.description for n in keyed[0]] == [n.description for n in bare[0]]
+    assert keyed[1] == bare[1]
+
+
+def test_parse_terms_accepts_the_keyed_form_identically_to_the_bare_array():
+    bare = parse_terms(json.dumps([_term(0), _term(1)]))
+    keyed = parse_terms(json.dumps({"queries": [_term(0), _term(1)]}))
+    assert [q.text for q in keyed[0]] == [q.text for q in bare[0]]
+    assert keyed[1] == bare[1]
+
+
+def test_parse_judgements_accepts_the_keyed_form_identically_to_the_bare_array():
+    bare = parse_judgements(json.dumps([_judgement(0), _judgement(1)]))
+    keyed = parse_judgements(json.dumps({"judgements": [_judgement(0), _judgement(1)]}))
+    assert [j.index for j in keyed[0]] == [j.index for j in bare[0]]
+    assert keyed[1] == bare[1]

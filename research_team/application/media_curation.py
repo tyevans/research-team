@@ -208,15 +208,46 @@ def _fenced(raw: str) -> str:
     return text
 
 
-def _items(raw: str) -> list[dict[str, Any]] | None:
-    """The reply's JSON array of items, or `None` if the reply isn't shaped
-    that way.
+def _as_list(payload: Any) -> list[Any] | None:
+    """A list, whether the JSON handed over *is* one or merely *carries* one.
 
-    Each stage is prompted to answer with a bare JSON array -- there is
-    exactly one thing each stage reports, so there is no second field a
-    `{"needs": [...]}` wrapper would be disambiguating from the way
-    `parse_ontology`'s `{"classes": [...]}` disambiguates from other keys a
-    richer reply might carry.
+    Every stage here is prompted to answer with a bare JSON array. But models
+    wrap lists in a keyed object routinely regardless of what was asked for,
+    and `ontology_discovery.py` asks for exactly that shape
+    (`{"classes": [...]}`) -- so a reader moving between the two files, or a
+    model that has seen both prompts, will reach for the keyed form on
+    instinct. A parser that reads only a bare array turns a perfectly good
+    `{"needs": [...]}` reply into "no needs", and that is invisible: an empty
+    result is *already* a legitimate outcome in this chain (see the module
+    docstring), so there is nothing about the parser's output that tells a
+    caller the data was there and it looked in the wrong place. This is the
+    same class of failure CLAUDE.md's extraction notes describe for
+    `temporal_expression` landing in `properties` -- nothing raises, the
+    reply parses "successfully," and the count is just quietly short.
+
+    So: a bare list is returned as-is. A dict with exactly one key whose
+    value is a list returns that list -- not "the first list found in any
+    key," which would silently pick a wrong field on a reply carrying more
+    than one. Anything else, including a dict with zero or several list-typed
+    keys, returns `None`. This would pass with a change reverted to "only
+    accept a bare array" if no test fed it the keyed form -- the keyed-form
+    tests in `test_media_curation.py` are what pin this.
+    """
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        list_values = [value for value in payload.values() if isinstance(value, list)]
+        if len(list_values) == 1:
+            return list_values[0]
+    return None
+
+
+def _items(raw: str) -> list[dict[str, Any]] | None:
+    """The reply's items, as dicts, or `None` if the reply isn't shaped that
+    way at all.
+
+    Accepts a bare JSON array or a single-key object wrapping one -- see
+    `_as_list` for why both have to work.
 
     `None` here is not surfaced to callers as a distinct case the way
     `parse_ontology` surfaces it -- every parser below treats "not JSON" and
@@ -229,9 +260,10 @@ def _items(raw: str) -> list[dict[str, Any]] | None:
         payload = json.loads(_fenced(raw))
     except (ValueError, TypeError):
         return None
-    if not isinstance(payload, list):
+    items = _as_list(payload)
+    if items is None:
         return None
-    return [item for item in payload if isinstance(item, dict)]
+    return [item for item in items if isinstance(item, dict)]
 
 
 def parse_needs(text: str, *, need_id_prefix: str = "need") -> tuple[list[MediaNeed], int]:
