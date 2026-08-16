@@ -2699,6 +2699,27 @@ class MediaProposalStore:
         """
         return await self._rows.get(MediaProposalRow.row_id(proposal_id))
 
+    async def accepted(self) -> list[MediaProposalRow]:
+        """Every `accepted` proposal, across every project -- ordered by
+        `proposal_id`, not scoped by `WHERE project_id = ?` the way every
+        other read on this store is. Deliberately: reconciliation runs once
+        per process, before anything has asked about a particular project,
+        and an accepted proposal in a project nobody opens this session is
+        exactly the one most likely to have been abandoned.
+        """
+        cursor = await self._connection.execute(
+            f"SELECT id FROM {MediaProposalRow.table_name()} "
+            "WHERE status = 'accepted' AND deleted_at IS NULL "
+            "ORDER BY proposal_id",
+            (),
+        )
+        try:
+            ids = [UUID(row[0]) for row in await cursor.fetchall()]
+        finally:
+            await cursor.close()
+        rows = [await self._rows.get(row_id) for row_id in ids]
+        return [row for row in rows if row is not None]
+
     async def ignored_assets(self, project_id: UUID) -> set[str]:
         cursor = await self._connection.execute(
             f"SELECT asset_key FROM {MediaIgnoredAssetRow.table_name()} "
@@ -2820,6 +2841,14 @@ class MediaProposalRunner:
             asset_url=row.asset_url,
             title=row.title,
         )
+
+    async def accepted_proposal_ids(self) -> list[str]:
+        """The accepted-but-unfinished set, across every project -- what
+        `MediaAcceptReconciler` loops over. See `MediaProposalStore.accepted`
+        for why this is not scoped to one project.
+        """
+        rows = await self._started().accepted()
+        return [row.proposal_id for row in rows]
 
     async def ignored_assets(self, project_id: UUID) -> set[str]:
         return await self._started().ignored_assets(project_id)

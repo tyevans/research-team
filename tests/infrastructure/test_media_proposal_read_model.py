@@ -210,6 +210,33 @@ async def test_one_projects_proposals_are_invisible_to_another(proposals, projec
     assert len(await proposals.for_project(other)) == 1
 
 
+async def test_accepted_spans_every_project_and_excludes_other_statuses(proposals, project_id):
+    """The read reconciliation needs: accepted-but-unfinished, across every
+    project, because a proposal in a project nobody has opened this session
+    is exactly the one most likely to have been abandoned. The cross-project
+    case is asserted explicitly -- a `WHERE project_id = ?` that crept in
+    from `for_project` would otherwise still pass the "excludes other
+    statuses" half of this test.
+    """
+    other = uuid4()
+    await proposals.projection.handle(_proposed(project_id, proposal_id="p1"))
+    await proposals.projection.handle(
+        MediaProposalAccepted(aggregate_id=project_id, proposal_id="p1")
+    )
+    await proposals.projection.handle(_proposed(project_id, proposal_id="p2", need_id="n2"))
+    await proposals.projection.handle(
+        MediaProposalStored(aggregate_id=project_id, proposal_id="p2", source_id="s2")
+    )
+    await proposals.projection.handle(_proposed(other, proposal_id="p3", need_id="n3"))
+    await proposals.projection.handle(
+        MediaProposalFailed(aggregate_id=other, proposal_id="p3", error="404")
+    )
+
+    rows = await proposals.accepted()
+
+    assert [row.proposal_id for row in rows] == ["p1"]
+
+
 # --- the runner ---------------------------------------------------------
 #
 # Mirrors the ontology runner tests: every assertion is on a row the log
@@ -254,3 +281,26 @@ async def test_a_rebuild_reproduces_the_table_from_the_log(
 
     (row,) = await runner.for_project(project_id)
     assert row.proposal_id == "p1"
+
+
+async def test_the_runner_answers_accepted_proposal_ids_across_projects(
+    runner, store, publisher, project_id
+):
+    other = uuid4()
+    await _append(store, publisher, project_id, _proposed(project_id, proposal_id="p1"))
+    await _append(
+        store,
+        publisher,
+        project_id,
+        MediaProposalAccepted(aggregate_id=project_id, proposal_id="p1"),
+    )
+    await _append(store, publisher, other, _proposed(other, proposal_id="p2", need_id="n2"))
+    await _append(
+        store,
+        publisher,
+        other,
+        MediaProposalStored(aggregate_id=other, proposal_id="p2", source_id="s2"),
+    )
+    await runner.caught_up()
+
+    assert await runner.accepted_proposal_ids() == ["p1"]
