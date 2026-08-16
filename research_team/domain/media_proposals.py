@@ -171,7 +171,14 @@ class ProposeMedia:
     topic_id: str
     page_url: str
     asset_url: str
-    thumbnail_url: str | None
+    # `str`, matching `MediaProposed.thumbnail_url = ""` below and this
+    # codebase's convention of `""` for "absent" rather than `None` (see
+    # CLAUDE.md's comment/commit conventions and `SearchResult.thumbnail_url`
+    # in `media_curation.py`, which is never `None` either). Was `str | None`
+    # -- no caller ever passed `None`, but had one, `pydantic` would have
+    # raised rather than silently carrying it through to the event as
+    # documented "absent means no thumbnail" behaviour.
+    thumbnail_url: str
     kind: str
     title: str
     reason: str
