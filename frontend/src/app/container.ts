@@ -10,6 +10,7 @@ import type {
   GraphRepository,
   HealthRepository,
   LessonRepository,
+  MediaProposalRepository,
   ProjectRepository,
   ResearchRepository,
   SessionRepository,
@@ -26,6 +27,7 @@ import { HttpDefinitionsRepository } from '@infrastructure/http/definitions-repo
 import { HttpDocumentRepository } from '@infrastructure/http/document-repository.ts'
 import { HttpGraphRepository } from '@infrastructure/http/graph-repository.ts'
 import { HttpClient } from '@infrastructure/http/http-client.ts'
+import { HttpMediaProposalRepository } from '@infrastructure/http/media-proposal-repository.ts'
 import {
   HttpExtractionRepository,
   HttpHealthRepository,
@@ -62,6 +64,7 @@ export interface Container {
   readonly research: ResearchRepository
   readonly topics: TopicRepository
   readonly documents: DocumentRepository
+  readonly mediaProposals: MediaProposalRepository
   readonly graphs: GraphRepository
   readonly usages: UsagesRepository
   readonly definitions: DefinitionsRepository
@@ -92,6 +95,7 @@ export const createContainer = (baseUrl = ''): Container => {
     research: new HttpResearchRepository(http),
     topics: new HttpTopicRepository(http),
     documents: new HttpDocumentRepository(http),
+    mediaProposals: new HttpMediaProposalRepository(http),
     graphs: new HttpGraphRepository(http),
     usages: new HttpUsagesRepository(http),
     definitions: new HttpDefinitionsRepository(http),

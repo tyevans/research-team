@@ -99,6 +99,14 @@ Everything is an environment variable. The ones a first run actually needs:
 vector and chunk stores, embeddings, Neo4j and pgvector, tracing, and the two
 places where the obvious setting is the wrong one.
 
+**Media search has a deployment prerequisite, not a code one.** If
+`AGENT_SEARXNG_URL` points at an instance with `image_proxy` off — the
+default — the media review pane's thumbnails hotlink the viewer's browser
+straight to whoever indexed the image, leaking IP and referrer. Set
+`image_proxy: true` in that instance's `settings.yml` before turning media
+search on for anyone but yourself. Details and the measurement in
+`docs/configuration.md`.
+
 Durable backends need nothing beyond `docker compose up -d`; the schema is
 created on first project open. Both defaults keep everything in-process.
 

@@ -22,6 +22,7 @@ import type {
   TextSummary,
 } from '@domain/research/document.ts'
 import type { ExtractionQueueBoard } from '@domain/research/extraction-queue.ts'
+import type { IgnoredMedia, MediaProposalGroup } from '@domain/research/media-proposal.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { Dispatch } from '@domain/research/dispatch.ts'
 import type { TopicDocuments } from '@domain/research/topic-document.ts'
@@ -350,6 +351,56 @@ export interface DocumentRepository {
    * a component building this string itself would be the one place in the
    * tree that knew a path. Not a promise: nothing is fetched to answer it. */
   contentUrl(projectId: ProjectId, sourceId: SourceId): string
+}
+
+/** A separate seam from `DocumentRepository`, though both speak for the
+ *  corpus: a proposal has no bytes, and `Corpus`'s own guards -- kind flips,
+ *  derivedness, digest supersession -- have nothing to say about a row that
+ *  is not yet a source. `domain/media_proposals.py`'s own module docstring
+ *  is why the *backend* keeps this a separate aggregate; this port mirrors
+ *  that split rather than smuggling proposal reads through `documents`. */
+export interface MediaProposalRepository {
+  /** Every proposal in the project, grouped by the need that produced it --
+   *  the shape `GET .../media-proposals` already answers in, so nothing here
+   *  re-groups a flat list the server did not send flat. */
+  list(projectId: ProjectId): Promise<readonly MediaProposalGroup[]>
+  /** Record the decision and hand the download off to the accept worker.
+   *
+   * Resolves once the decision is recorded, not once the download finishes --
+   * an hour of audio is minutes of transcription, and a caller that awaited
+   * that would be a caller that hung the pane. `MediaProposalStored`/`Failed`
+   * only ever show up in a re-read of `list`, which is why the card stays in
+   * a working state and polls rather than awaiting a second promise here. */
+  accept(projectId: ProjectId, proposalId: string): Promise<void>
+  /** Close the record without touching either ignore list -- rejecting is not
+   *  blacklisting, so a fresh proposal for the same asset is still allowed
+   *  later. `note` is optional because most rejections are obvious. */
+  reject(projectId: ProjectId, proposalId: string, note?: string): Promise<void>
+  /** Ignore the asset or host behind one proposal, keyed off the proposal's
+   *  own recorded asset -- the caller does not have to already know the key,
+   *  unlike `unignore` below. Reversible; see `unignore`. */
+  ignore(projectId: ProjectId, proposalId: string, grain: 'asset' | 'host'): Promise<void>
+  /** Both ignore lists, for the undo list beside the pane -- a suppression
+   *  nobody can see is indistinguishable from a chain that stopped working. */
+  ignored(projectId: ProjectId): Promise<IgnoredMedia>
+  /** Reverse an ignore at either grain, by the key `ignored` reported. */
+  unignore(projectId: ProjectId, grain: 'asset' | 'host', key: string): Promise<void>
+  /** Run the three-stage curation chain once for one topic -- the only way
+   *  any proposal comes to exist. Resolves once the chain has actually run
+   *  (the route answers 202 after appending events, not before starting),
+   *  with the outcome counts the response carries -- `needs`/`candidates`/
+   *  `ignored`/`rejectedParses` -- so a caller can toast something more
+   *  useful than "done". */
+  run(projectId: ProjectId, topicId: string): Promise<MediaCurationOutcome>
+}
+
+/** What one curation run reported, mirroring the route's own `CurationOutcome`
+ *  field-for-field -- see `application/media_curation.py`'s `CurationOutcome`. */
+export interface MediaCurationOutcome {
+  readonly needs: number
+  readonly candidates: number
+  readonly ignored: number
+  readonly rejectedParses: number
 }
 
 /** A media upload. `file` rather than bytes: a `File` streams to the network

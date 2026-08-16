@@ -26,6 +26,7 @@ LEVELS: tuple[Level, ...] = ("auto", "ask", "deny")
 
 SEARCH_TOOL = "web_search"
 FETCH_TOOL = "fetch"
+FETCH_MEDIA_TOOL = "fetch_media"
 ADVANCE_STAGE_TOOL = "advance_stage"
 """Defined here rather than beside its tool because a workflow application port
 does not exist -- there is nothing above `domain.workflow` for the name to live
@@ -35,6 +36,7 @@ in, and the tool module importing this is the same direction `corpus_read` and
 GATED_TOOLS: tuple[str, ...] = (
     SEARCH_TOOL,
     FETCH_TOOL,
+    FETCH_MEDIA_TOOL,
     ADVANCE_STAGE_TOOL,
     "write_file",
     "edit_file",
@@ -62,7 +64,11 @@ switch) and each restatement is a chance for one of them to forget."""
 STRICTNESS: tuple[Level, ...] = ("auto", "ask", "deny")
 """The levels in increasing order, so two of them can be compared."""
 
-TOOL_FLOORS: dict[str, Level] = {FETCH_TOOL: "ask", ADVANCE_STAGE_TOOL: "ask"}
+TOOL_FLOORS: dict[str, Level] = {
+    FETCH_TOOL: "ask",
+    FETCH_MEDIA_TOOL: "ask",
+    ADVANCE_STAGE_TOOL: "ask",
+}
 """The least autonomy a tool gets when nobody has said otherwise.
 
 `advance_stage` has one for a different reason than the others: it is not
@@ -81,10 +87,19 @@ tool present in a default install with nothing standing in front of it. A floor
 of `ask` means it is there, discoverable, and cannot leave the process until a
 person says so.
 
+`fetch_media`'s floor is the same argument, with the stakes raised rather than
+changed: it is also a network tool present unconditionally, reaching a URL the
+model chose, and it additionally pulls megabytes to disk and can trigger a
+perception pass -- costs `fetch` does not have. Nothing about that extra cost
+is enforced by this floor, though; see `MAX_UPLOAD_BYTES` in
+`application/media_acquisition.py` for why the byte ceiling is a separate,
+unconditional refusal rather than something raising this tool to `auto` could
+ever lift.
+
 A floor, not an override: it raises the default and never lowers it, so a
 policy built to deny everything is not read as "except fetch". An explicit
 `set()` still wins in both directions -- someone who turns fetch to `auto` for a
-research session meant it."""
+research session meant it, and the same is true of `fetch_media`."""
 
 
 class AutonomyPolicy:
@@ -135,6 +150,14 @@ class AutonomyPolicy:
         asks for everything to be automatic has said something later and more
         general, and silently keeping the deny would leave a switch labelled
         "allow all" that does not.
+
+        `fetch_media` is swept in like any other hazard, and that is intended
+        rather than inherited: it is the first tool where "allow all" means an
+        unattended run can pull megabytes to disk and trigger a perception
+        pass on the model's own say-so, with nobody in the loop to notice
+        before it happens. Stated here because a reader auditing what
+        `relax_all` actually grants should not have to discover that
+        consequence by tracing `TOOL_FLOORS` to `fetch_media.py` themselves.
 
         `advance_stage` (see `STAGE_GATE_TOOLS`) is excluded unless asked for
         by name. Its floor is not about danger -- it *is* the workflow review

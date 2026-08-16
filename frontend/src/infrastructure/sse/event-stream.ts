@@ -205,6 +205,12 @@ export const decodeFrame = (data: string): FeedFrame | null => {
         ? { kind: 'corpus', projectId: frame.data.project_id, change: frame.data.change }
         : null
     }
+    case 'Media': {
+      const frame = projectChangeFrameDto.safeParse(payload)
+      return frame.success
+        ? { kind: 'media', projectId: frame.data.project_id, change: frame.data.change }
+        : null
+    }
     case 'TurnActivity': {
       const frame = activityFrameDto.safeParse(payload)
       return frame.success ? { kind: 'activity', entry: toActivityEntry(frame.data) } : null

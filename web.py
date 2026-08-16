@@ -129,6 +129,26 @@ def main() -> None:
             # `definitions` above was one review away from.
             ontology=application.ontology,
             ontology_discoverers=application.ontology_discoverers,
+            # The read side (the runner, started like every other projection)
+            # and the write side (the repository `MediaCurationService` and
+            # the accept/reject/ignore routes both append through) -- missing
+            # either would 503 half of `/media-proposals`, the same gap
+            # `ontology`/`ontology_discoverers` above close for that pair.
+            media_proposals=application.media_proposals,
+            media_proposal_repository=application.media_proposal_repository,
+            # The worker the accept route (above) hands off to -- Task 11b.
+            # Without this, accepting a proposal here still appends the event
+            # and answers 202, but nothing ever downloads or stores it: the
+            # same gap the two comments above this one close for ontology and
+            # media-proposals, one route further down the same lifecycle.
+            media_accept_worker=application.media_accept_worker,
+            # `None`/`None` together when this install has no SearXNG
+            # instance -- see `media_curation_text`'s docstring in
+            # `composition.py`. Passed through rather than rebuilt here so
+            # this entrypoint runs the chain over the exact model and search
+            # client `config` resolved, not a second reading of it.
+            curation_text=application.media_curation_text,
+            curation_search=application.media_curation_search,
             # The same object the executor's gating predicate reads, which is
             # the only reason the routes over it can change anything: a copy
             # would answer reads correctly and change nothing. Instance-wide,

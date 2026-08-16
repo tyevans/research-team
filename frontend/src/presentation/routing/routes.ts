@@ -80,6 +80,12 @@ export const FACETS = [
   // selection, which is exactly what the grammar is for.
   'tree',
   'doc',
+  // The corpus's other half: a candidate that has not been accepted into it
+  // yet. Its own facet rather than folded into `doc` -- `MediaProposalPane`
+  // has no single-select reading the way a document list does, so its id is
+  // always null, but it is still a *place on the project* and belongs in the
+  // grammar for the reason `timeline` and `tree` are.
+  'media',
   'file',
   'artifact',
   'finding',

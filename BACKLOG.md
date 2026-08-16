@@ -3216,3 +3216,54 @@ still a result set, and a raised `AttributeError` is a lost turn.
 One `isinstance(result, dict)` guard in the loop, skipping what fails it, plus a
 test that a payload mixing a good result with a string still renders the good
 one.
+
+### B97. An accepted media proposal does not survive a restart
+
+`research_team/interfaces/web/app.py`'s accept route appends
+`MediaProposalAccepted`, answers 202, and hands the download to
+`asyncio.create_task`. That task does not survive process death.
+
+So a process that dies after the event is appended — the 202 is already
+sent — and before `MediaAcceptWorker` finishes leaves the proposal
+permanently `accepted`, with no source ever created. **Nothing on the next
+startup detects it.** There is no reconciliation pass, no status distinguishing
+"accepted and running" from "accepted and abandoned", and no operator signal;
+the review pane shows a card that is working and always will be.
+
+Found on 2026-08-16 by Task 11b's reviewer, on a question asked specifically
+because a fire-and-forget hand-off had just been chosen over a queue. The
+hand-off itself was the right call and is not what is wrong here: two accepted
+proposals share no per-project resource, so the serialization a queue buys is
+not needed, and `MediaAcceptWorker` already treats an "already stored" refusal
+as its own success signal, which is what makes a re-run safe. What is missing
+is anything that re-runs it.
+
+The reviewer's suggested fix is the cheap one and the reads it needs already
+exist: on startup, diff accepted proposals against the sources that resulted
+and re-schedule the gap. Worth doing before anyone accepts media they care
+about, and worth its own thought rather than being bolted onto the end of the
+acquisition wave — "reconcile on startup" is a durable-work pattern this
+codebase does not otherwise have, and inventing it in a hurry is how it ends up
+per-feature.
+
+The safety of a re-run is already load-bearing and already pinned:
+`StoreMediaProposal` against an already-stored proposal is refused rather than
+idempotent, because `decide` cannot arbitrate between two `source_id`s claiming
+to be one proposal's result.
+
+### B98. `build_application` can leak an HTTP client if it raises partway
+
+`research_team/composition.py`. The media `httpx.AsyncClient` is constructed
+early in `build_application` and closed in `Application.close()`, which is
+unconditional and correct on every path — *once an `Application` exists*. The
+function is around a thousand lines, and anything raising between the client's
+construction and the `Application(...)` call leaves it unclosed with no owner.
+
+Pre-existing in shape rather than introduced here, and named now because this is
+the change that first gave that window a resource with a real cost to leak: a
+connection pool, not a dataclass. Found 2026-08-16 by Task 11b's reviewer.
+
+A `try/finally` around the construction, or building the client last, both fix
+it. Building it last is probably right and probably annoying, since the ordering
+in that function is already constrained by what closes over what — which is why
+this is written down rather than done in passing.

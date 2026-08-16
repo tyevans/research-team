@@ -652,6 +652,54 @@ export const mediaSourceDto = sourceCommon.extend({
 
 export const documentDto = z.discriminatedUnion('kind', [textSourceDto, mediaSourceDto])
 
+/** `_media_proposal_view` in app.py, verbatim. `status` is left as `z.string()`
+ *  rather than an enum: an older console talking to a build that has grown a
+ *  fifth lifecycle status should still render the row (as an unrecognised
+ *  status, handled at the mapper) rather than fail the whole listing over one
+ *  proposal it does not understand yet -- the same reasoning `documentDto`
+ *  above gives for tolerating unknown keys. */
+export const mediaProposalDto = z.object({
+  proposal_id: z.string(),
+  need_id: z.string(),
+  topic_id: z.string(),
+  page_url: z.string(),
+  asset_url: z.string(),
+  thumbnail_url: maybe(z.string()),
+  kind: z.string(),
+  title: z.string(),
+  reason: z.string(),
+  query: z.string(),
+  status: z.string(),
+  note: maybe(z.string()),
+  source_id: maybe(z.string()),
+  error: maybe(z.string()),
+})
+
+/** `_media_proposal_groups`: one need's proposals, labelled with the need's
+ *  own sentence. */
+export const mediaProposalGroupDto = z.object({
+  need_id: z.string(),
+  need_description: z.string(),
+  proposals: z.array(mediaProposalDto),
+})
+
+/** `GET .../ignored`. Defaulted rather than required, matching
+ *  `extractionQueueDto`: a project with nothing ignored yet is a legitimate
+ *  state, not a malformed response. */
+export const ignoredMediaDto = z.object({
+  assets: z.array(z.string()).default([]),
+  hosts: z.array(z.string()).default([]),
+})
+
+/** `POST .../topics/{topic_id}/media-proposals`'s 202 body -- `run_media_curation`'s
+ *  own `content={...}` dict, field-for-field. */
+export const mediaCurationOutcomeDto = z.object({
+  needs: z.number(),
+  candidates: z.number(),
+  ignored: z.number(),
+  rejected_parses: z.number(),
+})
+
 /** One row of `/sources/extraction-queue`'s `finished`: how a document's most
  *  recent extraction went.
  *

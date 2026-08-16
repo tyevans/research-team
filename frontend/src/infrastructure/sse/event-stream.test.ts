@@ -175,6 +175,21 @@ describe('decodeFrame', () => {
     ).toEqual({ kind: 'corpus', projectId: 'p1', change: 'CorpusDocumentStored' })
   })
 
+  it('reads a media frame as its own kind, not as a session log entry', () => {
+    // Without this case the frame fell to the log branch: `feed_event`
+    // stamps `index: 0`, `isEventIndex` requires `>= 1`, so the frame was
+    // dropped and `MediaProposalPane` polled every 3s instead while a
+    // proposal sat in `accepted`.
+    expect(
+      frame({
+        type: 'Media',
+        project_id: 'p1',
+        change: 'MediaProposalAccepted',
+        occurred_at: '2026-01-01T00:00:00Z',
+      }),
+    ).toEqual({ kind: 'media', projectId: 'p1', change: 'MediaProposalAccepted' })
+  })
+
   it('reads a project frame as its own kind, not as a session log entry', () => {
     // The course page's rail redraws off these. Without this case the frame
     // fell to the log branch, arrived with the project's UUID under

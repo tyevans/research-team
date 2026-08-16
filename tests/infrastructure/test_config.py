@@ -92,6 +92,24 @@ def test_a_blank_searxng_url_reads_as_unset(monkeypatch):
     assert config.searxng_url() is None
 
 
+def test_curation_model_defaults_to_the_chat_model(monkeypatch):
+    monkeypatch.delenv("AGENT_CURATION_MODEL", raising=False)
+    monkeypatch.setenv("AGENT_MODEL", "qwen-chat")
+    assert config.curation_model() == "qwen-chat"
+
+
+def test_curation_model_is_overridable(monkeypatch):
+    monkeypatch.setenv("AGENT_MODEL", "qwen-chat")
+    monkeypatch.setenv("AGENT_CURATION_MODEL", "qwen-curation")
+    assert config.curation_model() == "qwen-curation"
+
+
+def test_a_blank_curation_model_reads_as_unset(monkeypatch):
+    monkeypatch.setenv("AGENT_MODEL", "qwen-chat")
+    monkeypatch.setenv("AGENT_CURATION_MODEL", "   ")
+    assert config.curation_model() == "qwen-chat"
+
+
 def test_searxng_url_loses_its_trailing_slash(monkeypatch):
     monkeypatch.setenv("AGENT_SEARXNG_URL", "http://searx.local/")
     assert config.searxng_url() == "http://searx.local"

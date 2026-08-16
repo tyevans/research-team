@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { notify } from '@application/notifications/toast-store.ts'
 import { errorMessage } from '@application/ports/errors.ts'
 import { queryKeys } from '@application/queries/keys.ts'
+import { useRunMediaCuration } from '@application/research/use-media-proposals.ts'
 import { useContainer } from '@app/container-context.tsx'
 import { statusLabel } from '@domain/entity/status.ts'
 import { CLOSED_STATUSES, type TopicDetail, type TopicStatus } from '@domain/research/topic.ts'
@@ -90,6 +91,7 @@ export const TopicManagePane = ({
   const { topics } = useContainer()
   const queryClient = useQueryClient()
   const justificationId = useId()
+  const runCuration = useRunMediaCuration(projectId)
 
   const [chosen, setChosen] = useState<TopicStatus | null>(null)
   const [justification, setJustification] = useState('')
@@ -308,6 +310,35 @@ export const TopicManagePane = ({
       ) : null}
 
       <SubQuestions projectId={projectId} topic={topic} />
+
+      {/* The chain's only trigger anywhere in the product -- see
+          `MediaCurationService.curate`/`run_media_curation`. Placed here
+          rather than in `MediaProposalPane` because the chain needs a topic
+          and this is the one place a topic is already in scope; the pane's
+          own empty state ("Run the media curation chain from a topic...")
+          points here. */}
+      <section className="mt-[16px] border-0 border-t border-solid border-line pt-[12px]">
+        <h3 className="font-medium m-0 mb-[8px] font-mono text-xs tracking-[0.06em] text-fg-faint uppercase">
+          Media
+        </h3>
+        <Button
+          tone="ghost"
+          disabled={runCuration.isPending}
+          onClick={() =>
+            runCuration.mutate(topic.topicId, {
+              onSuccess: (outcome) =>
+                notify(
+                  outcome.candidates > 0
+                    ? `Found ${outcome.candidates} media candidate${outcome.candidates === 1 ? '' : 's'} across ${outcome.needs} need${outcome.needs === 1 ? '' : 's'}.`
+                    : `No media candidates found (${outcome.needs} need${outcome.needs === 1 ? '' : 's'} identified).`,
+                ),
+              onError: (error) => notify(errorMessage(error), 'bad'),
+            })
+          }
+        >
+          {runCuration.isPending ? 'Searching for media…' : 'Find media for this topic'}
+        </Button>
+      </section>
 
       {/* Last, and inside this panel rather than as a fifth pane: what a
           dispatch wrote is the answer to the question this topic asks, so it

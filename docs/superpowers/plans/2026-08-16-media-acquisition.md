@@ -291,7 +291,17 @@ Write the equivalent three for `parse_terms` and `parse_judgements`.
 - Test: `tests/application/test_media_curation.py`
 
 **Interfaces:**
+- Consumes: `TopicReadPort` (`application/topic_read.py:88`) — its view carries `question`, `scope`, `sub_questions`, `findings`, `source_ids`.
 - Produces: `MediaCurationService.curate(project_id: UUID, topic_id: UUID) -> CurationOutcome` with `CurationOutcome(needs: int, candidates: int, ignored: int, rejected_parses: int)`.
+
+**Corrected mid-execution.** The first draft of this task passed only a topic
+*id* and left stage 1's prompt with nothing to reason about — the chain would
+have asked a model what imagery serves a topic it cannot see, making every
+later stage garbage-in. The spec always said the prompt carries the topic's
+question, scope and findings; the plan simply failed to wire the port that
+already existed. A test must assert the topic's question reaches the text
+port's prompt, not merely that `curate` returns something — the weaker
+assertion passes with the port unwired, which is the whole defect.
 
 **The fake port is six lines**, per `OntologyTextPort`'s reasoning — a list of canned responses returned in order. Do not mock a chat model.
 
@@ -475,6 +485,32 @@ async def test_a_failed_download_records_why_and_leaves_the_proposal_visible():
 ```
 
 - [ ] **Step 2:** Verify red. **Step 3:** Implement: download → `store_media` → perception → `MediaProposalStored`. **Step 4:** Green. **Step 5:** Commit.
+
+---
+
+## Task 11b: Wire the worker to the accept route
+
+**Added mid-execution — the plan had no task for this**, and without it the
+whole wave is inert: Task 9's accept route appends `MediaProposalAccepted` and
+answers 202, Task 11 built a worker that nobody starts, and the two never meet.
+Every test in both tasks passes with them unconnected, which is exactly the
+class of gap `CLAUDE.md` warns about — the machinery works and the feature does
+not exist.
+
+**Files:**
+- Modify: `research_team/composition.py`, `research_team/interfaces/web/app.py`
+- Test: `tests/integration/test_accepting_a_proposal_acquires_it.py`
+
+- [ ] **Step 1: Write the failing integration test.** Accept a proposal
+  through the composed application, then assert a corpus source exists whose
+  `uri` is the proposal's page URL. Not that the route answered 202 — that
+  passes today, with no worker in the world.
+- [ ] **Step 2:** Verify red.
+- [ ] **Step 3:** Construct `MediaAcceptWorker` in `composition.py` beside the
+  projections, and have the accept route hand off to it. Acceptance stays a
+  202: the route records the decision and returns; the download must not block
+  the response, because an hour of audio is minutes of perception.
+- [ ] **Step 4:** Green. **Step 5:** Commit.
 
 ---
 
