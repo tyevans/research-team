@@ -30,7 +30,23 @@ and a bundle-size budget. Run it rather than the individual commands -- the
 prettier check and the size budget are only in the chain, and they are the two
 that fail in CI.
 
-**There is a fifth command, and it is not a gate.**
+**But `verify` is not the whole of the frontend job, and the gate it misses
+is invisible from here.** `research_team/interfaces/web/static` is a build
+artefact committed to the repository, and CI has a step -- `the committed
+build matches src/` -- that runs `npm run build` and fails if the working
+tree then shows drift. `verify` *runs* the build too, and never compares its
+output against the committed tree, so **a stale console passes `verify` green
+every time**. Any change under `frontend/src` has to be followed by `cd
+frontend && npm run build` and a commit of the rebuilt `assets/app.js` and
+`assets/index.css`.
+
+Measured on 2026-08-16, not reasoned: PR #209 carried a frontend change whose
+own `npm run verify` had passed in full, and this was the only red job of the
+four. The tell is unhelpful -- the job is named `frontend`, so it reads as a
+test failure, and the actual error is eleven lines below a successful build's
+output.
+
+**There is a further command, and it is not a gate.**
 
 ```
 cd frontend && npm run test:browser
