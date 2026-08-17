@@ -218,3 +218,44 @@ def test_perception_max_chars_matches_the_document_cap(monkeypatch):
     monkeypatch.delenv("AGENT_PERCEPTION_MAX_CHARS", raising=False)
     assert config.DEFAULT_PERCEPTION_MAX_CHARS == MAX_DOCUMENT_CHARS
     assert config.perception_max_chars() == MAX_DOCUMENT_CHARS
+
+
+def test_the_interaction_database_sits_beside_the_session_one(monkeypatch, tmp_path):
+    """Its own file, because it is its own store: positions from two stores
+    cannot be ordered against each other."""
+    monkeypatch.delenv("AGENT_INTERACTION_DB", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    path = config.interaction_db_path()
+
+    assert path.endswith("/.research-team/interactions.db")
+    assert "sessions.db" not in path
+
+
+def test_the_interaction_database_honours_an_override(monkeypatch):
+    monkeypatch.setenv("AGENT_INTERACTION_DB", "/tmp/probe-interactions.db")
+
+    assert config.interaction_db_path() == "/tmp/probe-interactions.db"
+
+
+def test_the_interaction_log_collects_unless_switched_off(monkeypatch):
+    """Default-on, unlike every other boolean in this module. Fails if someone
+    "fixes" the inversion to match the others."""
+    monkeypatch.delenv("AGENT_INTERACTION_LOG", raising=False)
+
+    assert config.interaction_log_enabled() is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", "off", "OFF", " off "])
+def test_the_interaction_log_switches_off(monkeypatch, value):
+    monkeypatch.setenv("AGENT_INTERACTION_LOG", value)
+
+    assert config.interaction_log_enabled() is False
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "on", ""])
+def test_anything_else_leaves_the_interaction_log_collecting(monkeypatch, value):
+    """An empty string is the unset-but-present case and must not read as off."""
+    monkeypatch.setenv("AGENT_INTERACTION_LOG", value)
+
+    assert config.interaction_log_enabled() is True
