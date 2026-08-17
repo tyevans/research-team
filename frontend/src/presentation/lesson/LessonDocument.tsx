@@ -11,6 +11,7 @@ import { EvidenceWidget } from './EvidenceWidget.tsx'
 import { Flashcards } from './Flashcards.tsx'
 import { GraphWidget } from './GraphWidget.tsx'
 import { Mcq } from './Mcq.tsx'
+import { TimelineWidget } from './TimelineWidget.tsx'
 
 /** A parsed markdown artifact: prose, and widgets a learner can operate.
  *
@@ -104,6 +105,7 @@ const RENDERERS: Readonly<
   definition: DefinitionWidget,
   evidence: EvidenceWidget,
   graph: GraphWidget,
+  timeline: TimelineWidget,
 }
 
 const Component = ({

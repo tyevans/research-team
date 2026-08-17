@@ -754,6 +754,46 @@
   background: var(--bg-raise);
 }
 
+/* An explicit height for `.cmp-graph-box`'s reason: `TimelineCanvas` draws
+   into an SVG sized by its container, and a markdown flow gives it none.
+   Measured in `TimelineWidget.browser.test.tsx`; jsdom reports 0 here
+   whatever this rule says.
+
+   No `aspect-ratio`, unlike the graph box: an axis is read left to right and
+   gains nothing from height, so a floor is the whole requirement and a ratio
+   would make a wide answer column absurdly tall.
+
+   `border: 0` paired with no directional width, deliberately -- the box has
+   no rule, and the pairing is here so that adding one later cannot fall into
+   the `border-solid` trap CLAUDE.md records.
+
+   `--bg-raise`, not `--bg-raised`: the latter is not a token this build
+   defines, and a rule naming it sets no background while looking exactly like
+   one that worked. Measured against `tokens.css`, not reasoned, and asserted
+   in the browser test where an undefined property resolves to
+   `rgba(0, 0, 0, 0)`. */
+.cmp-timeline-box {
+  /* What the canvas's own absolute positioning resolves against; without it
+     it would find some ancestor further up the page and measure that. */
+  position: relative;
+  width: 100%;
+  min-height: 12rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0.5rem;
+  background: var(--bg-raise);
+}
+
+/* `--fg-dim`, matching `.cmp-ref-note`. `--fg-muted` is not a token this build
+   defines, and naming it would leave the counts in the body colour -- legible,
+   so nothing would look wrong, and the line would simply stop reading as the
+   aside it is. */
+.cmp-timeline-counts {
+  margin: 0.5rem 0 0;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001s !important;

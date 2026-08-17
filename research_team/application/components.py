@@ -88,6 +88,7 @@ import yaml
 
 from research_team.application.artifacts import parse_frontmatter
 from research_team.application.graph_read import MAX_NEIGHBORHOOD_DEPTH
+from research_team.application.timeline_read import MAX_TIMELINE_BANDS
 from research_team.domain.workflow import ArtifactType
 
 _YAML_LOADER: type = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
@@ -752,6 +753,44 @@ REGISTRY: dict[str, ComponentType] = {
             "than a drawing the reader has to find it in.",
             "Leave `depth` at 1 unless the second hop is the thing you are "
             "showing. Two hops on a well-extracted entity is a hairball.",
+        ),
+    ),
+    "timeline": ComponentType(
+        name="timeline",
+        version=1,
+        summary=(
+            "This project's dated entities on an axis, filtered by type and "
+            "date range. Not scoped to one entity -- there is no such filter."
+        ),
+        example=(
+            "```component:timeline\n"
+            "id: fourth-century-people\n"
+            "entity_type: Person\n"
+            'from: "0300-01-01"\n'
+            'to: "0400-01-01"\n'
+            "```"
+        ),
+        fields={
+            "entity_type": Spec(text),
+            # `from` and `to` are ISO instants bounding a half-open window;
+            # either may be omitted for an open end. Checked as text rather
+            # than parsed here: the route answers its own 422 naming which
+            # parameter was wrong, and a second date parser in this module
+            # would be a second thing to keep in step with it.
+            "from": Spec(text),
+            "to": Spec(text),
+            "limit": Spec(integer_between(1, MAX_TIMELINE_BANDS)),
+        },
+        resolved=True,
+        craft=(
+            "Quote the dates. An unquoted `from: 0300-01-01` is a YAML date, "
+            "not a string, and YAML will not give you back the leading zero.",
+            "There is no entity filter, and `entity:` here does nothing -- the "
+            "route filters by type and range only. If you want one entity's "
+            "dates, say them in a sentence.",
+            "Narrow the window to the span you are actually discussing. A "
+            "timeline of everything is a bar chart of the corpus rather than "
+            "an illustration of your point.",
         ),
     ),
 }

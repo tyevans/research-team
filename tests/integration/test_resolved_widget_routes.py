@@ -114,3 +114,41 @@ async def test_a_neighbourhood_answers_404_not_503_on_an_unopened_project(client
     )
 
     assert response.status_code == 404, response.text
+
+
+async def test_a_timeline_answers_for_a_project_nothing_has_opened(client):
+    """The only request a `timeline` widget makes.
+
+    `_timeline_reader` opens through `graphs` so the timeline and the graph
+    read the *same* store rather than two folds of one log -- which is exactly
+    the call a refactor drops, and dropping it is a 503 on the first request
+    for every project and a 200 on every one after.
+    """
+    project_id = await _untouched_project(client)
+
+    response = await client.get(
+        f"/api/projects/{project_id}/timeline?entity_type=Person&from=0300-01-01"
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["bands"] == []
+
+
+async def test_a_timeline_refuses_an_unparseable_bound_rather_than_widening_it(client):
+    """The one place in this feature's routes that 422s instead of clamping.
+
+    Almost everything else the resolved widgets call clamps a bad argument --
+    `/documents/{id}/text` clamps its offsets, `/timeline` clamps its `limit`.
+    `from`/`to` do not, deliberately (`app.py`'s `read_timeline` docstring): a
+    client that mistyped a date and got the whole timeline back has been
+    answered a different question with no way to tell. The widget renders this
+    as prose, so this test is what says there *is* a 422 to render.
+
+    Red against a route that fell back to "no window" on an unparseable bound
+    -- which would answer 200 here.
+    """
+    project_id = await _untouched_project(client)
+
+    response = await client.get(f"/api/projects/{project_id}/timeline?from=the+fourth+century")
+
+    assert response.status_code == 422, response.text

@@ -160,6 +160,27 @@ export const readGraphRef = (block: ComponentBlock): GraphRef => ({
   depth: num(block.data['depth']) ?? 1,
 })
 
+/** A `timeline` widget's window. Nullable rather than defaulted throughout:
+ *  an omitted bound is an open end, and a default would silently narrow a
+ *  request the author left wide.
+ *
+ * No entity or topic field, and that absence is deliberate rather than
+ * pending: `GET /timeline` filters by type and range only, so an `entity`
+ * here would be a field that read cleanly and did nothing. */
+export interface TimelineWindow {
+  readonly entityType: string | null
+  readonly from: string | null
+  readonly to: string | null
+  readonly limit: number | null
+}
+
+export const readTimelineQuery = (block: ComponentBlock): TimelineWindow => ({
+  entityType: str(block.data['entity_type']),
+  from: str(block.data['from']),
+  to: str(block.data['to']),
+  limit: num(block.data['limit']),
+})
+
 const rec = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 

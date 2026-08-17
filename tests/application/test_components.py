@@ -34,6 +34,7 @@ from research_team.application.components import (
     validation_report,
 )
 from research_team.application.graph_read import MAX_NEIGHBORHOOD_DEPTH
+from research_team.application.timeline_read import MAX_TIMELINE_BANDS
 
 MCQ = """\
 ```component:mcq
@@ -862,3 +863,62 @@ def test_a_graph_depth_bound_tracks_the_server_s_constant():
     )
 
     assert parse_document(source, path="lesson.md").components[0].errors == ()
+
+
+TIMELINE = """\
+```component:timeline
+id: fourth-century-people
+entity_type: Person
+from: "0300-01-01"
+to: "0400-01-01"
+```
+"""
+
+
+def test_a_timeline_carries_its_window_through_both_views():
+    document = parse_document(TIMELINE, path="lesson.md")
+
+    author = project(document, view="author")["blocks"][0]
+    learner = project(document, view="learner")["blocks"][0]
+
+    assert learner["data"] == author["data"]
+    assert author["data"]["entity_type"] == "Person"
+    assert author["data"]["from"] == "0300-01-01"
+    assert learner["resolved"] is True
+
+
+def test_a_timeline_has_no_entity_field_and_warns_about_one():
+    """`GET /timeline` has no entity filter, so `entity:` here would be a
+    field that silently does nothing -- and a widget that quietly ignores what
+    the author asked for is worse than one that cannot do it at all.
+
+    The warning is `_unknown_keys`' existing behaviour, so this is red only
+    against a registry entry that *added* an `entity` field to be helpful.
+    """
+    source = "```component:timeline\nid: t\nentity: Constantine\n```\n"
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert [str(note) for note in block.warnings] == ["entity: unrecognised field, ignored"]
+    assert block.errors == ()
+
+
+def test_a_timeline_with_no_window_at_all_is_valid():
+    """Every field is optional: the whole timeline is a real thing to ask for,
+    and requiring a range would make the commonest use the fiddliest."""
+    source = "```component:timeline\nid: t\n```\n"
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert block.errors == ()
+
+
+def test_a_timeline_limit_past_the_server_s_cap_is_an_authoring_error():
+    source = f"```component:timeline\nid: t\nlimit: {MAX_TIMELINE_BANDS + 1}\n```\n"
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert [str(note) for note in block.errors] == [
+        f"limit: expected a whole number from 1 to {MAX_TIMELINE_BANDS}, "
+        f"got {MAX_TIMELINE_BANDS + 1}"
+    ]

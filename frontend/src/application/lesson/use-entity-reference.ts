@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { useContainer } from '@app/container-context.tsx'
 import { queryKeys } from '@application/queries/keys.ts'
+import { resolvedWidgetQuery } from '@application/queries/resolved-widget.ts'
 import type { EntityReference, ResolvedEntity } from '@domain/lesson/resolved.ts'
 import { matchEntities } from '@domain/lesson/resolved.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
@@ -41,6 +42,8 @@ export const useEntityReference = (
     queryKey: queryKeys.entityReference(projectId ?? ('' as ProjectId), name),
     queryFn: () => graphs.search(projectId as ProjectId, name),
     enabled,
+    // One policy for every resolved widget; the reasoning is in the constant.
+    ...resolvedWidgetQuery,
   })
 
   if (reference.entityId !== null) {

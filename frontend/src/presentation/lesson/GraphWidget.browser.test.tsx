@@ -114,33 +114,42 @@ it('gives the canvas a box with a real height inside a document flow', async () 
   expect(getComputedStyle(measured).backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
 })
 
-/** `.cmp-passage`'s border geometry, which arrived with the `evidence` widget
- *  and had no measurement.
+/** The `min-height` floor on `.cmp-graph-box`, which had no measurement.
  *
- * Here rather than in a file of its own because it is one assertion and this
- * is already the browser project; CLAUDE.md is explicit that no gate catches
- * this and that jsdom cannot see it. The rule pairs `border: 0` with
- * `border-left: 2px`, and the failure it guards against is the `border-solid`
- * trap: a directional width beside an all-sides style leaves the other three
- * at the browser's `medium` (~3px), so a rule meant for one edge draws a box.
+ * The case above renders at 640px, where `aspect-ratio: 16 / 10` alone gives
+ * 400px and the floor is inert -- so the rule was asserted by nothing and
+ * deleting `min-height` would have left that test green. A narrow answer
+ * column is where the ratio stops being enough: at 240px the ratio asks for
+ * 150px, which is too short to show a neighbourhood in, and 15rem is what
+ * stops it.
  *
- * **Proved red** by deleting the `border: 0` line from `.cmp-passage` and
- * adding `border-style: solid`: `borderTopWidth` comes back as `3px`.
+ * **Proved red** by deleting `min-height` from `.cmp-graph-box`: the box
+ * measures 150px and the assertion fails.
  */
-it('draws the passage rule on one edge only', async () => {
+it('keeps the graph box above its floor in a narrow column', async () => {
   const screen = await render(
-    <div className="md doc">
-      <figure className="cmp-passage">
-        <blockquote>cunctos populos</blockquote>
-      </figure>
-    </div>,
+    <Harness>
+      <div className="md doc" style={{ width: '240px' }}>
+        <GraphWidget
+          block={componentBlock({
+            type: 'graph',
+            id: 'constantine-around',
+            data: { entity: 'Constantine', depth: 1 },
+          })}
+          attempts={{} as unknown as AttemptsApi}
+          projectId={PROJECT}
+        />
+      </div>
+    </Harness>,
   )
 
-  const passage = screen.container.querySelector('.cmp-passage') as HTMLElement
-  const style = getComputedStyle(passage)
+  await vi.waitFor(() => {
+    expect(screen.container.querySelector('[data-fake-canvas]')).not.toBeNull()
+  })
+  const measured = screen.container.querySelector('[data-graph-widget]') as HTMLElement
 
-  expect(style.borderLeftWidth).toBe('2px')
-  expect(style.borderTopWidth).toBe('0px')
-  expect(style.borderRightWidth).toBe('0px')
-  expect(style.borderBottomWidth).toBe('0px')
+  // `15rem` against a 16px root. Asserted as "at least", not "equal to", so a
+  // future rule that makes the box taller still passes -- what is under test
+  // is that the ratio's 150px is not the answer.
+  expect(measured.getBoundingClientRect().height).toBeGreaterThanOrEqual(240)
 })

@@ -5,6 +5,7 @@ import { useContainer } from '@app/container-context.tsx'
 import type { AttemptsApi } from '@application/lesson/use-attempts.ts'
 import { useEntityReference } from '@application/lesson/use-entity-reference.ts'
 import { queryKeys } from '@application/queries/keys.ts'
+import { resolvedWidgetQuery } from '@application/queries/resolved-widget.ts'
 import { emptyGraph, expand } from '@domain/knowledge/graph.ts'
 import type { ComponentBlock } from '@domain/lesson/document.ts'
 import { readGraphRef } from '@domain/lesson/widgets.ts'
@@ -87,6 +88,10 @@ const Neighbourhood = ({
   const hood = useQuery({
     queryKey: queryKeys.neighborhood(projectId, entityId, depth),
     queryFn: () => graphs.neighborhood(projectId, entityId, depth),
+    // One policy for every resolved widget; the reasoning is in the constant.
+    // An inferred node's id belongs to no stored entity, so its 404 is
+    // permanent and the app-wide `retry: 1` only doubles the wait.
+    ...resolvedWidgetQuery,
   })
 
   // `expand` off `emptyGraph` rather than a hand-built `GraphView`: it is the

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useContainer } from '@app/container-context.tsx'
 import type { AttemptsApi } from '@application/lesson/use-attempts.ts'
 import { queryKeys } from '@application/queries/keys.ts'
+import { resolvedWidgetQuery } from '@application/queries/resolved-widget.ts'
 import type { ComponentBlock } from '@domain/lesson/document.ts'
 import type { EvidenceSource } from '@domain/lesson/widgets.ts'
 import { readEvidence } from '@domain/lesson/widgets.ts'
@@ -83,6 +84,10 @@ const Passage = ({ projectId, source }: { projectId: ProjectId; source: Evidence
   const passage = useQuery({
     queryKey: queryKeys.document(projectId, source.source as SourceId, range),
     queryFn: () => documents.read(projectId, source.source as SourceId, range),
+    // One policy for every resolved widget; the reasoning is in the constant.
+    // An invented source id is a 404 forever, so the app-wide `retry: 1`
+    // buys a second request and a longer wait before the prose that says so.
+    ...resolvedWidgetQuery,
   })
 
   if (passage.isPending) return <span className="cmp-ref-note">fetching the passage…</span>

@@ -110,6 +110,27 @@ export const queryKeys = {
    *  different graphs, and a shared key would draw one under the other. */
   neighborhood: (project: ProjectId, entityId: string, depth: number) =>
     ['neighborhood', project, entityId, depth] as const,
+  /** One window over the timeline. Every bound is in the key: two widgets
+   *  asking for two centuries are two different answers, and a key on the
+   *  project alone would show one century's bands under the other's heading
+   *  -- the same mistake `document`'s range key exists to avoid. */
+  timeline: (
+    project: ProjectId,
+    window: {
+      entityType?: string | null
+      from?: string | null
+      to?: string | null
+      limit?: number | null
+    },
+  ) =>
+    [
+      'timeline',
+      project,
+      window.entityType ?? null,
+      window.from ?? null,
+      window.to ?? null,
+      window.limit ?? null,
+    ] as const,
   /** One project's discovered classes. Keyed on the project alone: the view
    *  shows all of them at once, and a per-class key would be a cache entry
    *  nothing ever reads on its own. */

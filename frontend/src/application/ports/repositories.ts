@@ -510,14 +510,31 @@ export interface OntologyRepository {
   discover(projectId: ProjectId, sourceId: string): Promise<number | null>
 }
 
+/** A window over the project's timeline. Every part optional: the whole
+ *  timeline is a real thing to ask for, and it is the console's own request. */
+export interface TimelineWindowQuery {
+  readonly entityType?: string
+  /** ISO instants bounding a half-open `[from, to)` window; either may be
+   *  omitted for an open end. Sent as `from`/`to` -- the route aliases them
+   *  back onto `from_`, because `from` is a Python keyword. */
+  readonly from?: string
+  readonly to?: string
+  readonly limit?: number
+}
+
 export interface TimelineRepository {
-  /** The project's dated entities in time order, up to the server's cap.
+  /** The project's dated entities in time order, inside `window`, up to the
+   *  server's cap.
    *
    * `undatedCount` on the result is not optional dressing -- most entities in
    * a real graph carry no dates, so a timeline is a view of a minority of the
    * corpus and the caller must show the denominator. `truncated` says the cap
-   * bit, the same way `WholeGraph.truncated` does. */
-  timeline(projectId: ProjectId, entityType?: string): Promise<Timeline>
+   * bit, the same way `WholeGraph.truncated` does.
+   *
+   * An options object rather than the positional `entityType` this replaced:
+   * three of the four parameters are optional and independent, and a
+   * positional list of four optionals is a call site nobody can read. */
+  timeline(projectId: ProjectId, window?: TimelineWindowQuery): Promise<Timeline>
 }
 
 export interface WorkerRepository {
