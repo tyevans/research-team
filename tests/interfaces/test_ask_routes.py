@@ -11,6 +11,7 @@ project's own stream and feed because the ask does write, to its own
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from eventsource.application.aggregates.repository import AggregateRepository
@@ -26,6 +27,7 @@ from research_team.application.ask import (
 )
 from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.domain.ask_conversation import AskConversation
+from research_team.infrastructure.persistence.read_models import AskConversationStore
 from research_team.interfaces.web.app import AskRequest, create_app
 
 SOME_ANSWER = AskAnswer(text="an answer")
@@ -315,3 +317,152 @@ def test_an_unconfigured_build_says_so_rather_than_failing_obscurely():
         == 503
     )
     assert http.delete(f"/api/projects/{uuid4()}/ask/c").status_code == 503
+
+
+def _mcq_answer(component_id: str, correct_index: int) -> str:
+    """Two options, the correct one placed by index so a test can pick which
+    of two turns' keys it means to hit."""
+    options = ["1974", "1975"]
+    lines = [f"```component:mcq\nid: {component_id}\nprompt: Which year?\noptions:\n"]
+    for index, option in enumerate(options):
+        lines.append(f'  - text: "{option}"\n    correct: {index == correct_index}\n')
+    lines.append("```\n")
+    return "".join(lines)
+
+
+DECK_ANSWER = (
+    "```component:flashcards\n"
+    "id: deck\n"
+    "title: Severity Vocabulary\n"
+    "cards:\n"
+    '  - front: "SEV-1"\n'
+    '    back: "Complete loss of a customer-facing service."\n'
+    "```\n"
+)
+"""A deck has no right answer -- `grade` refuses it with `GradingError`, which
+is what makes it the fixture for the 400 test."""
+
+
+async def _store_with_turns(
+    db_path: str, project_id: UUID, turns: list[str]
+) -> tuple[AskConversationStore, UUID]:
+    """A conversation with the given answers, written straight to the read
+    model's own store rather than through `AskService`/`ConversationRegistry`.
+
+    This is the arrange every attempt test below uses, not only the one named
+    for it: `post_ask_attempt` reads `asks` alone and never touches the
+    in-memory registry, so a fixture that went through `ask.ask(...)` first
+    would leave that registry populated and could not tell a route that
+    (wrongly) leaned on it apart from one that doesn't. Writing here instead
+    is the version of the CLAUDE.md fixture rule that actually exercises the
+    distinction: the registry stays empty for every test in this block.
+    """
+    store = await AskConversationStore.open(db_path)
+    conversation_id = uuid4()
+    opened_at = datetime.now(UTC)
+    await store.start(conversation_id, project_id, opened_at)
+    for position, answer in enumerate(turns):
+        await store.record(
+            conversation_id,
+            question=f"question {position}",
+            answer=answer,
+            citations=[],
+            recorded_at=opened_at,
+        )
+    return store, conversation_id
+
+
+def test_a_right_answer_to_an_asked_question_is_marked_correct(tmp_path, project_id):
+    store, conversation_id = asyncio.run(
+        _store_with_turns(str(tmp_path / "asks.db"), project_id, [_mcq_answer("q1", 0)])
+    )
+    http = client(ask_service(StubExecutor()), asks=store)
+
+    response = http.post(
+        f"/api/projects/{project_id}/asks/{conversation_id}/attempts",
+        json={"position": 0, "component_id": "q1", "response": 0},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["correct"] is True
+
+
+def test_an_attempt_is_graded_against_its_own_turn_not_the_last_one(tmp_path, project_id):
+    """Two turns, each with an mcq whose right answer is a different index. A
+    route that read "the conversation's answer" and grabbed the most recent
+    turn passes every single-turn test and fails this one: turn 0's key puts
+    the right answer at index 0, turn 1's puts it at index 1, and the attempt
+    below is against turn 0."""
+    store, conversation_id = asyncio.run(
+        _store_with_turns(
+            str(tmp_path / "asks.db"),
+            project_id,
+            [_mcq_answer("q1", 0), _mcq_answer("q1", 1)],
+        )
+    )
+    http = client(ask_service(StubExecutor()), asks=store)
+
+    response = http.post(
+        f"/api/projects/{project_id}/asks/{conversation_id}/attempts",
+        json={"position": 0, "component_id": "q1", "response": 0},
+    )
+
+    assert response.json()["correct"] is True
+
+
+def test_a_conversation_from_another_project_is_a_404(tmp_path, project_id):
+    """The same ruling `read_ask` already makes: a guessed id and a real one
+    belonging to someone else get the same answer."""
+    store, conversation_id = asyncio.run(
+        _store_with_turns(str(tmp_path / "asks.db"), project_id, [_mcq_answer("q1", 0)])
+    )
+    http = client(ask_service(StubExecutor()), asks=store)
+
+    response = http.post(
+        f"/api/projects/{uuid4()}/asks/{conversation_id}/attempts",
+        json={"position": 0, "component_id": "q1", "response": 0},
+    )
+
+    assert response.status_code == 404
+
+
+def test_an_ungradeable_component_is_a_400_not_a_500(tmp_path, project_id):
+    """A flashcard deck has no right answer. `GradingError` is the client's to
+    fix, and every raise site is a 400 or a 404 -- never a 500 on a route a
+    reader can reach."""
+    store, conversation_id = asyncio.run(
+        _store_with_turns(str(tmp_path / "asks.db"), project_id, [DECK_ANSWER])
+    )
+    http = client(ask_service(StubExecutor()), asks=store)
+
+    response = http.post(
+        f"/api/projects/{project_id}/asks/{conversation_id}/attempts",
+        json={"position": 0, "component_id": "deck", "response": 0},
+    )
+
+    assert response.status_code == 400
+
+
+def test_grading_works_against_a_conversation_this_process_did_not_stream(
+    tmp_path, project_id
+):
+    """Every test above already writes its turn straight to the read model's
+    store rather than through `ask.ask(...)`, so the in-memory
+    `ConversationRegistry` used by `client()`'s `ask_service` is empty in all
+    of them -- see `_store_with_turns`. This test is the one the brief names,
+    kept separate so the point survives on its own even if a later edit gives
+    one of the others a streamed arrange phase by mistake."""
+    store, conversation_id = asyncio.run(
+        _store_with_turns(str(tmp_path / "asks.db"), project_id, [_mcq_answer("q1", 0)])
+    )
+    ask = ask_service(StubExecutor())
+    assert ask._conversations.get("c", project_id).messages == ()
+    http = client(ask, asks=store)
+
+    response = http.post(
+        f"/api/projects/{project_id}/asks/{conversation_id}/attempts",
+        json={"position": 0, "component_id": "q1", "response": 0},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["correct"] is True
