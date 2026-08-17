@@ -9,6 +9,7 @@ import { Cloze } from './Cloze.tsx'
 import { DefinitionWidget } from './DefinitionWidget.tsx'
 import { EvidenceWidget } from './EvidenceWidget.tsx'
 import { Flashcards } from './Flashcards.tsx'
+import { GraphWidget } from './GraphWidget.tsx'
 import { Mcq } from './Mcq.tsx'
 
 /** A parsed markdown artifact: prose, and widgets a learner can operate.
@@ -102,6 +103,7 @@ const RENDERERS: Readonly<
   checklist: Checklist,
   definition: DefinitionWidget,
   evidence: EvidenceWidget,
+  graph: GraphWidget,
 }
 
 const Component = ({

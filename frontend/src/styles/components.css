@@ -726,6 +726,34 @@
   color: var(--fg-dim);
 }
 
+/* The canvas measures this box with a ResizeObserver, and a markdown flow
+   gives it no height -- so without an explicit one it measures 0 and draws
+   nothing, silently. `aspect-ratio` rather than a fixed height so a narrow
+   column gets a shorter graph rather than a squashed one.
+   Asserted in `GraphWidget.browser.test.tsx`: jsdom reports 0 here whatever
+   this rule says, so no jsdom test can defend it. */
+.cmp-graph-box {
+  /* What `GraphCanvas`'s own `absolute inset-0` is positioned against. Without
+     it the canvas would resolve to the nearest positioned ancestor somewhere
+     up the page and measure that instead. */
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  /* A floor as well as a ratio: at a very narrow width the ratio alone gives
+     a box too short to show a neighbourhood in. */
+  min-height: 15rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0.5rem;
+  /* `--bg-raise`, not `--bg-raised`: the latter is not a token this build
+     defines, so a rule naming it sets no background and looks exactly like one
+     that worked -- the same trap `.cmp-passage figcaption` records for
+     `--fg-muted`. Measured against `tokens.css`, not reasoned. Asserted in
+     `GraphWidget.browser.test.tsx`, where an undefined property resolves to
+     `rgba(0, 0, 0, 0)`. */
+  background: var(--bg-raise);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001s !important;

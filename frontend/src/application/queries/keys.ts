@@ -105,6 +105,11 @@ export const queryKeys = {
    * in someone else's cursor. */
   entityReference: (project: ProjectId, name: string) =>
     ['entity-reference', project, name] as const,
+  /** One entity's neighbourhood at one depth. Depth is in the key rather than
+   *  refetched over: two widgets on the same entity at depths 1 and 2 are two
+   *  different graphs, and a shared key would draw one under the other. */
+  neighborhood: (project: ProjectId, entityId: string, depth: number) =>
+    ['neighborhood', project, entityId, depth] as const,
   /** One project's discovered classes. Keyed on the project alone: the view
    *  shows all of them at once, and a per-class key would be a cache entry
    *  nothing ever reads on its own. */

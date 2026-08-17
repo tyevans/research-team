@@ -7,7 +7,7 @@
  * a defect. `queryByRole('alert')` is what pins that -- an alert is what an
  * error panel would be.
  */
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
@@ -76,7 +76,6 @@ it('renders the reference and nothing else when the lookup is unavailable', () =
 })
 
 it('lists every candidate with its type when the name is ambiguous', () => {
-  const picked = vi.fn()
   render(
     <ResolvedFrame
       reference={{
@@ -85,7 +84,6 @@ it('lists every candidate with its type when the name is ambiguous', () => {
         truncated: false,
       }}
       name="Constantine"
-      onPick={picked}
     >
       {() => <p>never</p>}
     </ResolvedFrame>,
@@ -97,8 +95,7 @@ it('lists every candidate with its type when the name is ambiguous', () => {
   expect(screen.getByRole('button', { name: /Constantine.*Place/ })).toBeInTheDocument()
 })
 
-it('hands a picked candidate back to the widget', () => {
-  const picked = vi.fn()
+it('yields to its child on the candidate a reader picked', () => {
   const { getByRole } = render(
     <ResolvedFrame
       reference={{
@@ -107,15 +104,90 @@ it('hands a picked candidate back to the widget', () => {
         truncated: false,
       }}
       name="Constantine"
-      onPick={picked}
     >
-      {() => <p>never</p>}
+      {(entity) => <p>definition of {entity.id}</p>}
     </ResolvedFrame>,
   )
 
-  getByRole('button', { name: /Place/ }).click()
+  act(() => getByRole('button', { name: /Place/ }).click())
 
-  expect(picked).toHaveBeenCalledWith('e2')
+  // The author's name, not the candidate's: the reference is the prose the
+  // widget degrades to, and a pick decides the id and nothing else.
+  expect(screen.getByText(/definition of e2/)).toBeInTheDocument()
+})
+
+it('drops a pick a later search result no longer offers', () => {
+  // Red against holding the pick unconditionally -- which is what
+  // `DefinitionWidget` did before this state moved in here, and what the
+  // obvious `picked ? {id: picked} : reference` restores. That build keeps
+  // drawing `e2` below: an id the current answer does not name, with the
+  // picker gone and no way back to it. A search refetching to a different set
+  // is ordinary here, because extraction runs while a reader has the answer
+  // open.
+  const child = (entity: GraphNode) => <p>drawing {entity.id}</p>
+  const { getByRole, rerender } = render(
+    <ResolvedFrame
+      reference={{
+        state: 'ambiguous',
+        candidates: [node('e1', 'Constantine', 'Person'), node('e2', 'Constantine', 'Place')],
+        truncated: false,
+      }}
+      name="Constantine"
+    >
+      {child}
+    </ResolvedFrame>,
+  )
+  act(() => getByRole('button', { name: /Place/ }).click())
+  expect(screen.getByText(/drawing e2/)).toBeInTheDocument()
+
+  rerender(
+    <ResolvedFrame
+      reference={{
+        state: 'ambiguous',
+        candidates: [node('e7', 'Constantine', 'Event'), node('e8', 'Constantine', 'Work')],
+        truncated: false,
+      }}
+      name="Constantine"
+    >
+      {child}
+    </ResolvedFrame>,
+  )
+
+  expect(screen.queryByText(/drawing e2/)).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Event/ })).toBeInTheDocument()
+})
+
+it('lets a resolved answer overtake a pick', () => {
+  // Passes structurally rather than by the scoping above: the `resolved` arm
+  // returns before the pick is read at all, so this would stay green with the
+  // candidate lookup removed. It is here because that arm being first is the
+  // half of the fix a refactor could quietly reorder -- moving the pick check
+  // above it makes this the only test that fails.
+  const child = (entity: GraphNode) => <p>drawing {entity.id}</p>
+  const { getByRole, rerender } = render(
+    <ResolvedFrame
+      reference={{
+        state: 'ambiguous',
+        candidates: [node('e1', 'Constantine', 'Person'), node('e2', 'Constantine', 'Place')],
+        truncated: false,
+      }}
+      name="Constantine"
+    >
+      {child}
+    </ResolvedFrame>,
+  )
+  act(() => getByRole('button', { name: /Place/ }).click())
+
+  rerender(
+    <ResolvedFrame
+      reference={{ state: 'resolved', entity: node('e9', 'Constantine') }}
+      name="Constantine"
+    >
+      {child}
+    </ResolvedFrame>,
+  )
+
+  expect(screen.getByText(/drawing e9/)).toBeInTheDocument()
 })
 
 it('caps the picker and says how many it is showing', () => {

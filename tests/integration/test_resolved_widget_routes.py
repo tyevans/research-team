@@ -91,3 +91,26 @@ async def test_a_definition_answers_for_a_project_nothing_has_opened(client):
     )
 
     assert response.status_code != 503, response.text
+
+
+async def test_a_neighbourhood_answers_404_not_503_on_an_unopened_project(client):
+    """The second request a `graph` widget makes.
+
+    404 is the *right* answer here -- no such entity in an empty graph -- and
+    503 is the fixture trap: it means the route reached for a reader without
+    opening the project. The two are a character apart in a log and say
+    opposite things about whether the build is wired.
+
+    Pinned to 404 rather than the sibling test's `!= 503`, because this route
+    has only one honest answer for an id nothing stored: `neighborhood`
+    returns `None` and the route turns that into a 404. There is no second
+    plausible status for the assertion to be brittle against.
+    """
+    project_id = await _untouched_project(client)
+    unknown = uuid4()
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities/{unknown}/neighborhood?depth=1"
+    )
+
+    assert response.status_code == 404, response.text

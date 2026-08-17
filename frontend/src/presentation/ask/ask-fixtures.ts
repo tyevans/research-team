@@ -1,8 +1,16 @@
-/** Turns and transcripts for the stories and tests on this page.
+/** Turns, transcripts and component blocks for the ask surface -- and, for
+ *  `componentBlock` alone, for the lesson widgets too.
  *
  * Here rather than inline for the reason `course/course-fixtures.ts` exists: a
  * transcript written out in five stories is five transcripts, and they drift
  * one story at a time until no two of them show the same component.
+ *
+ * `componentBlock` has outgrown the file's name and is left here anyway. It is
+ * imported from `presentation/lesson` by every resolved widget's tests, and
+ * moving it would touch each of those in a slice that is about none of them --
+ * the shape it builds is `ComponentBlock`, which is a `domain/lesson` type, so
+ * `domain/lesson` is where it belongs the day someone is already in those
+ * files. Filed rather than done, deliberately.
  */
 import type { AskActivity, AskTranscript, AskTurn } from '@domain/ask/conversation.ts'
 import type { ComponentBlock } from '@domain/lesson/document.ts'

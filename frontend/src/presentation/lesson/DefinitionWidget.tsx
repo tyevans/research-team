@@ -1,5 +1,3 @@
-import { useState } from 'react'
-
 import type { AttemptsApi } from '@application/lesson/use-attempts.ts'
 import { useEntityReference } from '@application/lesson/use-entity-reference.ts'
 import type { GraphNode } from '@domain/knowledge/graph.ts'
@@ -31,22 +29,14 @@ export const DefinitionWidget = ({
 }) => {
   const reference = readDefinitionRef(block)
   const resolved = useEntityReference(projectId, reference)
-  // A reader's pick out of the ambiguity picker, which overrides the search.
-  // Local state rather than a store: it is one reader's choice about one
-  // block in one answer, and nothing else on the page has a use for it.
-  const [picked, setPicked] = useState<string | null>(null)
 
-  // The picked node carries the author's name and an empty `entityType`, the
-  // same synthesis `useEntityReference` makes for a pinned `entity_id` and for
-  // the same reason -- the id is the whole of what a pick decides, and the
-  // frame yields to the child immediately rather than rendering the type.
-  const chosen: typeof resolved = picked
-    ? { state: 'resolved', entity: { id: picked, name: reference.entity, entityType: '' } }
-    : resolved
-
+  // The reader's pick out of the ambiguity picker lives in `ResolvedFrame`
+  // now, not here -- see its docstring. Held here it survived a later search
+  // result that no longer offered it, and it would have been copied into this
+  // widget's four siblings before anyone noticed.
   return (
     <div className="cmp-body">
-      <ResolvedFrame reference={chosen} name={reference.entity} onPick={setPicked}>
+      <ResolvedFrame reference={resolved} name={reference.entity}>
         {/* Narrowed here rather than cast inside `Defined`, so TypeScript
             carries the guarantee instead of a comment. The `null` arm is
             unreachable and exists only to make the narrow possible:

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 
 import type { GraphNode } from '@domain/knowledge/graph.ts'
 import type { ResolvedEntity } from '@domain/lesson/resolved.ts'
@@ -33,11 +33,19 @@ const MAX_CANDIDATES = 8
  * `missing` and `unavailable` are worded differently on purpose. "Not in this
  * project's graph" is a claim about the corpus, and a page that could not look
  * the name up at all has not earned it.
+ *
+ * **The pick lives here rather than in each widget, and it is scoped to the
+ * candidate list that offered it.** It was a `useState` in `DefinitionWidget`
+ * before, overriding the reference unconditionally -- so a pick survived a
+ * later search result that no longer contained it, and the widget kept drawing
+ * an entity the current answer does not offer. That is a property of this
+ * shape rather than of any one widget, and five copies of it would be five
+ * chances to get it wrong; `ResolvedFrame.test.tsx` fails on the stale pick if
+ * the scoping below is removed.
  */
 export const ResolvedFrame = ({
   reference,
   name,
-  onPick,
   children,
 }: {
   reference: ResolvedEntity
@@ -45,16 +53,25 @@ export const ResolvedFrame = ({
    *  reference is the prose the widget degrades to, so it is never derived
    *  from a candidate -- a reader must see the word the answer used. */
   name: string
-  /** Where a picked candidate goes. Optional because a widget may have
-   *  nothing to do with one; the picker is still worth drawing, since seeing
-   *  that two entities share a name is itself the answer to "why is this
-   *  blank". */
-  onPick?: (entityId: string) => void
   children: (entity: GraphNode) => ReactNode
 }) => {
+  const [picked, setPicked] = useState<string | null>(null)
+
   if (reference.state === 'resolved') return <>{children(reference.entity)}</>
 
   if (reference.state === 'ambiguous') {
+    // A pick counts only while the candidate list still offers it. Held
+    // unconditionally it would outlive the search result that produced it: a
+    // refetch that resolves the name to one entity, or to a different set,
+    // would leave the widget drawing an id nothing on the page now names.
+    //
+    // The picked candidate carries the author's name and an empty
+    // `entityType`, the same synthesis `useEntityReference` makes for a
+    // pinned `entity_id` and for the same reason -- the id is the whole of
+    // what a pick decides.
+    const chosen = reference.candidates.find((candidate) => candidate.id === picked)
+    if (chosen) return <>{children({ id: chosen.id, name, entityType: '' })}</>
+
     const shown = reference.candidates.slice(0, MAX_CANDIDATES)
     const hidden = reference.candidates.length - shown.length
 
@@ -74,7 +91,11 @@ export const ResolvedFrame = ({
         <ul className="cmp-ref-picker">
           {shown.map((candidate) => (
             <li key={candidate.id}>
-              <button type="button" className="cmp-ref-pick" onClick={() => onPick?.(candidate.id)}>
+              <button
+                type="button"
+                className="cmp-ref-pick"
+                onClick={() => setPicked(candidate.id)}
+              >
                 <span className="cmp-ref-pick-name">{candidate.name}</span>
                 <span className="cmp-ref-pick-type">{candidate.entityType}</span>
               </button>

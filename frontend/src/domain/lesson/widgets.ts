@@ -1,4 +1,6 @@
 import type { ComponentBlock } from './document.ts'
+import type { EntityReference } from './resolved.ts'
+import { readEntityReference } from './resolved.ts'
 
 /** The four widget shapes this build renders, read out of a block's `data`.
  *
@@ -143,6 +145,19 @@ export const readEvidence = (block: ComponentBlock): Evidence => ({
       end: num(entry['end']),
     }
   }),
+})
+
+/** A `graph` widget's reference, plus how far out to draw. */
+export interface GraphRef extends EntityReference {
+  readonly depth: number
+}
+
+export const readGraphRef = (block: ComponentBlock): GraphRef => ({
+  ...readEntityReference(block),
+  // The server defaults this too, so a body that reached here without one is
+  // a body the registry did not normalise -- a hand-built test block, in
+  // practice. 1 is the same default the registry writes.
+  depth: num(block.data['depth']) ?? 1,
 })
 
 const rec = (value: unknown): Record<string, unknown> =>

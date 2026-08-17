@@ -33,6 +33,7 @@ from research_team.application.components import (
     project,
     validation_report,
 )
+from research_team.application.graph_read import MAX_NEIGHBORHOOD_DEPTH
 
 MCQ = """\
 ```component:mcq
@@ -804,3 +805,60 @@ def test_evidence_refuses_a_negative_offset():
     assert [str(note) for note in block.errors] == [
         "sources[0].start: expected a whole number from 0 to 100000000, got -5"
     ]
+
+
+GRAPH = """\
+```component:graph
+id: constantine-around
+entity: Constantine
+depth: 1
+```
+"""
+
+
+def test_a_graph_carries_its_reference_and_depth_through_both_views():
+    document = parse_document(GRAPH, path="lesson.md")
+
+    author = project(document, view="author")["blocks"][0]
+    learner = project(document, view="learner")["blocks"][0]
+
+    assert learner["data"] == author["data"]
+    assert author["data"]["depth"] == 1
+    assert learner["resolved"] is True
+
+
+def test_a_graph_defaults_its_depth_to_one():
+    """One hop is the readable neighbourhood; two is a hairball in a markdown
+    column. Red against a registry entry with no `default`, which would leave
+    `depth` absent and the client picking a second bound to keep in step."""
+    source = "```component:graph\nid: g\nentity: Constantine\n```\n"
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert block.data["depth"] == 1
+
+
+def test_a_graph_depth_past_the_server_s_bound_is_an_authoring_error():
+    """The route answers 422 for this (`app.py`'s `read_graph_neighborhood`).
+    Catching it here turns a failure the reader would meet into a note the
+    model can act on, which is what the validation report exists for. Red
+    against `Spec(text)` on `depth`."""
+    source = "```component:graph\nid: g\nentity: Constantine\ndepth: 5\n```\n"
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert [str(note) for note in block.errors] == [
+        "depth: expected a whole number from 1 to 2, got 5"
+    ]
+
+
+def test_a_graph_depth_bound_tracks_the_server_s_constant():
+    """Red against a hardcoded `2` in the registry the day someone raises
+    `MAX_NEIGHBORHOOD_DEPTH` -- the failure being a widget that validates to
+    one bound and fetches against another, which nothing else would report."""
+    source = (
+        f"```component:graph\nid: g\nentity: Constantine\n"
+        f"depth: {MAX_NEIGHBORHOOD_DEPTH}\n```\n"
+    )
+
+    assert parse_document(source, path="lesson.md").components[0].errors == ()

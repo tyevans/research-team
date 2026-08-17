@@ -87,6 +87,7 @@ from typing import Any, ClassVar, Literal
 import yaml
 
 from research_team.application.artifacts import parse_frontmatter
+from research_team.application.graph_read import MAX_NEIGHBORHOOD_DEPTH
 from research_team.domain.workflow import ArtifactType
 
 _YAML_LOADER: type = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
@@ -719,6 +720,38 @@ REGISTRY: dict[str, ComponentType] = {
             "will show nothing.",
             "One claim per block. Two claims sharing a passage list leaves the "
             "reader unable to tell which range supports which.",
+        ),
+    ),
+    "graph": ComponentType(
+        name="graph",
+        version=1,
+        summary=(
+            "The neighbourhood around one entity in this project's knowledge "
+            "graph: what it connects to, and how. Reference by name."
+        ),
+        example=(
+            "```component:graph\nid: constantine-around\nentity: Constantine\ndepth: 1\n```"
+        ),
+        fields={
+            "entity": Spec(text, required=True),
+            "entity_id": Spec(text),
+            # Bounded here against the same constant the route refuses past,
+            # so an over-deep request is an authoring note rather than a 422
+            # the reader discovers. Default 1 because one hop is the readable
+            # neighbourhood -- two is a hairball in a markdown column.
+            "depth": Spec(integer_between(1, MAX_NEIGHBORHOOD_DEPTH), default=1),
+        },
+        resolved=True,
+        craft=(
+            "Write the entity name exactly as your prose does, and exactly as "
+            "the sources spell it. The lookup is a name search over what "
+            "extraction actually stored, so a tidier canonical name finds "
+            "nothing and the widget renders as the plain name.",
+            "Reach for this when the *shape* of the connections is the point. "
+            "If what matters is one relationship, a sentence says it better "
+            "than a drawing the reader has to find it in.",
+            "Leave `depth` at 1 unless the second hop is the thing you are "
+            "showing. Two hops on a well-extracted entity is a hairball.",
         ),
     ),
 }
