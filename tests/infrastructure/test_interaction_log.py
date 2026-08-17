@@ -10,14 +10,24 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import aiosqlite
+from eventsource import ExpectedVersion, InMemoryEventBus, StreamId
+from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
+from eventsource.adapters.sqlite import SQLiteEventStore
 
 from research_team.domain.interaction import (
+    BROWSER_SESSION_AGGREGATE_TYPE,
+    INTERACTION_EVENTS,
     AskSubmitted,
     SearchPerformed,
     ViewEntered,
     ViewExited,
 )
-from research_team.infrastructure.persistence.interaction_log import InteractionLogStore
+from research_team.infrastructure.persistence.interaction_log import (
+    InteractionEventRow,
+    InteractionLogProjection,
+    InteractionLogRunner,
+    InteractionLogStore,
+)
 
 
 def _view_entered(session_id, seq=1, **over):
@@ -213,3 +223,65 @@ async def test_a_database_written_before_a_field_existed_gains_its_column(db_pat
         assert len(await reopened.events(browser_session)) == 1
     finally:
         await reopened.close()
+
+
+def test_the_projection_handles_every_kind_in_the_vocabulary():
+    """A kind with no handler is silently unrecorded: replay counts an event
+    no projection handles as APPLIED, so nothing raises and the read model is
+    simply missing rows.
+
+    Fails when a kind is added to INTERACTION_EVENTS and not to the
+    projection -- which is the whole point.
+    """
+    handled = InteractionLogProjection(
+        InMemoryReadModelRepository(InteractionEventRow)
+    ).subscribed_to()
+
+    assert set(INTERACTION_EVENTS) == set(handled)
+
+
+async def test_the_projection_writes_a_row():
+    rows = InMemoryReadModelRepository(InteractionEventRow)
+    projection = InteractionLogProjection(rows)
+    browser_session = uuid4()
+
+    await projection.handle(_view_entered(browser_session, seq=4))
+
+    stored = await rows.find(None)
+    assert len(stored) == 1
+    assert stored[0].seq == 4
+    assert stored[0].kind == "ViewEntered"
+
+
+async def test_the_runner_follows_its_own_store(db_path, tmp_path):
+    """The end-to-end shape of this feature's write path: append to the
+    interaction store, publish, and find a row.
+
+    The publish is not decoration. Appending does not deliver -- the bus is a
+    wake-up signal and the store owns ordering -- so an append nobody
+    publishes reaches a running projection only on restart. Drop the publish
+    line and this test fails with an empty list, which is exactly how it would
+    fail in production.
+    """
+    interaction_db = str(tmp_path / "interactions.db")
+    store = SQLiteEventStore(interaction_db)
+    bus = InMemoryEventBus()
+    runner = InteractionLogRunner(store, interaction_db, bus)
+    await runner.start()
+    try:
+        browser_session = uuid4()
+        event = _view_entered(browser_session, seq=1)
+
+        await store.append(
+            StreamId(browser_session, BROWSER_SESSION_AGGREGATE_TYPE),
+            [event],
+            ExpectedVersion.any_(),
+        )
+        await bus.publish([event])
+        await runner.caught_up()
+
+        rows = await runner.events(browser_session)
+        assert len(rows) == 1
+        assert rows[0].view == "project/entity"
+    finally:
+        await runner.stop()
