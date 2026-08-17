@@ -931,7 +931,10 @@ async def test_a_failed_extraction_reports_a_failed_stage(tmp_path, build_adapte
 
     with pytest.raises(KnowledgeError):
         await adapter.ingest(
-            SourceRef(source_id="notes", text="x" * 200_001), report=notes.append
+            SourceRef(
+                source_id="notes", text="x" * (redstring_adapter.MAX_DOCUMENT_CHARS + 1)
+            ),
+            report=notes.append,
         )
 
     assert notes[-1].stage == "failed"

@@ -31,7 +31,16 @@ class KnowledgeError(Exception):
 
 
 #: Longest document accepted in one `remember` or `store_source` call.
-#: Roughly a long article.
+#: Roughly a short book.
+#:
+#: A judgement, not a measurement. Nothing downstream fails at any particular
+#: length -- redstring chunks a long document happily, which is exactly the
+#: problem: it multiplies model calls rather than bounding them, so the bound
+#: has to come from here (`redstring_adapter.ingest`). Raised from 200,000 on
+#: 2026-08-17 because a real document came in 4% over it and splitting a
+#: document into parts costs cross-part entity resolution, which consolidation
+#: only partly recovers. The cost of the raise is that a single oversized
+#: ingest can now occupy the extractor two and a half times as long as before.
 #:
 #: Lives here rather than in `redstring_adapter.py`, where it originated,
 #: because `CorpusEditor._store` (`corpus_editing.py`) has to enforce it too:
@@ -52,7 +61,7 @@ class KnowledgeError(Exception):
 #: transcript truncate at a different length than a document.
 #: `test_perception_max_chars_matches_the_document_cap` is what fails if they
 #: separate -- this comment is the signal, that test is the gate.
-MAX_DOCUMENT_CHARS = 200_000
+MAX_DOCUMENT_CHARS = 500_000
 
 #: Longest `source_id` this derives from a url.
 #:
