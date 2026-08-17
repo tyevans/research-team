@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "deepagents>=0.7.5,<0.8",
+    "deepagents>=0.7.6,<0.8",
     # Capped below the next minor, as redstring caps it. Both libraries are
     # pre-1.0 with a stated no-shim policy, so a minor is where the breaking
     # renames land -- 0.12.0 carried four and 0.14.0 carried seventeen. An
@@ -20,7 +20,7 @@ dependencies = [
     "eventsource-py[sqlite]>=0.14.0,<0.15",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
-    "langchain-openai>=1.4.2",
+    "langchain-openai>=1.5.1",
     # Course artifacts carry YAML frontmatter, so something has to read it back.
     # Already present transitively (langchain, uvicorn, redstring all pull it),
     # and named here because `application/artifacts.py` imports it directly --
@@ -60,7 +60,7 @@ dependencies = [
     # handed to a `Consolidator` is redstring's own.
     "redstring[llm,neo4j,pgvector]>=0.9.1,<0.10",
     "trafilatura>=2.2.0",
-    "uvicorn[standard]>=0.52.1",
+    "uvicorn[standard]>=0.52.3",
     # The blob store streams to disk with async file handles rather than
     # blocking the event loop on ordinary `open()` -- see `blob_store.py`.
     "aiofiles>=24.1",
@@ -99,9 +99,9 @@ tracing = [
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
-    "hypothesis>=6.165.2",
+    "hypothesis>=6.165.8",
     "mutmut>=3.0",
-    "ruff==0.16.2",
+    "ruff==0.16.3",
 ]
 
 [tool.pytest.ini_options]
