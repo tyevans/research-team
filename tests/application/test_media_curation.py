@@ -527,3 +527,39 @@ async def test_curate_reports_a_transport_failure_rather_than_letting_it_propaga
         await _service(BrokenTextPort(), search, proposals_repo, topic_id=topic_id).curate(
             project_id, topic_id
         )
+
+
+async def test_a_judge_that_keeps_nothing_is_reported_as_such(
+    project_id, topic_id, proposals_repo
+):
+    """The fifth route to zero, and the one that was invisible longest.
+
+    A judge answering well-formed JSON in which every verdict is
+    `keep: false` produces no candidates, no rejected parses (a `keep: false`
+    is the judge working, not junk -- see `parse_judgements`), no ignores and
+    no empty search. Every count reads zero and the run looks identical to a
+    topic nothing was found for.
+
+    Not hypothetical: measured on 2026-08-16 against gemma-4-26b-qat, which
+    was shown ten real video results for a drawboring need and rejected all
+    ten with sensible reasons. That is the exact shape of the original report
+    this counter was added for.
+
+    Fails if `judged_out` is incremented anywhere the pool was empty --
+    `searched_empty` owns that case, and the two must not double-count.
+    """
+    all_rejected = json.dumps(
+        [
+            {"index": i, "keep": False, "reason": f"not what the need asks for {i}"}
+            for i in range(3)
+        ]
+    )
+    port = FakeTextPort([_needs_json(1), _terms_json(1), all_rejected])
+    search = FakeSearchPort([_result("https://ok.example/a.jpg")])
+
+    service = _service(port, search, proposals_repo, topic_id=topic_id)
+    outcome = await service.curate(project_id, topic_id)
+
+    assert outcome.candidates == 0
+    assert outcome.judged_out == 1
+    assert (outcome.ignored, outcome.rejected_parses, outcome.searched_empty) == (0, 0, 0)

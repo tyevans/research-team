@@ -8,6 +8,7 @@ const outcome = (over: Partial<Parameters<typeof curationSummary>[0]> = {}) => (
   ignored: 0,
   rejectedParses: 0,
   searchedEmpty: 0,
+  judgedOut: 0,
   ...over,
 })
 
@@ -37,11 +38,18 @@ describe('curationSummary', () => {
     expect(curationSummary(outcome({ ignored: 4 }))).toBe(
       'No media candidates found (2 needs identified; 4 ignored).',
     )
+    // The case that reproduced the original report: gemma-4-26b-qat judged
+    // ten real video results and kept none, leaving every other count clean.
+    expect(curationSummary(outcome({ judgedOut: 2 }))).toBe(
+      'No media candidates found (2 needs identified; 2 needs judged out).',
+    )
   })
 
   it('lists several reasons in the chain order they occur in', () => {
-    expect(curationSummary(outcome({ searchedEmpty: 1, ignored: 2, rejectedParses: 3 }))).toBe(
-      'No media candidates found (2 needs identified; 1 need found nothing, 2 ignored, 3 unreadable replies).',
+    expect(
+      curationSummary(outcome({ searchedEmpty: 1, ignored: 2, judgedOut: 1, rejectedParses: 3 })),
+    ).toBe(
+      'No media candidates found (2 needs identified; 1 need found nothing, 2 ignored, 1 need judged out, 3 unreadable replies).',
     )
   })
 

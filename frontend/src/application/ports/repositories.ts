@@ -405,6 +405,10 @@ export interface MediaCurationOutcome {
   /** Needs whose search pool came back empty -- the one route to zero
    *  candidates that no other count covers. See `CurationOutcome`. */
   readonly searchedEmpty: number
+  /** Needs whose pooled candidates the judge saw and kept none of -- the
+   *  fifth route to zero, and the one that leaves every other count clean.
+   *  See `CurationOutcome`. */
+  readonly judgedOut: number
 }
 
 /** A media upload. `file` rather than bytes: a `File` streams to the network

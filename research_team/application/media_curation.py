@@ -572,6 +572,12 @@ class CurationOutcome:
     `rejected_parses` is what distinguishes "the model gave us nothing to
     search for" from "the search found nothing" from "the reply was
     unreadable" -- three different things to go fix, previously one number.
+
+    `judged_out` counts needs whose pooled candidates the judge saw and kept
+    none of. It is the fifth route and the last silent one: a `keep: false`
+    verdict is deliberately not a `rejected_parse` (see `parse_judgements`),
+    so a judge that rejects everything leaves every other field at zero. That
+    is the shape of the report this whole set of counts was added for.
     """
 
     needs: int
@@ -579,6 +585,7 @@ class CurationOutcome:
     ignored: int
     rejected_parses: int
     searched_empty: int
+    judged_out: int
 
 
 class MediaCurationService:
@@ -637,7 +644,12 @@ class MediaCurationService:
         topic = await self._topics.read_topic(topic_id)
         if topic is None:
             return CurationOutcome(
-                needs=0, candidates=0, ignored=0, rejected_parses=0, searched_empty=0
+                needs=0,
+                candidates=0,
+                ignored=0,
+                rejected_parses=0,
+                searched_empty=0,
+                judged_out=0,
             )
 
         aggregate = await self._proposals.load_or_create(project_id)
@@ -671,6 +683,7 @@ class MediaCurationService:
         candidates = 0
         ignored = 0
         searched_empty = 0
+        judged_out = 0
 
         for need in needs:
             terms, terms_rejected = parse_terms(
@@ -717,6 +730,18 @@ class MediaCurationService:
             )
             rejected += judge_rejected
 
+            # The fifth route to zero, and the one that reproduces the
+            # original report exactly: the judge was shown real candidates,
+            # answered with well-formed JSON, and kept none of them. Nothing
+            # is wrong -- being strict is stage 3's job -- but it is a wholly
+            # different fact from "nothing was found" or "the reply was
+            # unreadable", and without this it reported identically to both.
+            # Measured on 2026-08-16 against gemma-4-26b-qat: ten video
+            # results, ten reasoned `keep: false` verdicts, and an outcome
+            # whose every count read zero.
+            if not judgements:
+                judged_out += 1
+
             for judgement in judgements:
                 if not 0 <= judgement.index < len(kept):
                     # The judge was shown exactly `len(kept)` results and
@@ -752,4 +777,5 @@ class MediaCurationService:
             ignored=ignored,
             rejected_parses=rejected,
             searched_empty=searched_empty,
+            judged_out=judged_out,
         )

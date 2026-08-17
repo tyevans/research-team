@@ -67,7 +67,7 @@ export interface IgnoredMedia {
  *
  * So the zero case reports the counts that explain it. The order is the
  * chain's own: what the search never found, what the ignore list removed,
- * what could not be read. Only non-zero counts appear -- a run that found
+ * what the judge rejected outright, what could not be read. Only non-zero counts appear -- a run that found
  * nothing for an ordinary reason should not read like a list of faults.
  */
 export function curationSummary(outcome: {
@@ -76,6 +76,7 @@ export function curationSummary(outcome: {
   readonly ignored: number
   readonly rejectedParses: number
   readonly searchedEmpty: number
+  readonly judgedOut: number
 }): string {
   // `many` is explicit rather than `word + 's'` because "reply" pluralises to
   // "replies" and the naive rule wrote "replys" -- caught by the test, which
@@ -87,6 +88,7 @@ export function curationSummary(outcome: {
   const because = [
     outcome.searchedEmpty > 0 ? `${plural(outcome.searchedEmpty, 'need')} found nothing` : null,
     outcome.ignored > 0 ? `${outcome.ignored} ignored` : null,
+    outcome.judgedOut > 0 ? `${plural(outcome.judgedOut, 'need')} judged out` : null,
     outcome.rejectedParses > 0
       ? plural(outcome.rejectedParses, 'unreadable reply', 'unreadable replies')
       : null,
