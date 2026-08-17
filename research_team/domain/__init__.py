@@ -113,6 +113,7 @@ from research_team.domain.research_run import (
 )
 from research_team.domain.session import (
     Session,
+    SessionPurpose,
     SessionState,
     decide,
     evolve,
@@ -193,6 +194,7 @@ __all__ = [
     "Session",
     "SessionCommand",
     "SessionForkedFrom",
+    "SessionPurpose",
     "SessionStarted",
     "SessionState",
     "SourceRecord",

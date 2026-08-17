@@ -31,6 +31,7 @@ from research_team.domain.commands import (
     RecordToolResult,
     SendUserMessage,
     SessionCommand,
+    SessionPurpose,
     StartSession,
     WriteFile,
 )
@@ -83,6 +84,17 @@ class SessionState(BaseModel):
     "new"` and nothing else -- once `SessionStarted` has folded, a project is
     always present, because the event cannot carry anything else.
     """
+    purpose: SessionPurpose = SessionPurpose.CHAT
+    """What kind of work this session is for. See `SessionPurpose`.
+
+    Defaulted here and required on the event, which looks inconsistent and is
+    not: `initial_state()` takes no arguments (eventsource 0.12), so every
+    field on the state needs a value that is true before any event exists --
+    the same reason `session_id` and `project_id` are `| None` above despite
+    being required on `SessionStarted`. The default is unreachable in practice:
+    the fold replaces the state wholesale on `SessionStarted`, so no started
+    session ever carries it.
+    """
     files: dict[str, dict[str, Any]] = Field(default_factory=dict)
     messages: list[dict[str, Any]] = Field(default_factory=list)
     turn_index: int = 0
@@ -128,7 +140,11 @@ def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
     match command, state:
         # ---- creation ----
         case StartSession(
-            session_id=new_id, system_prompt=prompt, model_name=model, project_id=project_id
+            session_id=new_id,
+            system_prompt=prompt,
+            model_name=model,
+            project_id=project_id,
+            purpose=purpose,
         ), SessionState(status="new"):
             return [
                 SessionStarted(
@@ -138,6 +154,7 @@ def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
                     system_prompt=prompt,
                     model_name=model,
                     project_id=project_id,
+                    purpose=purpose,
                 )
             ]
         case StartSession(), _:
@@ -310,7 +327,12 @@ def evolve(state: SessionState, event: DomainEvent) -> SessionState:
     still replays instead of failing halfway through.
     """
     match event:
-        case SessionStarted(system_prompt=prompt, model_name=model, project_id=project_id):
+        case SessionStarted(
+            system_prompt=prompt,
+            model_name=model,
+            project_id=project_id,
+            purpose=purpose,
+        ):
             # Replaces state wholesale: this is the creation event, and it is
             # the only one that establishes rather than amends.
             return SessionState(
@@ -321,6 +343,7 @@ def evolve(state: SessionState, event: DomainEvent) -> SessionState:
                 system_prompt=prompt,
                 model_name=model,
                 project_id=project_id,
+                purpose=purpose,
             )
 
         case (
