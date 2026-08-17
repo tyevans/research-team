@@ -525,6 +525,31 @@ def test_the_generated_reference_covers_every_registered_type():
         assert parsed.components[0].type == name
 
 
+def test_the_reference_carries_each_type_s_craft_notes():
+    """The generated reference is the only place either agent learns to write
+    a good item, so craft travels with syntax or not at all.
+
+    Reverting `craft` to a field nothing renders leaves this red: the strings
+    are in the registry either way, and `component_reference` is what has to
+    put them in front of a model.
+    """
+    reference = component_reference(only=["mcq"])
+
+    assert "distractor" in reference
+    # The mcq note names per-option feedback, which is the field authors skip.
+    assert "feedback" in reference
+
+
+def test_craft_notes_are_scoped_to_the_types_asked_for():
+    """`only` narrows craft the same way it narrows examples -- showing a stage
+    how to write a good cloze it was told not to use is the same mistake the
+    `only` parameter exists to prevent."""
+    reference = component_reference(only=["flashcards"])
+
+    assert "one fact per card" in reference.lower()
+    assert "distractor" not in reference
+
+
 # --- B31: the guidance has to survive being handed to a subagent ------------
 #
 # Component guidance rides `StageMiddleware`, which wraps the *caller's* model
