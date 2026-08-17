@@ -3245,3 +3245,29 @@ one resource with nothing between its construction and `Application(...)`.
 Every other resource here doesn't have that luxury — there's meaningful
 construction between the event store and the return statement — so the fix
 has to actually unwind, not just reorder.
+
+### B106. Ask history has a server half and no client -- reopening a conversation is not reachable
+
+`docs/superpowers/specs/2026-08-16-components-in-an-ask-design.md` §4 and
+`read_ask` (`app.py:3076`) are correct and tested: a stored ask turn carries
+projected `blocks` with the answer key withheld, the same shape the live
+stream sends. But no route in `frontend/src` fetches a stored conversation --
+grepped for any caller of `GET /api/projects/{project_id}/asks/{conversation_id}`
+outside the Python tests, and there is none. `AskView.tsx` holds its
+transcript in memory only and starts empty on every mount; there is no reopen,
+no refresh, and nothing a reader can click to see this endpoint's response.
+
+The server-side work is not wasted -- it is the exact shape a history UI would
+need, built as a forward investment while the projection and the withholding
+logic were already in scope. What is missing is entirely the client half: a
+route or affordance that lists a project's past ask conversations, opens one,
+and renders its stored turns through the same `AskTurnWidgets` path a live
+answer already uses (see `AskTurn.tsx`'s widget branch, which takes a `Doc` and
+does not care where it came from).
+
+Left undone here because it was not requested and is real UI surface: a list
+view, a route, empty-state and loading-state design, and a decision about
+whether reopening a conversation should also let a reader keep asking into it
+or only read what is there. Worth doing before the spec's §4 claim ("a reader
+reopening a conversation gets working widgets, not code blocks") is a true
+sentence about this application rather than about the server alone.

@@ -1,5 +1,6 @@
 import type { AttemptsApi } from '@application/lesson/use-attempts.ts'
 import type { ComponentBlock, LessonDocument as Doc } from '@domain/lesson/document.ts'
+import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Markdown } from '../common/content.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
@@ -34,6 +35,7 @@ export const LessonDocument = ({
   doc,
   attempts,
   withheldExplanation = FILE_WITHHELD_EXPLANATION,
+  projectId,
 }: {
   doc: Doc
   attempts: AttemptsApi
@@ -43,11 +45,28 @@ export const LessonDocument = ({
    *  turn, where the raw answer travels in the *same* response as the blocks.
    *  The ask surface passes its own text rather than this default. */
   withheldExplanation?: string
+  /** Optional because the lesson caller has no project in scope -- a course
+   *  is read from a session, not a project, and `Markdown` already treats a
+   *  missing `projectId` as "leave `[[src:...]]` unexpanded" for exactly that
+   *  reason. The ask surface does have one, and passes it: without it, a
+   *  reference in the model's prose renders as a working link right up until
+   *  the same answer also carries a widget, at which point the identical
+   *  `[[src:...]]` prints as literal text -- same answer, two renderings,
+   *  decided only by whether a component happened to be present. */
+  projectId?: ProjectId
 }) => (
   <div className="md doc">
     {doc.blocks.map((block, index) =>
       block.kind === 'markdown' ? (
-        <Markdown key={index} source={block.text} className="md-unwrapped" />
+        // Spread rather than a bare `projectId={projectId}`: `exactOptionalPropertyTypes`
+        // treats an explicit `undefined` differently from an omitted prop, and
+        // `Markdown`'s own optional `projectId` is what "no project in scope" means.
+        <Markdown
+          key={index}
+          source={block.text}
+          className="md-unwrapped"
+          {...(projectId ? { projectId } : {})}
+        />
       ) : (
         <Component
           key={block.id}

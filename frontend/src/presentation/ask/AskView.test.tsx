@@ -8,7 +8,7 @@ import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { AskRepository } from '@application/ports/repositories.ts'
 import type { AskEvent } from '@domain/ask/conversation.ts'
-import { ProjectId } from '@domain/shared/identifier.ts'
+import { ComponentId, ProjectId } from '@domain/shared/identifier.ts'
 
 import { AskView } from './AskView.tsx'
 
@@ -152,6 +152,69 @@ it('keeps tool activity out of the way until asked for', async () => {
 
   await userEvent.click(disclosure)
   expect(screen.getByText(/read_source/)).toBeInTheDocument()
+})
+
+/** The seam eight per-task reviews missed: the id an attempt POST names has
+ *  to be the one the *server* opened the conversation under, not the browser's
+ *  own `chatId`. Every other test in this file and in `AskTurn.test.tsx` uses
+ *  its own literal id on each side of that seam ("c1" here, "c" there), so
+ *  each half stays internally consistent and nothing crosses from the stream
+ *  to the POST. This stubs a repository that emits a `conversation` frame
+ *  naming one id and a widget-bearing answer, then asserts the attempt goes
+ *  out under that id -- proved red against the build that aliased `chatId` as
+ *  `conversationId` in `AskView.tsx`, where this asserted the store's own
+ *  minted uuid instead and passed for the wrong reason. */
+it('submits a widget attempt against the server-issued conversation id, not the browser chat id', async () => {
+  const submitAskAttempt = vi.fn().mockResolvedValue({
+    correct: true,
+    score: 1,
+    feedback: [],
+    rationale: null,
+    correctOptions: [0],
+    blanks: [],
+    progress: null,
+  })
+  const spy = vi.fn(
+    async (
+      _p: ProjectId,
+      _c: string,
+      _q: string,
+      onEvent: (event: AskEvent) => void,
+    ): Promise<void> => {
+      onEvent({ type: 'conversation', conversationId: 'server-issued-id' })
+      onEvent({
+        type: 'answer',
+        text: 'pick one',
+        blocks: [
+          {
+            kind: 'component',
+            id: ComponentId('q1'),
+            type: 'mcq',
+            data: { prompt: 'Which?', options: [{ text: 'A' }, { text: 'B' }], multiple: false },
+            raw: '```component:mcq\n```',
+            lang: 'component:mcq',
+            unknown: false,
+            errors: [],
+            withheld: ['answer'],
+          },
+        ],
+        position: 0,
+        citations: [],
+      })
+    },
+  )
+  renderAsk({ ask: spy, submitAskAttempt })
+
+  await ask('which papers agree?')
+
+  await userEvent.click(screen.getByRole('radio', { name: 'A' }))
+  await userEvent.click(screen.getByRole('button', { name: /check answer/i }))
+
+  expect(submitAskAttempt).toHaveBeenCalledWith(
+    PROJECT,
+    'server-issued-id',
+    expect.objectContaining({ position: 0 }),
+  )
 })
 
 it('refuses to send while a question is in flight', async () => {

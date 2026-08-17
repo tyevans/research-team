@@ -19,7 +19,7 @@ export const AskThread = ({
 }: {
   projectId: ProjectId
   transcript: AskTranscript
-  conversationId: string
+  conversationId: string | null
 }) => {
   /** Which activity folds are open, by turn index.
    *

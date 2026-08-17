@@ -27,7 +27,8 @@ export const AskPage = ({
 }: {
   projectId: ProjectId
   transcript: AskTranscript
-  conversationId: string
+  // Null until the stream's first frame names it -- see `AskState.conversationId`.
+  conversationId: string | null
   asking: boolean
   error: string | null
   onAsk: (question: string) => void

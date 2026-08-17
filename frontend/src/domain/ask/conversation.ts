@@ -43,6 +43,11 @@ export interface AskTurn {
 export type AskTranscript = readonly AskTurn[]
 
 export type AskEvent =
+  // The server's own id for this conversation, sent once as the stream's
+  // first frame. Never `chatId` -- that is minted in the browser and never
+  // reaches storage, so an attempt POST built from it names a conversation
+  // the server has never heard of. See `AskState.conversationId`.
+  | { readonly type: 'conversation'; readonly conversationId: string }
   | { readonly type: 'delta'; readonly messageId: string; readonly text: string }
   | {
       readonly type: 'message'
@@ -89,6 +94,11 @@ export const applyEvent = (transcript: AskTranscript, event: AskEvent): AskTrans
   ]
 
   switch (event.type) {
+    // Carries no per-turn data -- the store reads this one directly off the
+    // stream to learn its conversation id, and the transcript fold has
+    // nothing to do with it. Handled here only so the switch stays exhaustive.
+    case 'conversation':
+      return transcript
     case 'delta':
       return replaced({ ...turn, answer: turn.answer + event.text })
     case 'message':

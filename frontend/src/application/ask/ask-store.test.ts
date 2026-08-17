@@ -98,6 +98,24 @@ it('sends the same chat id for every question in a conversation', async () => {
   expect(ask.mock.calls[0]![1]).toBe(ask.mock.calls[1]![1])
 })
 
+it('records the server-issued conversation id, distinct from the chat id it asked with', async () => {
+  // Never the same string: `chatId` is minted here and only ever used to ask
+  // the server to open a conversation, never a value the server stores
+  // anything under. Conflating the two is exactly the bug this field exists
+  // to prevent -- see `AskState.conversationId`.
+  const ask = vi.fn<AskRepository['ask']>(async (_p, _c, _q, onEvent) => {
+    onEvent({ type: 'conversation', conversationId: 'server-id' })
+    onEvent({ type: 'answer', text: 'x', blocks: [], position: 0, citations: [] })
+  })
+  const asking = store(fakeAsk({ ask }))
+
+  expect(asking.getState().conversationId).toBeNull()
+  await asking.getState().send('one')
+
+  expect(asking.getState().conversationId).toBe('server-id')
+  expect(asking.getState().conversationId).not.toBe(asking.getState().chatId)
+})
+
 it('reset forgets the server copy and starts a new chat id', async () => {
   const forget = vi.fn().mockResolvedValue(undefined)
   const asking = store(fakeAsk({ forget }))

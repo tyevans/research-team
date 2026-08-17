@@ -16,6 +16,13 @@ export interface AskState {
   readonly asking: boolean
   readonly error: string | null
   readonly chatId: string
+  /** The server's id for the open conversation -- distinct from `chatId` on
+   *  purpose. `chatId` is minted here and only ever used to ask the server to
+   *  open a conversation; the server's own id is what an attempt POST and a
+   *  history route have to name, and the two are never the same string. Null
+   *  until the stream's first frame arrives, which is why an attempt cannot
+   *  be submitted before then -- see `AskPage`'s widgets. */
+  readonly conversationId: string | null
   send(question: string): Promise<void>
   reset(): Promise<void>
 }
@@ -36,6 +43,7 @@ export const createAskStore = ({
     asking: false,
     error: null,
     chatId: newChatId(),
+    conversationId: null,
 
     async send(question) {
       const trimmed = question.trim()
@@ -47,6 +55,13 @@ export const createAskStore = ({
       set((state) => ({ transcript: asked(state.transcript, trimmed), asking: true, error: null }))
       try {
         await ask.ask(projectId, get().chatId, trimmed, (event) => {
+          // Intercepted rather than folded into the transcript: this is the
+          // one event with nothing to do with a turn, and the store -- not
+          // the pure fold -- is what other code reads a conversation id from.
+          if (event.type === 'conversation') {
+            set({ conversationId: event.conversationId })
+            return
+          }
           set((state) => ({ transcript: applyEvent(state.transcript, event) }))
         })
       } catch (err) {
@@ -67,7 +82,7 @@ export const createAskStore = ({
 
     async reset() {
       const previous = get().chatId
-      set({ transcript: [], error: null, chatId: newChatId() })
+      set({ transcript: [], error: null, chatId: newChatId(), conversationId: null })
       try {
         await ask.forget(projectId, previous)
       } catch {

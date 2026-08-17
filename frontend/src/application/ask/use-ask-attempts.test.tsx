@@ -60,6 +60,21 @@ describe('useAskAttempts', () => {
     expect(result.current.stateFor(block).picked).toEqual([])
   })
 
+  it('does not post when the conversation id has not arrived yet', async () => {
+    // The stream's first frame names the conversation; a widget can in
+    // principle render before it lands. Posting under a guess -- `chatId`,
+    // say -- would silently grade against a conversation the server never
+    // opened, which is the bug this null case exists to rule out.
+    const submitAskAttempt = vi.fn()
+    const { result } = renderHook(() => useAskAttempts(projectId, null, 2), {
+      wrapper: harness(submitAskAttempt),
+    })
+
+    await act(() => result.current.submit(block, [0]))
+
+    expect(submitAskAttempt).not.toHaveBeenCalled()
+  })
+
   it('does not offer a checklist save', () => {
     // Nothing on this path can persist a tick, and a control that silently
     // drops what it was given is worse than one that is not there.

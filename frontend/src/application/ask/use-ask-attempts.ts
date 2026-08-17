@@ -12,20 +12,35 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
  * `stored` is null and `saveChecklist` is absent, and both are the same fact
  * from two directions: an ask records nothing, so there is no history to
  * restore and no tick to keep. The reader is told this in the page rather than
- * discovering it on refresh. */
+ * discovering it on refresh.
+ *
+ * `conversationId` is nullable because the server names the conversation in
+ * the stream's *first* frame, and a component can render before that frame
+ * lands -- an early `delta` carries no id, but a widget only ever appears
+ * inside `blocks`, which travel on the `answer` frame that settles the turn.
+ * In practice the id is already known by the time a widget exists to submit
+ * against. This still guards the gap rather than assume it away: posting an
+ * attempt under a guessed id -- `chatId`, say -- would silently grade against
+ * a conversation the server never opened, which is exactly the bug this hook
+ * replaced. Null keeps the widget interactive but makes `submit` a no-op
+ * instead, the same shape `useAttempts` uses for "no file open". */
 export const useAskAttempts = (
   projectId: ProjectId,
-  conversationId: string,
+  conversationId: string | null,
   position: number,
 ): AttemptsApi => {
   const { ask } = useContainer()
-  return useAttemptMachine(`${conversationId}:${String(position)}`, {
+  const api = useAttemptMachine(`${conversationId ?? 'pending'}:${String(position)}`, {
     stored: null,
     submit: (block, response) =>
-      ask.submitAskAttempt(projectId, conversationId, {
+      ask.submitAskAttempt(projectId, conversationId!, {
         position,
         componentId: block.id,
         response,
       }),
   })
+  return {
+    ...api,
+    submit: (block, response) => (conversationId ? api.submit(block, response) : Promise.resolve()),
+  }
 }

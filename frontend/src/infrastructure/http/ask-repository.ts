@@ -28,6 +28,10 @@ import { toVerdict } from './mappers.ts'
 const citationDto = z.object({ kind: z.literal('source'), id: z.string() })
 
 const askFrameDto = z.discriminatedUnion('type', [
+  // The stream's own first frame, naming the conversation the server stored
+  // this exchange under. Distinct from `chatId` on purpose -- see
+  // `AskEvent`'s `conversation` member in the domain.
+  z.object({ type: z.literal('conversation'), conversation_id: z.string() }),
   z.object({ type: z.literal('delta'), message_id: z.string(), text: z.string() }),
   z.object({
     type: z.literal('message'),
@@ -55,6 +59,8 @@ const askFrameDto = z.discriminatedUnion('type', [
 
 const toEvent = (raw: z.output<typeof askFrameDto>): AskEvent => {
   switch (raw.type) {
+    case 'conversation':
+      return { type: 'conversation', conversationId: raw.conversation_id }
     case 'delta':
       return { type: 'delta', messageId: raw.message_id, text: raw.text }
     case 'message':

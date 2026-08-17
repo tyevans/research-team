@@ -33,7 +33,7 @@ const AskTurnWidgets = ({
 }: {
   doc: Doc
   projectId: ProjectId
-  conversationId: string
+  conversationId: string | null
   position: number
 }) => {
   const attempts = useAskAttempts(projectId, conversationId, position)
@@ -43,6 +43,7 @@ const AskTurnWidgets = ({
         doc={doc}
         attempts={attempts}
         withheldExplanation={ASK_WITHHELD_EXPLANATION}
+        projectId={projectId}
       />
       {/* The one honest difference from a lesson: nothing on this path
           persists an attempt, so reopening the conversation gives a blank
@@ -76,7 +77,7 @@ export const AskTurn = ({
   turn: Turn
   open: boolean
   onToggle: () => void
-  conversationId: string
+  conversationId: string | null
 }) => (
   // The rule between exchanges: every turn but the first, because a 28px gap
   // was the only thing separating turn n's answer from turn n+1's question

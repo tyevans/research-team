@@ -144,6 +144,19 @@ The visible consequence: refresh the ask history and the widgets are blank
 again. That is worth stating in the UI rather than discovering, and the design
 takes it as the cost of not answering B33 here.
 
+**Amendment, made in the fix-review pass that shipped this design:** the
+sentence above describes a screen that does not exist. `read_ask`'s stored
+turn view (§2) is implemented and tested server-side — it does return
+`blocks` per turn, correctly, with the answer key withheld — but no route in
+`frontend/src` fetches a stored conversation at all. There is no reopen, no
+refresh, and therefore no "blank again" for a reader to see, honest or
+otherwise; the only page that renders an ask (`AskView.tsx`) holds its
+transcript in memory and starts empty on every mount. The server half stands
+on its own as a forward investment — the exact shape a history UI would need
+when one is built — but nothing here is reachable by a user action yet.
+`BACKLOG.md` B106 records the gap; building the client half is out of scope
+for this design.
+
 ### 5. Withholding on this surface is weaker than on a file, and says so
 
 The learner projection is applied to the blocks, so the key is not in the
@@ -235,10 +248,20 @@ the registry rather than in either prompt.
 produces better items is a claim about model behaviour, and this design asserts
 it rather than having measured it. The cost if it is wrong is bounded — a
 longer prompt on stages already carrying the reference — but the honest note is
-that nothing here proves the items improve. The implementation ends with a
-before/after read of one generated evidence spec, recorded in the commit
-message, so the next person has at least one observation rather than only this
-paragraph.
+that nothing here proves the items improve.
+
+**That measurement was deferred, and this paragraph used to claim otherwise.**
+It said the implementation would end with a before/after read of one generated
+evidence spec. What Task 8's commit actually took was a prompt-level diff —
+`component_reference`'s output with and without craft notes, +488 characters,
+three notes added — which says what the model is *told*, not what it *writes*.
+That diff is real and is recorded in the commit message honestly; the claim
+above it, that a generated spec was read before and after, was not. Running an
+actual stage with and without `craft` and comparing the resulting items is the
+observation this section still wants, and it remains undone. The reasoning
+above — that registry-resident guidance cannot drift the way a duplicated prompt
+does — holds regardless of whether the effect on item quality has been
+measured, and stands on its own.
 
 ## Testing
 

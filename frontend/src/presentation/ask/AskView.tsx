@@ -31,7 +31,12 @@ export const AskView = ({ projectId }: { projectId: ProjectId }) => {
   const transcript = store((state) => state.transcript)
   const asking = store((state) => state.asking)
   const error = store((state) => state.error)
-  const conversationId = store((state) => state.chatId)
+  // The server's id for this conversation, not `chatId`: that one is minted
+  // in the browser and never reaches storage, so an attempt POST built from
+  // it would name a conversation the server has never heard of. Null until
+  // the stream's first frame arrives -- see `AskPage` for how a turn
+  // rendered before then is kept from posting under a guess.
+  const conversationId = store((state) => state.conversationId)
 
   return (
     <AskPage

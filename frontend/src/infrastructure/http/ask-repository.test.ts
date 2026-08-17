@@ -47,6 +47,16 @@ it('yields one event per frame', async () => {
   ])
 })
 
+it('parses the conversation frame naming the server-issued id', async () => {
+  // The stream's first frame, and the only source in this codebase of the id
+  // an attempt POST has to name -- see `AskState.conversationId`.
+  const seen = await collect(
+    respond('data: {"type":"conversation","conversation_id":"conv-1"}\n\n'),
+  )
+
+  expect(seen).toEqual([{ type: 'conversation', conversationId: 'conv-1' }])
+})
+
 it('reassembles a frame split across chunks', async () => {
   const seen = await collect(
     respond('data: {"type":"delta","mess', 'age_id":"m1","text":"two"}\n\n'),
