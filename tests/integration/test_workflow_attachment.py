@@ -31,6 +31,18 @@ from tests.conftest import ToolAwareFakeChatModel
 CONTEXT = "ubd.step1.context"
 CORPUS_TOOLS = {"list_sources", "read_source", "graph_search"}
 
+# Sent by both tests, so the pair differs in the purpose and nothing else. A
+# round's real prompt and a person's "hi" would be the more natural pair and
+# would also be a second moving variable: neither test could then say the
+# purpose was what decided the outcome.
+TURN_PROMPT = "investigate the topic"
+
+# The first line of `WORKFLOW_PROMPT`, spelled once. Both tests read it -- the
+# round asserting its absence and the mirror its presence -- so the round's
+# assertion cannot start passing because the phrase was reworded or dropped
+# from the chain entirely.
+WORKFLOW_PROMPT_MARKER = "This project runs a staged workflow"
+
 
 class RecordingChatModel(ToolAwareFakeChatModel):
     """Records both halves of what crossed the boundary: bound tools and prompt.
@@ -118,15 +130,17 @@ async def test_a_research_round_is_not_given_the_workflow(build_application):
         project_id, SessionPurpose.RESEARCH_ROUND
     )
 
-    await application.service.run_turn(session_id, "investigate the topic")
+    await application.service.run_turn(session_id, TURN_PROMPT)
 
     # (1) An unattended call on a tool floored at `ask` is an approval nobody
     # answers, so the round must not be able to reach it at all.
     assert "advance_stage" not in model.last_bound
     # (2) The reported symptom: the stage's methodology in the system message
-    # arguing with the round's own instructions in the user message.
+    # arguing with the round's own instructions in the user message. Both
+    # absences have their witness in the mirror below, which asserts the same
+    # two strings are present for a CHAT session on this same stage.
     assert "## Current stage" not in model.last_prompt
-    assert "This project runs a staged workflow" not in model.last_prompt
+    assert WORKFLOW_PROMPT_MARKER not in model.last_prompt
     # (3) The unreported one.
     assert model.last_bound >= CORPUS_TOOLS
 
@@ -138,7 +152,13 @@ async def test_a_person_still_gets_the_workflow(build_application):
     system message names the current stage, and the stage's denylist is in
     force -- all three corpus tools withdrawn, because `ubd.step1.context`
     claims none of them. That is exactly the evidence for (3) above, read the
-    other way: the same stage, the same union, and only the purpose differs.
+    other way: the same stage, the same union, the same user message, and only
+    the purpose differs.
+
+    It is also the witness for the round's two *absence* assertions. An absence
+    proves nothing on its own -- drop `WORKFLOW_PROMPT` from the chain
+    altogether and the round test still goes green, for the wrong reason. So
+    both strings are asserted present here.
     """
     model = _model()
     application = await build_application(model=model)
@@ -146,8 +166,9 @@ async def test_a_person_still_gets_the_workflow(build_application):
     await application.attach_project(project_id)
     session_id = await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
-    await application.service.run_turn(session_id, "hi")
+    await application.service.run_turn(session_id, TURN_PROMPT)
 
     assert "advance_stage" in model.last_bound
     assert "## Current stage" in model.last_prompt
+    assert WORKFLOW_PROMPT_MARKER in model.last_prompt
     assert not (model.last_bound & CORPUS_TOOLS)
