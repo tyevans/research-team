@@ -25,7 +25,9 @@ from research_team.application.media_curation import (
     MAX_QUERIES_PER_NEED,
     CurationUnavailable,
     MediaCurationService,
+    MediaNeed,
     SearchResult,
+    _judge_prompt,
     parse_judgements,
     parse_needs,
     parse_terms,
@@ -563,3 +565,36 @@ async def test_a_judge_that_keeps_nothing_is_reported_as_such(
     assert outcome.candidates == 0
     assert outcome.judged_out == 1
     assert (outcome.ignored, outcome.rejected_parses, outcome.searched_empty) == (0, 0, 0)
+
+
+def test_stage_3_asks_the_judge_to_keep_partial_matches():
+    """The instruction the whole feature turned out to rest on.
+
+    Stage 1 writes compound needs, and a judge reading one literally rejects
+    every real result because no single result is all of it. Measured on
+    2026-08-16: against ten genuinely on-topic drawboring videos,
+    gemma-4-26b-qat and muse-glimmer-30b each kept zero with the old prompt;
+    with this instruction both saturated the cap, and muse marked 8 of 10
+    keepable. Which model was loaded had decided whether the feature worked.
+
+    Asserting on prompt wording is ordinarily brittle, and it is worth it
+    here: the failure this guards against is silent -- a tidied prompt costs
+    no test, no error and no log line, only every candidate on some models.
+    The assertion is deliberately loose (the word "part", and that rejection
+    is scoped to off-topic) so rephrasing stays possible and deleting the
+    idea does not.
+    """
+    need = MediaNeed(need_id="need-0", medium="video", description="d", why="w")
+    result = SearchResult(
+        title="t",
+        url="https://example.com/p",
+        snippet="s",
+        kind="video",
+        asset_url="https://example.com/v",
+        detail="",
+        thumbnail_url="",
+    )
+    prompt = _judge_prompt(need, [result])
+
+    assert "part" in prompt
+    assert "off-topic" in prompt
