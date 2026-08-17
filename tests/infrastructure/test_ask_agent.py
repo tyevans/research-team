@@ -294,3 +294,15 @@ async def test_the_reference_syntax_reaches_the_model():
         if isinstance(message, SystemMessage)
     )
     assert REFERENCE_SYNTAX_PROMPT in system_text
+
+
+def test_the_ask_prompt_carries_the_component_reference():
+    """Without this the agent never authors one, and every other task in this
+    feature renders nothing. Red against the prompt as it stood."""
+    from research_team.infrastructure.agent.ask_agent import ASK_PROMPT
+
+    assert "component:mcq" in ASK_PROMPT
+    assert "component:checklist" not in ASK_PROMPT
+    # Craft, not only syntax -- Task 1's notes reach this prompt through the
+    # same generated reference the stage prompt uses.
+    assert "distractor" in ASK_PROMPT
