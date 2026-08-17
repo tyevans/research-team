@@ -42,8 +42,22 @@ export interface ComponentBlock {
    *  exists and is being graded on the server rather than in this page. */
   readonly withheld: readonly string[]
   /** Whether this component fetches its data from the project rather than
-   *  carrying it. The renderer threads `projectId` on this rather than on a
-   *  name list, so a sixth resolved type needs no client change. */
+   *  carrying it, as the server classified it.
+   *
+   * **The renderer does not read this**, and that is deliberate rather than an
+   * omission. `LessonDocument` spreads `projectId` into every renderer
+   * unconditionally: a widget that does not resolve simply ignores the prop,
+   * which costs nothing, whereas gating the spread on this flag would make a
+   * resolved widget's ability to fetch depend on the server having classified
+   * it correctly. A mis-flagged component would then render `unavailable`
+   * forever with nothing raising -- the same silent-empty failure CLAUDE.md
+   * describes for a missing projection. Unconditional threading has one
+   * behaviour whether the flag is right or wrong.
+   *
+   * So what is it for? It is carried for *widgets* to read -- a resolved
+   * widget can assert its own class, and the ask surface can tell a reference
+   * component from a content one without a hardcoded type list. Nothing in
+   * this task consumes it yet; Tasks 3-7 are its first readers. */
   readonly resolved: boolean
 }
 

@@ -82,6 +82,7 @@ it('lists every candidate with its type when the name is ambiguous', () => {
       reference={{
         state: 'ambiguous',
         candidates: [node('e1', 'Constantine', 'Person'), node('e2', 'Constantine', 'Place')],
+        truncated: false,
       }}
       name="Constantine"
       onPick={picked}
@@ -103,6 +104,7 @@ it('hands a picked candidate back to the widget', () => {
       reference={{
         state: 'ambiguous',
         candidates: [node('e1', 'Constantine', 'Person'), node('e2', 'Constantine', 'Place')],
+        truncated: false,
       }}
       name="Constantine"
       onPick={picked}
@@ -114,6 +116,60 @@ it('hands a picked candidate back to the widget', () => {
   getByRole('button', { name: /Place/ }).click()
 
   expect(picked).toHaveBeenCalledWith('e2')
+})
+
+it('caps the picker and says how many it is showing', () => {
+  // `/graph/entities?name=` is a substring filter, so twenty matches needs an
+  // ordinary short name, not a pathological one. Red against an uncapped
+  // picker: that one draws twenty buttons inside a paragraph of prose and
+  // never says it did.
+  const candidates = Array.from({ length: 20 }, (_unused, index) =>
+    node(`e${String(index)}`, `Constantine ${String(index)}`),
+  )
+  render(
+    <ResolvedFrame reference={{ state: 'ambiguous', candidates, truncated: false }} name="Constant">
+      {() => <p>never</p>}
+    </ResolvedFrame>,
+  )
+
+  expect(screen.getAllByRole('button')).toHaveLength(8)
+  expect(screen.getByText(/20 entities in this project match that name/)).toBeInTheDocument()
+  // The count of what was left out is the whole point: a reader who does not
+  // find their entity among eight must not conclude it is absent.
+  expect(screen.getByText(/showing the first 8/)).toBeInTheDocument()
+})
+
+it('says the count is a floor when the server held matches back', () => {
+  // A capped search page cannot support a flat "12 entities share that name",
+  // which is a claim about the graph rather than about what came back.
+  const candidates = Array.from({ length: 12 }, (_unused, index) =>
+    node(`e${String(index)}`, `Constantine ${String(index)}`),
+  )
+  render(
+    <ResolvedFrame reference={{ state: 'ambiguous', candidates, truncated: true }} name="Constant">
+      {() => <p>never</p>}
+    </ResolvedFrame>,
+  )
+
+  expect(screen.getByText(/At least 12 entities/)).toBeInTheDocument()
+})
+
+it('says nothing about a cap when every candidate fits', () => {
+  render(
+    <ResolvedFrame
+      reference={{
+        state: 'ambiguous',
+        candidates: [node('e1', 'Constantine', 'Person'), node('e2', 'Constantine', 'Place')],
+        truncated: false,
+      }}
+      name="Constantine"
+    >
+      {() => <p>never</p>}
+    </ResolvedFrame>,
+  )
+
+  expect(screen.queryByText(/showing the first/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/At least/)).not.toBeInTheDocument()
 })
 
 it('says nothing at all while the search is in flight', () => {

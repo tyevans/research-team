@@ -78,6 +78,33 @@ describe('matchEntities', () => {
     expect(result).toEqual({
       state: 'ambiguous',
       candidates: [node('e1', 'Constantine', 'Person'), node('e2', 'Constantine', 'Place')],
+      truncated: false,
+    })
+  })
+
+  it('carries the search truncation onto an ambiguous result', () => {
+    // Without it the picker would say "3 entities in this project share that
+    // name" off a page the server capped, which is a claim about the graph
+    // the client cannot make. Red against a build that drops the argument.
+    const result = matchEntities(
+      'Const',
+      [node('e1', 'Constantine'), node('e2', 'Constantius'), node('e3', 'Constans')],
+      true,
+    )
+
+    expect(result).toEqual({
+      state: 'ambiguous',
+      candidates: [node('e1', 'Constantine'), node('e2', 'Constantius'), node('e3', 'Constans')],
+      truncated: true,
+    })
+  })
+
+  it('drops truncation on a resolved result rather than carrying it', () => {
+    // An exact hit answers the question outright, so what the server held back
+    // is no longer about anything the reader is being shown.
+    expect(matchEntities('Constantine', [node('e1', 'Constantine')], true)).toEqual({
+      state: 'resolved',
+      entity: node('e1', 'Constantine'),
     })
   })
 

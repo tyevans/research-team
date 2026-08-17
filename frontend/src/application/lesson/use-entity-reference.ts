@@ -52,5 +52,5 @@ export const useEntityReference = (
   if (!enabled) return { state: 'unavailable' }
   if (search.isError) return { state: 'unavailable' }
   if (!search.data) return { state: 'loading' }
-  return matchEntities(name, search.data.entities)
+  return matchEntities(name, search.data.entities, search.data.truncated)
 }

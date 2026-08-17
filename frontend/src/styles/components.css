@@ -627,6 +627,17 @@
   margin: 0;
 }
 
+/* `loading` and `unavailable`, dimmer than a reference the page has actually
+   checked. The state carries no note -- neither may make a claim about the
+   corpus -- so weight is the only thing left to say the name is unconfirmed,
+   and without a rule here the class was in the attribute and absent from the
+   bundle, which is CLAUDE.md's silent-failure shape. `resolved-frame-dressing
+   .browser.test.tsx` fails if this stops applying; jsdom cannot see it. */
+.cmp-ref-quiet .cmp-ref-name {
+  font-weight: 500;
+  color: var(--fg-dim);
+}
+
 .cmp-ref-ambiguous {
   flex-direction: column;
   align-items: stretch;

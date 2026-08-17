@@ -32,7 +32,19 @@ export interface EntityReference {
 export type ResolvedEntity =
   | { readonly state: 'loading' }
   | { readonly state: 'resolved'; readonly entity: GraphNode }
-  | { readonly state: 'ambiguous'; readonly candidates: readonly GraphNode[] }
+  | {
+      readonly state: 'ambiguous'
+      readonly candidates: readonly GraphNode[]
+      /** Whether the server held further matches back beyond `candidates`.
+       *
+       * Carried rather than dropped because the picker's honesty depends on
+       * it: `/graph/entities?name=` caps its page, so "3 entities share that
+       * name" is a claim the client cannot make from a capped result. Required
+       * rather than optional -- everything that builds one of these is
+       * `matchEntities` or a test, both of which can say `false` outright, so
+       * there is no legacy construction site to stay lenient for. */
+      readonly truncated: boolean
+    }
   | { readonly state: 'missing' }
   | { readonly state: 'unavailable' }
 
@@ -54,8 +66,20 @@ export const readEntityReference = (block: ComponentBlock): EntityReference => (
  * exact hit, the commonest reference a model writes would render a picker
  * every time. Two entities sharing an exact name is the real ambiguity, and
  * the one `entity_id` exists to pin.
+ *
+ * `truncated` is the caller's `EntitySearchResult.truncated` and is passed
+ * through to an `ambiguous` result rather than consulted here. It cannot
+ * change which state a page lands in -- an exact hit among the results is
+ * still an exact hit whatever the server held back -- but it decides whether
+ * the picker may claim to be showing every entity that shares the name. It is
+ * dropped on `resolved`, where it would be a claim about a question already
+ * answered, and on `missing`, which a truncated search cannot produce.
  */
-export const matchEntities = (name: string, entities: readonly GraphNode[]): ResolvedEntity => {
+export const matchEntities = (
+  name: string,
+  entities: readonly GraphNode[],
+  truncated = false,
+): ResolvedEntity => {
   if (entities.length === 0) return { state: 'missing' }
 
   const wanted = name.trim().toLowerCase()
@@ -64,5 +88,5 @@ export const matchEntities = (name: string, entities: readonly GraphNode[]): Res
 
   const [only] = candidates
   if (candidates.length === 1 && only) return { state: 'resolved', entity: only }
-  return { state: 'ambiguous', candidates }
+  return { state: 'ambiguous', candidates, truncated }
 }
