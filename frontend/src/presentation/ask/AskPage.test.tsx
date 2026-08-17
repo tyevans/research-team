@@ -13,6 +13,7 @@ import { PROJECT, turn } from './ask-fixtures.ts'
 const base = {
   projectId: PROJECT,
   transcript: [],
+  conversationId: 'c1',
   asking: false,
   error: null,
   onAsk: () => {},

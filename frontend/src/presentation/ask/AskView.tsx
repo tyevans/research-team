@@ -31,11 +31,13 @@ export const AskView = ({ projectId }: { projectId: ProjectId }) => {
   const transcript = store((state) => state.transcript)
   const asking = store((state) => state.asking)
   const error = store((state) => state.error)
+  const conversationId = store((state) => state.chatId)
 
   return (
     <AskPage
       projectId={projectId}
       transcript={transcript}
+      conversationId={conversationId}
       asking={asking}
       error={error}
       onAsk={(question) => void store.getState().send(question)}

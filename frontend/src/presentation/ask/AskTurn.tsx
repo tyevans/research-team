@@ -1,9 +1,59 @@
+import { useAskAttempts } from '@application/ask/use-ask-attempts.ts'
 import type { AskTurn as Turn } from '@domain/ask/conversation.ts'
+import { hasComponents, type LessonDocument as Doc } from '@domain/lesson/document.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Markdown } from '../common/content.tsx'
+import { LessonDocument } from '../lesson/LessonDocument.tsx'
 import { AskActivityFold } from './AskActivity.tsx'
 import { CitationList } from './CitationList.tsx'
+
+/** The file wording says the answer key is "graded on the server" and "readable
+ *  from the source toggle" -- both true of a lesson file, both false here. An
+ *  ask turn has no source toggle, and the raw answer is not withheld from this
+ *  page at all: it travels in the *same* response as `blocks`, unparsed. So the
+ *  honest claim is narrower -- out of sight until the reader has tried, not out
+ *  of reach -- and it is the one thing this surface disagrees with the file on. */
+const ASK_WITHHELD_EXPLANATION =
+  'The answer is not in what this page was given, so it cannot mark your attempt ' +
+  'locally -- it asks the server. The full answer is still part of the reply that ' +
+  'carried this question, so this keeps the answer out of sight until you have ' +
+  'tried rather than out of reach.'
+
+/** A widget-bearing answer, rendered through the same document pipeline the
+ *  lesson reader uses. A sibling of `AskTurn` rather than a branch inside it,
+ *  so `useAskAttempts` is never called conditionally -- a hook behind an `if`
+ *  changes which hooks fire between renders of the same component, which React
+ *  cannot recover from. */
+const AskTurnWidgets = ({
+  doc,
+  projectId,
+  conversationId,
+  position,
+}: {
+  doc: Doc
+  projectId: ProjectId
+  conversationId: string
+  position: number
+}) => {
+  const attempts = useAskAttempts(projectId, conversationId, position)
+  return (
+    <>
+      <LessonDocument
+        doc={doc}
+        attempts={attempts}
+        withheldExplanation={ASK_WITHHELD_EXPLANATION}
+      />
+      {/* The one honest difference from a lesson: nothing on this path
+          persists an attempt, so reopening the conversation gives a blank
+          question back. A reader who does not know this loses work and
+          blames the page rather than the design. */}
+      <p className="ask-widget-note">
+        Answers here are not saved — reopening this conversation gives you a blank question.
+      </p>
+    </>
+  )
+}
 
 /** One exchange: the question, what was consulted, the answer, its sources.
  *
@@ -20,11 +70,13 @@ export const AskTurn = ({
   turn,
   open,
   onToggle,
+  conversationId,
 }: {
   projectId: ProjectId
   turn: Turn
   open: boolean
   onToggle: () => void
+  conversationId: string
 }) => (
   // The rule between exchanges: every turn but the first, because a 28px gap
   // was the only thing separating turn n's answer from turn n+1's question
@@ -47,9 +99,23 @@ export const AskTurn = ({
     {/* The model writes markdown, and it goes through the one sanitising
         renderer this application has -- see `Markdown`. `text-fg`, not
         `text-fg-dim`: dimming the answer -- the thing the reader came for --
-        was backwards; the machinery around it is what should recede. */}
+        was backwards; the machinery around it is what should recede.
+
+        `hasComponents` is the same predicate `LessonDocument` uses to decide
+        the same question: an answer with no widgets keeps this plain path, so
+        the common case -- most answers -- grows no second render tree and no
+        attempt state. */}
     {turn.answer ? (
-      <Markdown className="text-fg" source={turn.answer} projectId={projectId} />
+      hasComponents({ blocks: turn.blocks }) ? (
+        <AskTurnWidgets
+          doc={{ blocks: turn.blocks }}
+          projectId={projectId}
+          conversationId={conversationId}
+          position={turn.position}
+        />
+      ) : (
+        <Markdown className="text-fg" source={turn.answer} projectId={projectId} />
+      )
     ) : null}
 
     {/* In the turn as well as in the page's banner. The banner is what a

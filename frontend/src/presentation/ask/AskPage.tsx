@@ -19,6 +19,7 @@ import { AskThread } from './AskThread.tsx'
 export const AskPage = ({
   projectId,
   transcript,
+  conversationId,
   asking,
   error,
   onAsk,
@@ -26,6 +27,7 @@ export const AskPage = ({
 }: {
   projectId: ProjectId
   transcript: AskTranscript
+  conversationId: string
   asking: boolean
   error: string | null
   onAsk: (question: string) => void
@@ -51,7 +53,7 @@ export const AskPage = ({
       </div>
     ) : null}
 
-    <AskThread projectId={projectId} transcript={transcript} />
+    <AskThread projectId={projectId} transcript={transcript} conversationId={conversationId} />
 
     <AskComposer asking={asking} onAsk={onAsk} />
   </section>

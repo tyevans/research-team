@@ -25,13 +25,36 @@ import { Mcq } from './Mcq.tsx'
  *    block, a component with errors renders as its own source plus a panel
  *    naming the fields, and neither takes the rest of the document down.
  */
-export const LessonDocument = ({ doc, attempts }: { doc: Doc; attempts: AttemptsApi }) => (
+const FILE_WITHHELD_EXPLANATION =
+  'The answer key was removed from this response and is graded on the server. ' +
+  'The raw file is still readable from the source toggle, so this keeps answers ' +
+  'off the page rather than out of reach.'
+
+export const LessonDocument = ({
+  doc,
+  attempts,
+  withheldExplanation = FILE_WITHHELD_EXPLANATION,
+}: {
+  doc: Doc
+  attempts: AttemptsApi
+  /** What the "answers withheld" tooltip says the answer key's absence means.
+   *  Defaults to the file wording -- "graded on the server, readable from the
+   *  source toggle" -- which is true of a lesson file and false of an ask
+   *  turn, where the raw answer travels in the *same* response as the blocks.
+   *  The ask surface passes its own text rather than this default. */
+  withheldExplanation?: string
+}) => (
   <div className="md doc">
     {doc.blocks.map((block, index) =>
       block.kind === 'markdown' ? (
         <Markdown key={index} source={block.text} className="md-unwrapped" />
       ) : (
-        <Component key={block.id} block={block} attempts={attempts} />
+        <Component
+          key={block.id}
+          block={block}
+          attempts={attempts}
+          withheldExplanation={withheldExplanation}
+        />
       ),
     )}
   </div>
@@ -46,7 +69,15 @@ const RENDERERS: Readonly<
   checklist: Checklist,
 }
 
-const Component = ({ block, attempts }: { block: ComponentBlock; attempts: AttemptsApi }) => {
+const Component = ({
+  block,
+  attempts,
+  withheldExplanation,
+}: {
+  block: ComponentBlock
+  attempts: AttemptsApi
+  withheldExplanation: string
+}) => {
   if (block.unknown) return <UnknownComponent block={block} />
   if (block.errors.length > 0) return <BrokenComponent block={block} />
 
@@ -62,13 +93,7 @@ const Component = ({ block, attempts }: { block: ComponentBlock; attempts: Attem
       <div className="cmp-kind">
         <span className="cmp-kind-name">{block.type}</span>
         {block.withheld.length > 0 ? (
-          <Tooltip
-            explanation={
-              'The answer key was removed from this response and is graded on the server. ' +
-              'The raw file is still readable from the source toggle, so this keeps answers ' +
-              'off the page rather than out of reach.'
-            }
-          >
+          <Tooltip explanation={withheldExplanation}>
             <span className="cmp-withheld">answers withheld</span>
           </Tooltip>
         ) : null}
