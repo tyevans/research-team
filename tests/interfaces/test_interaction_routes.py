@@ -149,6 +149,45 @@ async def test_an_empty_batch_is_accepted_and_writes_nothing(application):
         assert response.json() == {"accepted": 0, "rejected": 0}
 
 
+async def test_a_payload_carrying_an_envelope_key_is_rejected_alone(application):
+    """A payload that names an envelope-owned key (`seq`, here) collides with
+    the explicit keyword the route passes to the same constructor -- a
+    `TypeError`, not a `ValidationError`, if nothing guards against it. Before
+    the fix this escaped the route's try/except entirely and 500'd the whole
+    batch, losing the good event beside it. Fails if the collision check is
+    removed and the whole batch is lost with it.
+    """
+    browser_session, install = uuid4(), uuid4()
+    good = _envelope(browser_session, install, seq=1)
+    bad = _envelope(browser_session, install, seq=2)
+    bad["payload"] = {**bad["payload"], "seq": 999}
+    async with await _client(_api(application)) as client:
+        response = await client.post("/api/interactions", json={"events": [good, bad]})
+
+        assert response.status_code == 202
+        assert response.json() == {"accepted": 1, "rejected": 1}
+
+    await application.interaction_log_caught_up()
+    assert len(await application.interaction_log.events(browser_session)) == 1
+
+
+async def test_the_stored_row_reflects_the_envelope_never_the_payload(application):
+    """Even when a payload names an envelope key with a value that would be
+    harmless to accept, the envelope is the authority: the event is rejected
+    rather than the payload's value being allowed to override it."""
+    browser_session, install = uuid4(), uuid4()
+    other_install = uuid4()
+    event = _envelope(browser_session, install, seq=7)
+    event["payload"] = {**event["payload"], "install_id": str(other_install)}
+    async with await _client(_api(application)) as client:
+        response = await client.post("/api/interactions", json={"events": [event]})
+
+        assert response.json() == {"accepted": 0, "rejected": 1}
+
+    await application.interaction_log_caught_up()
+    assert await application.interaction_log.events(browser_session) == []
+
+
 async def test_the_route_is_absent_when_collection_is_off(application):
     """AGENT_INTERACTION_LOG=0 makes the entrypoint pass None, and the house
     pattern is that the dependency being absent is the switch."""

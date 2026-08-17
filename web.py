@@ -168,6 +168,15 @@ def main() -> None:
             # front of this port, and this is the one route that would spend
             # an hour of model time for whoever calls it.
             research=application.research if config.research_run_over_http() else None,
+            # Unlike every other flag-gated dependency above, this one
+            # defaults to on: `config.interaction_log_enabled` argues that
+            # "unset means the route is not there" is the stronger promise
+            # for an optional capability, but a log nobody collects is worth
+            # nothing, so interaction telemetry ships collecting unless
+            # someone opts out.
+            interactions=(
+                application.interaction_recorder if config.interaction_log_enabled() else None
+            ),
         ),
         host=config.web_host(),
         port=config.web_port(),

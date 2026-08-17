@@ -93,6 +93,36 @@ def test_the_entrypoint_passes_no_dependency_as_a_bare_none():
     assert not nulled, f"web.py passes {nulled} as a literal None, which wires nothing"
 
 
+def test_the_interaction_log_switch_actually_removes_the_dependency(monkeypatch):
+    """`AGENT_INTERACTION_LOG=0` must make `interactions` evaluate to `None`
+    at the entrypoint's own call site -- not merely somewhere in `config.py`.
+
+    Evaluates the exact expression `web.py` passes for `interactions=`,
+    against a stub `application` and the real `config` module, with the env
+    var toggled. Fails if the guard is ever weakened to a bare pass-through
+    that ignores the flag, which `test_the_entrypoint_passes_no_dependency_as_a_bare_none`
+    above would not catch -- a conditional is not a literal `None`.
+    """
+    from research_team.infrastructure import config
+
+    order = list(inspect.signature(create_app).parameters)
+    supplied = _supplied_parameters(_create_app_call(), order)
+    expression = ast.Expression(supplied["interactions"])
+    ast.fix_missing_locations(expression)
+    code = compile(expression, filename=str(ENTRYPOINT), mode="eval")
+
+    class _StubApplication:
+        interaction_recorder = object()
+
+    namespace = {"application": _StubApplication(), "config": config}
+
+    monkeypatch.setenv("AGENT_INTERACTION_LOG", "0")
+    assert eval(code, namespace) is None
+
+    monkeypatch.setenv("AGENT_INTERACTION_LOG", "on")
+    assert eval(code, namespace) is _StubApplication.interaction_recorder
+
+
 @pytest.mark.parametrize("parameter", ["topics", "topic_repository", "corpus"])
 def test_the_guarded_parameters_are_still_optional_on_the_factory(parameter):
     """The guard only means anything while the factory tolerates the absence.

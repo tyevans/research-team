@@ -1735,6 +1735,30 @@ def create_app(
 
     _interaction_kinds = {event_type.__name__: event_type for event_type in INTERACTION_EVENTS}
 
+    _INTERACTION_ENVELOPE_KEYS = frozenset(
+        {
+            "aggregate_id",
+            "install_id",
+            "seq",
+            "view",
+            "occurred_at",
+            "project_id",
+            "session_id",
+            "received_at",
+        }
+    )
+    """The keyword arguments the route itself supplies to every event
+    constructor below. `envelope.payload` is splatted alongside them, and a
+    payload that happens to carry one of these names collides with the
+    explicit keyword -- not a `ValidationError` but a `TypeError` ("got
+    multiple values for keyword argument"), which the route's per-event
+    try/except does not catch, so it used to escape the loop and 500 the
+    whole batch. Checked explicitly, before the call, rather than widening
+    the `except`: the envelope's own values must never be reachable from
+    payload content in the first place, whether or not the exception type
+    happens to line up.
+    """
+
     @app.post("/api/interactions")
     async def post_interactions(body: InteractionBatch):
         """Record what the console's user did. Capture only; nothing reads
@@ -1769,6 +1793,16 @@ def create_app(
             if event_type is None:
                 rejected += 1
                 continue
+            if not _INTERACTION_ENVELOPE_KEYS.isdisjoint(envelope.payload):
+                # A payload carrying an envelope-owned key (e.g. `seq`)
+                # would otherwise collide with the explicit keyword below
+                # and raise `TypeError`, not `ValidationError` -- see
+                # `_INTERACTION_ENVELOPE_KEYS`. The envelope is the
+                # authority for these fields; payload content never
+                # overrides them, so the event is rejected rather than
+                # silently dropping either value.
+                rejected += 1
+                continue
             try:
                 events.append(
                     event_type(
@@ -1783,9 +1817,13 @@ def create_app(
                         **envelope.payload,
                     )
                 )
-            except ValidationError:
+            except (ValidationError, TypeError):
                 # One event's payload not matching its kind. Counted, not
-                # raised: see the docstring.
+                # raised: see the docstring. `TypeError` is belt-and-braces
+                # here, not the primary defense -- the collision check above
+                # is what actually stops an envelope-owned key from reaching
+                # the constructor; this only catches whatever that check
+                # didn't anticipate.
                 rejected += 1
 
         accepted = await interactions.record(events)
