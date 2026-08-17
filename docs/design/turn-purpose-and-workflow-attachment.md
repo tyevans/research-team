@@ -42,6 +42,24 @@ Each claim below was read out of the code named, not inferred.
   the same condition. `running_workflow` (`:1107`) reads only
   `session.state.project_id` → the project's `preset_id`. It has no notion of
   who asked for the turn. **Verified.**
+- **Correction, made after the branch was built: there are *four* call sites,
+  not two.** `composition.py:1199` (`workflow_tools`), `:1243`
+  (`granted_tools`), `:1434` (`turn_middleware`), `:1538` (`gate_review`). Two
+  are the genuine workflow consumers above. `gate_review` answering `None` for
+  a round is harmless, since `advance_stage` is no longer bound. The fourth
+  was a Critical: `granted_tools` called `running_workflow` only to take a
+  project id out of its first tuple slot, so making the fold answer `None` for
+  a round silently took away that round's corpus reader and its page keeper.
+  See the commit that moved it to `session.state.project_id`.
+
+  **What the miscount cost is the part worth keeping.** This survived five
+  per-task reviews, because the early return and the caller that misused it
+  are 100 lines apart and never appeared in the same diff — each reviewer saw
+  a correct early return, and the survey above told everyone the consumers had
+  already been enumerated. A consumer survey is load-bearing in a change that
+  alters what a shared helper returns, and this one was taken by reading the
+  two call sites that were *about* workflows rather than by grepping for the
+  name.
 - **`advance_stage` is floored at `ask`.** `autonomy.py:67-71`,
   `TOOL_FLOORS[ADVANCE_STAGE_TOOL] = "ask"`, and the docstring says why: it *is*
   the review gate. So an unattended round that calls it hits an approval
@@ -215,7 +233,12 @@ compound:
 If a fix is wanted before the design lands, do it as the four lines *and* file
 the design; do not let the four lines close the question.
 
-### 2.3 Why not fix it at the two consumers, or at `turns.run`
+### 2.3 Why not fix it at the workflow consumers, or at `turns.run`
+
+(Titled "the two consumers" when written. The argument below is unchanged and
+still stands — it is about the two consumers that genuinely want a workflow —
+but see the correction in §1: four call sites read `running_workflow`, and one
+of them wanted a project id.)
 
 At the consumers: `workflow_tools` and `turn_middleware` would each need the
 same test, which is precisely the "a run gated by half a workflow" failure
@@ -349,6 +372,13 @@ fixture did not create.
 - Behaviourally: seeding, dispatch and research-round turns lose the stage
   prompt, `advance_stage`, and the tool denylist. Chat and stage turns are
   unchanged. Nothing in the HTTP contract changes.
+- `SessionService.fork` replays the source's events verbatim, `SessionStarted`
+  included, so forking a round or a seeding session gives a person a session
+  labelled `RESEARCH_ROUND` — no stage prompt, no `advance_stage`. **Seen and
+  deliberately deferred:** the failure direction is the benign one
+  `WORKFLOW_DRIVEN`'s own docstring names, and re-stamping a purpose mid-replay
+  changes fork's core semantics, which deserves its own review rather than a
+  tail-end patch on this branch. Filed as `BACKLOG.md` B101.
 
 ## What this does to an existing database
 
