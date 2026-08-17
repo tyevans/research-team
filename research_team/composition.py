@@ -1231,28 +1231,36 @@ def build_application(
         unattended run should have whether or not a person actually granted
         it hosts, not only once they do.
 
-        Built with this project's corpus reader when one is running, mirroring
-        `project_fetch` below -- otherwise a covered fetch under a grant would
-        stop finding pages this project already has, for the whole time a
-        grant is attached, which is a regression `_compose`'s shadowing would
-        otherwise hide until someone noticed stale corpus reads.
+        Built with this project's corpus reader, mirroring `project_fetch`
+        below -- otherwise a covered fetch under a grant would stop finding
+        pages this project already has, for the whole time a grant is
+        attached, which is a regression `_compose`'s shadowing would otherwise
+        hide until someone noticed stale corpus reads.
+
+        **The reader and the keeper follow the *project*, not the workflow.**
+        This used to take the project id out of `running_workflow`'s first
+        tuple slot, which reads as harmless and is not: it silently made both
+        of them conditional on the project having selected a preset, so a run
+        on a preset-less project already fetched with no corpus and saved
+        nothing. Giving a round no workflow turned that latent bug into a live
+        one on *every* round. `turn_sources` keys off `session.state.
+        project_id` for the same reason and states it; this now matches.
         """
         grant = resolved_grants.get(session.aggregate_id)
         if grant is None:
             return ()
-        running = await running_workflow(session)
-        reader = (
-            ProjectCorpusReader(corpus, running[0], blob_store)
-            if running is not None
-            else None
-        )
+        project_id = session.state.project_id
         return (
             build_fetch_tool(
                 recall=recall,
-                corpus=reader,
+                corpus=(
+                    ProjectCorpusReader(corpus, project_id, blob_store)
+                    if project_id is not None
+                    else None
+                ),
                 pages=pages,
                 grant=grant,
-                keep=_keeper(running[0]) if running is not None else None,
+                keep=_keeper(project_id) if project_id is not None else None,
             ),
         )
 
