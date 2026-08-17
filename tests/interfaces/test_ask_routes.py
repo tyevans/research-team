@@ -87,8 +87,60 @@ def test_the_answer_arrives_last_with_its_citations():
     assert last == {
         "type": "answer",
         "text": "two papers",
+        "position": 0,
+        "blocks": [{"kind": "markdown", "text": "two papers"}],
         "citations": [{"kind": "source", "id": "s1"}],
     }
+
+
+MCQ_ANSWER = (
+    "```component:mcq\n"
+    "id: q1\n"
+    "prompt: Which year?\n"
+    "options:\n"
+    '  - text: "1974"\n'
+    "    correct: true\n"
+    '  - text: "1975"\n'
+    "    correct: false\n"
+    "```\n"
+)
+"""An mcq with no leading prose, so the parsed answer is exactly one
+component block -- ["markdown", "component"] would be equally correct but
+would not isolate what this test is about."""
+
+
+def test_the_answer_frame_carries_parsed_blocks_and_its_position():
+    """The live widget cannot be graded without a position, and cannot be
+    rendered without blocks. Red against a frame carrying only `text`."""
+    executor = StubExecutor(answer=AskAnswer(text=MCQ_ANSWER))
+    response = client(ask_service(executor)).post(
+        f"/api/projects/{uuid4()}/ask", json={"chat_id": "c", "question": "quiz me"}
+    )
+
+    answer = frames(response)[-1]
+    assert answer["position"] == 0
+    assert [block["kind"] for block in answer["blocks"]] == ["component"]
+    # The prose survives beside the blocks: a client that ignores `blocks`
+    # renders exactly what it rendered before this feature.
+    assert answer["text"]
+
+
+def test_the_second_turn_s_position_is_one():
+    """The bug this is written red for is a frame that reports the *count* of
+    turns rather than the index of this one -- invisible in every single-turn
+    test, and every hand test is a single turn."""
+    ask = ask_service(StubExecutor(answer=AskAnswer(text="first answer")))
+    project = uuid4()
+    http = client(ask)
+    http.post(f"/api/projects/{project}/ask", json={"chat_id": "c", "question": "first"})
+
+    ask._executor.answer = AskAnswer(text="second answer")
+    response = http.post(
+        f"/api/projects/{project}/ask", json={"chat_id": "c", "question": "second"}
+    )
+
+    answer = frames(response)[-1]
+    assert answer["position"] == 1
 
 
 def test_activity_is_streamed_before_the_answer():

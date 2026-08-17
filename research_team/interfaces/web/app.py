@@ -52,6 +52,7 @@ from research_team.application.ask import (
     AskInFlight,
     AskService,
 )
+from research_team.application.ask_components import answer_document
 from research_team.application.blobs import BlobStorePort
 from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_editing import CorpusEditor, DocumentExists, NotDropped
@@ -2923,6 +2924,14 @@ def create_app(
             body = {
                 "type": "answer",
                 "text": note.text,
+                "position": note.position,
+                # Parsed here rather than in the browser for the four reasons
+                # `application/components.py` opens with, of which the second
+                # binds hardest: withholding is only real if the projection
+                # happens before the bytes leave. `text` travels beside it
+                # anyway (see the design's section 5) -- that is honesty about
+                # the strength of the property, not a reason to skip it.
+                "blocks": answer_document(note.text)["blocks"],
                 "citations": [
                     {"kind": citation.kind, "id": citation.id} for citation in note.citations
                 ],
@@ -3069,6 +3078,7 @@ def create_app(
                     "position": turn.position,
                     "question": turn.question,
                     "answer": turn.answer,
+                    "blocks": answer_document(turn.answer)["blocks"],
                     "citations": turn.citations,
                     "recordedAt": turn.recorded_at.isoformat(),
                 }
