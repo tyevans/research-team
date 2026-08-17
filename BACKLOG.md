@@ -3174,29 +3174,33 @@ would newly run without embeddings need checking one at a time rather than in
 a feature branch about video.
 
 
-### B94. A running transcription shows no state on its own media row
+### B94. There is still no batch "Transcribe all" control
 
-Between the 202 and the terminal frame — minutes for an hour of audio — a media
-row in the console shows a live "Transcribe" button and nothing else.
-`documentExtraction` returns `unextractable` for every media row, deliberately
-and with a good comment (a video is not a document and must not be offered to
-the extraction queue), and `perceiveBusy` is only true while the HTTP request
-itself is in flight, which is milliseconds.
+The per-row half of this entry is done: `mediaPerception` in
+`frontend/src/domain/research/extraction-queue.ts` reads a medium's
+transcription state off the extraction queue under the *medium's* own id
+(perception enqueues under the medium, extraction under the derived id, so the
+two share one board and cannot collide), and the media row renders
+"Transcribing…" / "Queued for transcription" / "Transcription failed: …" with
+the press off while the queue holds it. `documentExtraction` still answers
+`unextractable` for every medium and must keep doing so — that is what keeps a
+video out of the extraction queue, and the third state was built beside it
+rather than by weakening it.
 
-Not duplicated work, and that is why this is cosmetic rather than a defect: a
-second press is handled correctly, answering 202 with `queued: false` and
-"Already queued for transcription". The extraction pane does show the running
-job, so the state is visible somewhere — just not on the row carrying the
-button that started it.
+What remains is the batch control this was originally deferred to: one
+"Transcribe all" press for a corpus of recordings, alongside "Extract all
+(N)". It should **consume `mediaPerception` rather than rebuild it** — the
+per-row state exists now, and the count beside the button is the same
+derivation `unextractedCount` does for extraction (`canPerceive` is the
+predicate). The server side is the open question, not the client one: there is
+no bulk perceive route, and `POST /sources/extract` is the shape to copy.
 
-The gap is the one the split between `busy` and `perceiveBusy` leaves open by
-construction: `busy` tracks the extraction queue, which media is excluded from,
-and `perceiveBusy` tracks a request that has already returned. The fix is a
-third state read off the queue keyed by the *medium's* id (perception enqueues
-under the medium, extraction under the derived id, so the two cannot collide),
-rendered on the media row the way `ExtractionPane` renders a stage. Left for
-the slice that adds the batch "Transcribe all" control, which needs the same
-per-row state and would otherwise build it twice.
+Also left undone deliberately: no `transcribed` state. A finished perception is
+reported by the row swapping its press for a "Transcript" link off
+`derivedSources`, so between the queue recording `done` and the corpus refresh
+landing the derived row, the medium briefly offers "Transcribe" again. A second
+press there is answered `queued: false`, so the cost is a stale offer rather
+than duplicated work.
 
 ### B100. `build_application` still leaks the event store, blob store, and every projection runner on a partial build
 

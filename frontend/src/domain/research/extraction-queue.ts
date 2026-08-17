@@ -110,6 +110,62 @@ export const documentExtraction = (
   return { kind: 'idle' }
 }
 
+/** What a media row should say about its *transcription*, which is a different
+ *  question from `DocumentExtraction` over the same board.
+ *
+ * The third state B94 records as missing. `documentExtraction` answers
+ * `unextractable` for every medium and must keep doing so -- a medium is not a
+ * document and must not be offered to the extraction queue -- and `perceiveBusy`
+ * is only true while the POST itself is in flight, which is milliseconds
+ * against the minutes an hour of audio takes. Between those two the row showed
+ * a live "Transcribe" button and nothing else.
+ *
+ * Read off the same board, keyed by the *medium's* id: `perceive` enqueues
+ * under the medium and extraction under the derived id (`<id>#perceived`), so
+ * the two share one queue and cannot collide on one key. See
+ * `ExtractionQueue._drain`, which is where perception's outcome is recorded
+ * with no entity counts.
+ */
+export type MediaPerception =
+  | { readonly kind: 'transcribing' }
+  | { readonly kind: 'queued' }
+  | { readonly kind: 'failed'; readonly detail: string | null }
+  /** Nothing to say: a text row, a dropped medium, or one the queue has never
+   *  held. Deliberately *not* a `transcribed` state -- a finished perception is
+   *  already reported by the row swapping its press for a "Transcript" link off
+   *  `derivedSources`, and a second account of the same fact is how a row ends
+   *  up drawing both. */
+  | { readonly kind: 'idle' }
+
+/** Order matters here exactly as it does in `documentExtraction`: running and
+ *  queued before any past outcome, so a *re*-transcription reports what is
+ *  happening now rather than how the last one went.
+ *
+ * Non-media rows answer `idle` rather than being refused, so a caller cannot
+ * be wrong about which rows may ask. A text source can reach this queue on its
+ * own account -- that is what extraction is -- and answering its extraction as
+ * a transcription would be the mirror image of the mistake
+ * `documentExtraction` guards against, so the kind is checked first and
+ * nothing else is consulted.
+ */
+export const mediaPerception = (
+  document: SourceSummary,
+  board: ExtractionQueueBoard,
+): MediaPerception => {
+  if (document.kind !== 'media') return { kind: 'idle' }
+  if (board.running === document.sourceId) return { kind: 'transcribing' }
+  if (board.queued.includes(document.sourceId)) return { kind: 'queued' }
+  const outcome = board.finished.find((row) => row.sourceId === document.sourceId)
+  if (outcome?.status === 'failed') return { kind: 'failed', detail: outcome.detail }
+  return { kind: 'idle' }
+}
+
+/** Whether a transcription press would do anything. Derived for
+ *  `canExtract`'s reason: "may I press it" and "what does it say" cannot be
+ *  allowed to disagree. */
+export const canPerceive = (state: MediaPerception): boolean =>
+  state.kind === 'idle' || state.kind === 'failed'
+
 /** How many documents "extract all unextracted" would actually take on.
  *
  * Counted here rather than read from the server so the header can say a number

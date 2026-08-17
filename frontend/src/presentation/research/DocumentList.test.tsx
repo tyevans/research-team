@@ -776,6 +776,98 @@ it('offers Transcribe on a medium nothing has been derived from', async () => {
   expect(perceive).toHaveBeenCalledWith(PROJECT, 'm1')
 })
 
+/** The state between the 202 and the terminal frame, which is minutes for an
+ *  hour of audio and used to be invisible (B94).
+ *
+ * The row read `unextractable` from `documentExtraction` -- correctly, a video
+ * is not a document -- and `perceiveBusy` went false as soon as the POST
+ * returned, so a transcription in progress showed a live "Transcribe" button
+ * and nothing else. Asserted through the whole pane rather than against
+ * `mediaPerception` alone, because the domain test cannot see the board
+ * failing to reach the row: the props are the seam this pins.
+ *
+ * Both halves matter. The label is what tells the reader the press did
+ * something; the off button is what stops a second press the server would
+ * absorb as "Already queued for transcription".
+ */
+it('shows a medium the queue is transcribing, and stops offering the press', async () => {
+  const documents = fakeDocuments(
+    vi.fn<DocumentRepository['list']>().mockResolvedValue([media({ title: 'The keynote' })]),
+    {
+      extractionQueue: vi.fn<DocumentRepository['extractionQueue']>().mockResolvedValue({
+        ...emptyExtractionQueue,
+        // Under the medium's own id: `perceive` enqueues there, and the
+        // derived `m1#perceived` is what extraction would queue under.
+        running: SourceId('m1'),
+      }),
+    },
+  )
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+
+  const row = (await screen.findByText('The keynote')).closest('[data-document-row]')
+  await waitFor(() =>
+    expect(within(row as HTMLElement).getByText('Transcribing…')).toBeInTheDocument(),
+  )
+  expect(within(row as HTMLElement).getByRole('button', { name: 'Transcribe' })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  )
+})
+
+/** The other end of the same state: once the queue no longer holds the medium
+ *  the row goes back to offering the press, and says nothing about a
+ *  transcription that is not happening.
+ *
+ * A waiting medium rather than an idle one, so this is not merely the default
+ * board every other test renders: it pins that `queued` is reported and that
+ * `finished` -- where a terminated perception lands, with no entity counts --
+ * leaves no live state behind. Would pass with the queued half reverted only
+ * if the row also stopped reporting "Queued for transcription", which the
+ * first assertion refuses.
+ */
+it('drops the transcribing state once the queue no longer holds the medium', async () => {
+  const board = vi
+    .fn<DocumentRepository['extractionQueue']>()
+    .mockResolvedValue({ ...emptyExtractionQueue, queued: [SourceId('m1')] })
+  const documents = fakeDocuments(
+    vi.fn<DocumentRepository['list']>().mockResolvedValue([media({ title: 'The keynote' })]),
+    { extractionQueue: board },
+  )
+
+  const { unmount } = renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+  const queuedRow = (await screen.findByText('The keynote')).closest('[data-document-row]')
+  await waitFor(() =>
+    expect(
+      within(queuedRow as HTMLElement).getByText('Queued for transcription'),
+    ).toBeInTheDocument(),
+  )
+  unmount()
+
+  board.mockResolvedValue({
+    ...emptyExtractionQueue,
+    finished: [
+      {
+        sourceId: SourceId('m1'),
+        status: 'done',
+        detail: null,
+        entities: null,
+        relationships: null,
+      },
+    ],
+  })
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+
+  const row = (await screen.findAllByText('The keynote')).at(-1)!.closest('[data-document-row]')
+  await waitFor(() =>
+    expect(within(row as HTMLElement).getByRole('button', { name: 'Transcribe' })).toHaveAttribute(
+      'aria-disabled',
+      'false',
+    ),
+  )
+  expect(within(row as HTMLElement).queryByText(/Transcribing|Queued for transcription/)).toBeNull()
+})
+
 /** A dropped medium offers nothing, which is an assertion of absence and so
  *  the kind that rots quietly if never written down.
  *
