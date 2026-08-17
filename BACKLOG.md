@@ -1183,68 +1183,77 @@ worth the complexity it costs.
 
 ### B84. Listing the corpus loads every document's text to render a table of titles
 
-`CorpusStore.list_all` is the only listing method, and it loads whole rows.
-A `CorpusDocumentRow` carries `text`, so every caller above it --
-`CorpusReadPort.list_sources`, and therefore `GET /api/projects/{id}/sources`,
-the agent's own `list_sources` tool, and `fetch.stored_page` -- materialises the
-full body of every document in the project in order to render source ids, titles
-and character counts. Nothing above the read model can *see* the text
-(`SourceListing.record` is a `TextRecord`/`MediaRecord`, which has no field for
-it), so this is cost, not a leak.
+**Measured, and half fixed.** `fetch.stored_page` -- the hot caller, and the
+reason this entry said to measure that one rather than `GET /sources` -- no
+longer lists the corpus at all. It calls `CorpusReadPort.list_text_uris`, a
+column-projected `SELECT source_id, uri` behind `CorpusStore.list_text_uris`.
+The rest of this entry is what remains.
 
-**`stored_page` is the caller to measure, and it is not the obvious one.**
-`fetch.py:191` calls `list_sources()` on **every `fetch` tool call**, to match one
-normalised URL against the corpus -- so during an autonomous run this is tens to
-hundreds of calls, each materialising every live document's body, and the
-frequency scales with the *work* rather than with someone opening a page. The
-route and the listing tool are a person pressing something; this is a hot loop.
-Anyone picking this up should profile `stored_page` first, not `GET /sources`.
-(`stored_page` needs only `uri` and `source_id`, so it is also the caller a
-column-projected query would help most, and the one that could be fixed
-independently if the general fix stays deferred.)
+**The measurement, taken 2026-08-16** with `tracemalloc` over a fixture corpus
+(SQLite on local disk, one `stored_page` call, mean of 3-5 reps after a warm
+call). The 40,000-character body is this entry's own "typical research paper"
+estimate, now used rather than merely reasoned; the 200,000 case is
+`MAX_DOCUMENT_CHARS`.
 
-**It arrived with `list_all` in the media-corpus work and was invisible for two
-tasks, which is the part worth knowing.** `CorpusStore.list` sat beside it the
-whole time with a nine-column `SELECT` that never touched `text`, and it was
-`list` that `test_listing_carries_metadata_and_never_text` read -- so the
-property was asserted, held, and described a method the application layer had
-already stopped calling. Deleting `list` in review (it queried the documents
-table alone, which is the half-corpus hazard `list_documents` was removed over)
-took away the last method with the property and the only test guarding it in
-one move. Not a regression that review introduced; one review made visible.
+| corpus | `stored_page` via `list_sources` | `list_all` | raw SQL, all columns | raw SQL, 2-6 columns |
+|---|---|---|---|---|
+| 100 x 40K | 8.5 ms / 4.5 MB | 6.8 ms / 4.4 MB | 2.0 ms / 4.1 MB | 1.3 ms / 0.04 MB |
+| 500 x 40K | 48.1 ms / 22.5 MB | 34.4 ms / 22.0 MB | 13.5 ms / 20.4 MB | 5.7 ms / 0.16 MB |
+| 500 x 200K | 149.6 ms / 102.5 MB | 140.7 ms / 102.0 MB | 37.0 ms / 100.4 MB | 21.3 ms / 0.16 MB |
 
-The fix is two column-projected queries, one per table, both feeding
+The reasoned worst case in the old entry was close: ~100MB at 500 documents at
+the cap, ~20MB at 500 x 40K. It was right about the magnitude and wrong about
+which fix follows from it.
+
+**The attribution, which is the part that decided the fix.** Peak memory is
+*entirely* the bytes: 22.5 MB -> 0.16 MB, a 140x reduction, with pydantic
+construction still in the picture. Wall time splits three ways at 500 x 40K --
+5.7 ms narrow query, +7.8 ms to carry the text out of SQLite, +21 ms pydantic
+-- so per-row model construction is indeed the largest single share, exactly as
+this entry suspected. But it is *not* per-row: it costs 0.042 ms/row at 40,000
+characters and 0.20 ms/row at 200,000, so it scales with the size of the text
+field, not the row count. It is the text either way. **A narrower row model
+that still selected `text` would have saved nothing at all**, which is why the
+fix is column projection after all.
+
+**What remains, and it is the cheaper half.** `CorpusStore.list_all` still
+loads whole rows, so `CorpusReadPort.list_sources` -- and therefore `GET
+/api/projects/{id}/sources` and the agent's `list_sources` tool -- still pay
+34.4 ms and 22.0 MB at 500 x 40K to render ids, titles and counts. Both are a
+person pressing something, once, rather than a loop, and 22 MB transiently on a
+page load is not a defect worth machinery. Nothing above the read model can
+*see* the text (`SourceListing.record` is a `TextRecord`/`MediaRecord`, which
+has no field for it), so this stays cost rather than a leak.
+
+**Revisit at a corpus where a page load is felt: roughly 1,500 documents at
+40,000 characters** -- linear in total characters on the numbers above, so
+about 100 ms and 65 MB per listing call, and worse under concurrency. Or
+sooner, if any caller starts listing in a loop the way `stored_page` did.
+
+The fix, if it comes: two column-projected queries, one per table, both feeding
 `to_record` -- which reads `char_count` on a text row and
-`media_type`/`byte_count` on a media one, so the two projections cannot share a
-column tuple the way `list`'s single one did. That is the whole cost: it is not
-hard, it is just more machinery than an unmeasured cost justifies, and this
-repository does not optimise on reasoning alone.
+`media_type`/`byte_count` on a media one, so unlike `list_text_uris` they
+cannot share a column tuple, and unlike it they must return something
+`to_record` and `corpus_reader` (which reads `extracted_at` and does an
+`isinstance`) can still consume. That is the whole cost, and it is now the only
+reason this is deferred rather than done.
 
-**What would make it worth doing.** One listing call transiently holds the sum of
-every live document's text in the project. `MAX_DOCUMENT_CHARS = 200_000`
-(`knowledge.py:40`) caps each document, so the worst case is bounded and
-checkable: 500 documents at the cap is ~100MB per call. **The realistic figure is
-reasoned, not measured** -- taking ~40KB of extracted text as a typical research
-paper, which is an estimate nobody in this repository has checked against real
-stored documents, a 500-document corpus is ~20MB per call and a thousand-paper
-one ~40MB. Treat both numbers as an order of magnitude, not a measurement. Per
-`fetch`, per concurrent run, is what makes even the small figure worth a look.
+**The trap this entry recorded, and how the new tests avoid it.**
+`CorpusStore.list` once sat beside `list_all` with a nine-column `SELECT` that
+never touched `text`, and `test_listing_carries_metadata_and_never_text` tested
+`list` -- a method the application layer had already stopped calling, so the
+property was asserted, held, and described dead code. The two new tests read
+`list_text_uris`, which is the method `stored_page` actually calls:
+`test_the_uri_listing_matches_what_a_full_listing_says` pins it against
+`list_all` so the hand-written SQL filter cannot drift, and
+`test_the_uri_listing_never_selects_a_documents_text` asserts the column list
+itself.
 
-The number that would settle it is one nobody has taken: the wall time and peak
-memory of `stored_page` on the largest real corpus available. That is worth
-saying because per-row pydantic model construction may well dominate the bytes,
-and if it does then column projection is the wrong fix and a narrower row model
-is the right one. **Measure before building either -- and the measurement is
-cheap.** `stored_page` is one call on a fixture corpus; if timing it is an hour's
-work, do that hour before deciding anything here, including deciding to keep
-deferring it.
+`test_listing_carries_metadata_and_never_text` still asserts only the
+structural half for `list_all`, and its docstring still says it would not fail
+on the memory cost. That remains true and is now deliberate: the memory cost of
+`list_all` is measured above and accepted, not unknown.
 
-`test_listing_carries_metadata_and_never_text` now asserts only the structural
-half -- that `to_record` yields a record with no field for text, so nothing
-above the read model can see a body through a listing -- and its docstring says
-in as many words that it would **not** fail on the memory cost. There is no test
-anywhere that would. `list_all`'s own docstring names itself as the line to come
-back to.
 
 ### B85. The blob sweep is operator-run; nothing reclaims automatically
 

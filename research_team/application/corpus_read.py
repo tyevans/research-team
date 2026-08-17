@@ -134,6 +134,20 @@ class SourceListing:
     extracted: bool
 
 
+@dataclass(frozen=True)
+class TextSourceUri:
+    """One live text source's id and the URI it was stored under.
+
+    Two strings rather than a record, and the narrowness is the whole point:
+    this exists so `fetch.stored_page` can match a URL against the corpus
+    without the read model loading every document's body to answer. See
+    `CorpusReadPort.list_text_uris` for the measurement that bought it.
+    """
+
+    source_id: str
+    uri: str
+
+
 class OpenBlob(Protocol):
     """`MediaHandle.open`: call it to start reading, optionally from an offset.
 
@@ -210,6 +224,45 @@ class CorpusReadPort(Protocol):
         rows back too, because the corpus keeps them on purpose: a drop is a
         judgement someone made, and hiding it from a browser would misreport
         what the project holds.
+        """
+        ...
+
+    async def list_text_uris(self) -> list[TextSourceUri]:
+        """Every live text source's id and URI, and nothing else.
+
+        A second listing method, which the docstring above says one method is
+        the only shape that cannot lie by omission -- so the exception needs
+        its reason. This one cannot be mistaken for a corpus listing: it
+        answers with two strings, has no record in it and nothing to render,
+        and its one caller (`fetch.stored_page`) is matching a URL against
+        text sources on purpose. Matching a media source there would find a
+        source with no text for `read_document` to return and fall through to
+        "unreadable" for a reason that has nothing to do with a drop.
+
+        It exists because `list_sources` was measurably the wrong call to make
+        in a hot loop. `stored_page` runs on **every `fetch` tool call**, and
+        `list_sources` materialises every live document's body to answer it.
+        Measured on 2026-08-16 against a fixture corpus of 500 documents of
+        40,000 characters each (`tracemalloc`, one `stored_page` call):
+        **48.1 ms and 22.5 MB peak** through `list_sources`, against **5.7 ms
+        and 0.16 MB** for the column-projected query behind this. At 500
+        documents near the `MAX_DOCUMENT_CHARS` cap it is 149.6 ms / 102.5 MB
+        against the same 0.16 MB.
+
+        The attribution is why the fix is column projection and not a narrower
+        row model: peak memory is *entirely* the bytes (a 140x reduction with
+        the pydantic construction still in place), and the per-row pydantic
+        cost itself scales with the size of the text field rather than with
+        the row count -- 0.042 ms/row at 40,000 characters, 0.20 ms/row at
+        200,000. A narrower model that still selected `text` would have saved
+        nothing. `BACKLOG.md` B84 carries the full numbers.
+
+        Dropped and deleted sources are absent, with no opt-in: the caller is
+        deciding whether to serve a stored page instead of fetching one, and
+        serving a document somebody excluded is how an excluded source ends up
+        cited. A source stored without a `uri` is absent too -- most of the
+        corpus looks like that, and it must be a miss rather than a match on
+        the empty string.
         """
         ...
 

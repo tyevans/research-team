@@ -180,10 +180,16 @@ async def stored_page(corpus: CorpusReadPort, url: str, max_chars: int) -> str |
 
     Matched on `normalize_url` rather than on the stored string, so a URL that
     differs only in scheme case, a default port or a fragment is recognised as
-    the same page. Scanning `list_sources` is O(corpus) per call; a corpus
-    holds hundreds of records at most and the scan is a local read-model
-    query, so an index would be machinery bought against a cost nobody has
-    measured.
+    the same page. Scanning is O(corpus) per call and stays that way: the scan
+    itself is 5.7 ms over 500 sources (measured 2026-08-16), so an index is
+    still machinery bought against nothing.
+
+    What did have to change is *what* is scanned. This called `list_sources`,
+    which loads every live document's body to render records nothing here
+    reads -- 48.1 ms and 22.5 MB peak per call at 500 documents of 40,000
+    characters, on a call that runs on every `fetch`. `list_text_uris` is the
+    same scan over two columns: 5.7 ms and 0.16 MB. See its docstring for the
+    attribution and `BACKLOG.md` B84 for the rest.
 
     A storage failure returns None rather than propagating. The corpus is an
     optimisation on this path, and an optimisation that can break the
@@ -200,21 +206,15 @@ async def stored_page(corpus: CorpusReadPort, url: str, max_chars: int) -> str |
     """
     target = normalize_url(url)
     try:
-        records = await corpus.list_sources()
+        # Text only, and now by construction rather than by filtering: a media
+        # source at this URL has no text for `read_document` to return, and
+        # matching it here would just fall through to "unreadable" below for a
+        # reason that has nothing to do with a drop.
+        sources = await corpus.list_text_uris()
     except CorpusReadError:
         return None
     match = next(
-        (
-            listing.record
-            for listing in records
-            # Text only: a media source at this URL has no text for
-            # `read_document` to return, and matching it here would just
-            # fall through to "unreadable" below for a reason that has
-            # nothing to do with a drop.
-            if listing.record.kind == "text"
-            and listing.record.uri
-            and normalize_url(listing.record.uri) == target
-        ),
+        (source for source in sources if normalize_url(source.uri) == target),
         None,
     )
     if match is None:
