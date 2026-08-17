@@ -31,7 +31,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from research_team.application import (
     ApprovalDecision,
@@ -105,6 +105,7 @@ from research_team.domain import (
     SelectWorkflow,
     SessionPurpose,
 )
+from research_team.domain.interaction import INTERACTION_EVENTS, InteractionEvent
 from research_team.domain.media_proposals import (
     AcceptMediaProposal,
     IgnoreMediaAsset,
@@ -123,6 +124,7 @@ from research_team.domain.topic import (
     Topic,
     TopicStatus,
 )
+from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.timeline_reader import ProjectTimelineReader
 from research_team.infrastructure.knowledge.usage_reader import UsageReader
@@ -630,6 +632,53 @@ class NewRun(BaseModel):
         return list(self.fetch_hosts), self.fetch_budget
 
 
+INTERACTION_BATCH_LIMIT = 200
+"""Most events one POST may carry.
+
+The client flushes at 50, so this leaves room for a page-hide flush racing a
+timer flush without rejecting a batch that is merely unlucky.
+"""
+
+
+class InteractionEnvelope(BaseModel):
+    """One reported interaction, as the browser sends it.
+
+    Deliberately loose about `payload`: the kind decides its shape, and the
+    domain event validates it. Validating twice would mean two vocabularies to
+    keep in step, and the second one would drift.
+    """
+
+    kind: str
+    browser_session_id: UUID
+    install_id: UUID
+    seq: int
+    view: str
+    occurred_at: datetime
+    project_id: UUID | None = None
+    session_id: UUID | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class InteractionBatch(BaseModel):
+    """One flush.
+
+    Capped rather than unbounded because this route takes unauthenticated
+    input on a local port and the body becomes rows.
+
+    `events` is `list[dict]`, not `list[InteractionEnvelope]`, on purpose:
+    FastAPI validates a typed body before the route runs, so a batch typed as
+    `list[InteractionEnvelope]` would 422 in full the moment any one envelope
+    failed schema validation -- the same whole-batch loss partial acceptance
+    exists to avoid, just moved one layer earlier where the route's own
+    try/except never gets a chance to run. Each dict is validated into an
+    `InteractionEnvelope` by hand, per-event, inside the route.
+    """
+
+    events: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=INTERACTION_BATCH_LIMIT
+    )
+
+
 class NewSeed(BaseModel):
     """What one seeding turn is asked to name topics for.
 
@@ -741,6 +790,7 @@ def create_app(
     media_accept_worker: MediaAcceptWorker | None = None,
     curation_text: MediaCurationTextPort | None = None,
     curation_search: MediaSearchPort | None = None,
+    interactions: EventStoreInteractionRecorder | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -1682,6 +1732,67 @@ def create_app(
         await _require_project(project_id)
         reader = _topic_reader(project_id)
         return [topic_view(view) for view in await reader.list_topics()]
+
+    _interaction_kinds = {event_type.__name__: event_type for event_type in INTERACTION_EVENTS}
+
+    @app.post("/api/interactions")
+    async def post_interactions(body: InteractionBatch):
+        """Record what the console's user did. Capture only; nothing reads
+        this back.
+
+        Answers 202 with counts rather than rejecting a batch that contains
+        one bad event. The client cannot see this response -- it is delivered
+        by `sendBeacon` on page-hide, which reports nothing -- so a
+        whole-batch rejection would silently discard the good events beside
+        the bad one. Partial acceptance loses one event instead of fifty.
+
+        The counts are returned anyway, for a human with curl.
+        """
+        if interactions is None:
+            raise HTTPException(
+                status_code=503, detail="the interaction log is not collecting"
+            )
+
+        received = datetime.now(UTC)
+        events: list[InteractionEvent] = []
+        rejected = 0
+        for raw in body.events:
+            try:
+                envelope = InteractionEnvelope.model_validate(raw)
+            except ValidationError:
+                # The envelope itself doesn't match the shape every kind
+                # shares (a missing `view`, a bad UUID). Counted alongside a
+                # bad `kind` and a bad `payload` below: see the docstring.
+                rejected += 1
+                continue
+            event_type = _interaction_kinds.get(envelope.kind)
+            if event_type is None:
+                rejected += 1
+                continue
+            try:
+                events.append(
+                    event_type(
+                        aggregate_id=envelope.browser_session_id,
+                        install_id=envelope.install_id,
+                        seq=envelope.seq,
+                        view=envelope.view,
+                        occurred_at=envelope.occurred_at,
+                        project_id=envelope.project_id,
+                        session_id=envelope.session_id,
+                        received_at=received,
+                        **envelope.payload,
+                    )
+                )
+            except ValidationError:
+                # One event's payload not matching its kind. Counted, not
+                # raised: see the docstring.
+                rejected += 1
+
+        accepted = await interactions.record(events)
+        return JSONResponse(
+            status_code=202,
+            content={"accepted": accepted, "rejected": rejected},
+        )
 
     @app.post("/api/projects/{project_id}/topics/seed")
     async def seed_topics(project_id: UUID, body: NewSeed):
