@@ -308,7 +308,9 @@ In `session_service.py`, change the signature to `async def start_in_project(sel
 
 Pass `purpose=purpose` into the `StartSession(...)` on the first-join branch (`:502-509`).
 
-**The fork branch is the half that is easy to miss.** `_fork_files_from` (`:513-524`) is the second-and-later-session path, and it starts its session by some other route — read it, find where its session is created, and thread `purpose` there too. A build that wires only the first-join branch gives every project past its first session the default purpose, **and every test that creates one session passes** — the file's own comment at `:517-521` records that exact mistake being made before with `project_name`. Add a comment saying so.
+**The fork branch is the half that is easy to miss, and it is verified, not suspected.** There are exactly two `StartSession` issuers in the whole codebase — checked with `grep -rn "StartSession(" research_team/`. The second is inside `_fork_files_from`, at `session_service.py:592-601`, which is the second-and-later-session path.
+
+So `_fork_files_from` gains a `purpose: SessionPurpose` keyword-only parameter (it is already keyword-only past `session_id`, `:568-576`), threaded from `start_in_project` and passed into its `StartSession` at `:593`. A build that wires only the first-join branch gives every project past its first session the default purpose, **and every test that creates a single session still passes** — the file's own comment at `:517-521` records that exact mistake being made before with `project_name`, which is why this was checked rather than assumed. Add a comment on the new parameter saying so.
 
 - [ ] **Step 4: Update the six production call sites**
 
