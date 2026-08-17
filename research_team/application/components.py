@@ -628,6 +628,46 @@ REGISTRY: dict[str, ComponentType] = {
             "`note` carries the caveat that would otherwise bloat `text`.",
         ),
     ),
+    "definition": ComponentType(
+        name="definition",
+        version=1,
+        summary=(
+            "This project's own grounded definition of an entity, with the "
+            "passages it was drawn from. Reference by name; the browser looks "
+            "it up."
+        ),
+        example=(
+            "```component:definition\n"
+            "id: nicene-christianity\n"
+            "entity: Nicene Christianity\n"
+            "```"
+        ),
+        fields={
+            # `entity` is required and `entity_id` is optional beside it,
+            # rather than "one of these two". `_check_fields` validates one
+            # field at a time and has no disjunction; building one to serve
+            # five fields is machinery for nothing. The name is wanted anyway:
+            # `ResolvedFrame` degrades to the word the author wrote, never to
+            # a candidate's, so a reference with only an id has nothing to
+            # render in four of its five states.
+            "entity": Spec(text, required=True),
+            "entity_id": Spec(text),
+        },
+        resolved=True,
+        craft=(
+            "Write the entity name exactly as your prose does, and exactly as "
+            "the sources spell it. The lookup is a name search over what "
+            "extraction actually stored, so a tidier canonical name -- "
+            "'Constantine I' for an entity stored as 'Constantine' -- finds "
+            "nothing and the widget renders as the plain name.",
+            "Use this where a reader needs the project's grounded account of a "
+            "term, not where you would define it yourself in a clause. A "
+            "definition widget beside a sentence that already defines the word "
+            "is two definitions competing.",
+            "`entity_id` is for pinning a name two entities share. You will not "
+            "have one; leave it out.",
+        ),
+    ),
 }
 
 

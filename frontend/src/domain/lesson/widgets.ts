@@ -112,6 +112,13 @@ export const readChecklist = (block: ComponentBlock): Checklist => ({
   }),
 })
 
+/** A `definition` widget's reference. A thin alias over the shared reader
+ *  rather than its own parse: every resolved widget reads the same two
+ *  fields, and five copies of that would be five places to forget
+ *  `entity_id`. Re-exported here so a renderer imports its reader from the
+ *  module every other renderer imports one from. */
+export { readEntityReference as readDefinitionRef } from './resolved.ts'
+
 const rec = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 

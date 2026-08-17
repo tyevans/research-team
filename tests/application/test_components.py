@@ -661,3 +661,65 @@ def test_a_malformed_body_still_degrades_rather_than_raising(body):
     # Non-empty detail: an error that says only "could not parse" tells the
     # model nothing it can act on.
     assert message.split("--", 1)[1].strip()
+
+
+DEFINITION = """\
+```component:definition
+id: nicene
+entity: Nicene Christianity
+```
+"""
+
+
+def test_a_definition_carries_its_reference_through_both_views():
+    """The body is a query, so there is nothing to strip and nothing to grade.
+
+    Red against a `definition` entry that sets `gradeable=True` or a `strip`,
+    both of which are the shape every other registered type has and therefore
+    the shape a copy-paste addition would arrive in.
+    """
+    document = parse_document(DEFINITION, path="lesson.md")
+
+    author = project(document, view="author")["blocks"][0]
+    learner = project(document, view="learner")["blocks"][0]
+
+    assert author["data"]["entity"] == "Nicene Christianity"
+    assert learner["data"] == author["data"]
+    assert learner["resolved"] is True
+    assert learner["gradeable"] is False
+
+
+def test_a_definition_without_an_entity_says_which_field_is_missing():
+    source = "```component:definition\nid: nope\n```\n"
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert [str(note) for note in block.errors] == ["entity: required field missing"]
+
+
+def test_a_definition_may_pin_an_ambiguous_name_with_an_entity_id():
+    """`entity_id` is the escape hatch, and it is *not* a warned-about unknown
+    key -- a human copying one out of the console must not be told the field
+    they were told to use is unrecognised."""
+    source = (
+        "```component:definition\n"
+        "id: c\n"
+        "entity: Constantine\n"
+        "entity_id: 8f2c1e00-0000-4000-8000-000000000000\n"
+        "```\n"
+    )
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert block.errors == ()
+    assert block.warnings == ()
+    assert block.data["entity_id"] == "8f2c1e00-0000-4000-8000-000000000000"
+
+
+def test_the_generated_reference_renders_the_definition_example():
+    """`component_reference` is what the authoring model reads. A type whose
+    example does not appear in it is a type the model will never write."""
+    reference = component_reference(only=["definition"])
+
+    assert "component:definition" in reference
+    assert "entity:" in reference

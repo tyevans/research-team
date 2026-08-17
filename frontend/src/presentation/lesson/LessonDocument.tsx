@@ -6,6 +6,7 @@ import { Markdown } from '../common/content.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
 import { Checklist } from './Checklist.tsx'
 import { Cloze } from './Cloze.tsx'
+import { DefinitionWidget } from './DefinitionWidget.tsx'
 import { Flashcards } from './Flashcards.tsx'
 import { Mcq } from './Mcq.tsx'
 
@@ -98,6 +99,7 @@ const RENDERERS: Readonly<
   mcq: Mcq,
   cloze: Cloze,
   checklist: Checklist,
+  definition: DefinitionWidget,
 }
 
 const Component = ({

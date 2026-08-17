@@ -670,6 +670,23 @@
   color: var(--fg-dim);
 }
 
+/* The citation row under a `definition` widget's text.
+ *
+ * Layout only. The anchors inside come from `DefinitionCitations`, which
+ * carries its own `text-xs text-fg-dim` -- restating them here would be two
+ * sources for one appearance, and the utilities are the half the research
+ * panel shares. `--fg-dim`, not `--fg-muted`: the latter is not a token this
+ * build defines, so a rule naming it sets no colour at all and looks like one
+ * that worked. */
+.cmp-definition-citations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001s !important;

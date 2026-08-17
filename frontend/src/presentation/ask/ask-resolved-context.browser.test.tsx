@@ -11,36 +11,81 @@
  * but so would a widget that silently fell back, and only the prose surviving
  * distinguishes "one block degraded" from "the answer went down".
  *
- * **This test would pass with all of Task 2 reverted, and that is stated here
- * rather than left as reassurance.** No renderer in `RENDERERS` calls
- * `useEntityReference` yet -- Task 3 ships the first -- so the turn below
- * carries no blocks and the hook never runs. What it pins today is only that
- * `AskTurn` draws its answer under the real providers. Task 3 must widen it:
- * give `turn()` a `component:definition` block, and the assertion becomes a
- * real one, because a missing provider then throws during render and the
- * answer text below disappears with the turn.
+ * **This now has teeth, and Task 2's version said it did not.** The turn below
+ * carries a `component:definition` block, `RENDERERS` maps it to
+ * `DefinitionWidget`, and that widget calls `useEntityReference` on the first
+ * render -- so a missing provider is a throw during render, not a quiet
+ * fallback. Measured rather than reasoned: with `ContainerProvider` removed
+ * from the wrapper below, this fails with "useContainer must be used inside a
+ * <ContainerProvider>" and the answer text is gone; with `QueryClientProvider`
+ * removed it fails the same way on TanStack's own message.
+ *
+ * The providers are the real ones -- `createContainer()` and a `QueryClient`,
+ * nested as `main.tsx` nests them -- rather than fakes. Its fetches have no
+ * server here and fail, which lands the widget in `unavailable`; that is the
+ * point. The claim is that a failing lookup costs one block, and a test whose
+ * container always answered could not make it.
  */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { expect, it } from 'vitest'
 import { page } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 
+import { ContainerProvider } from '@app/container-context.tsx'
+import { createContainer } from '@app/container.ts'
+import type { ComponentBlock, MarkdownBlock } from '@domain/lesson/document.ts'
+import { ComponentId } from '@domain/shared/identifier.ts'
+
 import { AskTurn } from './AskTurn.tsx'
 import { PROJECT, turn } from './ask-fixtures.ts'
 
+const DEFINITION: ComponentBlock = {
+  kind: 'component',
+  id: ComponentId('nicene'),
+  type: 'definition',
+  data: { entity: 'Nicene Christianity' },
+  raw: '```component:definition\nid: nicene\nentity: Nicene Christianity\n```',
+  lang: 'component:definition',
+  unknown: false,
+  errors: [],
+  withheld: [],
+  resolved: true,
+}
+
+/** The sibling the assertion is really about. It has to be a *block* and not
+ *  `turn.answer`: `AskTurn` renders the answer string only when the turn
+ *  carries no components, and switches to `LessonDocument` over `blocks` the
+ *  moment one appears -- so a turn with a widget and prose only in `answer`
+ *  shows no prose at all, and this test would fail for a reason that has
+ *  nothing to do with providers. Found by running it. */
+const PROSE: MarkdownBlock = {
+  kind: 'markdown',
+  text: 'They agree on the effect and disagree on its size.',
+}
+
 it('renders the prose beside a resolved widget rather than losing the turn', async () => {
+  const container = createContainer()
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
   await render(
-    <AskTurn
-      projectId={PROJECT}
-      turn={turn({ blocks: [] })}
-      open={false}
-      onToggle={() => {}}
-      conversationId="c1"
-    />,
+    <ContainerProvider container={container}>
+      <QueryClientProvider client={client}>
+        <AskTurn
+          projectId={PROJECT}
+          turn={turn({ blocks: [PROSE, DEFINITION] })}
+          open={false}
+          onToggle={() => {}}
+          conversationId="c1"
+        />
+      </QueryClientProvider>
+    </ContainerProvider>,
   )
 
-  // The fixture's own default answer, quoted from `ask-fixtures.ts:71` rather
-  // than invented: an assertion against text the fixture does not carry would
-  // fail for a reason that has nothing to do with providers.
+  // The widget itself renders, which is what proves the hook ran at all: with
+  // no reachable server the reference degrades, and `ResolvedFrame` draws the
+  // author's word in every non-resolved state.
+  await expect.element(page.getByText('Nicene Christianity')).toBeInTheDocument()
+
   await expect
     .element(page.getByText(/They agree on the effect and disagree on its size/))
     .toBeInTheDocument()
