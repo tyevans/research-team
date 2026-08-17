@@ -536,8 +536,10 @@ def test_the_reference_carries_each_type_s_craft_notes():
     reference = component_reference(only=["mcq"])
 
     assert "distractor" in reference
-    # The mcq note names per-option feedback, which is the field authors skip.
-    assert "feedback" in reference
+    # "feedback" alone doesn't discriminate: mcq's summary and example both
+    # already said it before craft existed, so it passes with craft rendered
+    # or reverted. This phrase is only in the craft note itself.
+    assert "misunderstanding that makes it attractive" in reference
 
 
 def test_craft_notes_are_scoped_to_the_types_asked_for():

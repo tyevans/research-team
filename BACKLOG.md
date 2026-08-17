@@ -881,6 +881,23 @@ authentication and a separate deny-by-default delivery reader, which is B18's
 whole content. It stays as the marker that this surface follows the rule rather
 than bending it, and it closes when B18 closes.
 
+### B105. Withholding in an ask is weaker than withholding in a file
+
+The ask surface projects the learner view and grades on the server, so the
+browser cannot mark an answer -- but the raw answer travels in the *same
+response* as the blocks, where B30's subject at least needed a second request
+to a different route.
+
+Taken deliberately. Stripping the prose would mean reconstructing the answer
+from blocks in a client, which is a second renderer and a new class of bug, to
+defend against a reader who wants the answer to a question they asked for
+themselves. On a course file the author and the learner are two people; on an
+ask they are one.
+
+The UI says so in its own words rather than reusing the file's tooltip, which
+would be dishonest here. Closes with B18 alongside B30, or sooner if an ask
+ever grows a second reader.
+
 ### ~~B28. An attempt is graded and then forgotten~~ (done)
 
 `LearnerProgress` (`domain/learner.py`) is the record: one stream per session,

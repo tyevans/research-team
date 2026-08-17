@@ -39,6 +39,14 @@ searching. The page starts no session and appends no events: the conversation
 is held in server memory, is dropped when you leave, and the tools it can reach
 are an allowlist of four readers with no write and no network among them.
 
+The agent answering that page may write an mcq, cloze, or flashcard component
+into its reply instead of just prose, and the block renders and grades live in
+the chat turn — a reader can attempt it right there. **Nothing about the
+attempt is recorded**: there is no conversation state to hold it in, so a
+refresh blanks the widget back to its unanswered form. The withholding is
+weaker here than on a course file, because the answer key travels in the same
+response as the block rather than behind a second request — see B105.
+
 Point at your model server if it is not on the default
 `http://localhost:8080/v1/`:
 
