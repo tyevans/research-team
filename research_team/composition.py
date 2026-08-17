@@ -88,7 +88,7 @@ from research_team.application.topic_dispatch import TopicDispatcher
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
-from research_team.domain import ProjectState, Session, current_stage_of
+from research_team.domain import ProjectState, Session, SessionPurpose, current_stage_of
 from research_team.domain.commands import RecordStageReview, WriteFile
 from research_team.domain.media_proposals import MediaProposals
 from research_team.domain.research_run import Budget
@@ -191,6 +191,18 @@ from research_team.infrastructure.telemetry import build_tracer
 from research_team.workflows import PRESETS
 
 logger = logging.getLogger(__name__)
+
+WORKFLOW_DRIVEN = frozenset({SessionPurpose.CHAT, SessionPurpose.WORKFLOW_STAGE})
+"""The purposes a workflow attaches to.
+
+An allowlist rather than a denylist of the unattended kinds, so a purpose
+added later gets no workflow until somebody says it should. The failure
+directions are not symmetric: a new unattended kind that wrongly *keeps* the
+workflow is the bug this whole change removes and is invisible -- nothing
+raises, the stage prompt simply argues with the round prompt and the model
+picks one. A new kind that wrongly *loses* it is a missing stage prompt, which
+whoever added the kind sees on the first turn.
+"""
 
 
 @dataclass(frozen=True)
@@ -1125,6 +1137,16 @@ def build_application(
         would be a run gated by half a workflow -- and the failure would look
         like a model behaving oddly rather than like a wiring fault.
         """
+        if session.state.purpose not in WORKFLOW_DRIVEN:
+            # An autonomous round, a seeding turn or a dispatch turn. Three
+            # things follow from returning None here, and the third is the one
+            # nobody reported: no `advance_stage` (floored at `ask`, so an
+            # unattended call is an approval nobody answers), no stage prompt
+            # arguing with the round's own instructions, and no stage tool
+            # denylist -- which on any stage declaring no `tools` of its own
+            # was withdrawing `list_sources`, `read_source` and `graph_search`
+            # from a round whose entire job is reading the corpus.
+            return None
         project_id = session.state.project_id
         if project_id is None:
             return None
