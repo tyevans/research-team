@@ -1,11 +1,13 @@
 import { expect, it } from 'vitest'
 
-import type { TextSummary } from './document.ts'
+import type { MediaSummary, TextSummary } from './document.ts'
 import { SourceId } from '../shared/identifier.ts'
 import {
   canExtract,
+  canPerceive,
   documentExtraction,
   emptyExtractionQueue,
+  mediaPerception,
   unextractedCount,
   type ExtractionQueueBoard,
 } from './extraction-queue.ts'
@@ -123,6 +125,76 @@ it('never offers extraction on media, and does not count it as unextracted', () 
   expect(state.kind).toBe('unextractable')
   expect(canExtract(state)).toBe(false)
   expect(unextractedCount([video, doc({ sourceId: SourceId('s1') })], emptyExtractionQueue)).toBe(1)
+})
+
+const video = (over: Partial<MediaSummary> = {}): MediaSummary => ({
+  sourceId: SourceId('m1'),
+  kind: 'media',
+  mediaType: 'video/mp4',
+  byteCount: 12,
+  sha256: 'deadbeef',
+  uri: null,
+  title: null,
+  publishedAt: null,
+  note: null,
+  fetchedAt: null,
+  droppedReason: null,
+  extracted: false,
+  ...over,
+})
+
+/** A medium in the shared queue, which is the whole of B94's third state.
+ *
+ * `perceive` enqueues under the medium's own id and extraction enqueues under
+ * the derived one, so one board answers both questions without collision --
+ * and this is the only place that split is pinned. Deleting the
+ * `board.running` test in `mediaPerception` fails the first assertion; making
+ * it consult the derived id instead fails the last.
+ */
+it('reads a transcription off the queue under the medium’s own id', () => {
+  expect(mediaPerception(video(), board({ running: SourceId('m1') })).kind).toBe('transcribing')
+  expect(mediaPerception(video(), board({ queued: [SourceId('m1')] })).kind).toBe('queued')
+  expect(mediaPerception(video(), emptyExtractionQueue).kind).toBe('idle')
+
+  // The derived text source queueing for *extraction* is a different row's
+  // state and must not surface on the medium: this is the collision the id
+  // split exists to prevent.
+  expect(mediaPerception(video(), board({ running: SourceId('m1#perceived') })).kind).toBe('idle')
+})
+
+/** Running and queued beat any past outcome, matching `documentExtraction`: a
+ *  medium being transcribed again reports what is happening now rather than
+ *  how the last attempt went. Fails if the `finished` lookup is moved above
+ *  the queue tests. */
+it('reports a running transcription over the last failed one', () => {
+  const failed = {
+    sourceId: SourceId('m1'),
+    status: 'failed',
+    detail: 'ffmpeg exited 1',
+    entities: null,
+    relationships: null,
+  } as const
+
+  expect(mediaPerception(video(), board({ finished: [failed] }))).toEqual({
+    kind: 'failed',
+    detail: 'ffmpeg exited 1',
+  })
+  expect(
+    mediaPerception(video(), board({ running: SourceId('m1'), finished: [failed] })).kind,
+  ).toBe('transcribing')
+  // Pressable again only where a press would do something -- the same rule
+  // `canExtract` states for the extract control.
+  expect(canPerceive(mediaPerception(video(), board({ finished: [failed] })))).toBe(true)
+  expect(canPerceive(mediaPerception(video(), board({ running: SourceId('m1') })))).toBe(false)
+})
+
+/** A text row's place in this queue is its extraction, and reporting it as a
+ *  transcription would be the mirror of the mistake `documentExtraction`'s
+ *  media test guards against. Fails if the `kind` check is dropped. */
+it('says nothing about a text row, which is in this queue to be extracted', () => {
+  expect(
+    mediaPerception(doc({ sourceId: SourceId('s1') }), board({ running: SourceId('s1') })),
+  ).toEqual({ kind: 'idle' })
 })
 
 it('leaves nothing to extract when everything is extracted, queued or dropped', () => {

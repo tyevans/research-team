@@ -20,6 +20,7 @@ from research_team.application.corpus_read import (
     CorpusReadError,
     SourceListing,
     StoredDocument,
+    TextSourceUri,
 )
 from research_team.application.grants import FetchGrant, GrantRegistry
 from research_team.domain import TextRecord
@@ -507,16 +508,29 @@ class _StubCorpus:
         self._error = error
         self._drop_on_read = drop_on_read
         self.reads: list[str] = []
+        self.listed_uris = 0
+        self.listed_sources = 0
 
     async def list_sources(self):
         if self._error:
             raise self._error
+        self.listed_sources += 1
         # `extracted=False` throughout: nothing on the `fetch` path reads it,
         # and a double that varied it would imply this port's caller cares
         # which documents have graphs. It does not -- it is matching URLs.
         return [
             SourceListing(record=document.record, extracted=False)
             for document in self._documents
+        ]
+
+    async def list_text_uris(self):
+        if self._error:
+            raise self._error
+        self.listed_uris += 1
+        return [
+            TextSourceUri(source_id=document.record.source_id, uri=document.record.uri)
+            for document in self._documents
+            if document.record.kind == "text" and document.record.uri
         ]
 
     async def read_document(self, source_id):
@@ -660,6 +674,34 @@ async def test_a_page_not_in_the_corpus_still_reaches_the_network():
     await _invoke(fetch, {"url": "https://ex.example/sev"})
 
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_matching_the_corpus_never_asks_for_a_full_listing():
+    """`stored_page` runs on every `fetch` call and needs two strings.
+
+    `list_sources` loads every live document's body to answer -- measured on
+    2026-08-16 at 48.1 ms and 22.5 MB peak per call over 500 documents of
+    40,000 characters, against 5.7 ms and 0.16 MB for the column-projected
+    `list_text_uris`. Nothing about the returned records is read here, so the
+    bytes are pure cost, and the cost recurs per `fetch` rather than per page
+    someone opens.
+
+    This fails against the previous implementation, which called
+    `list_sources` -- proved by writing it before the change. Nothing else in
+    the suite would: both calls find the same page, so every existing
+    assertion about the *answer* passes either way.
+    """
+    calls: list[int] = []
+    corpus = _StubCorpus([_stored("s1", "https://ex.example/sev")])
+    fetch = build_fetch_tool(client=_client(_counting(calls)), corpus=corpus)
+
+    text = await _invoke(fetch, {"url": "https://ex.example/sev"})
+
+    assert "stored prose" in text
+    assert calls == []
+    assert corpus.listed_uris == 1
+    assert corpus.listed_sources == 0
 
 
 @pytest.mark.asyncio

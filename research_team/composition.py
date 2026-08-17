@@ -7,6 +7,7 @@ swapping any of them is an edit here and nowhere else.
 
 import asyncio
 import logging
+import random
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -510,6 +511,18 @@ class Application:
     because "perceive this medium" is a button on the Documents page with no
     other way to reach `PerceptionPort`."""
 
+    media_reconcile_interval: float = config.DEFAULT_MEDIA_RECONCILE_INTERVAL_SECONDS
+    """Seconds between periodic reconciliation sweeps -- the upper bound of the
+    sweep loop's jittered sleep, not a fixed period. See
+    `_sweep_reconciliation` for the jitter and `config.
+    media_reconcile_interval_seconds` for why five minutes.
+
+    A field with a default rather than a required constructor argument, so the
+    dozens of tests that build an `Application` directly are untouched;
+    `build_application` overrides it from the environment. A test that needs
+    the sweep to fire wants a fraction of a second here, and setting a field is
+    cheaper than monkeypatching a module-level read."""
+
     _initial_project_id: UUID | None = None
     """`project_id`, if `build_application` was given one. Attached in
     `start()` rather than at construction, because attaching talks to a
@@ -526,6 +539,17 @@ class Application:
     Held at all because `asyncio.create_task` only weakly references its task
     -- the note `app.py` already carries above `create_app`'s body -- so a
     reconciliation nothing kept a reference to could be collected mid-download."""
+
+    _sweep: list[asyncio.Task[None]] = field(default_factory=list, repr=False)
+    """The periodic sweep task `start()` scheduled, if it has been called.
+
+    A *separate* list from `_reconciliation` above rather than another entry in
+    it, and the separation is load-bearing: `reconciled()` awaits everything in
+    `_reconciliation`, and the sweep never finishes, so a sweep task in that
+    list would hang every test that calls `reconciled()` -- and every one of
+    them would hang for the full test timeout rather than fail with anything
+    naming the cause. Same one-element-list shape and the same reason
+    (`frozen=True`, and `create_task` holds only a weak reference)."""
 
     @property
     def knowledge(self) -> RedstringKnowledge | None:
@@ -589,9 +613,64 @@ class Application:
         # re-fetching an hour of video must not hold the port closed.
         await self.media_proposals.caught_up()
         self._reconciliation.append(asyncio.create_task(self.media_accept_reconciler.run()))
+        # And again, on a timer, for the case the startup pass cannot reach:
+        # `BACKLOG.md` B99, now closed -- the design is in the spec named
+        # above, under "What this does not do". The pass above fixes a
+        # process that died and came back; it does nothing for a process
+        # that never dies, where an
+        # accept's `asyncio.create_task` raised, hung, or was dropped and the
+        # proposal stays `accepted` for as long as the process stays up.
+        #
+        # Created after `caught_up()` for the same reason the pass above is,
+        # and `tests/integration/test_accept_reconciliation.py::
+        # test_the_reconciler_reads_only_after_caught_up_returns` is what
+        # fails if either line moves above it: the sweep's first read must not
+        # land on a projection still mid-replay either.
+        self._sweep.append(asyncio.create_task(self._sweep_reconciliation()))
         await self.asks.start()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
+
+    async def _sweep_reconciliation(self) -> None:
+        """Re-run reconciliation forever, on a jittered timer.
+
+        `BACKLOG.md` B99, closed by this; the three questions it deferred on
+        are answered here and in the spec `start()` names.
+
+        **Full jitter: the sleep is a uniform draw from `[0, interval]`, not
+        the interval itself.** That is the standard answer to the failure it
+        prevents -- every process in a multi-instance deployment sweeping in
+        lockstep, which turns a cheap periodic read into a synchronised burst
+        against one database, and keeps them synchronised because they all
+        wake, work, and sleep the same amount. The cost is that an individual
+        sweep's spacing is unpredictable and averages half the interval, so
+        the configured number is an upper bound on the gap rather than the gap.
+        Sleeping *before* the first sweep is deliberate: `start()` has just run
+        one, and a sweep immediately after it would be pure waste.
+
+        **Two processes sweeping the same proposal at once needs no locking,
+        and that is a claim about `StoreMediaProposal` rather than about
+        timing.** It *refuses* an already-stored proposal instead of being
+        idempotent, and `MediaAcceptWorker` reads that refusal back as its own
+        success signal -- so the loser of a race records nothing and reports
+        success. The cost of not locking is a duplicated download, bounded by
+        the number of processes; the blob store is content-addressed, so the
+        bytes land on the same blob and nothing downstream can tell.
+
+        Survives a sweep raising, because the timer is worth more than any one
+        sweep: a projection that is briefly unreadable would otherwise kill
+        reconciliation for the life of the process, silently, which is the
+        exact defect B99 is about. `asyncio.CancelledError` is a
+        `BaseException` and so is *not* caught here -- deliberately, and the
+        reason for `except Exception` rather than a bare `except`: a sweep
+        that swallowed cancellation would outlive `close()`.
+        """
+        while True:
+            await asyncio.sleep(random.uniform(0, self.media_reconcile_interval))
+            try:
+                await self.media_accept_reconciler.run()
+            except Exception:
+                logger.exception("periodic media reconciliation sweep failed")
 
     def turns_tools(self) -> tuple[BaseTool, ...]:
         """The tools available to this instance's agent, for tests that assert on them.
@@ -692,6 +771,16 @@ class Application:
         for task in self._reconciliation:
             task.cancel()
         self._reconciliation.clear()
+        # The periodic sweep goes with it, and for a stronger reason: it never
+        # finishes on its own, so anything short of cancelling it here leaves a
+        # task reading through a stopped projection and a closed store for the
+        # life of the event loop. Cancelled rather than awaited for the same
+        # reason as above -- mid-download it would hold shutdown, and the
+        # proposal it abandons stays `accepted`, which the next sweep or the
+        # next `start()` reconciles.
+        for task in self._sweep:
+            task.cancel()
+        self._sweep.clear()
         await self.research.stop_all()
         await self.turns.cancel_all()
         await self.summaries.stop()
@@ -2208,6 +2297,7 @@ def build_application(
         perceiver=media_perceiver,
         media_accept_worker=media_accept_worker,
         media_accept_reconciler=media_accept_reconciler,
+        media_reconcile_interval=config.media_reconcile_interval_seconds(),
         _media_http_client=resolved_media_http_client,
         _initial_project_id=project_id,
     )

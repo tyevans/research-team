@@ -9,9 +9,12 @@ import {
 } from '@domain/research/document.ts'
 import {
   canExtract,
+  canPerceive,
   documentExtraction,
   type DocumentExtraction,
   type ExtractionQueueBoard,
+  mediaPerception,
+  type MediaPerception,
 } from '@domain/research/extraction-queue.ts'
 import type { SourceId } from '@domain/shared/identifier.ts'
 
@@ -247,6 +250,9 @@ export const DocumentBrowser = ({
                 top={position.top}
                 measure={position.measure}
                 extraction={documentExtraction(row, queue)}
+                // Read off the same board as `extraction`, under the medium's
+                // own id rather than the derived one -- see `mediaPerception`.
+                perception={mediaPerception(row, queue)}
                 busy={busy}
                 transcript={derived.get(row.sourceId) ?? null}
                 perceiveBusy={perceiveBusy}
@@ -283,12 +289,33 @@ const EXTRACTION_NOTE: Record<DocumentExtraction['kind'], string | null> = {
   idle: null,
 }
 
+/** What each perception state says on a media row.
+ *
+ * A second table beside `EXTRACTION_NOTE` rather than more entries in it: the
+ * two are read off one board but answer different questions, and a single
+ * table would have to invent a key for "queued, but which queue" -- which is
+ * the disagreement B94 was about in the first place. Both can be non-null at
+ * once only on a text row's extraction and a media row's perception, which are
+ * never the same row.
+ */
+const PERCEPTION_NOTE: Record<MediaPerception['kind'], string | null> = {
+  transcribing: 'Transcribing…',
+  queued: 'Queued for transcription',
+  // The detail rides beside this, as the extraction failure's does, and for
+  // the same reason: the queue's memory is its only record.
+  failed: 'Transcription failed',
+  // Nothing on an untouched medium: the "Transcribe" button beside it already
+  // says that, and a permanent "not transcribed" is an apology on a 340px row.
+  idle: null,
+}
+
 const DocumentRow = ({
   document,
   index,
   top,
   measure,
   extraction,
+  perception,
   busy,
   transcript,
   perceiveBusy,
@@ -303,6 +330,10 @@ const DocumentRow = ({
   top: number
   measure: (element: HTMLElement | null) => void
   extraction: DocumentExtraction
+  /** Whether this medium is transcribing, waiting to, or neither. Always
+   *  `idle` on a text row -- a text source's place in this same queue is its
+   *  extraction, which `extraction` already reports. */
+  perception: MediaPerception
   busy: boolean
   /** This medium's transcript, or `null` for one nothing has perceived.
    *  Always `null` on a text row -- a transcript is not itself perceived. */
@@ -433,11 +464,29 @@ const DocumentRow = ({
           {extraction.kind === 'failed' && extraction.detail ? `: ${extraction.detail}` : ''}
         </span>
       ) : null}
+      {/* The transcription's own line. Inside the open button beside the
+          extraction note rather than in the action slot, because the slot holds
+          one control and a medium being transcribed still has to be able to
+          offer "Transcript" the moment it lands. Between the 202 and the
+          terminal frame -- minutes for an hour of audio -- this is the only
+          thing on the row that says the press did anything. */}
+      {PERCEPTION_NOTE[perception.kind] ? (
+        <span
+          className={clsx(
+            'font-mono text-xs',
+            perception.kind === 'failed' ? 'text-k-failure' : 'text-fg-dim',
+          )}
+        >
+          {PERCEPTION_NOTE[perception.kind]}
+          {perception.kind === 'failed' && perception.detail ? `: ${perception.detail}` : ''}
+        </span>
+      ) : null}
     </button>
     <ExtractAction document={document} extraction={extraction} busy={busy} onExtract={onExtract} />
     <PerceiveAction
       document={document}
       transcript={transcript}
+      perception={perception}
       busy={perceiveBusy}
       onOpen={onOpen}
       onPerceive={onPerceive}
@@ -468,12 +517,14 @@ const DocumentRow = ({
 const PerceiveAction = ({
   document,
   transcript,
+  perception,
   busy,
   onOpen,
   onPerceive,
 }: {
   document: SourceSummary
   transcript: SourceId | null
+  perception: MediaPerception
   busy: boolean
   onOpen: (sourceId: SourceId) => void
   onPerceive: () => void
@@ -495,12 +546,16 @@ const PerceiveAction = ({
     )
   }
 
+  // Off while the queue holds this medium, not only while the POST is in
+  // flight. `busy` alone left the button live for the whole transcription --
+  // minutes -- and a second press is answered `queued: false` with "Already
+  // queued", which is the server absorbing a press the row should not have
+  // offered. An off *button* rather than nothing at all, unlike the dropped
+  // case above: this one becomes pressable again when the queue drains.
+  const off = busy || !canPerceive(perception)
   return (
     <span className="flex shrink-0 items-center pr-3 pl-[6px]">
-      <Tooltip
-        asChild
-        explanation={`Perceive ${documentLabel(document)} into text this project can read`}
-      >
+      <Tooltip asChild explanation={explainPerception(perception, documentLabel(document))}>
         {/* `aria-disabled` and a handler guard rather than `disabled`, for the
             reason the extract controls give at length: a `disabled` element
             takes neither focus nor pointer events, so the tooltip explaining
@@ -508,17 +563,33 @@ const PerceiveAction = ({
         <Button
           small
           tone="quiet"
-          aria-disabled={busy}
+          aria-disabled={off}
           onClick={() => {
-            if (busy) return
+            if (off) return
             onPerceive()
           }}
         >
-          Transcribe
+          {/* "Retry" on a failure, matching `ExtractAction`: the note above
+              already says it failed, and a button still saying "Transcribe"
+              would read as though the failure were somewhere else. */}
+          {perception.kind === 'failed' ? 'Retry' : 'Transcribe'}
         </Button>
       </Tooltip>
     </span>
   )
+}
+
+const explainPerception = (perception: MediaPerception, label: string): string => {
+  switch (perception.kind) {
+    case 'transcribing':
+      return `${label} is being transcribed now`
+    case 'queued':
+      return `${label} is already waiting to be transcribed`
+    case 'failed':
+      return `Try transcribing ${label} again`
+    default:
+      return `Perceive ${label} into text this project can read`
+  }
 }
 
 /** The per-row extract control, or nothing at all.

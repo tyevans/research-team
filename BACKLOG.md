@@ -1183,102 +1183,118 @@ worth the complexity it costs.
 
 ### B84. Listing the corpus loads every document's text to render a table of titles
 
-`CorpusStore.list_all` is the only listing method, and it loads whole rows.
-A `CorpusDocumentRow` carries `text`, so every caller above it --
-`CorpusReadPort.list_sources`, and therefore `GET /api/projects/{id}/sources`,
-the agent's own `list_sources` tool, and `fetch.stored_page` -- materialises the
-full body of every document in the project in order to render source ids, titles
-and character counts. Nothing above the read model can *see* the text
-(`SourceListing.record` is a `TextRecord`/`MediaRecord`, which has no field for
-it), so this is cost, not a leak.
+**Measured, and half fixed.** `fetch.stored_page` -- the hot caller, and the
+reason this entry said to measure that one rather than `GET /sources` -- no
+longer lists the corpus at all. It calls `CorpusReadPort.list_text_uris`, a
+column-projected `SELECT source_id, uri` behind `CorpusStore.list_text_uris`.
+The rest of this entry is what remains.
 
-**`stored_page` is the caller to measure, and it is not the obvious one.**
-`fetch.py:191` calls `list_sources()` on **every `fetch` tool call**, to match one
-normalised URL against the corpus -- so during an autonomous run this is tens to
-hundreds of calls, each materialising every live document's body, and the
-frequency scales with the *work* rather than with someone opening a page. The
-route and the listing tool are a person pressing something; this is a hot loop.
-Anyone picking this up should profile `stored_page` first, not `GET /sources`.
-(`stored_page` needs only `uri` and `source_id`, so it is also the caller a
-column-projected query would help most, and the one that could be fixed
-independently if the general fix stays deferred.)
+**The measurement, taken 2026-08-16** with `tracemalloc` over a fixture corpus
+(SQLite on local disk, one `stored_page` call, mean of 3-5 reps after a warm
+call). The 40,000-character body is this entry's own "typical research paper"
+estimate, now used rather than merely reasoned; the 200,000 case is
+`MAX_DOCUMENT_CHARS`.
 
-**It arrived with `list_all` in the media-corpus work and was invisible for two
-tasks, which is the part worth knowing.** `CorpusStore.list` sat beside it the
-whole time with a nine-column `SELECT` that never touched `text`, and it was
-`list` that `test_listing_carries_metadata_and_never_text` read -- so the
-property was asserted, held, and described a method the application layer had
-already stopped calling. Deleting `list` in review (it queried the documents
-table alone, which is the half-corpus hazard `list_documents` was removed over)
-took away the last method with the property and the only test guarding it in
-one move. Not a regression that review introduced; one review made visible.
+| corpus | `stored_page` via `list_sources` | `list_all` | raw SQL, all columns | raw SQL, 2-6 columns |
+|---|---|---|---|---|
+| 100 x 40K | 8.5 ms / 4.5 MB | 6.8 ms / 4.4 MB | 2.0 ms / 4.1 MB | 1.3 ms / 0.04 MB |
+| 500 x 40K | 48.1 ms / 22.5 MB | 34.4 ms / 22.0 MB | 13.5 ms / 20.4 MB | 5.7 ms / 0.16 MB |
+| 500 x 200K | 149.6 ms / 102.5 MB | 140.7 ms / 102.0 MB | 37.0 ms / 100.4 MB | 21.3 ms / 0.16 MB |
 
-The fix is two column-projected queries, one per table, both feeding
+The reasoned worst case in the old entry was close: ~100MB at 500 documents at
+the cap, ~20MB at 500 x 40K. It was right about the magnitude and wrong about
+which fix follows from it.
+
+**The attribution, which is the part that decided the fix.** Peak memory is
+*entirely* the bytes: 22.5 MB -> 0.16 MB, a 140x reduction, with pydantic
+construction still in the picture. Wall time splits three ways at 500 x 40K --
+5.7 ms narrow query, +7.8 ms to carry the text out of SQLite, +21 ms pydantic
+-- so per-row model construction is indeed the largest single share, exactly as
+this entry suspected. But it is *not* per-row: it costs 0.042 ms/row at 40,000
+characters and 0.20 ms/row at 200,000, so it scales with the size of the text
+field, not the row count. It is the text either way. **A narrower row model
+that still selected `text` would have saved nothing at all**, which is why the
+fix is column projection after all.
+
+**What remains, and it is the cheaper half.** `CorpusStore.list_all` still
+loads whole rows, so `CorpusReadPort.list_sources` -- and therefore `GET
+/api/projects/{id}/sources` and the agent's `list_sources` tool -- still pay
+34.4 ms and 22.0 MB at 500 x 40K to render ids, titles and counts. Both are a
+person pressing something, once, rather than a loop, and 22 MB transiently on a
+page load is not a defect worth machinery. Nothing above the read model can
+*see* the text (`SourceListing.record` is a `TextRecord`/`MediaRecord`, which
+has no field for it), so this stays cost rather than a leak.
+
+**Revisit at a corpus where a page load is felt: roughly 1,500 documents at
+40,000 characters** -- linear in total characters on the numbers above, so
+about 100 ms and 65 MB per listing call, and worse under concurrency. Or
+sooner, if any caller starts listing in a loop the way `stored_page` did.
+
+The fix, if it comes: two column-projected queries, one per table, both feeding
 `to_record` -- which reads `char_count` on a text row and
-`media_type`/`byte_count` on a media one, so the two projections cannot share a
-column tuple the way `list`'s single one did. That is the whole cost: it is not
-hard, it is just more machinery than an unmeasured cost justifies, and this
-repository does not optimise on reasoning alone.
+`media_type`/`byte_count` on a media one, so unlike `list_text_uris` they
+cannot share a column tuple, and unlike it they must return something
+`to_record` and `corpus_reader` (which reads `extracted_at` and does an
+`isinstance`) can still consume. That is the whole cost, and it is now the only
+reason this is deferred rather than done.
 
-**What would make it worth doing.** One listing call transiently holds the sum of
-every live document's text in the project. `MAX_DOCUMENT_CHARS = 200_000`
-(`knowledge.py:40`) caps each document, so the worst case is bounded and
-checkable: 500 documents at the cap is ~100MB per call. **The realistic figure is
-reasoned, not measured** -- taking ~40KB of extracted text as a typical research
-paper, which is an estimate nobody in this repository has checked against real
-stored documents, a 500-document corpus is ~20MB per call and a thousand-paper
-one ~40MB. Treat both numbers as an order of magnitude, not a measurement. Per
-`fetch`, per concurrent run, is what makes even the small figure worth a look.
+**The trap this entry recorded, and how the new tests avoid it.**
+`CorpusStore.list` once sat beside `list_all` with a nine-column `SELECT` that
+never touched `text`, and `test_listing_carries_metadata_and_never_text` tested
+`list` -- a method the application layer had already stopped calling, so the
+property was asserted, held, and described dead code. The two new tests read
+`list_text_uris`, which is the method `stored_page` actually calls:
+`test_the_uri_listing_matches_what_a_full_listing_says` pins it against
+`list_all` so the hand-written SQL filter cannot drift, and
+`test_the_uri_listing_never_selects_a_documents_text` asserts the column list
+itself.
 
-The number that would settle it is one nobody has taken: the wall time and peak
-memory of `stored_page` on the largest real corpus available. That is worth
-saying because per-row pydantic model construction may well dominate the bytes,
-and if it does then column projection is the wrong fix and a narrower row model
-is the right one. **Measure before building either -- and the measurement is
-cheap.** `stored_page` is one call on a fixture corpus; if timing it is an hour's
-work, do that hour before deciding anything here, including deciding to keep
-deferring it.
+`test_listing_carries_metadata_and_never_text` still asserts only the
+structural half for `list_all`, and its docstring still says it would not fail
+on the memory cost. That remains true and is now deliberate: the memory cost of
+`list_all` is measured above and accepted, not unknown.
 
-`test_listing_carries_metadata_and_never_text` now asserts only the structural
-half -- that `to_record` yields a record with no field for text, so nothing
-above the read model can see a body through a listing -- and its docstring says
-in as many words that it would **not** fail on the memory cost. There is no test
-anywhere that would. `list_all`'s own docstring names itself as the line to come
-back to.
 
-### B85. Nothing sweeps a blob no record points at
+### B85. The blob sweep is operator-run; nothing reclaims automatically
 
-`CorpusEditor.store_media` writes the bytes before it executes the command, on
-purpose: a rejected store then leaves an unreferenced blob, which content
-addressing makes harmless -- the next store of the same bytes adopts it -- and
-the other order would commit a record pointing at bytes that are not there,
-the one failure this design promised to make loud rather than merely rare.
-The accepted cost is that nothing ever deletes the orphan. A second source is
-supersession: a media source re-stored under one `source_id` with *different*
-bytes leaves the first blob referenced by nothing, and so does a drop, since
-`by_digest` releases a dropped source's digest.
+**Mostly closed.** `research_team/infrastructure/persistence/blob_sweep.py`
+is the mark-and-sweep this entry asked for: every digest under the blob root
+that no `corpus_media` row names, older than
+`config.blob_sweep_grace_seconds()` (a day by default). It reports by default
+and deletes only under `--remove`, in the style of `local_copy.py`.
 
-The spec accepts this explicitly (no GC in that slice), so it is not a
-divergence -- it is here because the acceptance otherwise lives only in
-`store_media`'s docstring, and this is where this repository keeps work it
-decided not to do.
+The grace period is what stands in for the transaction that does not exist.
+`CorpusEditor.store_media` writes bytes before it saves the record, on
+purpose, and the two writes are not atomic -- so a blob with no row may be a
+store in flight rather than an orphan, and youth is the only thing that tells
+them apart. That makes the window improbable, not impossible: a process
+suspended between the two writes for longer than the grace period still loses
+its blob. Reasoned, not measured, and deliberately generous.
 
-**The sweep is cheap to write and is deliberately not written.** The
-`corpus_media` table carries `sha256` for exactly this: a mark-and-sweep is
-"every digest under the blob root that no `corpus_media` row names". What
-makes it more than a `for` loop is that the two writes are not in one
-transaction. A sweep running between `put` and the command's save would
-delete the bytes of a store in flight, so it needs either a grace period on
-mtime or a quiescent window -- and choosing between those needs a number
-nobody has: how much space this actually wastes on a real corpus. A rejected
-media store is rare (`decide` refuses only a kind flip), and re-store and drop
-are operator actions, so the honest guess is "very little", which is exactly
-the guess a measurement should replace before anyone builds a deleter.
+**What remains, and why it is the right call.** Nothing reclaims
+automatically. There is no timer and no call from `Application.start()`, which
+is the difference between this and B99's accept sweep: that one only *adds*
+and is safe to re-run unattended, this one destroys. An unattended deleter
+would need the residual risk above to be measured rather than reasoned, and
+B85's original point still stands -- nobody knows how much space this actually
+wastes on a real corpus, so the prize for automating it is unquantified while
+the downside is user data.
 
-Until then the recovery is manual and safe in one direction only: a blob that
-no row names can be removed by hand, and a row whose blob is gone answers 410
-rather than lying. That asymmetry is what makes deferring this cost space
-rather than correctness.
+Two smaller residuals:
+
+- **A dropped source keeps its bytes.** The projection marks a dropped row
+  rather than deleting it, so the digest is still named and the sweep never
+  touches it -- even though `by_digest` released it inside the aggregate.
+  Reclaiming those needs a decision about whether a drop is reversible, and
+  nothing has made one.
+- **A stale `.incoming-*` temporary is never removed.** It sits outside the
+  fan-out directories by construction, because sweeping one would truncate an
+  upload in progress. `put`'s `except BaseException` is the only cleanup, so a
+  process killed mid-upload leaves one forever.
+
+Supersession -- the other orphan source this entry named -- *is* reclaimed;
+`test_a_superseded_digest_becomes_a_candidate_and_the_new_one_does_not` pins
+it.
 
 ## Entity definitions and usages
 
@@ -3158,87 +3174,33 @@ would newly run without embeddings need checking one at a time rather than in
 a feature branch about video.
 
 
-### B93. `MediaPerceiver` writes text without the cap `CorpusEditor._store` enforces
+### B94. There is still no batch "Transcribe all" control
 
-`MAX_DOCUMENT_CHARS` (200_000) is enforced on exactly one of the two paths that
-write text into `corpus_documents`. `CorpusEditor._store` checks it and raises
-`KnowledgeError`, which the PATCH route maps to 400. `MediaPerceiver.perceive`
-executes `StoreDerivedText` on the aggregate directly, and `decide` has no
-opinion on the length of anything — so nothing in this repository bounds a
-transcript.
+The per-row half of this entry is done: `mediaPerception` in
+`frontend/src/domain/research/extraction-queue.ts` reads a medium's
+transcription state off the extraction queue under the *medium's* own id
+(perception enqueues under the medium, extraction under the derived id, so the
+two share one board and cannot collide), and the media row renders
+"Transcribing…" / "Queued for transcription" / "Transcription failed: …" with
+the press off while the queue holds it. `documentExtraction` still answers
+`unextractable` for every medium and must keep doing so — that is what keeps a
+video out of the extraction queue, and the third state was built beside it
+rather than by weakening it.
 
-The only bound is advisory: `Budget(max_chars=config.perception_max_chars())`
-handed to `readeverything.represent`. Reasoned rather than measured — no
-transcript this long has been produced here — but the shape of the risk is
-plain from the code: a `Budget` is a request to the library, and whether it is
-honoured exactly, approximately, or per-segment is the library's business and
-is pinned only by a `<0.3` version cap. A pre-1.0 minor could change it without
-anything here noticing.
+What remains is the batch control this was originally deferred to: one
+"Transcribe all" press for a corpus of recordings, alongside "Extract all
+(N)". It should **consume `mediaPerception` rather than rebuild it** — the
+per-row state exists now, and the count beside the button is the same
+derivation `unextractedCount` does for extraction (`canPerceive` is the
+predicate). The server side is the open question, not the client one: there is
+no bulk perceive route, and `POST /sources/extract` is the shape to copy.
 
-What it costs if it happens: an oversized derived row that can never be
-extracted (`store_source`'s own cap refuses it downstream) and can never be
-revised (`_store`'s cap refuses that too) — a row the system wrote and cannot
-subsequently act on. Note that `CorpusEditor._store_derived` deliberately does
-*not* check the cap, for exactly this reason: a restore that enforced it would
-refuse to put back a transcript this system itself produced, which is a worse
-dead end than the one it exists to fix. That comment cross-references this
-entry.
-
-The fix is a check in `MediaPerceiver.perceive` between the port returning and
-the command being executed, raising a named exception the perceive route maps —
-not a truncation, which would store a sentence ending mid-word as if a model
-had produced it. Deliberately not done inside this slice: it needs a route
-status decision and an error type, and the perceive route's exception mapping
-was settled two tasks earlier.
-
-### B94. A running transcription shows no state on its own media row
-
-Between the 202 and the terminal frame — minutes for an hour of audio — a media
-row in the console shows a live "Transcribe" button and nothing else.
-`documentExtraction` returns `unextractable` for every media row, deliberately
-and with a good comment (a video is not a document and must not be offered to
-the extraction queue), and `perceiveBusy` is only true while the HTTP request
-itself is in flight, which is milliseconds.
-
-Not duplicated work, and that is why this is cosmetic rather than a defect: a
-second press is handled correctly, answering 202 with `queued: false` and
-"Already queued for transcription". The extraction pane does show the running
-job, so the state is visible somewhere — just not on the row carrying the
-button that started it.
-
-The gap is the one the split between `busy` and `perceiveBusy` leaves open by
-construction: `busy` tracks the extraction queue, which media is excluded from,
-and `perceiveBusy` tracks a request that has already returned. The fix is a
-third state read off the queue keyed by the *medium's* id (perception enqueues
-under the medium, extraction under the derived id, so the two cannot collide),
-rendered on the media row the way `ExtractionPane` renders a stage. Left for
-the slice that adds the batch "Transcribe all" control, which needs the same
-per-row state and would otherwise build it twice.
-
-### B99. No periodic sweep for an accept that dies mid-run
-
-`Application.start()`'s reconciliation (designed in
-`docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`,
-`composition.py:555`) runs once, at startup. It fixes the case a process that
-died and restarted, but not the case where the process never dies: an accept
-whose `asyncio.create_task` raises, hangs, or is silently dropped by the event
-loop stays `accepted` with no source for as long as the process stays up,
-because nothing after startup looks at it again.
-
-Deliberately deferred by the spec rather than an oversight — a periodic sweep
-is a different shape of problem than the crash case the spec was scoped to. It
-needs an interval to poll on, a jitter policy so every process in a
-multi-instance deployment doesn't sweep in lockstep, and a story for what
-happens when two processes sweep the same proposal at once (the crash case
-sidesteps this: only one process is ever running). None of that follows from
-the accept-is-safe-to-rerun property the spec already established; it would
-need its own design.
-
-The fix is a background task in `Application` alongside the projections'
-runners, re-using `MediaAcceptReconciler` (already re-run-safe — see
-`StoreMediaProposal`'s refusal of an already-stored proposal, which is what
-makes a re-run idempotent rather than dangerous) on a timer instead of once at
-`start()`.
+Also left undone deliberately: no `transcribed` state. A finished perception is
+reported by the row swapping its press for a "Transcript" link off
+`derivedSources`, so between the queue recording `done` and the corpus refresh
+landing the derived row, the medium briefly offers "Transcribe" again. A second
+press there is answered `queued: false`, so the cost is a stale offer rather
+than duplicated work.
 
 ### B100. `build_application` still leaks the event store, blob store, and every projection runner on a partial build
 
@@ -3266,28 +3228,3 @@ one resource with nothing between its construction and `Application(...)`.
 Every other resource here doesn't have that luxury — there's meaningful
 construction between the event store and the return statement — so the fix
 has to actually unwind, not just reorder.
-
-### B101. Nothing asserts the reconciler runs after `caught_up()`, not before
-
-`Application.start()` (`composition.py`, near line 555) calls
-`self.media_proposals.start()`, then the projection's `caught_up()`, then the
-reconciler — in that order, deliberately: the design spec
-(`docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`) rules
-that the reconciler must read a caught-up projection, or it diffs against
-proposals the log hasn't replayed into the read model yet and reconciles
-correctly-pending accepts it was never supposed to touch.
-
-`tests/integration/test_accept_reconciliation.py` asserts against a composed
-`Application` and would fail if the reconciler call were removed entirely —
-but a test that swapped the two lines, running the reconciler *before*
-`caught_up()`, would still pass. The fixture's projection catches up fast
-enough in-process that the reconciler finds the row settled either way; the
-ordering bug the spec is actually worried about only shows up when the
-projection is still mid-replay at the moment the reconciler reads it.
-
-Reported by the Task 4 implementer as a known gap rather than found by review.
-Proving the ordering would need a projection stalled on purpose — a fake
-`caught_up()` that blocks until released, with the test asserting the
-reconciler's read happens after release, not before. Worth doing before this
-ordering is treated as tested rather than merely stated.
-

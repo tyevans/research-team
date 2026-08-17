@@ -362,6 +362,87 @@ async def test_listing_carries_metadata_and_never_text(db_path):
         await store.close()
 
 
+async def test_the_uri_listing_matches_what_a_full_listing_says(corpus_store) -> None:
+    """`list_text_uris` is the method `fetch.stored_page` actually calls, and
+    the two listings must not drift.
+
+    Pinned against `list_all` rather than against a literal, because the whole
+    hazard is a second query with its own hand-written filter: `list_text_uris`
+    is raw SQL over literal column names, so a rename on `CorpusDocumentRow`
+    or a divergence in the dropped/deleted filter breaks it at runtime and
+    nothing else here would notice. Media rows are excluded on purpose -- see
+    the method's docstring -- so the comparison is against the text half.
+
+    B84 records the trap this avoids: `test_listing_carries_metadata_and_never_text`
+    once guarded `CorpusStore.list`, a method the application layer had already
+    stopped calling, so the property held and described dead code.
+    """
+    project_id = uuid4()
+    for event in _events(
+        project_id,
+        StoreSourceDocument(
+            corpus_id=project_id, source_id="s1", text="kept", uri="https://x/1"
+        ),
+        StoreSourceDocument(corpus_id=project_id, source_id="s2", text="no uri at all"),
+        StoreSourceDocument(
+            corpus_id=project_id, source_id="s3", text="dropped", uri="https://x/3"
+        ),
+        DropSourceDocument(source_id="s3", reason="paywalled stub"),
+    ):
+        await corpus_store.projection.handle(event)
+    await corpus_store.projection.handle(_media_stored(project_id, "v1", uri="https://x/v1"))
+
+    assert await corpus_store.list_text_uris(project_id) == [("s1", "https://x/1")]
+
+    listed = await corpus_store.list_all(project_id)
+    expected = [
+        (row.source_id, row.uri)
+        for row in listed
+        if to_record(row).kind == "text" and row.uri is not None
+    ]
+    assert await corpus_store.list_text_uris(project_id) == expected
+
+
+async def test_the_uri_listing_never_selects_a_documents_text(corpus_store) -> None:
+    """The point of the method is the column list, so the column list is what
+    is asserted.
+
+    Measured on 2026-08-16: `stored_page` through `list_sources` costs 48.1 ms
+    and 22.5 MB peak over 500 documents of 40,000 characters; through this,
+    5.7 ms and 0.16 MB. Peak memory is entirely the bytes, which is why the
+    fix is projection and not a narrower row model.
+
+    Reads the SQL rather than the timing, because a memory assertion here
+    would be a benchmark in the unit suite. Fails if `list_text_uris` is ever
+    reimplemented on top of `list_all` or widened to `SELECT *`.
+    """
+    project_id = uuid4()
+    for event in _events(
+        project_id,
+        StoreSourceDocument(
+            corpus_id=project_id, source_id="s1", text="a body", uri="https://x/1"
+        ),
+    ):
+        await corpus_store.projection.handle(event)
+
+    statements: list[str] = []
+    original = corpus_store._connection.execute
+
+    def record(sql, *args, **kwargs):
+        statements.append(sql)
+        return original(sql, *args, **kwargs)
+
+    corpus_store._connection.execute = record
+    try:
+        assert await corpus_store.list_text_uris(project_id) == [("s1", "https://x/1")]
+    finally:
+        corpus_store._connection.execute = original
+
+    assert statements, "the query must go through the connection to be checkable"
+    assert all("text" not in sql.split("FROM")[0].lower() for sql in statements)
+    assert all("*" not in sql for sql in statements)
+
+
 async def test_get_and_list_both_refuse_a_dropped_document(db_path):
     """The drop is recorded, but a dropped source is not a readable one.
 

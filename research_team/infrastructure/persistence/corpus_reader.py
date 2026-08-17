@@ -25,6 +25,7 @@ from research_team.application.corpus_read import (
     MediaHandle,
     SourceListing,
     StoredDocument,
+    TextSourceUri,
 )
 from research_team.infrastructure.persistence.read_models import (
     CorpusDocumentRow,
@@ -66,6 +67,16 @@ class ProjectCorpusReader:
             )
             for row in rows
         ]
+
+    async def list_text_uris(self) -> list[TextSourceUri]:
+        try:
+            pairs = await self._runner.list_text_uris(self._project_id)
+        except RuntimeError as error:
+            # Same translation as `list_sources`: an unstarted projection is a
+            # wiring fault, and `CorpusReadError` is what the tools above know
+            # how to say.
+            raise CorpusReadError(str(error)) from error
+        return [TextSourceUri(source_id=source_id, uri=uri) for source_id, uri in pairs]
 
     async def read_document(
         self, source_id: str, *, include_dropped: bool = False

@@ -27,6 +27,19 @@ class FilesystemBlobStore:
     def __init__(self, root: Path) -> None:
         self._root = Path(root)
 
+    @property
+    def root(self) -> Path:
+        """The directory this store owns, for a caller that must walk it.
+
+        Exposed for the orphan sweep (`blob_sweep.py`) and for nothing else.
+        It is read-only on purpose: the sweep deletes files, so it must be
+        pointed at the root some *store instance* is actually using rather
+        than at one re-derived from `config.blob_root()` at the call site.
+        Composition builds exactly one store, and the comment above that line
+        says why a second one pointed elsewhere is the bug to fear.
+        """
+        return self._root
+
     def _path(self, sha256: str) -> Path:
         return self._root / sha256[:2] / sha256
 

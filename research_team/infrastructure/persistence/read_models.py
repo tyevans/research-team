@@ -1184,16 +1184,24 @@ class CorpusStore:
         The cost of that deletion is real and is not paid back here: `list`
         projected nine columns and this loads whole rows, `text` included, so
         listing a corpus of a hundred papers now pulls every one of them
-        through memory to render a table of titles. Accepted rather than
-        fixed, because the fix is two column-projected queries that both have
-        to feed `to_record` -- which reads `char_count` on one kind and
-        `media_type`/`byte_count` on the other -- and no one has measured a
-        corpus large enough for it to matter. Nothing above this sees the
-        text: `SourceListing.record` is a `TextRecord`/`MediaRecord` and has
-        no field for it. If a corpus ever gets big enough that a listing is
-        slow, this is the line to come back to -- `BACKLOG.md` B84 carries the
-        measurement to take first, and why it might point at a narrower row
-        model rather than at column projection.
+        through memory to render a table of titles. Measured on
+        2026-08-16 rather than reasoned about: 34.4 ms and 22.0 MB peak for a
+        corpus of 500 documents of 40,000 characters, 140.7 ms and 102 MB at
+        500 documents near `MAX_DOCUMENT_CHARS`. Still accepted, because every
+        caller left on this path is a person pressing something once -- the one
+        caller that ran it in a loop, `fetch.stored_page`, was moved to
+        `list_text_uris` below. Nothing above this sees the text:
+        `SourceListing.record` is a `TextRecord`/`MediaRecord` and has no field
+        for it.
+
+        The fix, when a listing is felt (about 1,500 documents of 40,000
+        characters), is two column-projected queries that both have to feed
+        `to_record` -- which reads `char_count` on one kind and
+        `media_type`/`byte_count` on the other, so unlike `list_text_uris` they
+        cannot share a column tuple. `BACKLOG.md` B84 carries the full numbers,
+        including why the narrower row model it once suspected would have saved
+        nothing: peak memory is entirely the bytes, and the per-row pydantic
+        cost scales with the size of `text` rather than with the row count.
 
         Two tables, one query each, held to the same
         `dropped_reason`/`deleted_at` filter as `get` and `get_media`.
@@ -1210,6 +1218,42 @@ class CorpusStore:
             ),
             key=lambda row: row.source_id,
         )
+
+    async def list_text_uris(self, project_id: UUID) -> list[tuple[str, str]]:
+        """`(source_id, uri)` for every live text source that has a URI.
+
+        Raw SQL and two columns, deliberately, where every other read here
+        goes through the repository and gets whole pydantic rows. That is the
+        entire point of this method: `fetch.stored_page` needs exactly these
+        two strings on every `fetch` tool call, and answering it through
+        `list_all` loads every document's text. Measured on 2026-08-16 on a
+        fixture corpus of 500 documents x 40,000 characters -- 48.1 ms and
+        22.5 MB peak per call through `list_sources`, 5.7 ms and 0.16 MB
+        through this. `CorpusReadPort.list_text_uris` carries the attribution
+        and `BACKLOG.md` B84 the rest.
+
+        Documents only, and this is *not* the half-corpus hazard `list` was
+        deleted over: nothing renders this, and its caller wants text sources
+        specifically. It is also why it is a separate method rather than a
+        flag on `list_all` -- a listing that answered for one table would read
+        downstream as a whole corpus, and this cannot, because it answers with
+        strings.
+
+        The filter matches `list_all`'s exactly, minus the `include_dropped`
+        opt-in nobody on this path wants. Kept as literal SQL against the
+        generated column names, which is the cost: a rename of `dropped_reason`
+        or `uri` on `CorpusDocumentRow` breaks this at runtime rather than at
+        type-check time. `test_the_uri_listing_matches_what_a_full_listing_says`
+        is what fails if it drifts.
+        """
+        async with self._connection.execute(
+            f"SELECT source_id, uri FROM {CorpusDocumentRow.table_name()} "
+            "WHERE project_id = ? AND uri IS NOT NULL "
+            "AND deleted_at IS NULL AND dropped_reason IS NULL "
+            "ORDER BY source_id",
+            (str(project_id),),
+        ) as cursor:
+            return [(row[0], row[1]) for row in await cursor.fetchall()]
 
     async def truncate(self) -> None:
         """Empty both tables, for a rebuild to fill again.
@@ -1347,6 +1391,11 @@ class CorpusRunner:
         if self._corpus is None:
             raise RuntimeError("the corpus projection has not been started")
         return await self._corpus.list_all(project_id, include_dropped=include_dropped)
+
+    async def list_text_uris(self, project_id: UUID) -> list[tuple[str, str]]:
+        if self._corpus is None:
+            raise RuntimeError("the corpus projection has not been started")
+        return await self._corpus.list_text_uris(project_id)
 
     async def rebuild(self) -> None:
         """Throw the table away and derive it again from the log.

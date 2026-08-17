@@ -74,6 +74,14 @@ DEFAULT_NEO4J_USER = "neo4j"
 #: than silent, but still a bug.
 DEFAULT_PERCEPTION_MAX_CHARS = 200_000
 
+#: Seconds between periodic reconciliation sweeps -- see
+#: `media_reconcile_interval_seconds` below for why this number.
+DEFAULT_MEDIA_RECONCILE_INTERVAL_SECONDS = 300.0
+
+#: How old an unreferenced blob must be before the sweep may delete it -- see
+#: `blob_sweep_grace_seconds` below for why a whole day.
+DEFAULT_BLOB_SWEEP_GRACE_SECONDS = 86_400.0
+
 
 def default_db_path() -> str:
     """Where sessions live. Sessions persist across runs and are resumable."""
@@ -610,3 +618,56 @@ def perception_root() -> Path:
     path = Path(configured) if configured else Path.home() / ".research-team" / "perception"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def media_reconcile_interval_seconds() -> float:
+    """How long between periodic sweeps for proposals stuck at `accepted`.
+
+    Five minutes. The sweep costs one read of the accepted set per interval
+    against a set that is normally empty, so the interval is chosen for how
+    long a stranded proposal may sit looking like it is working, not for the
+    cost of asking -- a review pane showing a card that is downloading and is
+    not is tolerable for minutes and not for hours. Reasoned, not measured:
+    nothing here has run long enough in anger to have a distribution of how
+    often an accept's task is actually lost.
+
+    A sweep that overruns its interval cannot pile up -- the loop in
+    `Application` sleeps *between* sweeps rather than on a fixed schedule --
+    so lowering this trades wasted reads for latency and nothing else.
+    """
+    configured = os.getenv("AGENT_MEDIA_RECONCILE_INTERVAL", "").strip()
+    return float(configured) if configured else DEFAULT_MEDIA_RECONCILE_INTERVAL_SECONDS
+
+
+def blob_sweep_grace_seconds() -> float:
+    """How long a blob must have sat untouched before the sweep may delete it.
+
+    A whole day. The number is not a performance tuning knob -- it is the one
+    thing standing between the sweep and destroyed user data, because
+    `CorpusEditor.store_media` writes the bytes and saves the record in two
+    separate writes with no transaction across them. A blob observed with no
+    `corpus_media` row naming it may simply be a store that has not reached
+    its save yet, and the two states are indistinguishable from the outside.
+    Twenty-four hours is far longer than any plausible store, and the cost of
+    being generous is disk while the cost of being wrong is bytes nobody can
+    get back; a day of an orphaned film is cheaper than the film.
+
+    Reasoned, not measured. Nothing here has run against a real corpus long
+    enough to have a distribution of how long a store takes, and B85 says
+    plainly that the amount of space actually wasted is unmeasured too -- so
+    both halves of this trade are guesses, and the guess is deliberately made
+    on the side of keeping bytes.
+
+    **The residual risk this does not remove.** A grace period makes the
+    window improbable, not impossible: a `store_media` that stalls for longer
+    than this between `put` and the command's save still loses its blob. What
+    would cause that -- a very large upload streamed slowly enough that `put`
+    itself spans a day is not the case, since the mtime is set as the bytes
+    land; the real cases are a process suspended (SIGSTOP, a laptop asleep
+    mid-request) between the two writes, or a command whose save blocks for a
+    day behind a lock or a wedged event store. Both are pathological, and
+    neither is impossible. This is the reason the sweep is operator-run and
+    reports before it deletes rather than running on a timer.
+    """
+    configured = os.getenv("AGENT_BLOB_SWEEP_GRACE", "").strip()
+    return float(configured) if configured else DEFAULT_BLOB_SWEEP_GRACE_SECONDS
