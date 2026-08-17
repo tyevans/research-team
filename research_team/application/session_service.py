@@ -64,6 +64,7 @@ from research_team.domain import (
     RecordToolResult,
     SendUserMessage,
     Session,
+    SessionPurpose,
     StartSession,
     WriteFile,
 )
@@ -465,8 +466,14 @@ class SessionService:
     # session that names a project without the project having agreed to it, so
     # no `JoinProject`, no holder, no inherited filesystem. Callers that
     # wanted "a session, quickly" want `start_in_project` and a project.
-    async def start_in_project(self, project_id: UUID) -> UUID:
+    async def start_in_project(self, project_id: UUID, purpose: SessionPurpose) -> UUID:
         """Begin a session that shares the project's filesystem.
+
+        `purpose` is required and undefaulted so that every caller states what
+        it is starting. Six call sites do, and the type checker is what stops a
+        seventh from quietly inheriting whichever default looked harmless --
+        see `SessionPurpose` for why the harmless-looking one is `CHAT` and why
+        that is the bug rather than the fallback.
 
         Joining is decided by the `Project` aggregate, which rejects a second
         concurrent session by name. That rejection propagates: a caller
@@ -506,6 +513,7 @@ class SessionService:
                     + project_context(state.name),
                     model_name=self._executor.model_name,
                     project_id=project_id,
+                    purpose=purpose,
                 )
             )
             await self._repository.save(session)
@@ -521,6 +529,12 @@ class SessionService:
                 # every project past its first session unnamed -- and every
                 # test that creates one session would pass.
                 project_name=state.name,
+                # Same shape of mistake as project_name above, and checked for
+                # the same reason: a build that threaded `purpose` only into
+                # the first-join branch would give every session past a
+                # project's first the default purpose, and every test that
+                # creates a single session would still pass.
+                purpose=purpose,
             )
 
         await self._projects.save(project)
@@ -572,6 +586,7 @@ class SessionService:
         source_session_id: UUID,
         at_event: int,
         project_id: UUID,
+        purpose: SessionPurpose,
         project_name: str = "",
     ) -> None:
         """Start `session_id`, carrying only the source's file history in.
@@ -598,6 +613,7 @@ class SessionService:
                 + project_context(project_name),
                 model_name=self._executor.model_name,
                 project_id=project_id,
+                purpose=purpose,
             )
         )
         for event in events[:at_event]:

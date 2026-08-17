@@ -33,6 +33,8 @@ from uuid import UUID
 
 from eventsource import DomainEvent, register_event
 
+from research_team.domain.commands import SessionPurpose
+
 
 @register_event
 class SessionStarted(DomainEvent):
@@ -57,6 +59,20 @@ class SessionStarted(DomainEvent):
     than hidden -- a build that has to read such a log again needs this field
     optional and every caller of `project_id` ready for None, which is the
     design that was just removed.
+    """
+    purpose: SessionPurpose
+    """What kind of work this session is for. See `domain.session.SessionPurpose`.
+
+    Required and deliberately not defaulted, matching `project_id` above.
+
+    This is a **breaking change to stored payloads**: a `SessionStarted`
+    written before this field existed no longer loads, and there is no
+    validator to translate one. A default would have to be `CHAT`, and
+    asserting that every session ever recorded was a person at a keyboard is a
+    claim about history this build cannot make -- the auto-research sessions in
+    any existing database are exactly the ones it would be wrong about.
+    Chosen over a shim while the project is pre-release and holds no real data;
+    `tests/infrastructure/test_schema_evolution.py` pins the refusal.
     """
 
 

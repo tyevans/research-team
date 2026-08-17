@@ -16,6 +16,7 @@ from research_team.domain import (
     FileEdited,
     FileWritten,
     SessionForkedFrom,
+    SessionPurpose,
     SessionStarted,
     TurnCompleted,
     TurnFailed,
@@ -47,6 +48,13 @@ class SessionSummary:
     hold: this is a dataclass, so a field with no default cannot follow one
     that has a default. That moves it in the positional argument order, which
     nothing here depends on -- every construction site names its fields.
+    """
+    purpose: SessionPurpose
+    """What kind of work this session was for. See `domain.commands.SessionPurpose`.
+
+    Required, matching `SessionStarted.purpose`, and declared above the
+    defaulted fields for the same dataclass-ordering reason as `project_id`
+    above -- a field with no default cannot follow one that has a default.
     """
     forked_from: UUID | None = None
     forked_at: int | None = None
@@ -139,6 +147,10 @@ def _summarize(session_id: UUID, events: list[DomainEvent]) -> SessionSummary:
         # to no project -- a shape the type no longer permits and the console
         # no longer renders, so it would surface somewhere further away.
         project_id=next(e.project_id for e in events if isinstance(e, SessionStarted)),
+        # Same reasoning as `project_id` immediately above: `SessionStarted` is
+        # the only event carrying it, required to be first on the stream, and
+        # a stream with none is not a session.
+        purpose=next(e.purpose for e in events if isinstance(e, SessionStarted)),
     )
 
 

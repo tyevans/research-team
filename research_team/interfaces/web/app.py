@@ -96,7 +96,14 @@ from research_team.application.topic_dispatch import (
 )
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
-from research_team.domain import Corpus, CreateProject, Project, ProjectState, SelectWorkflow
+from research_team.domain import (
+    Corpus,
+    CreateProject,
+    Project,
+    ProjectState,
+    SelectWorkflow,
+    SessionPurpose,
+)
 from research_team.domain.media_proposals import (
     AcceptMediaProposal,
     IgnoreMediaAsset,
@@ -2711,7 +2718,7 @@ def create_app(
                     )
                 await service.release_project(state.active_session_id)
         try:
-            session_id = await service.start_in_project(project_id)
+            session_id = await service.start_in_project(project_id, SessionPurpose.CHAT)
         except CommandRejectedError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         try:
@@ -2766,7 +2773,13 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         try:
-            session_id = await service.start_in_project(project_id)
+            # RESEARCH_ROUND, and this is the line that detaches the workflow:
+            # `running_workflow` returns None for it, so the rounds get neither
+            # `advance_stage` nor the stage prompt nor the stage tool denylist.
+            # See docs/design/turn-purpose-and-workflow-attachment.md.
+            session_id = await service.start_in_project(
+                project_id, SessionPurpose.RESEARCH_ROUND
+            )
         except CommandRejectedError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         try:

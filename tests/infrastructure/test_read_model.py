@@ -20,6 +20,7 @@ from research_team.domain import (
     RecordForkSource,
     SendUserMessage,
     Session,
+    SessionPurpose,
     StartSession,
     WriteFile,
 )
@@ -56,6 +57,7 @@ def _new_session(session_id=None) -> Session:
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     return session
@@ -124,6 +126,30 @@ async def test_a_deleted_file_stops_counting(projection, rows):
 
     row = await rows.get(session.aggregate_id)
     assert to_summary(row).files == 1
+
+
+async def test_a_rounds_session_is_recorded_as_a_round(projection, rows):
+    """Asserts the stored value, not that the projection didn't raise.
+
+    An event no projection handles counts as APPLIED (CLAUDE.md), so a test
+    that only checked the row exists would pass with `_on_started` never
+    reading `purpose` at all -- the way it would if the field were added to
+    the row but forgotten in the handler.
+    """
+    session = Session(uuid4())
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
+            purpose=SessionPurpose.RESEARCH_ROUND,
+        )
+    )
+    await _project(projection, session)
+
+    row = await rows.get(session.aggregate_id)
+    assert row.purpose is SessionPurpose.RESEARCH_ROUND
 
 
 async def test_fork_lineage_is_recorded(projection, rows):

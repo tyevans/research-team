@@ -10,6 +10,7 @@ from uuid import uuid4
 from research_team.domain import (
     SendUserMessage,
     Session,
+    SessionPurpose,
     StartSession,
 )
 from research_team.infrastructure.persistence import SNAPSHOT_THRESHOLD
@@ -32,6 +33,7 @@ async def test_save_does_not_wait_for_the_snapshot_it_triggers(aggregates, sessi
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     await _grow_past_threshold(session)
@@ -52,6 +54,7 @@ async def test_the_backgrounded_snapshot_still_gets_written(aggregates, session_
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     await _grow_past_threshold(session)
@@ -80,6 +83,7 @@ async def test_closing_waits_for_snapshots_still_in_flight(repository, session_i
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     await _grow_past_threshold(session)

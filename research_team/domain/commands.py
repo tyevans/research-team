@@ -10,6 +10,7 @@ difference between these and the events in `events.py`, which are frozen facts
 about the past and are written down forever.
 """
 
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
@@ -17,6 +18,51 @@ from pydantic import BaseModel, ConfigDict
 
 MAX_ERROR_MESSAGE = 500
 """How much of a failure's message the log keeps. Enough to recognise it."""
+
+
+class SessionPurpose(StrEnum):
+    """What kind of work a session exists to do.
+
+    The one thing that decides whether a workflow attaches to its turns. A
+    `StrEnum` rather than a `Literal` because it is named at six production
+    call sites and read in `composition.py`; a bare string would let a typo
+    reach the fold and read as an unknown purpose, which -- see
+    `WORKFLOW_DRIVEN` in `composition.py` -- fails safe into "no workflow" and
+    would therefore be silent.
+
+    Deliberately not a boolean. `drives_workflow: bool` was the cheaper shape
+    and was rejected: three of these five are unattended in different ways
+    (a round works a topic queue, a seeding turn opens topics, a dispatch turn
+    writes one topic up), and collapsing them loses the ability to answer
+    "which sessions were research rounds" -- the first question anyone
+    debugging this feature asks.
+
+    Defined here rather than in `session.py`, where the brief for this change
+    first placed it: `session.py` imports the command classes from this module
+    to match on in `decide`, so a `session.py -> commands.py` import already
+    exists, and `commands.py` needing the enum from `session.py` in turn is a
+    real cycle, not a style choice -- `import research_team.domain.commands`
+    raised `ImportError: cannot import name 'ChangeAutonomy' from partially
+    initialized module` the moment both sides tried it. This module has no
+    dependency on `session.py`, so it is the one that can hold a type both
+    sides need. `session.py` re-exports it so `from research_team.domain.session
+    import SessionPurpose` still works exactly as specified.
+    """
+
+    CHAT = "chat"
+    """A person, at a keyboard, in the web console or the REPL."""
+
+    WORKFLOW_STAGE = "workflow_stage"
+    """`StageRunner`, driving one stage of the selected preset."""
+
+    RESEARCH_ROUND = "research_round"
+    """One round of `ResearchRunDriver`, working the topic queue."""
+
+    TOPIC_SEEDING = "topic_seeding"
+    """`TopicSeeder`, opening a project's initial topics in one turn."""
+
+    TOPIC_DISPATCH = "topic_dispatch"
+    """`TopicDispatcher`, writing up what is known about one topic."""
 
 
 class Command(BaseModel):
@@ -43,6 +89,14 @@ class StartSession(Command):
     #: -- `decide` never has to reject it, and no caller has to remember to
     #: pass it. `SessionService.start_in_project` is the only thing that
     #: issues this command.
+    purpose: SessionPurpose
+    #: What kind of work this session is for. Required and undefaulted, for the
+    #: same reason `project_id` above is: a session whose purpose nobody stated
+    #: cannot be expressed as a request in the first place, so `decide` never
+    #: has to reject one and no caller can forget. Defaulting it to `CHAT` was
+    #: considered and rejected -- it makes the safe value the silent one, so a
+    #: caller who forgot would attach a workflow to an unattended run, which is
+    #: precisely the defect this field exists to remove.
 
 
 class SendUserMessage(Command):

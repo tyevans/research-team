@@ -3228,3 +3228,29 @@ one resource with nothing between its construction and `Application(...)`.
 Every other resource here doesn't have that luxury — there's meaningful
 construction between the event store and the return statement — so the fix
 has to actually unwind, not just reorder.
+
+### B101. Forking a research-round session gives a person a session still labelled `RESEARCH_ROUND`
+
+`research_team/application/session_service.py`'s `fork` replays the first `at`
+events of the source stream onto a fresh one verbatim, `SessionStarted`
+included — which is what makes it a fork rather than a new session, and is
+also why the new session carries the old one's `purpose`. Fork a round or a
+seeding session through `POST /api/sessions/{id}/forks` and keep working in it
+from the console, and it is a person at a keyboard on a session the whole
+workflow apparatus has agreed not to attach to: no stage prompt, no
+`advance_stage`, no stage denylist.
+
+Deferred rather than fixed on the branch that introduced `SessionPurpose`, and
+the reason is the direction of the failure. `WORKFLOW_DRIVEN`'s docstring names
+this exact case as the benign one — a person who is missing a stage prompt sees
+that on their first turn and can say so; a round that is silently *given* the
+workflow is the failure nobody reports. So the cost of leaving it is bounded
+and visible, and the fix is not the two-line one it looks like: re-stamping a
+purpose mid-replay is a change to what "fork" means (the new stream would no
+longer be a faithful prefix of the old one), and the route-level alternative —
+having the fork endpoint pass `CHAT` — encodes "forks are for people" in the
+one place that cannot see whether the caller is a person.
+
+Whichever way it goes, it wants a test that a forked round is drivable by hand,
+which is the property actually at stake. `_fork_files_from` is a different
+method and is not implicated.

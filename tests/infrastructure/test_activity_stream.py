@@ -7,7 +7,7 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage, ToolMessage
 
 from research_team.application.ports import ActivityDelta, ActivityMessage
-from research_team.domain import StartSession
+from research_team.domain import SessionPurpose, StartSession
 from research_team.infrastructure.agent.deep_agent import (
     DeepAgentTurnExecutor,
     to_activity_message,
@@ -47,6 +47,7 @@ async def test_running_a_turn_reports_whole_messages(aggregates, session_id):
             system_prompt="be brief",
             model_name="fake",
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     model = ToolAwareFakeChatModel(responses=[AIMessage(content="the reply", id="a1")])
@@ -74,6 +75,7 @@ async def test_prose_is_reported_as_a_delta(aggregates, session_id):
             system_prompt="be brief",
             model_name="fake",
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     model = ToolAwareFakeChatModel(
@@ -108,6 +110,7 @@ async def test_the_durable_record_is_identical_with_and_without_a_reporter(
                 system_prompt="be brief",
                 model_name="fake",
                 project_id=uuid4(),
+                purpose=SessionPurpose.CHAT,
             )
         )
         model = ToolAwareFakeChatModel(responses=[AIMessage(content="the reply", id="a1")])
@@ -135,6 +138,7 @@ async def test_a_raising_reporter_does_not_fail_the_turn(aggregates, session_id)
             system_prompt="be brief",
             model_name="fake",
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     model = ToolAwareFakeChatModel(responses=[AIMessage(content="the reply", id="a1")])

@@ -79,7 +79,7 @@ from research_team.application.stage_exit import (
     render_review,
     review_stage,
 )
-from research_team.domain import FileDeleted, FileEdited, FileWritten
+from research_team.domain import FileDeleted, FileEdited, FileWritten, SessionPurpose
 from research_team.domain.project import AdvanceStage, ProjectState, current_stage_of
 from research_team.domain.workflow import Preset, StageBase
 from research_team.workflows import PRESETS
@@ -460,7 +460,9 @@ class StageRunner:
         for one turn and this holds it for a whole stage -- so it is the place
         the `finally` earns most.
         """
-        session_id = await self._session.start_in_project(project_id)
+        session_id = await self._session.start_in_project(
+            project_id, SessionPurpose.WORKFLOW_STAGE
+        )
         self._running[project_id] = StageRunSnapshot(
             stage_id=stage.id,
             preset_id=preset.id,

@@ -20,7 +20,7 @@ from uuid import uuid4
 from langchain_core.messages import AIMessage
 
 from research_team.application.prompts import DEFAULT_PROMPT_ROOT, UNPROMPTED_STAGE_NOTICE
-from research_team.domain import AdvanceStage, CreateProject, SelectWorkflow
+from research_team.domain import AdvanceStage, CreateProject, SelectWorkflow, SessionPurpose
 from research_team.workflows import hybrid_default, ubd_pure
 from tests.conftest import ToolAwareFakeChatModel
 
@@ -97,7 +97,7 @@ async def test_a_ubd_stage_is_prompted_with_the_text_of_its_prompt_ref(build_app
     application = await build_application(model=model)
     project_id = await _project_at(application, ubd_pure, DESIRED_RESULTS)
     await application.attach_project(project_id)
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
     await application.service.run_turn(session_id, "hi")
 
@@ -116,7 +116,7 @@ async def test_the_generator_role_line_travels_with_the_prompt(build_application
     application = await build_application(model=model)
     project_id = await _project_at(application, ubd_pure, DESIRED_RESULTS)
     await application.attach_project(project_id)
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
     await application.service.run_turn(session_id, "hi")
 
@@ -135,7 +135,7 @@ async def test_the_prompt_precedes_the_mechanics_it_must_not_repeat(build_applic
     application = await build_application(model=model)
     project_id = await _project_at(application, ubd_pure, DESIRED_RESULTS)
     await application.attach_project(project_id)
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
     await application.service.run_turn(session_id, "hi")
 
@@ -157,7 +157,7 @@ async def test_a_stage_whose_prompt_is_missing_says_so_to_the_model(build_applic
     application = await build_application(model=model)
     project_id = await _project_at(application, hybrid_default, FRAMING)
     await application.attach_project(project_id)
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
     await application.service.run_turn(session_id, "hi")
 
@@ -178,7 +178,7 @@ async def test_the_unprompted_stage_still_gets_its_mechanics(build_application):
     application = await build_application(model=model)
     project_id = await _project_at(application, hybrid_default, FRAMING)
     await application.attach_project(project_id)
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
     await application.service.run_turn(session_id, "hi")
 

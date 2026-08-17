@@ -22,6 +22,7 @@ from research_team.domain import (
     RecordStageReview,
     RecordToolDecision,
     Session,
+    SessionPurpose,
     StartSession,
 )
 from research_team.infrastructure.persistence.check_telemetry import (
@@ -63,6 +64,7 @@ def _session(project_id=None) -> Session:
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=project_id or uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     return session

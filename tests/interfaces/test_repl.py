@@ -5,7 +5,13 @@ from langchain_core.messages import AIMessage, ToolMessage, message_to_dict
 
 from research_team.application.check_telemetry_read import CheckStat, CheckTelemetryReadError
 from research_team.application.ports import ActivityDelta, ActivityMessage, ActivityRemark
-from research_team.domain import FileEdited, FileWritten, SessionStarted, TurnCompleted
+from research_team.domain import (
+    FileEdited,
+    FileWritten,
+    SessionPurpose,
+    SessionStarted,
+    TurnCompleted,
+)
 from research_team.interfaces.cli import repl
 from research_team.interfaces.cli.formatters import (
     format_activity,
@@ -86,6 +92,7 @@ def test_format_log_numbers_events():
             system_prompt="s",
             model_name="m",
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
             aggregate_version=1,
         ),
         TurnCompleted(aggregate_id=uuid4(), turn_index=1, aggregate_version=2),

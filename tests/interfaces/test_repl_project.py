@@ -7,6 +7,7 @@ a `Repl` over a fresh in-memory-backed service, and commands run through
 
 import pytest
 
+from research_team.domain import SessionPurpose
 from research_team.interfaces.cli import repl
 from tests.conftest import start_session
 
@@ -172,7 +173,7 @@ async def test_exiting_the_repl_releases_a_held_project(
     # project was actually released, not just that `run()` returned.
     other_service = await build_service(model=fake_model)
     project_id = (await other_service.list_projects())[0][0]
-    joined = await other_service.start_in_project(project_id)
+    joined = await other_service.start_in_project(project_id, SessionPurpose.CHAT)
     assert joined is not None
 
 

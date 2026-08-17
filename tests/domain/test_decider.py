@@ -32,6 +32,7 @@ from research_team.domain import (
     RecordToolDecision,
     RecordToolResult,
     SendUserMessage,
+    SessionPurpose,
     SessionStarted,
     StageChecksEvaluated,
     StartSession,
@@ -67,6 +68,7 @@ def started(session_id=None):
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         ),
     )
 
@@ -115,6 +117,7 @@ def test_starting_a_session_emits_session_started():
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         ),
         state,
     )
@@ -130,7 +133,11 @@ def test_starting_twice_is_rejected():
     with pytest.raises(CommandRejectedError, match="already started"):
         decide(
             StartSession(
-                session_id=uuid4(), system_prompt="x", model_name="y", project_id=uuid4()
+                session_id=uuid4(),
+                system_prompt="x",
+                model_name="y",
+                project_id=uuid4(),
+                purpose=SessionPurpose.CHAT,
             ),
             started(),
         )
@@ -142,7 +149,11 @@ def test_a_session_records_the_project_it_belongs_to():
 
     events = decide(
         StartSession(
-            session_id=session_id, system_prompt="p", model_name="m", project_id=project_id
+            session_id=session_id,
+            system_prompt="p",
+            model_name="m",
+            project_id=project_id,
+            purpose=SessionPurpose.CHAT,
         ),
         state,
     )
@@ -405,6 +416,7 @@ def test_evolve_ignores_an_event_it_has_no_branch_for():
                 system_prompt="",
                 model_name="",
                 project_id=uuid4(),
+                purpose=SessionPurpose.CHAT,
             ),
         ).messages
         == state.messages
