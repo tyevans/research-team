@@ -1956,6 +1956,7 @@ def create_app(
                 "candidates": outcome.candidates,
                 "ignored": outcome.ignored,
                 "rejected_parses": outcome.rejected_parses,
+                "searched_empty": outcome.searched_empty,
             },
         )
 

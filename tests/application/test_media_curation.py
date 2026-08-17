@@ -74,10 +74,37 @@ def test_parse_needs_returns_nothing_for_prose_instead_of_json():
     This would still pass if `parse_needs` raised and the test caught the
     exception instead of asserting `== []` -- what pins the no-raise
     behaviour is that the call above is unguarded.
+
+    The count is 1, not 0, and that changed on 2026-08-16: prose is a reply
+    nobody could read, which is a different fact about the run from a model
+    that read the topic and said "nothing here". Both still yield no needs,
+    so no caller's control flow depends on which happened -- see
+    `test_parse_needs_separates_an_unreadable_reply_from_an_empty_one`.
     """
     needs, rejected = parse_needs("I don't think this topic needs images.")
     assert needs == []
-    assert rejected == 0
+    assert rejected == 1
+
+
+def test_parse_needs_separates_an_unreadable_reply_from_an_empty_one():
+    """The distinction the three parsers exist to preserve, pinned once.
+
+    An empty array is the model answering the question with "none"; prose is
+    the model not answering it. Both produce no needs. Only the count tells
+    them apart, and until 2026-08-16 it did not -- a real run reported two
+    needs and zero candidates with `rejected_parses` at 0, and which stage
+    had failed could not be recovered from the response at all.
+
+    Fails if either parser branch is deleted: dropping the `items is None`
+    guard makes prose report 0, and counting `[]` as a rejection makes the
+    empty case report 1.
+    """
+    assert parse_needs("[]") == ([], 0)
+    assert parse_needs("not json at all") == ([], 1)
+    assert parse_terms("[]") == ([], 0)
+    assert parse_terms("no terms come to mind") == ([], 1)
+    assert parse_judgements("[]") == ([], 0)
+    assert parse_judgements("none of these work") == ([], 1)
 
 
 def test_parse_needs_honours_the_cap():
@@ -100,10 +127,12 @@ def test_parse_terms_drops_an_item_missing_its_text_and_counts_it():
 
 def test_parse_terms_returns_nothing_for_prose_instead_of_json():
     """Same legitimate-empty-outcome reasoning as `parse_needs`: a need can
-    genuinely suggest no searchable term, and this must not raise for it."""
+    genuinely suggest no searchable term, and this must not raise for it.
+
+    Counted as one unreadable reply -- see `parse_needs`' prose test."""
     queries, rejected = parse_terms("No good search terms come to mind.")
     assert queries == []
-    assert rejected == 0
+    assert rejected == 1
 
 
 def test_parse_terms_honours_the_cap():
@@ -126,10 +155,14 @@ def test_parse_judgements_drops_an_item_missing_its_index_and_counts_it():
 
 def test_parse_judgements_returns_nothing_for_prose_instead_of_json():
     """A judge that keeps none of the pooled results is legitimate -- the
-    search returned nothing worth proposing -- and must not raise."""
+    search returned nothing worth proposing -- and must not raise.
+
+    Counted as one unreadable reply -- see `parse_needs`' prose test. A judge
+    that genuinely keeps nothing answers `[]` or a list of `keep: false`
+    verdicts, neither of which is counted here."""
     judgements, rejected = parse_judgements("None of these results are usable.")
     assert judgements == []
-    assert rejected == 0
+    assert rejected == 1
 
 
 def test_parse_judgements_drops_items_the_model_marked_keep_false():
@@ -366,6 +399,14 @@ async def test_needs_are_recorded_even_when_every_search_returns_nothing(
     assert outcome.needs == 2
     assert outcome.candidates == 0
     assert any(isinstance(e, MediaNeedsIdentified) for e in harness.published_events)
+    # Both needs searched and found nothing, and the outcome says so. This is
+    # the route to zero that no other count covers: with `searched_empty`
+    # absent, this run and a run whose judge rejected everything report an
+    # identical (0, 0, 0), which is what made a real zero undiagnosable on
+    # 2026-08-16. Fails if the counter moves after the ignore filter, where
+    # an empty pool would already have been skipped.
+    assert outcome.searched_empty == 2
+    assert (outcome.ignored, outcome.rejected_parses) == (0, 0)
 
 
 async def test_stage_1_is_prompted_with_the_topics_own_content(

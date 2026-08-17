@@ -30,6 +30,7 @@ job of adapting to a foreign system, which belongs in infrastructure, and
 """
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
@@ -44,6 +45,14 @@ from research_team.domain.media_proposals import (
     ProposeMedia,
 )
 from research_team.domain.urls import normalize_url
+
+logger = logging.getLogger(__name__)
+
+#: How much of an unreadable reply `_unreadable` logs. Enough to see whether
+#: the model answered prose, wrapped its JSON in something `_fenced` does not
+#: strip, or emitted a reasoning preamble -- and short enough that a stage
+#: failing on every need does not fill the log with the same 8KB reply.
+UNREADABLE_LOG_CHARS = 500
 
 MAX_NEEDS_PER_TOPIC = 4
 """Stage 1's cap on how many things a topic is allowed to want seen or heard.
@@ -261,12 +270,21 @@ def _items(raw: str) -> list[dict[str, Any]] | None:
     Accepts a bare JSON array or a single-key object wrapping one -- see
     `_as_list` for why both have to work.
 
-    `None` here is not surfaced to callers as a distinct case the way
-    `parse_ontology` surfaces it -- every parser below treats "not JSON" and
-    "an empty array" identically, because unlike ontology discovery there is
-    nothing here that needs to distinguish "examined, found none" from
-    "unreadable, retry": a stage that produced nothing usable is retried by
-    running the chain again, the same as a stage whose reply did not parse.
+    `None` means "this reply is not shaped like items at all", and is
+    distinct from `[]`, which means "it is, and there are none". Every
+    parser below keeps that distinction: `None` costs a `rejected_parses`
+    and a logged reply, `[]` costs neither.
+
+    This docstring used to say the opposite -- that the two were treated
+    identically because "a stage that produced nothing usable is retried by
+    running the chain again, the same as a stage whose reply did not parse."
+    That reasoning is about the *remedy* and was used to justify collapsing
+    the *report*, which does not follow. Two causes can share a fix and still
+    need telling apart, and this very module argues that position twice
+    elsewhere: `CurationUnavailable` refuses to fold a transport failure into
+    an empty outcome, and `parse_judgements` separates "the judge said no"
+    from "the item was junk" precisely so strictness cannot masquerade as
+    malformation in the one number a caller reads.
     """
     try:
         payload = json.loads(_fenced(raw))
@@ -278,17 +296,50 @@ def _items(raw: str) -> list[dict[str, Any]] | None:
     return [item for item in items if isinstance(item, dict)]
 
 
+def _unreadable(stage: str, raw: str) -> None:
+    """Log a reply no parser could read, with the reply itself in the record.
+
+    **The reply is the evidence, and nothing else recovers it.** Every stage
+    here answers an unreadable reply the same way it answers a genuinely
+    empty one -- an empty list -- so by the time a count reaches a caller the
+    text that caused it is gone. CLAUDE.md's extraction notes are the
+    precedent: three minutes of logging what the model actually returned beat
+    two hours of reasoning about what the code downstream does with the
+    answer, and the defect there (`temporal_expression` filed under
+    `properties`) was invisible from every direction until someone looked at
+    the payload.
+
+    WARNING rather than ERROR: the chain continues and the run is still
+    valid. A stage that could not be read is a fact about one model call, not
+    a failure of the request.
+    """
+    logger.warning(
+        "media curation: %s reply was not readable as JSON items; got: %s",
+        stage,
+        raw[:UNREADABLE_LOG_CHARS],
+    )
+
+
 def parse_needs(text: str, *, need_id_prefix: str = "need") -> tuple[list[MediaNeed], int]:
     """Stage 1's reply, as the needs the document supports and a count of
     what was dropped.
 
     An item is dropped, and counted, if `medium`, `description` or `why` is
     missing or blank -- all three are what a person reviewing a need reads,
-    and a need with a blank reason is not reviewable. Prose instead of JSON,
-    or a JSON reply with no `needs` array, yields `([], 0)`: a topic that
-    wants no imagery and a reply nobody could read are both retried the same
-    way (run the chain again), so this parser does not distinguish them --
-    see `_items`.
+    and a need with a blank reason is not reviewable.
+
+    Prose instead of JSON, or a JSON reply with no array in it, yields
+    `([], 1)` and a WARNING carrying the reply -- **not `([], 0)`, which is
+    what this returned until it cost an afternoon.** A topic that genuinely
+    wants no imagery and a reply nobody could read are remedied the same way
+    (run the chain again), and that was the stated reason for reporting them
+    identically. It does not follow: sharing a remedy is not being the same
+    event, and the count is the only place the difference could have shown.
+    Measured on 2026-08-16 -- a woodworking topic returned two good needs and
+    zero candidates, with `rejected_parses` reading 0, and no evidence
+    existed anywhere to say whether stage 2 had answered prose or the judge
+    had genuinely kept nothing. The list stays empty either way, so no
+    caller's control flow changes; only the count stops lying.
 
     `need_id`s are assigned here, from position, because nothing upstream of
     this parser has offered one: the model is not asked for an id, and the
@@ -296,6 +347,9 @@ def parse_needs(text: str, *, need_id_prefix: str = "need") -> tuple[list[MediaN
     available before the caller records them as events.
     """
     items = _items(text)
+    if items is None:
+        _unreadable("stage 1 (needs)", text)
+        return [], 1
     rejected = 0
     needs: list[MediaNeed] = []
     for item in items or []:
@@ -340,6 +394,9 @@ def parse_terms(text: str, *, need_id: str = "") -> tuple[list[Query], int]:
     to get wrong.
     """
     items = _items(text)
+    if items is None:
+        _unreadable("stage 2 (terms)", text)
+        return [], 1
     rejected = 0
     queries: list[Query] = []
     for item in items or []:
@@ -376,6 +433,9 @@ def parse_judgements(text: str, *, need_id: str = "") -> tuple[list[Judgement], 
     has to decide whether to worry about.
     """
     items = _items(text)
+    if items is None:
+        _unreadable("stage 3 (judgements)", text)
+        return [], 1
     rejected = 0
     kept: list[Judgement] = []
     for item in items or []:
@@ -500,15 +560,25 @@ class CurationUnavailable(Exception):
 class CurationOutcome:
     """What one `curate` call did, as counts a caller can report or log.
 
-    `ignored` and `rejected_parses` exist so a silent shortfall is never the
-    only signal something happened -- "6 candidates, 2 ignored" is a fact a
-    person can act on; a bare "4 candidates" is not.
+    `ignored`, `rejected_parses` and `searched_empty` exist so a silent
+    shortfall is never the only signal something happened -- "6 candidates, 2
+    ignored" is a fact a person can act on; a bare "4 candidates" is not.
+
+    `searched_empty` counts needs whose search pool came back with nothing at
+    all, before judging. It is the one route to zero that no other field
+    covers: a need can produce no terms, or terms that match nothing, and
+    both leave `candidates`, `ignored` and `rejected_parses` all reading
+    zero while the chain quietly `continue`s past stage 3. Separating it from
+    `rejected_parses` is what distinguishes "the model gave us nothing to
+    search for" from "the search found nothing" from "the reply was
+    unreadable" -- three different things to go fix, previously one number.
     """
 
     needs: int
     candidates: int
     ignored: int
     rejected_parses: int
+    searched_empty: int
 
 
 class MediaCurationService:
@@ -566,7 +636,9 @@ class MediaCurationService:
         # doesn't have.
         topic = await self._topics.read_topic(topic_id)
         if topic is None:
-            return CurationOutcome(needs=0, candidates=0, ignored=0, rejected_parses=0)
+            return CurationOutcome(
+                needs=0, candidates=0, ignored=0, rejected_parses=0, searched_empty=0
+            )
 
         aggregate = await self._proposals.load_or_create(project_id)
 
@@ -598,6 +670,7 @@ class MediaCurationService:
 
         candidates = 0
         ignored = 0
+        searched_empty = 0
 
         for need in needs:
             terms, terms_rejected = parse_terms(
@@ -609,6 +682,13 @@ class MediaCurationService:
             for query in terms:
                 for result in await self._search(query.text, query.categories):
                     pool.append((result, query.text))
+
+            # Counted before the ignore filter, so the two cannot be confused:
+            # an empty pool means nothing was found (or no terms were produced
+            # to find it with), where a pool emptied by the filter is already
+            # reported as `ignored`.
+            if not pool:
+                searched_empty += 1
 
             # The ignore filter runs here: after search, before stage 3. Not
             # at proposal time, which would pay a model call judging
@@ -667,5 +747,9 @@ class MediaCurationService:
             await self._proposals.save(aggregate)
 
         return CurationOutcome(
-            needs=len(needs), candidates=candidates, ignored=ignored, rejected_parses=rejected
+            needs=len(needs),
+            candidates=candidates,
+            ignored=ignored,
+            rejected_parses=rejected,
+            searched_empty=searched_empty,
         )

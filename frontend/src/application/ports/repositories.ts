@@ -402,6 +402,9 @@ export interface MediaCurationOutcome {
   readonly candidates: number
   readonly ignored: number
   readonly rejectedParses: number
+  /** Needs whose search pool came back empty -- the one route to zero
+   *  candidates that no other count covers. See `CurationOutcome`. */
+  readonly searchedEmpty: number
 }
 
 /** A media upload. `file` rather than bytes: a `File` streams to the network

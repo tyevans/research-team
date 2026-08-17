@@ -698,6 +698,7 @@ export const mediaCurationOutcomeDto = z.object({
   candidates: z.number(),
   ignored: z.number(),
   rejected_parses: z.number(),
+  searched_empty: z.number(),
 })
 
 /** One row of `/sources/extraction-queue`'s `finished`: how a document's most

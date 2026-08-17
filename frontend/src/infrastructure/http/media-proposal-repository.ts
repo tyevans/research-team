@@ -70,6 +70,7 @@ export class HttpMediaProposalRepository implements MediaProposalRepository {
       candidates: body.candidates,
       ignored: body.ignored,
       rejectedParses: body.rejected_parses,
+      searchedEmpty: body.searched_empty,
     }
   }
 
