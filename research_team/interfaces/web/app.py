@@ -52,6 +52,7 @@ from research_team.application.ask import (
     AskInFlight,
     AskService,
 )
+from research_team.application.ask_components import answer_document
 from research_team.application.blobs import BlobStorePort
 from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_editing import CorpusEditor, DocumentExists, NotDropped
@@ -522,6 +523,25 @@ class Attempt(BaseModel):
     component_id: str
     response: Any = None
     at: int | None = None
+
+
+class AskAttempt(BaseModel):
+    """One reader's answer to a component the model wrote into an answer.
+
+    Addressed by `(position, component_id)` rather than by a file path: an ask
+    answer has no file, and the turn is what the server re-parses to recover
+    the key. `position` is in the body rather than the path for `Attempt`'s
+    reason -- one addressing scheme for both attempt routes beats two.
+
+    No `at`. A file can be revised under a learner, which is what `Attempt.at`
+    defends against; an `AskTurnRecorded` is a fact about an answer that was
+    given and is never rewritten, so there is no second version to grade
+    against.
+    """
+
+    position: int
+    component_id: str
+    response: Any = None
 
 
 class ChecklistState(BaseModel):
@@ -2936,6 +2956,14 @@ def create_app(
             body = {
                 "type": "answer",
                 "text": note.text,
+                "position": note.position,
+                # Parsed here rather than in the browser for the four reasons
+                # `application/components.py` opens with, of which the second
+                # binds hardest: withholding is only real if the projection
+                # happens before the bytes leave. `text` travels beside it
+                # anyway (see the design's section 5) -- that is honesty about
+                # the strength of the property, not a reason to skip it.
+                "blocks": answer_document(note.text)["blocks"],
                 "citations": [
                     {"kind": citation.kind, "id": citation.id} for citation in note.citations
                 ],
@@ -3082,12 +3110,56 @@ def create_app(
                     "position": turn.position,
                     "question": turn.question,
                     "answer": turn.answer,
+                    "blocks": answer_document(turn.answer)["blocks"],
                     "citations": turn.citations,
                     "recordedAt": turn.recorded_at.isoformat(),
                 }
                 for turn in turns
             ],
         }
+
+    @app.post("/api/projects/{project_id}/asks/{conversation_id}/attempts")
+    async def post_ask_attempt(project_id: UUID, conversation_id: UUID, body: AskAttempt):
+        """Mark one attempt at a component the model wrote into an answer.
+
+        The key is recovered by re-parsing the stored answer, which is the same
+        move the file surface makes with `session.state.files` -- the browser
+        holds the learner projection and could not mark this if it tried.
+
+        **Nothing is recorded.** `LearnerProgress` keys on a session and an ask
+        is deliberately not one; the design's section 4 gives the three
+        reasons and B33 records the identity question this declines to answer
+        by accident. The visible cost is that a refresh blanks the widgets.
+        """
+        if asks is None:
+            raise HTTPException(status_code=503, detail="ask history is not configured")
+        row = await asks.get(conversation_id)
+        if row is None or row.project_id != project_id:
+            raise HTTPException(
+                status_code=404, detail=f"no conversation {conversation_id} in {project_id}"
+            )
+        turns = await asks.turns_for(conversation_id)
+        turn = next((t for t in turns if t.position == body.position), None)
+        if turn is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"conversation {conversation_id} has no turn {body.position}",
+            )
+        # Re-parsed raw, never through `project()`: that call is what strips
+        # the key for a browser, and this is the one caller that needs it,
+        # server-side, with nothing it returns carrying the block itself.
+        document = parse_document(turn.answer, path="")
+        component = document.component(body.component_id)
+        if component is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"turn {body.position} has no component {body.component_id!r}",
+            )
+        try:
+            verdict = grade(component, body.response)
+        except GradingError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return verdict.as_json()
 
     @app.get("/api/health")
     async def health():

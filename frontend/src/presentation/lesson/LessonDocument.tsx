@@ -1,5 +1,6 @@
 import type { AttemptsApi } from '@application/lesson/use-attempts.ts'
 import type { ComponentBlock, LessonDocument as Doc } from '@domain/lesson/document.ts'
+import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Markdown } from '../common/content.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
@@ -25,13 +26,54 @@ import { Mcq } from './Mcq.tsx'
  *    block, a component with errors renders as its own source plus a panel
  *    naming the fields, and neither takes the rest of the document down.
  */
-export const LessonDocument = ({ doc, attempts }: { doc: Doc; attempts: AttemptsApi }) => (
+const FILE_WITHHELD_EXPLANATION =
+  'The answer key was removed from this response and is graded on the server. ' +
+  'The raw file is still readable from the source toggle, so this keeps answers ' +
+  'off the page rather than out of reach.'
+
+export const LessonDocument = ({
+  doc,
+  attempts,
+  withheldExplanation = FILE_WITHHELD_EXPLANATION,
+  projectId,
+}: {
+  doc: Doc
+  attempts: AttemptsApi
+  /** What the "answers withheld" tooltip says the answer key's absence means.
+   *  Defaults to the file wording -- "graded on the server, readable from the
+   *  source toggle" -- which is true of a lesson file and false of an ask
+   *  turn, where the raw answer travels in the *same* response as the blocks.
+   *  The ask surface passes its own text rather than this default. */
+  withheldExplanation?: string
+  /** Optional because the lesson caller has no project in scope -- a course
+   *  is read from a session, not a project, and `Markdown` already treats a
+   *  missing `projectId` as "leave `[[src:...]]` unexpanded" for exactly that
+   *  reason. The ask surface does have one, and passes it: without it, a
+   *  reference in the model's prose renders as a working link right up until
+   *  the same answer also carries a widget, at which point the identical
+   *  `[[src:...]]` prints as literal text -- same answer, two renderings,
+   *  decided only by whether a component happened to be present. */
+  projectId?: ProjectId
+}) => (
   <div className="md doc">
     {doc.blocks.map((block, index) =>
       block.kind === 'markdown' ? (
-        <Markdown key={index} source={block.text} className="md-unwrapped" />
+        // Spread rather than a bare `projectId={projectId}`: `exactOptionalPropertyTypes`
+        // treats an explicit `undefined` differently from an omitted prop, and
+        // `Markdown`'s own optional `projectId` is what "no project in scope" means.
+        <Markdown
+          key={index}
+          source={block.text}
+          className="md-unwrapped"
+          {...(projectId ? { projectId } : {})}
+        />
       ) : (
-        <Component key={block.id} block={block} attempts={attempts} />
+        <Component
+          key={block.id}
+          block={block}
+          attempts={attempts}
+          withheldExplanation={withheldExplanation}
+        />
       ),
     )}
   </div>
@@ -46,7 +88,15 @@ const RENDERERS: Readonly<
   checklist: Checklist,
 }
 
-const Component = ({ block, attempts }: { block: ComponentBlock; attempts: AttemptsApi }) => {
+const Component = ({
+  block,
+  attempts,
+  withheldExplanation,
+}: {
+  block: ComponentBlock
+  attempts: AttemptsApi
+  withheldExplanation: string
+}) => {
   if (block.unknown) return <UnknownComponent block={block} />
   if (block.errors.length > 0) return <BrokenComponent block={block} />
 
@@ -62,13 +112,7 @@ const Component = ({ block, attempts }: { block: ComponentBlock; attempts: Attem
       <div className="cmp-kind">
         <span className="cmp-kind-name">{block.type}</span>
         {block.withheld.length > 0 ? (
-          <Tooltip
-            explanation={
-              'The answer key was removed from this response and is graded on the server. ' +
-              'The raw file is still readable from the source toggle, so this keeps answers ' +
-              'off the page rather than out of reach.'
-            }
-          >
+          <Tooltip explanation={withheldExplanation}>
             <span className="cmp-withheld">answers withheld</span>
           </Tooltip>
         ) : null}

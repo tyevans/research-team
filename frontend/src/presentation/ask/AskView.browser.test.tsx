@@ -53,6 +53,8 @@ const answering = vi.fn(
     onEvent({
       type: 'answer',
       text: 'A paragraph of answer, long enough to take a line of its own on the page.',
+      blocks: [],
+      position: 0,
       citations: [{ kind: 'source', id: 's1' }],
     })
   },

@@ -68,7 +68,9 @@ export const Mcq = ({ block, attempts }: { block: ComponentBlock; attempts: Atte
           primary
           label={state.busy ? 'checking…' : 'check answer'}
           disabled={state.busy || state.verdict !== null || state.picked.length === 0}
-          onClick={() => attempts.submit(block, attempts.mcqResponse(state.picked, mcq.multiple))}
+          onClick={() =>
+            void attempts.submit(block, attempts.mcqResponse(state.picked, mcq.multiple))
+          }
         />
         {state.verdict ? (
           <CmpButton label="try again" onClick={() => attempts.reset(block)} />

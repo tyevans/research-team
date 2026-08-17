@@ -49,6 +49,16 @@
   cursor: help;
 }
 
+/* The one honest difference an ask turn's widgets carry, said quietly: it
+   should read as a caption under the component, not as another line of the
+   answer. Matched no rule at all until now -- `AskTurn.tsx` wrote the class
+   and nothing declared it, so it rendered at default paragraph weight. */
+.ask-widget-note {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+}
+
 .cmp-body {
   padding: 12px;
 }

@@ -15,9 +15,11 @@ import { AskTurn } from './AskTurn.tsx'
 export const AskThread = ({
   projectId,
   transcript,
+  conversationId,
 }: {
   projectId: ProjectId
   transcript: AskTranscript
+  conversationId: string | null
 }) => {
   /** Which activity folds are open, by turn index.
    *
@@ -54,6 +56,7 @@ export const AskThread = ({
             key={index}
             projectId={projectId}
             turn={turn}
+            conversationId={conversationId}
             open={open.has(index)}
             onToggle={() =>
               setOpen((current) => {

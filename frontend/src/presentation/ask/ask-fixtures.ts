@@ -70,6 +70,8 @@ export const turn = (over: Partial<AskTurn> = {}): AskTurn => ({
   question: 'What did the two 2019 papers actually disagree about?',
   answer:
     'They agree on the effect and disagree on its size. Both find spaced review beats massed\nreview at two weeks; the second reports roughly half the advantage, and attributes the gap\nto its untimed final test.',
+  blocks: [],
+  position: 0,
   activity: [],
   citations: [{ kind: 'source', id: 's1' }],
   error: null,

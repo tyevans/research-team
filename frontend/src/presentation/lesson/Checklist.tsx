@@ -20,7 +20,7 @@ export const Checklist = ({
     const ticked = { ...state.ticked, [index]: !state.ticked[index] }
     attempts.update(block, { ticked })
     if (checklist.persist) {
-      attempts.saveChecklist(
+      attempts.saveChecklist?.(
         block,
         checklist.items.map((_, position) => position).filter((position) => ticked[position]),
       )

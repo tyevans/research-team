@@ -881,6 +881,23 @@ authentication and a separate deny-by-default delivery reader, which is B18's
 whole content. It stays as the marker that this surface follows the rule rather
 than bending it, and it closes when B18 closes.
 
+### B105. Withholding in an ask is weaker than withholding in a file
+
+The ask surface projects the learner view and grades on the server, so the
+browser cannot mark an answer -- but the raw answer travels in the *same
+response* as the blocks, where B30's subject at least needed a second request
+to a different route.
+
+Taken deliberately. Stripping the prose would mean reconstructing the answer
+from blocks in a client, which is a second renderer and a new class of bug, to
+defend against a reader who wants the answer to a question they asked for
+themselves. On a course file the author and the learner are two people; on an
+ask they are one.
+
+The UI says so in its own words rather than reusing the file's tooltip, which
+would be dishonest here. Closes with B18 alongside B30, or sooner if an ask
+ever grows a second reader.
+
 ### ~~B28. An attempt is graded and then forgotten~~ (done)
 
 `LearnerProgress` (`domain/learner.py`) is the record: one stream per session,
@@ -3229,6 +3246,31 @@ Every other resource here doesn't have that luxury — there's meaningful
 construction between the event store and the return statement — so the fix
 has to actually unwind, not just reorder.
 
+### B106. Ask history has a server half and no client -- reopening a conversation is not reachable
+
+`docs/superpowers/specs/2026-08-16-components-in-an-ask-design.md` §4 and
+`read_ask` (`app.py:3076`) are correct and tested: a stored ask turn carries
+projected `blocks` with the answer key withheld, the same shape the live
+stream sends. But no route in `frontend/src` fetches a stored conversation --
+grepped for any caller of `GET /api/projects/{project_id}/asks/{conversation_id}`
+outside the Python tests, and there is none. `AskView.tsx` holds its
+transcript in memory only and starts empty on every mount; there is no reopen,
+no refresh, and nothing a reader can click to see this endpoint's response.
+
+The server-side work is not wasted -- it is the exact shape a history UI would
+need, built as a forward investment while the projection and the withholding
+logic were already in scope. What is missing is entirely the client half: a
+route or affordance that lists a project's past ask conversations, opens one,
+and renders its stored turns through the same `AskTurnWidgets` path a live
+answer already uses (see `AskTurn.tsx`'s widget branch, which takes a `Doc` and
+does not care where it came from).
+
+Left undone here because it was not requested and is real UI surface: a list
+view, a route, empty-state and loading-state design, and a decision about
+whether reopening a conversation should also let a reader keep asking into it
+or only read what is there. Worth doing before the spec's §4 claim ("a reader
+reopening a conversation gets working widgets, not code blocks") is a true
+sentence about this application rather than about the server alone.
 ### B101. Forking a research-round session gives a person a session still labelled `RESEARCH_ROUND`
 
 `research_team/application/session_service.py`'s `fork` replays the first `at`

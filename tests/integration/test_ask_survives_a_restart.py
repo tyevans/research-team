@@ -145,6 +145,39 @@ async def test_the_history_route_answers_from_the_composed_application(db_file, 
     assert missing.status_code == 404
 
 
+async def test_a_stored_turn_is_parsed_the_same_way_as_a_live_one(db_file, project_id):
+    """A reader reopening a conversation gets working widgets, not code
+    blocks. Red against `read_ask` returning only `answer`."""
+    mcq_answer = (
+        "```component:mcq\n"
+        "id: q1\n"
+        "prompt: Which year?\n"
+        "options:\n"
+        '  - text: "1974"\n'
+        "    correct: true\n"
+        '  - text: "1975"\n'
+        "    correct: false\n"
+        "```\n"
+    )
+    application = await _application(db_file, [AskAnswer(text=mcq_answer)])
+    try:
+        conversation_id = await _ask(application, project_id, "quiz me")
+        await application.asks.caught_up()
+        app = create_app(
+            service=None, feed=None, turns=None, ask=application.ask, asks=application.asks
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as http:
+            body = (
+                await http.get(f"/api/projects/{project_id}/asks/{conversation_id}")
+            ).json()
+    finally:
+        await application.close()
+
+    assert [block["kind"] for block in body["turns"][0]["blocks"]] == ["component"]
+
+
 async def test_one_projects_history_does_not_list_anothers(db_file, project_id):
     """The spec asks for it directly, and a route that dropped its
     `project_id` predicate would pass every other test in this file."""

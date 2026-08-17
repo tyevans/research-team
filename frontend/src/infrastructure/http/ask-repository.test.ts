@@ -8,7 +8,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@application/ports/errors.ts'
 import type { AskEvent } from '@domain/ask/conversation.ts'
-import { ProjectId } from '@domain/shared/identifier.ts'
+import { ComponentId, ProjectId } from '@domain/shared/identifier.ts'
 
 import { HttpAskRepository } from './ask-repository.ts'
 
@@ -43,8 +43,18 @@ it('yields one event per frame', async () => {
 
   expect(seen).toEqual([
     { type: 'delta', messageId: 'm1', text: 'two' },
-    { type: 'answer', text: 'two papers', citations: [] },
+    { type: 'answer', text: 'two papers', blocks: [], position: 0, citations: [] },
   ])
+})
+
+it('parses the conversation frame naming the server-issued id', async () => {
+  // The stream's first frame, and the only source in this codebase of the id
+  // an attempt POST has to name -- see `AskState.conversationId`.
+  const seen = await collect(
+    respond('data: {"type":"conversation","conversation_id":"conv-1"}\n\n'),
+  )
+
+  expect(seen).toEqual([{ type: 'conversation', conversationId: 'conv-1' }])
 })
 
 it('reassembles a frame split across chunks', async () => {
@@ -70,7 +80,7 @@ it('reads a last frame the server did not terminate', async () => {
   // sit unparsed in the buffer forever if the loop only flushed on '\n\n'.
   const seen = await collect(respond('data: {"type":"answer","text":"x","citations":[]}\n'))
 
-  expect(seen).toEqual([{ type: 'answer', text: 'x', citations: [] }])
+  expect(seen).toEqual([{ type: 'answer', text: 'x', blocks: [], position: 0, citations: [] }])
 })
 
 it('maps citations off the wire', async () => {
@@ -78,7 +88,34 @@ it('maps citations off the wire', async () => {
     respond('data: {"type":"answer","text":"x","citations":[{"kind":"source","id":"s1"}]}\n\n'),
   )
 
-  expect(seen[0]).toEqual({ type: 'answer', text: 'x', citations: [{ kind: 'source', id: 's1' }] })
+  expect(seen[0]).toEqual({
+    type: 'answer',
+    text: 'x',
+    blocks: [],
+    position: 0,
+    citations: [{ kind: 'source', id: 's1' }],
+  })
+})
+
+it('reads blocks and a position off an answer frame', async () => {
+  const frame =
+    'data: {"type":"answer","text":"try this","position":2,' +
+    '"blocks":[{"kind":"component","type":"mcq","id":"q1","data":{},"errors":[],"withheld":["options[].correct"],"gradeable":true}],' +
+    '"citations":[]}\n\n'
+
+  const seen = await collect(respond(frame))
+
+  expect(seen[0]).toMatchObject({ type: 'answer', position: 2 })
+  expect(seen[0]).toHaveProperty('blocks.0.type', 'mcq')
+})
+
+it('defaults blocks and position on a server that sends neither', async () => {
+  // Not compatibility -- this build is pre-release. It keeps the parse from
+  // rejecting a frame outright during a partial deploy, where the alternative
+  // is an answer the reader never sees at all.
+  const seen = await collect(respond('data: {"type":"answer","text":"x","citations":[]}\n\n'))
+
+  expect(seen[0]).toMatchObject({ type: 'answer', blocks: [], position: 0 })
 })
 
 it('drops a frame whose shape this build does not understand', async () => {
@@ -90,7 +127,7 @@ it('drops a frame whose shape this build does not understand', async () => {
     ),
   )
 
-  expect(seen).toEqual([{ type: 'answer', text: 'x', citations: [] }])
+  expect(seen).toEqual([{ type: 'answer', text: 'x', blocks: [], position: 0, citations: [] }])
 })
 
 it('carries an in-band failure through as an event', async () => {
@@ -120,6 +157,44 @@ it('posts the chat id and question', async () => {
   const [url, init] = fetcher.mock.calls[0] as [string, RequestInit]
   expect(url).toBe(`/api/projects/${PROJECT}/ask`)
   expect(JSON.parse(init.body as string)).toEqual({ chat_id: 'c', question: 'why?' })
+})
+
+it('posts an attempt against a block and parses the verdict', async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(
+      new Response(JSON.stringify({ correct: true, correct_options: [1] }), { status: 200 }),
+    )
+
+  const verdict = await new HttpAskRepository('', fetcher).submitAskAttempt(PROJECT, 'c', {
+    position: 2,
+    componentId: ComponentId('q1'),
+    response: 1,
+  })
+
+  const [url, init] = fetcher.mock.calls[0] as [string, RequestInit]
+  expect(url).toBe(`/api/projects/${PROJECT}/asks/c/attempts`)
+  expect(JSON.parse(init.body as string)).toEqual({
+    position: 2,
+    component_id: 'q1',
+    response: 1,
+  })
+  expect(verdict.correct).toBe(true)
+  expect(verdict.correctOptions).toEqual([1])
+})
+
+it('raises an ApiError when the attempt route refuses', async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(new Response('{"detail":"no such block"}', { status: 404 }))
+
+  await expect(
+    new HttpAskRepository('', fetcher).submitAskAttempt(PROJECT, 'c', {
+      position: 0,
+      componentId: ComponentId('q1'),
+      response: 1,
+    }),
+  ).rejects.toMatchObject({ status: 404 })
 })
 
 afterEach(() => {

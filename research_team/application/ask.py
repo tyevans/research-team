@@ -86,6 +86,12 @@ class AskConversationOpened:
 class AskAnswer:
     text: str
     citations: tuple[Citation, ...] = ()
+    #: Which turn of this conversation this answer is, zero-based -- the same
+    #: number `AskTurnRow.position` stores, and the half of the grading key the
+    #: browser cannot derive. Taken from the registry's message count rather
+    #: than by loading the aggregate: two messages are appended per turn, and
+    #: the count is read *before* this turn's pair is added.
+    position: int = 0
 
 
 @dataclass(frozen=True)
@@ -298,6 +304,11 @@ class AskService:
             # Swallowing it would mean a reader shown an answer the history
             # pane will never list, which is worse than an error they can
             # retry.
+            # Read before `put`, which appends this turn's two messages: the
+            # position of *this* answer is the count of completed turns behind
+            # it. Reading after would report the next turn's index and nothing
+            # in a single-turn test would notice.
+            answer = replace(answer, position=len(conversation.messages) // 2)
             await self._record(conversation, question=question, answer=answer)
             self._conversations.put(
                 conversation.appended(

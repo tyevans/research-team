@@ -14,9 +14,13 @@ import { z } from 'zod'
 import { ApiError } from '@application/ports/errors.ts'
 import type { AskRepository } from '@application/ports/repositories.ts'
 import type { AskEvent } from '@domain/ask/conversation.ts'
-import type { ProjectId } from '@domain/shared/identifier.ts'
+import type { AttemptResponse, Verdict } from '@domain/lesson/attempt.ts'
+import type { DocumentBlock } from '@domain/lesson/document.ts'
+import type { ComponentId, ProjectId } from '@domain/shared/identifier.ts'
 
+import { verdictDto } from './dto.ts'
 import { seg } from './http-client.ts'
+import { toVerdict } from './mappers.ts'
 
 // Source-only: the tool that would have produced a topic citation created
 // topics rather than read them and left this read-only page's tool set, so a
@@ -24,6 +28,10 @@ import { seg } from './http-client.ts'
 const citationDto = z.object({ kind: z.literal('source'), id: z.string() })
 
 const askFrameDto = z.discriminatedUnion('type', [
+  // The stream's own first frame, naming the conversation the server stored
+  // this exchange under. Distinct from `chatId` on purpose -- see
+  // `AskEvent`'s `conversation` member in the domain.
+  z.object({ type: z.literal('conversation'), conversation_id: z.string() }),
   z.object({ type: z.literal('delta'), message_id: z.string(), text: z.string() }),
   z.object({
     type: z.literal('message'),
@@ -38,6 +46,12 @@ const askFrameDto = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('answer'),
     text: z.string(),
+    // `unknown` rather than a block schema: the domain's readers already
+    // narrow an open `data` record at the one boundary that needs it (see
+    // `domain/lesson/widgets.ts`), and re-deriving the whole component shape
+    // in zod would be a second schema to keep in step with the registry.
+    blocks: z.array(z.unknown()).default([]),
+    position: z.number().int().nonnegative().default(0),
     citations: z.array(citationDto).default([]),
   }),
   z.object({ type: z.literal('error'), detail: z.string() }),
@@ -45,6 +59,8 @@ const askFrameDto = z.discriminatedUnion('type', [
 
 const toEvent = (raw: z.output<typeof askFrameDto>): AskEvent => {
   switch (raw.type) {
+    case 'conversation':
+      return { type: 'conversation', conversationId: raw.conversation_id }
     case 'delta':
       return { type: 'delta', messageId: raw.message_id, text: raw.text }
     case 'message':
@@ -56,7 +72,13 @@ const toEvent = (raw: z.output<typeof askFrameDto>): AskEvent => {
         isError: raw.is_error,
       }
     case 'answer':
-      return { type: 'answer', text: raw.text, citations: raw.citations }
+      return {
+        type: 'answer',
+        text: raw.text,
+        blocks: raw.blocks as readonly DocumentBlock[],
+        position: raw.position,
+        citations: raw.citations,
+      }
     case 'error':
       return { type: 'error', detail: raw.detail }
   }
@@ -117,6 +139,33 @@ export class HttpAskRepository implements AskRepository {
       { method: 'DELETE' },
     )
     if (!response.ok) throw new ApiError(await detail(response), response.status)
+  }
+
+  // Not routed through `HttpClient`: that class is the JSON-in-JSON-out norm
+  // everywhere else, but `ask` above already owns a bare `fetcher` for the
+  // SSE body it cannot let `HttpClient` buffer, and a second HTTP path in
+  // this one repository would be a second place to keep the error handling
+  // in step. This follows the same fetch/parse/throw shape as `forget`.
+  async submitAskAttempt(
+    projectId: ProjectId,
+    conversationId: string,
+    input: { position: number; componentId: ComponentId; response: AttemptResponse },
+  ): Promise<Verdict> {
+    const response = await this.fetcher(
+      `${this.baseUrl}/api/projects/${seg(projectId)}/asks/${seg(conversationId)}/attempts`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          position: input.position,
+          component_id: input.componentId,
+          response: input.response,
+        }),
+      },
+    )
+    if (!response.ok) throw new ApiError(await detail(response), response.status)
+    // Same verdict shape as the lesson route, so the same schema and mapper.
+    return toVerdict(verdictDto.parse(JSON.parse(await response.text())))
   }
 }
 

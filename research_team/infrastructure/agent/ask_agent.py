@@ -15,6 +15,8 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import BaseTool
 
 from research_team.application.ask import AskAnswer, AskMessage, Citation
+from research_team.application.ask_components import ASK_COMPONENT_TYPES
+from research_team.application.components import component_reference
 from research_team.application.corpus_read import (
     LIST_SOURCES_TOOL,
     READ_SOURCE_TOOL,
@@ -107,6 +109,28 @@ source you got something from.
 """
     + REFERENCE_SYNTAX_PROMPT
 )
+
+ASK_COMPONENT_PROMPT = """
+## Asking the reader something back
+
+Some answers land better as something the reader does than as something they
+read. You can write an interactive component into an answer and it will render
+as a working widget in the page, graded on the server.
+
+**The default is prose, and this is the part to get right.** A component earns
+its place when the reader would learn more by *doing* than by reading -- when
+they have asked to check their understanding, when they are about to rely on a
+distinction the corpus draws finely, or when they asked to be quizzed. A
+question about a fact the material states plainly is not worth asking back, and
+an answer that ends in a quiz the reader did not want is worse than the same
+answer in a paragraph. Most answers should contain no component at all.
+
+Answer the question first. A component is what follows a real answer, never a
+substitute for one.
+
+""" + component_reference(only=ASK_COMPONENT_TYPES)
+
+ASK_PROMPT = ASK_PROMPT + ASK_COMPONENT_PROMPT
 
 
 def readable(tools: Iterable[BaseTool]) -> tuple[BaseTool, ...]:

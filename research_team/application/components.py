@@ -323,6 +323,19 @@ class ComponentType:
     summary: str
     example: str
     withheld: tuple[str, ...] = ()
+    craft: tuple[str, ...] = ()
+    """How to write a *good* one of these, not how to write a valid one.
+
+    Registry-resident for `summary` and `example`'s reason: guidance kept
+    beside a schema drifts from it within two edits, and the drift is invisible
+    until a model authors faithfully to a description that stopped being true.
+    Both the stage prompt and the ask prompt render this, so there is one copy.
+
+    What belongs here is the failure mode this format actually produces -- the
+    fourth distractor nobody picks, the blank the sentence gives away -- and
+    not a course in assessment design. A model reads this every time it writes
+    one; length is a cost paid per authoring turn.
+    """
     gradeable: bool = False
     normalize: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     strip: Callable[[dict[str, Any]], dict[str, Any]] | None = None
@@ -419,6 +432,12 @@ REGISTRY: dict[str, ComponentType] = {
                 required=True,
             ),
         },
+        craft=(
+            "One fact per card. A card whose back is a paragraph is a passage that "
+            "has been put in the wrong container -- split it or leave it as prose.",
+            "Write the front as the question a reader would actually ask "
+            "themselves, not as a heading.",
+        ),
     ),
     "mcq": ComponentType(
         name="mcq",
@@ -463,6 +482,16 @@ REGISTRY: dict[str, ComponentType] = {
             "rationale": Spec(text),
         },
         withheld=("options[].correct", "options[].feedback", "rationale"),
+        craft=(
+            "Every distractor should be something a reader who half-understands "
+            "would actually pick. An option nobody chooses teaches nothing and "
+            "costs a line -- three or four options beat five padded ones.",
+            "Give each wrong option `feedback` naming the misunderstanding that "
+            "makes it attractive. The moment after a wrong answer is the one "
+            "moment the reader is most ready to read why.",
+            "`rationale` explains the right answer's reasoning, which is not the "
+            "same as restating it.",
+        ),
         gradeable=True,
         strip=_mcq_strip,
     ),
@@ -487,6 +516,15 @@ REGISTRY: dict[str, ComponentType] = {
             "mode": Spec(one_of("one-at-a-time", "all-at-once"), default="one-at-a-time"),
         },
         withheld=("text", "segments[].answer"),
+        craft=(
+            "Blank the thing being learned, not the word that happens to be a "
+            "noun. If the surrounding sentence gives the answer away, the blank "
+            "tests reading rather than recall.",
+            "Grading normalises case and spacing but not word choice, so use "
+            "`{{answer::hint}}` where a term has several defensible spellings.",
+            "Three or four blanks in a passage is plenty; a sentence that is more "
+            "blank than prose is unreadable rather than difficult.",
+        ),
         gradeable=True,
         normalize=_cloze_segments,
         strip=_cloze_strip,
@@ -524,6 +562,12 @@ REGISTRY: dict[str, ComponentType] = {
                 required=True,
             ),
         },
+        craft=(
+            "Steps someone performs, in the order they perform them -- not facts "
+            "they should know. A checklist of facts is a flashcard deck with no "
+            "second side.",
+            "`note` carries the caveat that would otherwise bloat `text`.",
+        ),
     ),
 }
 
@@ -557,6 +601,10 @@ def component_reference(only: Iterable[str] | None = None) -> str:
     ]
     for component in wanted:
         lines += [f"### {component.name}", "", component.summary, "", component.example, ""]
+        if component.craft:
+            lines += ["Writing a good one:", ""]
+            lines += [f"- {note}" for note in component.craft]
+            lines += [""]
     return "\n".join(lines)
 
 

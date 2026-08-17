@@ -25,6 +25,7 @@ const meta = {
   args: {
     projectId: PROJECT,
     transcript: [],
+    conversationId: 'c1',
     asking: false,
     error: null,
     onAsk: () => {},

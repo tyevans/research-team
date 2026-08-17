@@ -1,6 +1,10 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useState } from 'react'
 
+import type { Container as AppContainer } from '@app/container.ts'
+import { ContainerProvider } from '@app/container-context.tsx'
+import { ComponentId } from '@domain/shared/identifier.ts'
+
 import { AskTurn } from './AskTurn.tsx'
 import { PROJECT, assistantCall, toolResult, turn } from './ask-fixtures.ts'
 
@@ -26,7 +30,7 @@ const meta = {
       </div>
     ),
   ],
-  args: { projectId: PROJECT, open: false, onToggle: () => {} },
+  args: { projectId: PROJECT, conversationId: 'c1', open: false, onToggle: () => {} },
 } satisfies Meta<typeof AskTurn>
 
 export default meta
@@ -106,3 +110,49 @@ export const Failed: Story = {
  *  one: `CitationList` renders nothing at all rather than an empty "Sources"
  *  heading, which would read as a page that lost its data. */
 export const NoCitations: Story = { args: { turn: turn({ citations: [] }) } }
+
+/** The model answered back with a widget, not just prose -- the case this
+ *  story exists to inspect is whether an mcq's own layout (its option list,
+ *  its button row) sits inside the chat column the way a plain answer does,
+ *  or overflows it. `useAskAttempts` reaches for the container on every
+ *  render of the widget path, so this story needs one even though it never
+ *  submits -- `submitAskAttempt` here never resolves, matching the "nobody
+ *  clicked check answer yet" state the story is actually showing. */
+export const WithComponent: Story = {
+  decorators: [
+    (Story) => {
+      const container = {
+        ask: { submitAskAttempt: () => new Promise<never>(() => {}) },
+      } as unknown as AppContainer
+      return (
+        <ContainerProvider container={container}>
+          <Story />
+        </ContainerProvider>
+      )
+    },
+  ],
+  args: {
+    turn: turn({
+      blocks: [
+        {
+          kind: 'component',
+          id: ComponentId('q1'),
+          type: 'mcq',
+          data: {
+            prompt: 'Which of the two papers reports the larger effect?',
+            options: [
+              { text: 'The 2019 spaced-review paper' },
+              { text: 'The follow-up replication' },
+            ],
+            multiple: false,
+          },
+          raw: '```component:mcq\n```',
+          lang: 'component:mcq',
+          unknown: false,
+          errors: [],
+          withheld: ['answer'],
+        },
+      ],
+    }),
+  },
+}
