@@ -47,7 +47,16 @@ export const DefinitionWidget = ({
   return (
     <div className="cmp-body">
       <ResolvedFrame reference={chosen} name={reference.entity} onPick={setPicked}>
-        {(entity) => <Defined projectId={projectId as ProjectId} entity={entity} />}
+        {/* Narrowed here rather than cast inside `Defined`, so TypeScript
+            carries the guarantee instead of a comment. The `null` arm is
+            unreachable and exists only to make the narrow possible:
+            `useEntityReference` returns `unavailable` whenever there is no
+            project (`use-entity-reference.ts`), and `ResolvedFrame` reaches
+            this render prop only from its `resolved` arm -- so no state that
+            mounts a child here can lack a project. Narrowing at the call site
+            keeps `ResolvedFrame`'s signature untouched, which matters because
+            four more widgets copy this shape. */}
+        {(entity) => (projectId ? <Defined projectId={projectId} entity={entity} /> : null)}
       </ResolvedFrame>
     </div>
   )
@@ -58,10 +67,8 @@ export const DefinitionWidget = ({
  *  it with a null id and an `enabled` flag on every non-resolved state --
  *  which works and which reads as though a fetch might happen when it cannot.
  *
- * `projectId` is cast non-optional at the call site above: this only renders
- * from `ResolvedFrame`'s `resolved` arm, and `useEntityReference` returns
- * `unavailable` for every reference with no project, so the state that mounts
- * this one is unreachable without one.
+ * `projectId` is non-optional and the call site narrows to it rather than
+ * casting -- see the render prop above for why that arm is unreachable.
  */
 const Defined = ({ projectId, entity }: { projectId: ProjectId; entity: GraphNode }) => {
   const definition = useDefinition(projectId, entity.id)
