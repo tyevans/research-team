@@ -3,10 +3,10 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from eventsource import InMemoryEventBus
+from eventsource import InMemoryEventBus, StreamId
 from eventsource.adapters.sqlite import SQLiteEventStore
 
-from research_team.domain.interaction import ViewEntered
+from research_team.domain.interaction import BROWSER_SESSION_AGGREGATE_TYPE, ViewEntered
 from research_team.infrastructure.interaction.recorder import (
     EventStoreInteractionRecorder,
 )
@@ -56,7 +56,15 @@ async def test_recording_publishes_every_event(tmp_path):
 async def test_two_browser_sessions_go_to_two_streams(tmp_path):
     """One append per stream, because append takes one StreamId. A single
     call with events from two sessions would put one session's events in the
-    other's stream."""
+    other's stream.
+
+    Asserting only `written == 2` would pass even if both events landed in
+    one stream -- the count is the same either way. So this reads each
+    session's stream back individually and checks it holds exactly its own
+    event, which is the only way to catch a grouping bug (by a constant, or
+    by aggregate *type* instead of aggregate *id*) that still writes two
+    events total.
+    """
     store = SQLiteEventStore(str(tmp_path / "interactions.db"))
     recorder = EventStoreInteractionRecorder(store, InMemoryEventBus())
     first, second = uuid4(), uuid4()
@@ -64,6 +72,20 @@ async def test_two_browser_sessions_go_to_two_streams(tmp_path):
     written = await recorder.record([_event(first, 1), _event(second, 1)])
 
     assert written == 2
+    first_stream = [
+        envelope.event
+        async for envelope in store.read_stream(
+            StreamId(first, BROWSER_SESSION_AGGREGATE_TYPE)
+        )
+    ]
+    second_stream = [
+        envelope.event
+        async for envelope in store.read_stream(
+            StreamId(second, BROWSER_SESSION_AGGREGATE_TYPE)
+        )
+    ]
+    assert [event.aggregate_id for event in first_stream] == [first]
+    assert [event.aggregate_id for event in second_stream] == [second]
 
 
 async def test_an_empty_batch_writes_nothing_and_does_not_raise(tmp_path):
