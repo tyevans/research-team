@@ -78,15 +78,34 @@ did not -- and it is a constant so the guess costs one number to revise, not
 a re-read of every prompt that assumes it.
 """
 
-MAX_CANDIDATES_PER_NEED = 3
+MAX_CANDIDATES_PER_NEED = 5
 """Stage 3's cap on how many judged results survive per need.
 
 Combined with the two caps above, the worst case for one chain invocation is
 `MAX_NEEDS_PER_TOPIC * MAX_QUERIES_PER_NEED` = 8 searches, and
-`MAX_NEEDS_PER_TOPIC * MAX_CANDIDATES_PER_NEED` = 24 candidates proposed. Both
+`MAX_NEEDS_PER_TOPIC * MAX_CANDIDATES_PER_NEED` = 20 candidates proposed. Both
 are guesses at where a review pane stops being reviewable and starts being a
 chore, made constants for the reason every bound in this module is a
 constant: a wrong guess is a number to change, not a redesign.
+
+(This said 24 while the value was 3, which is 12. The arithmetic was wrong,
+not the constant -- noted because the number was quotable and nobody
+recomputed it.)
+
+**Raised from 3 to 5 on 2026-08-16, and unlike the caps above this one is
+measured.** With `_judge_prompt` asking for partial matches, the judge became
+the looser constraint and this became the binding one: against the same
+ten-result pool, `gemma-4-26b-qat` and `muse-glimmer-30b` both saturated it,
+and muse marked `keep: true` on 8 of 10 -- rejecting only a blasting video
+and something about a cat and a drawstring. Holding at 3 would have discarded
+five candidates the judge wanted, which defeats the point of loosening it:
+the product composes an answer from several sources ("this part of X, that
+part of Y"), so the cap has to leave room for several.
+
+Five rather than eight because a reviewer's attention is the scarce thing,
+not the judge's willingness, and 8/10 was one need on one pool -- too thin to
+set a bound on. If review starts feeling thin rather than long, this is the
+number to raise.
 """
 
 
@@ -504,13 +523,39 @@ def _judge_prompt(need: MediaNeed, results: list[SearchResult]) -> str:
 
     The index in each line is what `parse_judgements` reads back -- a judged
     item names a position in *this* listing, not any id of the result.
+
+    **Partial matches are kept, and this is the load-bearing instruction.**
+    Stage 1 writes compound needs -- "a slow-motion close-up of the pin being
+    driven *and* a stress test comparing the joint against a glued one" -- and
+    a judge reading that literally rejects every real video, because no single
+    video is all of it. Measured on 2026-08-16 against one such need and ten
+    genuinely on-topic drawboring videos: `gemma-4-26b-qat` and
+    `muse-glimmer-30b` each kept **zero**, with correct reasons of the form
+    "shows drawboring but does not include the stress test";
+    `qwen3.8-27b-mtp` kept three only because it read the need loosely. Which
+    model happened to be loaded decided whether the feature worked at all.
+
+    The fix is to say what the product actually wants, which the old prompt
+    never did: an answer is composed from several sources -- "this part of X,
+    that part of Y" -- so a result covering one clause of a need is useful,
+    not a failure to cover the rest. Rejection is reserved for off-topic.
+
+    The cost is real and accepted: a looser judge proposes weaker candidates,
+    and the person reviewing them absorbs that. `MAX_CANDIDATES_PER_NEED`
+    bounds how many reach them, and rejecting a mediocre proposal is one
+    click, where a need that silently kept nothing is invisible.
     """
     lines = [
         f"{i}. {r.title} -- {r.url} ({r.kind}): {r.snippet}" for i, r in enumerate(results)
     ]
     return (
         f"Need: {need.description}\nWhy: {need.why}\n"
-        "Which of these results serve the need? Judge only what is listed.\n"
+        "Which of these results serve the need, in whole or in part? Judge "
+        "only what is listed.\n"
+        "A need is often satisfied by several results together rather than by "
+        "one that covers all of it, so keep anything that covers part of the "
+        "need -- one aspect, one step, one of several things asked for. "
+        "Reject only what is off-topic or unusable.\n"
         + "\n".join(lines)
         + '\nAnswer with JSON: [{"index": ..., "keep": true|false, "reason": ...}].'
     )
