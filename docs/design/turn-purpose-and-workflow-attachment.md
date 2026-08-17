@@ -349,3 +349,39 @@ fixture did not create.
 - Behaviourally: seeding, dispatch and research-round turns lose the stage
   prompt, `advance_stage`, and the tool denylist. Chat and stage turns are
   unchanged. Nothing in the HTTP contract changes.
+
+## What this does to an existing database
+
+Measured on 2026-08-16 against a copy of the real database (`local_copy`
+rewrote its store id; row counts as printed at copy time: `events` 45,
+`session_summary_rows` 2, `projection_checkpoints` 3), by calling
+`SessionSummaryStore.open()` directly against the copy — the exact call
+`build_application` makes on startup:
+
+```
+OPEN FAILED: ReadModelSchemaMismatchError('Cannot reconcile session_summary_rows:
+purpose is required and has no default, so it cannot be added to a table that
+may already have rows -- give the field a default or make it optional')
+```
+
+This is `apply_schema`'s refusal path, and it is reached without ever getting
+as far as a rebuild. `generate_additive_migration` refuses `purpose`
+*categorically* the moment it sees a required column with no default — before
+`apply_schema` even checks whether the table has rows. The row-count check
+only decides what happens *after* that refusal: an empty table would be
+dropped and recreated (silently, no error), but `session_summary_rows` here
+has 2 rows, so `apply_schema` re-raises instead of hiding the refusal behind a
+silent drop.
+
+The prediction in the Task 4 brief assumed the reconcile step would get far
+enough to ask for `/rebuild`, and that the rebuild would then be the thing
+that fails (replaying `SessionStarted` payloads with no `purpose`, which Task
+1 made unloadable). That second failure is real but was never reached here —
+`SessionSummaryStore.open()` raises first, before any replay starts, because
+the populated table itself is enough to refuse the reconcile. Either way the
+practical result is the one Task 1 accepted: **this database cannot be
+carried forward.** The owner's console needs a fresh `~/.research-team`
+directory (or `/rebuild` after manually dropping and recreating an *empty*
+`session_summary_rows`, which only defers the same wall to the replay of
+`SessionStarted`) — not a migration, because the missing values have no
+honest answer to backfill.

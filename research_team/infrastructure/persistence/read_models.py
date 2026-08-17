@@ -77,6 +77,7 @@ from research_team.domain import (
     MediaRecord,
     Session,
     SessionForkedFrom,
+    SessionPurpose,
     SessionStarted,
     SourceRecord,
     TextRecord,
@@ -143,6 +144,11 @@ class SessionSummaryRow(ReadModel):
     from a database written before a project was compulsory, and this build
     does not load those: the event itself refuses to validate, so a rebuild
     raises rather than quietly reproducing the row."""
+    purpose: SessionPurpose
+    """Required, matching `SessionStarted`. A row without one could only come
+    from a database written before purpose was compulsory, and this build
+    does not load those: the event itself refuses to validate, so a rebuild
+    raises rather than quietly reproducing the row."""
 
     @field_validator("file_paths", mode="before")
     @classmethod
@@ -176,6 +182,7 @@ def to_summary(row: SessionSummaryRow) -> SessionSummary:
         forked_at=row.forked_at,
         failed_turns=row.failed_turns,
         project_id=row.project_id,
+        purpose=row.purpose,
     )
 
 
@@ -215,9 +222,11 @@ class SessionSummaryProjection(DeclarativeProjection):
                 id=event.aggregate_id,
                 started_at=event.occurred_at,
                 # Written here and nowhere else: this is the only event that
-                # carries a project, so no later handler can change it and a
-                # replay from any checkpoint re-derives the same value.
+                # carries a project or a purpose, so no later handler can
+                # change either and a replay from any checkpoint re-derives
+                # the same values.
                 project_id=event.project_id,
+                purpose=event.purpose,
             )
         )
 

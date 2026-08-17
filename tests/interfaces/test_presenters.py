@@ -17,6 +17,7 @@ from research_team.domain import (
     ProjectStageAdvanced,
     ProjectWorkflowSelected,
     SessionForkedFrom,
+    SessionPurpose,
     SessionStarted,
     TextRecord,
     ToolResultRecorded,
@@ -434,6 +435,7 @@ def test_a_session_summary_carries_its_project_so_rows_can_be_grouped():
         files=1,
         first_message="hello",
         project_id=project_id,
+        purpose=SessionPurpose.CHAT,
     )
 
     assert summary_view(summary)["project_id"] == str(project_id)

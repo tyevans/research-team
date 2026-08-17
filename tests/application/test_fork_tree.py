@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from research_team.application import SessionSummary, build_fork_tree
+from research_team.domain import SessionPurpose
 
 START = datetime(2026, 8, 2, 12, 0, tzinfo=UTC)
 
@@ -20,6 +21,7 @@ def summary(index: int, *, forked_from=None, forked_at=None) -> SessionSummary:
         # that says nothing about projects. A shared constant would read as
         # though belonging to one project mattered to the forest.
         project_id=uuid4(),
+        purpose=SessionPurpose.CHAT,
         forked_from=forked_from,
         forked_at=forked_at,
     )
