@@ -7,6 +7,7 @@ from research_team.application import TurnAccountingError
 from research_team.domain import (
     AssistantMessageAdded,
     FileWritten,
+    SessionPurpose,
     SessionStarted,
     StartSession,
     TurnCompleted,
@@ -341,6 +342,7 @@ async def test_turn_runs_under_the_sessions_own_prompt(build_service, fake_model
             system_prompt="a distinctive prompt",
             model_name=fake_model.__class__.__name__,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     await service._repository.save(session)

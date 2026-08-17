@@ -12,7 +12,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from research_team.application.topics import SELF_CONTAINED_QUESTION
-from research_team.domain import CreateProject
+from research_team.domain import CreateProject, SessionPurpose
 from tests.conftest import start_session
 
 
@@ -63,7 +63,7 @@ async def _write_file(service, session_id, path: str, content: str, fake_model) 
 
 
 async def test_the_first_session_in_a_project_starts_empty(service, project_id):
-    session_id = await service.start_in_project(project_id)
+    session_id = await service.start_in_project(project_id, SessionPurpose.CHAT)
 
     session = await service.load(session_id)
     assert session.state.files == {}
@@ -73,11 +73,11 @@ async def test_the_first_session_in_a_project_starts_empty(service, project_id):
 async def test_a_later_session_inherits_the_previous_one_s_files(
     service, project_id, fake_model
 ):
-    first = await service.start_in_project(project_id)
+    first = await service.start_in_project(project_id, SessionPurpose.CHAT)
     await _write_file(service, first, "/notes.md", "hello", fake_model)
     await service.release_project(first)
 
-    second = await service.start_in_project(project_id)
+    second = await service.start_in_project(project_id, SessionPurpose.CHAT)
 
     session = await service.load(second)
     assert session.state.files["/notes.md"]["content"] == "hello"
@@ -86,11 +86,11 @@ async def test_a_later_session_inherits_the_previous_one_s_files(
 
 async def test_inheriting_does_not_copy_the_conversation(service, project_id, fake_model):
     """A project shares a filesystem, not a chat history."""
-    first = await service.start_in_project(project_id)
+    first = await service.start_in_project(project_id, SessionPurpose.CHAT)
     await _write_file(service, first, "/notes.md", "hello", fake_model)
     await service.release_project(first)
 
-    second = await service.start_in_project(project_id)
+    second = await service.start_in_project(project_id, SessionPurpose.CHAT)
 
     session = await service.load(second)
     assert session.state.messages == []
@@ -99,10 +99,10 @@ async def test_inheriting_does_not_copy_the_conversation(service, project_id, fa
 async def test_a_second_session_cannot_start_while_one_holds_the_project(service, project_id):
     from eventsource import CommandRejectedError
 
-    first = await service.start_in_project(project_id)
+    first = await service.start_in_project(project_id, SessionPurpose.CHAT)
 
     with pytest.raises(CommandRejectedError, match=str(first)):
-        await service.start_in_project(project_id)
+        await service.start_in_project(project_id, SessionPurpose.CHAT)
 
 
 async def test_release_project_is_a_no_op_for_a_session_that_holds_nothing(service):
@@ -130,11 +130,11 @@ async def test_releasing_lets_a_second_session_take_the_project(
     What matters: the second call does not raise, it actually joined the
     project, and it inherited the tip the first session left behind.
     """
-    first = await service.start_in_project(project_id)
+    first = await service.start_in_project(project_id, SessionPurpose.CHAT)
     await _write_file(service, first, "/notes.md", "hello", fake_model)
     await service.release_project(first)
 
-    second = await service.start_in_project(project_id)
+    second = await service.start_in_project(project_id, SessionPurpose.CHAT)
 
     session = await service.load(second)
     assert session.state.project_id == project_id
@@ -155,9 +155,9 @@ async def test_release_project_is_a_no_op_for_a_session_that_is_not_the_holder(
     non-holding session must not raise, and must not disturb whoever
     actually holds it.
     """
-    first = await service.start_in_project(project_id)
+    first = await service.start_in_project(project_id, SessionPurpose.CHAT)
     await service.release_project(first)
-    second = await service.start_in_project(project_id)
+    second = await service.start_in_project(project_id, SessionPurpose.CHAT)
 
     await service.release_project(first)
 
@@ -174,7 +174,7 @@ async def test_a_session_started_in_a_project_records_the_knowledge_prompt(
     actually started with, not whatever the process's default happens to be
     today.
     """
-    session_id = await service.start_in_project(project_id)
+    session_id = await service.start_in_project(project_id, SessionPurpose.CHAT)
 
     session = await service.load(session_id)
 
@@ -202,7 +202,7 @@ async def test_a_session_started_in_a_project_is_told_about_its_topic_tools(
     with "queue_empty" forever, because the only thing that can put a topic on
     the queue is the agent calling `open_topic`, and nothing ever told it to.
     """
-    session_id = await service.start_in_project(project_id)
+    session_id = await service.start_in_project(project_id, SessionPurpose.CHAT)
 
     session = await service.load(session_id)
 
@@ -232,7 +232,7 @@ async def test_a_session_started_in_a_project_is_told_the_project_it_is_in(
     happened to appear in the default prompt, which it does not: the fixture
     names this project `research` and no default text contains it.
     """
-    session_id = await service.start_in_project(project_id)
+    session_id = await service.start_in_project(project_id, SessionPurpose.CHAT)
 
     session = await service.load(session_id)
 
@@ -244,11 +244,11 @@ async def test_a_second_session_in_a_project_is_told_it_too(service, project_id,
     threaded separately -- a second join that inherited files but not the
     project's name would be the same defect, visible only on the second
     session of a project and therefore never in a fresh-database test."""
-    first = await service.start_in_project(project_id)
+    first = await service.start_in_project(project_id, SessionPurpose.CHAT)
     await _write_file(service, first, "/notes.md", "something", fake_model)
     await service.release_project(first)
 
-    second = await service.start_in_project(project_id)
+    second = await service.start_in_project(project_id, SessionPurpose.CHAT)
 
     session = await service.load(second)
     assert "research" in session.state.system_prompt
@@ -268,7 +268,7 @@ async def test_a_joined_session_is_told_what_a_self_contained_question_is(servic
     "self-contained": the vague version of this instruction is the one the
     model was already given and already believed it had followed.
     """
-    session_id = await service.start_in_project(project_id)
+    session_id = await service.start_in_project(project_id, SessionPurpose.CHAT)
 
     session = await service.load(session_id)
 
@@ -302,12 +302,12 @@ async def test_a_release_does_not_freeze_the_project_at_the_moment_it_happened(
     there, so the next session inherits a prefix of a stream rather than a
     filesystem.
     """
-    first = await service.start_in_project(project_id)
+    first = await service.start_in_project(project_id, SessionPurpose.CHAT)
     await _write_file(service, first, "/before.md", "early", fake_model)
     await service.release_project(first)
     await _write_file(service, first, "/after.md", "late", fake_model)
 
-    second = await service.start_in_project(project_id)
+    second = await service.start_in_project(project_id, SessionPurpose.CHAT)
 
     session = await service.load(second)
     assert session.state.files["/before.md"]["content"] == "early"
@@ -325,7 +325,7 @@ async def test_the_project_shows_files_written_after_its_release(
     project's own file listing went blank of work that was sitting in the
     stream it was pointing at.
     """
-    first = await service.start_in_project(project_id)
+    first = await service.start_in_project(project_id, SessionPurpose.CHAT)
     await service.release_project(first)
     await _write_file(service, first, "/after.md", "late", fake_model)
 
@@ -344,11 +344,11 @@ async def test_the_fork_point_recorded_is_the_one_actually_taken(
     outran the pointer would leave both of them describing a point that is not
     where anything was copied from.
     """
-    first = await service.start_in_project(project_id)
+    first = await service.start_in_project(project_id, SessionPurpose.CHAT)
     await service.release_project(first)
     await _write_file(service, first, "/after.md", "late", fake_model)
 
-    second = await service.start_in_project(project_id)
+    second = await service.start_in_project(project_id, SessionPurpose.CHAT)
 
     at = len(await service.history(first))
     forked = [
@@ -358,3 +358,16 @@ async def test_the_fork_point_recorded_is_the_one_actually_taken(
     ]
     assert [event.at_event for event in forked] == [at]
     assert (await service.projects.load(project_id)).state.tip_at_event == at
+
+
+async def test_the_session_carries_the_purpose_it_was_started_for(service, project_id):
+    """A run's session is a research round, and the session itself says so.
+
+    The point of the whole change is that this fact is on the session rather
+    than inferred from a registry, so this asserts the stored state and not
+    the argument it was given.
+    """
+    session_id = await service.start_in_project(project_id, SessionPurpose.RESEARCH_ROUND)
+
+    session = await service.load(session_id)
+    assert session.state.purpose is SessionPurpose.RESEARCH_ROUND

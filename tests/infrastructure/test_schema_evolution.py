@@ -33,6 +33,7 @@ from research_team.domain import (
     ProjectStageAdvanced,
     SendUserMessage,
     Session,
+    SessionPurpose,
     SessionStarted,
     StartSession,
     ToolCallDecided,
@@ -106,6 +107,7 @@ async def started(repository, session_id, db_path):
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     await repository.save(session)
@@ -351,6 +353,7 @@ async def test_a_schema_version_bump_falls_back_to_replay(repository, session_id
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     for index in range(60):  # comfortably past the snapshot threshold
@@ -412,6 +415,43 @@ async def test_session_started_without_project_id_no_longer_loads(
         await repository.events_for(session_id)
 
 
+async def test_session_started_without_purpose_no_longer_loads(repository, started, db_path):
+    """The second deliberate break in this file, and it reads like the first.
+
+    `SessionStarted` gained a required `purpose` so that a workflow attaches
+    only to the kinds of turn that should drive it. A payload written before
+    the field existed cannot be translated: the only available default is
+    `CHAT`, and the sessions in an old database this build would be wrong
+    about are exactly the auto-research ones the field was added to fix.
+
+    So the payload is rejected at read. Pinned here because "old data stops
+    loading" should cost a test to change. Affordable only because the project
+    is pre-release and holds no real data.
+
+    Proved non-vacuous by temporarily giving `SessionStarted.purpose` a
+    `= SessionPurpose.CHAT` default and re-running: the test failed, because
+    the default is exactly what would let this payload load silently.
+    """
+    session_id = uuid4()
+    await _write_old_event(
+        db_path,
+        session_id,
+        version=1,
+        event_type="SessionStarted",
+        payload={
+            "aggregate_id": str(session_id),
+            "aggregate_type": "Session",
+            "aggregate_version": 1,
+            "system_prompt": "p",
+            "model_name": "m",
+            "project_id": str(uuid4()),
+        },
+    )
+
+    with pytest.raises(ValidationError, match="purpose"):
+        await repository.events_for(session_id)
+
+
 async def test_session_started_with_a_project_id_loads(repository, started, db_path):
     """The shape that replaced it, read back the same way.
 
@@ -433,6 +473,7 @@ async def test_session_started_with_a_project_id_loads(repository, started, db_p
             "system_prompt": "p",
             "model_name": "m",
             "project_id": str(project_id),
+            "purpose": "chat",
         },
     )
 

@@ -1,17 +1,15 @@
 ## Pre-Compact Snapshot
-**Time**: 2026-08-17T03:58:39Z
+**Time**: 2026-08-17T17:29:07Z
 
 ### Recent Commits
-358b4f6 Write down the gate that let a stale console through
-246ca63 Rebuild the committed console for B94's media-row states
-535a4fc Show a transcription on the row that started it (B94)
-45228c0 Measure B84, and take the text out of the fetch hot loop
-7e40241 Reclaim blobs no corpus_media row names, by hand (B85)
+8f49608 Fix the wrong grading key, and three review findings besides
+c8ff10e Document components in an ask, and rebuild the console
+0325ce6 Render a component the model asked back
+59c04f4 Share the attempt state machine between a lesson and an ask
+7044a0f Read blocks and a position off an ask answer frame
 
 ### Working Tree
  M .claude/tackline/memory/sessions/pre-compact.md
-?? .claude/tackline/memory/sessions/2026-08-16T05-59-29Z.md
-?? .claude/tackline/memory/sessions/last.md
 
 ### Open Questions
 (fill in before context is lost)

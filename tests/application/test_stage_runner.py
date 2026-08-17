@@ -39,6 +39,7 @@ from research_team.domain import (
     CreateProject,
     Project,
     ProjectStageAdvanced,
+    SessionPurpose,
     StageChecksEvaluated,
     ToolCallDecided,
 )
@@ -954,7 +955,7 @@ async def test_a_stage_sees_artifacts_written_after_the_project_was_released(
     ran a turn against work that already existed, and the artifacts stayed
     where nothing could reach them. Proved red on `satisfied`.
     """
-    stranded = await service.start_in_project(project_id)
+    stranded = await service.start_in_project(project_id, SessionPurpose.WORKFLOW_STAGE)
     await service.release_project(stranded)
     await service.write_file(stranded, STAGE_ONE_ARTIFACT, _artifact("Intent", "s.one"))
 

@@ -14,6 +14,7 @@ from eventsource import CommandRejectedError
 from research_team.domain import (
     SendUserMessage,
     Session,
+    SessionPurpose,
     StartSession,
     WriteFile,
 )
@@ -31,6 +32,7 @@ def test_execute_applies_the_events_decide_returns(session_id):
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
 
@@ -48,6 +50,7 @@ def test_execute_stamps_the_version_decide_cannot_know(session_id):
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     session.execute(SendUserMessage(message={"type": "human", "data": {}}))
@@ -85,6 +88,7 @@ async def test_state_survives_save_and_reload(aggregates, session_id):
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     session.execute(WriteFile(path="/a.py", file_data=FILE_DATA))
@@ -98,3 +102,23 @@ async def test_state_survives_save_and_reload(aggregates, session_id):
     assert reloaded.version == 3
     # Replay reconstitutes the decider's own view, not just the payloads.
     assert reloaded.state.status == "started"
+
+
+def test_a_session_remembers_what_kind_of_work_it_is_for(session_id):
+    """The purpose reaches the state, which is the only place anything reads it.
+
+    Would pass with `decide` returning a hard-coded CHAT, which is why the
+    second half uses a non-default purpose: a build that ignored the command
+    and folded the enum's first member would answer CHAT here and fail.
+    """
+    session = Session(session_id)
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
+            purpose=SessionPurpose.RESEARCH_ROUND,
+        )
+    )
+    assert session.state.purpose is SessionPurpose.RESEARCH_ROUND

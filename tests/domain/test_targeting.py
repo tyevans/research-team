@@ -22,7 +22,7 @@ from uuid import uuid4
 import pytest
 from eventsource import AggregateIdMismatchError
 
-from research_team.domain.commands import StartSession
+from research_team.domain.commands import SessionPurpose, StartSession
 from research_team.domain.corpus import Corpus, StoreSourceDocument
 from research_team.domain.project import CreateProject, Project
 from research_team.domain.research_run import ResearchRun, StartRun
@@ -54,6 +54,7 @@ def test_a_session_refuses_a_command_naming_another_session() -> None:
                 system_prompt="p",
                 model_name="m",
                 project_id=uuid4(),
+                purpose=SessionPurpose.CHAT,
             )
         )
 

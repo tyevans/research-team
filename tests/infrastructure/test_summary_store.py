@@ -14,6 +14,7 @@ from eventsource.ports.readmodels import ReadModelSchemaMismatchError
 
 from research_team.domain import (
     SendUserMessage,
+    SessionPurpose,
     StartSession,
 )
 from research_team.infrastructure.persistence import SessionSummaryStore
@@ -38,6 +39,7 @@ async def test_rows_outlive_the_process(db_path, repository, session_id):
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     session.execute(
@@ -70,6 +72,7 @@ async def test_sessions_are_listed_newest_first(db_path, repository):
                     system_prompt=SYSTEM_PROMPT,
                     model_name=MODEL_NAME,
                     project_id=uuid4(),
+                    purpose=SessionPurpose.CHAT,
                 )
             )
             session.execute(
@@ -99,6 +102,7 @@ async def test_a_sessions_project_survives_a_reopen(db_path, repository, session
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=project_id,
+            purpose=SessionPurpose.CHAT,
         )
     )
     events = list(session.uncommitted_events)

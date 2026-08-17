@@ -34,6 +34,7 @@ from uuid import UUID, uuid4
 from research_team.application.artifacts import slugify
 from research_team.application.session_service import SessionService
 from research_team.application.topic_read import TopicDetail, TopicReadPort
+from research_team.domain import SessionPurpose
 
 TOPICS_DIR = "/topics"
 """Where a dispatch writes, kept apart from `/course` -- see the module
@@ -334,7 +335,9 @@ class TopicDispatcher:
         # the project across a turn that never runs.
         project_name = (await self._session.project_state(project_id)).name
 
-        session_id = await self._session.start_in_project(project_id)
+        session_id = await self._session.start_in_project(
+            project_id, SessionPurpose.TOPIC_DISPATCH
+        )
         try:
             await self._session.attach_project(project_id)
             outcome = await self._turns.run(

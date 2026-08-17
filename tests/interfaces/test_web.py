@@ -30,6 +30,7 @@ from research_team.domain import (
     DeleteFile,
     DropSourceDocument,
     SendUserMessage,
+    SessionPurpose,
     StartSession,
     StoreSourceDocument,
     WriteFile,
@@ -427,6 +428,7 @@ async def test_sse_frames_each_event_as_a_data_line(repository, session_id):
             system_prompt="prompt",
             model_name="test-model",
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     await repository.save(aggregate)
@@ -1275,6 +1277,7 @@ async def test_each_frame_carries_the_cursor_that_follows_it(repository, session
             system_prompt="prompt",
             model_name="test-model",
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     await repository.save(aggregate)
@@ -1305,6 +1308,7 @@ async def test_reconnecting_with_a_cursor_delivers_what_was_missed(repository, s
             system_prompt="prompt",
             model_name="test-model",
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     await repository.save(aggregate)
@@ -1340,6 +1344,7 @@ async def test_an_unplaceable_cursor_falls_back_to_the_live_end(repository, sess
             system_prompt="prompt",
             model_name="test-model",
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     await repository.save(aggregate)  # already in the log, must not be replayed
