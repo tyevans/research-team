@@ -345,12 +345,21 @@ duplicates are expected rather than exceptional.
 
 ### Kill switch
 
-`INTERACTION_LOG=0` disables collection. The endpoint then answers `202` with
-`{"accepted": 0}` and drops the batch, rather than `404` — so the client needs
-no branch and no version negotiation. The frontend emitter also goes inert when
-told to, avoiding pointless requests, but the server is the authority.
+`INTERACTION_LOG=0` disables collection, and it does so the way this repository
+already does feature flags: **the dependency is `None` at the entrypoint and the
+route answers 503.** `config.py` states the reasoning and it is better than the
+alternative — "unset means the route is not there is a stronger promise than any
+check inside a route that exists".
 
-Default is **on**: local, single-user, on the user's own machine. Turning it off
+An earlier draft of this section had the endpoint answer `202 {"accepted": 0}`
+and drop the batch, to spare the client a branch. That was wrong on its own
+terms: `sendBeacon` cannot observe a response at all, so a 503 costs the client
+nothing that a fake 202 saves it, and the fake 202 gives up a real promise for
+no gain. The emitter treats every transport failure identically — drop and carry
+on — so a disabled route needs no client-side handling.
+
+Default is **on**, unlike `AGENT_TRACING`: this is local, single-user, on the
+user's own machine, and a log nobody collects is worth nothing. Turning it off
 is one environment variable, and that is the answer to the
 `AskSubmitted.query_text` objection.
 
@@ -418,7 +427,18 @@ the change reverted says so.
   var and the fact that it never leaves the machine.
 - ~20 emission sites in application code that a new feature can forget to add.
   This is the residual risk of the chosen approach and there is no gate for it.
-- Bundle growth for the emitter. Small, but the budget is a CI gate.
+- Bundle growth for the emitter. The `app` bucket is at 85.3 kB gzipped against
+  a 96 kB limit, so there is ~10.7 kB of room and the emitter fits — but the
+  budget is a CI gate and the measurement should be re-taken, not assumed.
+- The frontend coverage thresholds are ratchets, and `src/application/**`
+  requires 66% of lines. The emitter lands there, so it must be genuinely
+  tested or `npm run verify` fails on coverage rather than on correctness.
+  This is a feature, but it means "add the emitter, test it later" is not an
+  available sequence.
+- Every route added to `create_app` must also be wired in `web.py`, the single
+  production call site. Three comments there record routes that shipped 503ing
+  because someone added the parameter and forgot the argument;
+  `tests/interfaces/test_web_entrypoint.py` exists to catch exactly that.
 
 ## Open, deliberately
 
