@@ -55,7 +55,11 @@ ROUND_INSTRUCTIONS = (
     "not do is extract it into the graph; `remember_page` is still how a page "
     "whose contents should be searchable as entities and relationships gets "
     "there. Use it for the pages that turn out to matter, not for everything "
-    "you opened."
+    "you opened.\n\n"
+    "Gathering is part of the work, not preparation for it. A round that "
+    "finds and links a source this topic did not have has produced "
+    "something, and `sources_linked` is counted exactly as findings are. "
+    "Reading widely and linking nothing is the empty round described above."
 )
 """What every round's turn is told, before the topic itself.
 
@@ -63,6 +67,18 @@ The counting rule is stated to the model on purpose. It is measured on
 artifacts either way, so telling it is not what makes the measurement honest --
 but a model that does not know how it is scored optimises for the reply, and
 the reply is the one thing here nobody reads.
+
+The last paragraph exists because of what else changed on this branch, not
+because the counting rule above needed restating on its own. Before the
+workflow was detached from research rounds, a round's system message carried
+the stage's methodology, and that methodology gave gathering sources a reason
+to matter -- a round doing document review, say, was told document review was
+its job. Detaching the workflow removed that message and left this constant as
+the only thing a round is told. Without a sentence naming `sources_linked` as
+first-class, a round would be told less than it used to be -- `link_source`
+would appear only in the tool list two paragraphs up, indistinguishable from
+`open_topic` -- which reads as a regression in the very isolation Task 3 was
+for.
 """
 
 
