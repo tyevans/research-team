@@ -1,15 +1,17 @@
 ## Pre-Compact Snapshot
-**Time**: 2026-08-16T00:15:28Z
+**Time**: 2026-08-17T03:58:39Z
 
 ### Recent Commits
-720478a Merge remote-tracking branch 'origin/main' into media-in-the-corpus
-b3da578 Name both guards on the revise path, not just the older one
-756ed07 Rebuild the console for the player's error state
-999eb13 Correct a comment that claimed a guard, drop a dead fake, file the orphans
-e30a740 Say when a media source's bytes do not arrive, instead of a black box
+358b4f6 Write down the gate that let a stale console through
+246ca63 Rebuild the committed console for B94's media-row states
+535a4fc Show a transcription on the row that started it (B94)
+45228c0 Measure B84, and take the text out of the fetch hot loop
+7e40241 Reclaim blobs no corpus_media row names, by hand (B85)
 
 ### Working Tree
  M .claude/tackline/memory/sessions/pre-compact.md
+?? .claude/tackline/memory/sessions/2026-08-16T05-59-29Z.md
+?? .claude/tackline/memory/sessions/last.md
 
 ### Open Questions
 (fill in before context is lost)

@@ -54,3 +54,45 @@ export interface IgnoredMedia {
   readonly assets: readonly string[]
   readonly hosts: readonly string[]
 }
+
+/** What to tell a person about one curation run.
+ *
+ * A bare "no media candidates found" is the message this replaced, and it
+ * was true but useless: the chain has four distinct routes to zero, and that
+ * sentence named none of them. Measured on 2026-08-16 -- a woodworking topic
+ * produced two well-formed needs and zero candidates, and answering "which
+ * stage failed?" took reading the source, querying the SearXNG instance by
+ * hand, and finally the event log, because the toast and the response body
+ * between them carried nothing that distinguished the cases.
+ *
+ * So the zero case reports the counts that explain it. The order is the
+ * chain's own: what the search never found, what the ignore list removed,
+ * what the judge rejected outright, what could not be read. Only non-zero counts appear -- a run that found
+ * nothing for an ordinary reason should not read like a list of faults.
+ */
+export function curationSummary(outcome: {
+  readonly needs: number
+  readonly candidates: number
+  readonly ignored: number
+  readonly rejectedParses: number
+  readonly searchedEmpty: number
+  readonly judgedOut: number
+}): string {
+  // `many` is explicit rather than `word + 's'` because "reply" pluralises to
+  // "replies" and the naive rule wrote "replys" -- caught by the test, which
+  // is the only reason this parameter exists.
+  const plural = (n: number, word: string, many = `${word}s`) => `${n} ${n === 1 ? word : many}`
+  if (outcome.candidates > 0) {
+    return `Found ${plural(outcome.candidates, 'media candidate')} across ${plural(outcome.needs, 'need')}.`
+  }
+  const because = [
+    outcome.searchedEmpty > 0 ? `${plural(outcome.searchedEmpty, 'need')} found nothing` : null,
+    outcome.ignored > 0 ? `${outcome.ignored} ignored` : null,
+    outcome.judgedOut > 0 ? `${plural(outcome.judgedOut, 'need')} judged out` : null,
+    outcome.rejectedParses > 0
+      ? plural(outcome.rejectedParses, 'unreadable reply', 'unreadable replies')
+      : null,
+  ].filter((part): part is string => part !== null)
+  const detail = because.length > 0 ? `; ${because.join(', ')}` : ''
+  return `No media candidates found (${plural(outcome.needs, 'need')} identified${detail}).`
+}

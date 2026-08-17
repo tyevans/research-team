@@ -5,6 +5,7 @@ import { notify } from '@application/notifications/toast-store.ts'
 import { errorMessage } from '@application/ports/errors.ts'
 import { queryKeys } from '@application/queries/keys.ts'
 import { useRunMediaCuration } from '@application/research/use-media-proposals.ts'
+import { curationSummary } from '@domain/research/media-proposal.ts'
 import { useContainer } from '@app/container-context.tsx'
 import { statusLabel } from '@domain/entity/status.ts'
 import { CLOSED_STATUSES, type TopicDetail, type TopicStatus } from '@domain/research/topic.ts'
@@ -326,12 +327,7 @@ export const TopicManagePane = ({
           disabled={runCuration.isPending}
           onClick={() =>
             runCuration.mutate(topic.topicId, {
-              onSuccess: (outcome) =>
-                notify(
-                  outcome.candidates > 0
-                    ? `Found ${outcome.candidates} media candidate${outcome.candidates === 1 ? '' : 's'} across ${outcome.needs} need${outcome.needs === 1 ? '' : 's'}.`
-                    : `No media candidates found (${outcome.needs} need${outcome.needs === 1 ? '' : 's'} identified).`,
-                ),
+              onSuccess: (outcome) => notify(curationSummary(outcome)),
               onError: (error) => notify(errorMessage(error), 'bad'),
             })
           }
