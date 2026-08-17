@@ -240,6 +240,49 @@ def one_of(*allowed: str) -> Checker:
     return check
 
 
+def integer_between(low: int, high: int) -> Checker:
+    """A whole number inside a bound the *server* already enforces.
+
+    Both bounds this is used for -- `MAX_NEIGHBORHOOD_DEPTH` and
+    `MAX_TIMELINE_BANDS` -- are refused by the route with a 422. Checking here
+    turns a fetch-time failure the reader sees into an authoring-time note the
+    model can act on, which is the whole reason validation feedback exists.
+
+    `bool` is excluded explicitly: `isinstance(True, int)` is true in Python,
+    so without that line `depth: true` validates and then travels to a route
+    as `1`, having silently become a number the author never wrote.
+    """
+
+    def check(value: Any, path: str) -> list[Note]:
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            return [Note(path, f"expected a whole number from {low} to {high}, got {value!r}")]
+        return []
+
+    return check
+
+
+def string_list(minimum: int = 1) -> Checker:
+    """A list of bare strings, each checked at its own subscript path.
+
+    Distinct from `listing`, which takes a list of *mappings*. `compare`'s
+    `entities:` is a plain sequence of names, and wrapping each in a mapping to
+    reuse `listing` would be schema noise a model has to get right for nothing.
+    """
+
+    def check(value: Any, path: str) -> list[Note]:
+        if not isinstance(value, list):
+            return [Note(path, f"expected a list, got {_typename(value)}")]
+        if len(value) < minimum:
+            plural = "entry" if minimum == 1 else "entries"
+            return [Note(path, f"expected at least {minimum} {plural}, got {len(value)}")]
+        notes: list[Note] = []
+        for index, entry in enumerate(value):
+            notes.extend(text(entry, f"{path}[{index}]"))
+        return notes
+
+    return check
+
+
 def listing(item: Mapping[str, Spec], minimum: int = 1) -> Checker:
     """A list of mappings, each checked against `item`, with paths that subscript.
 
@@ -335,6 +378,22 @@ class ComponentType:
     fourth distractor nobody picks, the blank the sentence gives away -- and
     not a course in assessment design. A model reads this every time it writes
     one; length is a cost paid per authoring turn.
+    """
+    resolved: bool = False
+    """This component carries a reference and fetches its data in the browser.
+
+    Structurally it is the inverse of `gradeable`: nothing is withheld (there
+    is no answer key -- the data is the project's own), nothing is graded, and
+    the YAML body is a *query*, not content. The flag exists so the projection,
+    the prompt and the client can all tell the two classes apart without a name
+    list, which is the shape that rots the moment a sixth type is added.
+
+    Validation of a resolved body stays pure and shape-only. The registry
+    cannot check that a referenced entity exists -- `validation_report` runs
+    here at parse time with no graph handle -- so a name matching nothing is a
+    *render* state, not a parse error. See
+    `tests/application/test_resolved_components.py` for the assertion that
+    keeps it that way.
     """
     gradeable: bool = False
     normalize: Callable[[dict[str, Any]], dict[str, Any]] | None = None
@@ -911,6 +970,10 @@ def _component_json(block: ComponentBlock, view: View) -> dict[str, Any]:
         "errors": [{"path": n.path, "message": n.message} for n in block.errors],
         "withheld": list(spec.withheld) if (learner and spec) else [],
         "gradeable": bool(spec and spec.gradeable),
+        # The client threads `projectId` into a renderer on this rather than
+        # on a name list, so a build that adds a sixth resolved type needs no
+        # client change to give it a project.
+        "resolved": bool(spec and spec.resolved),
     }
     if block.unknown:
         out["unknown"] = True
