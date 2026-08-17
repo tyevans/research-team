@@ -14,6 +14,7 @@ from research_team.application import SessionService
 from research_team.domain import (
     CreateProject,
     Session,
+    SessionPurpose,
     StartSession,
 )
 from research_team.infrastructure.persistence import (
@@ -178,12 +179,18 @@ def session(aggregates, session_id, project_id) -> Session:
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=project_id,
+            purpose=SessionPurpose.CHAT,
         )
     )
     return aggregate
 
 
-async def start_session(service: SessionService, *, name: str | None = None) -> UUID:
+async def start_session(
+    service: SessionService,
+    *,
+    name: str | None = None,
+    purpose: SessionPurpose = SessionPurpose.CHAT,
+) -> UUID:
     """A session in a project of its own, and the id of the session.
 
     Stands where `SessionService.create_session()` used to. That method was
@@ -211,7 +218,7 @@ async def start_session(service: SessionService, *, name: str | None = None) -> 
         )
     )
     await service.projects.save(project)
-    return await service.start_in_project(identifier)
+    return await service.start_in_project(identifier, purpose)
 
 
 class ToolAwareFakeChatModel(FakeMessagesListChatModel):

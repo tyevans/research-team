@@ -27,6 +27,7 @@ from uuid import UUID, uuid4
 
 from research_team.application.session_service import SessionService
 from research_team.application.topics import SELF_CONTAINED_QUESTION
+from research_team.domain import SessionPurpose
 
 SEEDING_PROMPT = (
     "Open a set of broad, orthogonal topics covering this subject. Work from "
@@ -131,7 +132,9 @@ class TopicSeeder:
         them.
         """
         run_id = run_id or uuid4()
-        session_id = await self._session.start_in_project(project_id)
+        session_id = await self._session.start_in_project(
+            project_id, SessionPurpose.TOPIC_SEEDING
+        )
         try:
             await self._session.attach_project(project_id)
             outcome = await self._turns.run(session_id, seeding_prompt(subject, max_topics))

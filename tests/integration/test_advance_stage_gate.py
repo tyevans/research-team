@@ -23,6 +23,7 @@ from research_team.application.autonomy import ADVANCE_STAGE_TOOL
 from research_team.domain import (
     CreateProject,
     SelectWorkflow,
+    SessionPurpose,
     StageChecksEvaluated,
     ToolCallDecided,
 )
@@ -96,7 +97,7 @@ async def _project(application, *, workflow: bool = True):
 
 async def _in_project(application, project_id):
     await application.attach_project(project_id)
-    return await application.service.start_in_project(project_id)
+    return await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
 
 async def _stage_of(application, project_id) -> str | None:

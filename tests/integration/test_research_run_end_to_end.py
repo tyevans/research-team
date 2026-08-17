@@ -20,7 +20,7 @@ from uuid import uuid4
 from langchain_core.messages import AIMessage
 
 from research_team.application.autonomy import FETCH_TOOL
-from research_team.domain import CreateProject
+from research_team.domain import CreateProject, SessionPurpose
 from research_team.domain.research_run import Budget
 from research_team.domain.topic import OpenTopic, Topic
 from research_team.infrastructure.persistence import build_topic_repository
@@ -107,7 +107,9 @@ async def working(build_application, db_path, model):
 
 
 async def run_on(application, project_id, **budget):
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(
+        project_id, SessionPurpose.RESEARCH_ROUND
+    )
     await application.attach_project(project_id)
     run = application.research.start(project_id, session_id, budget=Budget(**budget))
     return run, await application.research.wait(project_id)
@@ -167,7 +169,9 @@ async def test_a_run_stops_when_it_is_asked_to(build_application, db_path):
     """`cancelled` reaches the log rather than the run simply going quiet."""
     project_id, _ = await seed(build_application, db_path)
     application = await working(build_application, db_path, ScriptedModel(responses=quiet()))
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(
+        project_id, SessionPurpose.RESEARCH_ROUND
+    )
     await application.attach_project(project_id)
 
     run = application.research.start(
@@ -192,7 +196,9 @@ async def test_a_granted_runs_grant_reaches_the_fold_and_is_released_on_stop(
     """
     project_id, _ = await seed(build_application, db_path)
     application = await working(build_application, db_path, ScriptedModel(responses=quiet()))
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(
+        project_id, SessionPurpose.RESEARCH_ROUND
+    )
     await application.attach_project(project_id)
 
     run = application.research.start(
@@ -219,7 +225,9 @@ async def test_a_run_with_no_grant_is_still_registered_and_then_released(
     once it stops, exactly like a granted one."""
     project_id, _ = await seed(build_application, db_path)
     application = await working(build_application, db_path, ScriptedModel(responses=quiet()))
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(
+        project_id, SessionPurpose.RESEARCH_ROUND
+    )
     await application.attach_project(project_id)
 
     application.research.start(

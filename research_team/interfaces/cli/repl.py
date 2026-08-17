@@ -29,7 +29,7 @@ from research_team.application.check_telemetry_read import (
     CheckTelemetryReadPort,
 )
 from research_team.application.ports import ActivityNote
-from research_team.domain import CreateProject
+from research_team.domain import CreateProject, SessionPurpose
 from research_team.domain.research_run import Budget
 from research_team.infrastructure import config
 from research_team.interfaces.cli.formatters import (
@@ -318,7 +318,7 @@ async def _handle_project(repl: "Repl", argument: str) -> str:
         if match is None:
             return f"{name!r}: no such project"
         try:
-            new_session_id = await service.start_in_project(match)
+            new_session_id = await service.start_in_project(match, SessionPurpose.CHAT)
         except CommandRejectedError as error:
             # Worded verbatim: it names the session holding the project,
             # which is the next thing anyone asks.

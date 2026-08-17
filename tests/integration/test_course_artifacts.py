@@ -18,7 +18,7 @@ from uuid import uuid4
 from langchain_core.messages import AIMessage
 
 from research_team.application.artifacts import parse_frontmatter, stage_artifact_paths
-from research_team.domain import AdvanceStage, CreateProject, SelectWorkflow
+from research_team.domain import AdvanceStage, CreateProject, SelectWorkflow, SessionPurpose
 from research_team.workflows import hybrid_default
 from tests.conftest import ToolAwareFakeChatModel
 
@@ -105,7 +105,7 @@ async def _run_two_stages(build_application):
     application = await build_application(model=model)
     project_id = await _project(application)
     await application.attach_project(project_id)
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
     await application.service.run_turn(session_id, "do the intake")
     await _advance(application, project_id, FRAMING)
@@ -214,7 +214,7 @@ async def test_the_paths_the_model_is_told_to_write_are_the_paths_derived(
     application = await build_application(model=model)
     project_id = await _project(application)
     await application.attach_project(project_id)
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
     await application.service.run_turn(session_id, "what do you write here?")
 

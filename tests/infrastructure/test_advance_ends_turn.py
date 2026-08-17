@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage
 
 from research_team.application import ApprovalDecision, AutonomyPolicy
 from research_team.application.ports import GateReview
-from research_team.domain import Session, StartSession
+from research_team.domain import Session, SessionPurpose, StartSession
 from research_team.domain.project import (
     AdvanceStage,
     ProjectCreated,
@@ -80,6 +80,7 @@ def _session() -> Session:
             system_prompt="You are a coding agent.",
             model_name="test-model",
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     return session

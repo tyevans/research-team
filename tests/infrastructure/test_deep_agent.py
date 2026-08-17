@@ -21,7 +21,7 @@ from langchain_core.tools import tool
 
 from research_team.application import ApprovalDecision, ApprovalRefused, AutonomyPolicy
 from research_team.application.ports import ActivityDelta, GateReview
-from research_team.domain import Session, StartSession
+from research_team.domain import Session, SessionPurpose, StartSession
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 from research_team.infrastructure.agent.search import build_search_tool
 from research_team.infrastructure.agent.stage_middleware import StageMiddleware
@@ -114,6 +114,7 @@ def _session() -> Session:
             system_prompt="be brief",
             model_name="fake",
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     return session

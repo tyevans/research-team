@@ -12,6 +12,7 @@ from research_team.domain import (
     RecordForkSource,
     SendUserMessage,
     Session,
+    SessionPurpose,
     StartSession,
     WriteFile,
 )
@@ -37,6 +38,7 @@ def make_session(aggregates):
                 system_prompt=SYSTEM_PROMPT,
                 model_name=MODEL_NAME,
                 project_id=project_id,
+                purpose=SessionPurpose.CHAT,
             )
         )
         if first_message is not None:

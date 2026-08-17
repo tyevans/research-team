@@ -9,7 +9,7 @@ from redstring import DocumentExtracted, document_stream
 
 from research_team.application.session_service import NO_SEARCH_CLAUSE, project_context
 from research_team.application.topics import TOPICS_PROMPT
-from research_team.domain import StartSession, StoreSourceDocument
+from research_team.domain import SessionPurpose, StartSession, StoreSourceDocument
 from research_team.domain.learner import LearnerChecklistRecorded
 from research_team.domain.project import AdvanceStage, CreateProject, SelectWorkflow
 from research_team.domain.topic import OpenTopic
@@ -238,6 +238,7 @@ async def test_read_since_ignores_events_from_other_aggregate_types(tmp_path):
                 system_prompt="p",
                 model_name="m",
                 project_id=uuid4(),
+                purpose=SessionPurpose.CHAT,
             )
         )
         await repository.save(session)

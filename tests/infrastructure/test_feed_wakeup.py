@@ -9,6 +9,7 @@ import asyncio
 from uuid import uuid4
 
 from research_team.domain import (
+    SessionPurpose,
     StartSession,
 )
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
@@ -22,6 +23,7 @@ async def test_a_local_save_wakes_a_waiting_reader(repository, session_id):
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
 
@@ -56,6 +58,7 @@ async def test_a_save_before_the_wait_does_not_leave_a_signal_standing(repositor
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     await repository.save(session)
@@ -83,6 +86,7 @@ async def test_a_position_survives_a_round_trip_through_text(repository, session
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     await repository.save(session)

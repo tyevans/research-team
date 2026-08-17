@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from langchain_core.messages import AIMessage
 
-from research_team.domain import AdvanceStage, CreateProject, SelectWorkflow
+from research_team.domain import AdvanceStage, CreateProject, SelectWorkflow, SessionPurpose
 from research_team.workflows import hybrid_default
 from tests.conftest import ToolAwareFakeChatModel, start_session
 
@@ -69,7 +69,7 @@ async def test_a_tool_outside_the_current_stage_is_not_callable(build_applicatio
     application = await build_application(model=model)
     project_id = await _project(application, workflow=True, advance=True)
     await application.attach_project(project_id)
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
     await application.service.run_turn(session_id, "hi")
 
@@ -98,7 +98,7 @@ async def test_a_project_with_no_workflow_sees_every_registered_tool(build_appli
     application = await build_application(model=model)
     project_id = await _project(application, workflow=False)
     await application.attach_project(project_id)
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
     await application.service.run_turn(session_id, "hi")
 
@@ -126,7 +126,7 @@ async def test_the_first_stage_is_in_force_before_anything_advances(build_applic
     application = await build_application(model=model)
     project_id = await _project(application, workflow=True)
     await application.attach_project(project_id)
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
     await application.service.run_turn(session_id, "hi")
 
@@ -149,7 +149,7 @@ async def test_the_stage_is_refolded_between_turns(build_application):
     application = await build_application(model=model)
     project_id = await _project(application, workflow=True)
     await application.attach_project(project_id)
-    session_id = await application.service.start_in_project(project_id)
+    session_id = await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
     await application.service.run_turn(session_id, "hi")
     assert "graph_search" in model.last_bound

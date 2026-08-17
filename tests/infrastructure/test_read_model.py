@@ -20,6 +20,7 @@ from research_team.domain import (
     RecordForkSource,
     SendUserMessage,
     Session,
+    SessionPurpose,
     StartSession,
     WriteFile,
 )
@@ -56,6 +57,7 @@ def _new_session(session_id=None) -> Session:
             system_prompt=SYSTEM_PROMPT,
             model_name=MODEL_NAME,
             project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
         )
     )
     return session
