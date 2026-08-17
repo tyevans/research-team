@@ -668,6 +668,59 @@ REGISTRY: dict[str, ComponentType] = {
             "have one; leave it out.",
         ),
     ),
+    "evidence": ComponentType(
+        name="evidence",
+        version=1,
+        summary=(
+            "A claim beside the passages it rests on, quoted from this "
+            "project's sources. Takes source ids directly -- the same ids "
+            "`[[src:...]]` uses."
+        ),
+        example=(
+            "```component:evidence\n"
+            "id: state-religion\n"
+            "claim: |\n"
+            "  Theodosius made Nicene Christianity the state religion in AD 380.\n"
+            "sources:\n"
+            "  - source: doc-4f2a\n"
+            "    start: 4120\n"
+            "    end: 4380\n"
+            "```"
+        ),
+        fields={
+            "claim": Spec(text, required=True),
+            "sources": Spec(
+                listing(
+                    {
+                        "source": Spec(text, required=True),
+                        # Bounded rather than merely non-negative: the route
+                        # clamps whatever it is given, so an offset typed with
+                        # an extra digit returns the end of the document and
+                        # nothing tells the reader the range was nonsense.
+                        # The ceiling is generous on purpose -- it is a typo
+                        # guard, not a document-length check, which this layer
+                        # has no way to make.
+                        "start": Spec(integer_between(0, 100_000_000)),
+                        "end": Spec(integer_between(0, 100_000_000)),
+                    }
+                ),
+                required=True,
+            ),
+        },
+        resolved=True,
+        craft=(
+            "Quote the passage that actually carries the claim, not the "
+            "paragraph around it. The reader is going to read both and compare "
+            "them, which is the entire point of the widget -- a range that only "
+            "nearly supports the claim is more damaging here than in prose, "
+            "because you have invited the check.",
+            "Use the source ids already in your context. A `source:` you cannot "
+            "find in what you were given is one you invented, and the widget "
+            "will show nothing.",
+            "One claim per block. Two claims sharing a passage list leaves the "
+            "reader unable to tell which range supports which.",
+        ),
+    ),
 }
 
 

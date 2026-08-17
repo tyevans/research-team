@@ -723,3 +723,84 @@ def test_the_generated_reference_renders_the_definition_example():
 
     assert "component:definition" in reference
     assert "entity:" in reference
+
+
+EVIDENCE = """\
+```component:evidence
+id: state-religion
+claim: |
+  Theodosius made Nicene Christianity the state religion in AD 380.
+sources:
+  - source: doc-1
+    start: 4120
+    end: 4380
+```
+"""
+
+
+def test_evidence_carries_its_claim_and_ranges_through_both_views():
+    """Red against an `evidence` entry that strips or grades.
+
+    There is no answer key to withhold here -- the claim and the passages
+    behind it are the whole body -- and the widget's entire value is that the
+    reader compares the two, so a learner who sees less than the author does
+    cannot do the one thing this component exists for.
+    """
+    document = parse_document(EVIDENCE, path="lesson.md")
+
+    author = project(document, view="author")["blocks"][0]
+    learner = project(document, view="learner")["blocks"][0]
+
+    assert learner["data"] == author["data"]
+    assert author["data"]["sources"][0] == {"source": "doc-1", "start": 4120, "end": 4380}
+    assert learner["resolved"] is True
+
+
+def test_evidence_needs_at_least_one_source():
+    """A claim with no passage behind it is prose wearing a widget's clothes,
+    and the widget's entire value is that the reader can check it."""
+    source = "```component:evidence\nid: e\nclaim: Something happened.\nsources: []\n```\n"
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert [str(note) for note in block.errors] == [
+        "sources: expected at least 1 entry, got 0"
+    ]
+
+
+def test_evidence_names_the_offending_source_by_its_subscript():
+    source = (
+        "```component:evidence\n"
+        "id: e\n"
+        "claim: Something happened.\n"
+        "sources:\n"
+        "  - start: 10\n"
+        "    end: 20\n"
+        "```\n"
+    )
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert [str(note) for note in block.errors] == [
+        "sources[0].source: required field missing"
+    ]
+
+
+def test_evidence_refuses_a_negative_offset():
+    """Red against `Spec(text)` on the offsets, which would accept `start: -5`
+    and send it to a route that clamps it to 0 without saying so."""
+    source = (
+        "```component:evidence\n"
+        "id: e\n"
+        "claim: Something happened.\n"
+        "sources:\n"
+        "  - source: doc-1\n"
+        "    start: -5\n"
+        "```\n"
+    )
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert [str(note) for note in block.errors] == [
+        "sources[0].start: expected a whole number from 0 to 100000000, got -5"
+    ]

@@ -119,9 +119,42 @@ export const readChecklist = (block: ComponentBlock): Checklist => ({
  *  module every other renderer imports one from. */
 export { readEntityReference as readDefinitionRef } from './resolved.ts'
 
+/** One passage an `evidence` claim rests on. Offsets are nullable rather
+ *  than defaulted to 0: absent means "from the start" / "to the end", and
+ *  `{start: 0, end: 0}` would be a request for nothing. */
+export interface EvidenceSource {
+  readonly source: string
+  readonly start: number | null
+  readonly end: number | null
+}
+
+export interface Evidence {
+  readonly claim: string
+  readonly sources: readonly EvidenceSource[]
+}
+
+export const readEvidence = (block: ComponentBlock): Evidence => ({
+  claim: str(block.data['claim']) ?? '',
+  sources: list(block.data['sources']).map((raw) => {
+    const entry = rec(raw)
+    return {
+      source: str(entry['source']) ?? '',
+      start: num(entry['start']),
+      end: num(entry['end']),
+    }
+  }),
+})
+
 const rec = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 
 const list = (value: unknown): readonly unknown[] => (Array.isArray(value) ? value : [])
 
 const str = (value: unknown): string | null => (typeof value === 'string' ? value : null)
+
+/** `Number.isFinite` and not a bare `typeof`: YAML's `.nan` and `.inf` parse
+ *  to real numbers here, and either one reaches the range query as the string
+ *  "NaN" -- a query param the route reads as a nonsense offset rather than as
+ *  the absent one the author effectively wrote. */
+const num = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null

@@ -7,6 +7,7 @@ import { Tooltip } from '../common/Tooltip.tsx'
 import { Checklist } from './Checklist.tsx'
 import { Cloze } from './Cloze.tsx'
 import { DefinitionWidget } from './DefinitionWidget.tsx'
+import { EvidenceWidget } from './EvidenceWidget.tsx'
 import { Flashcards } from './Flashcards.tsx'
 import { Mcq } from './Mcq.tsx'
 
@@ -100,6 +101,7 @@ const RENDERERS: Readonly<
   cloze: Cloze,
   checklist: Checklist,
   definition: DefinitionWidget,
+  evidence: EvidenceWidget,
 }
 
 const Component = ({

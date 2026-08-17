@@ -33,24 +33,17 @@ import { render } from 'vitest-browser-react'
 
 import { ContainerProvider } from '@app/container-context.tsx'
 import { createContainer } from '@app/container.ts'
-import type { ComponentBlock, MarkdownBlock } from '@domain/lesson/document.ts'
-import { ComponentId } from '@domain/shared/identifier.ts'
+import type { MarkdownBlock } from '@domain/lesson/document.ts'
 
 import { AskTurn } from './AskTurn.tsx'
-import { PROJECT, turn } from './ask-fixtures.ts'
+import { componentBlock, PROJECT, turn } from './ask-fixtures.ts'
 
-const DEFINITION: ComponentBlock = {
-  kind: 'component',
-  id: ComponentId('nicene'),
+const DEFINITION = componentBlock({
   type: 'definition',
+  id: 'nicene',
   data: { entity: 'Nicene Christianity' },
   raw: '```component:definition\nid: nicene\nentity: Nicene Christianity\n```',
-  lang: 'component:definition',
-  unknown: false,
-  errors: [],
-  withheld: [],
-  resolved: true,
-}
+})
 
 /** The sibling the assertion is really about. It has to be a *block* and not
  *  `turn.answer`: `AskTurn` renders the answer string only when the turn
