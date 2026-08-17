@@ -6,10 +6,17 @@ fake model through a real `create_deep_agent` on a project that has selected a
 workflow and advanced past its first stage, and assert on what the model was
 actually bound and actually sent.
 
-The stage matters: `hybrid.step1.framing` declares no `tools` of its own, and
-`StageMiddleware` is a denylist over the union of every stage's declared tools.
-Any stage that *does* declare them -- the intake stages, which is where the
-first stage always is -- would hide the third defect entirely.
+The stage matters, and choosing it wrong weakens the measurement rather than
+breaking it. `StageMiddleware` is a denylist over the *union* of every stage's
+declared tools, and `_permits` gives a tool back only if the **current** stage
+claims it -- so the loss is per stage: total on a stage claiming nothing,
+partial on one claiming some. Across the three presets only five of 33 stages
+declare any `tools` at all, and every preset's first stage is one of them.
+
+`ubd.step1.context` is used because it declares none, and it is one advance
+past `ubd.step0.intake` -- the ordinary case rather than an edge. An earlier
+version of this file sat on `hybrid.step1.framing`, which claims `list_sources`
+and `read_source`, and could therefore only pin `graph_search` being withdrawn.
 """
 
 from typing import Any
@@ -18,10 +25,10 @@ from uuid import uuid4
 from langchain_core.messages import AIMessage
 
 from research_team.domain import AdvanceStage, CreateProject, SelectWorkflow, SessionPurpose
-from research_team.workflows import hybrid_default
+from research_team.workflows import ubd_pure
 from tests.conftest import ToolAwareFakeChatModel
 
-FRAMING = "hybrid.step1.framing"
+CONTEXT = "ubd.step1.context"
 CORPUS_TOOLS = {"list_sources", "read_source", "graph_search"}
 
 
@@ -62,15 +69,16 @@ def _model() -> RecordingChatModel:
     return model
 
 
-async def _project_at_framing(application):
+async def _project_at_context(application):
+    """A `ubd.pure` project one advance past intake, at a stage claiming no tools."""
     project_id = uuid4()
     project = application.service.projects.create_new(project_id)
     project.execute(CreateProject(project_id=project_id, name=f"course {project_id}"))
-    project.execute(SelectWorkflow(preset=hybrid_default))
+    project.execute(SelectWorkflow(preset=ubd_pure))
     project.execute(
         AdvanceStage(
-            preset=hybrid_default,
-            to_stage=FRAMING,
+            preset=ubd_pure,
+            to_stage=CONTEXT,
             decided_by="human",
             gate_decision="approve",
         )
@@ -96,14 +104,15 @@ async def test_a_research_round_is_not_given_the_workflow(build_application):
 
     (3) is the one a test written only from the bug report would miss, and it
     is the one that silently breaks rounds: `StageMiddleware` is a denylist
-    over the union of every stage's declared tools, so on any stage that
-    declares none -- the large majority -- `list_sources`, `read_source` and
-    `graph_search` are all withdrawn, and a round cannot read the corpus it
-    exists to read.
+    over the union of every stage's declared tools, so on a stage that declares
+    none -- 26 of the 33 stages across the three presets -- `list_sources`,
+    `read_source` and `graph_search` are all withdrawn, and a round cannot read
+    the corpus it exists to read. `ubd.step1.context` is such a stage, so the
+    full loss is what this pins.
     """
     model = _model()
     application = await build_application(model=model)
-    project_id = await _project_at_framing(application)
+    project_id = await _project_at_context(application)
     await application.attach_project(project_id)
     session_id = await application.service.start_in_project(
         project_id, SessionPurpose.RESEARCH_ROUND
@@ -127,12 +136,13 @@ async def test_a_person_still_gets_the_workflow(build_application):
 
     Same preset, same stage, `purpose=CHAT`: `advance_stage` is bound, the
     system message names the current stage, and the stage's denylist is in
-    force -- `graph_search` withdrawn because `hybrid.step1.framing` does not
-    claim it, which is the same evidence as (3) above read the other way.
+    force -- all three corpus tools withdrawn, because `ubd.step1.context`
+    claims none of them. That is exactly the evidence for (3) above, read the
+    other way: the same stage, the same union, and only the purpose differs.
     """
     model = _model()
     application = await build_application(model=model)
-    project_id = await _project_at_framing(application)
+    project_id = await _project_at_context(application)
     await application.attach_project(project_id)
     session_id = await application.service.start_in_project(project_id, SessionPurpose.CHAT)
 
@@ -140,4 +150,4 @@ async def test_a_person_still_gets_the_workflow(build_application):
 
     assert "advance_stage" in model.last_bound
     assert "## Current stage" in model.last_prompt
-    assert "graph_search" not in model.last_bound
+    assert not (model.last_bound & CORPUS_TOOLS)
