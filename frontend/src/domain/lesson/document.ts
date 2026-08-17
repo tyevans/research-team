@@ -41,6 +41,10 @@ export interface ComponentBlock {
   /** Field names the learner projection stripped. Non-empty means an answer key
    *  exists and is being graded on the server rather than in this page. */
   readonly withheld: readonly string[]
+  /** Whether this component fetches its data from the project rather than
+   *  carrying it. The renderer threads `projectId` on this rather than on a
+   *  name list, so a sixth resolved type needs no client change. */
+  readonly resolved: boolean
 }
 
 export interface ComponentError {

@@ -607,6 +607,58 @@
    boundary is not a `BREAKPOINTS` value, and 900 never was one. That is worth
    keeping here, because this file is where the 900 lived. */
 
+/* A resolved component that did not resolve. Deliberately typographic rather
+   than panelled: these states are prose the reader should be able to read
+   past, and a bordered box would make an ordinary gap in the corpus look like
+   a failure of the page. */
+.cmp-ref {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.cmp-ref-name {
+  font-weight: 600;
+  color: var(--fg);
+}
+.cmp-ref-note {
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+  margin: 0;
+}
+
+.cmp-ref-ambiguous {
+  flex-direction: column;
+  align-items: stretch;
+}
+.cmp-ref-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* The full four-side `border` shorthand, not a directional width. CLAUDE.md's
+   `border-solid` trap is about a Tailwind utility leaving three sides with a
+   style and no explicit width; a shorthand naming width, style and colour
+   together cannot land in that state. */
+.cmp-ref-pick {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  background: var(--bg-panel-2);
+  color: var(--fg);
+  cursor: pointer;
+}
+.cmp-ref-pick-type {
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001s !important;

@@ -21,6 +21,7 @@ const block = (data: Record<string, unknown>): ComponentBlock => ({
   unknown: false,
   errors: [],
   withheld: [],
+  resolved: false,
 })
 
 /** `data` is an open record because the set of widget types is open. These

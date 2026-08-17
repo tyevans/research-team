@@ -168,6 +168,7 @@ const toDocumentBlock = (raw: Dto<typeof dto.documentBlockDto>): DocumentBlock =
     unknown: raw.unknown,
     errors: raw.errors.map((error) => ({ path: error.path, message: error.message })),
     withheld: raw.withheld,
+    resolved: raw.resolved,
   }
   return block
 }

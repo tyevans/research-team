@@ -73,6 +73,7 @@ export const LessonDocument = ({
           block={block}
           attempts={attempts}
           withheldExplanation={withheldExplanation}
+          {...(projectId ? { projectId } : {})}
         />
       ),
     )}
@@ -80,7 +81,18 @@ export const LessonDocument = ({
 )
 
 const RENDERERS: Readonly<
-  Record<string, (props: { block: ComponentBlock; attempts: AttemptsApi }) => React.ReactElement>
+  Record<
+    string,
+    (props: {
+      block: ComponentBlock
+      attempts: AttemptsApi
+      /** Optional because a lesson file is read from a session, which has no
+       *  project in scope -- see this module's `projectId` prop. A resolved
+       *  component handed none renders its `unavailable` state, which is
+       *  prose, which is the same answer as every other failure here. */
+      projectId?: ProjectId
+    }) => React.ReactElement
+  >
 > = {
   flashcards: Flashcards,
   mcq: Mcq,
@@ -92,10 +104,12 @@ const Component = ({
   block,
   attempts,
   withheldExplanation,
+  projectId,
 }: {
   block: ComponentBlock
   attempts: AttemptsApi
   withheldExplanation: string
+  projectId?: ProjectId
 }) => {
   if (block.unknown) return <UnknownComponent block={block} />
   if (block.errors.length > 0) return <BrokenComponent block={block} />
@@ -117,7 +131,10 @@ const Component = ({
           </Tooltip>
         ) : null}
       </div>
-      <Renderer block={block} attempts={attempts} />
+      {/* Spread rather than a bare `projectId={projectId}`, matching the
+          `Markdown` call above: `exactOptionalPropertyTypes` treats an
+          explicit `undefined` differently from an omitted prop. */}
+      <Renderer block={block} attempts={attempts} {...(projectId ? { projectId } : {})} />
     </section>
   )
 }

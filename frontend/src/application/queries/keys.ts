@@ -94,6 +94,17 @@ export const queryKeys = {
    *  and a shared key would make a definition refetch invalidate the
    *  passages too, and vice versa. */
   definition: (project: ProjectId, entityId: string) => ['definition', project, entityId] as const,
+  /** One entity-name lookup, shared by every resolved widget on the page.
+   *
+   * Keyed on the name rather than on the component id: an answer that cites
+   * "Constantine" in a `definition` and again in a `graph` is one search, not
+   * two, and keying by component would make the same question a cache miss
+   * per widget. Not the zustand graph store (`graph-store.ts:85`) for the
+   * spec's reason -- that store is per-project console state with selection
+   * and expansion in it, and a widget wants a cached read rather than a share
+   * in someone else's cursor. */
+  entityReference: (project: ProjectId, name: string) =>
+    ['entity-reference', project, name] as const,
   /** One project's discovered classes. Keyed on the project alone: the view
    *  shows all of them at once, and a per-class key would be a cache entry
    *  nothing ever reads on its own. */

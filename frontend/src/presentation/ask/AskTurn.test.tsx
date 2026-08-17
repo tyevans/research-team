@@ -43,6 +43,7 @@ const mcqBlock: ComponentBlock = {
   unknown: false,
   errors: [],
   withheld: ['answer'],
+  resolved: false,
 }
 
 it('renders a widget the model asked back, not a code block', () => {

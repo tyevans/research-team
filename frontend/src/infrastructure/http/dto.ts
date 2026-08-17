@@ -138,6 +138,11 @@ export const documentBlockDto = z.union([
     unknown: z.boolean().default(false),
     errors: z.array(componentErrorDto).default([]),
     withheld: z.array(z.string()).default([]),
+    // Defaulted for `graphEntityDto.temporal`'s reason: fixtures in this
+    // suite predate the field and should not have to be found and updated
+    // because a block gained a flag. `false` is the honest default -- every
+    // component that existed before this field carried its own data.
+    resolved: z.boolean().default(false),
   }),
 ])
 
