@@ -61,7 +61,11 @@ def text_message(kind: str, content: str) -> dict:
 
 def test_a_started_session_is_summarised_by_its_model():
     event = make(
-        SessionStarted, system_prompt="p", model_name="qwen3.6-27b", project_id=uuid4()
+        SessionStarted,
+        system_prompt="p",
+        model_name="qwen3.6-27b",
+        project_id=uuid4(),
+        purpose=SessionPurpose.CHAT,
     )
     assert event_summary(event) == "qwen3.6-27b"
 
@@ -206,7 +210,13 @@ def test_a_call_with_no_arguments_is_still_named():
 
 def test_rows_are_numbered_from_one():
     events = [
-        make(SessionStarted, system_prompt="p", model_name="m", project_id=uuid4()),
+        make(
+            SessionStarted,
+            system_prompt="p",
+            model_name="m",
+            project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
+        ),
         make(UserMessageSent, message=text_message("human", "hi")),
     ]
     assert [row["index"] for row in event_rows(events)] == [1, 2]
@@ -327,7 +337,13 @@ def test_a_feed_event_always_has_a_summary_string():
 
     for event in (
         make(FileWritten, path="/a.py", file_data={"content": "x"}),
-        make(SessionStarted, system_prompt="p", model_name="m", project_id=uuid4()),
+        make(
+            SessionStarted,
+            system_prompt="p",
+            model_name="m",
+            project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
+        ),
         make(TurnCompleted, turn_index=1),
     ):
         payload = feed_event(uuid4(), event, 1)
