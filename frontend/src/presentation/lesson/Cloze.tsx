@@ -14,7 +14,7 @@ export const Cloze = ({ block, attempts }: { block: ComponentBlock; attempts: At
 
   const submit = () => {
     if (state.busy || state.verdict) return
-    attempts.submit(
+    void attempts.submit(
       block,
       blanks.map((blank) => state.typed[blank.blank] ?? ''),
     )
