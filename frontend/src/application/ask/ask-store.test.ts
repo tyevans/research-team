@@ -10,9 +10,10 @@ const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
 
 const fakeAsk = (over: Partial<AskRepository> = {}): AskRepository => ({
   ask: vi.fn<AskRepository['ask']>(async (_p, _c, _q, onEvent) => {
-    onEvent({ type: 'answer', text: 'two papers', citations: [] })
+    onEvent({ type: 'answer', text: 'two papers', blocks: [], position: 0, citations: [] })
   }),
   forget: vi.fn().mockResolvedValue(undefined),
+  submitAskAttempt: vi.fn(),
   ...over,
 })
 
@@ -87,7 +88,7 @@ it('refuses a second question while one is running', async () => {
 
 it('sends the same chat id for every question in a conversation', async () => {
   const ask = vi.fn<AskRepository['ask']>(async (_p, _c, _q, onEvent) => {
-    onEvent({ type: 'answer', text: 'x', citations: [] })
+    onEvent({ type: 'answer', text: 'x', blocks: [], position: 0, citations: [] })
   })
   const asking = store(fakeAsk({ ask }))
 

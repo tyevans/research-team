@@ -569,6 +569,16 @@ export interface AskRepository {
   ): Promise<void>
   /** Forgets the server's copy of a conversation, backing "new chat". */
   forget(projectId: ProjectId, chatId: string): Promise<void>
+  /** The browser cannot mark an answer to a question the model asked back
+   *  either — the key never left the server. Posts one and renders the reply.
+   *
+   *  Returns no progress alongside the verdict, unlike the lesson route: an
+   *  ask records no attempt, so there is nothing to fold back in. */
+  submitAskAttempt(
+    projectId: ProjectId,
+    conversationId: string,
+    input: { position: number; componentId: ComponentId; response: AttemptResponse },
+  ): Promise<Verdict>
 }
 
 export interface HealthRepository {

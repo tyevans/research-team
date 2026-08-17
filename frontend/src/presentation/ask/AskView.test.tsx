@@ -33,7 +33,7 @@ const answering = (text: string, citations: { kind: 'source'; id: string }[] = [
       _q: string,
       onEvent: (event: AskEvent) => void,
     ): Promise<void> => {
-      onEvent({ type: 'answer', text, citations })
+      onEvent({ type: 'answer', text, blocks: [], position: 0, citations })
     },
   )
 
@@ -134,7 +134,7 @@ it('keeps tool activity out of the way until asked for', async () => {
         payload: { type: 'tool', data: { name: 'read_source' } },
         isError: false,
       })
-      onEvent({ type: 'answer', text: 'two papers', citations: [] })
+      onEvent({ type: 'answer', text: 'two papers', blocks: [], position: 0, citations: [] })
     },
   )
   renderAsk({ ask: spy })

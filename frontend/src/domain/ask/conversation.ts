@@ -3,6 +3,7 @@
  * Pure on purpose: streaming order is the part that goes subtly wrong, and it
  * is far cheaper to get right here than through a rendered component.
  */
+import type { DocumentBlock } from '@domain/lesson/document.ts'
 
 /** `open_topic`, the tool that would have produced a `'topic'` citation, turned
  *  out to create topics rather than read them, so it was dropped from this
@@ -24,6 +25,14 @@ export interface AskActivity {
 export interface AskTurn {
   readonly question: string
   readonly answer: string
+  /** The document blocks the model wrote alongside `answer` -- mcq, cloze,
+   *  flashcards. Empty until the turn settles: deltas carry only prose, so
+   *  there is nothing to show here before the `answer` frame arrives. */
+  readonly blocks: readonly DocumentBlock[]
+  /** Where this turn's blocks sit in the grading log, carried straight off
+   *  the `answer` frame. A grading POST for one of `blocks` has to name it,
+   *  and this is the only place in the transcript that value survives to. */
+  readonly position: number
   readonly activity: readonly AskActivity[]
   readonly citations: readonly Citation[]
   readonly error: string | null
@@ -42,12 +51,27 @@ export type AskEvent =
       readonly payload: unknown
       readonly isError: boolean
     }
-  | { readonly type: 'answer'; readonly text: string; readonly citations: readonly Citation[] }
+  | {
+      readonly type: 'answer'
+      readonly text: string
+      readonly blocks: readonly DocumentBlock[]
+      readonly position: number
+      readonly citations: readonly Citation[]
+    }
   | { readonly type: 'error'; readonly detail: string }
 
 export const asked = (transcript: AskTranscript, question: string): AskTranscript => [
   ...transcript,
-  { question, answer: '', activity: [], citations: [], error: null, settled: false },
+  {
+    question,
+    answer: '',
+    blocks: [],
+    position: 0,
+    activity: [],
+    citations: [],
+    error: null,
+    settled: false,
+  },
 ]
 
 export const applyEvent = (transcript: AskTranscript, event: AskEvent): AskTranscript => {
@@ -86,6 +110,8 @@ export const applyEvent = (transcript: AskTranscript, event: AskEvent): AskTrans
       return replaced({
         ...turn,
         answer: event.text,
+        blocks: event.blocks,
+        position: event.position,
         citations: event.citations,
         settled: true,
       })

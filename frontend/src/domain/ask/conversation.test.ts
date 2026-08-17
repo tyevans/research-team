@@ -31,7 +31,13 @@ it('replaces the accumulated deltas with the final answer rather than appending'
   let transcript = open()
   transcript = applyEvent(transcript, { type: 'delta', messageId: 'm1', text: 'two papers' })
 
-  transcript = applyEvent(transcript, { type: 'answer', text: 'two papers', citations: [] })
+  transcript = applyEvent(transcript, {
+    type: 'answer',
+    text: 'two papers',
+    blocks: [],
+    position: 0,
+    citations: [],
+  })
 
   // Appending would render the answer twice: the deltas are the same words.
   expect(transcript[0]!.answer).toBe('two papers')
@@ -44,10 +50,38 @@ it('keeps citations with the turn they belong to', () => {
   transcript = applyEvent(transcript, {
     type: 'answer',
     text: 'two papers',
+    blocks: [],
+    position: 0,
     citations: [{ kind: 'source', id: 's1' }],
   })
 
   expect(transcript[0]!.citations).toEqual([{ kind: 'source', id: 's1' }])
+})
+
+it('keeps blocks and their position with the turn they belong to', () => {
+  let transcript = open()
+
+  const block = {
+    kind: 'component',
+    id: 'q1',
+    type: 'mcq',
+    data: {},
+    raw: '',
+    lang: null,
+    unknown: false,
+    errors: [],
+    withheld: ['options[].correct'],
+  }
+  transcript = applyEvent(transcript, {
+    type: 'answer',
+    text: 'two papers',
+    blocks: [block as never],
+    position: 3,
+    citations: [],
+  })
+
+  expect(transcript[0]!.blocks).toEqual([block])
+  expect(transcript[0]!.position).toBe(3)
 })
 
 it('records activity in arrival order', () => {
@@ -81,7 +115,13 @@ it('settles a turn on error and keeps the reason', () => {
 
 it('leaves a settled turn alone when a late event arrives', () => {
   let transcript = open()
-  transcript = applyEvent(transcript, { type: 'answer', text: 'done', citations: [] })
+  transcript = applyEvent(transcript, {
+    type: 'answer',
+    text: 'done',
+    blocks: [],
+    position: 0,
+    citations: [],
+  })
 
   transcript = applyEvent(transcript, { type: 'delta', messageId: 'm1', text: 'late' })
 
@@ -98,7 +138,13 @@ it('ignores an event with no turn open at all', () => {
 
 it('appends a second turn without disturbing the first', () => {
   let transcript = open()
-  transcript = applyEvent(transcript, { type: 'answer', text: 'two papers', citations: [] })
+  transcript = applyEvent(transcript, {
+    type: 'answer',
+    text: 'two papers',
+    blocks: [],
+    position: 0,
+    citations: [],
+  })
 
   transcript = asked(transcript, 'and the second?')
 
