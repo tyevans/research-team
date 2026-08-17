@@ -72,7 +72,7 @@ DEFAULT_NEO4J_USER = "neo4j"
 #: The two constants must be changed together -- drift makes a transcript
 #: truncate at a different length than a document, which is visible rather
 #: than silent, but still a bug.
-DEFAULT_PERCEPTION_MAX_CHARS = 200_000
+DEFAULT_PERCEPTION_MAX_CHARS = 500_000
 
 #: Seconds between periodic reconciliation sweeps -- see
 #: `media_reconcile_interval_seconds` below for why this number.
