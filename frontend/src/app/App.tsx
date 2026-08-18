@@ -7,7 +7,7 @@ import { createSessionStore, type SessionStore } from '@application/session/sess
 import type { Course } from '@domain/project/course.ts'
 import { AskView } from '@presentation/ask/AskView.tsx'
 import { Shell } from '@presentation/layout/Shell.tsx'
-import { ProjectView } from '@presentation/project/ProjectView.tsx'
+import { DEFAULT_MATERIAL, ProjectView } from '@presentation/project/ProjectView.tsx'
 import { homeHref, type Route } from '@presentation/routing/routes.ts'
 import { useRoute, useSeekSeconds } from '@presentation/routing/use-route.ts'
 import { SessionView } from '@presentation/session/SessionView.tsx'
@@ -34,11 +34,17 @@ export const App = () => (
  * Derived from the parsed route rather than from `window.location.hash`,
  * because the hash carries ids and `view` is documented as structural. The
  * facet set is closed (`FACETS`), so this cannot grow a value nobody
- * expected. */
-const viewNameOf = (route: Route): string => {
+ * expected.
+ *
+ * The fallback is `ProjectView`'s own `DEFAULT_MATERIAL`, imported rather than
+ * repeated: a bare `#/p/<id>` opens that tab, and a literal `'session'` here
+ * would keep saying so silently on the day the default moves. Exported for
+ * `App.test.tsx`, which is the only place a route shape can be named without
+ * driving the whole console. */
+export const viewNameOf = (route: Route): string => {
   if (route.name === 'session') return 'session'
   if (route.name !== 'project') return 'home'
-  return `project/${route.selection?.facet ?? 'session'}`
+  return `project/${route.selection?.facet ?? DEFAULT_MATERIAL}`
 }
 
 /** The composition root's own component: routing, the session store, and the

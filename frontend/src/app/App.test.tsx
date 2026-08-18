@@ -11,9 +11,9 @@ import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
 import type { MediaSummary } from '@domain/research/document.ts'
 import { ProjectId, SessionId, SourceId } from '@domain/shared/identifier.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
-import { projectHref } from '@presentation/routing/routes.ts'
+import { parseRoute, projectHref } from '@presentation/routing/routes.ts'
 
-import { App } from './App.tsx'
+import { App, viewNameOf } from './App.tsx'
 
 /** The application, rendered as the application.
  *
@@ -104,9 +104,16 @@ const COURSE = {
   unimplementedChecks: [],
 }
 
+/** The spy the interaction-log assertions read, rebuilt per container so one
+ *  test cannot see another's events. Absent entirely until this round: every
+ *  test in this file ran the shipped app with `sink === undefined`, and
+ *  survived only because `emitter.flushOnUnload` catches. */
+let interactions = { send: vi.fn(), sendOnUnload: vi.fn() }
+
 const containerWith = (over: Record<string, unknown> = {}) =>
   ({
     now: () => NOW,
+    interactions,
     preferences: new InMemoryPreferenceStore(),
     // Connects and disconnects, delivers nothing. Every frame-driven refresh
     // in the shell is a subscription on this, so a container without it fails
@@ -188,6 +195,7 @@ const renderApp = (container: AppContainer = containerWith()) => {
 
 beforeEach(() => {
   window.location.hash = ''
+  interactions = { send: vi.fn(), sendOnUnload: vi.fn() }
 })
 
 it('renders one main landmark, with the chrome outside it', async () => {
@@ -501,4 +509,60 @@ it('does not seek an opened document with no `?t=` in its link', async () => {
 
   const player = await screen.findByTestId('media-player')
   expect((player as HTMLMediaElement).currentTime).toBe(0)
+})
+
+/** The interaction log, seen from the composition root.
+ *
+ * Deleting the `<InteractionLogProvider>` wrapper from `App.tsx` left all 15
+ * tests above green and all 4 provider tests green, and the console collected
+ * nothing -- which is the exact state the commit that added the wrapper says it
+ * is fixing. Same hole this file was written for: no component test renders the
+ * composition root, so no component test can see a provider it fails to mount.
+ * Proved red by replacing the wrapper with a fragment -- the batch comes back
+ * undefined, because nothing calls `sendOnUnload` at all. */
+it('mounts the interaction log over the application, not merely beside it', async () => {
+  window.location.hash = `#/p/${ATLAS}/entity/e1`
+  const { unmount } = renderApp()
+  await screen.findByRole('group', { name: 'Project regions' })
+
+  unmount()
+  // The provider's teardown defers its final beacon by a microtask so a
+  // StrictMode remount can cancel it; nothing has reached the sink until then.
+  await Promise.resolve()
+
+  const batch = interactions.sendOnUnload.mock.calls[0]?.[0] as
+    { kind: string; view: string; project_id: string | null }[] | undefined
+  expect(
+    batch?.some(
+      (event) =>
+        event.kind === 'ViewEntered' &&
+        event.view === 'project/entity' &&
+        event.project_id === ATLAS,
+    ),
+  ).toBe(true)
+})
+
+/** `viewNameOf` had no test at all, and it is the one function deciding what
+ *  every row of the log is filed under. Driven through `parseRoute` rather than
+ *  hand-built route objects, so a route shape that stops parsing the way this
+ *  expects fails here rather than silently renaming a view. */
+it.each([
+  ['#/', 'home'],
+  ['#/nonsense', 'home'],
+  [`#/s/${HOLDER}`, 'session'],
+  // No selection: the facet is `ProjectView`'s `DEFAULT_MATERIAL`, which
+  // `viewNameOf` now imports rather than repeats.
+  [`#/p/${ATLAS}`, 'project/session'],
+  [`#/p/${ATLAS}/entity/e1`, 'project/entity'],
+  [`#/p/${ATLAS}/doc/d1`, 'project/doc'],
+  [`#/p/${ATLAS}/ask`, 'project/ask'],
+  [`#/p/${ATLAS}/topic/t1`, 'project/topic'],
+  [`#/p/${ATLAS}/stage/step1.framing`, 'project/stage'],
+  [`#/p/${ATLAS}/timeline`, 'project/timeline'],
+  [`#/p/${ATLAS}/artifact/objectives.md`, 'project/artifact'],
+  // An unrecognised facet parses as home rather than as a project route, so
+  // the log cannot grow a view name nobody chose.
+  [`#/p/${ATLAS}/wat`, 'home'],
+])('names the view for %s', (hash, expected) => {
+  expect(viewNameOf(parseRoute(hash))).toBe(expected)
 })

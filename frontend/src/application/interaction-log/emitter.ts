@@ -36,6 +36,10 @@ interface Context {
 export interface Emitter {
   record(kind: string, payload?: Readonly<Record<string, unknown>>): void
   setContext(context: Partial<Context>): void
+  /** Restart the interval flush after `stop()`. Idempotent, and a no-op on an
+   *  emitter that was never stopped -- the caller is a React effect that runs
+   *  once in production and three times under StrictMode. */
+  start(): void
   flush(): Promise<void>
   flushOnUnload(): void
   stop(): void
@@ -100,6 +104,19 @@ export const createEmitter = ({
 
     setContext(next) {
       context = { ...context, ...next }
+    },
+
+    start() {
+      // Without this the emitter is a one-shot: `stop()` clears the interval
+      // and nothing could ever create another, because the timer was only
+      // built in the constructor. A React effect cleanup calls `stop()`, and
+      // StrictMode's re-invoke does not rebuild the emitter (it is held in
+      // component state), so every `npm run dev` session ran with no interval
+      // flush at all -- measured: 0 sends in a 20 s fake-timer window.
+      if (timer !== null) return
+      timer = setInterval(() => {
+        void flush()
+      }, FLUSH_INTERVAL_MS)
     },
 
     flush,

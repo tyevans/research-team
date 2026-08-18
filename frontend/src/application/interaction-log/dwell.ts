@@ -42,6 +42,12 @@ export const createDwellTracker = ({
 
   const onVisibility = () => {
     if (document.visibilityState === 'hidden') {
+      // The mirror of the guard below, and it costs more: overwriting
+      // `hiddenSince` discards the interval already accumulating, so a
+      // repeated hidden->hidden event both emits a second unpaired
+      // `AttentionLost` *and* silently shortens `hidden_ms`. Rarer than
+      // show-without-hide, worse when it happens.
+      if (hiddenSince !== null) return
       hiddenSince = clock()
       emitter.record('AttentionLost')
       return

@@ -184,6 +184,30 @@ it('stops flushing once stopped', async () => {
   expect(transport.send).not.toHaveBeenCalled()
 })
 
+it('flushes again after being restarted', async () => {
+  /** `stop()` was terminal: the interval was only ever created in
+   *  `createEmitter`, so an emitter that outlived a stop -- which is exactly
+   *  what a React effect cleanup plus StrictMode's remount produces -- never
+   *  flushed on a timer again. Without `start()` this fails on the first
+   *  assertion with 0 sends. */
+  const transport = sink()
+  const log = emitter(transport)
+  log.stop()
+  log.start()
+  log.record('AttentionLost')
+  await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL_MS)
+
+  expect(transport.send).toHaveBeenCalledTimes(1)
+
+  // Idempotent: the same effect body runs three times under StrictMode, and a
+  // second interval would double every request for the rest of the page load.
+  log.start()
+  log.record('AttentionLost')
+  await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL_MS)
+
+  expect(transport.send).toHaveBeenCalledTimes(2)
+})
+
 it('survives a sink that rejects', async () => {
   /** A dropped batch must not become an unhandled rejection: main.tsx turns
    *  those into a toast, and telemetry failing is not the user's problem. */

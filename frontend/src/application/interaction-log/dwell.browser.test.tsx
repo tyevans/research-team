@@ -17,6 +17,7 @@ const recorder = () => {
       events.push({ kind, payload })
     }),
     setContext: vi.fn(),
+    start: vi.fn(),
     flush: vi.fn(async () => {}),
     flushOnUnload: vi.fn(),
     stop: vi.fn(),
@@ -125,6 +126,39 @@ it('flushes by beacon on pagehide', () => {
 
     expect(emitter.flushOnUnload).toHaveBeenCalled()
   } finally {
+    detach()
+  }
+})
+
+it('does not restart the hidden clock on a repeated hide', () => {
+  const emitter = recorder()
+  // An explicit clock rather than `performance.now()`: the loss this pins is
+  // arithmetic, and "hidden_ms is smaller than it should be" needs a known
+  // number to be smaller than.
+  let ticks = 0
+  const tracker = createDwellTracker({ emitter, clock: () => ticks })
+  const detach = tracker.attach()
+  // Entered while visible, then hidden: `enter()` starts its own
+  // `hiddenSince` if the tab is already hidden, which would make the first
+  // event below the *second* hide rather than the first.
+  tracker.enter('home')
+  const restore = stubVisibility('hidden')
+  try {
+    document.dispatchEvent(new Event('visibilitychange'))
+    ticks = 100
+    // A second hidden->hidden transition. Without the guard this overwrites
+    // `hiddenSince`, so the 100 ticks already hidden are discarded --
+    // `hidden_ms` comes back 50 rather than 150 -- and the log gains an
+    // `AttentionLost` answering nothing.
+    document.dispatchEvent(new Event('visibilitychange'))
+    ticks = 150
+    tracker.exit()
+
+    expect(emitter.events.filter((event) => event.kind === 'AttentionLost')).toHaveLength(1)
+    const exited = emitter.events.find((event) => event.kind === 'ViewExited')
+    expect(exited?.payload.hidden_ms).toBe(150)
+  } finally {
+    restore()
     detach()
   }
 })
