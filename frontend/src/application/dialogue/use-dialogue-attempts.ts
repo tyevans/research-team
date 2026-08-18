@@ -36,13 +36,32 @@ export const useDialogueAttempts = (
   const { dialogues } = useContainer()
   const api = useAttemptMachine(`${dialogueId ?? 'pending'}:${String(position)}`, {
     stored: null,
+    // The null check is inside the port rather than only on the returned
+    // `submit` below, and both are kept. A non-null assertion here -- which is
+    // what this was, and what `useAskAttempts` still is -- is safe only because
+    // the wrapper short-circuits, which puts the assertion and its guard in two
+    // separate places: a future caller reaching this port directly would render
+    // `null` into the URL path and grade against a dialogue that does not
+    // exist.
+    //
+    // Rejecting rather than resolving, because the port owes a `Verdict` and
+    // there is no honest one to invent: a resolved no-op would leave the widget
+    // looking marked. `useAttemptMachine`'s own `.catch` writes the message
+    // into the widget's error, so the failure is visible instead of silent.
+    // No reader reaches it today -- the wrapper below still returns first.
     submit: (block, response) =>
-      dialogues.submitDialogueAttempt(projectId, dialogueId!, {
-        position,
-        componentId: block.id,
-        response,
-      }),
+      dialogueId === null
+        ? Promise.reject(new Error('This dialogue has not been started yet.'))
+        : dialogues.submitDialogueAttempt(projectId, dialogueId, {
+            position,
+            componentId: block.id,
+            response,
+          }),
   })
+  // Kept as well as the guard above, and not redundant with it: this one stops
+  // the attempt machine transitioning to a submitted state at all, so a widget
+  // rendered before `start` returns does not show a graded-looking result it
+  // never got.
   return {
     ...api,
     submit: (block, response) => (dialogueId ? api.submit(block, response) : Promise.resolve()),

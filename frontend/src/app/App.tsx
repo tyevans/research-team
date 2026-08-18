@@ -6,6 +6,7 @@ import { queryKeys } from '@application/queries/keys.ts'
 import { createSessionStore, type SessionStore } from '@application/session/session-store.ts'
 import type { Course } from '@domain/project/course.ts'
 import { AskView } from '@presentation/ask/AskView.tsx'
+import { DialogueView } from '@presentation/dialogue/DialogueView.tsx'
 import { Shell } from '@presentation/layout/Shell.tsx'
 import { ProjectView } from '@presentation/project/ProjectView.tsx'
 import { homeHref, type Route } from '@presentation/routing/routes.ts'
@@ -149,6 +150,15 @@ const CurrentView = ({
   // URL and nothing to read it against, so it is a view rather than a region.
   // `ProjectView.regionOf` maps it anyway, and says why.
   if (selection?.facet === 'ask') return <AskView key={id} projectId={id} />
+
+  // Intercepted for `ask`'s reason -- a dialogue is one conversation with no
+  // parts worth a URL segment beyond its own id, so it is a view rather than a
+  // region. `key` on the dialogue id and not the project: switching dialogues
+  // within a project must remount the store, or the second dialogue inherits
+  // the first's transcript.
+  if (selection?.facet === 'dialogue') {
+    return <DialogueView key={`${id}:${selection.id ?? 'new'}`} projectId={id} />
+  }
 
   // Unconditional, which is the whole of what this slice changed here. The
   // branch that stood between the two facet sets, and the `RESEARCH_FACETS`

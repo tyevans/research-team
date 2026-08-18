@@ -55,11 +55,43 @@ it('keeps the framing on the store rather than in the transcript', async () => {
 
   expect(dialogue.getState().goal).toBe('understand the creed')
   expect(dialogue.getState().stoppingCondition).toBe('the reader explains it unaided')
-  expect(dialogue.getState().pendingBlocks).toEqual(BLOCKS)
+  expect(dialogue.getState().openingBlocks).toEqual(BLOCKS)
   // One turn, the reader's -- not three. Red against a store that folded the
   // framing frame in as a turn of its own.
   expect(dialogue.getState().transcript).toHaveLength(1)
   expect(dialogue.getState().transcript[0]!.reply).toBe('It settled Arianism.')
+})
+
+it('keeps the OPENING question rather than the newest frame\u2019s', async () => {
+  // The frame's `pending_blocks` is "the question being answered, not the one
+  // about to be asked" (`app.py:3117`), so on the second exchange it is the
+  // FIRST turn's question -- already drawn under the reader's first answer.
+  // A store that overwrote would walk the opening question forward and show a
+  // duplicate of a one-exchange-stale question at the top of the thread.
+  //
+  // Red against the store as it shipped in a78c44f, which set `pendingBlocks`
+  // on every frame: this asserts the SECOND frame's blocks are not kept.
+  const later: readonly DocumentBlock[] = [{ kind: 'markdown', text: 'And then what?' }]
+  let blocks = BLOCKS
+  const dialogues = repo({
+    reply: vi.fn<DialogueRepository['reply']>(async (_p, _d, _r, onEvent) => {
+      onEvent({
+        type: 'dialogue',
+        dialogueId: 'd1',
+        goal: 'understand the creed',
+        stoppingCondition: 'the reader explains it unaided',
+        pendingBlocks: blocks,
+      })
+      blocks = later
+    }),
+  })
+  const dialogue = store(dialogues)
+
+  await dialogue.getState().start('the creed')
+  await dialogue.getState().send('It settled Arianism.')
+  await dialogue.getState().send('Because the bishops agreed.')
+
+  expect(dialogue.getState().openingBlocks).toEqual(BLOCKS)
 })
 
 it('refuses to send before a dialogue has been started', async () => {

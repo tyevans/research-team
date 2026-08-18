@@ -8,7 +8,7 @@
  *    key and a URL segment, so the server mints it and it arrives from
  *    `start`. Every guard below follows from that.
  * 2. **The framing lives here, not in the transcript.** `goal`,
- *    `stoppingCondition` and `pendingBlocks` are the dialogue's framing, not
+ *    `stoppingCondition` and `openingBlocks` are the dialogue's framing, not
  *    turns in it; a transcript that held them would draw them as something the
  *    reader has to answer.
  * 3. **The store settles a stream that ended without settling itself.** The
@@ -27,10 +27,20 @@ export interface DialogueState {
   readonly dialogueId: string | null
   readonly goal: string
   readonly stoppingCondition: string
-  /** The question the reader is answering right now: the opening one on a
-   *  fresh dialogue, the outstanding one on a resumed one. Blocks, never a
-   *  string. */
-  readonly pendingBlocks: readonly DocumentBlock[]
+  /** The question that OPENED the dialogue -- the one belonging to no turn.
+   *
+   * Framing rather than a turn, which is why it is here beside `goal` and not
+   * captured in the view: a view holding it would need its own ref and would
+   * lose it on remount. Blocks, never a string.
+   *
+   * Captured from the first `dialogue` frame and never overwritten. The frame's
+   * `pending_blocks` is "the question being answered, not the one about to be
+   * asked" (`app.py:3117`), so on exchange N it is turn N-1's question -- which
+   * is already on screen. Only on the FIRST exchange does it name a question no
+   * turn carries, and that is the opening one. Overwriting it, as this store
+   * did, walked the opening question forward and drew a duplicate of a
+   * question one exchange stale at the top of the thread. */
+  readonly openingBlocks: readonly DocumentBlock[]
   readonly replying: boolean
   readonly starting: boolean
   readonly error: string | null
@@ -52,7 +62,7 @@ export const createDialogueStore = ({
     dialogueId: null,
     goal: '',
     stoppingCondition: '',
-    pendingBlocks: [],
+    openingBlocks: [],
     replying: false,
     starting: false,
     error: null,
@@ -105,15 +115,16 @@ export const createDialogueStore = ({
         await dialogues.reply(projectId, dialogueId, trimmed, (event) => {
           // Intercepted rather than folded: the framing is the dialogue's, not
           // a turn's, exactly as the ask intercepts its `conversation` frame.
-          // `pendingBlocks` is overwritten on every exchange because a resumed
-          // dialogue sends the outstanding question here, not an opening one.
           if (event.type === 'dialogue') {
-            set({
+            set((state) => ({
               dialogueId: event.dialogueId,
               goal: event.goal,
               stoppingCondition: event.stoppingCondition,
-              pendingBlocks: event.pendingBlocks,
-            })
+              // First frame only -- see `openingBlocks` for why a later
+              // frame's blocks are a question already drawn.
+              openingBlocks:
+                state.openingBlocks.length > 0 ? state.openingBlocks : event.pendingBlocks,
+            }))
             return
           }
           set((state) => ({ transcript: applyEvent(state.transcript, event) }))

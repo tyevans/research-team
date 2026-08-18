@@ -36,6 +36,7 @@ export const DialogueThread = ({
   transcript,
   openingBlocks,
   dialogueId,
+  concluded,
 }: {
   projectId: ProjectId
   transcript: DialogueTranscript
@@ -44,6 +45,17 @@ export const DialogueThread = ({
    *  see `DialogueOpening`. */
   openingBlocks: readonly DocumentBlock[]
   dialogueId: string | null
+  /** Whether the dialogue has reached its goal, in which case NOTHING is
+   *  outstanding.
+   *
+   * `.dlg-pending` glows to say the reader is being waited on. A concluded
+   * dialogue replaces the composer with "This dialogue has reached its goal",
+   * so the last question glowing beside it invites an answer there is nowhere
+   * to type. Measured rather than reasoned: the browser test
+   * `stops glowing at the last question once the dialogue has concluded`
+   * compares the last question's `border-left-color` against a live one's and
+   * fails if this prop is dropped. */
+  concluded: boolean
 }) => {
   /** Which activity folds are open, by exchange index.
    *
@@ -76,7 +88,7 @@ export const DialogueThread = ({
           <DialogueOpening
             blocks={openingBlocks}
             projectId={projectId}
-            outstanding={newestAsked === -1}
+            outstanding={!concluded && newestAsked === -1}
           />
         ) : null}
 
@@ -87,7 +99,7 @@ export const DialogueThread = ({
             turn={turn}
             index={index}
             dialogueId={dialogueId}
-            outstanding={index === newestAsked}
+            outstanding={!concluded && index === newestAsked}
             open={open.has(index)}
             onToggle={() =>
               setOpen((current) => {

@@ -98,6 +98,11 @@ export const FACETS = [
   // a URL. It is a facet anyway because it is a *place on the project*, and
   // giving it a route of its own would be a second grammar for the same idea.
   'ask',
+  // A place on the project with a durable id, unlike `ask` beside it: a
+  // dialogue's id is minted by the server and is a row key, so it has a better
+  // claim to a URL segment than an ask does. The grammar already supports it
+  // unchanged -- `Selection` carries an id for every plain facet.
+  'dialogue',
 ] as const
 
 type PlainFacet = Exclude<Facet, 'session' | 'file'>

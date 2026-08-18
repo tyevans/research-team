@@ -83,6 +83,7 @@ export const DialoguePage = ({
         transcript={transcript}
         openingBlocks={openingBlocks}
         dialogueId={dialogueId}
+        concluded={concluded}
       />
 
       {concluded ? (
