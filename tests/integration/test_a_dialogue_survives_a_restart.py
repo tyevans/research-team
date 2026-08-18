@@ -89,6 +89,13 @@ async def _application(db_file, questions):
 
 
 async def _project(application) -> UUID:
+    """A project id, by the only route that mints one.
+
+    The HTTP hop is incidental and no route here is under test -- this file
+    asserts nothing about a response. Plan 2 adds real dialogue routes to this
+    area; when it does, they will need assertions of their own rather than
+    inheriting this call's.
+    """
     api = create_app(application.service, application.feed, application.turns)
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as http:

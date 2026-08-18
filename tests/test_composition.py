@@ -227,3 +227,33 @@ async def test_a_raise_late_in_build_application_never_constructs_the_media_clie
     for client in built:
         await client.aclose()
     assert built == []
+
+
+async def test_the_placeholder_socratic_executor_raises_when_called_not_when_built():
+    """The one property `_UnbuiltSocraticExecutor` exists to have.
+
+    Raising at *construction* would break `build_application` outright, and
+    the whole reason the runner, the service and the resumption path are wired
+    in Task 4 rather than deferred to Plan 2 is that composing has to succeed
+    for any of them to be reachable in a real build. A future edit moving the
+    raise into `__init__` would be caught here rather than by whichever
+    integration test next happened to build an application.
+
+    Would pass with the raises reverted to nothing at all, which is why the
+    second half asserts the refusal rather than only the construction.
+    """
+    from research_team import composition
+
+    executor = composition._UnbuiltSocraticExecutor()
+
+    with pytest.raises(NotImplementedError):
+        await executor.frame(project_id=uuid4(), topic="anything")
+    with pytest.raises(NotImplementedError):
+        await executor.respond(
+            project_id=uuid4(),
+            history=(),
+            goal="",
+            stopping_condition="",
+            reply="",
+            on_activity=lambda _note: None,
+        )

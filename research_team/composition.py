@@ -909,6 +909,14 @@ class _UnbuiltSocraticExecutor:
 
     Delete this class in Plan 2. `grep _UnbuiltSocraticExecutor` is how you
     find every line that has to change.
+
+    **The cost, stated because Plan 2 inherits it:** `respond` takes `**_kwargs`
+    and so accepts any call at all. This stub therefore checks nothing about
+    `SocraticExecutor.respond`'s keywords, and a rename on the protocol side
+    would leave it silently agreeing. Harmless only for as long as it raises --
+    which is why `test_the_placeholder_socratic_executor_raises_when_called_not_when_built`
+    pins the raise, and why the first thing Plan 2's real executor buys is a
+    signature that can disagree.
     """
 
     async def frame(self, *, project_id, topic):
