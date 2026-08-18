@@ -400,6 +400,19 @@ class ComponentType:
     gradeable: bool = False
     normalize: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     strip: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    warn: Callable[[dict[str, Any]], list[Note]] | None = None
+    """Whole-body notes a per-field `Checker` cannot make, because they are
+    about the relationship between two fields' entries rather than one value.
+
+    Warnings and never errors, which is the whole reason this is separate from
+    `fields`: what it catches renders *correctly* and misbehaves elsewhere --
+    the duplicate-`id` warning's shape exactly, and `_unknown_keys`' policy.
+
+    Runs only on a body that already validated, so an implementation may
+    assume the shapes `fields` declared. Nothing else in this module offers
+    that guarantee, and without it a hook indexing into a field a model wrote
+    as a string would raise inside a parser that promises never to.
+    """
 
 
 CLOZE_BLANK = re.compile(r"\{\{(.+?)\}\}", re.DOTALL)
@@ -465,6 +478,70 @@ def _cloze_text_has_a_blank(value: Any, path: str) -> list[Note]:
     if not CLOZE_BLANK.search(str(value)):
         return [Note(path, "no {{blanks}} found -- wrap each answer in {{ }}")]
     return []
+
+
+def _duplicates(entries: Sequence[tuple[str, Any]], noun: str, keyed: str) -> list[Note]:
+    """One note per repeat, addressed at the *later* entry.
+
+    The later one because that is the one to edit: the first occurrence is
+    presumably the row the author meant, and a note on it would read as an
+    instruction to change the wrong line.
+    """
+    seen: set[str] = set()
+    notes: list[Note] = []
+    for path, value in entries:
+        key = str(value)
+        if key in seen:
+            notes.append(
+                Note(
+                    path,
+                    f"duplicate {noun} {key!r}; the table keys {keyed} on it "
+                    "and the two will collide",
+                )
+            )
+        seen.add(key)
+    return notes
+
+
+def _compare_collisions(data: dict[str, Any]) -> list[Note]:
+    """Both of `compare`'s author-supplied key sets, warned about, never rejected.
+
+    The renderer keys its header cells and every row's cells on the entity
+    name, and its rows on the author's `label`. A repeat in either is a React
+    key collision: the table draws correctly and logs a warning into a console
+    no reader of the lesson will open.
+
+    Warned rather than rejected, deliberately, and the choice is the registry's
+    rather than the renderer's -- the renderer cannot dedupe without inventing
+    which of the two rows the author meant. Refusing would cost the whole table
+    over a defect that is cosmetic in the rendered output, which is the wrong
+    trade in a module whose first principle is that degradation costs one block
+    and never a document. This follows `_unknown_keys` and the duplicate-`id`
+    warning, the two existing cases of "renders fine, bites later".
+    """
+    entities = data.get("entities")
+    rows = data.get("rows")
+    notes: list[Note] = []
+    if isinstance(entities, list):
+        notes += _duplicates(
+            [(f"entities[{i}]", name) for i, name in enumerate(entities)],
+            "entity",
+            "columns",
+        )
+    if isinstance(rows, list):
+        # Indices come from `enumerate` over every row rather than from a
+        # filtered list, so a path still names the row a reader can count to
+        # if a non-mapping row ever reaches here.
+        notes += _duplicates(
+            [
+                (f"rows[{i}].label", row["label"])
+                for i, row in enumerate(rows)
+                if isinstance(row, Mapping) and row.get("label") is not None
+            ],
+            "label",
+            "rows",
+        )
+    return notes
 
 
 REGISTRY: dict[str, ComponentType] = {
@@ -791,6 +868,12 @@ REGISTRY: dict[str, ComponentType] = {
             "Narrow the window to the span you are actually discussing. A "
             "timeline of everything is a bar chart of the corpus rather than "
             "an illustration of your point.",
+            "`limit` shortens what is drawn; it does not make the read "
+            "cheaper. Measured, not assumed: the server walks the project's "
+            "entities twice and applies the limit to the result, and the read "
+            "is deliberately uncached. So write the limit for readability -- "
+            "a dozen bands a reader can take in -- and expect no saving from "
+            "it.",
         ),
     ),
     "compare": ComponentType(
@@ -835,6 +918,7 @@ REGISTRY: dict[str, ComponentType] = {
             ),
         },
         resolved=True,
+        warn=_compare_collisions,
         craft=(
             "Write each entity name exactly as your prose does, and exactly as "
             "the sources spell it -- the column heads are looked up by name, "
@@ -843,6 +927,11 @@ REGISTRY: dict[str, ComponentType] = {
             "You write the rows yourself: nothing in this project stores "
             "per-type attributes, so there is no schema to derive columns from. "
             "Pick the dimensions the comparison actually turns on.",
+            "Give each row a distinct `label` and name each entity once. The "
+            "table is keyed on both, so a repeat is a collision -- it still "
+            "draws, and you get a warning rather than a broken block, but two "
+            "rows called 'Reign' were almost certainly one row you meant to "
+            "edit.",
             "Cells are in the same order as `entities`. A short row is padded, "
             "so a dimension one entity has and another does not is fine to "
             "leave blank -- that blank is itself the comparison.",
@@ -905,8 +994,23 @@ COMPONENTS_FOR: Mapping[ArtifactType, tuple[str, ...]] = {
     # assessment. Recall and procedure, where being wrong costs nothing.
     ArtifactType.EXPERIENCE: ("flashcards", "cloze", "checklist"),
     # ADDIE Development. §3.8: "the whole catalog; this is where components get
-    # authored." The one stage that should reach for anything.
-    ArtifactType.BUILD: tuple(REGISTRY),
+    # authored." The one stage that should reach for anything -- anything a
+    # course file can actually render, which is not the same as the registry.
+    #
+    # This was `tuple(REGISTRY)`, and that is how five widgets that cannot
+    # work here joined this prompt without anyone deciding to add them. A
+    # resolved component fetches from the project's graph, and a course file is
+    # read from a *session*, which has no project in scope: every resolved
+    # widget in a lesson renders `unavailable` and draws the plain name it was
+    # given. Advertising them here teaches a model to write a block that is
+    # inert wherever this prompt applies.
+    #
+    # Enumerated rather than filtered by `spec.resolved` for the same reason
+    # `tuple(REGISTRY)` was wrong: a new entry should join a prompt because
+    # somebody put it here, not because its flags happened to line up.
+    # `test_a_resolved_type_does_not_reach_the_build_prompt_by_existing` fails
+    # if a resolved type reaches any artifact type, here or below.
+    ArtifactType.BUILD: ("flashcards", "mcq", "cloze", "checklist"),
     # Organising experiences: a sequence a learner or facilitator works
     # through is a checklist, and `ordering` is not registered yet.
     ArtifactType.SEQUENCE: ("checklist",),
@@ -1133,6 +1237,10 @@ def _build_component(
             data[field_name] = field_spec.default
     if spec.normalize and not errors:
         data = spec.normalize(data)
+    # Only on a body that validated, which is what lets a hook assume the
+    # shapes `fields` declared. See `ComponentType.warn`.
+    if spec.warn and not errors:
+        warnings.extend(spec.warn(data))
 
     try:
         version = int(data.get("v", spec.version))

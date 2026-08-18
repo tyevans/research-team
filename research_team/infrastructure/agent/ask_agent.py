@@ -115,7 +115,16 @@ ASK_COMPONENT_PROMPT = """
 
 Some answers land better as something the reader does than as something they
 read. You can write an interactive component into an answer and it will render
-as a working widget in the page, graded on the server.
+as a working widget in the page.
+
+There are two kinds and they earn their place differently. `mcq`, `cloze` and
+`flashcards` ask the reader something and are graded on the server. The other
+five -- `definition`, `evidence`, `graph`, `timeline`, `compare` -- carry a
+*reference* rather than content: the page looks each one up in this project's
+own corpus and draws what it finds. That is the one thing you can put in an
+answer that shows the reader what the project actually holds rather than what
+you can describe, and a reference that finds nothing degrades to the plain
+words you wrote rather than to an error.
 
 **The default is prose, and this is the part to get right.** A component earns
 its place when the reader would learn more by *doing* than by reading -- when
