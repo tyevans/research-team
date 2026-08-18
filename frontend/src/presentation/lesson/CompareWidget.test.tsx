@@ -13,6 +13,7 @@
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
@@ -73,6 +74,7 @@ const renderWidget = (
   )
   return {
     search,
+    user: userEvent.setup(),
     ...render(
       <CompareWidget
         block={block(data)}
@@ -126,6 +128,58 @@ it('pads a short row rather than shifting its cells left', () => {
 
   const row = screen.getByRole('row', { name: /Religious policy/ })
   expect(within(row).getAllByRole('cell')).toHaveLength(2)
+})
+
+it('links a resolved head into this project’s entity facet', async () => {
+  // The registry's own summary tells the authoring model the browser "links
+  // the ones it finds", and linking is the whole of what this adds over a
+  // markdown table. Red against the first draft, which drew a bare span and
+  // made that prompt text a false promise.
+  renderWidget()
+
+  const link = await screen.findByRole('link', { name: 'Diocletian' })
+  expect(link).toHaveAttribute('href', `#/p/${PROJECT}/entity/e1`)
+})
+
+it('draws a picker inside an ambiguous column head, and links what is picked', async () => {
+  // `compare` is the first widget to mount several frames at once, so it is
+  // the first place `ambiguous` can stack: this header row is two pickers,
+  // each a paragraph and a button list inside a `<th>`. Pinned rather than
+  // suppressed -- a head with no picker can never be disambiguated, and an
+  // unresolvable head can never be linked. Red against any later change that
+  // quietly hides the picker in a header.
+  const twins = vi.fn().mockImplementation((_project: unknown, name: string) =>
+    Promise.resolve({
+      entities: [
+        { id: `${name}-a`, name, entityType: 'Person' },
+        { id: `${name}-b`, name, entityType: 'Place' },
+      ],
+      truncated: false,
+    }),
+  )
+  const { user } = renderWidget(DATA, { search: twins })
+
+  // Four buttons: two candidates under each of the two heads. Awaited on the
+  // buttons rather than on the headers, which are present from the first
+  // render and would resolve while both frames are still `loading`.
+  await waitFor(() => {
+    expect(screen.getAllByRole('button')).toHaveLength(4)
+  })
+  const heads = screen.getAllByRole('columnheader')
+  // Both entity heads carry a picker; the corner cell carries nothing.
+  expect(within(heads[1] as HTMLElement).getAllByRole('button')).toHaveLength(2)
+  expect(within(heads[2] as HTMLElement).getAllByRole('button')).toHaveLength(2)
+  // Still a table, and still not an error.
+  expect(screen.getByRole('table')).toBeInTheDocument()
+  expect(screen.getByText('284-305')).toBeInTheDocument()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+  await user.click(within(heads[1] as HTMLElement).getAllByRole('button')[0] as HTMLElement)
+
+  expect(screen.getByRole('link', { name: 'Diocletian' })).toHaveAttribute(
+    'href',
+    `#/p/${PROJECT}/entity/Diocletian-a`,
+  )
 })
 
 it('draws the table with no project in scope, and looks nothing up', () => {

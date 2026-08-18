@@ -4,7 +4,7 @@ import type { ComponentBlock } from '@domain/lesson/document.ts'
 import { readCompare } from '@domain/lesson/widgets.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
-import { ResolvedFrame } from './ResolvedFrame.tsx'
+import { ResolvedFrame, ResolvedName } from './ResolvedFrame.tsx'
 import { Prose } from './widgets.tsx'
 
 /** A side-by-side table whose column heads are resolved against the graph.
@@ -81,16 +81,25 @@ const Head = ({ projectId, name }: { projectId: ProjectId | undefined; name: str
   const resolved = useEntityReference(projectId, { entity: name, entityId: null })
 
   return (
-    // `ResolvedFrame` carries the pick internally now, and there is nothing
-    // this widget would do differently with a pinned id -- it shows the name
-    // and the type either way. Its `missing` and `unavailable` states are
-    // prose, which is what keeps a mixed table a table: this widget mounts
-    // several of these at once, so an error panel per head would turn one
-    // unextracted name into a grid of boxes.
+    // `missing` and `unavailable` are prose, which is what keeps a mixed table
+    // a table: this widget mounts several frames at once, so an error panel
+    // per head would turn one unextracted name into a grid of boxes.
+    //
+    // `ambiguous` is the exception and is kept deliberately. It draws a
+    // paragraph and up to eight buttons *inside a `<th>`*, so a header row of
+    // three ambiguous names is three stacked pickers -- genuinely ugly, and
+    // the reason a comment is needed here at all. It is kept because a head
+    // with no picker can never be disambiguated, and an unresolvable head can
+    // never be linked; linking is the whole of what this widget adds over a
+    // markdown table, so suppressing the picker to tidy the header would
+    // trade the feature for the cosmetics. `CompareWidget.test.tsx` pins what
+    // an ambiguous header actually does, including that picking turns the
+    // head into a link -- red against any later attempt to suppress it
+    // quietly.
     <ResolvedFrame reference={resolved} name={name}>
       {(entity) => (
         <>
-          <span className="cmp-ref-name">{entity.name}</span>
+          <ResolvedName projectId={projectId} entity={entity} />
           {entity.entityType ? (
             <span className="cmp-ref-pick-type">{entity.entityType}</span>
           ) : null}

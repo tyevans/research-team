@@ -2,6 +2,8 @@ import { useState, type ReactNode } from 'react'
 
 import type { GraphNode } from '@domain/knowledge/graph.ts'
 import type { ResolvedEntity } from '@domain/lesson/resolved.ts'
+import type { ProjectId } from '@domain/shared/identifier.ts'
+import { projectHref } from '@presentation/routing/routes.ts'
 
 /** How many candidates the picker will draw.
  *
@@ -43,6 +45,43 @@ const MAX_CANDIDATES = 8
  * chances to get it wrong; `ResolvedFrame.test.tsx` fails on the stale pick if
  * the scoping below is removed.
  */
+/** A resolved entity's name, as a link into this project's entity facet.
+ *
+ * Here rather than in `CompareWidget` because linking is a property of the
+ * *shape* -- "resolved against this project's graph" -- and not of any one
+ * widget. `compare` is the first widget to render a resolved name as a name
+ * (`definition` renders prose, `graph` renders a canvas), so it is the first
+ * to need this; putting it beside `ResolvedFrame` is what stops the second one
+ * inventing a second URL shape. `REGISTRY["compare"].summary` promises the
+ * authoring model that the browser "links the ones it finds", and before this
+ * existed that promise was false.
+ *
+ * `projectHref(projectId, {facet: 'entity', id})` is the route `GraphDetail`'s
+ * `showInGraphHref` already uses (`TimelinePane.tsx:246`,
+ * `EntityTreePane.tsx:235`). Reused rather than invented, and it costs
+ * nothing: `projectHref` is a pure string function over the id, so no console
+ * state comes into the frame with it.
+ *
+ * No project means no link, only the name. That arm is reachable: a pinned
+ * `entity_id` resolves without a project at all (`use-entity-reference.ts`),
+ * and an href built from `undefined` would be a link to a page that does not
+ * exist -- worse than no link, because it looks like one that works.
+ */
+export const ResolvedName = ({
+  projectId,
+  entity,
+}: {
+  projectId: ProjectId | undefined
+  entity: GraphNode
+}) =>
+  projectId ? (
+    <a className="cmp-ref-name" href={projectHref(projectId, { facet: 'entity', id: entity.id })}>
+      {entity.name}
+    </a>
+  ) : (
+    <span className="cmp-ref-name">{entity.name}</span>
+  )
+
 export const ResolvedFrame = ({
   reference,
   name,

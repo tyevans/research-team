@@ -627,6 +627,20 @@
   margin: 0;
 }
 
+/* A resolved name is a link into the project's entity facet (`ResolvedName`).
+   `--accent` and no rest-state underline, matching `.md-link` -- an entity
+   reference in a widget and one in the surrounding prose are the same thing to
+   a reader and should not be two different colours. Without this the anchor
+   would take `.cmp-ref-name`'s `--fg` and the UA's underline, which reads as
+   emphasised body text rather than as a link. */
+a.cmp-ref-name {
+  color: var(--accent);
+  text-decoration: none;
+}
+a.cmp-ref-name:hover {
+  text-decoration: underline;
+}
+
 /* `loading` and `unavailable`, dimmer than a reference the page has actually
    checked. The state carries no note -- neither may make a claim about the
    corpus -- so weight is the only thing left to say the name is unconfirmed,
@@ -806,12 +820,9 @@
 
 .cmp-compare th,
 .cmp-compare td {
-  /* `border: 0` first, then the one edge that is wanted. A bare
-     `border-bottom` alone would in fact draw (Tailwind's `--tw-border-style`
-     defaults to solid, per CLAUDE.md), but this is a hand-written rule rather
-     than a utility, so the browser's own `medium` default is what the other
-     three sides would fall back to if a style ever reached them. Zeroing them
-     costs one declaration and removes the question. */
+  /* Zeroes the three sides this rule does not want. `<th>` carries a UA border
+     in some stylesheets, and `border-bottom: 1px solid` below says nothing
+     about the other three. */
   border: 0;
   border-bottom: 1px solid var(--line);
   padding: 0.5rem 0.75rem;
