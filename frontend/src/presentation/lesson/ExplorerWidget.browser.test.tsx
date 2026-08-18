@@ -117,6 +117,32 @@ it('gives the axis a box with a real height below its controls', async () => {
   const note = screen.container.querySelector('.cmp-explorer-note') as HTMLElement
   expect(getComputedStyle(note).color).not.toBe(getComputedStyle(prompt).color)
 
+  // `flex-basis: 100%` is the only load-bearing *layout* declaration in this
+  // stylesheet, and the colour assertion above passes without it.
+  //
+  // The ordering assertion is NOT what proves it, and that is measured rather
+  // than reasoned (2026-08-17): with `flex-basis` deleted the note's top is
+  // 187.94 against a last-field bottom of 175.94 -- byte-identical to the
+  // styled run. At this suite's width the note's own text (395.09px of it) plus
+  // the three fields already overflows the row's 564px of content box, so it
+  // wraps to its own line whichever way the rule goes. The ordering is kept as
+  // the statement of intent, and would catch a future rule that pulled the note
+  // up, but it cannot catch this one going missing.
+  //
+  // The width is what discriminates: 564 (the row's whole content box) with the
+  // declaration, 395.09 (shrink-to-fit around the sentence) without it. A note
+  // narrower than the row is one a shorter sentence would let a control sit
+  // beside -- the defect the rule exists to prevent, at a width or a wording
+  // this test does not have.
+  const fields = screen.container.querySelectorAll('.cmp-explorer-field')
+  const lastField = fields[fields.length - 1] as HTMLElement
+  expect(note.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+    lastField.getBoundingClientRect().bottom,
+  )
+  // 0.75rem of padding each side, from `.cmp-explorer-controls`.
+  const content = controlRect.width - 24
+  expect(note.getBoundingClientRect().width).toBeCloseTo(content, 0)
+
   // The counts read as an aside. Compared against the surrounding prose rather
   // than to a literal, for the reason above.
   const counts = screen.container.querySelector('.cmp-timeline-counts') as HTMLElement
