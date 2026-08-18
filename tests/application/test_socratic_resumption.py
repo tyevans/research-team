@@ -12,19 +12,19 @@ the events landed on. "The call returned" is compatible with a service that
 silently began a second dialogue, which is precisely the failure.
 
 **Every name from `research_team.application.socratic` is imported inside the
-function that uses it, and every test here is `xfail(strict=True)`.** The
-module does not exist until Task 3, and a module-level import of it is a
-*collection* error -- which interrupts the entire pytest run, so a suite that
-cannot be collected is a suite in which no other failure can be read. The
-deferred import keeps the file collectable; the strict xfail is what keeps it
-honestly red rather than quietly excused.
+function that uses it, and that is a leftover from when it did not exist.**
+Task 1 wrote this file against a module Task 3 would create, and a module-level
+import of a missing module is a *collection* error -- which interrupts the
+entire pytest run, so a suite that cannot be collected is a suite in which no
+other failure can be read. The deferred imports kept the file collectable; they
+are harmless now and are left alone rather than churned.
 
-**Task 3 removes the markers; it does not touch the assertions.** `strict=True`
-means the suite goes RED on an unexpected *pass*, so the moment the service
-works these tests fail as XPASS and whoever wrote it has to delete the markers
-deliberately. That is the whole point of this shape -- a plain `xfail` or a
-`skip` would let a working feature sit behind a permanently-excused test that
-nobody looks at again.
+**The `xfail(strict=True)` markers were removed by Task 3, which is what
+`strict=True` was for.** They were not excuses: the moment the service worked
+these tests failed as XPASS, so removing them was a deliberate edit by whoever
+made them pass rather than something that could be forgotten. A plain `xfail`
+or a `skip` would have let a working feature sit behind a permanently-excused
+test that nobody looks at again.
 """
 
 from datetime import UTC, datetime
@@ -43,15 +43,6 @@ from research_team.domain.socratic_dialogue import (
 )
 
 PROJECT_ID = uuid4()
-
-UNTIL_TASK_3 = (
-    "research_team.application.socratic does not exist until Task 3. "
-    "strict=True so this goes red on an unexpected PASS -- Task 3 deletes the "
-    "marker deliberately rather than leaving a permanently-excused test."
-)
-"""One constant, four markers, so Task 3's deletion is one edit rather than
-four. Four copies is three chances to leave one behind, and a marker left
-behind on a working test is precisely what `strict=True` exists to prevent."""
 
 
 class RecordingExecutor:
@@ -149,7 +140,17 @@ def build(executor, transcripts, read_model, registry=None):
 
     return SocraticDialogueService(
         executor=executor,
-        dialogues=registry or DialogueRegistry(now=lambda: 0.0),
+        # `is not None`, and not `registry or ...`. `DialogueRegistry` defines
+        # `__len__`, so an EMPTY registry is falsy -- and the registry handed in
+        # here is always empty, because nothing has been put in it yet. Written
+        # as `or`, this helper silently threw the caller's registry away and
+        # gave the service a private one, so `registry.drop(...)` below dropped
+        # from an object the service had never seen and no eviction ever
+        # happened. Measured on 2026-08-17: with `or` in place,
+        # `test_an_evicted_dialogue_resumes_on_the_same_stream` PASSED against a
+        # `DialogueRegistry.get` restored to the `ConversationRegistry.get`
+        # body -- the whole feature broken, the whole test green.
+        dialogues=registry if registry is not None else DialogueRegistry(now=lambda: 0.0),
         read_model=read_model,
         now=lambda: 0.0,
         transcripts=transcripts,
@@ -185,7 +186,6 @@ async def all_dialogue_ids(transcripts) -> set[UUID]:
     }
 
 
-@pytest.mark.xfail(strict=True, reason=UNTIL_TASK_3)
 async def test_an_evicted_dialogue_resumes_on_the_same_stream(transcripts):
     """The whole feature, in one test.
 
@@ -284,7 +284,6 @@ async def test_an_evicted_dialogue_resumes_on_the_same_stream(transcripts):
     assert recorded[2].prompt == "And what follows from it?"
 
 
-@pytest.mark.xfail(strict=True, reason=UNTIL_TASK_3)
 async def test_a_dialogue_still_in_the_registry_is_not_re_read(transcripts):
     """The registry is still a cache, and must still be one.
 
@@ -313,7 +312,6 @@ async def test_a_dialogue_still_in_the_registry_is_not_re_read(transcripts):
     ]
 
 
-@pytest.mark.xfail(strict=True, reason=UNTIL_TASK_3)
 async def test_a_dialogue_that_was_never_stored_is_refused_rather_than_invented(
     transcripts,
 ):
@@ -337,7 +335,6 @@ async def test_a_dialogue_that_was_never_stored_is_refused_rather_than_invented(
     assert await all_dialogue_ids(transcripts) == set()
 
 
-@pytest.mark.xfail(strict=True, reason=UNTIL_TASK_3)
 async def test_a_dialogue_is_not_resumable_from_another_project(transcripts):
     """The aggregate carries `project_id` and that is the boundary (spec §7).
 
