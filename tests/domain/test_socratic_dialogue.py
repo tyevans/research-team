@@ -228,3 +228,32 @@ def test_evolve_ignores_an_event_it_has_no_rule_for():
         evolve(state, AskTurnRecorded(aggregate_id=DIALOGUE_ID, question="q", answer="a"))
         == state
     )
+
+
+def test_starting_a_concluded_dialogue_says_so_rather_than_saying_already_started():
+    """The refusal message matches the state, for `Start` as for everything else.
+
+    Unreachable in practice -- ids are server-minted, so a second start against
+    a concluded dialogue means a bug upstream -- and that is the point: the only
+    thing at stake is whether the error tells that person the truth. Red against
+    the arm order this file was first written with, where `Start` was caught by
+    its own catch-all above the concluded check and reported "already started"
+    while the comment beside it claimed concluded was checked first.
+    """
+    concluded = _with(
+        STARTED, SocraticDialogueConcluded(aggregate_id=DIALOGUE_ID, reason="met")
+    )
+
+    with pytest.raises(CommandRejectedError, match="already concluded"):
+        decide(
+            StartSocraticDialogue(
+                dialogue_id=DIALOGUE_ID,
+                project_id=PROJECT_ID,
+                topic="t",
+                goal="g",
+                stopping_condition="s",
+                opening_prompt="p",
+                opened_at=OPENED_AT,
+            ),
+            concluded,
+        )

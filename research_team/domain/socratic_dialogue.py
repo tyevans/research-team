@@ -259,14 +259,23 @@ def decide(command: SocraticCommand, state: SocraticDialogueState) -> list[Domai
                     opened_at=command.opened_at,
                 )
             ]
-        case StartSocraticDialogue(), _:
-            raise CommandRejectedError("dialogue already started")
-
-        # Concluded is checked before "not started" for every other command,
-        # because a concluded dialogue is also not `new` and the two refusals
-        # say different things to whoever reads the error.
+        # Concluded is checked before every other refusal, `StartSocraticDialogue`
+        # included, because a concluded dialogue is neither `new` nor merely
+        # started and the two messages say different things to whoever reads
+        # them. Ordered after the one arm that must win -- a `new` state can
+        # never be `concluded`, so starting a fresh dialogue is unaffected.
+        #
+        # This arm sat *below* the `Start` catch-all in the first draft, which
+        # made a start against a concluded dialogue report "already started"
+        # while this comment claimed otherwise. Unreachable in practice (ids are
+        # server-minted, so reuse cannot happen) and therefore worth nothing but
+        # the comment being true; `test_starting_a_concluded_dialogue_says_so`
+        # is what fails if it moves back.
         case _, SocraticDialogueState(status="concluded"):
             raise CommandRejectedError("dialogue already concluded")
+
+        case StartSocraticDialogue(), _:
+            raise CommandRejectedError("dialogue already started")
 
         case _, SocraticDialogueState(status="new"):
             raise CommandRejectedError("dialogue not started")

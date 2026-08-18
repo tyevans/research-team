@@ -52,6 +52,7 @@ from research_team.domain.judgements import (
 from research_team.domain.media_proposals import MediaProposed
 from research_team.domain.ontology import OntologyDiscovered
 from research_team.domain.research_run import ResearchRunStarted
+from research_team.domain.socratic_dialogue import SocraticProgressObserved
 from research_team.domain.topic import OpenTopic, TopicInvestigated
 from research_team.infrastructure.persistence.event_store import (
     build_judgements_repository,
@@ -1288,4 +1289,6 @@ async def test_an_observation_written_before_evidence_kinds_existed_reads_as_ass
     # state assertion alone would not have been a test of it.
     stream = StreamId(dialogue_id, "SocraticDialogue")
     events = [envelope.event for envelope in await collect(store.read_stream(stream))]
-    assert events[-1].evidence == "assessment"
+    observed = events[-1]
+    assert isinstance(observed, SocraticProgressObserved)
+    assert observed.evidence == "assessment"

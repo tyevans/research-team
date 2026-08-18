@@ -44,6 +44,15 @@ from research_team.domain.socratic_dialogue import (
 
 PROJECT_ID = uuid4()
 
+UNTIL_TASK_3 = (
+    "research_team.application.socratic does not exist until Task 3. "
+    "strict=True so this goes red on an unexpected PASS -- Task 3 deletes the "
+    "marker deliberately rather than leaving a permanently-excused test."
+)
+"""One constant, four markers, so Task 3's deletion is one edit rather than
+four. Four copies is three chances to leave one behind, and a marker left
+behind on a working test is precisely what `strict=True` exists to prevent."""
+
 
 class RecordingExecutor:
     """Asks fixed questions and remembers exactly what it was asked with.
@@ -176,12 +185,7 @@ async def all_dialogue_ids(transcripts) -> set[UUID]:
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="research_team.application.socratic does not exist until Task 3. "
-    "strict=True so this goes red on an unexpected PASS -- Task 3 deletes the "
-    "marker deliberately rather than leaving a permanently-excused test.",
-)
+@pytest.mark.xfail(strict=True, reason=UNTIL_TASK_3)
 async def test_an_evicted_dialogue_resumes_on_the_same_stream(transcripts):
     """The whole feature, in one test.
 
@@ -280,12 +284,7 @@ async def test_an_evicted_dialogue_resumes_on_the_same_stream(transcripts):
     assert recorded[2].prompt == "And what follows from it?"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="research_team.application.socratic does not exist until Task 3. "
-    "strict=True so this goes red on an unexpected PASS -- Task 3 deletes the "
-    "marker deliberately rather than leaving a permanently-excused test.",
-)
+@pytest.mark.xfail(strict=True, reason=UNTIL_TASK_3)
 async def test_a_dialogue_still_in_the_registry_is_not_re_read(transcripts):
     """The registry is still a cache, and must still be one.
 
@@ -314,12 +313,7 @@ async def test_a_dialogue_still_in_the_registry_is_not_re_read(transcripts):
     ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="research_team.application.socratic does not exist until Task 3. "
-    "strict=True so this goes red on an unexpected PASS -- Task 3 deletes the "
-    "marker deliberately rather than leaving a permanently-excused test.",
-)
+@pytest.mark.xfail(strict=True, reason=UNTIL_TASK_3)
 async def test_a_dialogue_that_was_never_stored_is_refused_rather_than_invented(
     transcripts,
 ):
@@ -343,12 +337,7 @@ async def test_a_dialogue_that_was_never_stored_is_refused_rather_than_invented(
     assert await all_dialogue_ids(transcripts) == set()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="research_team.application.socratic does not exist until Task 3. "
-    "strict=True so this goes red on an unexpected PASS -- Task 3 deletes the "
-    "marker deliberately rather than leaving a permanently-excused test.",
-)
+@pytest.mark.xfail(strict=True, reason=UNTIL_TASK_3)
 async def test_a_dialogue_is_not_resumable_from_another_project(transcripts):
     """The aggregate carries `project_id` and that is the boundary (spec §7).
 
