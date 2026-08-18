@@ -11,13 +11,15 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
  *
  * Three of the five never reach the network:
  *
- *  - no `projectId` -> `unavailable`. A course file is read from a session,
+ *  - no `projectId` -> `unavailable`, **including for a pinned `entity_id`**.
+ *    A course file is read from a session,
  *    which has no project in scope (`LessonDocument.tsx:48`), and that is a
  *    real case rather than a misuse. Calling the port with `undefined` would
  *    produce a request against a URL with the word "undefined" in it and
  *    report a network failure where the honest answer is "this page cannot
  *    look that up".
- *  - an `entityId` -> `resolved` immediately, on a synthesised node carrying
+ *  - an `entityId` *with* a project -> `resolved` immediately, on a
+ *    synthesised node carrying
  *    the author's name. The escape hatch is exact by construction and
  *    confirming it would cost a request to learn nothing. The cost, stated:
  *    `entityType` is empty, so a frame that renders the type shows nothing
@@ -46,7 +48,15 @@ export const useEntityReference = (
     ...resolvedWidgetQuery,
   })
 
-  if (reference.entityId !== null) {
+  // No project outranks a pinned id, and the order of these two lines is the
+  // whole of that rule. Reversed, a hand-edited lesson file read outside any
+  // project answered `resolved` with an id the page cannot fetch anything
+  // with, and `DefinitionWidget`/`GraphWidget` -- which need a `projectId` to
+  // mount their inner fetch -- drew nothing at all. Spec §1 requires
+  // `unavailable` to degrade to readable prose, never to nothing.
+  // `use-entity-reference.test.tsx`'s pinned-id-with-no-project case fails if
+  // these swap back.
+  if (projectId && reference.entityId !== null) {
     return {
       state: 'resolved',
       entity: { id: reference.entityId, name: reference.entity, entityType: '' },

@@ -3296,3 +3296,65 @@ one place that cannot see whether the caller is a person.
 Whichever way it goes, it wants a test that a forked round is drivable by hand,
 which is the property actually at stake. `_fork_files_from` is a different
 method and is not implicated.
+
+### B107. `componentBlock` builds a `domain/lesson` type from an `ask` fixtures file
+
+`frontend/src/presentation/ask/ask-fixtures.ts` exports `componentBlock`, and
+what it builds is a `ComponentBlock` out of `@domain/lesson/document.ts` --
+nothing about it is ask-specific. It landed there because the ask surface
+needed one first, and it now has four callers outside `presentation/ask`: the
+`definition`, `graph`, `timeline` and `compare` widget test files all reach
+across into an ask fixtures module to construct a lesson-domain value.
+
+Not fixed on the spot because moving it is a four-file import churn on test
+files that were being written in the same pass, and a rename mid-implementation
+is exactly the kind of change that makes a review diff unreadable for no
+behavioural gain. The move itself is small: a fixtures module beside the domain
+type (or in `presentation/lesson/`), re-exported from `ask-fixtures.ts` for one
+commit if the churn wants splitting.
+
+Worth doing before a fifth widget copies the import, because the wrong import
+path is the thing that teaches the next person where fixtures live.
+
+### B108. The timeline widget's box does not scale beside the graph widget's
+
+`.cmp-timeline-box` (`components.css:789`) is `min-height: 12rem` and nothing
+else; `.cmp-graph-box` (:749) is `aspect-ratio: 16 / 10` over a `min-height:
+15rem` floor. Put one under the other in a single answer and the timeline sits
+at 12rem at every width while the graph grows with the column -- not broken,
+and not obviously right either.
+
+The absent ratio is deliberate and the CSS says so: a timeline is a horizontal
+instrument, its readable height does not depend on how wide the column is, and
+an aspect ratio would make it absurdly tall in a wide layout. What has not been done is looking
+at the two together and deciding whether they *read* as one system.
+
+**This wants an eye in Storybook, not a test.** There is no assertion to write:
+both boxes measure non-zero (which is what `GraphWidget.browser.test.tsx` and
+`TimelineWidget.browser.test.tsx` already pin), and "these two look like they
+belong together" is not a number. Recorded so the question is not lost with the
+branch that raised it.
+
+### B109. Two `project-*` browser tests fail on `main`'s CSS and are unrelated to any widget work
+
+`cd frontend && npm run test:browser` fails two cases:
+
+- `project-stacked.browser.test.tsx > clips nothing down to 596`
+- `project-tracks.browser.test.tsx > keeps MATERIAL wide enough for the tab
+  strip it always has`
+
+**Proven pre-existing, not reasoned**, in the whole-branch review of the
+data-bound-components work: the branch's own new CSS was reverted and the suite
+re-run three times, and both failed identically each time. They were
+independently read against the new code and there is no path from a lesson
+widget to either -- `project-stacked` and `project-tracks`
+measure the project console's layout, which no component block is mounted
+inside.
+
+Left as-is deliberately: they are a real defect in the console's stacked and
+track layouts, they are outside `verify` and outside CI (per CLAUDE.md,
+`test:browser` is not a gate), and fixing a console layout from a branch about
+markdown widgets would put an unreviewable change in an unrelated diff. Whoever
+picks this up should start by reproducing on `main` with nothing else checked
+out, because a browser measurement under load is exactly the failure CLAUDE.md
+says not to trust on one run.

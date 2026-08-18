@@ -133,3 +133,26 @@ it('is unavailable for an empty reference, and fetches nothing', () => {
   expect(result.current).toEqual({ state: 'unavailable' })
   expect(search).not.toHaveBeenCalled()
 })
+
+it('is unavailable for a pinned entity_id with no project in scope', () => {
+  // The two short-circuits crossed: an `entity_id` is exact, but every widget
+  // that mounts on `resolved` needs a project to fetch with, so `resolved`
+  // here promises data nobody can go and get. `DefinitionWidget` and
+  // `GraphWidget` both draw nothing at all in that case, which spec §1
+  // forbids -- `unavailable` must degrade to readable prose, never to
+  // nothing.
+  //
+  // Reachable only by hand: resolved types no longer reach the
+  // course-authoring prompt, so a hand-edited lesson file with an id copied
+  // out of the console is the one way this appears.
+  //
+  // Red against the hook that returned `resolved` before checking `enabled`.
+  const search = vi.fn()
+  const { result } = renderHook(
+    () => useEntityReference(undefined, { entity: 'Constantine', entityId: 'e9' }),
+    { wrapper: wrapperFor(search) },
+  )
+
+  expect(result.current).toEqual({ state: 'unavailable' })
+  expect(search).not.toHaveBeenCalled()
+})

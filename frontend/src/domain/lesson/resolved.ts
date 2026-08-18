@@ -68,12 +68,21 @@ export const readEntityReference = (block: ComponentBlock): EntityReference => (
  * the one `entity_id` exists to pin.
  *
  * `truncated` is the caller's `EntitySearchResult.truncated` and is passed
- * through to an `ambiguous` result rather than consulted here. It cannot
- * change which state a page lands in -- an exact hit among the results is
- * still an exact hit whatever the server held back -- but it decides whether
- * the picker may claim to be showing every entity that shares the name. It is
- * dropped on `resolved`, where it would be a claim about a question already
- * answered, and on `missing`, which a truncated search cannot produce.
+ * through to an `ambiguous` result rather than consulted here, and it decides
+ * whether the picker may claim to be showing every entity that shares the
+ * name. It is dropped on `resolved` and on `missing`, which a truncated
+ * search cannot produce.
+ *
+ * **Dropping it on `resolved` is a real trade, not a free one.** A single
+ * exact hit among a truncated page is still an exact hit *as a resolution* --
+ * that entity is the one the name names, and rendering it is right. But it is
+ * not proof the name is unambiguous: a second entity with the same exact name
+ * can sit beyond the server's cap, and this function has no way to know. So
+ * `resolved` here means "one exact match in what we were shown", and a
+ * genuinely colliding name can resolve silently to whichever of the two the
+ * cap happened to include. `entity_id` is the pin for that, and it is why the
+ * escape hatch exists. Widening the cap would narrow the window and not close
+ * it; an exact-match route on the server would.
  */
 export const matchEntities = (
   name: string,

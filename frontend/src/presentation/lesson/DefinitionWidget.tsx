@@ -7,7 +7,7 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { DefinitionCitations } from '../research/DefinitionCitations.tsx'
 import { useDefinition } from '../research/use-definition.ts'
-import { ResolvedFrame } from './ResolvedFrame.tsx'
+import { QuietReference, ResolvedFrame } from './ResolvedFrame.tsx'
 import { Prose } from './widgets.tsx'
 
 /** This project's own grounded account of an entity, beside the prose that
@@ -38,15 +38,24 @@ export const DefinitionWidget = ({
     <div className="cmp-body">
       <ResolvedFrame reference={resolved} name={reference.entity}>
         {/* Narrowed here rather than cast inside `Defined`, so TypeScript
-            carries the guarantee instead of a comment. The `null` arm is
-            unreachable and exists only to make the narrow possible:
-            `useEntityReference` returns `unavailable` whenever there is no
-            project (`use-entity-reference.ts`), and `ResolvedFrame` reaches
-            this render prop only from its `resolved` arm -- so no state that
-            mounts a child here can lack a project. Narrowing at the call site
-            keeps `ResolvedFrame`'s signature untouched, which matters because
-            four more widgets copy this shape. */}
-        {(entity) => (projectId ? <Defined projectId={projectId} entity={entity} /> : null)}
+            carries the guarantee instead of a comment. Narrowing at the call
+            site keeps `ResolvedFrame`'s signature untouched, which matters
+            because four more widgets copy this shape.
+
+            The no-project arm draws the quiet reference, not `null`. It is
+            unreachable -- `useEntityReference` answers `unavailable` whenever
+            there is no project, for a pinned `entity_id` as well as for a
+            name -- but it was `null` while that was only true of names, and a
+            hand-edited lesson file with an id in it rendered a blank widget,
+            which spec §1 forbids. The arm now costs nothing to be wrong
+            about. */}
+        {(entity) =>
+          projectId ? (
+            <Defined projectId={projectId} entity={entity} />
+          ) : (
+            <QuietReference name={entity.name} />
+          )
+        }
       </ResolvedFrame>
     </div>
   )

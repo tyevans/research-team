@@ -62,10 +62,13 @@ const MAX_CANDIDATES = 8
  * nothing: `projectHref` is a pure string function over the id, so no console
  * state comes into the frame with it.
  *
- * No project means no link, only the name. That arm is reachable: a pinned
- * `entity_id` resolves without a project at all (`use-entity-reference.ts`),
- * and an href built from `undefined` would be a link to a page that does not
- * exist -- worse than no link, because it looks like one that works.
+ * No project means no link, only the name. **That arm is unreachable today**
+ * and is kept anyway: `useEntityReference` answers `unavailable` whenever
+ * there is no project -- for a pinned `entity_id` as well as for a name, since
+ * the fix that made those two agree -- so nothing now reaches a render prop
+ * without one. It is the honest fallback rather than defensive noise, because
+ * an href built from `undefined` would be a link to a page that does not
+ * exist, which is worse than no link: it looks like one that works.
  */
 export const ResolvedName = ({
   projectId,
@@ -164,9 +167,34 @@ export const ResolvedFrame = ({
   // nothing that would be a claim about the corpus. They differ only in
   // whether an answer is still coming, which is not worth a spinner on a
   // block a reader is scrolling past.
-  return (
-    <div className="cmp-ref cmp-ref-quiet">
-      <span className="cmp-ref-name">{name}</span>
-    </div>
-  )
+  //
+  if (reference.state === 'loading' || reference.state === 'unavailable') {
+    return <QuietReference name={name} />
+  }
+
+  // Named and thrown away rather than fallen through to: five widgets read
+  // this union now, and a sixth state added to `ResolvedEntity` would
+  // otherwise land in the quiet frame -- a wrong answer wearing a deliberate
+  // one's clothes. The assignment fails typecheck instead, which is the only
+  // gate that can catch it; no test can assert on a state that does not
+  // exist yet. `null` is the runtime arm because it is unreachable, not
+  // because it is a sensible render.
+  const unhandled: never = reference
+  void unhandled
+  return null
 }
+
+/** The quiet frame, without a `ResolvedEntity` to reach it through.
+ *
+ * Exported so a widget's own "I cannot draw this" arm renders the same prose
+ * `ResolvedFrame` would, rather than `null`. Spec §1's rule is that a
+ * reference degrades to readable prose and *never* to nothing, and two
+ * widgets had `projectId ? <X/> : null` render arms that broke it -- see
+ * `DefinitionWidget`. One component so the tone cannot drift, for the same
+ * reason `ResolvedFrame` holds the other three states.
+ */
+export const QuietReference = ({ name }: { name: string }) => (
+  <div className="cmp-ref cmp-ref-quiet">
+    <span className="cmp-ref-name">{name}</span>
+  </div>
+)

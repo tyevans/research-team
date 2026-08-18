@@ -11,7 +11,7 @@ import type { ComponentBlock } from '@domain/lesson/document.ts'
 import { readGraphRef } from '@domain/lesson/widgets.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
-import { ResolvedFrame } from './ResolvedFrame.tsx'
+import { QuietReference, ResolvedFrame } from './ResolvedFrame.tsx'
 
 // Lazy for `GraphPane`'s reason: the ~60 kB canvas/d3-force bundle should be
 // fetched when a reader actually meets a graph, not as part of rendering an
@@ -51,10 +51,12 @@ export const GraphWidget = ({
     <div className="cmp-body">
       <ResolvedFrame reference={resolved} name={reference.entity}>
         {/* Narrowed here rather than cast inside `Neighbourhood`, copying
-            `DefinitionWidget`: `useEntityReference` answers `unavailable`
-            whenever there is no project, and `ResolvedFrame` reaches this
-            render prop only from its `resolved` arm -- so the `null` arm is
-            unreachable and exists only to make the narrow possible. */}
+            `DefinitionWidget` -- including its no-project arm, which draws
+            the quiet reference rather than `null`. Unreachable
+            (`useEntityReference` answers `unavailable` with no project, for a
+            pinned `entity_id` as well as for a name) and prose anyway,
+            because it was `null` here while that was only true of names and a
+            hand-edited lesson file rendered a blank canvas. */}
         {(entity) =>
           projectId ? (
             <Neighbourhood
@@ -63,7 +65,9 @@ export const GraphWidget = ({
               name={entity.name}
               depth={reference.depth}
             />
-          ) : null
+          ) : (
+            <QuietReference name={entity.name} />
+          )
         }
       </ResolvedFrame>
     </div>

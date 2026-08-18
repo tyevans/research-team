@@ -506,10 +506,13 @@ def _duplicates(entries: Sequence[tuple[str, Any]], noun: str, keyed: str) -> li
 def _compare_collisions(data: dict[str, Any]) -> list[Note]:
     """Both of `compare`'s author-supplied key sets, warned about, never rejected.
 
-    The renderer keys its header cells and every row's cells on the entity
-    name, and its rows on the author's `label`. A repeat in either is a React
-    key collision: the table draws correctly and logs a warning into a console
-    no reader of the lesson will open.
+    Three sites, not two, and all three come from these two key sets:
+    `CompareWidget.tsx` keys its `<th>` column heads on the entity name, its
+    `<tr>` rows on the author's `label`, and every row's `<td>` cells on the
+    entity name again (the cells are mapped over `entities`, so a duplicate
+    name collides once per row). A repeat in either set is a React key
+    collision: the table draws correctly and logs a warning into a console no
+    reader of the lesson will open.
 
     Warned rather than rejected, deliberately, and the choice is the registry's
     rather than the renderer's -- the renderer cannot dedupe without inventing
@@ -974,16 +977,6 @@ def component_reference(only: Iterable[str] | None = None) -> str:
             lines += [f"- {note}" for note in component.craft]
             lines += [""]
     return "\n".join(lines)
-
-
-COMPONENT_PROMPT = "\n\n## Interactive components\n\n" + component_reference()
-"""The reference as a prompt fragment, computed once from the registry.
-
-Carried in the stage instructions rather than in every session's base prompt:
-components are how a *course artifact* becomes something a learner can do
-rather than only read, and a session driving no preset is not writing one. The
-same reasoning puts `WORKFLOW_PROMPT` there.
-"""
 
 
 COMPONENTS_FOR: Mapping[ArtifactType, tuple[str, ...]] = {

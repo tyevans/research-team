@@ -54,10 +54,20 @@ export interface ComponentBlock {
    * describes for a missing projection. Unconditional threading has one
    * behaviour whether the flag is right or wrong.
    *
-   * So what is it for? It is carried for *widgets* to read -- a resolved
-   * widget can assert its own class, and the ask surface can tell a reference
-   * component from a content one without a hardcoded type list. Nothing in
-   * this task consumes it yet; Tasks 3-7 are its first readers. */
+   * **Nothing in `frontend/src` reads it today.** All five resolved widgets
+   * shipped without it, for the reason above -- they take `projectId`
+   * unconditionally and never ask whether they were classified as resolved --
+   * so an earlier version of this docstring promising "Tasks 3-7 are its
+   * first readers" turned out to be wrong about its own feature.
+   *
+   * Kept rather than deleted, and the case is narrow: it is the server's
+   * classification, already emitted, already validated by the block schema
+   * and already mapped, and it is the only thing on the client that can tell
+   * a reference component from a content one without a hardcoded type list.
+   * A surface that needs that distinction -- a print or export view that
+   * cannot fetch, say -- gets it for free. The cost of being wrong about that
+   * guess is one boolean on the wire. Grep before writing the first reader:
+   * if this paragraph is still the only mention, it is dead and should go. */
   readonly resolved: boolean
 }
 
