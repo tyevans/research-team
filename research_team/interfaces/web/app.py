@@ -83,7 +83,7 @@ from research_team.application.perception import (
     PerceptionPort,
     SourceDropped,
 )
-from research_team.application.ports import ActivityDelta, ActivityMessage
+from research_team.application.ports import ActivityDelta, ActivityMessage, ActivityRemark
 from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.socratic import (
     DialogueInFlight,
@@ -3077,8 +3077,8 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    def _socratic_frame(note: object) -> str:
-        """One SSE `data:` line per note.
+    def _socratic_frame(note: object) -> str | None:
+        """One SSE `data:` line per note, or `None` for a note with nothing to draw.
 
         Deliberately its own function rather than a branch inside `_ask_frame`:
         the last frame of a dialogue turn is typed `prompt` and not `answer`,
@@ -3123,8 +3123,29 @@ def create_app(
                 "citations": [{"kind": kind, "id": cited} for kind, cited in note.citations],
                 "concluded": note.concluded,
             }
-        else:  # ActivityRemark and anything added later
-            body = {"type": "message", "message_id": "", "kind": "assistant", "payload": {}}
+        elif isinstance(note, ActivityRemark):
+            # Carried, not flattened. The brief's version emitted an empty
+            # `payload` here, which draws an empty assistant bubble on the page
+            # and loses the one thing the remark is: its text. A remark has no
+            # `message_id` by design (see `ActivityRemark`), so it travels as a
+            # message with an empty one and `kind: "remark"` -- Plan 3 can
+            # style it apart from a model utterance without a sixth frame type
+            # its DTOs would have to learn.
+            body = {
+                "type": "message",
+                "message_id": "",
+                "kind": "remark",
+                "payload": {"text": note.text},
+                "is_error": False,
+            }
+        else:
+            # Anything added later, and deliberately nothing rather than an
+            # empty bubble: a frame the page cannot render is worse than no
+            # frame, because it occupies a row in the transcript. The caller
+            # skips a `None`. Whoever adds a note type adds a branch here, and
+            # the cost of forgetting is a note that is silently invisible --
+            # which is the trade taken over a visible blank.
+            return None
         return f"data: {json.dumps(body)}\n\n"
 
     @app.post("/api/projects/{project_id}/dialogues")
@@ -3190,9 +3211,13 @@ def create_app(
                 if failed is not None:
                     raise failed
                 if first is not None:
-                    yield _socratic_frame(first)
+                    frame = _socratic_frame(first)
+                    if frame is not None:
+                        yield frame
                 async for note in notes:
-                    yield _socratic_frame(note)
+                    frame = _socratic_frame(note)
+                    if frame is not None:
+                        yield frame
             except Exception as failure:  # noqa: BLE001 -- the browser needs the reason
                 yield f"data: {json.dumps({'type': 'error', 'detail': str(failure)})}\n\n"
             finally:

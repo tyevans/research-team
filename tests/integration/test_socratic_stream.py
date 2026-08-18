@@ -18,6 +18,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 
+from research_team.application.ports import ActivityRemark
 from research_team.application.socratic import SocraticFraming, SocraticPrompt
 from research_team.composition import build_application
 from research_team.interfaces.web import create_app
@@ -241,7 +242,15 @@ async def test_a_dialogue_that_does_not_exist_is_a_404_not_a_new_one(client):
 async def test_a_second_reply_while_one_is_running_is_a_409(client):
     """`DialogueInFlight`, raised before streaming begins, so it can be a
     status code the page can act on rather than an error frame it has to
-    special-case."""
+    special-case.
+
+    The precondition is established by an `Event` the executor sets on entry,
+    never by a sleep. A sleep here is CLAUDE.md's B4 shape exactly: under load
+    the first request may not have reached the executor yet, the second gets a
+    200, and the test fails against correct code while looking like flakiness.
+    Waiting on `entered` is the same claim made deterministically -- the first
+    reply is provably in flight before the second is sent.
+    """
     import asyncio
 
     http, application, _stub = client
@@ -249,10 +258,12 @@ async def test_a_second_reply_while_one_is_running_is_a_409(client):
     started = await http.post(f"/api/projects/{project_id}/dialogues", json={"topic": "t"})
     dialogue_id = started.json()["dialogueId"]
 
+    entered = asyncio.Event()
     release = asyncio.Event()
 
     class SlowExecutor(StubExecutor):
         async def respond(self, **kwargs):
+            entered.set()
             await release.wait()
             return SocraticPrompt(prompt="Why?")
 
@@ -263,7 +274,7 @@ async def test_a_second_reply_while_one_is_running_is_a_409(client):
             json={"reply": "one"},
         )
     )
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(entered.wait(), timeout=5)
     second = await http.post(
         f"/api/projects/{project_id}/dialogues/{dialogue_id}/reply", json={"reply": "two"}
     )
@@ -271,6 +282,67 @@ async def test_a_second_reply_while_one_is_running_is_a_409(client):
     await first
 
     assert second.status_code == 409, second.text
+
+
+async def test_a_framing_the_model_botched_is_a_502_and_not_a_400(client):
+    """502 and not 400, and this test is the only thing keeping it that way.
+
+    `parse_framing` refuses rather than defaulting -- an empty stopping
+    condition is a dialogue that can never stop -- and it refuses with a
+    `ValueError`. The route has to turn that into an upstream failure, because
+    the request was fine: the reader typed a topic and there is nothing they
+    could have typed differently. 400 looks right to anyone reading only the
+    `except` clause who does not know where the framing came from, which is why
+    the status is asserted here rather than left to the comment.
+
+    Red against `status_code=400`, and against no `except ValueError` at all
+    (a 500 from the unhandled raise).
+    """
+    http, application, _stub = client
+    project_id = await _project(http)
+
+    class BotchedFraming(StubExecutor):
+        async def frame(self, *, project_id, topic):
+            raise ValueError("no stopping condition in the model's reply")
+
+    application.socratic._executor = BotchedFraming()
+    response = await http.post(f"/api/projects/{project_id}/dialogues", json={"topic": "t"})
+
+    assert response.status_code == 502, response.text
+    # The reason travels: a reader told only "502" cannot tell an unreachable
+    # model from one that answered in the wrong shape.
+    assert "no stopping condition" in response.json()["detail"]
+
+
+async def test_a_remark_reaches_the_page_with_its_text(client):
+    """An `ActivityRemark` carries text and no `message_id`, and an earlier
+    draft of `_socratic_frame` emitted an empty payload for it -- which renders
+    as an empty assistant bubble and loses the only thing the note is.
+
+    Red against that draft: the frame was present and `payload` was `{}`.
+    """
+    http, application, _stub = client
+    project_id = await _project(http)
+    started = await http.post(f"/api/projects/{project_id}/dialogues", json={"topic": "t"})
+    dialogue_id = started.json()["dialogueId"]
+
+    class RemarkingExecutor(StubExecutor):
+        async def respond(self, *, on_activity, **kwargs):
+            on_activity(ActivityRemark(text="two documents were left out"))
+            return SocraticPrompt(prompt="Why?")
+
+    application.socratic._executor = RemarkingExecutor()
+    response = await http.post(
+        f"/api/projects/{project_id}/dialogues/{dialogue_id}/reply", json={"reply": "hi"}
+    )
+
+    remarks = [
+        frame
+        for frame in _frames(response.text)
+        if frame["type"] == "message" and frame["kind"] == "remark"
+    ]
+    assert remarks, "the remark was dropped or drawn as something else"
+    assert remarks[0]["payload"]["text"] == "two documents were left out"
 
 
 async def test_an_unconfigured_build_says_so_rather_than_answering(tmp_path):
