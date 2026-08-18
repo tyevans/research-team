@@ -889,6 +889,107 @@ a.cmp-ref-name:hover {
   font-weight: 600;
 }
 
+/* ---------------------------------------------------------------------------
+   the socratic dialogue
+
+   Named rules rather than utilities, for `layout.css`'s reason and one of this
+   surface's own: the question and the answer have to be told apart at a glance
+   and the distinction is measured in a browser test, so it needs somewhere a
+   measurement can point at. Every `var()` below was grepped against
+   `tokens.css` rather than recalled -- `--fg-muted` and `--bg-raised` do not
+   exist here, and a rule naming one sets no colour while looking exactly like
+   a rule that worked.
+
+   The direction is carried by the paint, not only by the DOM: the DIALOGUE's
+   question is the prominent block and the READER's answer is the quiet one,
+   which is the inverse of the ask surface beside it. That inversion is the
+   whole trap this page is shaped around -- a page drawing them the other way
+   round still reads as a conversation, just one where the reader asks
+   everything.
+   --------------------------------------------------------------------------- */
+
+.dlg-framing {
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-raise);
+  /* `border: 0` first: `border-bottom: 1px solid` says nothing about the other
+     three sides, and a side with a style but no width falls back to the
+     browser's `medium` (~3px). The same defect `.cmp-compare` documents. */
+  border: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.dlg-goal {
+  margin: 0;
+  font-size: var(--t-lg);
+  color: var(--fg);
+}
+
+/* Dimmer than the goal on purpose. Both must be readable -- a reader who
+   disagrees with either should see it before spending twenty minutes -- but
+   the goal is what the dialogue is for and the condition is when it stops. */
+.dlg-condition {
+  margin: var(--space-2) 0 0;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
+.dlg-exchange {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* What the dialogue asked. The panel and the accent rule are the loud half of
+   the pair: on this surface the question is the thing being put to the reader,
+   where on the ask surface the reader's own words carry the panel. */
+.dlg-question,
+.dlg-pending {
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-panel-2);
+  border: 0;
+  border-left: 2px solid var(--accent-dim);
+  border-radius: var(--radius);
+  color: var(--fg);
+}
+
+/* The outstanding question, which belongs to no turn. Louder than a settled
+   one because it is the only thing on the page waiting on the reader. */
+.dlg-pending {
+  border-left-color: var(--accent);
+}
+
+/* The reader's own words: no panel, dimmer, and indented under the question,
+   so a transcript scans as question / answer without a label on every line.
+   `pre-wrap` because they typed the newlines. */
+.dlg-answer {
+  margin: 0;
+  padding-left: var(--space-4);
+  white-space: pre-wrap;
+  color: var(--fg-dim);
+}
+
+/* Says the dialogue is writing, and never says what. The delta frames that
+   drive this carry an empty `text` deliberately -- see
+   `domain/dialogue/conversation.ts` -- so there is no half-written question to
+   show even if this wanted to. */
+.dlg-composing {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--fg-faint);
+}
+
+.dlg-concluded {
+  flex-shrink: 0;
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  border: 0;
+  border-top: 1px solid var(--line);
+  text-align: center;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001s !important;

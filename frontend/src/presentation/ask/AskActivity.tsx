@@ -17,12 +17,22 @@ import { plural } from '../formatting/format.ts'
  * re-renders on every stream frame, and a fold owning its own state would
  * close itself while somebody is reading it.
  */
+/** The structural minimum both surfaces satisfy.
+ *
+ * Widened from `AskActivity` for the dialogue surface, which has one more
+ * `kind` (`remark`) and is otherwise the same frame. Nothing below reads
+ * `kind` at all -- every row is derived from `payload` -- so the narrower
+ * literal union was buying nothing here and cost a second copy of this fold.
+ * A cast at the dialogue call site would have been the alternative, and would
+ * have hidden a real shape change the day one happens. */
+export type ActivityFrame = Omit<AskActivity, 'kind'> & { readonly kind: string }
+
 export const AskActivityFold = ({
   activity,
   open,
   onToggle,
 }: {
-  activity: readonly AskActivity[]
+  activity: readonly ActivityFrame[]
   open: boolean
   onToggle: () => void
 }) => {
@@ -87,8 +97,8 @@ export const RESULT_LIMIT = 80
  * with neither is not dropped -- a result whose call frame never arrived, or a
  * call still running, is the only trace of that tool run a reader has.
  */
-export const activityRows = (activity: readonly AskActivity[]): readonly ActivityRow[] => {
-  const results = new Map<string, AskActivity>()
+export const activityRows = (activity: readonly ActivityFrame[]): readonly ActivityRow[] => {
+  const results = new Map<string, ActivityFrame>()
   for (const item of activity) {
     const id = resultCallId(item)
     if (id !== null) results.set(id, item)
@@ -141,7 +151,7 @@ export const activityRows = (activity: readonly AskActivity[]): readonly Activit
  * longer has to make on the rendering path -- `activityRows` gives every call
  * its own row. Kept because the rows that still reach this are the ones whose
  * calls could not be read at all, and a name is better than a kind. */
-export const activityName = (item: AskActivity): string => {
+export const activityName = (item: ActivityFrame): string => {
   const data = frameData(item)
   if (data === null) return item.kind
 
@@ -155,7 +165,7 @@ export const activityName = (item: AskActivity): string => {
 }
 
 /** The `{type, data}` body of a frame, or `null` for a shape this cannot read. */
-const frameData = (item: AskActivity): Record<string, unknown> | null => {
+const frameData = (item: ActivityFrame): Record<string, unknown> | null => {
   const payload = item.payload
   if (typeof payload !== 'object' || payload === null) return null
   const data = (payload as Record<string, unknown>)['data']
@@ -171,7 +181,7 @@ interface FrameCall {
   readonly id: string | null
 }
 
-const toolCalls = (item: AskActivity): readonly FrameCall[] => {
+const toolCalls = (item: ActivityFrame): readonly FrameCall[] => {
   const calls = frameData(item)?.['tool_calls']
   if (!Array.isArray(calls)) return []
   return calls.flatMap((call: unknown) => {
@@ -184,7 +194,7 @@ const toolCalls = (item: AskActivity): readonly FrameCall[] => {
   })
 }
 
-const resultCallId = (item: AskActivity): string | null => {
+const resultCallId = (item: ActivityFrame): string | null => {
   const id = frameData(item)?.['tool_call_id']
   return typeof id === 'string' && id ? id : null
 }
@@ -199,7 +209,7 @@ const resultCallId = (item: AskActivity): string | null => {
  * rest says how much followed without pretending to know the format. Blank
  * lines are dropped before counting because they are spacing, and a reader
  * counting matches would otherwise be told the wrong number. */
-const resultSummary = (item: AskActivity): string | null => {
+const resultSummary = (item: ActivityFrame): string | null => {
   const text = contentText(frameData(item)?.['content']).trim()
   if (!text) return null
   const [first, ...rest] = text.split('\n').filter((line) => line.trim())
