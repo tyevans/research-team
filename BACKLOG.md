@@ -3684,3 +3684,42 @@ What a fix would fail on if it were wrong: an opening question containing an
 route and come back with a verdict (a). An assertion that the widget *renders*
 passes today and is exactly the reassurance this entry is about.
 
+
+### B120. A resumed dialogue comes back with its answers and without its conversation
+
+`cac21ff` made a dialogue a place: its id reaches the URL, a remount reads it
+back, and the answers a reader marked arrive as `stored` and re-render against
+the turn they belong to. That is the half B114 was about, and it works.
+
+The other half does not. `DialogueRepository` has `start`, `reply`,
+`submitDialogueAttempt` and `progress` — **no port reads one dialogue whole.**
+So a reader who refreshes gets their marked answers back over an empty thread,
+under the placeholder line "Pick something to work through.", because `goal`,
+`stoppingCondition` and `openingBlocks` all arrive from the POST that started
+the dialogue and nothing re-fetches them. The transcript is gone until they
+answer again, at which point one exchange appears with no history above it.
+
+The server half already exists: `GET /api/projects/{id}/dialogues/{dialogue_id}`
+(`app.py:3600`) serves the framing, the turns and `openingBlocks` — it is what
+Plan 1's Task 5 built and what Task 6 chose not to call, having decided the POST
+should return the framing instead. That decision was right for the fresh case
+and left the resumed one unserved.
+
+Why it is not fixed here: it is a new port method, a new DTO and mapper, a fetch
+on mount that has to interleave with the store's existing framing state, and a
+decision about what the page shows while it is in flight. That is a task, not a
+fix wave, and it was found by a whole-plan review after the last task had
+shipped.
+
+Picking it up: add `read(projectId, dialogueId)` to `DialogueRepository` against
+the existing route, call it from `DialogueView` when `selection.id` names a
+dialogue the store is not on, and seed `goal`/`stoppingCondition`/
+`openingBlocks`/`transcript` from it. The test that would fail today is the
+whole-chain one in `App.test.tsx` extended past the answers: start a dialogue,
+answer once, remount from the hash, and assert the earlier exchange is on the
+page — not merely that the progress arrived.
+
+The cheaper half-measure, if the fetch proves awkward: render nothing where the
+framing would go rather than the "Pick something to work through." placeholder,
+which currently tells a reader with a live dialogue that they have not started
+one.
