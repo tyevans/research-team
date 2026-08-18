@@ -21,15 +21,16 @@ would invite the model to re-decide the goal every turn, and a goal the model
 can revise is not a stopping condition anything can test.
 
 The cost of a prompt is paid per turn, so the sizes are worth recording rather
-than guessing at. Measured on 2026-08-18, after `ls` and `glob` were added to
-the tools half: the reply prompt is 6,583 characters and the framing prompt
-2,703 -- against the ask's 13,255. Almost the whole gap
+than guessing at. Re-measured on 2026-08-18, after the judgement block was
+folded in (1,141 characters of it): the reply prompt is 7,724 characters and
+the framing prompt 2,703 -- against the ask's 13,255. Almost the whole gap
 between the two is the component reference the framing call deliberately does
 without (2,482 characters for two types, where the ask's nine cost 9,600).
 """
 
 import re
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -45,6 +46,7 @@ from research_team.application.ports import ActivityReporter
 from research_team.application.socratic import (
     DialogueMessage,
     SocraticFraming,
+    SocraticObservation,
     SocraticPrompt,
 )
 from research_team.application.socratic_components import SOCRATIC_COMPONENT_TYPES
@@ -173,7 +175,46 @@ thing this format buys.
 
 """ + component_reference(only=SOCRATIC_COMPONENT_TYPES)
 
-SOCRATIC_PROMPT = SOCRATIC_TOOLS_PROMPT + SOCRATIC_METHOD_PROMPT + SOCRATIC_COMPONENT_PROMPT
+SOCRATIC_JUDGEMENT_PROMPT = """
+## Saying whether this is finished
+
+Answer every turn as YAML, and nothing else:
+
+```yaml
+concluded: false
+observation: |
+  What the reader demonstrated this turn, if anything. Omit the key entirely
+  when they demonstrated nothing worth recording -- most turns.
+prompt: |
+  Your one question. Leave it empty ONLY when concluded is true.
+```
+
+**Decide `concluded` before you write the question.** The order is not
+cosmetic: a verdict written after a question is a verdict chosen to justify
+asking it, and this dialogue stops when the reader has demonstrated the thing
+rather than when you run out of questions.
+
+`concluded: true` means the stopping condition you were given is met -- not
+that the reader is doing well, and not that you have run out of things to ask.
+When it is true, leave `prompt` empty. There is nothing further to ask, and
+asking one more to be sure is the thing you were told not to do.
+
+`observation` is your reading of what they showed, which is weaker evidence
+than a marked answer and is recorded as such. Write it when they demonstrated
+something specific; omit it otherwise. "Engaged well" is not an observation.
+"""
+"""The judgement half of the reply turn. `concluded` is shown first because the
+model answers in the order it is shown, and a verdict written after the question
+is one chosen to justify asking it -- structural mitigation rather than a plea
+in prose. `_declared_fields` reads the keys off this block, so the order and the
+key names here are both load-bearing."""
+
+SOCRATIC_PROMPT = (
+    SOCRATIC_TOOLS_PROMPT
+    + SOCRATIC_METHOD_PROMPT
+    + SOCRATIC_COMPONENT_PROMPT
+    + SOCRATIC_JUDGEMENT_PROMPT
+)
 """The reply turn. Composed -- see the module docstring for why not appended."""
 
 SOCRATIC_FRAMING_SYSTEM = SOCRATIC_TOOLS_PROMPT + SOCRATIC_FRAMING_PROMPT
@@ -193,9 +234,15 @@ input that must not be able to construct Python objects."""
 _FENCE = re.compile(r"```(?:yaml)?\s*\n(.*?)```", re.DOTALL)
 
 
-def _framing_fields() -> tuple[str, ...]:
-    """The keys `SOCRATIC_FRAMING_PROMPT` asks the model for, read off the
+def _declared_fields(prompt: str) -> tuple[str, ...]:
+    """The keys a prompt's own fenced block asks the model for, read off the
     prompt itself.
+
+    Was `_framing_fields`, taking no argument and closing over
+    `SOCRATIC_FRAMING_PROMPT`. Generalised to a parameter when the judgement
+    block needed the identical guard: a second copy would be a second place for
+    a derivation to stop matching the prompt it derives from, which is precisely
+    the failure the derivation exists to prevent.
 
     **Derived rather than written alongside, and that is the whole reason this
     function exists.** The prompt shows a three-key YAML block and the parser
@@ -207,19 +254,27 @@ def _framing_fields() -> tuple[str, ...]:
 
     Returns nothing rather than guessing if the prompt's fenced block ever
     stops being a YAML mapping. `parse_framing` would then demand no fields at
-    all, so
-    `test_the_parser_asks_for_exactly_the_keys_the_framing_prompt_asks_for` is
-    what fails -- loudly, in a unit test -- instead of a dialogue quietly
-    framing itself with empty strings.
+    all, so both callers'
+    `test_the_parser_asks_for_exactly_the_keys_the_..._prompt_asks_for` is what
+    fails -- loudly, in a unit test -- instead of a dialogue quietly framing
+    itself with empty strings.
     """
-    fenced = _FENCE.search(SOCRATIC_FRAMING_PROMPT)
+    fenced = _FENCE.search(prompt)
     if fenced is None:
         return ()
     block = yaml.load(fenced.group(1), Loader=_YAML_LOADER)
     return tuple(block) if isinstance(block, dict) else ()
 
 
-_FRAMING_FIELDS = _framing_fields()
+_FRAMING_FIELDS = _declared_fields(SOCRATIC_FRAMING_PROMPT)
+_JUDGEMENT_FIELDS = _declared_fields(SOCRATIC_JUDGEMENT_PROMPT)
+"""What the judgement block declares. Read by
+`test_the_parser_asks_for_exactly_the_keys_the_judgement_prompt_asks_for` and by
+nothing in the parser itself -- `parse_judgement` cannot loop over these the way
+`parse_framing` does, because the three keys have three different rules
+(`concluded` a real bool, `prompt` conditional, `observation` optional). The
+derivation still earns its place: it is what fails when a key is renamed in the
+prompt and not here."""
 
 
 def parse_framing(text: str) -> SocraticFraming:
@@ -262,16 +317,86 @@ def parse_framing(text: str) -> SocraticFraming:
         )
     except KeyError as error:
         # Only reachable when `_FRAMING_FIELDS` did not demand the key that is
-        # absent -- that is, when `_framing_fields` failed open and returned
+        # absent -- that is, when `_declared_fields` failed open and returned
         # `()` because the prompt's fenced block stopped being a YAML mapping.
-        # Failing open is deliberate (see `_framing_fields`); failing open with
+        # Failing open is deliberate (see `_declared_fields`); failing open with
         # the *wrong exception type* is not, because `begin`'s callers and every
         # test here expect `ValueError`, and a `KeyError` would escape a
         # `pytest.raises(ValueError)` and every `except ValueError` upstream.
         raise ValueError(
             f"the framing is missing {error.args[0]}, and the prompt no longer "
-            "declares it either -- see `_framing_fields`"
+            "declares it either -- see `_declared_fields`"
         ) from error
+
+
+@dataclass(frozen=True)
+class SocraticJudgement:
+    """What one turn's model call decided, parsed."""
+
+    concluded: bool
+    prompt: str
+    observation: SocraticObservation | None = None
+
+
+def parse_judgement(text: str) -> SocraticJudgement:
+    """A verdict and a question, or a refusal.
+
+    **Refused rather than defaulted, and unlike `parse_framing` the reason is
+    not that the failure is expensive -- it is that the failure is silent.** A
+    `.get("concluded", False)` implementation reads a model's warm prose reply,
+    or a dropped fence, or a mistyped key, as "not finished". The dialogue then
+    runs forever: the reader keeps answering, the model keeps asking, and
+    nothing anywhere raises. There is no symptom to notice and no log line to
+    find. That is the failure mode this whole plan is shaped around.
+
+    `concluded` must be a real bool. YAML gives back `"maybe"` as a string,
+    which is truthy, so `bool(loaded.get("concluded"))` ends dialogues on
+    values the model never meant as a yes.
+
+    `prompt` is required except when concluding: a finished dialogue has
+    nothing further to ask, and forcing a closing question is how it asks one
+    more to be sure.
+
+    `observation` is the one optional key. A turn where the reader demonstrated
+    nothing is ordinary; manufacturing an empty observation for it would write a
+    `SocraticProgressObserved` per turn and bury the real ones. It is recorded
+    as `evidence="assessment"` and never `"attempt"` -- it is the model's
+    reading of the reader, not a marked answer, and a stopping condition met
+    entirely by assessments is a dialogue that graded its own homework.
+
+    The fence is optional for `parse_framing`'s reason: models include it
+    roughly half the time.
+
+    `test_a_judgement_that_cannot_be_read_is_refused_rather_than_defaulted`
+    fails on every branch below except the no-question one, which is
+    `test_a_turn_that_concludes_nothing_and_asks_nothing_is_refused`. The error
+    strings are matched on: every refusal says "judgement" except that one,
+    which says "question", so a rewording that collapsed them would make one of
+    those tests pass for the wrong reason.
+    """
+    fenced = _FENCE.search(text)
+    body = fenced.group(1) if fenced else text
+    try:
+        loaded = yaml.load(body, Loader=_YAML_LOADER)
+    except yaml.YAMLError as error:
+        raise ValueError(f"the judgement did not parse as YAML: {error}") from error
+    if not isinstance(loaded, dict):
+        raise ValueError(f"the judgement was not a mapping, got {type(loaded).__name__}")
+    concluded = loaded.get("concluded")
+    if not isinstance(concluded, bool):
+        raise ValueError(
+            f"the judgement's `concluded` was not true or false, got {concluded!r}"
+        )
+    prompt = str(loaded.get("prompt") or "").strip()
+    if not prompt and not concluded:
+        raise ValueError("the judgement carries no question and did not conclude")
+    observed = loaded.get("observation")
+    observation = (
+        SocraticObservation(observation=str(observed).strip(), evidence="assessment")
+        if isinstance(observed, str) and observed.strip()
+        else None
+    )
+    return SocraticJudgement(concluded=concluded, prompt=prompt, observation=observation)
 
 
 def _framed_history(

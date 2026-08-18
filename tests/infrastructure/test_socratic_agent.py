@@ -28,12 +28,15 @@ from research_team.infrastructure.agent import socratic_agent
 from research_team.infrastructure.agent.ask_agent import READ_ONLY_FILE_TOOLS
 from research_team.infrastructure.agent.socratic_agent import (
     _FRAMING_FIELDS,
+    _JUDGEMENT_FIELDS,
     SOCRATIC_COMPONENT_PROMPT,
     SOCRATIC_FRAMING_SYSTEM,
+    SOCRATIC_JUDGEMENT_PROMPT,
     SOCRATIC_PROMPT,
     SOCRATIC_TOOLS_PROMPT,
     DeepAgentSocraticExecutor,
     parse_framing,
+    parse_judgement,
 )
 from tests.conftest import ToolAwareFakeChatModel
 
@@ -362,3 +365,161 @@ async def test_every_message_of_the_exchange_is_reported_before_respond_returns(
     # The model's one message, and no note for anything that went *in*.
     assert reported.count("ActivityMessage") == 1, reported
     assert result.prompt == "Why do you say that?"
+
+
+def test_a_judgement_block_becomes_a_verdict_and_a_question():
+    """The ordinary turn: not finished, here is the next question.
+
+    The judgement comes FIRST in the block and the question second, which is
+    the ordering ruling -- a model that has already written `concluded: false`
+    has committed to continuing before it writes what to ask. Asked the other
+    way round it writes a question and then rationalises a verdict that keeps
+    it.
+    """
+    text = (
+        "```yaml\n"
+        "concluded: false\n"
+        "observation: |\n"
+        "  named both parties but not what divided them\n"
+        "prompt: |\n"
+        "  What did Arius actually claim about the Son?\n"
+        "```\n"
+    )
+
+    judged = parse_judgement(text)
+
+    assert judged.concluded is False
+    assert judged.prompt == "What did Arius actually claim about the Son?"
+    assert judged.observation is not None
+    assert judged.observation.observation == "named both parties but not what divided them"
+    # The model's own reading, never a graded fact. A stopping condition met
+    # entirely by these is a dialogue that graded its own homework, and the kind
+    # is the only thing that keeps that visible.
+    assert judged.observation.evidence == "assessment"
+
+
+def test_a_concluding_judgement_may_carry_no_question():
+    """A finished dialogue has nothing further to ask.
+
+    Forcing a closing question is how a dialogue asks one more "to be sure",
+    which `SOCRATIC_METHOD_PROMPT` already tells the model not to do. Red
+    against a parser that requires `prompt` unconditionally -- every genuine
+    conclusion would then be refused, and a dialogue that can never conclude is
+    exactly what this plan exists to end.
+    """
+    text = (
+        "```yaml\n"
+        "concluded: true\n"
+        "observation: |\n"
+        "  distinguished the settlement from the politics, unaided\n"
+        'prompt: ""\n'
+        "```\n"
+    )
+
+    judged = parse_judgement(text)
+
+    assert judged.concluded is True
+    assert judged.prompt == ""
+    assert judged.observation is not None
+
+
+def test_a_turn_that_concludes_nothing_and_asks_nothing_is_refused():
+    """The silent failure this plan is shaped around, in its purest form.
+
+    An empty prompt on a non-concluding turn is a model that produced no
+    question. Defaulted, the reader sees a blank utterance and a dialogue that
+    is somehow still going; refused, the turn fails and says why.
+
+    Red against a parser that only requires `prompt` when `concluded` is false
+    *and* treats a missing key as empty -- the common shape.
+    """
+    text = '```yaml\nconcluded: false\nprompt: ""\n```\n'
+
+    with pytest.raises(ValueError, match="question"):
+        parse_judgement(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "That's exactly right, well done!",
+        "```yaml\nprompt: What next?\n```\n",
+        "```yaml\nconcluded: maybe\nprompt: What next?\n```\n",
+        "```yaml\n- concluded\n- prompt\n```\n",
+    ],
+)
+def test_a_judgement_that_cannot_be_read_is_refused_rather_than_defaulted(text):
+    """**The whole reason this is its own plan.**
+
+    Every case here would come back as a `SocraticJudgement` under an
+    implementation that defaults -- `concluded: False`, which is
+    indistinguishable from a dialogue that is simply still going. A broken
+    judgement path would then look like working software forever: the reader
+    keeps answering, the model keeps asking, and nothing ever stops. Refusing
+    makes the turn fail loudly on the first malformed answer.
+
+    The prose case is the one that matters most: a model that ignored the
+    format entirely and just replied warmly is the likeliest real failure, and
+    it is the one a truthy-`.get` reads as "not finished, no question".
+
+    `concluded: maybe` is here because YAML will happily give back the string
+    `"maybe"`, which is truthy -- a parser doing `bool(loaded.get("concluded"))`
+    concludes the dialogue on a value the model never meant as a yes.
+
+    Proved red on 2026-08-18 by writing the defaulting version, and the count
+    is measured rather than asserted: `bool(loaded.get("concluded", False))`
+    alone turns two of these five red -- the two that are already mappings.
+    The other three ("", the prose, the list) still raise, from the mapping
+    guard. Dropping *all three* guards (mapping, bool, and the no-question one)
+    is the fully-defaulting parser, and under it all five come back as a
+    `SocraticJudgement` with `concluded=False` -- the prose case with an empty
+    prompt besides, which is the exact shape a dialogue that never ends is made
+    of.
+    """
+    with pytest.raises(ValueError, match="judgement"):
+        parse_judgement(text)
+
+
+def test_the_parser_asks_for_exactly_the_keys_the_judgement_prompt_asks_for():
+    """Derived, not written twice -- the same guard `_framing_fields` gives the
+    framing parse. Two independent literals produce either a parser that
+    refuses every well-formed judgement (a renamed key it still demands) or one
+    that reads a key nothing sends, and neither has a symptom a caller could
+    act on.
+    """
+    assert set(_JUDGEMENT_FIELDS) == {"concluded", "observation", "prompt"}
+    for name in _JUDGEMENT_FIELDS:
+        assert f"{name}:" in SOCRATIC_JUDGEMENT_PROMPT
+
+
+def test_an_observation_is_optional_and_absent_means_nothing_was_demonstrated():
+    """The one key that may be absent, and the asymmetry is deliberate: a turn
+    where the reader demonstrated nothing worth recording is ordinary, where a
+    turn with no verdict and no question is broken.
+
+    Red against a parser that manufactures an empty observation, which would
+    write a `SocraticProgressObserved` carrying no observation on every turn and
+    bury the real ones.
+    """
+    judged = parse_judgement("```yaml\nconcluded: false\nprompt: Why?\n```\n")
+
+    assert judged.observation is None
+    assert judged.prompt == "Why?"
+
+
+def test_the_reply_prompt_carries_the_judgement_block_verdict_first():
+    """The ordering ruling, pinned where it is actually paid: `SOCRATIC_PROMPT`
+    is what the reply call is handed, and a judgement block that exists but was
+    never folded into it would leave every turn's answer unparseable while every
+    test above still passed.
+
+    Structural rather than about wording -- what is asserted is that the block
+    is in the assembled prompt and that `concluded:` precedes `prompt:` within
+    it. Would pass with the change reverted only if `SOCRATIC_PROMPT` already
+    contained the block; it did not, and this was red before the fold-in.
+    """
+    assert SOCRATIC_JUDGEMENT_PROMPT in SOCRATIC_PROMPT
+    verdict = SOCRATIC_JUDGEMENT_PROMPT.index("concluded:")
+    question = SOCRATIC_JUDGEMENT_PROMPT.index("prompt:")
+    assert verdict < question
