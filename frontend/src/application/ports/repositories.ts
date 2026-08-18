@@ -1,5 +1,6 @@
 import type { Approval, ApprovalAnswer } from '@domain/approval/approval.ts'
 import type { AskEvent } from '@domain/ask/conversation.ts'
+import type { DialogueEvent } from '@domain/dialogue/conversation.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
@@ -594,6 +595,41 @@ export interface AskRepository {
   submitAskAttempt(
     projectId: ProjectId,
     conversationId: string,
+    input: { position: number; componentId: ComponentId; response: AttemptResponse },
+  ): Promise<Verdict>
+}
+
+/** The socratic surface, which runs the other way round from the ask: the
+ *  system asks and the reader answers. Its own port rather than a widened
+ *  `AskRepository` for the reason `domain/dialogue/conversation.ts` opens
+ *  with -- a shared type would make that inversion a runtime concern. */
+export interface DialogueRepository {
+  /** Frames a dialogue and returns its server-minted id. Not a stream:
+   *  framing produces three strings and no activity worth watching, and the
+   *  id is the server's to mint because it is a row key and a URL segment. */
+  start(projectId: ProjectId, topic: string): Promise<string>
+  /** Streams one exchange. Rejects with a 404 for an unknown or concluded
+   *  dialogue and a 409 for one already running -- both are raised before the
+   *  stream opens, so both are status codes. A failure after the first frame
+   *  arrives as an `error` event and resolves, so a caller that only handles
+   *  rejection will show a turn that silently stops. */
+  reply(
+    projectId: ProjectId,
+    dialogueId: string,
+    reply: string,
+    onEvent: (event: DialogueEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void>
+  /** Marks one answer to a component the dialogue asked. The key never left
+   *  the server, so the browser cannot grade it.
+   *
+   *  Unlike `submitAskAttempt` this attempt is *recorded* against the dialogue
+   *  id and survives a refresh in storage -- but no read route serves it back
+   *  to a client yet, which is Task 6's progress route. Until then a refresh
+   *  still shows empty widgets. */
+  submitDialogueAttempt(
+    projectId: ProjectId,
+    dialogueId: string,
     input: { position: number; componentId: ComponentId; response: AttemptResponse },
   ): Promise<Verdict>
 }

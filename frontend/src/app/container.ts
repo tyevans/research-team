@@ -5,6 +5,7 @@ import type {
   AskRepository,
   AutonomyRepository,
   DefinitionsRepository,
+  DialogueRepository,
   OntologyRepository,
   DocumentRepository,
   ExtractionRepository,
@@ -26,6 +27,7 @@ import { HttpAskRepository } from '@infrastructure/http/ask-repository.ts'
 import { HttpAutonomyRepository } from '@infrastructure/http/autonomy-repository.ts'
 import { HttpDefinitionsRepository } from '@infrastructure/http/definitions-repository.ts'
 import { HttpOntologyRepository } from '@infrastructure/http/ontology-repository.ts'
+import { HttpDialogueRepository } from '@infrastructure/http/dialogue-repository.ts'
 import { HttpDocumentRepository } from '@infrastructure/http/document-repository.ts'
 import { HttpGraphRepository } from '@infrastructure/http/graph-repository.ts'
 import { HttpClient } from '@infrastructure/http/http-client.ts'
@@ -78,6 +80,11 @@ export interface Container {
   /** Its own adapter rather than one built on `HttpClient`: it POSTs and reads
    *  a stream, and `HttpClient` reads whole bodies. */
   readonly ask: AskRepository
+  /** Plural, matching `graphs`/`timelines`/`documents`. A singular key
+   *  typechecks through the `as unknown as Container` cast every test harness
+   *  uses and resolves to `undefined` at runtime, so the symptom is a page
+   *  stuck loading forever rather than a type error. */
+  readonly dialogues: DialogueRepository
   readonly stream: EventStream
   readonly preferences: PreferenceStore
   /** Injected so tests can drive it, and so nothing below reaches for the
@@ -108,6 +115,9 @@ export const createContainer = (baseUrl = ''): Container => {
     extractions: new HttpExtractionRepository(http),
     health: new HttpHealthRepository(http),
     ask: new HttpAskRepository(baseUrl),
+    // `baseUrl` and not `http`, like `ask`: it POSTs and reads a stream, which
+    // `HttpClient` would buffer whole.
+    dialogues: new HttpDialogueRepository(baseUrl),
     stream: new SseEventStream(`${baseUrl}/api/stream`),
     preferences: new LocalPreferenceStore(),
     now: () => Date.now(),
