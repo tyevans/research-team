@@ -85,6 +85,14 @@ from research_team.application.perception import (
 )
 from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.application.project_graphs import ProjectGraphs
+from research_team.application.socratic import (
+    DialogueInFlight,
+    SocraticDialogueOpened,
+    SocraticDialogueService,
+    SocraticPrompt,
+    UnknownDialogue,
+)
+from research_team.application.socratic_components import dialogue_document
 from research_team.application.timeline_read import (
     MAX_TIMELINE_BANDS,
     TimelineInterval,
@@ -674,6 +682,27 @@ class AskRequest(BaseModel):
     question: str
 
 
+class SocraticStart(BaseModel):
+    """A topic to build a dialogue around.
+
+    No id: unlike an ask's `chat_id`, the dialogue's id is minted by the server
+    and returned, because it is an aggregate id, a row key and a URL segment --
+    the identical hazard as letting a browser or a model pick one.
+    """
+
+    topic: str
+
+
+class SocraticReply(BaseModel):
+    """What the reader said in answer to the outstanding question.
+
+    Named `reply` and not `question`, matching the domain: on this surface the
+    system asks and the reader answers, which is the inverse of the ask.
+    """
+
+    reply: str
+
+
 class Decision(BaseModel):
     """A human's answer to a parked approval. `type` is langchain's vocabulary."""
 
@@ -731,6 +760,7 @@ def create_app(
     ask: AskService | None = None,
     asks: AskConversationRunner | None = None,
     dialogues: SocraticDialogueRunner | None = None,
+    socratic: SocraticDialogueService | None = None,
     extractor: DocumentExtractor | None = None,
     extract_queue: ExtractionQueue | None = None,
     definitions: DefinitionReaders | None = None,
@@ -3039,6 +3069,136 @@ def create_app(
                 # shutdown. It does run; it is not guaranteed to run promptly,
                 # so an abandoned model call can outlive the request by as long
                 # as the last reference does.
+                await notes.aclose()
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    def _socratic_frame(note: object) -> str:
+        """One SSE `data:` line per note.
+
+        Deliberately its own function rather than a branch inside `_ask_frame`:
+        the last frame of a dialogue turn is typed `prompt` and not `answer`,
+        because it is a question. A page that reused the ask's handler would
+        draw the dialogue's question in the reader's own column -- and it would
+        render, which is why this is a separate function with its own test
+        (`test_the_last_frame_is_typed_prompt_and_not_answer`, red against a
+        copy-paste of `_ask_frame`).
+        """
+        if isinstance(note, SocraticDialogueOpened):
+            body: dict[str, Any] = {
+                "type": "dialogue",
+                "dialogue_id": str(note.dialogue_id),
+                "goal": note.goal,
+                "stopping_condition": note.stopping_condition,
+                # The question being answered, not the one about to be asked.
+                # On a resumed dialogue this is not the opening one, which is
+                # why the field is not called `opening_prompt`.
+                "pending_prompt": note.pending_prompt,
+            }
+        elif isinstance(note, ActivityDelta):
+            body = {"type": "delta", "message_id": note.message_id, "text": note.text}
+        elif isinstance(note, ActivityMessage):
+            body = {
+                "type": "message",
+                "message_id": note.message_id,
+                "kind": note.kind,
+                "payload": note.payload,
+                "is_error": note.is_error,
+            }
+        elif isinstance(note, SocraticPrompt):
+            body = {
+                "type": "prompt",
+                "text": note.prompt,
+                # Parsed here rather than in the browser, for the reasons
+                # `components.py` opens with -- the second binds hardest:
+                # withholding is only real if the projection happens before the
+                # bytes leave, and this surface is the one where being told the
+                # answer defeats the method rather than merely leaking.
+                "blocks": dialogue_document(note.prompt)["blocks"],
+                "position": note.position,
+                "citations": [{"kind": kind, "id": cited} for kind, cited in note.citations],
+                "concluded": note.concluded,
+            }
+        else:  # ActivityRemark and anything added later
+            body = {"type": "message", "message_id": "", "kind": "assistant", "payload": {}}
+        return f"data: {json.dumps(body)}\n\n"
+
+    @app.post("/api/projects/{project_id}/dialogues")
+    async def start_dialogue(project_id: UUID, body: SocraticStart):
+        """Frame a dialogue and return its id.
+
+        Not a stream, unlike the reply route: framing produces three strings and
+        no activity worth watching, and a page that opened an EventSource for it
+        would show a spinner over an empty transcript. The reader's first sight
+        of the dialogue is its goal, and that arrives here.
+
+        A framing the model botched raises `ValueError` out of `parse_framing`
+        and becomes a 502: the request was fine and the upstream was not, which
+        is a different thing to tell a reader than a 400.
+        """
+        if socratic is None:
+            raise HTTPException(status_code=503, detail="dialogues are not configured")
+        if service is not None:
+            await _require_project(project_id)
+        try:
+            dialogue_id = await socratic.begin(project_id=project_id, topic=body.topic)
+        except ValueError as bad_framing:
+            raise HTTPException(
+                status_code=502, detail=f"the dialogue could not be framed: {bad_framing}"
+            ) from bad_framing
+        return {"dialogueId": str(dialogue_id)}
+
+    @app.post("/api/projects/{project_id}/dialogues/{dialogue_id}/reply")
+    async def reply_to_dialogue(project_id: UUID, dialogue_id: UUID, body: SocraticReply):
+        """Answer the outstanding question, and stream the next one.
+
+        The same two-stage shape as `ask_project`, and for the same reason: the
+        first note is pulled before the response begins so that the failures
+        which can still be a status code -- 404 for an unknown dialogue, 409 for
+        one already running -- are status codes rather than error frames the
+        page has to special-case.
+        """
+        if socratic is None:
+            raise HTTPException(status_code=503, detail="dialogues are not configured")
+        if service is not None:
+            await _require_project(project_id)
+
+        notes = socratic.respond(
+            project_id=project_id, dialogue_id=dialogue_id, reply=body.reply
+        )
+        failed: Exception | None = None
+        try:
+            first = await anext(notes)
+        except UnknownDialogue as missing:
+            # Covers a guessed id, a stale one, and a concluded one. All 404:
+            # telling a caller that an id they cannot use does exist is the
+            # distinction not worth drawing.
+            raise HTTPException(status_code=404, detail=str(missing)) from missing
+        except DialogueInFlight as busy:
+            raise HTTPException(status_code=409, detail=str(busy)) from busy
+        except StopAsyncIteration:
+            first = None
+        except Exception as failure:  # noqa: BLE001 -- the browser needs the reason
+            first, failed = None, failure
+
+        async def stream():
+            try:
+                if failed is not None:
+                    raise failed
+                if first is not None:
+                    yield _socratic_frame(first)
+                async for note in notes:
+                    yield _socratic_frame(note)
+            except Exception as failure:  # noqa: BLE001 -- the browser needs the reason
+                yield f"data: {json.dumps({'type': 'error', 'detail': str(failure)})}\n\n"
+            finally:
+                # The only path that cancels the executor task when a reader
+                # walks away. See `ask_project`'s `finally` for when this
+                # actually runs -- it is generator finalisation, not disconnect.
                 await notes.aclose()
 
         return StreamingResponse(
