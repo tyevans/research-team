@@ -145,6 +145,17 @@ it('renders an unsupported backing read as prose naming what is supported', () =
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
+it('says an absent backing read is missing rather than quoting it as empty', () => {
+  // `over` is required by the server, so this only arrives through a hand-built
+  // block -- but `readExplorerQuery` defaults it to `''`, and the shared
+  // sentence then read `asks to range over ""`, which describes nothing. Red
+  // against the single-sentence version: it renders the empty quotes.
+  const { timeline } = renderWidget({ prompt: 'Look.', vary: ['window'] })
+
+  expect(screen.getByText(/only/i)).toHaveTextContent('does not say what it ranges over')
+  expect(timeline).not.toHaveBeenCalled()
+})
+
 it('shows the author’s invitation, which is the point of the type', () => {
   // Without the prompt a reader is handed controls with no reason to touch
   // them, which is the design's section 3. Red against a widget that reads

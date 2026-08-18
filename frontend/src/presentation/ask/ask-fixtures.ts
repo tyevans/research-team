@@ -78,8 +78,8 @@ export const toolResult = ({
 /** One `component:` block, as the server's answer frame carries it.
  *
  * Here at the second copy rather than the fifth, which is the point of this
- * file: five resolved widgets each want this exact shape, and an inline
- * literal per test is five places to get `unknown` or `errors` wrong -- either
+ * file: six resolved widgets each want this exact shape, and an inline
+ * literal per test is six places to get `unknown` or `errors` wrong -- either
  * one silently routes the block to a code block or an error panel instead of
  * the widget, which reads as "the renderer is not wired up".
  *

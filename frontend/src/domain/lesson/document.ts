@@ -54,7 +54,7 @@ export interface ComponentBlock {
    * describes for a missing projection. Unconditional threading has one
    * behaviour whether the flag is right or wrong.
    *
-   * **Nothing in `frontend/src` reads it today.** All five resolved widgets
+   * **Nothing in `frontend/src` reads it today.** All six resolved widgets
    * shipped without it, for the reason above -- they take `projectId`
    * unconditionally and never ask whether they were classified as resolved --
    * so an earlier version of this docstring promising "Tasks 3-7 are its

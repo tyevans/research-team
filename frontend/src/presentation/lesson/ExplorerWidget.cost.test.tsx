@@ -223,3 +223,32 @@ it('is still free to revisit after the shared five-minute policy would have gone
 
   expect(timeline).toHaveBeenCalledTimes(2)
 })
+
+it('commits on Enter as well as on blur, and an Enter with nothing edited is free', async () => {
+  // Blur is one release gesture; Enter is the other, and the controls sit in a
+  // `<fieldset>` rather than a `<form>` deliberately (see `Controls`), so there
+  // is no implicit submit to fall back on. Without a key handler a reader who
+  // types a bound and presses Enter sees the widget sit there unchanged with no
+  // feedback -- which is what this was proved red against before `onKeyDown`
+  // existed: the first `waitFor` timed out at one call.
+  //
+  // The second half is the cost half, and it is why this case lives in this
+  // file rather than beside the prose assertions: Enter must go through the
+  // same guarded commit as blur, so pressing it having changed nothing must not
+  // pay a double pass. Red against a handler that calls `onCommit` directly.
+  const timeline = mount()
+  await waitFor(() => expect(timeline).toHaveBeenCalledTimes(1))
+
+  fireEvent.change(from(), { target: { value: '0200-01-01' } })
+  fireEvent.keyDown(from(), { key: 'Enter' })
+
+  await waitFor(() => expect(timeline).toHaveBeenCalledTimes(2))
+  expect(timeline).toHaveBeenLastCalledWith(PROJECT, {
+    from: '0200-01-01',
+    to: '0400-01-01',
+  })
+
+  fireEvent.keyDown(from(), { key: 'Enter' })
+  await settle()
+  expect(timeline).toHaveBeenCalledTimes(2)
+})

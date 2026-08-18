@@ -1,5 +1,6 @@
 import type { UseQueryResult } from '@tanstack/react-query'
 import { useQuery } from '@tanstack/react-query'
+import type { KeyboardEvent } from 'react'
 import { lazy, Suspense, useId, useState } from 'react'
 
 import { useContainer } from '@app/container-context.tsx'
@@ -72,8 +73,13 @@ export const ExplorerWidget = ({
     return (
       <div className="cmp-body">
         <p className="cmp-ref-note">
-          This explorer asks to range over “{spec.over}”, and only “{EXPLORER_BACKING_READ}” can be
-          explored in this build.
+          {spec.over
+            ? `This explorer asks to range over “${spec.over}”, and only “${EXPLORER_BACKING_READ}” can be explored in this build.`
+            : // `over` is required by the server, so an absent one only reaches
+              // here through a hand-built block -- and `readExplorerQuery`
+              // defaults it to `''`, which would otherwise render as
+              // `range over ""`. Named as missing rather than quoted as empty.
+              `This explorer does not say what it ranges over, and only “${EXPLORER_BACKING_READ}” can be explored in this build.`}
         </p>
       </div>
     )
@@ -151,9 +157,22 @@ const Exploring = ({ projectId, spec }: { projectId: ProjectId; spec: ExplorerSp
     // was declared to be. Freshness without retention is not a cache.
     //
     // The cost of the pair, stated rather than only implied: every window a
-    // reader visits is held for the life of the mount, so a reader who sweeps
-    // thirty windows holds thirty responses. Bounded by the sitting, and small
-    // beside the double pass each one would otherwise cost again.
+    // reader visits is held for as long as this widget is mounted, so a reader
+    // who sweeps thirty windows holds thirty responses. Bounded by the sitting,
+    // and small beside the double pass each one would otherwise cost again.
+    //
+    // And it reaches past this widget, which is the part worth knowing before
+    // editing either file. These keys are built by `queryKeys.timeline` and are
+    // *shared with* `TimelineWidget` -- same project, same window, same entry.
+    // `gcTime` resolves per cache ENTRY as the max across its observers, so an
+    // answer carrying both an `explorer` and a `timeline` over the same window
+    // gives the timeline's entry unbounded retention it never asked for, held
+    // for the explorer's lifetime rather than the timeline's. The cost is one
+    // held response, and `refetchOnMount: false` means nothing behaves
+    // differently -- it is memory, not staleness. Scoping the explorer's keys
+    // (`['timeline', ..., 'explorer']`) would end it and was rejected: it splits
+    // the cache, so an answer carrying both pays a second identical double pass,
+    // which is worse than holding one response.
     staleTime: Infinity,
     gcTime: Infinity,
   })
@@ -218,6 +237,16 @@ const Controls = ({
     onCommit({ ...window, from, to })
   }
 
+  // Enter is the other release gesture, and it needs a handler because these
+  // controls are a `<fieldset>` rather than a `<form>`: there is no implicit
+  // submit to fall back on, so without this a reader who types a bound and
+  // presses Enter watches nothing happen. It routes through the same guarded
+  // `commitWindow` as blur, so an Enter with no edit behind it is free --
+  // `ExplorerWidget.cost.test.tsx` fails on both halves.
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') commitWindow()
+  }
+
   return (
     <fieldset className="cmp-explorer-controls">
       <legend className="cmp-explorer-legend">Explore</legend>
@@ -259,6 +288,7 @@ const Controls = ({
                 setDraft({ ...draft, from: event.target.value })
               }}
               onBlur={commitWindow}
+              onKeyDown={onKeyDown}
             />
           </label>
           <label className="cmp-explorer-field" htmlFor={`${ids}-to`}>
@@ -271,6 +301,7 @@ const Controls = ({
                 setDraft({ ...draft, to: event.target.value })
               }}
               onBlur={commitWindow}
+              onKeyDown={onKeyDown}
             />
           </label>
         </>
