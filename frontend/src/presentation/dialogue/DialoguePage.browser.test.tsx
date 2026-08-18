@@ -39,11 +39,15 @@ type Props = ComponentProps<typeof DialoguePage>
 /** One exchange under an opening question, which is the smallest transcript
  *  that has both speakers AND an outstanding question below a settled one.
  *
- * `concluded` on the newest turn is what `DialoguePage` reads to decide the
- * page is over, so it is the one flag these tests vary. */
+ * `concluded` on the newest turn is one of the two things `DialoguePage` reads
+ * to decide the page is over, and it is the one these tests vary: it is the
+ * live-dialogue half, which is the case that has a transcript to measure. The
+ * store's half is for a resumed dialogue, which has no turns at all and so
+ * nothing here to lay out. */
 const props = (concluded = false): Props => ({
   projectId: PROJECT,
   transcript: [exchange({ concluded })],
+  concluded: false,
   goal: 'understand what the creed settled',
   stoppingCondition: 'the reader separates the settlement from the politics',
   openingBlocks: [{ kind: 'markdown', text: 'Where would you start?' }],

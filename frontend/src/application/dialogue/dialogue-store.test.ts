@@ -6,6 +6,7 @@
  */
 import { expect, it, vi } from 'vitest'
 
+import { ApiError } from '@application/ports/errors.ts'
 import type { DialogueRepository } from '@application/ports/repositories.ts'
 import type { DocumentBlock } from '@domain/lesson/document.ts'
 import { ComponentId, ProjectId } from '@domain/shared/identifier.ts'
@@ -375,4 +376,41 @@ it('resumes the dialogue the URL named, rather than starting at none', async () 
 
   expect(dialogue.getState().dialogueId).toBe('d9')
   expect(progress).toHaveBeenCalledWith(PROJECT, 'd9')
+})
+
+it('treats a 409 on reply as the dialogue having finished, not as a failure', async () => {
+  // Task 3 made this reachable: a reader who returns to a concluded dialogue
+  // and types gets a 409 rather than the 404 the route used to answer. In the
+  // error line that reads as "something went wrong"; as `concluded` it reads
+  // as what happened. Red against a store whose catch writes every rejection
+  // to `error` -- and red first on `concluded` not being a field at all.
+  const dialogues = repo({
+    reply: vi
+      .fn<DialogueRepository['reply']>()
+      .mockRejectedValue(new ApiError('dialogue has already concluded', 409)),
+  })
+  const dialogue = store(dialogues)
+
+  await dialogue.getState().start('the creed')
+  await dialogue.getState().send('one more?')
+
+  expect(dialogue.getState().concluded).toBe(true)
+  expect(dialogue.getState().error).toBeNull()
+})
+
+it('still reports a 404 as an error', async () => {
+  // The other half, so the branch above cannot be implemented by swallowing
+  // every rejection. A dialogue that genuinely is not there is a failure the
+  // reader needs told, and the STATUS is what separates the two -- never the
+  // detail string, which is the server's wording and free to change.
+  const dialogues = repo({
+    reply: vi.fn<DialogueRepository['reply']>().mockRejectedValue(new ApiError('no dialogue', 404)),
+  })
+  const dialogue = store(dialogues)
+
+  await dialogue.getState().start('the creed')
+  await dialogue.getState().send('hello?')
+
+  expect(dialogue.getState().concluded).toBe(false)
+  expect(dialogue.getState().error).toContain('no dialogue')
 })

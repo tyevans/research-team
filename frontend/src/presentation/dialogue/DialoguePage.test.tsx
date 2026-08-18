@@ -35,6 +35,7 @@ const props = (over: Partial<Props> = {}): Props => ({
   starting: false,
   error: null,
   progressUnavailable: false,
+  concluded: false,
   onStart: vi.fn(),
   onReply: vi.fn(),
   ...over,
@@ -267,4 +268,15 @@ it('keys remembered answers by the turn’s position and not by its index', () =
   })
 
   expect(screen.getByText(/you answered this correctly before/i)).toBeInTheDocument()
+})
+
+it('shows the finished state from the store even with no turns to read it off', () => {
+  // The page reads `concluded` off the newest turn, which is right during a
+  // live dialogue and impossible on a resumed one -- a resumed dialogue has no
+  // turns yet (B120). Red against a page that reads only the transcript: a
+  // returning reader sees a composer for a dialogue that cannot take a reply.
+  draw({ transcript: [], concluded: true })
+
+  expect(screen.getByText(/reached its goal/i)).toBeInTheDocument()
+  expect(screen.queryByLabelText(/your answer/i)).not.toBeInTheDocument()
 })

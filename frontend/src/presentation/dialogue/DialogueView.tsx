@@ -92,6 +92,10 @@ export const DialogueView = ({
   const starting = store((state) => state.starting)
   const error = store((state) => state.error)
   const progressUnavailable = store((state) => state.progressUnavailable)
+  // Read here rather than left on the store: a field nothing renders is a
+  // silo, and this one is the whole of what tells a returning reader their
+  // dialogue finished instead of showing them a failure.
+  const concluded = store((state) => state.concluded)
 
   /** Put the minted id in the hash, which is what makes a dialogue a place
    *  rather than a session.
@@ -136,6 +140,7 @@ export const DialogueView = ({
       starting={starting}
       error={error}
       progressUnavailable={progressUnavailable}
+      concluded={concluded}
       onStart={(topic) => void store.getState().start(topic)}
       onReply={(reply) => void store.getState().send(reply)}
     />

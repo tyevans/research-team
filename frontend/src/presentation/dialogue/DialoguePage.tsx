@@ -32,6 +32,7 @@ export const DialoguePage = ({
   starting,
   error,
   progressUnavailable,
+  concluded: concludedFromStore,
   onStart,
   onReply,
 }: {
@@ -61,15 +62,22 @@ export const DialoguePage = ({
   /** Whether the marked answers could not be loaded -- see `dialogue-store.ts`
    *  for why this is a flag and not the `error` above. */
   progressUnavailable: boolean
+  /** Whether the store has learned the dialogue is over -- see
+   *  `dialogue-store.ts` for why that is a 409 on reply and nothing else. */
+  concluded: boolean
   onStart: (topic: string) => void
   onReply: (reply: string) => void
 }) => {
-  // Read off the newest turn rather than the page: `concluded` travels on the
-  // `prompt` frame that closes a turn, so the last one is the only one that
-  // can be true. False on every frame a live server sends today -- nothing
-  // writes `SocraticDialogueConcluded` until Plan 4 -- and rendered now so
-  // that plan does not have to come back to this file.
-  const concluded = transcript[transcript.length - 1]?.concluded ?? false
+  // Either source, because neither covers both cases. The transcript's flag is
+  // what a LIVE dialogue has -- `concluded` travels on the `prompt` frame that
+  // closes a turn, so the newest turn is the only one that can carry it. The
+  // store's is what a RESUMED one has, where a 409 on the reader's first reply
+  // is the only signal and there are no turns to read a flag off at all
+  // (B120). A page that picked one shows a composer to a returning reader
+  // whose dialogue has finished. The test that fails if the store half is
+  // dropped is `shows the finished state from the store even with no turns to
+  // read it off`.
+  const concluded = concludedFromStore || (transcript[transcript.length - 1]?.concluded ?? false)
 
   return (
     <section className="dlg flex min-h-0 flex-1 flex-col overflow-hidden">

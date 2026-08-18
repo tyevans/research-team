@@ -16,7 +16,7 @@
  */
 import { create } from 'zustand'
 
-import { errorMessage } from '@application/ports/errors.ts'
+import { ApiError, errorMessage } from '@application/ports/errors.ts'
 import type { DialogueProgress, DialogueRepository } from '@application/ports/repositories.ts'
 import { answered, applyEvent, type DialogueTranscript } from '@domain/dialogue/conversation.ts'
 import type { DocumentBlock } from '@domain/lesson/document.ts'
@@ -68,6 +68,22 @@ export interface DialogueState {
    * below stood for a whole plan. Cleared on the next successful load, so a
    * transient failure does not stick. */
   readonly progressUnavailable: boolean
+  /** Whether the server has said this dialogue is over.
+   *
+   * Set from a 409 on reply and never from anything else here. It does NOT
+   * cover a dialogue that concludes mid-stream -- that arrives on the closing
+   * `prompt` frame and lives on the turn, which is where the page still reads
+   * it from for a live dialogue. This half is the resumed case: a reader who
+   * comes back and types has no turns in the transcript to read a flag off.
+   *
+   * What it does not fix, stated because it would be easy to read this as the
+   * whole thing: the transcript is still empty on a resumed dialogue, so the
+   * reader is told it finished above a thread with nothing in it. No port
+   * reads one dialogue whole -- that is B120, and this field is not it.
+   *
+   * Starts false and is never cleared: a concluded dialogue does not unfinish,
+   * and this store is rebuilt when the URL names a different one. */
+  readonly concluded: boolean
   readonly replying: boolean
   readonly starting: boolean
   readonly error: string | null
@@ -110,6 +126,7 @@ export const createDialogueStore = ({
     openingBlocks: [],
     progress: {},
     progressUnavailable: false,
+    concluded: false,
     replying: false,
     starting: false,
     error: null,
@@ -207,6 +224,28 @@ export const createDialogueStore = ({
           'the connection closed before the dialogue asked its next question',
         )
       } catch (err) {
+        // A 409 is not a failure. Task 3's route answers it when the dialogue
+        // has already concluded, which is a thing that happened rather than a
+        // thing that went wrong, and the error banner tells the reader
+        // something broke when their dialogue simply ended.
+        //
+        // `instanceof ApiError` and an explicit STATUS check, never a
+        // substring match on the detail: the server's body says "dialogue ...
+        // has already concluded" and a server test pins that substring, but
+        // the status is the contract and the prose is not. A client reading
+        // the wording couples the console to a string nobody promised to keep.
+        //
+        // The open turn is deliberately left as the reader typed it rather
+        // than settled with an error: the reply was refused, not failed, and
+        // an unsettled turn with no `composing` draws no indicator (see
+        // `DialogueExchange.tsx:183`). The test that fails without this branch
+        // is `treats a 409 on reply as the dialogue having finished, not as a
+        // failure`; `still reports a 404 as an error` is why it is a status
+        // check rather than a blanket swallow.
+        if (err instanceof ApiError && err.status === 409) {
+          set({ concluded: true })
+          return
+        }
         const detail = errorMessage(err)
         // A failure before streaming starts (404, 409, network) arrives as a
         // rejection rather than an in-band `error` event, so this is the only
