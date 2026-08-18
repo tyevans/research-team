@@ -181,6 +181,31 @@ export const readTimelineQuery = (block: ComponentBlock): TimelineWindow => ({
   limit: num(block.data['limit']),
 })
 
+/** One row of a `compare` table: a label, and the cells under it. */
+export interface CompareRow {
+  readonly label: string
+  /** In the same order as `Compare.entities`. Short rows are padded at
+   *  render, not here: how many columns there are is the table's business,
+   *  and a reader that padded would need the entity list to do it. */
+  readonly cells: readonly string[]
+}
+
+export interface Compare {
+  readonly entities: readonly string[]
+  readonly rows: readonly CompareRow[]
+}
+
+export const readCompare = (block: ComponentBlock): Compare => ({
+  entities: list(block.data['entities']).map((name) => str(name) ?? ''),
+  rows: list(block.data['rows']).map((raw) => {
+    const row = rec(raw)
+    return {
+      label: str(row['label']) ?? '',
+      cells: list(row['cells']).map((cell) => str(cell) ?? ''),
+    }
+  }),
+})
+
 const rec = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 

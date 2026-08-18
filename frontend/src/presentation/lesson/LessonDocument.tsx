@@ -6,6 +6,7 @@ import { Markdown } from '../common/content.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
 import { Checklist } from './Checklist.tsx'
 import { Cloze } from './Cloze.tsx'
+import { CompareWidget } from './CompareWidget.tsx'
 import { DefinitionWidget } from './DefinitionWidget.tsx'
 import { EvidenceWidget } from './EvidenceWidget.tsx'
 import { Flashcards } from './Flashcards.tsx'
@@ -106,6 +107,7 @@ const RENDERERS: Readonly<
   evidence: EvidenceWidget,
   graph: GraphWidget,
   timeline: TimelineWidget,
+  compare: CompareWidget,
 }
 
 const Component = ({

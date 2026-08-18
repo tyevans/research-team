@@ -922,3 +922,69 @@ def test_a_timeline_limit_past_the_server_s_cap_is_an_authoring_error():
         f"limit: expected a whole number from 1 to {MAX_TIMELINE_BANDS}, "
         f"got {MAX_TIMELINE_BANDS + 1}"
     ]
+
+
+COMPARE = """\
+```component:compare
+id: two-emperors
+entities: [Diocletian, Constantine]
+rows:
+  - label: Reign
+    cells:
+      - "284-305"
+      - "306-337"
+  - label: Religious policy
+```
+"""
+
+
+def test_compare_carries_its_entities_and_rows_through_both_views():
+    document = parse_document(COMPARE, path="lesson.md")
+
+    author = project(document, view="author")["blocks"][0]
+    learner = project(document, view="learner")["blocks"][0]
+
+    assert learner["data"] == author["data"]
+    assert author["data"]["entities"] == ["Diocletian", "Constantine"]
+    assert author["data"]["rows"][0]["label"] == "Reign"
+    assert learner["resolved"] is True
+
+
+def test_compare_needs_two_entities_to_compare():
+    """One column is not a comparison, and a table of one is a definition
+    with extra ceremony."""
+    source = (
+        "```component:compare\nid: c\nentities: [Constantine]\nrows:\n  - label: Reign\n```\n"
+    )
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert [str(note) for note in block.errors] == [
+        "entities: expected at least 2 entries, got 1"
+    ]
+
+
+def test_compare_names_a_non_string_entity_by_its_subscript():
+    source = (
+        "```component:compare\n"
+        "id: c\n"
+        "entities:\n"
+        "  - name: Constantine\n"
+        "  - Diocletian\n"
+        "rows:\n"
+        "  - label: Reign\n"
+        "```\n"
+    )
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert [str(note) for note in block.errors] == ["entities[0]: expected text, got mapping"]
+
+
+def test_a_compare_row_may_carry_no_cells_at_all():
+    """A row label with nothing under it is a real thing to write -- it is the
+    spec's own example -- and it renders as an empty row rather than an error.
+    Red against `cells` being required."""
+    source = "```component:compare\nid: c\nentities: [A, B]\nrows:\n  - label: Reign\n```\n"
+
+    assert parse_document(source, path="lesson.md").components[0].errors == ()

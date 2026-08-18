@@ -794,6 +794,35 @@
   color: var(--fg-dim);
 }
 
+.cmp-compare {
+  width: 100%;
+  border-collapse: collapse;
+  /* Wide tables scroll inside their own container rather than pushing the
+     document sideways -- a markdown column is narrow and three entities is
+     already wider than it. */
+  display: block;
+  overflow-x: auto;
+}
+
+.cmp-compare th,
+.cmp-compare td {
+  /* `border: 0` first, then the one edge that is wanted. A bare
+     `border-bottom` alone would in fact draw (Tailwind's `--tw-border-style`
+     defaults to solid, per CLAUDE.md), but this is a hand-written rule rather
+     than a utility, so the browser's own `medium` default is what the other
+     three sides would fall back to if a style ever reached them. Zeroing them
+     costs one declaration and removes the question. */
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.cmp-compare thead th {
+  font-weight: 600;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001s !important;

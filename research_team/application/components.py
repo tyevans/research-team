@@ -793,6 +793,61 @@ REGISTRY: dict[str, ComponentType] = {
             "an illustration of your point.",
         ),
     ),
+    "compare": ComponentType(
+        name="compare",
+        version=1,
+        summary=(
+            "A side-by-side table over two or more named entities. You write "
+            "the rows; the browser resolves each column head against this "
+            "project's graph and links the ones it finds."
+        ),
+        example=(
+            "```component:compare\n"
+            "id: two-emperors\n"
+            "entities: [Diocletian, Constantine]\n"
+            "rows:\n"
+            "  - label: Reign\n"
+            "    cells:\n"
+            '      - "284-305"\n'
+            '      - "306-337"\n'
+            "  - label: Religious policy\n"
+            "    cells:\n"
+            '      - "Persecution"\n'
+            '      - "Toleration, then patronage"\n'
+            "```"
+        ),
+        fields={
+            "entities": Spec(string_list(minimum=2), required=True),
+            "rows": Spec(
+                listing(
+                    {
+                        "label": Spec(text, required=True),
+                        # Optional, and short rows are fine: a label with
+                        # nothing under it is a real thing to write, and the
+                        # renderer pads to the column count rather than
+                        # refusing. Requiring one cell per entity would make
+                        # the commonest edit -- adding a third column --
+                        # invalidate every row at once.
+                        "cells": Spec(string_list(minimum=0)),
+                    }
+                ),
+                required=True,
+            ),
+        },
+        resolved=True,
+        craft=(
+            "Write each entity name exactly as your prose does, and exactly as "
+            "the sources spell it -- the column heads are looked up by name, "
+            "and one this project does not hold renders as plain text with the "
+            "rest of the table intact.",
+            "You write the rows yourself: nothing in this project stores "
+            "per-type attributes, so there is no schema to derive columns from. "
+            "Pick the dimensions the comparison actually turns on.",
+            "Cells are in the same order as `entities`. A short row is padded, "
+            "so a dimension one entity has and another does not is fine to "
+            "leave blank -- that blank is itself the comparison.",
+        ),
+    ),
 }
 
 
