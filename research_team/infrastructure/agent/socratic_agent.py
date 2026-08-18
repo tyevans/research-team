@@ -547,37 +547,15 @@ class DeepAgentSocraticExecutor:
                 if delta is not None:
                     on_activity(delta)
 
+        judged = parse_judgement(last_text(final))
         return SocraticPrompt(
-            prompt=last_text(final),
+            # The parsed question, never `last_text(final)`. The model's last
+            # message is the YAML block; falling back to it when the parse
+            # yields an empty prompt -- which a concluding turn does by design
+            # -- would show the reader the block as the dialogue's closing
+            # words.
+            prompt=judged.prompt,
             citations=citations(final),
-            # `observation` and `concluded` are left at their defaults, and this
-            # is a scoped omission with a named owner rather than an oversight.
-            #
-            # **Until Plan 4 ("concluding a dialogue") lands, nothing anywhere
-            # writes `SocraticDialogueConcluded`.** Both fields need the model to
-            # return structured judgement alongside its prose, and that parse
-            # fails *silently* -- a malformed answer reads as "not concluded"
-            # rather than raising -- so it needs its own slice and its own red
-            # proofs instead of riding along at the end of this one.
-            #
-            # Two consequences to know before you touch anything nearby:
-            #
-            # 1. A dialogue currently ends only when the reader stops replying.
-            #    The design's first sentence is that it should stop when the
-            #    reader has demonstrated the thing rather than when they stop
-            #    typing, so this is the gap between what is built and what was
-            #    designed -- not a detail.
-            # 2. `SocraticDialogueState.status == "concluded"` and
-            #    `SocraticDialogueRow.status`, with the refusal branches in
-            #    `socratic_dialogue.decide` behind them, are therefore
-            #    **unreachable through any live path** and are exercised only by
-            #    unit tests that build the state directly. They are not dead
-            #    code. Deleting them is the obvious tidy-up and it would delete
-            #    the thing Plan 4 is built on.
-            #
-            # The graded route (`SocraticDialogueService.record_attempt`) does
-            # produce `evidence="attempt"` observations with none of this
-            # machinery, which is the half the design argues is worth having
-            # first -- so the stopping condition has evidence accumulating
-            # against it even while nothing can act on it yet.
+            observation=judged.observation,
+            concluded=judged.concluded,
         )

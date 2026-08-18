@@ -259,9 +259,22 @@ async def _respond(history=(), reply="It settled Arianism."):
     """One `respond` call over the tool-aware fake, mirroring
     `test_ask_agent.py::_answer` because the executor mirrors that one."""
     RecordingModel.prompted = []
+    # A judgement block, not bare prose: since the executor parses every reply
+    # through `parse_judgement`, a fake answering in prose now raises rather
+    # than returning, and all three `respond` tests below go red on the raise.
+    # The question is what these tests read back, so it is carried in `prompt`.
     project_tools = tuple(_named(name) for name in ("read_source", "record_finding"))
     executor = DeepAgentSocraticExecutor(
-        model=RecordingModel(responses=[AIMessage(content="Why do you say that?", id="a1")]),
+        model=RecordingModel(
+            responses=[
+                AIMessage(
+                    content=(
+                        "```yaml\nconcluded: false\nprompt: |\n  Why do you say that?\n```\n"
+                    ),
+                    id="a1",
+                )
+            ]
+        ),
         open_graph=lambda _project: _ready((None, project_tools)),
         project_files=lambda _project: _ready({"notes.md": "x"}),
         project_sources=lambda _project: _ready({}),
@@ -296,7 +309,11 @@ async def test_a_reply_comes_back_as_the_models_next_question():
     assert isinstance(result, SocraticPrompt)
     assert result.prompt == "Why do you say that?"
     assert result.citations == ()
-    # Left at their defaults until Plan 4; see the comment at the return site.
+    # The fake's judgement observes nothing and does not conclude, so these
+    # carry the parse's answer rather than a default -- which is precisely what
+    # makes them weak here. `test_a_dialogue_concludes.py` is where a `true`
+    # verdict is proved to reach a stored event; this only pins that a turn
+    # which continues stays continuing.
     assert result.observation is None
     assert result.concluded is False
 
