@@ -76,6 +76,7 @@ async def client(tmp_path):
         application.service,
         application.feed,
         application.turns,
+        dialogues=application.dialogues,
         socratic=application.socratic,
     )
     transport = ASGITransport(app=api)
@@ -202,6 +203,7 @@ async def test_a_component_in_a_question_arrives_parsed_and_withheld(tmp_path):
             application.service,
             application.feed,
             application.turns,
+            dialogues=application.dialogues,
             socratic=application.socratic,
         )
         transport = ASGITransport(app=api)

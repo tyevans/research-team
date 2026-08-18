@@ -1,6 +1,7 @@
 import { useContainer } from '@app/container-context.tsx'
 import { useAttemptMachine, type AttemptsApi } from '@application/lesson/use-attempts.ts'
-import type { ProjectId } from '@domain/shared/identifier.ts'
+import type { ItemProgress } from '@domain/lesson/attempt.ts'
+import type { ComponentId, ProjectId } from '@domain/shared/identifier.ts'
 
 /** Every widget's state for one exchange, and the one call that changes it on
  *  the server.
@@ -11,10 +12,23 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
  * whole argument for this surface being its own principal, so it would be odd
  * to reach it through the ask's hook.
  *
- * `stored` is null all the same, and for a different reason than the ask's:
- * the attempts are written and no read route serves them back yet (B114, Task
- * 6's progress route). So a refresh still shows empty widgets today, and this
- * hook will gain the loader rather than change shape when it does not.
+ * `stored` is a parameter here where `useAskAttempts` hardcodes null, and that
+ * one difference is the surface's whole claim: an ask discards an attempt, a
+ * dialogue records one, and B114's progress route is what makes the recording
+ * visible instead of merely true in the log. It is this exchange's own map --
+ * `progress['turn/{position}']` -- because a component id is unique only
+ * within one utterance.
+ *
+ * Required rather than optional, and emphatically not defaulted with `??`: an
+ * omitted map would read as "this reader has answered nothing", which is the
+ * exact false statement this parameter exists to stop the page making. A
+ * caller with nothing loaded passes `null` and says so.
+ *
+ * Nothing refreshes it after an attempt, deliberately. `useAttemptMachine`
+ * reads `stored` only where there is no local edit, and submitting a component
+ * always writes one -- so a reload after marking cannot change a pixel, and
+ * would be one request per answer that provably does nothing. The store loads
+ * it once the dialogue has an id; see `DialogueView`.
  *
  * `dialogueId` is nullable because the page renders before `start` returns the
  * server-minted id. Posting under a guessed id would grade against a dialogue
@@ -31,11 +45,12 @@ export const useDialogueAttempts = (
   projectId: ProjectId,
   dialogueId: string | null,
   position: number,
+  stored: ReadonlyMap<ComponentId, ItemProgress> | null,
 ): AttemptsApi => {
   // Plural, as every key in this container is.
   const { dialogues } = useContainer()
   const api = useAttemptMachine(`${dialogueId ?? 'pending'}:${String(position)}`, {
-    stored: null,
+    stored,
     // The null check is inside the port rather than only on the returned
     // `submit` below, and both are kept. A non-null assertion here -- which is
     // what this was, and what `useAskAttempts` still is -- is safe only because

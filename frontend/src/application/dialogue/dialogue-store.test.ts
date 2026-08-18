@@ -8,17 +8,29 @@ import { expect, it, vi } from 'vitest'
 
 import type { DialogueRepository } from '@application/ports/repositories.ts'
 import type { DocumentBlock } from '@domain/lesson/document.ts'
-import { ProjectId } from '@domain/shared/identifier.ts'
+import { ComponentId, ProjectId } from '@domain/shared/identifier.ts'
 
 import { createDialogueStore } from './dialogue-store.ts'
 
 const PROJECT = ProjectId('11111111-1111-4111-8111-111111111111')
 const BLOCKS: readonly DocumentBlock[] = [{ kind: 'markdown', text: 'Where would you start?' }]
 
+/** The framing `POST /dialogues` answers. The goal and the opening question
+ *  are on it because the route returns them: for three commits it answered an
+ *  id alone while claiming otherwise, and the page drew an empty framing over
+ *  an empty thread. */
+const FRAMING = {
+  dialogueId: 'd1',
+  goal: 'understand the creed',
+  stoppingCondition: 'the reader explains it unaided',
+  openingBlocks: BLOCKS,
+}
+
 const repo = (over: Partial<DialogueRepository> = {}): DialogueRepository => ({
-  start: vi.fn<DialogueRepository['start']>().mockResolvedValue('d1'),
+  start: vi.fn<DialogueRepository['start']>().mockResolvedValue(FRAMING),
   reply: vi.fn<DialogueRepository['reply']>().mockResolvedValue(undefined),
   submitDialogueAttempt: vi.fn(),
+  progress: vi.fn<DialogueRepository['progress']>().mockResolvedValue({}),
   ...over,
 })
 
@@ -200,7 +212,7 @@ it('does not start a second dialogue while one is being framed', async () => {
   // reach again.
   let release = (): void => {}
   const start = vi.fn<DialogueRepository['start']>(
-    () => new Promise<string>((resolve) => (release = () => resolve('d1'))),
+    () => new Promise((resolve) => (release = () => resolve(FRAMING))),
   )
   const dialogue = store(repo({ start }))
 
@@ -228,4 +240,82 @@ it('surfaces a framing failure as an error rather than an empty dialogue', async
   expect(dialogue.getState().dialogueId).toBeNull()
   expect(dialogue.getState().error).toContain('could not be framed')
   expect(dialogue.getState().starting).toBe(false)
+})
+
+it('draws the framing the moment the dialogue is framed', async () => {
+  // The largest hole this task closes. `POST /dialogues` answered
+  // `{"dialogueId"}` alone while its docstring claimed the goal arrived there,
+  // so a freshly framed dialogue showed "Pick something to work through." over
+  // an empty thread until the reader answered a question they could not see.
+  //
+  // Asserted on all three fields rather than on `dialogueId`, which was
+  // already set before this change and is therefore the one assertion that
+  // could not fail. Red against a `start` that folds in the id alone.
+  const dialogue = store(repo())
+
+  await dialogue.getState().start('the Nicene settlement')
+
+  expect(dialogue.getState().dialogueId).toBe('d1')
+  expect(dialogue.getState().goal).toBe('understand the creed')
+  expect(dialogue.getState().stoppingCondition).toBe('the reader explains it unaided')
+  expect(dialogue.getState().openingBlocks).toEqual(BLOCKS)
+})
+
+it('reads back the answers the server remembered', async () => {
+  // B114, and the whole argument for this surface being its own principal: an
+  // ask discards an attempt, a dialogue records one. Until this route existed
+  // the recording was real in the log and invisible in the browser.
+  //
+  // Asserted on the stored verdict reaching the state, never on the call
+  // having been made: an empty map is the right answer for a dialogue nobody
+  // has answered anything in, so a call-count assertion passes against a
+  // repository reading the wrong id entirely.
+  const marked = new Map([
+    [
+      ComponentId('council-1'),
+      { attempts: 2, correct: true, bestScore: 1, lastScore: 1, checked: [] },
+    ],
+  ])
+  // Held in a local rather than read back off the repository object:
+  // `@typescript-eslint/unbound-method` refuses `dialogues.progress` as a bare
+  // reference.
+  const progress = vi.fn<DialogueRepository['progress']>().mockResolvedValue({ 'turn/0': marked })
+  const dialogue = store(repo({ progress }))
+  await dialogue.getState().start('t')
+
+  await dialogue.getState().refreshProgress()
+
+  expect(dialogue.getState().progress['turn/0']?.get(ComponentId('council-1'))?.correct).toBe(true)
+  expect(progress).toHaveBeenCalledWith(PROJECT, 'd1')
+})
+
+it('does not ask for progress before there is a dialogue to ask about', async () => {
+  // `dialogueId` is null until `start` returns, and a null rendered into the
+  // path 404s -- which the page would then have to explain to a reader who has
+  // done nothing wrong. `DialogueView` runs this effect on mount, so this is
+  // the ordinary case rather than a corner.
+  const progress = vi.fn<DialogueRepository['progress']>().mockResolvedValue({})
+  const dialogue = store(repo({ progress }))
+
+  await dialogue.getState().refreshProgress()
+
+  expect(progress).not.toHaveBeenCalled()
+})
+
+it('leaves the page alone when the progress load fails', async () => {
+  // Deliberately silent, and the cost is stated in the store: this request is
+  // not the reader's action, and routing its failure into the page's error
+  // banner would blame their last answer for a call they did not make. What a
+  // failure looks like instead is a dialogue that forgot -- which is the bug
+  // this route exists to fix, and nothing catches it.
+  const dialogues = repo({
+    progress: vi.fn<DialogueRepository['progress']>().mockRejectedValue(new Error('gone')),
+  })
+  const dialogue = store(dialogues)
+  await dialogue.getState().start('t')
+
+  await dialogue.getState().refreshProgress()
+
+  expect(dialogue.getState().error).toBeNull()
+  expect(dialogue.getState().progress).toEqual({})
 })

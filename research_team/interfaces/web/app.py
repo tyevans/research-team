@@ -155,6 +155,7 @@ from research_team.interfaces.web.presenters import (
     corpus_change,
     course_view,
     definition_view,
+    dialogue_progress_view,
     dispatch_view,
     entity_page_view,
     event_rows,
@@ -3240,18 +3241,48 @@ def create_app(
 
     @app.post("/api/projects/{project_id}/dialogues")
     async def start_dialogue(project_id: UUID, body: SocraticStart):
-        """Frame a dialogue and return its id.
+        """Frame a dialogue and return it -- goal, stopping condition and all.
 
         Not a stream, unlike the reply route: framing produces three strings and
         no activity worth watching, and a page that opened an EventSource for it
         would show a spinner over an empty transcript. The reader's first sight
         of the dialogue is its goal, and that arrives here.
 
+        **It did not, until this route returned more than an id.** For three
+        commits this docstring's last sentence was false: the body was
+        `{"dialogueId"}` alone, so a freshly framed dialogue drew an empty
+        framing block and an empty thread until the reader answered a question
+        they could not see. `read_dialogue` below already served all three
+        fields; nothing called it after framing.
+
+        Returned here rather than left to a second `GET` by the client, and the
+        trade is worth naming. A second call is one more round trip on the one
+        path where the browser has nothing at all to draw in between, and it
+        gives the store two independent failure modes (a 404 or a 503 on the
+        read) for one reader action -- a dialogue that exists but whose framing
+        did not arrive is a state nothing on the page can explain. The cost is
+        that this route now needs `dialogues` and answers 503 without it, where
+        it previously needed only `socratic`. That is honest rather than a
+        narrowing: `composition.py` builds the two together (`socratic_service`
+        takes `read_model=dialogues`), and a build with no projection cannot
+        resume, list, or re-read any dialogue it mints.
+
+        Reading the projection immediately after the write happens to be safe
+        today -- `InMemoryEventBus.publish` dispatches synchronously by default
+        (`background=False`), so `SocraticDialogueOpened` is projected before
+        `begin` returns -- and that is **not** relied on. A miss falls through to
+        `caught_up()` and one retry, which is scoped by aggregate type and so
+        returns immediately in the common case rather than running its timeout
+        against another stream's append (`SocraticDialogueRunner.caught_up` says
+        why the scoping matters). The cost of the retry is one wasted `get` on a
+        genuinely absent row; the cost of trusting the bus is a route that
+        starts 502ing the day anything passes `background=True`.
+
         A framing the model botched raises `ValueError` out of `parse_framing`
         and becomes a 502: the request was fine and the upstream was not, which
         is a different thing to tell a reader than a 400.
         """
-        if socratic is None:
+        if socratic is None or dialogues is None:
             raise HTTPException(status_code=503, detail="dialogues are not configured")
         if service is not None:
             await _require_project(project_id)
@@ -3261,7 +3292,22 @@ def create_app(
             raise HTTPException(
                 status_code=502, detail=f"the dialogue could not be framed: {bad_framing}"
             ) from bad_framing
-        return {"dialogueId": str(dialogue_id)}
+        row = await dialogues.get(dialogue_id)
+        if row is None:
+            await dialogues.caught_up()
+            row = await dialogues.get(dialogue_id)
+        if row is None:
+            # Unreachable through a working projection, and a 502 rather than
+            # an assertion because the failure it reports is real and specific:
+            # the dialogue was minted and its framing is not readable, which is
+            # a half-made thing the client must not be handed as if it were
+            # whole. A dropped `@handles` reaches here as a `TimeoutError` out
+            # of `caught_up` instead -- see that method for why.
+            raise HTTPException(
+                status_code=502,
+                detail=f"dialogue {dialogue_id} was framed but its projection is not readable",
+            )
+        return _dialogue_view(row)
 
     @app.post("/api/projects/{project_id}/dialogues/{dialogue_id}/reply")
     async def reply_to_dialogue(project_id: UUID, dialogue_id: UUID, body: SocraticReply):
@@ -3334,16 +3380,15 @@ def create_app(
         reason this surface can answer a question the ask path was allowed to
         skip.
 
-        What that buys, precisely, and what it does not yet: the attempt is
-        *recorded* against the dialogue id, so it survives a refresh **in
-        storage**. No client can see it. The only progress read route is
-        `GET /api/sessions/{session_id}/progress`, which resolves its id
-        through `_load(session_id)` and so cannot serve a dialogue id, and
-        `progress_for` on the service is in-process only. A dialogue-scoped
-        read route -- and a console that calls it -- would have to exist before
-        a refresh leaves the widgets filled in; both are later plans' work.
-        Backlogged, so the gap is not rediscovered by someone trusting this
-        docstring.
+        What that buys: the attempt is *recorded* against the dialogue id and
+        survives a refresh both in storage and on the page.
+        `GET .../dialogues/{dialogue_id}/progress` below is what reads it back
+        (B114). For three commits it did not exist -- the only progress read
+        route was `GET /api/sessions/{session_id}/progress`, which resolves its
+        id through `_load(session_id)` and so cannot serve a dialogue id, and
+        `progress_for` on the service is in-process only -- so the property this
+        route was built for was real in the event log and invisible in the
+        browser.
 
         The key is recovered by re-parsing the stored turn's `prompt`, which is
         the dialogue's utterance -- not `reply`, which is the reader's. Parsed
@@ -3407,6 +3452,45 @@ def create_app(
         return verdict.as_json() | {
             "progress": item_view(progress, f"turn/{body.position}", body.component_id)
         }
+
+    @app.get("/api/projects/{project_id}/dialogues/{dialogue_id}/progress")
+    async def read_dialogue_progress(project_id: UUID, dialogue_id: UUID):
+        """Every answer this reader has had marked in this dialogue (B114).
+
+        **The read side of the route above, and the whole argument for this
+        surface being its own principal.** An ask discards an attempt; a
+        dialogue records one against a durable id. That claim -- "your answers
+        survive a refresh" -- was true in storage and false on screen until this
+        existed, because nothing could read the recording back.
+
+        `scope: "dialogue"` is a third shape beside `progress_view`'s `"file"`
+        and `"session"`, built rather than folded into the shared presenter.
+        `dialogue_progress_view` carries the reasoning and the cost; the short
+        form is that a dialogue's records are keyed by an *utterance*
+        (`turn/{position}`) and a component id is only unique within one, so
+        neither existing key fits, and widening a presenter two other surfaces
+        depend on so a third can reuse it is how surfaces couple by accident.
+
+        An untouched dialogue answers `{"items": {}}` and not a 404: nobody has
+        answered anything yet is a fact about the reader, not about the id. So
+        a test that asserts only the status passes against a route reading an
+        id it was never given -- `test_a_recorded_attempt_is_readable_back`
+        asserts a stored verdict through the body for that reason.
+
+        Ownership is checked the way both neighbours check it, and a dialogue in
+        another project is a 404 rather than a 403 for `read_dialogue`'s reason:
+        telling a caller that an id they cannot read does exist is the
+        distinction not worth drawing.
+        """
+        if socratic is None or dialogues is None:
+            raise HTTPException(status_code=503, detail="dialogues are not configured")
+        row = await dialogues.get(dialogue_id)
+        if row is None or row.project_id != project_id:
+            raise HTTPException(
+                status_code=404, detail=f"no dialogue {dialogue_id} in {project_id}"
+            )
+        state = await socratic.progress_for(dialogue_id)
+        return dialogue_progress_view(state, str(dialogue_id))
 
     @app.delete("/api/projects/{project_id}/ask/{chat_id}")
     async def forget_ask(project_id: UUID, chat_id: str):

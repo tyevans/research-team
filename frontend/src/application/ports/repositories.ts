@@ -13,7 +13,7 @@ import type {
 } from '@domain/knowledge/graph.ts'
 import type { OntologyClass } from '@domain/knowledge/ontology.ts'
 import type { Timeline } from '@domain/knowledge/timeline.ts'
-import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.ts'
+import type { ComponentAudience, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
@@ -603,11 +603,38 @@ export interface AskRepository {
  *  system asks and the reader answers. Its own port rather than a widened
  *  `AskRepository` for the reason `domain/dialogue/conversation.ts` opens
  *  with -- a shared type would make that inversion a runtime concern. */
+/** A dialogue's framing: what it is for, when it is done, and how it opened.
+ *
+ * Returned whole from `start` rather than fetched afterwards. The route
+ * `POST /dialogues` answered `{"dialogueId"}` alone for three commits while its
+ * own docstring claimed the goal arrived there, so a freshly framed dialogue
+ * drew an empty framing block and an empty thread until the reader answered a
+ * question they could not see. `app.py`'s `start_dialogue` carries the trade
+ * against a second `GET`.
+ *
+ * `openingBlocks`, never a raw prompt string: no dialogue surface carries raw
+ * prompt text, because the raw copy ships the fenced component's answer key
+ * beside a projection that withheld it. */
+export interface DialogueFraming {
+  readonly dialogueId: string
+  readonly goal: string
+  readonly stoppingCondition: string
+  readonly openingBlocks: readonly DocumentBlock[]
+}
+
+/** What this reader has had marked in one dialogue, keyed `turn/{position}`
+ *  and then by component id.
+ *
+ * Two levels because a component id is unique only within one utterance. Each
+ * turn's value is exactly the shape `useAttemptMachine`'s `stored` port takes,
+ * so an exchange passes its own entry through unadapted. */
+export type DialogueProgress = Readonly<Record<string, ReadonlyMap<ComponentId, ItemProgress>>>
+
 export interface DialogueRepository {
-  /** Frames a dialogue and returns its server-minted id. Not a stream:
+  /** Frames a dialogue and returns it, id and framing together. Not a stream:
    *  framing produces three strings and no activity worth watching, and the
    *  id is the server's to mint because it is a row key and a URL segment. */
-  start(projectId: ProjectId, topic: string): Promise<string>
+  start(projectId: ProjectId, topic: string): Promise<DialogueFraming>
   /** Streams one exchange. Rejects with a 404 for an unknown or concluded
    *  dialogue and a 409 for one already running -- both are raised before the
    *  stream opens, so both are status codes. A failure after the first frame
@@ -624,14 +651,20 @@ export interface DialogueRepository {
    *  the server, so the browser cannot grade it.
    *
    *  Unlike `submitAskAttempt` this attempt is *recorded* against the dialogue
-   *  id and survives a refresh in storage -- but no read route serves it back
-   *  to a client yet, which is Task 6's progress route. Until then a refresh
-   *  still shows empty widgets. */
+   *  id, and `progress` below is what reads it back -- which is what makes the
+   *  recording visible to a reader rather than only true in the log. */
   submitDialogueAttempt(
     projectId: ProjectId,
     dialogueId: string,
     input: { position: number; componentId: ComponentId; response: AttemptResponse },
   ): Promise<Verdict>
+  /** Everything this reader has had marked in this dialogue.
+   *
+   * The whole argument for this surface being its own principal: an ask
+   * discards an attempt and a dialogue keeps one, so this is the call that
+   * makes "your answers survive a refresh" true on screen and not just in
+   * storage. An untouched dialogue answers `{}` rather than rejecting. */
+  progress(projectId: ProjectId, dialogueId: string): Promise<DialogueProgress>
 }
 
 export interface HealthRepository {

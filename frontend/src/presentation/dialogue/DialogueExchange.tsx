@@ -1,9 +1,9 @@
 import { useDialogueAttempts } from '@application/dialogue/use-dialogue-attempts.ts'
 import type { AttemptsApi } from '@application/lesson/use-attempts.ts'
 import type { DialogueTurn } from '@domain/dialogue/conversation.ts'
-import { freshAttempt, mcqResponse } from '@domain/lesson/attempt.ts'
+import { freshAttempt, mcqResponse, type ItemProgress } from '@domain/lesson/attempt.ts'
 import type { DocumentBlock } from '@domain/lesson/document.ts'
-import type { ProjectId } from '@domain/shared/identifier.ts'
+import type { ComponentId, ProjectId } from '@domain/shared/identifier.ts'
 
 import { AskActivityFold } from '../ask/AskActivity.tsx'
 import { CitationList } from '../ask/CitationList.tsx'
@@ -135,6 +135,7 @@ export const DialogueExchange = ({
   turn,
   index,
   dialogueId,
+  stored,
   outstanding,
   open,
   onToggle,
@@ -143,6 +144,11 @@ export const DialogueExchange = ({
   turn: DialogueTurn
   index: number
   dialogueId: string | null
+  /** What the server remembers of THIS turn's widgets, or null where nothing
+   *  has been loaded. Passed down rather than fetched here so that one request
+   *  serves the whole thread; the exchange is handed only its own slice,
+   *  because a component id is unique only within one utterance. */
+  stored: ReadonlyMap<ComponentId, ItemProgress> | null
   /** Whether this turn's question is the newest thing the dialogue said. */
   outstanding: boolean
   open: boolean
@@ -153,7 +159,7 @@ export const DialogueExchange = ({
   // A guard added for a fixture's benefit would hide a missing provider until
   // the first question that happened to carry a widget -- which is production,
   // not the suite.
-  const attempts = useDialogueAttempts(projectId, dialogueId, turn.position)
+  const attempts = useDialogueAttempts(projectId, dialogueId, turn.position, stored)
 
   return (
     // `border-0` before `border-t`: `border-solid` sets `border-style: solid`

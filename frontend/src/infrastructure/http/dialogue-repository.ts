@@ -22,15 +22,19 @@
 import { z } from 'zod'
 
 import { ApiError } from '@application/ports/errors.ts'
-import type { DialogueRepository } from '@application/ports/repositories.ts'
+import type {
+  DialogueFraming,
+  DialogueProgress,
+  DialogueRepository,
+} from '@application/ports/repositories.ts'
 import type { DialogueEvent } from '@domain/dialogue/conversation.ts'
 import type { AttemptResponse, Verdict } from '@domain/lesson/attempt.ts'
 import type { DocumentBlock } from '@domain/lesson/document.ts'
 import type { ComponentId, ProjectId } from '@domain/shared/identifier.ts'
 
-import { verdictDto } from './dto.ts'
+import { dialogueProgressDto, verdictDto } from './dto.ts'
 import { seg } from './http-client.ts'
-import { toVerdict } from './mappers.ts'
+import { toDialogueProgress, toVerdict } from './mappers.ts'
 
 // Source-only, as on the ask: the citations a dialogue carries come from the
 // same retrieval tools, and no server surface mints another kind.
@@ -138,7 +142,7 @@ export class HttpDialogueRepository implements DialogueRepository {
     private readonly fetcher: typeof fetch = (...args) => fetch(...args),
   ) {}
 
-  async start(projectId: ProjectId, topic: string): Promise<string> {
+  async start(projectId: ProjectId, topic: string): Promise<DialogueFraming> {
     const response = await this.fetcher(
       `${this.baseUrl}/api/projects/${seg(projectId)}/dialogues`,
       {
@@ -148,11 +152,17 @@ export class HttpDialogueRepository implements DialogueRepository {
       },
     )
     if (!response.ok) throw new ApiError(await detail(response), response.status)
-    // `dialogueId`, camelCase, and this one is the server's own spelling -- the
-    // route returns `{"dialogueId": ...}` where every SSE frame is snake_case.
-    // Reading `dialogue_id` here yields `undefined` and a dialogue whose every
-    // later request 404s.
-    return startedDto.parse(JSON.parse(await response.text())).dialogueId
+    // camelCase throughout, and this route is the server's own spelling -- it
+    // answers `_dialogue_view`, where every SSE frame is snake_case. Reading
+    // `dialogue_id` here yields `undefined` and a dialogue whose every later
+    // request 404s.
+    const framed = framingDto.parse(JSON.parse(await response.text()))
+    return {
+      dialogueId: framed.dialogueId,
+      goal: framed.goal,
+      stoppingCondition: framed.stoppingCondition,
+      openingBlocks: framed.openingBlocks as readonly DocumentBlock[],
+    }
   }
 
   async reply(
@@ -217,13 +227,36 @@ export class HttpDialogueRepository implements DialogueRepository {
     )
     if (!response.ok) throw new ApiError(await detail(response), response.status)
     // Same verdict shape as the lesson and ask routes, so the same schema and
-    // mapper. Unlike the ask's, this attempt is *recorded* server-side -- but
-    // no read route serves it back yet, which is Task 6's problem.
+    // mapper. Unlike the ask's, this attempt is *recorded* server-side, and
+    // `progress` below is what reads it back.
     return toVerdict(verdictDto.parse(JSON.parse(await response.text())))
+  }
+
+  async progress(projectId: ProjectId, dialogueId: string): Promise<DialogueProgress> {
+    const response = await this.fetcher(
+      `${this.baseUrl}/api/projects/${seg(projectId)}/dialogues/${seg(dialogueId)}/progress`,
+    )
+    // Not swallowed into an empty map. An untouched dialogue already answers
+    // `{"items": {}}` with a 200, so a caught failure would be indistinguishable
+    // from "you have answered nothing" -- which on this surface is precisely the
+    // claim being made, and the wrong one to make silently.
+    if (!response.ok) throw new ApiError(await detail(response), response.status)
+    return toDialogueProgress(dialogueProgressDto.parse(JSON.parse(await response.text())))
   }
 }
 
-const startedDto = z.object({ dialogueId: z.string() })
+/** The framing route's body. `_dialogue_view` carries more than these four
+ *  fields -- `topic`, `status`, `turnCount` and the rest -- and none of them are
+ *  read here: a schema that demanded them would reject a body the server
+ *  trimmed, and one that carried them would put a second copy of the dialogue
+ *  list's shape in this file. zod ignores unknown keys, which is what makes
+ *  taking four of them honest rather than lossy. */
+const framingDto = z.object({
+  dialogueId: z.string(),
+  goal: z.string().default(''),
+  stoppingCondition: z.string().default(''),
+  openingBlocks: z.array(z.unknown()).default([]),
+})
 
 const emit = (frame: string, onEvent: (event: DialogueEvent) => void): void => {
   const event = parseFrame(frame)

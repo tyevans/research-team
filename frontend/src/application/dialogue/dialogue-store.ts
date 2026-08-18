@@ -17,7 +17,7 @@
 import { create } from 'zustand'
 
 import { errorMessage } from '@application/ports/errors.ts'
-import type { DialogueRepository } from '@application/ports/repositories.ts'
+import type { DialogueProgress, DialogueRepository } from '@application/ports/repositories.ts'
 import { answered, applyEvent, type DialogueTranscript } from '@domain/dialogue/conversation.ts'
 import type { DocumentBlock } from '@domain/lesson/document.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
@@ -41,11 +41,25 @@ export interface DialogueState {
    * did, walked the opening question forward and drew a duplicate of a
    * question one exchange stale at the top of the thread. */
   readonly openingBlocks: readonly DocumentBlock[]
+  /** What this reader has already had marked in this dialogue, keyed
+   *  `turn/{position}`.
+   *
+   * The state that makes this surface's claim true rather than merely
+   * recorded: an attempt is written against the dialogue id, and until
+   * `refreshProgress` existed nothing read it back, so a refresh showed blank
+   * widgets over answers the server remembered perfectly. Empty until the
+   * first refresh resolves, which is honest -- an unanswered widget and an
+   * unloaded one look the same because at that moment they are the same
+   * thing to the reader. */
+  readonly progress: DialogueProgress
   readonly replying: boolean
   readonly starting: boolean
   readonly error: string | null
   start(topic: string): Promise<void>
   send(reply: string): Promise<void>
+  /** Reloads the marked answers. Called on mount and after an attempt is
+   *  marked, and never on a null `dialogueId`. */
+  refreshProgress(): Promise<void>
 }
 
 export type DialogueStore = ReturnType<typeof createDialogueStore>
@@ -63,6 +77,7 @@ export const createDialogueStore = ({
     goal: '',
     stoppingCondition: '',
     openingBlocks: [],
+    progress: {},
     replying: false,
     starting: false,
     error: null,
@@ -83,7 +98,21 @@ export const createDialogueStore = ({
 
       set({ starting: true, error: null })
       try {
-        set({ dialogueId: await dialogues.start(projectId, trimmed) })
+        // The framing arrives HERE, with the id, and that is the whole of what
+        // this fold buys. It used to take an id alone, so a freshly framed
+        // dialogue drew "Pick something to work through." over an empty thread
+        // -- the goal, the stopping condition and the opening question all
+        // existed on the server and none of them were on screen until the
+        // reader answered a question they could not see. The test that fails
+        // if this narrows back to an id is `draws the framing the moment the
+        // dialogue is framed`.
+        const framing = await dialogues.start(projectId, trimmed)
+        set({
+          dialogueId: framing.dialogueId,
+          goal: framing.goal,
+          stoppingCondition: framing.stoppingCondition,
+          openingBlocks: framing.openingBlocks,
+        })
       } catch (err) {
         // Surfaced rather than swallowed: the route answers 502 when the model
         // botched the framing, and a store that kept quiet would leave the page
@@ -156,6 +185,29 @@ export const createDialogueStore = ({
         }))
       } finally {
         set({ replying: false })
+      }
+    },
+
+    async refreshProgress() {
+      const dialogueId = get().dialogueId
+      // Read out before the guard rather than after it, as `send` does: `get()`
+      // is opaque to the narrowing, so a second call would be `string | null`
+      // again. No dialogue means no id for the path, and a `null` rendered
+      // into it 404s.
+      if (dialogueId === null) return
+      try {
+        set({ progress: await dialogues.progress(projectId, dialogueId) })
+      } catch {
+        // Swallowed, and this is the one place in this store that swallows.
+        // The others surface because they are the reader's own action failing;
+        // this one runs unbidden on mount and after every marked answer, and
+        // the widget it feeds already shows its own verdict from the attempt
+        // response. Turning a failed background reload into the page's `error`
+        // banner would blame the reader's last answer for a request they did
+        // not make. The cost, stated plainly: a progress load that fails
+        // repeatedly is invisible, and what it looks like is a dialogue that
+        // forgot -- which is the bug this whole route exists to fix. Nothing
+        // catches that today.
       }
     },
   }))

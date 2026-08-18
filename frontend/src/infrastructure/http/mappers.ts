@@ -192,6 +192,24 @@ export const toProgressMap = (
     Object.entries(raw.items).map(([id, record]) => [ComponentId(id), toItemProgress(record)]),
   )
 
+/** One `ReadonlyMap` per turn, keyed `turn/{position}`.
+ *
+ * A `Map` inside rather than a plain record because that is exactly what
+ * `useAttemptMachine`'s `stored` port takes, so an exchange hands its own entry
+ * straight through with no adaptation at the call site. The outer level stays a
+ * record: it is looked up by a string the caller builds, never iterated. */
+export const toDialogueProgress = (
+  raw: Dto<typeof dto.dialogueProgressDto>,
+): Readonly<Record<string, ReadonlyMap<ComponentId, ItemProgress>>> =>
+  Object.fromEntries(
+    Object.entries(raw.items).map(([turn, items]) => [
+      turn,
+      new Map(
+        Object.entries(items).map(([id, record]) => [ComponentId(id), toItemProgress(record)]),
+      ),
+    ]),
+  )
+
 export const toVerdict = (raw: Dto<typeof dto.verdictDto>): Verdict => ({
   correct: raw.correct,
   score: raw.score,

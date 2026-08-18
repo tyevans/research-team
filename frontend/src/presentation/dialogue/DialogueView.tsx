@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 
 import { useContainer } from '@app/container-context.tsx'
 import { createDialogueStore } from '@application/dialogue/dialogue-store.ts'
@@ -37,9 +37,28 @@ export const DialogueView = ({ projectId }: { projectId: ProjectId }) => {
   // The server's id, null until `start` returns it. `DialoguePage` chooses
   // which of the two things its one composer is asking for from this.
   const dialogueId = store((state) => state.dialogueId)
+  /** What the server remembers of this reader's answers. Empty until the load
+   *  below resolves, which is honest: an unanswered widget and an unloaded one
+   *  are the same thing to a reader looking at them. */
+  const progress = store((state) => state.progress)
   const replying = store((state) => state.replying)
   const starting = store((state) => state.starting)
   const error = store((state) => state.error)
+
+  /** Load the marked answers once this dialogue has an id.
+   *
+   * Keyed on `dialogueId` rather than run once on mount: the id is null until
+   * `start` returns, so a bare `[]` effect would fire against nothing and
+   * never fire again -- and the case this whole route exists for, a reader
+   * returning to a dialogue that already has answers in it, arrives with an
+   * id already set. The store's action is a no-op on a null id, so the first
+   * run costs nothing.
+   *
+   * `void`: the action never rejects (it swallows its own failure and says
+   * why), so there is nothing here to handle. */
+  useEffect(() => {
+    void store.getState().refreshProgress()
+  }, [store, dialogueId])
 
   return (
     <DialoguePage
@@ -49,6 +68,7 @@ export const DialogueView = ({ projectId }: { projectId: ProjectId }) => {
       stoppingCondition={stoppingCondition}
       openingBlocks={openingBlocks}
       dialogueId={dialogueId}
+      progress={progress}
       replying={replying}
       starting={starting}
       error={error}

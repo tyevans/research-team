@@ -11,6 +11,18 @@
  * found still green with its rules renamed away. Deleting `.dlg-question`'s
  * `background` reddens the first test; deleting its `border-left` reddens the
  * third.
+ *
+ * **That second claim was false until 2026-08-18 and is worth reading as a
+ * warning.** The rule is `.dlg-question, .dlg-pending { border: 0; border-left:
+ * 2px solid var(--accent-dim) }` with `.dlg-pending` overriding only
+ * `border-left-color`. Delete the shared shorthand and the pending question
+ * still resolves a colour from its own surviving override while the settled one
+ * falls back to `color` -- so `glow !== quiet` still held, and the second
+ * assertion compared two elements that had both fallen back to the same
+ * fallback. The third test stayed green with the rule it named deleted, which
+ * is exactly the defect the `fieldset` above warns about, shipped a second
+ * time. What fixes it is asserting the *width*, which `border: 0` zeroes and
+ * only the shorthand restores.
  */
 import { expect, it } from 'vitest'
 import { render } from 'vitest-browser-react'
@@ -36,6 +48,7 @@ const props = (concluded = false): Props => ({
   stoppingCondition: 'the reader separates the settlement from the politics',
   openingBlocks: [{ kind: 'markdown', text: 'Where would you start?' }],
   dialogueId: 'd1',
+  progress: {},
   replying: false,
   starting: false,
   error: null,
@@ -135,8 +148,20 @@ it('stops glowing at the last question once the dialogue has concluded', async (
   const glow = getComputedStyle(live.newest).borderLeftColor
   const quiet = getComputedStyle(over.newest).borderLeftColor
   expect(glow).not.toBe(quiet)
-  // Not merely different -- there has to BE a rule. An element with no
-  // border-left colour of its own reports the computed `color`, so this pins
-  // that `.dlg-question` is painting one at all.
-  expect(quiet).toBe(getComputedStyle(over.opening).borderLeftColor)
+
+  // Not merely different -- there has to BE a rule, and the WIDTH is the only
+  // thing here that says so. This replaces two assertions that could not fail:
+  // an equality between two settled questions (both fall back to `color`, so
+  // it passed trivially) and, worse, the file docstring's claim that deleting
+  // `border-left` reddened this test. It did not. `.dlg-pending` overrides
+  // `border-left-color` alone, so with the shared shorthand gone `glow` still
+  // resolved from that override while `quiet` fell back to `color`, and the
+  // difference survived.
+  //
+  // `border: 0` in the same rule zeroes all four sides, so `2px` on the left
+  // can only come from the shorthand this test names. Measured in Chromium on
+  // 2026-08-18 by deleting that declaration: `2px` became `0px` on both, which
+  // is the red the docstring had been promising for a slice.
+  expect(getComputedStyle(live.newest).borderLeftWidth).toBe('2px')
+  expect(getComputedStyle(over.newest).borderLeftWidth).toBe('2px')
 })

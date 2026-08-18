@@ -11,6 +11,9 @@ import { expect, it, vi } from 'vitest'
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 
+import { ComponentId } from '@domain/shared/identifier.ts'
+
+import { componentBlock } from '../ask/ask-fixtures.ts'
 import { DialoguePage } from './DialoguePage.tsx'
 import { exchange, PROJECT } from './dialogue-fixtures.ts'
 
@@ -27,6 +30,7 @@ const props = (over: Partial<Props> = {}): Props => ({
   stoppingCondition: 'the reader separates the settlement from the politics',
   openingBlocks: [{ kind: 'markdown', text: 'Where would you start?' }],
   dialogueId: 'd1',
+  progress: {},
   replying: false,
   starting: false,
   error: null,
@@ -197,4 +201,53 @@ it('says a dialogue has finished when it concludes', () => {
   draw({ transcript: [exchange({ concluded: true })] })
 
   expect(screen.getByText(/this dialogue has reached its goal/i)).toBeInTheDocument()
+})
+
+it('draws a widget the reader already answered as already answered', () => {
+  // B114, on the page rather than in the store: the property that
+  // distinguishes this surface from the ask is that a refresh finds the
+  // answers still there, and until the progress route existed the recording
+  // was real in the event log and invisible here.
+  //
+  // The assertion is the sentence a reader sees, not a class or a prop. Red
+  // against a page that drops `progress` anywhere along the chain --
+  // `DialogueView`, `DialoguePage`, `DialogueThread`, `DialogueExchange` --
+  // because every one of those hands back a widget that says nothing.
+  draw({
+    transcript: [exchange({ blocks: [componentBlock({ type: 'mcq', id: 'council-1' })] })],
+    progress: {
+      'turn/0': new Map([
+        [
+          ComponentId('council-1'),
+          { attempts: 2, correct: true, bestScore: 1, lastScore: 1, checked: [] },
+        ],
+      ]),
+    },
+  })
+
+  expect(screen.getByText(/you answered this correctly after 2 tries before/i)).toBeInTheDocument()
+})
+
+it('keys remembered answers by the turn’s position and not by its index', () => {
+  // The two agree on a transcript loaded whole and diverge the moment one does
+  // not start at turn 0. The failure would be silent -- one exchange's
+  // verdicts drawn against another's questions -- so it is asserted with a
+  // single turn whose `position` is deliberately not its index.
+  //
+  // Red against `progress[`turn/${index}`]`, which finds nothing here.
+  draw({
+    transcript: [
+      exchange({ position: 3, blocks: [componentBlock({ type: 'mcq', id: 'council-1' })] }),
+    ],
+    progress: {
+      'turn/3': new Map([
+        [
+          ComponentId('council-1'),
+          { attempts: 1, correct: true, bestScore: 1, lastScore: 1, checked: [] },
+        ],
+      ]),
+    },
+  })
+
+  expect(screen.getByText(/you answered this correctly before/i)).toBeInTheDocument()
 })

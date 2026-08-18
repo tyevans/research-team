@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import type { DialogueProgress } from '@application/ports/repositories.ts'
 import type { DialogueTranscript } from '@domain/dialogue/conversation.ts'
 import type { DocumentBlock } from '@domain/lesson/document.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
@@ -36,6 +37,7 @@ export const DialogueThread = ({
   transcript,
   openingBlocks,
   dialogueId,
+  progress,
   concluded,
 }: {
   projectId: ProjectId
@@ -45,6 +47,13 @@ export const DialogueThread = ({
    *  see `DialogueOpening`. */
   openingBlocks: readonly DocumentBlock[]
   dialogueId: string | null
+  /** Every marked answer the server remembers, keyed `turn/{position}`.
+   *
+   * Indexed by the TURN's `position`, never by the array index. They agree on
+   * a transcript loaded whole and diverge the moment one does not start at
+   * turn 0 -- and the failure would be silent, drawing one exchange's verdicts
+   * against another's questions. */
+  progress: DialogueProgress
   /** Whether the dialogue has reached its goal, in which case NOTHING is
    *  outstanding.
    *
@@ -99,6 +108,7 @@ export const DialogueThread = ({
             turn={turn}
             index={index}
             dialogueId={dialogueId}
+            stored={progress[`turn/${String(turn.position)}`] ?? null}
             outstanding={!concluded && index === newestAsked}
             open={open.has(index)}
             onToggle={() =>

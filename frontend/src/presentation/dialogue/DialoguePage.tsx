@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 
+import type { DialogueProgress } from '@application/ports/repositories.ts'
 import type { DialogueTranscript } from '@domain/dialogue/conversation.ts'
 import type { DocumentBlock } from '@domain/lesson/document.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
@@ -26,6 +27,7 @@ export const DialoguePage = ({
   stoppingCondition,
   openingBlocks,
   dialogueId,
+  progress,
   replying,
   starting,
   error,
@@ -46,6 +48,12 @@ export const DialoguePage = ({
   // Null until `start` returns the server-minted id -- see `dialogue-store.ts`
   // for why this surface cannot mint one in the browser.
   dialogueId: string | null
+  /** What this reader has already had marked here, keyed `turn/{position}`.
+   *
+   * A prop rather than a fetch inside the thread, for this page's whole
+   * reason: the page stays a pure function of its props, so a test can draw a
+   * resumed dialogue with three answered widgets and no repository at all. */
+  progress: DialogueProgress
   replying: boolean
   starting: boolean
   error: string | null
@@ -83,6 +91,7 @@ export const DialoguePage = ({
         transcript={transcript}
         openingBlocks={openingBlocks}
         dialogueId={dialogueId}
+        progress={progress}
         concluded={concluded}
       />
 

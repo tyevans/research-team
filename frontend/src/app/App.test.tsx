@@ -329,6 +329,27 @@ it('offers a way into the ask page from the project page', async () => {
   expect(link).toHaveAttribute('href', `#/p/${ATLAS}/ask`)
 })
 
+/** The same failure, one plan later, on the surface built by the plan that
+ *  quoted the comment above.
+ *
+ * `facet: 'dialogue'` had **zero** `projectHref` call sites where `facet:
+ * 'ask'` has three: the page routed, rendered, streamed and graded, and the
+ * only way to reach it was to type `#/p/<id>/dialogue` into the address bar.
+ * Nothing was red, because nothing in this suite navigates the way a reader
+ * does -- every other test here assigns `window.location.hash`.
+ *
+ * **Proved red** on 2026-08-18 by reverting the link in `QueueHeader`: `Unable
+ * to find an accessible element with the role "link" and name /be asked about
+ * this project/i`.
+ */
+it('offers a way into the dialogue page from the project page', async () => {
+  window.location.hash = `#/p/${ATLAS}`
+  renderApp()
+
+  const link = await screen.findByRole('link', { name: /be asked about this project/i })
+  expect(link).toHaveAttribute('href', `#/p/${ATLAS}/dialogue`)
+})
+
 it('hands the selected entity to the graph, not just the view', async () => {
   // The id has to survive the facet, not only the route: a dispatch that
   // reached `ResearchView` with `entity` hard-null would satisfy the test

@@ -181,20 +181,97 @@ it('rejects with the status when the stream never opens', async () => {
   ).rejects.toMatchObject({ status: 409 })
 })
 
-it('starts a dialogue and returns the server’s id', async () => {
+it('starts a dialogue and returns its framing, not only its id', async () => {
+  // Shaped against `_dialogue_view` in `app.py`, which the route now answers.
+  // It returned `{"dialogueId"}` alone for three commits while its docstring
+  // claimed the goal arrived there, so the page drew "Pick something to work
+  // through." over an empty thread until the reader answered a question they
+  // could not see.
+  //
+  // The extra keys are in the fixture on purpose: the real body carries
+  // `topic`, `status`, `turnCount` and more, and `framingDto` reads four of
+  // them. A schema that rejected the rest would 500 the page on a body the
+  // server considers correct.
   const fetcher = vi.fn().mockResolvedValue({
     ok: true,
     status: 200,
-    text: async () => JSON.stringify({ dialogueId: 'd1' }),
+    text: async () =>
+      JSON.stringify({
+        dialogueId: 'd1',
+        projectId: PROJECT,
+        topic: 'the creed',
+        goal: 'understand what the creed settled',
+        stoppingCondition: 'the reader explains it unaided',
+        openingBlocks: [{ kind: 'markdown', text: 'Where would you start?' }],
+        turnCount: 0,
+        status: 'open',
+      }),
   })
 
-  const id = await new HttpDialogueRepository('', fetcher).start(PROJECT, 'the creed')
+  const framing = await new HttpDialogueRepository('', fetcher).start(PROJECT, 'the creed')
 
-  expect(id).toBe('d1')
+  expect(framing.dialogueId).toBe('d1')
+  expect(framing.goal).toBe('understand what the creed settled')
+  expect(framing.stoppingCondition).toBe('the reader explains it unaided')
+  expect(framing.openingBlocks).toEqual([{ kind: 'markdown', text: 'Where would you start?' }])
   expect(fetcher.mock.calls[0]?.[1]).toMatchObject({
     method: 'POST',
     body: JSON.stringify({ topic: 'the creed' }),
   })
+})
+
+it('reads back the answers this dialogue remembered', async () => {
+  // B114. Two levels of key and both are asserted, because that is the shape
+  // the third `progress_view` exists for: a component id is unique only within
+  // one utterance, so `turn/0` cannot be dropped from the key. Red against a
+  // mapper that flattened this to component ids -- which would find `council-1`
+  // and lose which question it belonged to.
+  //
+  // The snake_case record keys are the server's (`item_view` emits them, unlike
+  // `_dialogue_view` beside it); getting those wrong yields a well-formed
+  // object of zeroes, which reads as a reader who has answered nothing.
+  const fetcher = vi.fn().mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        scope: 'dialogue',
+        dialogueId: 'd1',
+        items: {
+          'turn/0': {
+            'council-1': {
+              attempts: 2,
+              correct: true,
+              best_score: 1,
+              last_score: 1,
+              checked: [],
+            },
+          },
+        },
+      }),
+      { status: 200 },
+    ),
+  )
+
+  const progress = await new HttpDialogueRepository('', fetcher).progress(PROJECT, 'd1')
+
+  expect(fetcher.mock.calls[0]?.[0]).toBe(`/api/projects/${PROJECT}/dialogues/d1/progress`)
+  const item = progress['turn/0']?.get(ComponentId('council-1'))
+  expect(item?.correct).toBe(true)
+  expect(item?.attempts).toBe(2)
+  expect(item?.bestScore).toBe(1)
+})
+
+it('rejects rather than reporting an empty history when progress cannot be read', async () => {
+  // An untouched dialogue answers `{"items": {}}` with a 200, so a swallowed
+  // failure is indistinguishable from "you have answered nothing" -- which on
+  // this surface is precisely the claim being made, and the wrong one to make
+  // silently. Red against a `catch` returning `{}`.
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(new Response(JSON.stringify({ detail: 'no dialogue' }), { status: 404 }))
+
+  await expect(
+    new HttpDialogueRepository('', fetcher).progress(PROJECT, 'd1'),
+  ).rejects.toMatchObject({ status: 404 })
 })
 
 it('posts an attempt against the dialogue, not the ask', async () => {

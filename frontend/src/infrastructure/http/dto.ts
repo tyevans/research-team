@@ -166,6 +166,25 @@ export const progressDto = z.object({
   items: z.record(z.string(), itemProgressDto).default({}),
 })
 
+/** The dialogue-scoped progress shape, which is a THIRD shape and not this
+ *  file's `progressDto` with a different `scope`.
+ *
+ * Two levels of key, because a dialogue's records are addressed by utterance
+ * and then by component: `items["turn/0"]["council-1"]`. A component id is
+ * unique only within one utterance, so the outer key cannot be dropped, and the
+ * flat `path#component_id` the session scope uses would make every caller
+ * re-derive a composite -- this one is consumed a turn at a time, once per
+ * exchange. See `dialogue_progress_view` in `presenters.py`, which states the
+ * cost of the third shape rather than hiding it.
+ *
+ * `items` defaults to `{}` because an empty map is the right answer for a
+ * dialogue nobody has answered anything in, not a malformed body. */
+export const dialogueProgressDto = z.object({
+  scope: z.string().optional(),
+  dialogueId: z.string().optional(),
+  items: z.record(z.string(), z.record(z.string(), itemProgressDto)).default({}),
+})
+
 export const verdictDto = z.object({
   correct: z.boolean().default(false),
   score: maybe(z.number()),

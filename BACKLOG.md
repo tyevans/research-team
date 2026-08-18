@@ -3466,7 +3466,40 @@ picks this up should start by reproducing on `main` with nothing else checked
 out, because a browser measurement under load is exactly the failure CLAUDE.md
 says not to trust on one run.
 
-### B114. A dialogue's progress is recorded and no client can read it
+### B114. Closed 2026-08-18 — the dialogue-scoped read route landed, and a console calls it
+
+**Closed by Task 6 of
+`.superpowers/sdd/2026-08-17-socratic-dialogue-console/`.** Kept as a stub
+rather than deleted, because the console plan's brief, three task reports and
+`post_dialogue_attempt`'s docstring all cite this number.
+
+What landed:
+
+- `GET /api/projects/{project_id}/dialogues/{dialogue_id}/progress` in
+  `app.py`, beside the attempts route and checking ownership the way both its
+  neighbours do. An untouched dialogue answers `{"items": {}}` and not a 404.
+- `dialogue_progress_view` in `presenters.py` — a **third** shape beside
+  `progress_view`'s `"file"` and `"session"`, not a widening of the shared
+  presenter. A dialogue's records are keyed by an utterance (`turn/{position}`)
+  and a component id is unique only within one, so neither existing key fits.
+  The cost is stated in that docstring rather than hidden: a third thing to keep
+  true, and three presenters to check when progress reporting changes.
+- `HttpDialogueRepository.progress`, `DialogueState.progress`, and the prop
+  chain `DialogueView` → `DialoguePage` → `DialogueThread` → `DialogueExchange`
+  → `useDialogueAttempts(…, stored)`. Indexed by the turn's `position`, never
+  its array index.
+- `tests/integration/test_socratic_progress_route.py`, every assertion on a
+  stored value reaching the body. Red-proved three ways: no route (404), the
+  wrong id read (three tests), and no ownership check (the 404 test returns
+  another reader's answers).
+
+Still not covered, and it is the same gap B119 records: a component in the
+**opening** question belongs to no turn, so there is no `turn/{position}` to
+key its progress under and none is loaded for it.
+
+The original entry follows.
+
+---
 
 `POST /api/projects/{project_id}/dialogues/{dialogue_id}/attempts` (95076c9)
 grades an attempt and records it against the **dialogue** id, so the progress
