@@ -37,8 +37,10 @@ const TimelineCanvas = lazy(() =>
  * complete vocabulary available is the set present in an unfiltered response.
  * Both are keyed through `queryKeys.timeline`, so when the author fixed no
  * `entity_type` the two keys are identical and there is one request. When they
- * did fix one it is two reads on mount, once, cached for the session; the cost
- * test asserts that number rather than leaving it to be discovered.
+ * did fix one it is two reads on mount and two per committed window -- a moved
+ * window moves both keys, because the types present inside it are not the types
+ * present inside the last one. The cost test asserts both numbers rather than
+ * leaving either to be discovered.
  *
  * **The vocabulary is only as complete as an uncapped response.** The server
  * caps bands, so an entity type present only past the cap is never offered and
@@ -124,6 +126,23 @@ const Exploring = ({ projectId, spec }: { projectId: ProjectId; spec: ExplorerSp
     queryKey: queryKeys.timeline(projectId, window),
     queryFn: () => timelines.timeline(projectId, asQuery(window)),
     ...resolvedWidgetQuery,
+    // `staleTime: Infinity`, overriding the shared five minutes, and only here.
+    //
+    // Five minutes is right for `definition`, `graph` and `timeline`: their
+    // data genuinely changes under a reader as extraction runs, and a stale
+    // view of a corpus that has moved is worse than one refetch. An explorer is
+    // the odd one out. The design's section 4 promises that a setting a reader
+    // already tried is free *for the sitting* -- and under the shared policy a
+    // reader who spends six minutes comparing four windows pays the double pass
+    // again for the first one they go back to, which is exactly the promise.
+    //
+    // The cost, and it is real rather than theoretical: a reader who leaves an
+    // explorer mounted for an hour is looking at bands that no longer reflect
+    // the corpus, and there is no refresh affordance -- reloading the answer is
+    // the only way back. Accepted because an explorer is a sitting: a reader
+    // sweeps a few windows and moves on, and the alternative is charging them
+    // twice for a window they already looked at.
+    staleTime: Infinity,
   })
 
   // The same key builder, the same window, `entityType` dropped. Identical to
@@ -135,6 +154,10 @@ const Exploring = ({ projectId, spec }: { projectId: ProjectId; spec: ExplorerSp
     queryFn: () => timelines.timeline(projectId, asQuery(vocabularyWindow)),
     enabled: varies(spec, 'entity_type'),
     ...resolvedWidgetQuery,
+    // Both queries or neither: when the two keys are identical they are one
+    // cache entry, and a different `staleTime` on each would mean the entry's
+    // freshness depended on which hook happened to create it.
+    staleTime: Infinity,
   })
 
   // Sorted so the picker does not reorder itself between renders as bands
@@ -269,17 +292,24 @@ const Result = ({ result }: { result: UseQueryResult<Timeline> }) => {
 
   return (
     <>
-      {bands.length === 0 ? (
-        <p className="cmp-ref-note">Nothing dated matches that window in this project.</p>
-      ) : (
-        <div className="cmp-timeline-box" data-explorer-widget>
-          <Suspense fallback={<p className="cmp-ref-note">loading the axis…</p>}>
-            {/* `onSelect` is a no-op deliberately, copying `TimelineWidget`: a
-                block inside an answer has no detail panel to open. */}
-            <TimelineCanvas bands={bands} selected={null} onSelect={() => {}} />
-          </Suspense>
-        </div>
-      )}
+      {/* The marker is on a wrapper that always renders rather than on the axis
+          box, which does not: an explorer's empty result is a state a reader
+          reaches *by exploring*, and a DOM contract that vanishes exactly then
+          is one Tasks 4-6 would assert against a widget that is working. The
+          box keeps its class and its height inside. */}
+      <div data-explorer-widget>
+        {bands.length === 0 ? (
+          <p className="cmp-ref-note">Nothing dated matches that window in this project.</p>
+        ) : (
+          <div className="cmp-timeline-box">
+            <Suspense fallback={<p className="cmp-ref-note">loading the axis…</p>}>
+              {/* `onSelect` is a no-op deliberately, copying `TimelineWidget`: a
+                  block inside an answer has no detail panel to open. */}
+              <TimelineCanvas bands={bands} selected={null} onSelect={() => {}} />
+            </Suspense>
+          </div>
+        )}
+      </div>
       {/* Rendered on every result including the empty one, and it matters more
           here than in `timeline`: a reader narrowing a filter and watching bands
           vanish needs to know which vanished because they were excluded and

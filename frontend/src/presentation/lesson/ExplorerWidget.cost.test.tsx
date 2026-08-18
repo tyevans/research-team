@@ -157,3 +157,29 @@ it('pays a second read on mount only when the author fixed a type it must vary p
     ]),
   )
 })
+
+it('pays that second read again on each window commit, and no more than that', async () => {
+  // The mount case above is only half the promise the widget's docstring makes.
+  // A committed window moves *both* keys -- the display read carries the type,
+  // the vocabulary read must re-ask what types exist inside the new window --
+  // so a filtered explorer costs two double passes per reader intention rather
+  // than one. Two, not three or four: this is the number a later refactor would
+  // inflate by giving the vocabulary query a key of its own or by dropping the
+  // draft, and it is asserted rather than left to be discovered.
+  const timeline = mount({ ...EXPLORER, entity_type: 'Person' })
+  await waitFor(() => expect(timeline).toHaveBeenCalledTimes(2))
+
+  fireEvent.change(from(), { target: { value: '0200-01-01' } })
+  fireEvent.change(from(), { target: { value: '0280-01-01' } })
+  fireEvent.blur(from())
+
+  await waitFor(() => expect(timeline).toHaveBeenCalledTimes(4))
+  await settle()
+  expect(timeline).toHaveBeenCalledTimes(4)
+  expect(timeline.mock.calls.slice(2).map((call: unknown[]) => call[1])).toEqual(
+    expect.arrayContaining([
+      { entityType: 'Person', from: '0280-01-01', to: '0400-01-01' },
+      { from: '0280-01-01', to: '0400-01-01' },
+    ]),
+  )
+})
