@@ -196,8 +196,44 @@ class ApprovalDecided(InteractionEvent):
     """
 
     decision: str
+
     latency_ms: int
+    """Wall time from the approval first appearing in this tab to the click.
+
+    Includes time the tab was backgrounded; `hidden_ms` is how much, and the
+    two together are what makes the split above readable. Gated calls arrive
+    while the reader is elsewhere, so a card that lands during lunch and is
+    answered two seconds after they return is the *common* case, not a race --
+    reported alone, `latency_ms` would say "an hour of deliberation".
+    """
+
+    hidden_ms: int = 0
+    """How much of `latency_ms` the tab was backgrounded for.
+
+    Reported alongside rather than subtracted, following `ViewExited` for the
+    same reason: the consumer chooses. Defaulted so a payload written before
+    the field existed still loads -- costless here, since nothing migrates.
+    """
+
     expanded_details: bool
+    """Whether the reader opened Edit or Respond on this card before deciding.
+
+    **The name overstates what is measured, deliberately and knowingly.** It
+    is a proxy: the console has no way to know that someone read the call's
+    arguments, only that they opened one of the two controls that show more of
+    them, so a careful reader who deliberates and then presses plain Approve
+    records `false`. It is sticky once true within a card's life (`Approvals.tsx`
+    is where that lives) so that opening the details and then collapsing them
+    still counts as having looked.
+
+    A rename was considered and rejected: every plausible one
+    (`opened_controls`, `expanded_any`) is a vocabulary change with the same
+    ambiguity one word further out, and the definition has to be written down
+    somewhere regardless. This docstring is that somewhere -- an analyst reads
+    the vocabulary, not the `.tsx`. Read it as a floor on deliberation, never
+    as a count of who read carefully.
+    """
+
     review_id: UUID | None = None
 
 

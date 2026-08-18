@@ -69,6 +69,15 @@ export const InteractionLogProvider = ({
   // `[sink]` key goes with it, which was its own small hazard: a sink swapped
   // mid-load would have started a second browser session.
   //
+  // Its stable identity is now load-bearing for something outside this file,
+  // which the argument above does not cover: `GraphPane`, `EntityTreePane`
+  // and `AskView` each pass this emitter to a `useMemo` store factory and
+  // list it in the dependency array. A memo-held or inline emitter would
+  // change identity on every provider render and rebuild those stores --
+  // wiping the drawn graph and the ask transcript mid-conversation, with no
+  // error and nothing in the log to say why. So this is not only about `seq`
+  // any more; changing it breaks two views before it breaks a counter.
+  //
   // A lazy ref would say the same thing and lint refuses it -- `react-hooks`'
   // `refs` rule forbids reading `.current` during render, and the read is the
   // whole point of the pattern. StrictMode calls this initialiser twice and

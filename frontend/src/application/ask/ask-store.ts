@@ -43,10 +43,26 @@ export const createAskStore = ({
    *  store that records nothing is correct in a test. */
   emitter?: Pick<Emitter, 'record'>
 }) => {
-  // How many questions have been sent on the current `chatId`. Reset by
-  // `reset()`, which mints a new chat -- a retry is "asked again in the same
-  // conversation", and a fresh conversation is not a retry of anything.
-  let turn = 0
+  // The last question asked on the current `chatId`, and how many times in a
+  // row it has been asked. Reset by `reset()`, which mints a new chat -- the
+  // same question asked in a fresh conversation is a new start, not a second
+  // attempt at the old one.
+  //
+  // This counts *repeats*, not turns, and the difference is the whole point.
+  // An earlier draft advanced on every question in the conversation, which
+  // made a productive five-turn chat indistinguishable from someone asking
+  // the same thing five ways because the answer was wrong -- and worse, made
+  // the feature people used best read as the one with the most friction.
+  // `direction.md` §3 reads this kind as repair; measuring conversation
+  // length under that name is a confident wrong number.
+  //
+  // Identical trimmed text is a narrow definition and deliberately so: it is
+  // the same one the search side uses, it is the only judgement a store can
+  // make without reading English, and it under-counts (a rephrased retry is
+  // missed) rather than over-counting. An absent signal is recoverable; a
+  // polluted one is not.
+  let lastQuestion: string | null = null
+  let repeats = 0
 
   return create<AskState>((set, get) => ({
     transcript: [],
@@ -62,19 +78,18 @@ export const createAskStore = ({
       // trip.
       if (!trimmed || get().asking) return
 
-      turn += 1
       // Emitted before the `await` below, per the brief: the act is the
       // submission, not the eventual answer, and a turn that fails partway
       // through streaming should still show up as something that was asked.
       emitter?.record('AskSubmitted', { query_text: trimmed })
-      if (turn > 1) {
-        // Genuinely known here, unlike a generic "resubmit": `turn` only
-        // advances within one `chatId`, so this is specifically a second
-        // question asked without leaving the conversation -- not a retry of
-        // an identical prompt, which this store has no way to detect (the
-        // model's own answer is what makes two prompts "the same question"
-        // or not, and that judgement does not belong here).
-        emitter?.record('ActionRetried', { action_kind: 'ask', attempt_number: turn })
+      if (lastQuestion === trimmed) {
+        repeats += 1
+      } else {
+        lastQuestion = trimmed
+        repeats = 1
+      }
+      if (repeats > 1) {
+        emitter?.record('ActionRetried', { action_kind: 'ask', attempt_number: repeats })
       }
 
       set((state) => ({ transcript: asked(state.transcript, trimmed), asking: true, error: null }))
@@ -107,7 +122,8 @@ export const createAskStore = ({
 
     async reset() {
       const previous = get().chatId
-      turn = 0
+      lastQuestion = null
+      repeats = 0
       set({ transcript: [], error: null, chatId: newChatId(), conversationId: null })
       try {
         await ask.forget(projectId, previous)

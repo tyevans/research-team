@@ -364,6 +364,10 @@ it('records ApprovalDecided with the elapsed time and false for a click-through 
   expect(record).toHaveBeenCalledWith('ApprovalDecided', {
     decision: 'approve',
     latency_ms: expect.any(Number),
+    // Zero, not merely present: the tab never went hidden, so the whole wait
+    // was time the reader could have been looking. `use-approval-feed.test.tsx`
+    // pins the other direction.
+    hidden_ms: 0,
     expanded_details: false,
     review_id: approval.id,
   })

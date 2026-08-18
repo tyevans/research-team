@@ -3354,3 +3354,29 @@ correlation in this codebase gets from position tokens. Nothing currently
 needs this join — B107's absent consumers would be the first callers — but
 whichever one is built first should not assume it can get exact interleaving
 across the two stores; it can't, structurally.
+
+### B110. `select(id, source)` and `EntityTreePane`'s emitter are plumbing with no caller
+
+`GraphState.select` takes a `source` no call site passes, and `EntityTreePane`
+is handed an `emitter` it never uses — it calls neither `select` nor
+`expandNode`. Both were added with the interaction log's emission sites
+(`f3e7adf`) for the follow-up they anticipate: `EntityOpened.source` is
+documented as "graph | search | timeline | link", and today every one of them
+records `'graph'`, because the two seams that could say otherwise — picking a
+result out of the search panel, and clicking a node in the entity tree — both
+reach the store through the default.
+
+Kept rather than deleted, and this entry is the cost of that: the reviewer's
+point stands that a parameter with no caller is dead weight, and the honest
+alternative was to remove it and re-add it with its first real user. The
+argument for keeping is that the field is already in the vocabulary and
+already being written with a value that is right for one path and merely
+unfalsified for the others, so a consumer reading `source` today learns
+nothing it could not have got from the kind alone. Wiring the two call sites
+is a small change; leaving `source` in place is what makes it a one-liner
+rather than a signature change across three files.
+
+If the follow-up has not happened by the time anything actually reads this
+log ([[B107]] is where that starts), delete the parameter instead — an
+always-constant field is worse than no field, because a consumer cannot tell
+"always graph" from "we never told you".

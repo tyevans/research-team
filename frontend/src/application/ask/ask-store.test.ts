@@ -175,12 +175,26 @@ it('records no ActionRetried for the first question in a conversation', async ()
   expect(record).not.toHaveBeenCalledWith('ActionRetried', expect.anything())
 })
 
-it('records ActionRetried for a second question in the same conversation', async () => {
+/** The finding that made this store's `ActionRetried` mean repair rather than
+ *  conversation length: a follow-up question is the ask feature working, and
+ *  counting it as a retry buries the signal under healthy use.
+ */
+it('records no ActionRetried for a different follow-up question', async () => {
   const record = vi.fn<Emitter['record']>()
   const asking = store(fakeAsk(), { record })
 
   await asking.getState().send('one')
   await asking.getState().send('two')
+
+  expect(record).not.toHaveBeenCalledWith('ActionRetried', expect.anything())
+})
+
+it('records ActionRetried when the identical question is asked again', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const asking = store(fakeAsk(), { record })
+
+  await asking.getState().send('one')
+  await asking.getState().send('  one  ')
 
   expect(record).toHaveBeenCalledWith('ActionRetried', {
     action_kind: 'ask',
@@ -194,7 +208,7 @@ it('resets the attempt count on reset(), so a new conversation is not a retry', 
 
   await asking.getState().send('one')
   await asking.getState().reset()
-  await asking.getState().send('one again, in a fresh chat')
+  await asking.getState().send('one')
 
   expect(record).not.toHaveBeenCalledWith('ActionRetried', expect.anything())
 })

@@ -38,7 +38,7 @@ const wrapperFor = (
 }
 
 describe('useUnignoreMedia', () => {
-  it('records ActionUndone naming the grain and the key that was un-ignored', async () => {
+  it('records ActionUndone naming the grain that was un-ignored', async () => {
     const record = vi.fn()
     const client = new QueryClient()
     const unignore = vi.fn().mockResolvedValue(undefined)
@@ -50,10 +50,31 @@ describe('useUnignoreMedia', () => {
     result.current.mutate({ grain: 'host', key: 'example.com' })
 
     await waitFor(() => {
-      expect(record).toHaveBeenCalledWith('ActionUndone', {
-        action_kind: 'unignore-host',
-        target_id: 'example.com',
-      })
+      expect(record).toHaveBeenCalledWith('ActionUndone', { action_kind: 'unignore-host' })
     })
+  })
+
+  /** The key never reaches the payload, and at `grain: 'asset'` the key is the
+   *  asset URL -- content, in a kind not on `TEXT_BEARING_FIELDS`. Written as
+   *  a substring search over every recorded payload rather than as an exact
+   *  payload match, because the exact match above would still pass if the URL
+   *  were reintroduced under a differently-named field.
+   */
+  it('puts no part of the asset URL into any payload', async () => {
+    const record = vi.fn()
+    const client = new QueryClient()
+    const unignore = vi.fn().mockResolvedValue(undefined)
+    const mediaProposals = fakeMediaProposals({ unignore })
+    const url = 'https://example.com/secret-dossier/plate-7.jpg'
+
+    const { result } = renderHook(() => useUnignoreMedia(project), {
+      wrapper: wrapperFor(mediaProposals, client, record),
+    })
+    result.current.mutate({ grain: 'asset', key: url })
+
+    await waitFor(() => {
+      expect(record).toHaveBeenCalledWith('ActionUndone', { action_kind: 'unignore-asset' })
+    })
+    expect(JSON.stringify(record.mock.calls)).not.toContain('secret-dossier')
   })
 })

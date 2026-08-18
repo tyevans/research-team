@@ -297,6 +297,33 @@ it('records EntityOpened with source "graph" when a node is selected explicitly'
   expect(record).toHaveBeenCalledWith('EntityOpened', { entity_id: 'ada', source: 'graph' })
 })
 
+/** A remount with the same entity still in the URL is not a navigation. The
+ *  guard is keyed on the emitter rather than on the store, so a second store
+ *  -- which is what a remount builds -- sees the same last selection.
+ */
+it('records one EntityOpened when a rebuilt store re-selects the entity already open', () => {
+  const record = vi.fn<Emitter['record']>()
+  const graphs = fakeGraphs()
+  const emitter = { record }
+
+  store(graphs, emitter).getState().select('ada')
+  store(graphs, emitter).getState().select('ada')
+
+  expect(record.mock.calls.filter(([kind]) => kind === 'EntityOpened')).toHaveLength(1)
+})
+
+it('records EntityOpened again when a different entity is opened in between', () => {
+  const record = vi.fn<Emitter['record']>()
+  const emitter = { record }
+  const graph = store(fakeGraphs(), emitter)
+
+  graph.getState().select('ada')
+  graph.getState().select('grace')
+  graph.getState().select('ada')
+
+  expect(record.mock.calls.filter(([kind]) => kind === 'EntityOpened')).toHaveLength(3)
+})
+
 it('records no EntityOpened when the selection is cleared', () => {
   const record = vi.fn<Emitter['record']>()
   const graph = store(fakeGraphs(), { record })
@@ -366,6 +393,26 @@ it('records ActionRetried when the identical search is pressed again', async () 
     action_kind: 'search',
     attempt_number: 2,
   })
+})
+
+/** The pair is emitted together or not at all. `ActionRetried` used to fire
+ *  before the request while `SearchPerformed` fired after it, so a failed
+ *  retry recorded one without the other -- and "retries per search" was
+ *  unreconcilable in the one case where friction is highest.
+ */
+it('records neither half of the pair when the retried search fails', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const search = vi
+    .fn()
+    .mockResolvedValueOnce({ entities: [], truncated: false })
+    .mockRejectedValueOnce(new Error('gateway'))
+  const graph = store(fakeGraphs({ search }), { record })
+
+  await graph.getState().search('ada')
+  await graph.getState().search('ada')
+
+  expect(record).not.toHaveBeenCalledWith('ActionRetried', expect.anything())
+  expect(record).toHaveBeenCalledTimes(2)
 })
 
 it('does not treat a changed search as a retry', async () => {

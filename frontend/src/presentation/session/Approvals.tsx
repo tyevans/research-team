@@ -111,6 +111,12 @@ const ApprovalCard = ({
   // stands in for the deliberation half of the click-through/deliberation
   // split. Sticky once true: closing the form again does not undo having
   // looked.
+  //
+  // This definition is also written into `ApprovalDecided.expanded_details`'s
+  // docstring in `research_team/domain/interaction.py`, deliberately
+  // duplicated: an analyst reading the log reads the vocabulary, not this
+  // file, and the name overstates what is measured (a careful reader who
+  // presses plain Approve records `false`). Keep the two in step.
   const [expandedDetails, setExpandedDetails] = useState(false)
   const reasonIds = useId()
 

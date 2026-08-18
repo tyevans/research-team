@@ -15,6 +15,10 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import type { GraphRepository } from '../ports/repositories.ts'
 
+/** The last entity each emitter recorded an `EntityOpened` for. See `select`
+ *  for why it lives here and why it is keyed on the emitter. */
+const lastOpened = new WeakMap<object, string>()
+
 /** One project's browsable knowledge graph: the current search results, and
  *  the subgraph a reader has expanded so far.
  *
@@ -151,9 +155,24 @@ export const createGraphStore = ({
 
     select(id, source = 'graph') {
       set({ selected: id })
-      if (id !== null) {
-        emitter?.record('EntityOpened', { entity_id: id, source })
-      }
+      if (id === null || emitter === undefined) return
+      // Once per navigation, not once per mount. `GraphPane`'s effect on
+      // `[entity]` re-runs whenever the pane is remounted with the same
+      // entity still in the URL -- facet away and back -- and that is not
+      // something the reader did. The same same-as-last guard the other two
+      // route-driven emitters use (`ProjectSwitchLog`'s `previous` ref, the
+      // provider's `entered`), placed here because a ref inside the pane
+      // would be reset by the very remount it has to survive.
+      //
+      // Keyed on the emitter rather than held in module scope: the emitter is
+      // one object per page load (`InteractionLogProvider` holds it in
+      // `useState`), which is exactly the span this guard should cover, and a
+      // WeakMap keyed on it isolates tests from each other for free -- module
+      // state would leak the last selection from one test into the next.
+      const opened = `${projectId}:${id}`
+      if (lastOpened.get(emitter) === opened) return
+      lastOpened.set(emitter, opened)
+      emitter.record('EntityOpened', { entity_id: id, source })
     },
 
     removeNode(id) {
@@ -196,11 +215,17 @@ export const createGraphStore = ({
         lastQuery = { needle, entityType }
         attempts = 1
       }
-      if (attempts > 1) {
-        emitter?.record('ActionRetried', { action_kind: 'search', attempt_number: attempts })
-      }
       try {
         const { entities, truncated } = await graphs.search(projectId, needle, entityType)
+        // Emitted after the request, beside `SearchPerformed`, rather than
+        // before it. The counting above still happens on every attempt, so a
+        // failed search is not forgotten -- it simply records neither half of
+        // the pair instead of recording the retry without the search it was a
+        // retry of, which made "retries per search" unreconcilable in exactly
+        // the case where friction is highest.
+        if (attempts > 1) {
+          emitter?.record('ActionRetried', { action_kind: 'search', attempt_number: attempts })
+        }
         emitter?.record('SearchPerformed', { query_text: needle, result_count: entities.length })
         if (entities.length === 0) {
           emitter?.record('EmptyResultEncountered', {

@@ -55,6 +55,47 @@ export const useApprovalFeed = (): ApprovalFeed => {
   // state would be a render the timestamp itself never causes.
   const shownAt = useRef<Map<ApprovalId, number>>(new Map())
 
+  // Backgrounded time, accumulated for the tab's whole life, and what each
+  // approval's total stood at when it was first shown. The difference is that
+  // card's `hidden_ms`.
+  //
+  // Kept here rather than read off `DwellTracker`: dwell's accumulator resets
+  // on every view change, and an approval outlives the view it appeared on --
+  // that is the point of a feed that is not scoped by session. Two
+  // accumulators over the same `visibilitychange` is duplication, and the
+  // alternative is worse: an approval answered after navigating twice would
+  // get whichever view's hidden time happened to be current.
+  const hiddenMs = useRef(0)
+  const hiddenSince = useRef<number | null>(null)
+  const hiddenAtShown = useRef<Map<ApprovalId, number>>(new Map())
+
+  const hiddenTotal = () =>
+    hiddenMs.current + (hiddenSince.current === null ? 0 : Date.now() - hiddenSince.current)
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        // Guarded both ways for `dwell.ts`'s measured reason: overwriting
+        // `hiddenSince` on a repeated hide silently discards the interval
+        // already accumulating.
+        if (hiddenSince.current !== null) return
+        hiddenSince.current = Date.now()
+        return
+      }
+      if (hiddenSince.current === null) return
+      hiddenMs.current += Date.now() - hiddenSince.current
+      hiddenSince.current = null
+    }
+    // A tab that is already hidden when this mounts is hidden from now, not
+    // from zero -- a background tab restored by the browser on startup is the
+    // ordinary way to reach that state.
+    if (document.visibilityState === 'hidden') hiddenSince.current = Date.now()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
+
   useEffect(
     () =>
       stream.onFrame((frame) => {
@@ -63,6 +104,7 @@ export const useApprovalFeed = (): ApprovalFeed => {
           setApprovals((current) => new Map(current).set(approval.id, approval))
           if (!shownAt.current.has(approval.id)) {
             shownAt.current.set(approval.id, Date.now())
+            hiddenAtShown.current.set(approval.id, hiddenTotal())
           }
           return
         }
@@ -76,6 +118,7 @@ export const useApprovalFeed = (): ApprovalFeed => {
           })
           setDeciding((current) => (current === settled ? null : current))
           shownAt.current.delete(settled)
+          hiddenAtShown.current.delete(settled)
         }
       }),
     [stream],
@@ -98,6 +141,7 @@ export const useApprovalFeed = (): ApprovalFeed => {
         // disconnect would report a `latency_ms` measured from before the
         // gap, which is not when *this* tab's reader started looking at it.
         shownAt.current.clear()
+        hiddenAtShown.current.clear()
       }),
     [stream],
   )
@@ -107,6 +151,7 @@ export const useApprovalFeed = (): ApprovalFeed => {
       if (deciding) return
       setDeciding(approval.id)
       const shown = shownAt.current.get(approval.id)
+      const hiddenWhenShown = hiddenAtShown.current.get(approval.id) ?? 0
       void (async () => {
         try {
           await container.approvals.decide(approval.sessionId, approval.id, answer)
@@ -121,6 +166,14 @@ export const useApprovalFeed = (): ApprovalFeed => {
             log.record('ApprovalDecided', {
               decision: answer.decision,
               latency_ms: Date.now() - shown,
+              // Reported alongside `latency_ms` rather than subtracted from
+              // it, following `ViewExited`'s precedent so the consumer
+              // chooses. Without it the click-through/deliberation split --
+              // the entire reason this kind exists -- cannot tell twelve
+              // seconds of reading from an hour of lunch, and lunch is the
+              // common case here: gated calls arrive while the reader is
+              // somewhere else entirely.
+              hidden_ms: Math.max(0, hiddenTotal() - hiddenWhenShown),
               expanded_details: expandedDetails,
               review_id: approval.id,
             })
