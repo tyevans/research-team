@@ -3452,3 +3452,53 @@ markdown widgets would put an unreviewable change in an unrelated diff. Whoever
 picks this up should start by reproducing on `main` with nothing else checked
 out, because a browser measurement under load is exactly the failure CLAUDE.md
 says not to trust on one run.
+
+### B110. A dialogue's progress is recorded and no client can read it
+
+`POST /api/projects/{project_id}/dialogues/{dialogue_id}/attempts` (95076c9)
+grades an attempt and records it against the **dialogue** id, so the progress
+survives a refresh in storage. Nothing can fetch it. The only progress read
+route is `GET /api/sessions/{session_id}/progress`, which resolves its id
+through `_load(session_id)` and therefore cannot serve a dialogue id, and
+`SocraticDialogueService.progress_for` is in-process only.
+
+So the property the attempts route was built for -- widgets that stay filled in
+across a reload, the thing that distinguishes this surface from the ask -- is
+real in the event log and invisible in the browser. The console plan needs the
+route before it can render any of it; picking this up means a
+dialogue-scoped sibling of the session progress route (the repository and the
+aggregate id are already there; only the HTTP surface is missing) and a client
+that calls it.
+
+Not done in Task 5 deliberately: adding a read route is the console plan's
+work, and widening a task that had already been reviewed to add an endpoint
+nothing yet calls would have put an unreviewed surface in the diff.
+`post_dialogue_attempt`'s docstring now states the gap rather than claiming the
+capability, which is how this entry was found.
+
+### B111. Grep any new read surface for a raw field shipped beside a projected one
+
+**Measured 2026-08-18, not reasoned: two of two surfaces audited had it, on
+four routes.** The socratic surface shipped raw `text` on the `prompt` SSE
+frame, raw `prompt` on `read_dialogue`'s turns, and raw `pendingPrompt` on
+`_dialogue_view` -- each sitting *beside* `blocks` that had correctly withheld
+`options[].correct` (fixed in 95076c9). The ask surface shipped raw `answer`
+beside its projected blocks on `read_ask` (fixed in b08d449), where B106 above
+had recorded the opposite as settled fact.
+
+The shape is what to look for, because it survives a working projection: the
+projection strips the answer key, and a raw copy of the same source string in
+the same response hands it straight back. A page that renders `blocks` looks
+right; only the bytes disagree.
+
+**The guard that caught all four was an assertion through the real route that
+no correctness value reaches the reader** -- driving an `mcq` end to end and
+searching the whole response body for `correct: true`, `"correct": true` and
+the raw fence marker. An assertion that the projection helper was *called*
+would have passed in every one of the four cases, and did: each of those routes
+called it, correctly, on the field beside the leak. Nor is `"correct" not in
+payload` enough -- the learner projection announces what it dropped as
+`"withheld": ["options[].correct", ...]`, which is the projection working.
+
+Nothing to fix here; this is a checklist item for whoever adds the next route
+that returns authored content.

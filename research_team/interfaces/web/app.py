@@ -3280,8 +3280,18 @@ def create_app(
         record against; a dialogue is one -- a durable id meaning exactly "one
         reader working toward one goal" -- which is the design's §3 and the
         reason this surface can answer a question the ask path was allowed to
-        skip. The visible difference is that a refresh does not blank the
-        widgets here.
+        skip.
+
+        What that buys, precisely, and what it does not yet: the attempt is
+        *recorded* against the dialogue id, so it survives a refresh **in
+        storage**. No client can see it. The only progress read route is
+        `GET /api/sessions/{session_id}/progress`, which resolves its id
+        through `_load(session_id)` and so cannot serve a dialogue id, and
+        `progress_for` on the service is in-process only. A dialogue-scoped
+        read route -- and a console that calls it -- would have to exist before
+        a refresh leaves the widgets filled in; both are later plans' work.
+        Backlogged, so the gap is not rediscovered by someone trusting this
+        docstring.
 
         The key is recovered by re-parsing the stored turn's `prompt`, which is
         the dialogue's utterance -- not `reply`, which is the reader's. Parsed
@@ -3528,16 +3538,17 @@ def create_app(
         `read_ask`: the second is a guessed id, and telling a caller that an id
         they cannot read does exist is the distinction not worth drawing.
 
-        `prompt` is the dialogue's question and `reply` is the reader's answer
-        -- the inverse of `read_ask`'s question/answer, because this surface
-        runs in the opposite direction. A client that reused the ask's turn
-        renderer here would draw every dialogue with the speakers swapped, and
-        it would still read as a conversation.
+        A turn's `blocks` are the dialogue's question and `reply` is the
+        reader's answer -- the inverse of `read_ask`'s question/answer, because
+        this surface runs in the opposite direction. A client that reused the
+        ask's turn renderer here would draw every dialogue with the speakers
+        swapped, and it would still read as a conversation.
 
         A turn pairs the reader's answer with the question it *produced*, so
-        the transcript's first utterance is `openingPrompt` on the dialogue and
-        is on no turn: a client rendering only `turns` draws a reader answering
-        something nobody asked.
+        the transcript's first utterance is `openingBlocks` on the dialogue
+        (not `openingPrompt` -- there is no raw prompt key on any of these
+        surfaces any more, see `_dialogue_view`) and is on no turn: a client
+        rendering only `turns` draws a reader answering something nobody asked.
         """
         if dialogues is None:
             raise HTTPException(status_code=503, detail="dialogues are not configured")
