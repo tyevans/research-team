@@ -3839,6 +3839,22 @@ class SocraticDialogueRunner:
 
         No event-type filter: this projection handles *all four* event types on
         its aggregate, so the scope is already exact.
+
+        **A dropped `@handles` reports here as a timeout, not as a missing
+        row.** `SubscriptionConfig` leaves `event_types=None`, so
+        `EventFilter.from_subscriber` derives the filter from the projection's
+        `@handles` set -- remove one and that event is never delivered, so
+        `last_processed_position` never advances past it while this method
+        keeps reading it back as remaining, for the full timeout. The
+        diagnostic then names this method rather than the handler that went
+        missing. Measured on 2026-08-17;
+        `test_a_dialogue_whose_start_nothing_handles_is_silently_empty` is the
+        test that had to work around it, and its docstring carries the detail.
+
+        This shape is copied verbatim from `AskConversationRunner.caught_up`,
+        so the sibling has the same property. Left alone deliberately:
+        diverging one runner from the established shape for this alone buys
+        a better error message and costs a difference nobody expects.
         """
         if self._manager is None:
             return
