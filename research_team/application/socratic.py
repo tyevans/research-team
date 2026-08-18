@@ -496,6 +496,24 @@ class SocraticDialogueService:
         the same fact from an empty message list -- and it is simpler for the
         reason this whole module exists, that a dialogue's identity outlives
         its cache entry.
+
+        **It is also the second line of defence behind `_resume`, and that is
+        not a side effect to be traded away.** Because this loads and never
+        creates, an id that `_resume` fabricated or got wrong dies here at the
+        repository -- `AggregateNotFoundError` -- rather than quietly opening a
+        second stream and recording onto it. Adding `AskService._record`'s
+        `create_new` fallback would remove exactly that protection, and it is
+        the obvious edit for someone reusing the neighbour, which is why this
+        paragraph exists.
+
+        Measured on 2026-08-17, not reasoned. A throwaway sabotage returning a
+        fresh `uuid4()` from `_resume` with the framing otherwise intact never
+        reached any assertion: it raised here. Adding a `create_new` fallback
+        alongside it did reach one, and failed it --
+        `test_an_evicted_dialogue_resumes_on_the_same_stream`'s
+        `assert await all_dialogue_ids(transcripts) == {dialogue_id}`, with the
+        fabricated id as an extra item. That test is the one to look at if this
+        paragraph is ever in doubt.
         """
         aggregate = await self._transcripts.load(dialogue.dialogue_id)
         aggregate.execute(
