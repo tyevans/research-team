@@ -3453,7 +3453,7 @@ picks this up should start by reproducing on `main` with nothing else checked
 out, because a browser measurement under load is exactly the failure CLAUDE.md
 says not to trust on one run.
 
-### B110. A dialogue's progress is recorded and no client can read it
+### B114. A dialogue's progress is recorded and no client can read it
 
 `POST /api/projects/{project_id}/dialogues/{dialogue_id}/attempts` (95076c9)
 grades an attempt and records it against the **dialogue** id, so the progress
@@ -3476,7 +3476,7 @@ nothing yet calls would have put an unreviewed surface in the diff.
 `post_dialogue_attempt`'s docstring now states the gap rather than claiming the
 capability, which is how this entry was found.
 
-### B111. Grep any new read surface for a raw field shipped beside a projected one
+### B115. Grep any new read surface for a raw field shipped beside a projected one
 
 **Measured 2026-08-18, not reasoned: two of two surfaces audited had it, on
 four routes.** The socratic surface shipped raw `text` on the `prompt` SSE
