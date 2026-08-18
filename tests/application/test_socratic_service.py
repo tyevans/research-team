@@ -10,6 +10,7 @@ counts as applied, so there is no layer below this that would have complained.
 """
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -26,6 +27,7 @@ from research_team.application.socratic import (
     SocraticFraming,
     SocraticObservation,
     SocraticPrompt,
+    UnknownDialogue,
 )
 from research_team.domain.socratic_dialogue import (
     SocraticDialogue,
@@ -33,6 +35,7 @@ from research_team.domain.socratic_dialogue import (
     SocraticDialogueStarted,
     SocraticProgressObserved,
     SocraticTurnRecorded,
+    StartSocraticDialogue,
 )
 
 PROJECT_ID = uuid4()
@@ -66,6 +69,25 @@ class EmptyReadModel:
         return []
 
 
+class StoredReadModel:
+    """One hand-held row, for the paths that need a registry miss to land
+    somewhere. `SimpleNamespace` for `test_socratic_resumption.py`'s reason:
+    `DialogueReadModel` is structural, so `_resume` reads attributes."""
+
+    def __init__(self, dialogue_id, *, turns=(), **fields):
+        self._rows = {dialogue_id: SimpleNamespace(**fields)}
+        self._turns = [
+            SimpleNamespace(position=index, reply=reply, prompt=prompt)
+            for index, (reply, prompt) in enumerate(turns)
+        ]
+
+    async def get(self, dialogue_id):
+        return self._rows.get(dialogue_id)
+
+    async def turns_for(self, dialogue_id):
+        return list(self._turns) if dialogue_id in self._rows else []
+
+
 @pytest.fixture
 def transcripts():
     return AggregateRepository(InMemoryTestHarness().event_store, SocraticDialogue)
@@ -75,7 +97,14 @@ def build(executor, transcripts, read_model=None):
     return SocraticDialogueService(
         executor=executor,
         dialogues=DialogueRegistry(now=lambda: 0.0),
-        read_model=read_model or EmptyReadModel(),
+        # `is not None`, never `or`. A falsy collaborator silently substitutes
+        # the default and the test then exercises an object the code under test
+        # never saw -- which is not hypothetical here: the same `or` in
+        # `test_socratic_resumption.py`'s `build` made the eviction test pass
+        # against a broken registry, because `DialogueRegistry` defines
+        # `__len__` and an empty one is falsy. No read model defines `__len__`
+        # today; that was true of the registry too, right up until it wasn't.
+        read_model=read_model if read_model is not None else EmptyReadModel(),
         now=lambda: 0.0,
         transcripts=transcripts,
         clock=lambda: datetime(2026, 8, 17, tzinfo=UTC),
@@ -244,6 +273,123 @@ async def test_two_replies_at_once_on_one_dialogue_are_refused(transcripts):
         await drain(service.respond(project_id=PROJECT_ID, dialogue_id=dialogue_id, reply="b"))
     release.set()
     await first
+
+
+async def test_a_concluded_dialogue_is_refused_before_the_model_is_called(
+    transcripts,
+):
+    """The third of `_resume`'s refusals, and the only one whose cost is money
+    rather than correctness.
+
+    `decide` refuses a turn against a concluded dialogue anyway -- so the
+    dialogue is safe either way, and that is why this is not the resumption
+    file's business. What `decide` cannot do is refuse it *before* the executor
+    has been paid for. The executor here raises if it is called at all, so the
+    exception type is the assertion: `UnknownDialogue` means the refusal
+    happened at the read model, and `RuntimeError` would mean the model ran
+    first and the aggregate cleaned up after.
+
+    Red against a `_resume` with the `status == "concluded"` branch deleted --
+    checked by deleting it, and this raised RuntimeError.
+    """
+    dialogue_id = uuid4()
+    service = build(
+        StubExecutor(fail=RuntimeError("the model was called")),
+        transcripts,
+        StoredReadModel(
+            dialogue_id,
+            project_id=PROJECT_ID,
+            goal="understand it",
+            stopping_condition="the reader states it plainly",
+            status="concluded",
+            opening_prompt="what do you think?",
+        ),
+    )
+
+    with pytest.raises(UnknownDialogue):
+        await drain(
+            service.respond(
+                project_id=PROJECT_ID, dialogue_id=dialogue_id, reply="one more thing"
+            )
+        )
+
+
+async def test_each_turn_is_numbered_from_the_exchanges_behind_it(transcripts):
+    """`position` is the grading key's half the browser cannot derive, and both
+    parities of the history have to number correctly.
+
+    The formula is `len(messages) // 2`, the same as `AskAnswer.position`. It
+    was written here as `(len(messages) - 1) // 2` for a whole commit, on the
+    reasoning that a dialogue's history opens with a question nobody has
+    answered where an ask's is pairs. **That reasoning is right and the
+    arithmetic it produced is wrong**, which is why this test asserts two
+    dialogues rather than two turns of one:
+
+    * with the opening question present the history is ODD before every turn,
+      and the two formulas agree exactly. A multi-turn test on this path passes
+      under both and proves nothing -- the first draft of this test was exactly
+      that.
+    * `SocraticDialogueStarted.opening_prompt` may be empty (it is defaulted for
+      schema evolution), so a resumed dialogue can have an EVEN history. There
+      `(len - 1) // 2` undercounts by one and numbers the second exchange as the
+      first, which would collide with the first turn's grading key.
+
+    Red against `(len - 1) // 2` on the second half only. The first half is red
+    against reading the count *after* `put`.
+    """
+    service = build(
+        StubExecutor([SocraticPrompt(prompt="why?"), SocraticPrompt(prompt="and?")]),
+        transcripts,
+    )
+    dialogue_id = await service.begin(project_id=PROJECT_ID, topic="the creed")
+
+    first = await drain(
+        service.respond(project_id=PROJECT_ID, dialogue_id=dialogue_id, reply="a")
+    )
+    second = await drain(
+        service.respond(project_id=PROJECT_ID, dialogue_id=dialogue_id, reply="b")
+    )
+
+    assert isinstance(first[-1], SocraticPrompt)
+    assert first[-1].position == 0
+    assert second[-1].position == 1
+
+    # A dialogue resumed from a row whose opening question was never recorded:
+    # one stored exchange, so a two-message history, so this turn is the second
+    # and must be numbered 1.
+    older = uuid4()
+    resumed = build(
+        StubExecutor([SocraticPrompt(prompt="go on?")]),
+        transcripts,
+        StoredReadModel(
+            older,
+            project_id=PROJECT_ID,
+            goal="understand it",
+            stopping_condition="the reader states it plainly",
+            status="started",
+            opening_prompt="",
+            turns=[("a", "why?")],
+        ),
+    )
+    # The stream has to exist for `_record`'s load, and `begin` is the only
+    # thing that starts one -- so this row stands for a dialogue whose events
+    # predate `opening_prompt`, which is what the empty string means.
+    aggregate = transcripts.create_new(older)
+    aggregate.execute(
+        StartSocraticDialogue(
+            dialogue_id=older,
+            project_id=PROJECT_ID,
+            topic="the creed",
+            goal="understand it",
+            stopping_condition="the reader states it plainly",
+            opening_prompt="",
+            opened_at=datetime(2026, 8, 17, tzinfo=UTC),
+        )
+    )
+    await transcripts.save(aggregate)
+
+    notes = await drain(resumed.respond(project_id=PROJECT_ID, dialogue_id=older, reply="b"))
+    assert notes[-1].position == 1
 
 
 def test_the_registry_returns_nothing_on_a_miss_rather_than_a_fresh_dialogue():

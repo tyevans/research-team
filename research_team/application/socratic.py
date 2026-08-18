@@ -100,7 +100,8 @@ class SocraticPrompt:
     """Which exchange of this dialogue this is, zero-based -- the same number
     `SocraticTurnRow.position` stores. Counted from the rehydrated history
     *before* this turn's pair is appended, so it is the count of exchanges
-    behind this one."""
+    behind this one -- `len(messages) // 2`, and see `respond` for why the
+    leading opening question does NOT make that `(len - 1) // 2`."""
 
 
 @dataclass(frozen=True)
@@ -394,12 +395,24 @@ class SocraticDialogueService:
                     with suppress(asyncio.CancelledError):
                         await running
 
-            # Read before `put`, which appends this exchange's two messages.
-            # The history starts with the opening question and alternates, so
-            # the count of *completed* exchanges behind this one is
-            # `(len(messages) - 1) // 2`. Reading after would report the next
-            # turn's index and nothing in a single-turn test would notice.
-            asked = replace(asked, position=max(len(dialogue.messages) - 1, 0) // 2)
+            # Read before `put`, which appends this exchange's two messages, so
+            # this is the count of exchanges *behind* this one. Reading after
+            # would report the next turn's index and nothing in a single-turn
+            # test would notice.
+            #
+            # `// 2` on the whole length, exactly as `AskAnswer.position` does,
+            # and this was `(len - 1) // 2` for a whole commit on the reasoning
+            # that a dialogue's history carries a leading opening question the
+            # ask's does not. That reasoning is right and the arithmetic it
+            # produced is wrong: with the opening question present the length is
+            # odd and the two formulas agree, and when `_resume` finds an empty
+            # `opening_prompt` -- which `SocraticDialogueStarted` permits, so
+            # older streams do it -- the history is EVEN and `(len - 1) // 2`
+            # undercounts by one, numbering a second turn as the first.
+            # `test_each_turn_is_numbered_from_the_exchanges_behind_it` covers
+            # both parities for that reason; the odd case alone cannot tell the
+            # two apart, which is how the wrong one survived being reviewed.
+            asked = replace(asked, position=len(dialogue.messages) // 2)
             # Recorded before the yield, for `AskService.ask`'s reason: there is
             # no suspension point between these statements for a cancellation to
             # land in, and recording afterwards would silently lose an exchange
