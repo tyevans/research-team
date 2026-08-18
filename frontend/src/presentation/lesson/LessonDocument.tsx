@@ -9,6 +9,7 @@ import { Cloze } from './Cloze.tsx'
 import { CompareWidget } from './CompareWidget.tsx'
 import { DefinitionWidget } from './DefinitionWidget.tsx'
 import { EvidenceWidget } from './EvidenceWidget.tsx'
+import { ExplorerWidget } from './ExplorerWidget.tsx'
 import { Flashcards } from './Flashcards.tsx'
 import { GraphWidget } from './GraphWidget.tsx'
 import { Mcq } from './Mcq.tsx'
@@ -108,6 +109,7 @@ const RENDERERS: Readonly<
   graph: GraphWidget,
   timeline: TimelineWidget,
   compare: CompareWidget,
+  explorer: ExplorerWidget,
 }
 
 const Component = ({
