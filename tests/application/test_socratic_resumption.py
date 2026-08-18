@@ -10,6 +10,21 @@ have started over while believing otherwise.
 Every assertion here is on what the executor was *handed* and on which stream
 the events landed on. "The call returned" is compatible with a service that
 silently began a second dialogue, which is precisely the failure.
+
+**Every name from `research_team.application.socratic` is imported inside the
+function that uses it, and every test here is `xfail(strict=True)`.** The
+module does not exist until Task 3, and a module-level import of it is a
+*collection* error -- which interrupts the entire pytest run, so a suite that
+cannot be collected is a suite in which no other failure can be read. The
+deferred import keeps the file collectable; the strict xfail is what keeps it
+honestly red rather than quietly excused.
+
+**Task 3 removes the markers; it does not touch the assertions.** `strict=True`
+means the suite goes RED on an unexpected *pass*, so the moment the service
+works these tests fail as XPASS and whoever wrote it has to delete the markers
+deliberately. That is the whole point of this shape -- a plain `xfail` or a
+`skip` would let a working feature sit behind a permanently-excused test that
+nobody looks at again.
 """
 
 from datetime import UTC, datetime
@@ -20,13 +35,6 @@ import pytest
 from eventsource import StreamId, collect
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
-from research_team.application.socratic import (
-    DialogueRegistry,
-    SocraticDialogueService,
-    SocraticFraming,
-    SocraticPrompt,
-    UnknownDialogue,
-)
 
 from research_team.domain.socratic_dialogue import (
     SocraticDialogue,
@@ -55,6 +63,8 @@ class RecordingExecutor:
         self.calls: list[dict] = []
 
     async def frame(self, *, project_id, topic):
+        from research_team.application.socratic import SocraticFraming
+
         self.calls.append({"kind": "frame", "topic": topic})
         return SocraticFraming(
             goal=f"understand {topic}",
@@ -65,6 +75,8 @@ class RecordingExecutor:
     async def respond(
         self, *, project_id, history, goal, stopping_condition, reply, on_activity
     ):
+        from research_team.application.socratic import SocraticPrompt
+
         self.calls.append(
             {
                 "kind": "respond",
@@ -121,6 +133,11 @@ def transcripts() -> AggregateRepository[SocraticDialogue]:
 
 
 def build(executor, transcripts, read_model, registry=None):
+    from research_team.application.socratic import (
+        DialogueRegistry,
+        SocraticDialogueService,
+    )
+
     return SocraticDialogueService(
         executor=executor,
         dialogues=registry or DialogueRegistry(now=lambda: 0.0),
@@ -159,6 +176,12 @@ async def all_dialogue_ids(transcripts) -> set[UUID]:
     }
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="research_team.application.socratic does not exist until Task 3. "
+    "strict=True so this goes red on an unexpected PASS -- Task 3 deletes the "
+    "marker deliberately rather than leaving a permanently-excused test.",
+)
 async def test_an_evicted_dialogue_resumes_on_the_same_stream(transcripts):
     """The whole feature, in one test.
 
@@ -182,6 +205,8 @@ async def test_an_evicted_dialogue_resumes_on_the_same_stream(transcripts):
 
     Each of those looks like working software until an hour has passed.
     """
+    from research_team.application.socratic import DialogueRegistry
+
     executor = RecordingExecutor(["Why do you think that?", "And what follows from it?"])
     read_model = StubReadModel()
     registry = DialogueRegistry(now=lambda: 0.0)
@@ -255,6 +280,12 @@ async def test_an_evicted_dialogue_resumes_on_the_same_stream(transcripts):
     assert recorded[2].prompt == "And what follows from it?"
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="research_team.application.socratic does not exist until Task 3. "
+    "strict=True so this goes red on an unexpected PASS -- Task 3 deletes the "
+    "marker deliberately rather than leaving a permanently-excused test.",
+)
 async def test_a_dialogue_still_in_the_registry_is_not_re_read(transcripts):
     """The registry is still a cache, and must still be one.
 
@@ -283,6 +314,12 @@ async def test_a_dialogue_still_in_the_registry_is_not_re_read(transcripts):
     ]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="research_team.application.socratic does not exist until Task 3. "
+    "strict=True so this goes red on an unexpected PASS -- Task 3 deletes the "
+    "marker deliberately rather than leaving a permanently-excused test.",
+)
 async def test_a_dialogue_that_was_never_stored_is_refused_rather_than_invented(
     transcripts,
 ):
@@ -293,6 +330,8 @@ async def test_a_dialogue_that_was_never_stored_is_refused_rather_than_invented(
     thought they knew -- and would write to a stream nobody asked for. Red
     against a service that falls back to `begin`.
     """
+    from research_team.application.socratic import UnknownDialogue
+
     executor = RecordingExecutor([])
     service = build(executor, transcripts, StubReadModel())
 
@@ -304,6 +343,12 @@ async def test_a_dialogue_that_was_never_stored_is_refused_rather_than_invented(
     assert await all_dialogue_ids(transcripts) == set()
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="research_team.application.socratic does not exist until Task 3. "
+    "strict=True so this goes red on an unexpected PASS -- Task 3 deletes the "
+    "marker deliberately rather than leaving a permanently-excused test.",
+)
 async def test_a_dialogue_is_not_resumable_from_another_project(transcripts):
     """The aggregate carries `project_id` and that is the boundary (spec §7).
 
@@ -314,6 +359,8 @@ async def test_a_dialogue_is_not_resumable_from_another_project(transcripts):
     string and a mismatch is ordinary, where a dialogue id is a server-minted
     UUID and a mismatch is either a bug or a probe.
     """
+    from research_team.application.socratic import UnknownDialogue
+
     executor = RecordingExecutor(["Why?"])
     read_model = StubReadModel()
     service = build(executor, transcripts, read_model)

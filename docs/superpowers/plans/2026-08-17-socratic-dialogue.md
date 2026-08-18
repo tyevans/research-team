@@ -1450,11 +1450,22 @@ dialogue is trying to reach something and has not yet.
 
 Two namings worth arguing, both settled here:
 
-prompt is the READER's utterance and reply is the DIALOGUE's, which is the
-opposite of the intuitive reading. citations forces it: they sit on the same
-event and come from tools the agent ran, so the agent's utterance is the one
-they belong beside. The pair then maps one-to-one onto AskTurnRecorded's
-question/answer, which is what lets the executor port keep the ask's shape.
+prompt is the SYSTEM's utterance and reply is the READER's -- the ordinary
+sense of both words. A socratic dialogue leads by questioning, so the system
+asks and the reader answers, which is deliberately the INVERSE of
+AskTurnRecorded's question/answer. That inversion is the feature, and a field
+layout hiding it is how someone later writes a socratic turn that behaves like
+an ask turn.
+
+(An earlier draft ruled the opposite, on the grounds that citations sit beside
+the agent's utterance. That argument decides nothing: both fields are on the
+same event either way, so it only proves the citations belong on
+SocraticTurnRecorded, which was never in question. Overturned in the progress
+ledger before execution; this paragraph is the corrected one.)
+
+And a turn pairs (reply, prompt): the reader's answer and the response it
+drew, not a question with its own answer. One executor call per event, every
+utterance stored exactly once.
 
 observations holds texts, not a count. A counter folds cheaply and answers
 nothing a stopping condition needs. The cost is a fold that grows with the
