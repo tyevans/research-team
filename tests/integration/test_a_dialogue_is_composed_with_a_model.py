@@ -59,7 +59,9 @@ async def _project(application) -> UUID:
 async def test_the_composed_executor_frames_a_dialogue_onto_the_stream(application):
     """Red three ways, and the middle one is the reason this file exists:
 
-    1. `_UnbuiltSocraticExecutor` still wired -- `NotImplementedError`.
+    1. The placeholder executor Plan 1 left in `composition.py` still wired --
+       `NotImplementedError`. Named obliquely on purpose: that class is gone,
+       and spelling it here would keep `grep` for it returning a hit forever.
     2. The real executor wired with `ASK_PROMPT` -- this passes, because a
        fake model ignores its prompt. See the prompt tests for that half; this
        file cannot cover it and says so rather than implying it can.

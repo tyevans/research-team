@@ -7,18 +7,35 @@ the prompt is composed rather than appended, that the component reference is
 the two-type one, and that the two calls get different instructions.
 """
 
-import pytest
+from uuid import uuid4
 
-from research_team.application.socratic import SocraticFraming
+import pytest
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+)
+from langchain_core.tools import tool
+
+from research_team.application.socratic import (
+    DialogueMessage,
+    SocraticFraming,
+    SocraticPrompt,
+)
 from research_team.application.socratic_components import SOCRATIC_COMPONENT_TYPES
+from research_team.infrastructure.agent import socratic_agent
+from research_team.infrastructure.agent.ask_agent import READ_ONLY_FILE_TOOLS
 from research_team.infrastructure.agent.socratic_agent import (
     _FRAMING_FIELDS,
     SOCRATIC_COMPONENT_PROMPT,
     SOCRATIC_FRAMING_SYSTEM,
     SOCRATIC_PROMPT,
     SOCRATIC_TOOLS_PROMPT,
+    DeepAgentSocraticExecutor,
     parse_framing,
 )
+from tests.conftest import ToolAwareFakeChatModel
 
 
 def test_the_reply_prompt_is_built_from_the_pieces_and_not_from_the_ask_s():
@@ -176,3 +193,172 @@ def test_a_reply_carries_the_sources_the_agent_actually_opened():
     from research_team.infrastructure.agent.ask_agent import CITED_BY_TOOL, READ_SOURCE_TOOL
 
     assert CITED_BY_TOOL[READ_SOURCE_TOOL] == ("source", "source_id")
+
+
+def test_the_tools_prompt_describes_every_file_tool_the_executor_actually_admits():
+    """Half of a drift this task created, and only half -- say so.
+
+    `DeepAgentSocraticExecutor` imports `READ_ONLY_FILE_TOOLS` from
+    `ask_agent`, so the *behaviour* is shared, while `SOCRATIC_TOOLS_PROMPT`
+    describes those tools in prose copied by hand. A file tool added to the
+    ask's list would be handed to a dialogue and described to it by nothing.
+
+    **Covers the file tools only.** The other half -- the project tools that
+    survive `readable(project_tools)` -- needs a built project to enumerate and
+    is not asserted here. Do not read this test as covering the allowlist.
+    """
+    for name in READ_ONLY_FILE_TOOLS:
+        assert name in SOCRATIC_TOOLS_PROMPT, f"{name} is admitted but never described"
+
+
+def test_a_framing_whose_keys_the_prompt_no_longer_declares_is_a_ValueError(monkeypatch):
+    """`_framing_fields` fails open by design -- an unreadable prompt block
+    yields `()` rather than raising at import, so a build that never opens a
+    dialogue still starts. But with `()` nothing is 'missing', and the three
+    literal lookups below it would raise **KeyError**, which no caller and no
+    other test here expects.
+
+    Red against the version that let the `KeyError` out: `pytest.raises`
+    demands `ValueError` and a `KeyError` is not one.
+    """
+    monkeypatch.setattr(socratic_agent, "_FRAMING_FIELDS", ())
+
+    with pytest.raises(ValueError, match="framing"):
+        parse_framing("goal: only a goal\n")
+
+
+class RecordingModel(ToolAwareFakeChatModel):
+    """The shared fake, remembering what it was asked. `test_ask_agent.py`'s,
+    duplicated rather than imported: importing a private helper out of a
+    sibling test module couples two suites that are free to diverge."""
+
+    prompted: list[BaseMessage] = []
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        RecordingModel.prompted = list(messages)
+        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+
+def _named(name: str):
+    @tool(name)
+    def _stub(argument: str = "") -> str:
+        """A stand-in for a project tool."""
+        return ""
+
+    return _stub
+
+
+async def _ready(value):
+    return value
+
+
+async def _respond(history=(), reply="It settled Arianism."):
+    """One `respond` call over the tool-aware fake, mirroring
+    `test_ask_agent.py::_answer` because the executor mirrors that one."""
+    RecordingModel.prompted = []
+    project_tools = tuple(_named(name) for name in ("read_source", "record_finding"))
+    executor = DeepAgentSocraticExecutor(
+        model=RecordingModel(responses=[AIMessage(content="Why do you say that?", id="a1")]),
+        open_graph=lambda _project: _ready((None, project_tools)),
+        project_files=lambda _project: _ready({"notes.md": "x"}),
+        project_sources=lambda _project: _ready({}),
+    )
+    reported: list[str] = []
+    result = await executor.respond(
+        project_id=uuid4(),
+        history=history,
+        goal="why the creed's wording mattered politically",
+        stopping_condition="the reader separates the settlement from the politics",
+        reply=reply,
+        on_activity=lambda note: reported.append(type(note).__name__),
+    )
+    return result, reported
+
+
+async def test_a_reply_comes_back_as_the_models_next_question():
+    """`respond`'s return value end to end over the fake -- the half of the
+    executor the composed test does not reach, because that one calls `frame`
+    only and `begin` never calls `respond`.
+
+    Red against an executor whose `respond` was never written, and red against
+    one returning `SocraticPrompt(prompt=...)` built from the tail message
+    rather than `last_text` -- the final state can end on a `ToolMessage`.
+
+    `citations` is empty because the fake calls no tool; that the mapping from
+    tool calls to citations is right is `test_ask_agent.py`'s, since this
+    executor imports the same `citations` function rather than re-deriving it.
+    """
+    result, _reported = await _respond()
+
+    assert isinstance(result, SocraticPrompt)
+    assert result.prompt == "Why do you say that?"
+    assert result.citations == ()
+    # Left at their defaults until Plan 4; see the comment at the return site.
+    assert result.observation is None
+    assert result.concluded is False
+
+
+async def test_the_goal_and_the_stopping_condition_reach_the_model_ahead_of_the_history():
+    """The framing is a `SystemMessage`, not a prefix on the reader's words --
+    a model shown it as something the reader said will sometimes answer it.
+
+    And the history has to arrive as the alternating turns it describes with
+    the new reply last, not as one concatenated blob, which is what a naive
+    join would produce. Red against `_framed_history` dropping the framing, or
+    appending the reply anywhere but the end.
+    """
+    history = (
+        DialogueMessage(role="assistant", text="What do you already believe it settled?"),
+        DialogueMessage(role="user", text="Something about Arius."),
+    )
+
+    await _respond(history=history, reply="It settled his christology.")
+
+    framings = [
+        message
+        for message in RecordingModel.prompted
+        if isinstance(message, SystemMessage)
+        and "why the creed's wording mattered politically" in message.text
+    ]
+    assert len(framings) == 1, "the goal reached the model zero times or twice"
+    assert "the reader separates the settlement from the politics" in framings[0].text
+
+    tail = [
+        # `.text` as a property, not a call: it is a property in the pinned
+        # langchain-core and calling it warns.
+        (type(message).__name__, message.text)
+        for message in RecordingModel.prompted
+        if isinstance(message, HumanMessage | AIMessage)
+    ]
+    assert tail == [
+        ("AIMessage", "What do you already believe it settled?"),
+        ("HumanMessage", "Something about Arius."),
+        ("HumanMessage", "It settled his christology."),
+    ]
+
+
+async def test_every_message_of_the_exchange_is_reported_before_respond_returns():
+    """The `astream` loop and its `reported` index, copied from
+    `DeepAgentAskExecutor.run` and adapted -- `messages` here is longer than
+    the ask's by one, because `_framed_history` prepends a `SystemMessage`.
+
+    **Measured, not reasoned, on 2026-08-18:** with `reported = 0` this fails
+    *loudly* rather than by reporting too much. `to_activity_message` refuses a
+    `SystemMessage` with `TurnAccountingError` (`messages.py:60`, which exists
+    to stop a user turn being recorded twice), so the framing turn aborts
+    `respond` outright before a single note is reported -- all three `respond`
+    tests here go red together, this one on the raise rather than on its count.
+
+    That is a better failure than the one expected when this test was written,
+    and it is luck rather than design: the guard belongs to the turn-recording
+    path and nothing makes it the activity path's business. If the framing ever
+    stops being a `SystemMessage`, an off-by-one here goes back to being silent
+    and this test's count assertion is what would catch it. Both halves are
+    asserted for that reason.
+    """
+    result, reported = await _respond()
+
+    assert reported, "nothing was reported: the activity loop yielded nothing at all"
+    # The model's one message, and no note for anything that went *in*.
+    assert reported.count("ActivityMessage") == 1, reported
+    assert result.prompt == "Why do you say that?"

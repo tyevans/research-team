@@ -1,8 +1,8 @@
 """A deep agent that leads a reader by questioning, and changes nothing.
 
-The prompts behind `SocraticDialogueService`. The executor that uses them lands
-in Task 3 and reuses the ask executor's plumbing wholesale -- the same read-only
-tool set, the same file backend, the same activity translation -- differing in
+The prompts behind `SocraticDialogueService`, and `DeepAgentSocraticExecutor`,
+which reuses the ask executor's plumbing wholesale -- the same read-only tool
+set, the same file backend, the same activity translation -- differing in
 exactly one thing that matters: what the model is told to do with them.
 
 **The prompt is composed from pieces and never appended to `ASK_PROMPT`.**
@@ -21,8 +21,9 @@ would invite the model to re-decide the goal every turn, and a goal the model
 can revise is not a stopping condition anything can test.
 
 The cost of a prompt is paid per turn, so the sizes are worth recording rather
-than guessing at. Measured on 2026-08-17: the reply prompt is 6,511 characters
-and the framing prompt 2,631 -- against the ask's 13,255. Almost the whole gap
+than guessing at. Measured on 2026-08-18, after `ls` and `glob` were added to
+the tools half: the reply prompt is 6,583 characters and the framing prompt
+2,703 -- against the ask's 13,255. Almost the whole gap
 between the two is the component reference the framing call deliberately does
 without (2,482 characters for two types, where the ask's nine cost 9,600).
 """
@@ -64,9 +65,10 @@ SOCRATIC_TOOLS_PROMPT = (
 
 You have its sources, its knowledge graph, its topics and its files. You have no
 access to the web. The sources are mounted read-only at `/sources/<source_id>`,
-so `grep` searches all of them at once. Open one with `read_source`, not
-`read_file`: only `read_source` returns the `source_id@start-end` span that makes
-a quote checkable.
+so `grep` searches all of them at once; `ls` and `glob` are how you find out
+what is there before searching it. Open one with `read_source`, not `read_file`:
+only `read_source` returns the `source_id@start-end` span that makes a quote
+checkable.
 
 If the material does not cover something, say so plainly rather than filling the
 gap from memory. A dialogue that invents its ground is worse than one that stops.
@@ -76,7 +78,16 @@ gap from memory. A dialogue that invents its ground is worse than one that stops
 )
 """The half both calls share. Deliberately the same claims the ask agent makes
 about the same tools -- the tool set is identical and a second, drifting
-description of it would be a second thing to keep true."""
+description of it would be a second thing to keep true.
+
+It had already drifted, and this was measured rather than feared: `ls` and
+`glob` are in `READ_ONLY_FILE_TOOLS`, which
+`DeepAgentSocraticExecutor` hands the agent, and neither was mentioned here
+until 2026-08-18 --
+`test_the_tools_prompt_describes_every_file_tool_the_executor_actually_admits`
+was red on both when first run. That test covers the *file* tools only; the
+project tools that survive `readable(project_tools)` need a built project to
+enumerate and are still described by nothing that would notice a change."""
 
 SOCRATIC_METHOD_PROMPT = """
 ## How to conduct this
@@ -243,11 +254,24 @@ def parse_framing(text: str) -> SocraticFraming:
     ]
     if missing:
         raise ValueError(f"the framing is missing {', '.join(missing)}")
-    return SocraticFraming(
-        goal=str(loaded["goal"]).strip(),
-        stopping_condition=str(loaded["stopping_condition"]).strip(),
-        opening_prompt=str(loaded["opening_prompt"]).strip(),
-    )
+    try:
+        return SocraticFraming(
+            goal=str(loaded["goal"]).strip(),
+            stopping_condition=str(loaded["stopping_condition"]).strip(),
+            opening_prompt=str(loaded["opening_prompt"]).strip(),
+        )
+    except KeyError as error:
+        # Only reachable when `_FRAMING_FIELDS` did not demand the key that is
+        # absent -- that is, when `_framing_fields` failed open and returned
+        # `()` because the prompt's fenced block stopped being a YAML mapping.
+        # Failing open is deliberate (see `_framing_fields`); failing open with
+        # the *wrong exception type* is not, because `begin`'s callers and every
+        # test here expect `ValueError`, and a `KeyError` would escape a
+        # `pytest.raises(ValueError)` and every `except ValueError` upstream.
+        raise ValueError(
+            f"the framing is missing {error.args[0]}, and the prompt no longer "
+            "declares it either -- see `_framing_fields`"
+        ) from error
 
 
 def _framed_history(
