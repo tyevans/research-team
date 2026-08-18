@@ -3296,3 +3296,61 @@ one place that cannot see whether the caller is a person.
 Whichever way it goes, it wants a test that a forked round is drivable by hand,
 which is the property actually at stake. `_fork_files_from` is a different
 method and is not implicated.
+
+### B107. The interaction log has no consumer
+
+`AGENT_INTERACTION_LOG` collects into `~/.research-team/interactions.db` and
+nothing reads it back: no read API, no view, no aggregation, no friction
+detection, no preemption. That is deliberate — the design's whole argument is
+that a corpus should exist before either consumer is designed against
+imagination rather than data — but it means the feature's actual usefulness is
+unproven until something is built on top of it.
+
+Both plausible families are answerable from what is already collecting:
+friction detection (aggregate, cross-session — where do sessions stall, retry,
+or hit `EmptyResultEncountered` repeatedly) and preemption (an ordered prefix
+within one session — what does the tail of a session look like right before
+someone gives up or asks for help). Neither has a design.
+
+Also true of the same runner and worth noting alongside: `InteractionLogRunner`
+exposes `failures()` and `rebuild()` with no HTTP surface, consistent with five
+of the seven peer projection runners in this codebase (`CorpusRunner` and
+`TopicRunner` set the precedent B44 already names for check telemetry). The
+trigger to revisit is the same shape as B44's: someone who is not reading the
+database by hand wanting these numbers.
+
+### B108. Two pre-existing browser-test failures are invisible because nothing runs `test:browser` in CI
+
+`frontend/src/presentation/project/project-stacked.browser.test.tsx` ("clips
+nothing down to 596" — expects an array of length 0, gets 2, at 640px) and
+`frontend/src/presentation/project/project-tracks.browser.test.tsx` ("keeps
+MATERIAL wide enough for the tab strip it always has" — expects 646 to be >=
+697.484375) both fail on `main`, unrelated to the interaction-log work and
+reproduced there in isolation across several of this branch's commits.
+
+Neither is caused by this branch and neither is fixed by it. The point of
+recording them here is the gate, not the failures: `npm run test:browser` is
+deliberately outside `npm run verify` and outside CI (CLAUDE.md's Verification
+section explains why — jsdom cannot lay anything out, so the suite exists for
+assertions jsdom cannot make), which also means nothing forces anyone to run
+it, and these two have sat red for long enough that several unrelated commits'
+messages have had to disclaim them by name. A suite nobody is made to run is a
+suite nobody is made to notice going red.
+
+### B109. Cross-store correlation between `sessions.db` and `interactions.db` is an application-layer join on wall-clock, not an ordering
+
+`eventsource` derives a store's id from the database connection string, and
+every checkpoint position carries that id — positions from two different
+stores cannot be compared or ordered against each other
+(`PositionForeignError`; see CLAUDE.md's Read models section for the
+mechanism). The interaction log is a second, separate store from the domain
+event log by design, for exactly the isolation that produces.
+
+The consequence for any future consumer: relating "what the domain recorded"
+to "what the user was doing at the time" cannot be a projection spanning both
+streams. It has to be a join on approximate wall-clock timestamps computed
+after the fact, which is weaker than the ordering guarantee every other
+correlation in this codebase gets from position tokens. Nothing currently
+needs this join — B107's absent consumers would be the first callers — but
+whichever one is built first should not assume it can get exact interleaving
+across the two stores; it can't, structurally.

@@ -102,6 +102,22 @@ Everything is an environment variable. The ones a first run actually needs:
 | `AGENT_WEB_HOST` / `AGENT_WEB_PORT` | `127.0.0.1` / `8000` | where the web UI binds |
 | `AGENT_SEARXNG_URL` | *(unset)* | SearXNG base URL; unset means no search tool exists |
 | `AGENT_CONTEXT` | `full` | `full`, `elide`, `compact` or `delegate` |
+| `AGENT_INTERACTION_LOG` | `on` | capture what the console user does; set `0`/`false`/`no`/`off` to disable |
+| `AGENT_INTERACTION_DB` | `~/.research-team/interactions.db` | SQLite file holding the interaction log |
+
+**`AGENT_INTERACTION_LOG` is the only default-on boolean in this project, and
+what it turns on is worth reading before turning it off.** The React console
+records what a user does — navigation, dwell (with hidden tab time counted
+separately), and semantic actions like search and approval decisions — and
+POSTs it to a second, separate event store from the one holding sessions.
+**`AskSubmitted` carries the research prompt itself: whatever text someone
+typed to ask the agent something.** That is the most sensitive field in the
+system, logged by default. Setting `AGENT_INTERACTION_LOG=0` removes the
+dependency entirely, and the ingest route then answers 503 rather than
+silently accepting and discarding — the same "unset means the route is not
+there" pattern `AGENT_RESEARCH_RUN` uses. The log has no reader today: no
+read API, no browser view, nothing consumes it yet. It exists to build a real
+corpus before later work designs friction detection against it.
 
 **[`docs/configuration.md`](docs/configuration.md) has the rest** — the graph,
 vector and chunk stores, embeddings, Neo4j and pgvector, tracing, and the two

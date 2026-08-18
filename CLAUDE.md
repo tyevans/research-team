@@ -322,6 +322,57 @@ and it wasn't: a build with `EntityDefinitionRunner` never constructed in
 the tests that "confirmed the endpoint worked" never noticed, because none of
 them checked for a stored row.
 
+## The interaction log
+
+**A second event store means no projection can span the two.** `eventsource`
+derives a store's id from the database connection string and every checkpoint
+position carries it, so a position from `interactions.db` cannot be ordered
+against a position from `sessions.db` (`PositionForeignError` — the same
+mechanism the Read models section above describes for two copies of one
+store). This is not a limitation to work around; it is why the interaction log
+is genuinely separate rather than separate by convention, and it is structural
+enough that a future consumer correlating the two has to fall back to an
+application-layer join on approximate wall-clock, not an ordered read. See
+BACKLOG B109.
+
+**A silent emitter makes "nothing happened" look exactly like success.** The
+interaction log's React context defaults to an emitter that records nothing,
+so the hundreds of existing component tests need no provider at all. The cost:
+a test that renders without the provider and asserts no events were sent
+passes whether the feature works, was reverted entirely, or was never wired up
+in the first place. Measured on this branch: deleting the
+`<InteractionLogProvider>` wrapper from `App.tsx` left all 15 `App.test.tsx`
+tests and all 4 provider tests green, with the console silently collecting
+nothing the whole time. The assertion has to be that a *recorded event reached
+the sink* — never that nothing threw.
+
+**Effect declaration order decides which route's ids an event carries.** A
+`setContext` effect declared above a `dwell.enter(view)` effect rewrites the
+context before `enter()` internally calls the previous view's `exit()`, so
+every page's `ViewExited` was stamped with the ids of the page the user went
+to *next* rather than the one just left. Silent — the dwell arithmetic stayed
+correct throughout, only the attribution was wrong, so nothing about the
+duration looked implausible. Swapping the two effects does not fix it; it just
+moves the same defect onto `ViewEntered`. The fix is one effect doing exit,
+then `setContext`, then enter, in that order.
+
+**`useMemo` is not a caching guarantee.** React may discard a memoised value on
+a remount, which for a per-page-load identity means minting a second id and
+restarting a sequence counter mid-page — breaking an idempotency key that
+depends on the pair staying stable together. A lazy `useState` initialiser
+gives the guarantee a memo doesn't; a lazy `useRef` looks like it would but
+doesn't survive this repo's lint, because the `react-hooks` plugin's refs rule
+forbids reading `.current` during render.
+
+**StrictMode's double-invoke can leave a cleaned-up resource dead.** An effect
+cleanup that stops a flush interval, paired with a factory that only builds the
+interval once, means a StrictMode remount gets an emitter whose timer is
+already gone. Measured: 0 timed flushes in a 20-second fake-timer window under
+StrictMode, 1 without. Production is unaffected — StrictMode's double-invoke is
+dev-only — which is exactly what makes this invisible: it degrades only the
+one environment where a person would hand-verify the feature by watching it
+run.
+
 ## Comments and commit messages
 
 The standard here is higher than most repositories and is worth matching.

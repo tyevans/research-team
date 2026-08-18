@@ -4,9 +4,20 @@ Flat, with a JSON payload column, rather than a table per kind. The
 vocabulary will churn, the database is droppable, and SQLite's JSON operators
 are enough for the hand queries this feature exists to enable:
 
-    sqlite3 ~/.research-team/interactions.db \\
-      "select seq, kind, view, json_extract(payload,'$.dwell_ms')
-         from interaction_events where browser_session_id = '...' order by seq"
+    uv run python -c "
+    import sqlite3
+    con = sqlite3.connect('$HOME/.research-team/interactions.db')
+    for row in con.execute(
+        \"select seq, kind, view, json_extract(payload,'$.dwell_ms')\"
+        \" from interaction_events where browser_session_id = ? order by seq\",
+        ('...',),
+    ):
+        print(row)
+    "
+
+The `sqlite3` CLI is the more natural way to write this and is not assumed
+present -- it is not installed on every machine this runs on, and the form
+above needs nothing beyond the interpreter already in this project's venv.
 
 Per-kind tables would be the right call once a consumer exists and its
 queries are known. Today there is no consumer, and guessing at its shape is
