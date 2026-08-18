@@ -4,9 +4,20 @@ Flat, with a JSON payload column, rather than a table per kind. The
 vocabulary will churn, the database is droppable, and SQLite's JSON operators
 are enough for the hand queries this feature exists to enable:
 
-    sqlite3 ~/.research-team/interactions.db \\
-      "select seq, kind, view, json_extract(payload,'$.dwell_ms')
-         from interaction_events where browser_session_id = '...' order by seq"
+    uv run python -c "
+    import sqlite3
+    con = sqlite3.connect('$HOME/.research-team/interactions.db')
+    for row in con.execute(
+        \"select seq, kind, view, json_extract(payload,'$.dwell_ms')\"
+        \" from interaction_events where browser_session_id = ? order by seq\",
+        ('...',),
+    ):
+        print(row)
+    "
+
+The `sqlite3` CLI is the more natural way to write this and is not assumed
+present -- it is not installed on every machine this runs on, and the form
+above needs nothing beyond the interpreter already in this project's venv.
 
 Per-kind tables would be the right call once a consumer exists and its
 queries are known. Today there is no consumer, and guessing at its shape is
@@ -109,14 +120,24 @@ class InteractionEventRow(ReadModel):
         return uuid5(INTERACTION_LOG_NAMESPACE, f"{browser_session_id}:{seq}")
 
 
-# Every field the base `DomainEvent` and `InteractionEvent` envelopes supply,
-# including `correlation_id`, `tenant_id` and `actor_id` -- not just the pair
-# that happen to have their own row columns. A hand-picked exclusion set
-# misses whichever envelope field nobody thought to name, and it would leak
-# straight into `payload` with nothing to catch it.
-_ENVELOPE_FIELDS = frozenset(DomainEvent.model_fields) | frozenset(
+ENVELOPE_FIELDS = frozenset(DomainEvent.model_fields) | frozenset(
     InteractionEvent.model_fields
 )
+"""Every field the base `DomainEvent` and `InteractionEvent` envelopes supply,
+including `correlation_id`, `tenant_id` and `actor_id` -- not just the pair
+that happen to have their own row columns. A hand-picked exclusion set misses
+whichever envelope field nobody thought to name, and it would leak straight
+into `payload` with nothing to catch it.
+
+Public rather than underscored because the ingest route needs the same set for
+the opposite direction: this module drops these keys *out* of a stored payload,
+and `interfaces/web/app.py` refuses a posted payload that carries one *in*. The
+branch shipped once with the route holding its own hand-picked list of eight of
+these, which let a payload set `actor_id` or `metadata` to arbitrary user text
+-- text that then landed in the `events` blob and, because of the filter below,
+nowhere in `interaction_events`. Two derivations of one set is how that
+happened; there is now one.
+"""
 
 
 def row_for(event: InteractionEvent) -> InteractionEventRow:
@@ -128,7 +149,7 @@ def row_for(event: InteractionEvent) -> InteractionEventRow:
     payload = {
         name: value
         for name, value in event.model_dump(mode="json").items()
-        if name not in _ENVELOPE_FIELDS
+        if name not in ENVELOPE_FIELDS
     }
     return InteractionEventRow(
         id=InteractionEventRow.row_id(event.aggregate_id, event.seq),
@@ -330,6 +351,18 @@ class InteractionLogRunner:
     (see `InteractionLogStore`'s docstring), because a projection the store
     never drives on its own would be dead weight for Task 3's tests, which use
     the store standalone.
+
+    **`AGENT_INTERACTION_LOG=0` does not stop this runner, and someone
+    auditing the switch will find the file and conclude it failed.** The
+    switch gates the *recorder* -- `web.py` passes `interactions=None` and the
+    ingest route answers 503 -- so nothing is ever appended, but this runner
+    still starts, creating `interactions.db`, applying its schema and running
+    a subscription over an empty store. Deliberate: the store has to exist for
+    a later `=1` run in the same process tree, and gating the runner too would
+    make turning collection back on a restart rather than a variable. The cost
+    is an empty database file that looks like the switch not working, which is
+    why it is written here and in `README.md` rather than left to be
+    rediscovered.
     """
 
     def __init__(

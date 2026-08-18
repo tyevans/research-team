@@ -61,7 +61,7 @@ async def test_a_stored_event_keeps_its_envelope_and_its_payload(db_path):
 
 
 async def test_a_stored_payload_holds_only_kind_specific_fields(db_path):
-    """`_ENVELOPE_FIELDS` is derived from both `DomainEvent` and
+    """`ENVELOPE_FIELDS` is derived from both `DomainEvent` and
     `InteractionEvent`'s fields, not a hand-picked pair. If it missed one --
     `correlation_id`, `tenant_id`, `actor_id` are the ones the brief's
     original exclusion set missed -- it would leak into every stored payload

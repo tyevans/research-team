@@ -1,6 +1,8 @@
 /** What the ask store guarantees on top of the fold and the repository. */
 import { expect, it, vi } from 'vitest'
 
+import type { Emitter } from '@application/interaction-log/emitter.ts'
+import { QUERY_TEXT_MAX_LENGTH } from '@application/interaction-log/text.ts'
 import type { AskRepository } from '@application/ports/repositories.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
@@ -18,8 +20,13 @@ const fakeAsk = (over: Partial<AskRepository> = {}): AskRepository => ({
 })
 
 let counter = 0
-const store = (ask: AskRepository = fakeAsk()) =>
-  createAskStore({ ask, projectId: PROJECT, newChatId: () => `chat-${String(++counter)}` })
+const store = (ask: AskRepository = fakeAsk(), emitter?: Pick<Emitter, 'record'>) =>
+  createAskStore({
+    ask,
+    projectId: PROJECT,
+    newChatId: () => `chat-${String(++counter)}`,
+    ...(emitter ? { emitter } : {}),
+  })
 
 it('records the question before the first frame arrives', async () => {
   const ask = fakeAsk({
@@ -138,4 +145,89 @@ it('clears the transcript even when forgetting the server copy fails', async () 
   // The server's copy expires on its own; refusing to clear the page would
   // strand the reader in a conversation they asked to leave.
   expect(asking.getState().transcript).toEqual([])
+})
+
+it('records AskSubmitted before the turn is awaited', () => {
+  const record = vi.fn<Emitter['record']>()
+  const asking = store(
+    fakeAsk({
+      ask: vi.fn(async () => {
+        // If the event were recorded after the await, it would not exist
+        // yet at this point in a still-pending promise.
+        await new Promise(() => {
+          /* never resolves within the test */
+        })
+      }),
+    }),
+    { record },
+  )
+
+  void asking.getState().send('what did we find?')
+
+  expect(record).toHaveBeenCalledWith('AskSubmitted', { query_text: 'what did we find?' })
+})
+
+it('records a pasted document truncated rather than whole', async () => {
+  /** The document cap is 500,000 characters and this field took whatever was
+   *  typed, so pasting a document into the ask box wrote that document into
+   *  the most sensitive field in the system. Truncated rather than dropped:
+   *  the ask still happened, and losing that is losing structure to protect
+   *  against content.
+   *
+   *  Proved red without `boundQueryText`: recorded all 500,000 characters. */
+  const record = vi.fn<Emitter['record']>()
+  const asking = store(fakeAsk(), { record })
+
+  await asking.getState().send('x'.repeat(500_000))
+
+  expect(record).toHaveBeenCalledWith('AskSubmitted', {
+    query_text: 'x'.repeat(QUERY_TEXT_MAX_LENGTH),
+  })
+})
+
+it('records no ActionRetried for the first question in a conversation', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const asking = store(fakeAsk(), { record })
+
+  await asking.getState().send('one')
+
+  expect(record).not.toHaveBeenCalledWith('ActionRetried', expect.anything())
+})
+
+/** The finding that made this store's `ActionRetried` mean repair rather than
+ *  conversation length: a follow-up question is the ask feature working, and
+ *  counting it as a retry buries the signal under healthy use.
+ */
+it('records no ActionRetried for a different follow-up question', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const asking = store(fakeAsk(), { record })
+
+  await asking.getState().send('one')
+  await asking.getState().send('two')
+
+  expect(record).not.toHaveBeenCalledWith('ActionRetried', expect.anything())
+})
+
+it('records ActionRetried when the identical question is asked again', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const asking = store(fakeAsk(), { record })
+
+  await asking.getState().send('one')
+  await asking.getState().send('  one  ')
+
+  expect(record).toHaveBeenCalledWith('ActionRetried', {
+    action_kind: 'ask',
+    attempt_number: 2,
+  })
+})
+
+it('resets the attempt count on reset(), so a new conversation is not a retry', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const asking = store(fakeAsk(), { record })
+
+  await asking.getState().send('one')
+  await asking.getState().reset()
+  await asking.getState().send('one')
+
+  expect(record).not.toHaveBeenCalledWith('ActionRetried', expect.anything())
 })

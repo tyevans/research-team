@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
 
+import { useInteractionLog } from '@app/interaction-log-provider.tsx'
 import { useContainer } from '@app/container-context.tsx'
 import { queryKeys } from '@application/queries/keys.ts'
 import { byTopic, type Dispatch } from '@domain/research/dispatch.ts'
@@ -81,11 +82,15 @@ export const useDispatchBoard = (projectId: ProjectId) => {
 export const useDispatchTopic = (projectId: ProjectId) => {
   const { topics } = useContainer()
   const queryClient = useQueryClient()
+  const log = useInteractionLog()
 
   return useMutation({
     mutationFn: ({ topicId, action }: { topicId: TopicId; action: string }) =>
       topics.dispatch(projectId, topicId, action),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.dispatch(projectId) }),
+    onSuccess: (_result, { topicId, action }) => {
+      log.record('DispatchRequested', { topic_id: topicId, action })
+      return queryClient.invalidateQueries({ queryKey: queryKeys.dispatch(projectId) })
+    },
   })
 }
 
