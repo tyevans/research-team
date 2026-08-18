@@ -268,6 +268,18 @@ async def test_an_evicted_dialogue_resumes_on_the_same_stream(transcripts):
         ("assistant", "Why do you think that?"),
     ]
 
+    # Proved to bite, on 2026-08-17, and it took two attempts -- the first is
+    # the more useful result. Sabotage A, `_resume` returning a `LiveDialogue`
+    # with a fresh `uuid4()` and the framing otherwise intact, never reaches
+    # this line: `_record`'s unconditional `load` raises
+    # `AggregateNotFoundError` first. That is a real second line of defence and
+    # is the reason `_record` must never grow the ask's `create_new` fallback.
+    # Sabotage B, that plus exactly such a fallback, fails HERE with the
+    # rehydrated id in the left set and the real one in the right. So both
+    # halves of this test are known to fail: `goal` above catches a lost
+    # framing, this catches a second stream -- but only under a two-part
+    # defect, which is the honest limit of the proof.
+    #
     # The same stream, and only that stream. This is the assertion a service
     # that started over would fail while every other observable agreed.
     assert await all_dialogue_ids(transcripts) == {dialogue_id}
