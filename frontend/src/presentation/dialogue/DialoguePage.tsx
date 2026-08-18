@@ -24,7 +24,7 @@ export const DialoguePage = ({
   transcript,
   goal,
   stoppingCondition,
-  pendingBlocks,
+  openingBlocks,
   dialogueId,
   replying,
   starting,
@@ -36,7 +36,13 @@ export const DialoguePage = ({
   transcript: DialogueTranscript
   goal: string
   stoppingCondition: string
-  pendingBlocks: readonly DocumentBlock[]
+  /** The question that opened the dialogue, off the dialogue row.
+   *
+   * `pendingBlocks` from the store is deliberately not taken: per
+   * `app.py:3117` it is "the question being answered, not the one about to be
+   * asked", so it duplicates a question already on screen one exchange stale.
+   * See `DialogueThread` for the chronology this props list follows. */
+  openingBlocks: readonly DocumentBlock[]
   // Null until `start` returns the server-minted id -- see `dialogue-store.ts`
   // for why this surface cannot mint one in the browser.
   dialogueId: string | null
@@ -72,7 +78,12 @@ export const DialoguePage = ({
         </div>
       ) : null}
 
-      <DialogueThread projectId={projectId} transcript={transcript} pendingBlocks={pendingBlocks} />
+      <DialogueThread
+        projectId={projectId}
+        transcript={transcript}
+        openingBlocks={openingBlocks}
+        dialogueId={dialogueId}
+      />
 
       {concluded ? (
         <p className="dlg-concluded" role="status">

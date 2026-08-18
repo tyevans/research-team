@@ -3613,3 +3613,41 @@ that exists today (`test_socratic_attempts.py`) could not see this class of
 leak until an executor stub that actually streams was written for it -- see
 `test_no_frame_of_a_streamed_turn_carries_the_answer_key`, whose predecessor
 passed for a whole slice because its stub emitted no activity at all.
+
+### B119. A component in a dialogue's OPENING question cannot be graded
+
+`LessonDocument` needs an `AttemptsApi`, and the dialogue console wires a real
+one (`use-dialogue-attempts.ts`) for every question that belongs to a turn: an
+attempt is `{position, componentId, response}`, and a turn carries the
+`position` the attempts route matches against a `SocraticTurnRow`. The opening
+question is the one exception. It lives on the dialogue row and belongs to no
+turn, so there is no row to match and no position to send; inventing one would
+404. `DialogueExchange.tsx`'s `UNGRADED` is what it gets instead.
+
+The cost, which is why this is filed rather than left implicit: a component in
+the opening question **draws and does nothing at all**. `update` is a no-op, so
+a reader's pick does not even highlight -- a broken control, and one a reader
+cannot tell from a fault in their own browser. No dialogue that has a turn has
+this problem.
+
+Two ways out, and the cheaper one is also the better one:
+
+- **(a) A synthetic position for the opening question.** Needs a server change
+  and a row that does not exist until the reader has answered something --
+  either a position the route special-cases, or a turn row minted at framing
+  time with no answer in it. Both put a fiction in the grading log so that a
+  page can render a widget.
+- **(b) Recommended: tell the framing model not to author components in the
+  opening question.** One sentence in the framing prompt, and it removes the
+  case rather than plumbing it. The opening question is *framing* -- it sets up
+  what the dialogue is for -- and a graded widget there asks the reader to
+  answer before the conversation has started, which is the wrong shape for this
+  surface regardless of what the client can submit. Do (b), and (a) only if
+  something later needs a gradeable opener for a reason this entry does not
+  anticipate.
+
+What a fix would fail on if it were wrong: an opening question containing an
+`mcq`, answered in the browser, must either not exist (b) or reach the attempts
+route and come back with a verdict (a). An assertion that the widget *renders*
+passes today and is exactly the reassurance this entry is about.
+
