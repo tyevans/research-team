@@ -49,6 +49,7 @@ const props = (concluded = false): Props => ({
   openingBlocks: [{ kind: 'markdown', text: 'Where would you start?' }],
   dialogueId: 'd1',
   progress: {},
+  progressUnavailable: false,
   replying: false,
   starting: false,
   error: null,

@@ -319,3 +319,60 @@ it('leaves the page alone when the progress load fails', async () => {
   expect(dialogue.getState().error).toBeNull()
   expect(dialogue.getState().progress).toEqual({})
 })
+
+it('says so quietly when the answers could not be loaded', async () => {
+  // The other half of the silence above. Staying out of `error` is right --
+  // this is not the reader's action -- but staying out of the page entirely
+  // made a failed load indistinguishable from a dialogue that forgot, which is
+  // the defect this route exists to fix. So there is exactly one flag, drawn as
+  // one line beside the thread.
+  //
+  // Red against the store before the flag existed: `progressUnavailable` is
+  // not a field, and `undefined` is not `true`.
+  const dialogue = store(
+    repo({
+      progress: vi.fn<DialogueRepository['progress']>().mockRejectedValue(new Error('gone')),
+    }),
+  )
+  await dialogue.getState().start('t')
+
+  await dialogue.getState().refreshProgress()
+
+  expect(dialogue.getState().progressUnavailable).toBe(true)
+})
+
+it('stops saying it once the answers load', async () => {
+  // A transient failure must not stick: the flag is cleared on the next
+  // success, not only set on failure. Written because the one-line version of
+  // this fix -- `catch { set({ progressUnavailable: true }) }` alone -- passes
+  // the test above and leaves the line on screen for the rest of the session.
+  const progress = vi
+    .fn<DialogueRepository['progress']>()
+    .mockRejectedValueOnce(new Error('gone'))
+    .mockResolvedValue({})
+  const dialogue = store(repo({ progress }))
+  await dialogue.getState().start('t')
+  await dialogue.getState().refreshProgress()
+
+  await dialogue.getState().refreshProgress()
+
+  expect(dialogue.getState().progressUnavailable).toBe(false)
+})
+
+it('resumes the dialogue the URL named, rather than starting at none', async () => {
+  // The seed, at the store's own level. `DialogueView` passes the id off the
+  // route; without it the store began every mount at `null`, `refreshProgress`
+  // returned on its guard, and no dialogue with any history in it was
+  // reachable in a browser at all.
+  const progress = vi.fn<DialogueRepository['progress']>().mockResolvedValue({})
+  const dialogue = createDialogueStore({
+    dialogues: repo({ progress }),
+    projectId: PROJECT,
+    dialogueId: 'd9',
+  })
+
+  await dialogue.getState().refreshProgress()
+
+  expect(dialogue.getState().dialogueId).toBe('d9')
+  expect(progress).toHaveBeenCalledWith(PROJECT, 'd9')
+})

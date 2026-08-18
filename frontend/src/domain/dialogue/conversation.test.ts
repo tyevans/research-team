@@ -53,6 +53,20 @@ it('opens a turn on the reader’s answer, not on the dialogue’s question', ()
   expect(transcript[0]?.settled).toBe(false)
 })
 
+it('opens a turn at no position, rather than at turn zero', () => {
+  // `-1`, because an open turn has no position until its `prompt` frame lands
+  // and `0` is a real one. `DialogueThread` looks a turn's verdicts up by
+  // `progress['turn/{position}']`, so a second turn in flight was handed the
+  // FIRST turn's marks -- another question's verdicts, on a question nobody
+  // has answered.
+  //
+  // Honest about what it caught: nothing, today. An open turn has empty
+  // `blocks` and so renders no widget for the wrong verdicts to land on. That
+  // is a property of the thread's rendering rather than of this fold, and it
+  // is one refactor away from being untrue. Red against `position: 0`.
+  expect(opened()[0]?.position).toBe(-1)
+})
+
 it('settles a turn from the prompt frame’s blocks', () => {
   const transcript = applyEvent(opened(), {
     type: 'prompt',

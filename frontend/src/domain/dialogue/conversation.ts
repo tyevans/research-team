@@ -113,7 +113,16 @@ export const answered = (transcript: DialogueTranscript, reply: string): Dialogu
   {
     blocks: [],
     reply,
-    position: 0,
+    // `-1` and not `0`, which is what this opened at: an open turn has no
+    // position until its `prompt` frame lands, and `0` is a real one. A second
+    // turn in flight was therefore handed `progress['turn/0']` -- the FIRST
+    // turn's verdicts, against a question it is not asking. Harmless only
+    // because an open turn has empty `blocks` and so renders no widget to
+    // mis-mark; that is a property of `DialogueThread`'s rendering, not of
+    // this fold, and it is one refactor away from being untrue. `-1` names no
+    // turn the server can have graded, so the lookup misses, which is the
+    // honest answer for a turn nobody has answered yet.
+    position: -1,
     activity: [],
     citations: [],
     concluded: false,

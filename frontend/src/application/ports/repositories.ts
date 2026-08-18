@@ -599,10 +599,6 @@ export interface AskRepository {
   ): Promise<Verdict>
 }
 
-/** The socratic surface, which runs the other way round from the ask: the
- *  system asks and the reader answers. Its own port rather than a widened
- *  `AskRepository` for the reason `domain/dialogue/conversation.ts` opens
- *  with -- a shared type would make that inversion a runtime concern. */
 /** A dialogue's framing: what it is for, when it is done, and how it opened.
  *
  * Returned whole from `start` rather than fetched afterwards. The route
@@ -630,6 +626,14 @@ export interface DialogueFraming {
  * so an exchange passes its own entry through unadapted. */
 export type DialogueProgress = Readonly<Record<string, ReadonlyMap<ComponentId, ItemProgress>>>
 
+/** The socratic surface, which runs the other way round from the ask: the
+ *  system asks and the reader answers. Its own port rather than a widened
+ *  `AskRepository` for the reason `domain/dialogue/conversation.ts` opens
+ *  with -- a shared type would make that inversion a runtime concern.
+ *
+ * Moved here from above `DialogueFraming`, where it read as that record's
+ * docstring and explained nothing about it while the interface it is actually
+ * about had none. */
 export interface DialogueRepository {
   /** Frames a dialogue and returns it, id and framing together. Not a stream:
    *  framing produces three strings and no activity worth watching, and the

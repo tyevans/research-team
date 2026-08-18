@@ -9,8 +9,9 @@ import { ContainerProvider } from '@app/container-context.tsx'
 import type { DocumentRepository } from '@application/ports/repositories.ts'
 import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
 import type { MediaSummary } from '@domain/research/document.ts'
-import { ProjectId, SessionId, SourceId } from '@domain/shared/identifier.ts'
+import { ComponentId, ProjectId, SessionId, SourceId } from '@domain/shared/identifier.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
+import { componentBlock } from '@presentation/ask/ask-fixtures.ts'
 import { projectHref } from '@presentation/routing/routes.ts'
 
 import { App } from './App.tsx'
@@ -522,4 +523,106 @@ it('does not seek an opened document with no `?t=` in its link', async () => {
 
   const player = await screen.findByTestId('media-player')
   expect((player as HTMLMediaElement).currentTime).toBe(0)
+})
+
+/** A dialogue that survives being left and come back to -- the whole chain, in
+ *  one test, because the plan that built it had six tasks and a review apiece
+ *  and none of them owned this.
+ *
+ * Every hop was correct and separately proved: the route,
+ * `dialogue_progress_view`, `dialogueProgressDto`, `toDialogueProgress`, the
+ * four-hop prop chain, and the keying by the turn's position. Nothing wrote the
+ * minted id into the hash, so `DialogueView` began every mount at
+ * `dialogueId: null`, `refreshProgress` short-circuited on its own guard, and
+ * the only dialogue reachable in a browser was one just minted with no attempts
+ * in it. `progress` could therefore only ever be `{}` on a real screen: a
+ * refresh did not lose the grades, it lost the dialogue.
+ *
+ * So this asserts the chain and not a hop of it -- a dialogue started, its id in
+ * the URL, a REMOUNT that reads it back, and a recorded attempt arriving as
+ * `stored` on the widget. Proved red against the code before this fix at the
+ * hash assertion, and red again at the composer's label with the navigation put
+ * back and the seed left out -- both measured, not reasoned.
+ *
+ * Here rather than beside the dialogue components for this file's reason: the
+ * composition root is the one file a component test never renders, and the
+ * missing wiring was in it.
+ */
+const DIALOGUE = 'd7c1e3aa-0000-4000-8000-000000000007'
+
+const fakeDialogues = () => ({
+  start: vi.fn().mockResolvedValue({
+    dialogueId: DIALOGUE,
+    goal: 'understand what the creed settled',
+    stoppingCondition: 'the reader explains it unaided',
+    openingBlocks: [{ kind: 'markdown', text: 'Where would you start?' }],
+  }),
+  // One turn's worth of marked answers, keyed the way the server keys them.
+  progress: vi.fn().mockResolvedValue({
+    'turn/0': new Map([
+      [
+        ComponentId('council-1'),
+        { attempts: 2, correct: true, bestScore: 1, lastScore: 1, checked: [] },
+      ],
+    ]),
+  }),
+  // Answers with the question the reply produced, carrying the component the
+  // progress above was recorded against. `position: 0` is the turn's, off the
+  // frame -- not its index.
+  reply: vi.fn(
+    async (
+      _projectId: unknown,
+      _dialogueId: unknown,
+      _reply: string,
+      onEvent: (event: unknown) => void,
+    ) => {
+      onEvent({
+        type: 'prompt',
+        blocks: [componentBlock({ type: 'mcq', id: 'council-1' })],
+        position: 0,
+        citations: [],
+        concluded: false,
+      })
+    },
+  ),
+  submitDialogueAttempt: vi.fn(),
+})
+
+it('puts a started dialogue in the URL, and finds its answers again after a remount', async () => {
+  const user = userEvent.setup()
+  const dialogues = fakeDialogues()
+  const container = containerWith({ dialogues })
+  window.location.hash = `#/p/${ATLAS}/dialogue`
+  const first = renderApp(container)
+
+  await user.type(await screen.findByLabelText('Topic'), 'the creed')
+  await user.click(screen.getByRole('button', { name: 'Start' }))
+
+  // The hop that did not exist. Replaced rather than pushed: `.../dialogue`
+  // with nothing after it is the blank composer the reader just left.
+  await waitFor(() => {
+    expect(window.location.hash).toBe(`#/p/${ATLAS}/dialogue/${DIALOGUE}`)
+  })
+
+  // The refresh, as a reader performs it: the page goes away and comes back at
+  // the URL that is now in the address bar.
+  first.unmount()
+  renderApp(container)
+
+  // Seeded from the URL, which is the half of the fix the navigation alone
+  // does not buy: the composer asks for an answer rather than for a topic,
+  // because there is already a dialogue here.
+  expect(await screen.findByLabelText('Your answer')).toBeInTheDocument()
+  await waitFor(() => {
+    expect(dialogues.progress).toHaveBeenCalledWith(ATLAS, DIALOGUE)
+  })
+
+  await user.type(screen.getByLabelText('Your answer'), 'It settled Arianism.')
+  await user.click(screen.getByRole('button', { name: 'Answer' }))
+
+  // The far end of the chain: a verdict recorded before the remount, drawn on
+  // the widget. The sentence a reader sees, not a prop.
+  expect(
+    await screen.findByText(/you answered this correctly after 2 tries before/i),
+  ).toBeInTheDocument()
 })

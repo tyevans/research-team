@@ -34,6 +34,7 @@ const props = (over: Partial<Props> = {}): Props => ({
   replying: false,
   starting: false,
   error: null,
+  progressUnavailable: false,
   onStart: vi.fn(),
   onReply: vi.fn(),
   ...over,
@@ -201,6 +202,22 @@ it('says a dialogue has finished when it concludes', () => {
   draw({ transcript: [exchange({ concluded: true })] })
 
   expect(screen.getByText(/this dialogue has reached its goal/i)).toBeInTheDocument()
+})
+
+it('says the earlier answers could not be loaded, without calling it an error', () => {
+  // The rendered half of `progressUnavailable`. `status` and not `alert`, and
+  // no `error-box`: the failed call is not the reader's action, so dressing it
+  // as an error blames their last answer for a request they did not make. It
+  // is on screen at all because silence here looks exactly like a dialogue
+  // that forgot -- the defect the progress route exists to fix.
+  //
+  // Asserts the ABSENCE of the alert as well as the presence of the line,
+  // because the version of this that is wrong still renders the sentence.
+  // Red against a page that drops the prop.
+  draw({ progressUnavailable: true })
+
+  expect(screen.getByText(/earlier answers could not be loaded/i)).toBeInTheDocument()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
 it('draws a widget the reader already answered as already answered', () => {

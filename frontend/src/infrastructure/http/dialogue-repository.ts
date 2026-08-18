@@ -251,11 +251,25 @@ export class HttpDialogueRepository implements DialogueRepository {
  *  trimmed, and one that carried them would put a second copy of the dialogue
  *  list's shape in this file. zod ignores unknown keys, which is what makes
  *  taking four of them honest rather than lossy. */
+/** Every field required, defaults nowhere -- this file's opening rule, which
+ *  this schema used to be the one exception to.
+ *
+ * `_dialogue_view` (`app.py:3644`) always sends all four, so a missing `goal`,
+ * `stoppingCondition` or `openingBlocks` is a server-side rename and nothing
+ * else. Defaulted, that rename yielded `''`, `''` and `[]` -- exactly the
+ * empty framing over an empty thread that returning the framing from `start`
+ * existed to remove, and with no failure anywhere: the parse succeeded, the
+ * store set three empty strings, and the page drew "Pick something to work
+ * through." over a dialogue that had a goal.
+ *
+ * The test that fails without this is `refuses a framing missing a key the
+ * server always sends`; it passes with the defaults restored only because it
+ * asserts the rejection, which is the point. */
 const framingDto = z.object({
   dialogueId: z.string(),
-  goal: z.string().default(''),
-  stoppingCondition: z.string().default(''),
-  openingBlocks: z.array(z.unknown()).default([]),
+  goal: z.string(),
+  stoppingCondition: z.string(),
+  openingBlocks: z.array(z.unknown()),
 })
 
 const emit = (frame: string, onEvent: (event: DialogueEvent) => void): void => {

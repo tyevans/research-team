@@ -52,6 +52,22 @@ export interface DialogueState {
    * unloaded one look the same because at that moment they are the same
    * thing to the reader. */
   readonly progress: DialogueProgress
+  /** Whether the last progress load failed.
+   *
+   * Not an error banner, and deliberately not routed into `error`: this call
+   * is not the reader's action, so blaming their last answer for a request
+   * they did not make is worse than silence. It is a flag rather than nothing
+   * because once a dialogue is resumable this path is reachable in the case
+   * the whole route exists for -- a reader coming back to answers the server
+   * remembers -- and a silent failure there is indistinguishable from a
+   * dialogue that forgot.
+   *
+   * What it costs: one quiet line beside the thread that a reader can do
+   * nothing about, on a page where every other pixel is the dialogue. What
+   * NOT having it cost: nothing at all on screen, which is why the swallow
+   * below stood for a whole plan. Cleared on the next successful load, so a
+   * transient failure does not stick. */
+  readonly progressUnavailable: boolean
   readonly replying: boolean
   readonly starting: boolean
   readonly error: string | null
@@ -67,17 +83,33 @@ export type DialogueStore = ReturnType<typeof createDialogueStore>
 export const createDialogueStore = ({
   dialogues,
   projectId,
+  /** The dialogue already in the URL, or `null` for "the reader has not
+   *  started one".
+   *
+   * The whole of what makes a dialogue resumable. Without it the store began
+   * every mount at `null`, `refreshProgress` short-circuited on its own guard,
+   * and the only dialogue that could exist in a browser was one just minted
+   * with no attempts in it -- so `progress` could only ever be `{}`, and a
+   * refresh lost not the grades but the entire dialogue. Every hop beneath
+   * this one was correct and proved; the gap was navigation alone.
+   *
+   * A seed rather than a subscription: the id changes exactly once per store,
+   * from null to the minted one, and `DialogueView` rebuilds the store when
+   * the URL names a DIFFERENT dialogue. */
+  dialogueId = null,
 }: {
   dialogues: DialogueRepository
   projectId: ProjectId
+  dialogueId?: string | null
 }) =>
   create<DialogueState>((set, get) => ({
     transcript: [],
-    dialogueId: null,
+    dialogueId,
     goal: '',
     stoppingCondition: '',
     openingBlocks: [],
     progress: {},
+    progressUnavailable: false,
     replying: false,
     starting: false,
     error: null,
@@ -196,8 +228,12 @@ export const createDialogueStore = ({
       // into it 404s.
       if (dialogueId === null) return
       try {
-        set({ progress: await dialogues.progress(projectId, dialogueId) })
+        set({
+          progress: await dialogues.progress(projectId, dialogueId),
+          progressUnavailable: false,
+        })
       } catch {
+        set({ progressUnavailable: true })
         // Swallowed, and this is the one place in this store that swallows.
         // The others surface because they are the reader's own action failing;
         // this one runs unbidden on mount and after every marked answer, and
@@ -206,8 +242,11 @@ export const createDialogueStore = ({
         // banner would blame the reader's last answer for a request they did
         // not make. The cost, stated plainly: a progress load that fails
         // repeatedly is invisible, and what it looks like is a dialogue that
-        // forgot -- which is the bug this whole route exists to fix. Nothing
-        // catches that today.
+        // forgot -- which is the bug this whole route exists to fix. So the
+        // failure sets `progressUnavailable` instead, which the page draws as
+        // one quiet line near the thread rather than as a banner. The test
+        // that fails without the flag is `says so quietly when the answers
+        // could not be loaded`.
       }
     },
   }))

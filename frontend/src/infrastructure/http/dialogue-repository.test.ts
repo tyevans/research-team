@@ -220,6 +220,36 @@ it('starts a dialogue and returns its framing, not only its id', async () => {
   })
 })
 
+it('refuses a framing missing a key the server always sends', async () => {
+  // The three fields are required rather than defaulted, and this is what that
+  // buys. `_dialogue_view` always sends `goal`, `stoppingCondition` and
+  // `openingBlocks`, so their absence means a server-side rename -- and while
+  // they were defaulted, a rename parsed cleanly into `''`, `''` and `[]`,
+  // which the page draws as "Pick something to work through." over an empty
+  // thread. That is the exact defect returning the framing from `start` was
+  // written to remove, restored silently.
+  //
+  // Asserts the REJECTION rather than a value, because there is no value to
+  // assert: the failure being caught is one where every value is plausible.
+  // Red against the defaulted schema -- it resolves rather than throwing.
+  const fetcher = vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    text: async () =>
+      JSON.stringify({
+        dialogueId: 'd1',
+        // `goal` renamed away. The other two are present so the test names one
+        // failure rather than three at once.
+        stoppingCondition: 'the reader explains it unaided',
+        openingBlocks: [],
+      }),
+  })
+
+  await expect(
+    new HttpDialogueRepository('', fetcher).start(PROJECT, 'the creed'),
+  ).rejects.toThrow()
+})
+
 it('reads back the answers this dialogue remembered', async () => {
   // B114. Two levels of key and both are asserted, because that is the shape
   // the third `progress_view` exists for: a component id is unique only within

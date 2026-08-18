@@ -31,6 +31,7 @@ export const DialoguePage = ({
   replying,
   starting,
   error,
+  progressUnavailable,
   onStart,
   onReply,
 }: {
@@ -57,6 +58,9 @@ export const DialoguePage = ({
   replying: boolean
   starting: boolean
   error: string | null
+  /** Whether the marked answers could not be loaded -- see `dialogue-store.ts`
+   *  for why this is a flag and not the `error` above. */
+  progressUnavailable: boolean
   onStart: (topic: string) => void
   onReply: (reply: string) => void
 }) => {
@@ -84,6 +88,20 @@ export const DialoguePage = ({
           <strong>That did not go through.</strong>
           {error}
         </div>
+      ) : null}
+
+      {/* One quiet line, and deliberately neither a banner nor a toast: the
+          load that failed is not the reader's action, so dressing it as an
+          error blames their last answer for a request they did not make. It
+          is here at all because the silent version is indistinguishable from
+          the defect this route exists to fix -- a dialogue that forgot. It
+          costs a line the reader can do nothing about; the alternative cost
+          nothing on screen and hid a broken route for a whole plan.
+          `role="status"`, not `alert`: it is not interrupting anyone. */}
+      {progressUnavailable ? (
+        <p className="dlg-progress-lost" role="status">
+          Your earlier answers could not be loaded.
+        </p>
       ) : null}
 
       <DialogueThread

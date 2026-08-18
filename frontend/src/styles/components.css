@@ -979,6 +979,18 @@ a.cmp-ref-name:hover {
   color: var(--fg-faint);
 }
 
+/* The failed progress load, said once and quietly. Muted and small on purpose:
+   it is not the reader's action that failed, and an error-coloured box here
+   reads as "your answer did not go through". Sized like `.dlg-composing`
+   beside it, which is the other line on this page nobody is asked to act on. */
+.dlg-progress-lost {
+  flex-shrink: 0;
+  margin: 0;
+  padding: var(--space-2) var(--space-5) 0;
+  font-size: var(--t-sm);
+  color: var(--fg-faint);
+}
+
 .dlg-concluded {
   flex-shrink: 0;
   margin: 0;
