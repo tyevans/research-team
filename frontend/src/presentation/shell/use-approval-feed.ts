@@ -53,6 +53,17 @@ export const useApprovalFeed = (): ApprovalFeed => {
   // -- the click-through-versus-deliberation distinction `direction.md` §3
   // turns on. A ref, not state: nothing on screen reads it, so putting it in
   // state would be a render the timestamp itself never causes.
+  //
+  // `performance.now()` throughout this hook, matching `dwell.ts` and the
+  // design's rule for durations: monotonic, so a system clock moved mid-
+  // session cannot produce a negative or absurd one. It shipped on
+  // `Date.now()`, and approvals are the *most* exposed measurement rather
+  // than the least -- they live for minutes to hours by the field's own
+  // docstring, so the window in which a clock change can land is the widest
+  // in the log, and `latency_ms` is an `int` with no lower bound. Every value
+  // here is differenced and never displayed, so the epoch is irrelevant;
+  // rounded at the emission site because the domain field is an `int` and
+  // pydantic refuses a fractional one, which `Date.now()` never produced.
   const shownAt = useRef<Map<ApprovalId, number>>(new Map())
 
   // Backgrounded time, accumulated for the tab's whole life, and what each
@@ -70,7 +81,7 @@ export const useApprovalFeed = (): ApprovalFeed => {
   const hiddenAtShown = useRef<Map<ApprovalId, number>>(new Map())
 
   const hiddenTotal = () =>
-    hiddenMs.current + (hiddenSince.current === null ? 0 : Date.now() - hiddenSince.current)
+    hiddenMs.current + (hiddenSince.current === null ? 0 : performance.now() - hiddenSince.current)
 
   useEffect(() => {
     const onVisibility = () => {
@@ -79,17 +90,17 @@ export const useApprovalFeed = (): ApprovalFeed => {
         // `hiddenSince` on a repeated hide silently discards the interval
         // already accumulating.
         if (hiddenSince.current !== null) return
-        hiddenSince.current = Date.now()
+        hiddenSince.current = performance.now()
         return
       }
       if (hiddenSince.current === null) return
-      hiddenMs.current += Date.now() - hiddenSince.current
+      hiddenMs.current += performance.now() - hiddenSince.current
       hiddenSince.current = null
     }
     // A tab that is already hidden when this mounts is hidden from now, not
     // from zero -- a background tab restored by the browser on startup is the
     // ordinary way to reach that state.
-    if (document.visibilityState === 'hidden') hiddenSince.current = Date.now()
+    if (document.visibilityState === 'hidden') hiddenSince.current = performance.now()
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
       document.removeEventListener('visibilitychange', onVisibility)
@@ -103,7 +114,7 @@ export const useApprovalFeed = (): ApprovalFeed => {
           const approval = frame.approval
           setApprovals((current) => new Map(current).set(approval.id, approval))
           if (!shownAt.current.has(approval.id)) {
-            shownAt.current.set(approval.id, Date.now())
+            shownAt.current.set(approval.id, performance.now())
             hiddenAtShown.current.set(approval.id, hiddenTotal())
           }
           return
@@ -165,7 +176,7 @@ export const useApprovalFeed = (): ApprovalFeed => {
           if (shown !== undefined) {
             log.record('ApprovalDecided', {
               decision: answer.decision,
-              latency_ms: Date.now() - shown,
+              latency_ms: Math.round(performance.now() - shown),
               // Reported alongside `latency_ms` rather than subtracted from
               // it, following `ViewExited`'s precedent so the consumer
               // chooses. Without it the click-through/deliberation split --
@@ -173,7 +184,7 @@ export const useApprovalFeed = (): ApprovalFeed => {
               // seconds of reading from an hour of lunch, and lunch is the
               // common case here: gated calls arrive while the reader is
               // somewhere else entirely.
-              hidden_ms: Math.max(0, hiddenTotal() - hiddenWhenShown),
+              hidden_ms: Math.round(Math.max(0, hiddenTotal() - hiddenWhenShown)),
               expanded_details: expandedDetails,
               review_id: approval.id,
             })

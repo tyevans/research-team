@@ -17,16 +17,31 @@ const INSTALL_KEY = 'research-team.install-id'
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
+const hex = (length: number): string => {
+  let out = ''
+  while (out.length < length) out += Math.random().toString(16).slice(2)
+  return out.slice(0, length)
+}
+
+/** Not cryptographic, and does not need to be: this identifies an install for
+ *  counting and nothing trusts it.
+ *
+ *  **The groups have to be 8-4-4-4-12, and the first version of this was
+ *  12-4-4-4-12.** `crypto.randomUUID` is absent on a plain-`http` LAN origin
+ *  -- a case this repo has already shipped a fix for -- so the fallback is
+ *  exactly the path a non-localhost console takes, and its output failed
+ *  `UUID_PATTERN`. The value was written to `localStorage` and rejected as
+ *  malformed on the very next load, so `install_id` changed on every page
+ *  load in the one context the fallback exists for, defeating the field's
+ *  sole purpose ("on nine separate days" rather than "in nine separate
+ *  tabs"). It did not fail ingest -- Python's `UUID` accepts 32 hex digits
+ *  regardless of dash placement -- so the failure was silent and statistical,
+ *  the worst shape. `install-identity.test.ts` round-trips a minted id
+ *  through `UUID_PATTERN` with `randomUUID` removed. */
 const mint = (): string =>
   typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
-    : // Only for a browser without randomUUID. Not cryptographic, and does
-      // not need to be: this identifies an install for counting, and nothing
-      // trusts it.
-      `${Date.now().toString(16).padStart(12, '0')}-0000-4000-8000-${Math.random()
-        .toString(16)
-        .slice(2, 14)
-        .padEnd(12, '0')}`.slice(0, 36)
+    : `${hex(8)}-${hex(4)}-4${hex(3)}-8${hex(3)}-${hex(12)}`
 
 /** The install, across restarts.
  *

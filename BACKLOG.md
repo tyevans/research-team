@@ -3380,3 +3380,17 @@ If the follow-up has not happened by the time anything actually reads this
 log ([[B107]] is where that starts), delete the parameter instead — an
 always-constant field is worse than no field, because a consumer cannot tell
 "always graph" from "we never told you".
+
+**`ViewEntered.params` is the same shape and belongs here too**, found by the
+whole-branch review rather than a per-slice one. `DwellTracker.enter(view,
+params?)` accepts them and `interaction-log-provider.tsx` calls
+`dwell.enter(view)` with none, so the field — documented "ids only: which
+entity, which topic" — ships `{}` on every event ever recorded. Not fixed
+alongside `source` because it is not the same size of change: the provider
+has `view`, `projectId` and `sessionId` and nothing else, so populating
+`params` means reaching into each route's own parameters at the one place
+that is deliberately route-agnostic, and getting that wrong stamps a view
+with the previous page's ids — the failure the comment above `dwell.enter`
+records having already been made once. Same disposal rule as `source`: by the
+time anything reads this log, either populate it or take it out of the
+vocabulary.

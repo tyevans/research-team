@@ -19,10 +19,23 @@ export interface InteractionEvent {
 }
 
 export interface InteractionSink {
-  /** Deliver a batch while the page is alive. Rejects on transport failure;
-   *  the caller drops the batch rather than retrying, because this data is
-   *  droppable by design and a retry queue would make late arrival a
-   *  permanent property of the log. */
+  /** Deliver a batch while the page is alive.
+   *
+   *  **Never rejects. An implementation absorbs its own transport failures
+   *  and resolves anyway**, and the batch is simply lost -- this data is
+   *  droppable by design, and a retry queue would make late arrival a
+   *  permanent property of the log.
+   *
+   *  Stated as a requirement on implementations rather than left to each one,
+   *  because the two halves shipped disagreeing: this line originally read
+   *  "rejects on transport failure" while the only adapter swallowed every
+   *  `ApiError`, which made the emitter's `try/catch` dead code against the
+   *  shipped adapter and made a future adapter that *did* reject correct by
+   *  the docs and a console-breaking bug in practice. Telemetry that breaks
+   *  the console is far worse than telemetry that is missing, so the promise
+   *  moved to match the adapter rather than the other way round. The
+   *  emitter's catch stays as belt-and-braces for an implementation that
+   *  breaks this promise. */
   send(events: readonly InteractionEvent[]): Promise<void>
 
   /** Deliver a batch while the page is going away.

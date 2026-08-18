@@ -82,6 +82,13 @@ export const createEmitter = ({
     } catch {
       // Dropped. Never rethrown: `main.tsx` turns an unhandled rejection
       // into a toast, and telemetry failing is not the user's problem.
+      //
+      // Belt-and-braces, and knowingly unreachable against the shipped
+      // adapter: the port requires `send` never to reject and
+      // `HttpInteractionSink` absorbs every `ApiError` itself. Kept because
+      // the cost is three lines and the failure it guards -- an
+      // implementation that breaks that promise -- surfaces as a toast on a
+      // working console.
     }
   }
 

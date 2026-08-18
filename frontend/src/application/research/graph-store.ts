@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import type { Emitter } from '@application/interaction-log/emitter.ts'
+import { boundQueryText } from '@application/interaction-log/text.ts'
 import { errorMessage } from '@application/ports/errors.ts'
 import {
   emptyGraph,
@@ -226,7 +227,10 @@ export const createGraphStore = ({
         if (attempts > 1) {
           emitter?.record('ActionRetried', { action_kind: 'search', attempt_number: attempts })
         }
-        emitter?.record('SearchPerformed', { query_text: needle, result_count: entities.length })
+        emitter?.record('SearchPerformed', {
+          query_text: boundQueryText(needle),
+          result_count: entities.length,
+        })
         if (entities.length === 0) {
           emitter?.record('EmptyResultEncountered', {
             where: 'graph-search',

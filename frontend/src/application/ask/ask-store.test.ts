@@ -2,6 +2,7 @@
 import { expect, it, vi } from 'vitest'
 
 import type { Emitter } from '@application/interaction-log/emitter.ts'
+import { QUERY_TEXT_MAX_LENGTH } from '@application/interaction-log/text.ts'
 import type { AskRepository } from '@application/ports/repositories.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
@@ -164,6 +165,24 @@ it('records AskSubmitted before the turn is awaited', () => {
   void asking.getState().send('what did we find?')
 
   expect(record).toHaveBeenCalledWith('AskSubmitted', { query_text: 'what did we find?' })
+})
+
+it('records a pasted document truncated rather than whole', async () => {
+  /** The document cap is 500,000 characters and this field took whatever was
+   *  typed, so pasting a document into the ask box wrote that document into
+   *  the most sensitive field in the system. Truncated rather than dropped:
+   *  the ask still happened, and losing that is losing structure to protect
+   *  against content.
+   *
+   *  Proved red without `boundQueryText`: recorded all 500,000 characters. */
+  const record = vi.fn<Emitter['record']>()
+  const asking = store(fakeAsk(), { record })
+
+  await asking.getState().send('x'.repeat(500_000))
+
+  expect(record).toHaveBeenCalledWith('AskSubmitted', {
+    query_text: 'x'.repeat(QUERY_TEXT_MAX_LENGTH),
+  })
 })
 
 it('records no ActionRetried for the first question in a conversation', async () => {

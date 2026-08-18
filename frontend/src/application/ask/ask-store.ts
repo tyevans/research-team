@@ -7,6 +7,7 @@
 import { create } from 'zustand'
 
 import type { Emitter } from '@application/interaction-log/emitter.ts'
+import { boundQueryText } from '@application/interaction-log/text.ts'
 import { errorMessage } from '@application/ports/errors.ts'
 import type { AskRepository } from '@application/ports/repositories.ts'
 import { applyEvent, asked, type AskTranscript } from '@domain/ask/conversation.ts'
@@ -81,7 +82,7 @@ export const createAskStore = ({
       // Emitted before the `await` below, per the brief: the act is the
       // submission, not the eventual answer, and a turn that fails partway
       // through streaming should still show up as something that was asked.
-      emitter?.record('AskSubmitted', { query_text: trimmed })
+      emitter?.record('AskSubmitted', { query_text: boundQueryText(trimmed) })
       if (lastQuestion === trimmed) {
         repeats += 1
       } else {
