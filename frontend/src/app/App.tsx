@@ -21,12 +21,25 @@ import { Toasts } from '@presentation/shell/Toasts.tsx'
 import { TreeView } from '@presentation/tree/TreeView.tsx'
 
 import { useContainer } from './container-context.tsx'
+import { InteractionLogProvider } from './interaction-log-provider.tsx'
 
 export const App = () => (
   <StreamProvider>
     <Console />
   </StreamProvider>
 )
+
+/** The view, as the log names it.
+ *
+ * Derived from the parsed route rather than from `window.location.hash`,
+ * because the hash carries ids and `view` is documented as structural. The
+ * facet set is closed (`FACETS`), so this cannot grow a value nobody
+ * expected. */
+const viewNameOf = (route: Route): string => {
+  if (route.name === 'session') return 'session'
+  if (route.name !== 'project') return 'home'
+  return `project/${route.selection?.facet ?? 'session'}`
+}
 
 /** The composition root's own component: routing, the session store, and the
  *  chrome every route shares.
@@ -65,59 +78,71 @@ const Console = () => {
 
   useTreeRefresh(route.name === 'home')
 
-  return (
-    <Shell
-      chrome={
-        <>
-          <a className="brand" href={homeHref()}>
-            <span className="brand-mark" />
-            <span className="brand-name">research&#8209;team</span>
-          </a>
-          <Breadcrumbs
-            route={route}
-            session={route.name === 'session' ? head : null}
-            course={route.name === 'project' ? course : null}
-          />
-          <div className="chrome-right">
-            {/* In the bar rather than floating over the page: as a fixed panel
-                at the lower right it sat on top of whatever was there, and the
-                only way past it was to find its own toggle. Here because "what
-                is running" is not a property of the page you happen to be on --
-                which is the whole reason it exists -- and the chrome is the one
-                piece every route already shares. That sentence is quoted in
-                `Shell.tsx` as the test for what belongs in this slot, so it is
-                the one thing here that is not merely description.
+  const view = viewNameOf(route)
 
-                Left of the badges: those two describe the connection, this
-                describes the work, and the connection is the thing you look for
-                when the work stops making sense -- so it stays at the edge where
-                it has always been rather than being pushed along. */}
-            <AgentWidget />
-            <DriftBadge />
-            <ConnectionBadge state={stream.connection} />
-          </div>
-        </>
-      }
+  return (
+    // Above `Shell` rather than inside it: a route change is observed by
+    // `useRoute()` once, here, and `dwell.enter(view)` fires from that one
+    // observation rather than once per view component underneath.
+    <InteractionLogProvider
+      sink={container.interactions}
+      view={view}
+      projectId={route.name === 'project' ? route.id : null}
+      sessionId={route.name === 'session' ? route.id : null}
     >
-      {/* Inside the surface rather than beside it, which is a change of parent
-          and not of position: `.toasts` is `position: fixed`, so it is placed
-          against the viewport wherever it is mounted, and `Shell` takes
-          children for the surface alone. It stays outside the overlay host on
-          purpose -- argued where `--z-toast` is declared. */}
-      <Toasts />
-      {/* Above the route's content and inside the surface, on every page.
-          A gated call blocks an agent until a person answers it, and the
-          person is wherever they happen to be — which is why this is one bar
-          in the shell rather than the three per-session call sites it
-          replaces. It renders nothing when nothing is pending. */}
-      <DecisionBar />
-      <CurrentView
-        route={route}
-        seekSeconds={seekSeconds}
-        store={sessionStore}
-        onCourse={setCourse}
-      />
-    </Shell>
+      <Shell
+        chrome={
+          <>
+            <a className="brand" href={homeHref()}>
+              <span className="brand-mark" />
+              <span className="brand-name">research&#8209;team</span>
+            </a>
+            <Breadcrumbs
+              route={route}
+              session={route.name === 'session' ? head : null}
+              course={route.name === 'project' ? course : null}
+            />
+            <div className="chrome-right">
+              {/* In the bar rather than floating over the page: as a fixed panel
+                  at the lower right it sat on top of whatever was there, and the
+                  only way past it was to find its own toggle. Here because "what
+                  is running" is not a property of the page you happen to be on --
+                  which is the whole reason it exists -- and the chrome is the one
+                  piece every route already shares. That sentence is quoted in
+                  `Shell.tsx` as the test for what belongs in this slot, so it is
+                  the one thing here that is not merely description.
+
+                  Left of the badges: those two describe the connection, this
+                  describes the work, and the connection is the thing you look for
+                  when the work stops making sense -- so it stays at the edge where
+                  it has always been rather than being pushed along. */}
+              <AgentWidget />
+              <DriftBadge />
+              <ConnectionBadge state={stream.connection} />
+            </div>
+          </>
+        }
+      >
+        {/* Inside the surface rather than beside it, which is a change of parent
+            and not of position: `.toasts` is `position: fixed`, so it is placed
+            against the viewport wherever it is mounted, and `Shell` takes
+            children for the surface alone. It stays outside the overlay host on
+            purpose -- argued where `--z-toast` is declared. */}
+        <Toasts />
+        {/* Above the route's content and inside the surface, on every page.
+            A gated call blocks an agent until a person answers it, and the
+            person is wherever they happen to be — which is why this is one bar
+            in the shell rather than the three per-session call sites it
+            replaces. It renders nothing when nothing is pending. */}
+        <DecisionBar />
+        <CurrentView
+          route={route}
+          seekSeconds={seekSeconds}
+          store={sessionStore}
+          onCourse={setCourse}
+        />
+      </Shell>
+    </InteractionLogProvider>
   )
 }
 

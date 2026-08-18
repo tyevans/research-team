@@ -107,7 +107,19 @@ export const createEmitter = ({
     flushOnUnload() {
       const batch = take()
       if (batch.length === 0) return
-      sink.sendOnUnload(batch)
+      try {
+        sink.sendOnUnload(batch)
+      } catch {
+        // Mirrors flush()'s catch. Nothing in today's sink throws here --
+        // sendBeacon returns a boolean and the fetch fallback self-catches --
+        // so this was latent until a caller attached the real `pagehide`
+        // listener (Task 12). Unlike flush(), this call is synchronous and
+        // void, so nothing upstream can catch a throw from inside it; an
+        // unguarded one would surface as an uncaught error out of a React
+        // effect cleanup on every unmount, which is a Critical defect by
+        // this feature's own rule (telemetry must never be visible to the
+        // user it is failing silently for).
+      }
     },
 
     stop() {

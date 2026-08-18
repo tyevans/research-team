@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 
-import { installId, newBrowserSessionId } from './identity.ts'
+import { installId, newBrowserSessionId } from './install-identity.ts'
 
 const storage = (): Storage => {
   const map = new Map<string, string>()

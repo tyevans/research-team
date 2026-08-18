@@ -4,6 +4,13 @@
  * implementation, and the storage failure modes are handled here for the same
  * reasons `LocalPreferenceStore` handles them -- storage throws in private
  * mode, and a browser carries junk written by an older build.
+ *
+ * In `infrastructure/storage` beside `LocalPreferenceStore`, not in
+ * `application/interaction-log` where it started. Skipping the port is a fair
+ * call for one implementation; putting the `localStorage` touch in the
+ * application layer is not, and the two were being justified by one argument.
+ * The layer is about which code may reach the browser, not about how many
+ * implementations there are.
  */
 
 const INSTALL_KEY = 'research-team.install-id'

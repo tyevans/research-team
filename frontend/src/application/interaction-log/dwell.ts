@@ -46,10 +46,16 @@ export const createDwellTracker = ({
       emitter.record('AttentionLost')
       return
     }
-    if (hiddenSince !== null) {
-      hiddenMs += clock() - hiddenSince
-      hiddenSince = null
-    }
+    // Only when something was actually lost. A `visibilitychange` to visible
+    // with no preceding hide is common -- some browsers fire one on initial
+    // load, and a tracker attached while the tab is already visible sees it --
+    // and an unguarded emit puts an unpaired `AttentionRegained` in the log.
+    // The arithmetic above is unaffected either way, which is exactly why this
+    // survived review of the numbers: `hidden_ms` stays correct while the raw
+    // event stream, the thing this feature exists to produce, does not.
+    if (hiddenSince === null) return
+    hiddenMs += clock() - hiddenSince
+    hiddenSince = null
     emitter.record('AttentionRegained')
   }
 

@@ -128,3 +128,26 @@ it('flushes by beacon on pagehide', () => {
     detach()
   }
 })
+
+it('does not report attention regained when none was lost', () => {
+  const emitter = recorder()
+  const tracker = createDwellTracker({ emitter })
+  const detach = tracker.attach()
+  const restore = stubVisibility('visible')
+  try {
+    tracker.enter('home')
+    // A visible-without-a-preceding-hide transition. Browsers do fire one --
+    // on initial load, and whenever a tracker attaches to an already-visible
+    // tab -- so this is the ordinary case, not a contrived one.
+    document.dispatchEvent(new Event('visibilitychange'))
+
+    // Reverting the `hiddenSince === null` guard in `onVisibility` fails this
+    // on the length assertion: the log gains an `AttentionRegained` answering
+    // no `AttentionLost`. `hidden_ms` is right either way, which is what makes
+    // the defect invisible to any test that only checks the arithmetic.
+    expect(emitter.events.filter((event) => event.kind === 'AttentionRegained')).toHaveLength(0)
+  } finally {
+    restore()
+    detach()
+  }
+})
