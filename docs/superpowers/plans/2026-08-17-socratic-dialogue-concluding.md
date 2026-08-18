@@ -1143,6 +1143,15 @@ B120. It does not add a read-one-dialogue port and does not restore a resumed
 transcript. It makes the one thing Task 3 made possible visible: a 409 on reply
 is rendered as "this dialogue has finished" rather than as a failure.
 
+**So do not read this task as complete.** After it lands, a reader returning to a
+concluded dialogue still sees "this dialogue has reached its goal" above an
+**empty thread** — better than a composer that 409s, worse than showing them the
+conversation they had. **The full fix is B120's content**: a port that reads one
+dialogue whole, and a `status` read off that response rather than off the newest
+turn in a transcript that has no turns. It is not in this plan, and a reviewer
+who signs this task off as "resumed dialogues work now" has signed off the wrong
+thing.
+
 **Interfaces:**
 - Consumes: `DialogueRepository.reply` rejecting with an `ApiError` of status 409.
 - Produces: `DialogueState.concluded: boolean` — set from a 409 on reply, and
