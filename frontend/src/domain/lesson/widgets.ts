@@ -181,6 +181,52 @@ export const readTimelineQuery = (block: ComponentBlock): TimelineWindow => ({
   limit: num(block.data['limit']),
 })
 
+/** Which parameter a reader may move. Mirrors `EXPLORER_AXES` in
+ *  `components.py`, and the duplication is the wire: the server validates the
+ *  vocabulary and this narrows it, and neither can read the other. */
+export type ExplorerAxis = 'entity_type' | 'window'
+
+const EXPLORER_AXES: readonly ExplorerAxis[] = ['entity_type', 'window']
+
+/** The only backing read this build serves. `over` is *not* defaulted to it:
+ *  the server warns rather than rejects an unsupported value, so an
+ *  `over: graph` body is valid and arrives here, and defaulting would run a
+ *  graph explorer's invitation against the timeline without telling anyone. */
+export const EXPLORER_BACKING_READ = 'timeline'
+
+/** An `explorer` widget: the author's fixed query, and which parts of it the
+ *  reader may move.
+ *
+ * `window` is a `TimelineWindow` and not a second shape, deliberately: the
+ * backing read is `GET /timeline`, and a parallel type here would be another
+ * thing to keep in step with `queryKeys.timeline` and `TimelineWindowQuery`
+ * for no expressive gain. */
+export interface ExplorerSpec {
+  readonly over: string
+  readonly prompt: string
+  readonly vary: readonly ExplorerAxis[]
+  readonly window: TimelineWindow
+}
+
+export const readExplorerQuery = (block: ComponentBlock): ExplorerSpec => ({
+  over: str(block.data['over']) ?? '',
+  prompt: str(block.data['prompt']) ?? '',
+  // Filtered rather than cast. The registry rejects an unknown axis, so the
+  // shape this guards against is a *newer server* sending an axis this build
+  // does not implement -- and the right answer there is to draw the controls
+  // we have, which is the same "an older reader does not call a newer document
+  // broken" contract the unknown-fence path keeps.
+  vary: list(block.data['vary']).filter((axis): axis is ExplorerAxis =>
+    EXPLORER_AXES.includes(axis as ExplorerAxis),
+  ),
+  window: readTimelineQuery(block),
+})
+
+/** Whether the reader may move one axis. A function rather than a `Set` on the
+ *  spec: `vary` is at most two entries, and a membership helper keeps the
+ *  widget's JSX reading as prose. */
+export const varies = (spec: ExplorerSpec, axis: ExplorerAxis): boolean => spec.vary.includes(axis)
+
 /** One row of a `compare` table: a label, and the cells under it. */
 export interface CompareRow {
   readonly label: string
