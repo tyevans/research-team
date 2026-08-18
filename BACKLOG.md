@@ -3723,3 +3723,59 @@ The cheaper half-measure, if the fetch proves awkward: render nothing where the
 framing would go rather than the "Pick something to work through." placeholder,
 which currently tells a reader with a live dialogue that they have not started
 one.
+
+**Second symptom, added once dialogues could conclude.** A reader returning to
+a *finished* dialogue now gets an empty thread and a live composer, same as
+above, but the consequence is sharper: their first reply is answered 409
+(`ConclusionReason` already recorded on the aggregate) rather than 404, which is
+correct and still a page offering an action it cannot perform. `DialoguePage.tsx`
+reads `concluded` off the newest turn in the transcript (`transcript[transcript
+.length - 1]?.concluded`, `DialoguePage.tsx:72`) rather than off the dialogue
+itself, and a resumed dialogue has no turns to read it from. The fix is this
+entry's own: the missing `read(projectId, dialogueId)` port call would also
+carry `status`, which is where `concluded` should be read from once it exists.
+No new backend work — `_dialogue_view` (`app.py:3650`) already returns `status`
+and `concludedReason`; verified 2026-08-18, this is a client-side gap only.
+
+### B121. Nothing ends a dialogue the reader simply walked away from
+
+After this plan, a dialogue can conclude two ways: the model judges the
+stopping condition met (`reason="met"`, `socratic.py:712`), or the reader ends
+it deliberately (`reason="abandoned"`, Task 6). Both routes exist, both are
+tested, both reach `SocraticDialogueConcluded` on the aggregate, the
+`concluded_reason` projection column, and the reader-facing status. What
+neither route reaches is the third case: a dialogue nobody returns to. It
+stays `status="started"` forever — not wrong, exactly, but permanent, because
+nothing in this system revisits a dialogue that has gone quiet.
+
+The obvious shape for a fix is a sweep: a job that walks dialogues idle past
+some duration and concludes them with a third reason, `"idle"` or similar.
+**That shape was refused on principle here, not deferred for lack of time.**
+The reason is the same ruling this plan's design section already made about
+the *other* stopping condition: a fixed number decided outside the aggregate,
+with no reader behavior it is answerable to, is not a stopping condition —
+it is a guess wearing one. "Conclude when the model judges the goal met" is
+testable against a transcript; "conclude when 48 hours have passed" is testable
+against a clock and nothing else, and the number is arbitrary in the way the
+design section already spent a paragraph refusing to be for the *understanding*
+side of this feature. Applying the same shape to the reader's *attention*
+instead — picking a duration nobody can justify, past which absence becomes
+abandonment — is the identical mistake with the argument swapped out. If it was
+wrong there, it does not become right here because the aggregate under
+discussion changed.
+
+What would change the calculus: a way to distinguish "abandoned" from "still
+open" that is not a timer. A reader explicitly leaving a project, a session
+boundary the client already tracks, an event that means something to a person
+rather than a duration meaning something to a cron job — any of those would be
+a real signal rather than a threshold, and this entry is where that design
+should be written once someone has one. Until then the honest state is: two
+conclusion routes, deliberately no third.
+
+Cost of leaving it unfiled as well as unfixed: a walked-away dialogue is
+indistinguishable, in every read model, from one still being worked. Any future
+"dialogues in progress" count is an over-count with no upper bound — it grows
+by one every time a reader opens a dialogue and never comes back, and nothing
+ever subtracts from it. That is a real cost of the refusal above, not a reason
+to reverse it; it is what a metrics feature building on `status="started"`
+should know going in.
