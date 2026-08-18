@@ -808,6 +808,61 @@ a.cmp-ref-name:hover {
   color: var(--fg-dim);
 }
 
+/* The explorer reuses `.cmp-timeline-box` for its axis verbatim -- it is the
+   same drawing in the same kind of flow, and a second box rule would be a
+   second thing to keep in step with the measurement in
+   `TimelineWidget.browser.test.tsx`. Only the control row is new. */
+
+/* The invitation, and the one thing that makes this worth more than a
+   timeline. Body colour and not `--fg-dim`: this is prose the author wrote for
+   the reader to act on, not an aside about the widget. */
+.cmp-explorer-prompt {
+  margin: 0 0 0.75rem;
+  color: var(--fg);
+}
+
+.cmp-explorer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin: 0 0 0.75rem;
+  padding: 0.75rem;
+  /* `border: 0` and no directional width: this row has no rule. A `<fieldset>`
+     carries a UA border, so leaving this off draws one nobody asked for. The
+     pairing is written out so that adding a directional width later cannot
+     fall into the `border-solid` trap CLAUDE.md records. */
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--bg-raise);
+}
+
+/* A `<legend>` inside a flex `<fieldset>` is laid out by the UA rather than by
+   the flex container, which is why this is only coloured and padded. */
+.cmp-explorer-legend {
+  padding: 0 0.25rem;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
+.cmp-explorer-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
+/* Full-width so it sits under the controls rather than beside them: it is a
+   statement about the whole row, and a reader scanning left to right for the
+   next control should not find a sentence there. */
+.cmp-explorer-note {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
 .cmp-compare {
   width: 100%;
   border-collapse: collapse;
