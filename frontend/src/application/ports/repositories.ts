@@ -669,6 +669,23 @@ export interface DialogueRepository {
    * makes "your answers survive a refresh" true on screen and not just in
    * storage. An untouched dialogue answers `{}` rather than rejecting. */
   progress(projectId: ProjectId, dialogueId: string): Promise<DialogueProgress>
+  /** Ends a dialogue because the reader chose to stop.
+   *
+   * POST and not DELETE: nothing is removed -- the dialogue, its turns and
+   * every marked answer stay readable, and the wrong verb would tell a reader
+   * otherwise.
+   *
+   * There is no matching read: nothing here reads one dialogue whole, so the
+   * fact that the reader ended it lives only in the store for this session.
+   * The server does carry it -- `_dialogue_view` sends `concludedReason` -- and
+   * B120's `read(projectId, dialogueId)` is where it would arrive from.
+   *
+   * Rejects with a 409 when the dialogue had already concluded, most likely
+   * because the model concluded it on the previous turn. That is not a
+   * failure: the reader wanted it stopped and it is stopped. It is a separate
+   * status rather than a success because the caller must not then claim the
+   * reader ended it. */
+  end(projectId: ProjectId, dialogueId: string): Promise<void>
 }
 
 export interface HealthRepository {

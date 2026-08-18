@@ -589,6 +589,40 @@ class SocraticDialogueService:
         await self._progress.save(progress)
         return progress.state
 
+    async def end(self, *, project_id: UUID, dialogue_id: UUID) -> None:
+        """Stop a dialogue because the reader said so.
+
+        `reason="abandoned"` is the stored value and is accurate about why it
+        ended, but nothing the reader sees says it: a reader who wants to stop
+        should be able to, and a conversation with no way to close it is a worse
+        experience than the one this plan is fixing.
+
+        **`forget` is not tidying.** `_resume` returns a cached `LiveDialogue`
+        before it reads the row, so its concluded refusal cannot see a dialogue
+        still in the registry. Without this line a reader who ends a dialogue and
+        types is answered -- the model call runs in full and `decide` refuses
+        only at save, as a `CommandRejectedError` the reply route does not catch,
+        which reaches the browser as an in-band `error` frame on a 200 stream
+        after the tokens are spent.
+        `test_ending_a_dialogue_drops_its_live_entry` is 200 rather than 409 with
+        it removed -- measured, not reasoned.
+
+        `load`, never `load_or_create`: an id that names nothing must die at the
+        repository rather than open a stream and immediately conclude it. That is
+        `_record`'s rule and it holds here for the same reason.
+
+        `project_id` is taken and not used, exactly as `record_attempt` takes it:
+        the route has already checked the row belongs to the project, and the
+        argument is here so a later per-project scope is a change to this method
+        rather than to every call site.
+        """
+        aggregate = await self._transcripts.load(dialogue_id)
+        aggregate.execute(
+            ConcludeSocraticDialogue(dialogue_id=dialogue_id, reason="abandoned")
+        )
+        await self._transcripts.save(aggregate)
+        self.forget(dialogue_id)
+
     async def _resume(self, project_id: UUID, dialogue_id: UUID) -> LiveDialogue:
         """The live dialogue, from the cache or from the read model.
 

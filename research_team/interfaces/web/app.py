@@ -3473,6 +3473,41 @@ def create_app(
             "progress": item_view(progress, f"turn/{body.position}", body.component_id)
         }
 
+    @app.post("/api/projects/{project_id}/dialogues/{dialogue_id}/end")
+    async def end_dialogue(project_id: UUID, dialogue_id: UUID):
+        """End a dialogue at the reader's request.
+
+        POST and not DELETE: nothing is removed. The dialogue, its turns and
+        every marked answer stay where they were and stay readable, which is the
+        opposite of what the wrong verb would tell a reader.
+
+        409 for one already concluded, matching `post_dialogue_attempt` and the
+        reply route, so the page has one rule for every "this dialogue has
+        finished" it can meet. The row read is against the projection, so two
+        ends inside one projection lag both reach `socratic.end` -- which is why
+        the `CommandRejectedError` arm is what makes a double-click safe, and not
+        the row check. `test_ending_a_dialogue_twice_is_refused_rather_than_written_twice`
+        is a 500 with that arm removed.
+
+        The project check is the route's because `ConcludeSocraticDialogue`
+        carries no project id and `decide` has nothing to compare: without it a
+        guessed id ends someone else's dialogue and answers 200 -- measured, by
+        deleting the check: `test_ending_a_dialogue_in_another_project_is_a_404`
+        goes green-path and the other project's dialogue is concluded.
+        """
+        if socratic is None or dialogues is None:
+            raise HTTPException(status_code=503, detail="dialogues are not configured")
+        row = await dialogues.get(dialogue_id)
+        if row is None or row.project_id != project_id:
+            raise HTTPException(
+                status_code=404, detail=f"no dialogue {dialogue_id} in {project_id}"
+            )
+        try:
+            await socratic.end(project_id=project_id, dialogue_id=dialogue_id)
+        except CommandRejectedError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return {"status": "concluded"}
+
     @app.get("/api/projects/{project_id}/dialogues/{dialogue_id}/progress")
     async def read_dialogue_progress(project_id: UUID, dialogue_id: UUID):
         """Every answer this reader has had marked in this dialogue (B114).

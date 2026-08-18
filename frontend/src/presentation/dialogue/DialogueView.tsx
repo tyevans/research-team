@@ -96,6 +96,10 @@ export const DialogueView = ({
   // silo, and this one is the whole of what tells a returning reader their
   // dialogue finished instead of showing them a failure.
   const concluded = store((state) => state.concluded)
+  // Same reason, one step further: `concluded` alone would draw "this dialogue
+  // has reached its goal" at a reader who stopped because they were done with
+  // it, which is a claim about them that is not true.
+  const endedByReader = store((state) => state.endedByReader)
 
   /** Put the minted id in the hash, which is what makes a dialogue a place
    *  rather than a session.
@@ -141,8 +145,10 @@ export const DialogueView = ({
       error={error}
       progressUnavailable={progressUnavailable}
       concluded={concluded}
+      endedByReader={endedByReader}
       onStart={(topic) => void store.getState().start(topic)}
       onReply={(reply) => void store.getState().send(reply)}
+      onEnd={() => void store.getState().end()}
     />
   )
 }

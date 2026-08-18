@@ -33,8 +33,10 @@ export const DialoguePage = ({
   error,
   progressUnavailable,
   concluded: concludedFromStore,
+  endedByReader,
   onStart,
   onReply,
+  onEnd,
 }: {
   projectId: ProjectId
   transcript: DialogueTranscript
@@ -65,8 +67,13 @@ export const DialoguePage = ({
   /** Whether the store has learned the dialogue is over -- see
    *  `dialogue-store.ts` for why that is a 409 on reply and nothing else. */
   concluded: boolean
+  /** Whether *this reader, in this session*, ended it -- see `dialogue-store.ts`
+   *  for why that is separate from `concluded` and why it does not survive a
+   *  refresh (B120). Only the wording below reads it. */
+  endedByReader: boolean
   onStart: (topic: string) => void
   onReply: (reply: string) => void
+  onEnd: () => void
 }) => {
   // Either source, because neither covers both cases. The transcript's flag is
   // what a LIVE dialogue has -- `concluded` travels on the `prompt` frame that
@@ -122,14 +129,28 @@ export const DialoguePage = ({
       />
 
       {concluded ? (
+        // Two sentences, and the default is the one that says the thing worked.
+        // "This dialogue has ended" would be true either way and was refused for
+        // exactly that: it is the one line on this page that tells a reader they
+        // got there. The cost, stated rather than hidden: `endedByReader` is
+        // store state and does not survive a refresh, so a reader who ended a
+        // dialogue and comes back is told it reached its goal. Not for want of
+        // the reason on the server -- `_dialogue_view` already sends
+        // `concludedReason` (`app.py:3720`); nothing in the browser fetches one
+        // dialogue whole. That is B120, and it is a client-side gap only.
+        //
+        // "You ended this dialogue", never "abandoned": `reason="abandoned"` is
+        // stored because it is accurate about why it ended, and it is not what a
+        // reader should read about themselves.
         <p className="dlg-concluded" role="status">
-          This dialogue has reached its goal.
+          {endedByReader ? 'You ended this dialogue.' : 'This dialogue has reached its goal.'}
         </p>
       ) : (
         <DialogueComposer
           started={dialogueId !== null}
           busy={dialogueId === null ? starting : replying}
           onSubmit={dialogueId === null ? onStart : onReply}
+          onEnd={onEnd}
         />
       )}
     </section>
@@ -148,10 +169,18 @@ const DialogueComposer = ({
   started,
   busy,
   onSubmit,
+  onEnd,
 }: {
   started: boolean
   busy: boolean
   onSubmit: (text: string) => void
+  /** Ends the dialogue. Drawn here rather than in the framing header because
+   *  this is where the reader already is when they decide they are done, and
+   *  only inside this branch because a concluded dialogue has nothing to end --
+   *  a button rendered unconditionally would sit under the "reached its goal"
+   *  line and 409 on every click. The store, not this component, guards the
+   *  case where no dialogue has been started yet. */
+  onEnd: () => void
 }) => {
   const [draft, setDraft] = useState('')
   const label = started ? 'Your answer' : 'Topic'
@@ -189,6 +218,13 @@ const DialogueComposer = ({
           }}
         />
         <div className="flex items-center justify-end gap-3">
+          {/* `tone="quiet"` and `type="button"`: quiet because stopping is not
+              the action this surface is encouraging, and `type="button"`
+              because a default-typed button inside a form submits it -- which
+              here would send the draft and end the dialogue on one click. */}
+          <Button tone="quiet" type="button" onClick={onEnd}>
+            End this dialogue
+          </Button>
           <Button tone="accent" type="submit" disabled={busy || !draft.trim()}>
             {started ? 'Answer' : 'Start'}
           </Button>

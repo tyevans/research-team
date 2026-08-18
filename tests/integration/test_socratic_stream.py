@@ -15,12 +15,17 @@ import json
 from uuid import UUID, uuid4
 
 import pytest
+from eventsource import StreamId, collect
 from httpx import ASGITransport, AsyncClient
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 
 from research_team.application.ports import ActivityRemark
 from research_team.application.socratic import SocraticFraming, SocraticPrompt
 from research_team.composition import build_application
+from research_team.domain.socratic_dialogue import (
+    SocraticDialogue,
+    SocraticDialogueConcluded,
+)
 from research_team.interfaces.web import create_app
 
 MCQ = (
@@ -86,6 +91,19 @@ async def client(tmp_path):
     async with AsyncClient(transport=transport, base_url="http://test") as http:
         yield http, application, stub
     await application.close()
+
+
+async def _events(application, dialogue_id):
+    # Four lines repeated from `test_a_dialogue_concludes.py` rather than
+    # imported: a shared helper across integration modules would be a
+    # dependency carrying one `collect` call.
+    stream = StreamId(dialogue_id, SocraticDialogue.aggregate_type)
+    return [
+        envelope.event
+        for envelope in await collect(
+            application.socratic._transcripts.event_store.read_stream(stream)
+        )
+    ]
 
 
 async def _project(http) -> UUID:
@@ -423,3 +441,108 @@ async def test_replying_to_a_concluded_dialogue_says_it_finished_not_that_it_is_
 
     assert response.status_code == 409, response.text
     assert "concluded" in response.json()["detail"]
+
+
+async def test_a_reader_can_end_a_dialogue_and_the_reason_says_who_ended_it(client):
+    """The other half of `ConclusionReason`, which nothing produced.
+
+    Asserted on the stored event and not on the 200: `end` is one command, and a
+    route that swallowed it would answer 200 with nothing written -- the exact
+    shape CLAUDE.md's "Events" section describes, where an event no projection
+    handles counts as APPLIED and silence is not refusal.
+
+    `reason == "abandoned"` and not `"met"`, because a dialogue the reader
+    stopped is not one the reader finished, and a stopping condition that could
+    be satisfied by giving up would be worth nothing.
+    """
+    http, application, _stub = client
+    project_id = await _project(http)
+    started = await http.post(f"/api/projects/{project_id}/dialogues", json={"topic": "t"})
+    dialogue_id = started.json()["dialogueId"]
+
+    ended = await http.post(f"/api/projects/{project_id}/dialogues/{dialogue_id}/end")
+
+    assert ended.status_code == 200, ended.text
+    events = await _events(application, UUID(dialogue_id))
+    assert type(events[-1]) is SocraticDialogueConcluded
+    assert events[-1].reason == "abandoned"
+
+    # And the projection, read back over HTTP, because the event alone proves
+    # only that something was written. An event no projection handles counts as
+    # APPLIED, so a `concluded_reason` column nothing filled would look identical
+    # from the stream. This is also what B120's missing read port would recover
+    # `endedByReader` from after a refresh -- the reason is already served, and
+    # the gap is that no console port fetches one dialogue whole.
+    await application.dialogues.caught_up()
+    view = await http.get(f"/api/projects/{project_id}/dialogues/{dialogue_id}")
+    assert view.status_code == 200, view.text
+    assert view.json()["status"] == "concluded"
+    assert view.json()["concludedReason"] == "abandoned"
+
+
+async def test_ending_a_dialogue_drops_its_live_entry(client):
+    """**The line this task exists around.**
+
+    `_resume` returns a cached `LiveDialogue` BEFORE it reads the row, so its
+    concluded refusal cannot see a dialogue still in the registry -- the
+    `cached is not None` early return sits above the `status == "concluded"`
+    check. A reader who ends a dialogue and then types would be answered: the
+    whole model call runs, and `decide` refuses only at save, as a
+    `CommandRejectedError` that `reply_to_dialogue` does not catch. That reaches
+    the browser as an in-band `error` frame on a 200 stream, after the tokens
+    are spent.
+
+    So `end` calls `forget`, and this test is what fails if that line is removed
+    as redundant. Red against an `end` that writes the event and leaves the
+    cache: the status below is 200, not 409.
+    """
+    http, application, _stub = client
+    project_id = await _project(http)
+    started = await http.post(f"/api/projects/{project_id}/dialogues", json={"topic": "t"})
+    dialogue_id = started.json()["dialogueId"]
+    await http.post(f"/api/projects/{project_id}/dialogues/{dialogue_id}/end")
+    await application.dialogues.caught_up()
+
+    response = await http.post(
+        f"/api/projects/{project_id}/dialogues/{dialogue_id}/reply", json={"reply": "more?"}
+    )
+
+    assert response.status_code == 409, response.text
+    assert "concluded" in response.json()["detail"]
+
+
+async def test_ending_a_dialogue_twice_is_refused_rather_than_written_twice(client):
+    """`decide` refuses every command against a concluded dialogue, so a second
+    `end` is a `CommandRejectedError`. Caught as 409 rather than left to become a
+    500 -- a double-clicked button is not a server fault -- and asserted on the
+    event count too, because a route that answered 409 while appending a second
+    `SocraticDialogueConcluded` would look identical from the status alone.
+    """
+    http, application, _stub = client
+    project_id = await _project(http)
+    started = await http.post(f"/api/projects/{project_id}/dialogues", json={"topic": "t"})
+    dialogue_id = started.json()["dialogueId"]
+    await http.post(f"/api/projects/{project_id}/dialogues/{dialogue_id}/end")
+
+    again = await http.post(f"/api/projects/{project_id}/dialogues/{dialogue_id}/end")
+
+    assert again.status_code == 409, again.text
+    events = await _events(application, UUID(dialogue_id))
+    assert [type(e) for e in events].count(SocraticDialogueConcluded) == 1
+
+
+async def test_ending_a_dialogue_in_another_project_is_a_404(client):
+    """The project check is the route's, not the command's:
+    `ConcludeSocraticDialogue` carries no project id, so `decide` has nothing to
+    compare -- the same gap `_resume`'s second refusal exists for. Without this
+    check a guessed id ends someone else's dialogue and answers 200.
+    """
+    http, _application, _stub = client
+    project_id = await _project(http)
+    other = await _project(http)
+    started = await http.post(f"/api/projects/{project_id}/dialogues", json={"topic": "t"})
+    dialogue_id = started.json()["dialogueId"]
+
+    response = await http.post(f"/api/projects/{other}/dialogues/{dialogue_id}/end")
+
+    assert response.status_code == 404, response.text

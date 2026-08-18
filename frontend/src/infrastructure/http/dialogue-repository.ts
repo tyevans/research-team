@@ -243,6 +243,16 @@ export class HttpDialogueRepository implements DialogueRepository {
     if (!response.ok) throw new ApiError(await detail(response), response.status)
     return toDialogueProgress(dialogueProgressDto.parse(JSON.parse(await response.text())))
   }
+
+  async end(projectId: ProjectId, dialogueId: string): Promise<void> {
+    const response = await this.fetcher(
+      `${this.baseUrl}/api/projects/${seg(projectId)}/dialogues/${seg(dialogueId)}/end`,
+      { method: 'POST' },
+    )
+    // No body parsed. The route answers `{"status": "concluded"}` and reading it
+    // would change nothing -- a caller that got a 200 already knows what it says.
+    if (!response.ok) throw new ApiError(await detail(response), response.status)
+  }
 }
 
 /** The framing route's body. `_dialogue_view` carries more than these four

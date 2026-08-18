@@ -5,6 +5,7 @@
  * CLAUDE.md's reason: jsdom lays nothing out.
  */
 import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ComponentProps, ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
@@ -36,8 +37,10 @@ const props = (over: Partial<Props> = {}): Props => ({
   error: null,
   progressUnavailable: false,
   concluded: false,
+  endedByReader: false,
   onStart: vi.fn(),
   onReply: vi.fn(),
+  onEnd: vi.fn(),
   ...over,
 })
 
@@ -279,4 +282,28 @@ it('shows the finished state from the store even with no turns to read it off', 
 
   expect(screen.getByText(/reached its goal/i)).toBeInTheDocument()
   expect(screen.queryByLabelText(/your answer/i)).not.toBeInTheDocument()
+})
+
+it('offers a way to end a live dialogue and calls it', async () => {
+  const onEnd = vi.fn()
+  render(<DialoguePage {...props({ dialogueId: 'd1', onEnd })} />)
+
+  await userEvent.click(screen.getByRole('button', { name: /end this dialogue/i }))
+
+  expect(onEnd).toHaveBeenCalledTimes(1)
+})
+
+it('does not offer to end a dialogue that has already finished', () => {
+  // Red against a button rendered unconditionally: it would sit under the
+  // "reached its goal" line and 409 on every click.
+  render(<DialoguePage {...props({ dialogueId: 'd1', concluded: true })} />)
+
+  expect(screen.queryByRole('button', { name: /end this dialogue/i })).not.toBeInTheDocument()
+})
+
+it('says the reader ended it when the reader ended it', () => {
+  render(<DialoguePage {...props({ dialogueId: 'd1', concluded: true, endedByReader: true })} />)
+
+  expect(screen.getByText(/you ended this dialogue/i)).toBeInTheDocument()
+  expect(screen.queryByText(/reached its goal/i)).not.toBeInTheDocument()
 })

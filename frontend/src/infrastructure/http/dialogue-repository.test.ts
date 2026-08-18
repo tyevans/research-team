@@ -331,3 +331,34 @@ it('posts an attempt against the dialogue, not the ask', async () => {
   expect(verdict.correct).toBe(true)
   expect(verdict.correctOptions).toEqual([1])
 })
+
+it('ends a dialogue with a POST, and surfaces a 409 as a status', async () => {
+  // The URL and the verb are the whole of this method, and neither is checked
+  // anywhere else -- the store test fakes the repository, so a wrong path here
+  // is a 404 no console test can see. POST and not DELETE because nothing is
+  // removed: the dialogue, its turns and every marked answer stay readable.
+  //
+  // The 409 half is asserted because the store branches on `err.status`, never
+  // on the detail string: a `!response.ok` that resolved instead of throwing
+  // would leave the store claiming the reader ended a dialogue the model had
+  // already concluded. Red against a method that swallows a non-ok response.
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(new Response(JSON.stringify({ status: 'concluded' }), { status: 200 }))
+
+  await new HttpDialogueRepository('', fetcher).end(PROJECT, 'd1')
+
+  expect(fetcher).toHaveBeenCalledWith(`/api/projects/${PROJECT}/dialogues/d1/end`, {
+    method: 'POST',
+  })
+
+  const refused = vi
+    .fn()
+    .mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'dialogue already concluded' }), { status: 409 }),
+    )
+
+  await expect(new HttpDialogueRepository('', refused).end(PROJECT, 'd1')).rejects.toMatchObject({
+    status: 409,
+  })
+})

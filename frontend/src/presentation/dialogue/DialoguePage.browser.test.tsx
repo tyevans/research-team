@@ -48,6 +48,7 @@ const props = (concluded = false): Props => ({
   projectId: PROJECT,
   transcript: [exchange({ concluded })],
   concluded: false,
+  endedByReader: false,
   goal: 'understand what the creed settled',
   stoppingCondition: 'the reader separates the settlement from the politics',
   openingBlocks: [{ kind: 'markdown', text: 'Where would you start?' }],
@@ -59,6 +60,7 @@ const props = (concluded = false): Props => ({
   error: null,
   onStart: () => undefined,
   onReply: () => undefined,
+  onEnd: () => undefined,
 })
 
 /** The height is the point, as on `AskView.browser.test.tsx`: this page is

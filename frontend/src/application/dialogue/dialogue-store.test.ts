@@ -32,6 +32,7 @@ const repo = (over: Partial<DialogueRepository> = {}): DialogueRepository => ({
   reply: vi.fn<DialogueRepository['reply']>().mockResolvedValue(undefined),
   submitDialogueAttempt: vi.fn(),
   progress: vi.fn<DialogueRepository['progress']>().mockResolvedValue({}),
+  end: vi.fn<DialogueRepository['end']>().mockResolvedValue(undefined),
   ...over,
 })
 
@@ -413,4 +414,48 @@ it('still reports a 404 as an error', async () => {
 
   expect(dialogue.getState().concluded).toBe(false)
   expect(dialogue.getState().error).toContain('no dialogue')
+})
+
+it('marks the dialogue ended by the reader', async () => {
+  const end = vi.fn<DialogueRepository['end']>().mockResolvedValue(undefined)
+  const dialogues = repo({ end })
+  const dialogue = store(dialogues)
+  await dialogue.getState().start('t')
+
+  await dialogue.getState().end()
+
+  expect(end).toHaveBeenCalledWith(PROJECT, dialogue.getState().dialogueId)
+  expect(dialogue.getState().concluded).toBe(true)
+  expect(dialogue.getState().endedByReader).toBe(true)
+})
+
+it('does nothing when there is no dialogue to end', async () => {
+  // Red against an action that calls the repository with a null id. The button
+  // is drawn from the moment the page loads, and before `start` resolves there
+  // is nothing to end -- the server would answer 404 and the reader would be
+  // told their dialogue is missing when they have not begun one.
+  const end = vi.fn<DialogueRepository['end']>()
+  const dialogue = store(repo({ end }))
+
+  await dialogue.getState().end()
+
+  expect(end).not.toHaveBeenCalled()
+  expect(dialogue.getState().error).toBeNull()
+})
+
+it('treats a 409 on end as already concluded, and not as the reader ending it', async () => {
+  const end = vi
+    .fn<DialogueRepository['end']>()
+    .mockRejectedValue(new ApiError('already concluded', 409))
+  const dialogue = store(repo({ end }))
+  await dialogue.getState().start('t')
+
+  await dialogue.getState().end()
+
+  expect(dialogue.getState().concluded).toBe(true)
+  // Not the reader's doing: something else concluded it first, most likely the
+  // model on the previous turn, and telling the reader they ended it would be a
+  // small lie about their own history.
+  expect(dialogue.getState().endedByReader).toBe(false)
+  expect(dialogue.getState().error).toBeNull()
 })

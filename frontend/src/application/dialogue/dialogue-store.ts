@@ -84,11 +84,37 @@ export interface DialogueState {
    * Starts false and is never cleared: a concluded dialogue does not unfinish,
    * and this store is rebuilt when the URL names a different one. */
   readonly concluded: boolean
+  /** Whether *this reader, in this session*, ended it.
+   *
+   * Separate from `concluded` because the two have different actors: the model
+   * judging a stopping condition met, and a reader deciding to stop. Only the
+   * success path of `end` sets it -- a 409 means something else concluded it
+   * first, most likely the model on the previous turn, and claiming the reader
+   * ended it would be a small lie about their own history.
+   *
+   * Store state, and it does not survive a refresh, so a reader who ends a
+   * dialogue and comes back is told it reached its goal.
+   *
+   * The cause is client-side only, and this comment said otherwise until it was
+   * checked: the SERVER already carries the reason -- `_dialogue_view` sends
+   * `concludedReason` (`app.py:3720`) beside `status`. What is missing is a port
+   * that reads one dialogue whole, so nothing in the browser ever fetches it.
+   * That is B120, whose fix (`read(projectId, dialogueId)`) would seed this
+   * field for free with no backend work.
+   *
+   * Filed rather than papered over with a line vague enough to be true either
+   * way -- which would cost the one sentence on this page that tells a reader
+   * they got there. */
+  readonly endedByReader: boolean
   readonly replying: boolean
   readonly starting: boolean
   readonly error: string | null
   start(topic: string): Promise<void>
   send(reply: string): Promise<void>
+  /** Ends the dialogue at the reader's request. A no-op before `start` has
+   *  resolved: there is nothing to end, and a null id in the path would 404 and
+   *  tell the reader their dialogue is missing when they never began one. */
+  end(): Promise<void>
   /** Reloads the marked answers. Called on mount and after an attempt is
    *  marked, and never on a null `dialogueId`. */
   refreshProgress(): Promise<void>
@@ -127,6 +153,7 @@ export const createDialogueStore = ({
     progress: {},
     progressUnavailable: false,
     concluded: false,
+    endedByReader: false,
     replying: false,
     starting: false,
     error: null,
@@ -256,6 +283,28 @@ export const createDialogueStore = ({
         }))
       } finally {
         set({ replying: false })
+      }
+    },
+
+    async end() {
+      const { dialogueId } = get()
+      if (dialogueId === null) return
+      try {
+        await dialogues.end(projectId, dialogueId)
+        set({ concluded: true, endedByReader: true })
+      } catch (err) {
+        // A 409 means it had already concluded: the reader's intent is satisfied
+        // and there is nothing to report. Same rule as `send`'s 409 above -- a
+        // state the reader wanted is not a failure -- and keyed on the status,
+        // never the detail string, which is the server's wording and free to
+        // change. `endedByReader` is deliberately NOT set here; the test that
+        // fails without that distinction is `treats a 409 on end as already
+        // concluded, and not as the reader ending it`.
+        if (err instanceof ApiError && err.status === 409) {
+          set({ concluded: true })
+          return
+        }
+        set({ error: errorMessage(err) })
       }
     },
 
