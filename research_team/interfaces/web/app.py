@@ -134,6 +134,7 @@ from research_team.infrastructure.persistence.read_models import (
     MediaProposalRow,
     MediaProposalRunner,
     OntologyRunner,
+    SocraticDialogueRunner,
 )
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
@@ -728,6 +729,7 @@ def create_app(
     dispatch: DispatchQueue | None = None,
     ask: AskService | None = None,
     asks: AskConversationRunner | None = None,
+    dialogues: SocraticDialogueRunner | None = None,
     extractor: DocumentExtractor | None = None,
     extract_queue: ExtractionQueue | None = None,
     definitions: DefinitionReaders | None = None,
@@ -3160,6 +3162,90 @@ def create_app(
         except GradingError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return verdict.as_json()
+
+    def _dialogue_view(row) -> dict[str, Any]:
+        """One dialogue, without its turns -- what a history list needs.
+
+        Carries `goal` and `stoppingCondition` in the *list* view and not only
+        in the detail one, deliberately. A reader picking a dialogue back up
+        needs to know what it was aiming at, and the topic alone does not say:
+        two dialogues about the Nicene settlement can be trying to do entirely
+        different things. It is two strings per row on a page that is a cheap
+        index, which is the same trade `firstQuestion` makes on the ask list.
+        """
+        return {
+            "dialogueId": str(row.id),
+            "projectId": str(row.project_id),
+            "topic": row.topic,
+            "goal": row.goal,
+            "stoppingCondition": row.stopping_condition,
+            "openingPrompt": row.opening_prompt,
+            # The question the reader is looking at now, which belongs to no
+            # turn -- see `SocraticTurnRecorded`. A view that omitted it would
+            # render a transcript ending on the reader's own words with
+            # nothing asking them anything.
+            "pendingPrompt": row.pending_prompt,
+            "openedAt": row.opened_at.isoformat(),
+            "status": row.status,
+            "concludedReason": row.concluded_reason,
+            "turnCount": row.turn_count,
+            "observations": row.observations,
+        }
+
+    @app.get("/api/projects/{project_id}/dialogues")
+    async def list_dialogues(project_id: UUID):
+        """Every dialogue held with this project, most recent first.
+
+        **503 when the projection is unwired, not an empty 200** -- the same
+        ruling `list_asks` makes and for the same reason: a dialogue appends
+        whether or not anything follows the log, so a build with no runner
+        started is indistinguishable from a project nobody has talked to unless
+        the route says so.
+        """
+        if dialogues is None:
+            raise HTTPException(status_code=503, detail="dialogues are not configured")
+        return [_dialogue_view(row) for row in await dialogues.for_project(project_id)]
+
+    @app.get("/api/projects/{project_id}/dialogues/{dialogue_id}")
+    async def read_dialogue(project_id: UUID, dialogue_id: UUID):
+        """One dialogue, with its exchanges in the order they happened.
+
+        404 covers both "no such dialogue" and "that dialogue belongs to
+        another project", and they are deliberately the same answer, matching
+        `read_ask`: the second is a guessed id, and telling a caller that an id
+        they cannot read does exist is the distinction not worth drawing.
+
+        `prompt` is the dialogue's question and `reply` is the reader's answer
+        -- the inverse of `read_ask`'s question/answer, because this surface
+        runs in the opposite direction. A client that reused the ask's turn
+        renderer here would draw every dialogue with the speakers swapped, and
+        it would still read as a conversation.
+
+        A turn pairs the reader's answer with the question it *produced*, so
+        the transcript's first utterance is `openingPrompt` on the dialogue and
+        is on no turn: a client rendering only `turns` draws a reader answering
+        something nobody asked.
+        """
+        if dialogues is None:
+            raise HTTPException(status_code=503, detail="dialogues are not configured")
+        row = await dialogues.get(dialogue_id)
+        if row is None or row.project_id != project_id:
+            raise HTTPException(
+                status_code=404, detail=f"no dialogue {dialogue_id} in {project_id}"
+            )
+        return {
+            **_dialogue_view(row),
+            "turns": [
+                {
+                    "position": turn.position,
+                    "prompt": turn.prompt,
+                    "reply": turn.reply,
+                    "citations": turn.citations,
+                    "recordedAt": turn.recorded_at.isoformat(),
+                }
+                for turn in await dialogues.turns_for(dialogue_id)
+            ],
+        }
 
     @app.get("/api/health")
     async def health():
