@@ -7,12 +7,17 @@ the prompt is composed rather than appended, that the component reference is
 the two-type one, and that the two calls get different instructions.
 """
 
+import pytest
+
+from research_team.application.socratic import SocraticFraming
 from research_team.application.socratic_components import SOCRATIC_COMPONENT_TYPES
 from research_team.infrastructure.agent.socratic_agent import (
+    _FRAMING_FIELDS,
     SOCRATIC_COMPONENT_PROMPT,
     SOCRATIC_FRAMING_SYSTEM,
     SOCRATIC_PROMPT,
     SOCRATIC_TOOLS_PROMPT,
+    parse_framing,
 )
 
 
@@ -80,3 +85,94 @@ def test_the_reply_prompt_tells_the_model_the_stopping_condition_is_not_its_to_m
     lowered = SOCRATIC_PROMPT.lower()
 
     assert "stopping condition" in lowered
+
+
+def test_the_parser_asks_for_exactly_the_keys_the_framing_prompt_asks_for():
+    """The one contract that had existed only as prose.
+
+    `SOCRATIC_FRAMING_PROMPT` shows the model a three-key YAML block; nothing
+    connected that block to the parser that reads its answer, so renaming a key
+    in the prompt would have left `parse_framing` refusing every well-formed
+    framing -- or, worse, a key added to the prompt and not to the parser would
+    have been silently dropped.
+
+    `_FRAMING_FIELDS` is now *derived* from the prompt at import, so the two
+    cannot disagree. This test pins the derivation's result rather than
+    re-deriving it: a prompt edit that dropped `stopping_condition` would make
+    the derivation agree with itself and fail here, which is the point.
+
+    Would pass with the derivation replaced by a hand-written tuple *today* --
+    it is the drift a year from now that it catches, so it is deliberately an
+    equality against the three literal names.
+    """
+    assert _FRAMING_FIELDS == ("goal", "stopping_condition", "opening_prompt")
+
+
+def test_a_framing_block_becomes_the_three_strings():
+    text = (
+        "```yaml\n"
+        "goal: |\n"
+        "  why the creed's wording mattered politically\n"
+        "stopping_condition: |\n"
+        "  the reader distinguishes the settlement from the politics around it\n"
+        "opening_prompt: |\n"
+        "  What do you already believe the creed settled?\n"
+        "```\n"
+    )
+
+    framing = parse_framing(text)
+
+    assert isinstance(framing, SocraticFraming)
+    assert framing.goal == "why the creed's wording mattered politically"
+    assert (
+        framing.stopping_condition
+        == "the reader distinguishes the settlement from the politics around it"
+    )
+    assert framing.opening_prompt == "What do you already believe the creed settled?"
+
+
+def test_a_framing_without_a_fence_is_still_read():
+    """Models drop the fence roughly as often as they include it, and a framing
+    that failed for want of three backticks would fail the whole dialogue at
+    its first call. Red against a parser that requires the fence."""
+    text = (
+        "goal: understand the settlement\n"
+        "stopping_condition: the reader explains it unaided\n"
+        "opening_prompt: Where would you start?\n"
+    )
+
+    framing = parse_framing(text)
+
+    assert framing.goal == "understand the settlement"
+    assert framing.opening_prompt == "Where would you start?"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "I would be happy to help you explore this topic!",
+        "```yaml\ngoal: only a goal\n```\n",
+        "```yaml\ngoal: g\nstopping_condition: s\n```\n",
+    ],
+)
+def test_a_framing_that_is_missing_a_field_is_refused_rather_than_defaulted(text):
+    """A dialogue framed with an empty stopping condition is one that can never
+    stop, and it would look completely normal until the reader gave up.
+
+    Refused loudly here, at `begin`, where the reader has invested one click --
+    rather than defaulted to "" and discovered twenty exchanges later. Red
+    against a parser that fills missing keys with empty strings, which is what
+    a `.get(key, "")` implementation does.
+    """
+    with pytest.raises(ValueError, match="framing"):
+        parse_framing(text)
+
+
+def test_a_reply_carries_the_sources_the_agent_actually_opened():
+    """`CITED_BY_TOOL` is reused rather than re-derived: `read_source` is still
+    the only admitted tool that opens one identified thing, and a second table
+    would be a second thing to keep in step with the allowlist."""
+    from research_team.infrastructure.agent.ask_agent import CITED_BY_TOOL, READ_SOURCE_TOOL
+
+    assert CITED_BY_TOOL[READ_SOURCE_TOOL] == ("source", "source_id")

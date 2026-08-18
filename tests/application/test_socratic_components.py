@@ -124,7 +124,7 @@ def test_the_prompt_a_socratic_agent_receives_carries_every_offered_type():
 def test_the_socratic_prompt_inherits_nothing_from_the_ask_s_component_reference():
     """The trap the design names by measurement.
 
-    `ask_agent.py:142` rebinds `ASK_PROMPT = ASK_PROMPT + ASK_COMPONENT_PROMPT`,
+    `ask_agent.py:147` rebinds `ASK_PROMPT = ASK_PROMPT + ASK_COMPONENT_PROMPT`,
     and that reference now covers nine types at 9,600 characters. A socratic
     prompt built by appending to `ASK_PROMPT` inherits all six resolved types
     silently -- it still *works*, which is why nothing else would catch it, and

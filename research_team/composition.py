@@ -134,6 +134,7 @@ from research_team.infrastructure.agent.search import (
     build_search_tool,
 )
 from research_team.infrastructure.agent.search_middleware import SearchAttemptsMiddleware
+from research_team.infrastructure.agent.socratic_agent import DeepAgentSocraticExecutor
 from research_team.infrastructure.agent.source_mount import mounted_sources
 from research_team.infrastructure.agent.stage_middleware import (
     StageMiddleware,
@@ -469,11 +470,9 @@ class Application:
     """Guided dialogues: framing a topic, and answering a reply with a question.
 
     A field beside `ask` and for its reason -- it is composed from this build's
-    stores and no caller could assemble it. Its executor is
-    `_UnbuiltSocraticExecutor` until Plan 2 lands the prompted agent, so
-    `begin` and `respond` raise `NotImplementedError` at call time; everything
-    behind them -- the repository, the registry, and the read-through
-    resumption path -- is the real thing."""
+    stores and no caller could assemble it. Its executor closes over the same
+    `open_graph` the ask's does, so like `ask` it cannot be constructed anywhere
+    a caller could stand."""
 
     dialogues: SocraticDialogueRunner
     """The read side of dialogues: a project's dialogues, one dialogue with its
@@ -896,34 +895,6 @@ def _extraction_model(injected: BaseChatModel | None) -> BaseChatModel:
     alone; only extraction is measured to be better off not reasoning.
     """
     return injected if injected is not None else build_extraction_model()
-
-
-class _UnbuiltSocraticExecutor:
-    """A placeholder until Plan 2 builds the real one.
-
-    Raises rather than returning a canned reply, and raises at *call* time
-    rather than at composition: composing must succeed so the runner, the
-    service and the history routes are all reachable and testable now, and a
-    caller that actually tries to hold a dialogue must be told plainly rather
-    than handed a stub answer that looks like a model's.
-
-    Delete this class in Plan 2. `grep _UnbuiltSocraticExecutor` is how you
-    find every line that has to change.
-
-    **The cost, stated because Plan 2 inherits it:** `respond` takes `**_kwargs`
-    and so accepts any call at all. This stub therefore checks nothing about
-    `SocraticExecutor.respond`'s keywords, and a rename on the protocol side
-    would leave it silently agreeing. Harmless only for as long as it raises --
-    which is why `test_the_placeholder_socratic_executor_raises_when_called_not_when_built`
-    pins the raise, and why the first thing Plan 2's real executor buys is a
-    signature that can disagree.
-    """
-
-    async def frame(self, *, project_id, topic):
-        raise NotImplementedError("the socratic executor is not built yet")
-
-    async def respond(self, **_kwargs):
-        raise NotImplementedError("the socratic executor is not built yet")
 
 
 def build_application(
@@ -2002,17 +1973,26 @@ def build_application(
         transcripts=build_ask_conversation_repository(repository.store, repository.publisher),
     )
 
-    # Built here for `ask_service`'s reason. The executor is a placeholder --
-    # see `_UnbuiltSocraticExecutor` -- because the prompted agent is a
-    # separate slice; everything else about a dialogue is composed and
-    # reachable now, which is what lets the read model and the resumption path
-    # be tested against a build the composition root actually made.
+    # Built here for `ask_service`'s reason: the executor takes the project
+    # tools `open_graph` assembles and keeps the readers, so it cannot be
+    # constructed anywhere a caller could reach.
+    #
+    # A second executor beside the ask's, differently prompted over identical
+    # plumbing -- which is the whole of what the design's §4 said this would
+    # cost, and it is these four lines.
     #
     # `read_model=dialogues` is the whole of resumption's wiring, and it is one
     # keyword. A build that passed something else here -- or nothing -- would
     # compose, serve, and start every resumed dialogue over.
     socratic_service = SocraticDialogueService(
-        executor=_UnbuiltSocraticExecutor(),
+        executor=DeepAgentSocraticExecutor(
+            model=resolved_model,
+            open_graph=open_graph,
+            project_files=service.project_files,
+            project_sources=lambda target_project_id: mounted_sources(
+                corpus_readers(target_project_id)
+            ),
+        ),
         dialogues=DialogueRegistry(now=time.monotonic),
         read_model=dialogues,
         now=time.monotonic,

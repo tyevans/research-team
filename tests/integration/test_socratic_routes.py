@@ -22,9 +22,12 @@ from research_team.interfaces.web import create_app
 class StubExecutor:
     """Framing and questioning without a model.
 
-    The composed build's real executor is `_UnbuiltSocraticExecutor`, which
-    raises when called (Plan 2 builds the real one), so these tests substitute
-    one rather than assert against a `NotImplementedError`.
+    The composed build's real executor is `DeepAgentSocraticExecutor`, which
+    calls a model. Substituted here because these tests are about the routes:
+    what a request returns, and what a refusal looks like. That the composed
+    one is real, reaches a model and parses what comes back is
+    `test_a_dialogue_is_composed_with_a_model.py`'s job, and this file would
+    stay green if it were not -- which is why that file exists.
     """
 
     async def frame(self, *, project_id, topic):

@@ -27,9 +27,37 @@ between the two is the component reference the framing call deliberately does
 without (2,482 characters for two types, where the ask's nine cost 9,600).
 """
 
+import re
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
+from uuid import UUID
+
+import yaml
+from deepagents import FilesystemMiddleware, create_deep_agent
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.tools import BaseTool
+
 from research_team.application.components import component_reference
 from research_team.application.corpus_read import REFERENCE_SYNTAX_PROMPT
+from research_team.application.ports import ActivityReporter
+from research_team.application.socratic import (
+    DialogueMessage,
+    SocraticFraming,
+    SocraticPrompt,
+)
 from research_team.application.socratic_components import SOCRATIC_COMPONENT_TYPES
+from research_team.infrastructure.agent.ask_agent import (
+    READ_ONLY_FILE_TOOLS,
+    citations,
+    readable,
+)
+from research_team.infrastructure.agent.deep_agent import (
+    to_activity_delta,
+    to_activity_message,
+)
+from research_team.infrastructure.agent.messages import last_text
+from research_team.infrastructure.agent.read_only_backend import ReadOnlyProjectBackend
 
 SOCRATIC_TOOLS_PROMPT = (
     """You can read one research project's gathered material and change none of it.
@@ -141,3 +169,266 @@ SOCRATIC_FRAMING_SYSTEM = SOCRATIC_TOOLS_PROMPT + SOCRATIC_FRAMING_PROMPT
 """The framing turn. No component reference: this call returns three strings,
 not an utterance to the reader, and offering it widget syntax invites a goal
 with an `mcq` in it."""
+
+
+_YAML_LOADER: type = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+"""The fastest *safe* loader this PyYAML has, declared here rather than
+imported from `components.py` -- that one is a private name in the application
+layer, and infrastructure reaching across for it would be a dependency
+`tests/test_architecture.py` does not forbid and nobody wants. `CSafeLoader`
+and not `CLoader`: this parses a language model's output, which is exactly the
+input that must not be able to construct Python objects."""
+
+_FENCE = re.compile(r"```(?:yaml)?\s*\n(.*?)```", re.DOTALL)
+
+
+def _framing_fields() -> tuple[str, ...]:
+    """The keys `SOCRATIC_FRAMING_PROMPT` asks the model for, read off the
+    prompt itself.
+
+    **Derived rather than written alongside, and that is the whole reason this
+    function exists.** The prompt shows a three-key YAML block and the parser
+    below refuses anything missing one of them; written as two independent
+    literals, a rename on either side produces a parser that refuses every
+    well-formed framing, or a key nothing ever reads. Neither failure has a
+    symptom a caller could act on -- the first fails every `begin` with a
+    message naming a key the model did send, the second fails none.
+
+    Returns nothing rather than guessing if the prompt's fenced block ever
+    stops being a YAML mapping. `parse_framing` would then demand no fields at
+    all, so
+    `test_the_parser_asks_for_exactly_the_keys_the_framing_prompt_asks_for` is
+    what fails -- loudly, in a unit test -- instead of a dialogue quietly
+    framing itself with empty strings.
+    """
+    fenced = _FENCE.search(SOCRATIC_FRAMING_PROMPT)
+    if fenced is None:
+        return ()
+    block = yaml.load(fenced.group(1), Loader=_YAML_LOADER)
+    return tuple(block) if isinstance(block, dict) else ()
+
+
+_FRAMING_FIELDS = _framing_fields()
+
+
+def parse_framing(text: str) -> SocraticFraming:
+    """The three strings a framing call must produce, or a refusal.
+
+    **Refused rather than defaulted, and that is the whole of this function.**
+    A `.get(key, "")` implementation is one line shorter and produces a
+    dialogue framed with an empty stopping condition -- one that can never
+    stop, and that looks entirely normal to a reader until they give up. Here
+    the failure lands at `begin`, where the reader has spent one click.
+
+    Module-level rather than a method on the executor so that the refusal is
+    reachable without a model call: a private method would put every one of
+    these cases behind a fake chat model.
+
+    The fence is optional because models include it roughly half the time, and
+    a framing that failed for want of three backticks would fail the whole
+    dialogue at its first call.
+    """
+    fenced = _FENCE.search(text)
+    body = fenced.group(1) if fenced else text
+    try:
+        loaded = yaml.load(body, Loader=_YAML_LOADER)
+    except yaml.YAMLError as error:
+        raise ValueError(f"the framing did not parse as YAML: {error}") from error
+    if not isinstance(loaded, dict):
+        raise ValueError(f"the framing was not a mapping, got {type(loaded).__name__}")
+    missing = [
+        name
+        for name in _FRAMING_FIELDS
+        if not isinstance(loaded.get(name), str) or not str(loaded.get(name)).strip()
+    ]
+    if missing:
+        raise ValueError(f"the framing is missing {', '.join(missing)}")
+    return SocraticFraming(
+        goal=str(loaded["goal"]).strip(),
+        stopping_condition=str(loaded["stopping_condition"]).strip(),
+        opening_prompt=str(loaded["opening_prompt"]).strip(),
+    )
+
+
+def _framed_history(
+    history: Sequence[DialogueMessage], goal: str, stopping_condition: str, reply: str
+) -> list[BaseMessage]:
+    """The conversation, with what it is for in front of it.
+
+    `SystemMessage` rather than a prefix on the first human turn: the framing is
+    not something the reader said, and a model shown it as the reader's words
+    will sometimes answer it.
+    """
+    framing = SystemMessage(
+        content=(
+            f"The goal of this dialogue: {goal}\n"
+            f"It stops when: {stopping_condition}\n"
+            "Neither is yours to change."
+        )
+    )
+    prior: list[BaseMessage] = [
+        HumanMessage(content=message.text)
+        if message.role == "user"
+        else AIMessage(content=message.text)
+        for message in history
+    ]
+    return [framing, *prior, HumanMessage(content=reply)]
+
+
+class DeepAgentSocraticExecutor:
+    """Frames a dialogue and takes one turn in it.
+
+    A sibling of `DeepAgentAskExecutor`, not a subclass: the two share their
+    plumbing and differ in their prompts and in what they return, and a shared
+    base would put the one interesting difference behind an override.
+
+    Builds a fresh agent per call, as the ask executor does per question and the
+    turn executor does per pass -- the tools are bound to a project and a stale
+    agent would ask about the wrong one. No checkpointer, for the reason
+    `ask_agent.py` records at length: langgraph refuses a checkpointed root
+    graph without a `thread_id` and `astream` passes none, so every call would
+    raise. Continuity lives in `history`, and the dialogue's *state* lives in
+    the aggregate -- which is where a stopping condition has to live to be
+    testable at all.
+
+    **The tool set is the ask's, deliberately.** `READ_ONLY_TOOLS`,
+    `READ_ONLY_FILE_TOOLS` and `CITED_BY_TOOL` are module constants in
+    `ask_agent.py` with no injection point, and the design puts changing the
+    allowlist out of scope for the first release. Reused rather than
+    re-declared: a second copy of the allowlist is a second thing to keep in
+    step, and nothing would fail if they drifted -- the dialogue would simply
+    stop being able to open a source.
+
+    `frame` reports no activity. It is one short call before the reader has seen
+    anything, and a page showing tool chatter under a spinner that has not yet
+    said what the dialogue is for reads as noise.
+    """
+
+    def __init__(
+        self,
+        *,
+        model: BaseChatModel,
+        open_graph: Callable[[UUID], Awaitable[tuple[Any, tuple[BaseTool, ...]]]],
+        project_files: Callable[[UUID], Awaitable[dict[str, Any]]],
+        project_sources: Callable[[UUID], Awaitable[dict[str, Any]]],
+        system_prompt: str = SOCRATIC_PROMPT,
+        framing_prompt: str = SOCRATIC_FRAMING_SYSTEM,
+    ) -> None:
+        self._model = model
+        self._open_graph = open_graph
+        # Required rather than defaulted, matching `DeepAgentAskExecutor`: a
+        # build that forgot to wire it would answer every `grep` over gathered
+        # sources with no matches and no error.
+        self._project_sources = project_sources
+        self._project_files = project_files
+        self._system_prompt = system_prompt
+        self._framing_prompt = framing_prompt
+
+    async def _agent(self, project_id: UUID, system_prompt: str):
+        """One agent, bound to one project. Extracted because `frame` and
+        `respond` build the same thing with different instructions."""
+        _knowledge, project_tools = await self._open_graph(project_id)
+        backend = ReadOnlyProjectBackend(
+            await self._project_files(project_id),
+            sources=await self._project_sources(project_id),
+        )
+        return create_deep_agent(
+            model=self._model,
+            tools=list(readable(project_tools)) or None,
+            backend=backend,
+            middleware=[FilesystemMiddleware(backend=backend, tools=READ_ONLY_FILE_TOOLS)],
+            system_prompt=system_prompt,
+        )
+
+    async def frame(self, *, project_id: UUID, topic: str) -> SocraticFraming:
+        agent = await self._agent(project_id, self._framing_prompt)
+        result = await agent.ainvoke(
+            {"messages": [HumanMessage(content=f"The reader's topic: {topic}")]}
+        )
+        # `last_text` rather than the tail message: the final state can end on a
+        # `ToolMessage`, and the framing call is allowed to read the corpus.
+        return parse_framing(last_text(result["messages"]))
+
+    async def respond(
+        self,
+        *,
+        project_id: UUID,
+        history: Sequence[DialogueMessage],
+        goal: str,
+        stopping_condition: str,
+        reply: str,
+        on_activity: ActivityReporter,
+    ) -> SocraticPrompt:
+        """One exchange, reporting activity as it happens.
+
+        Every `on_activity` call is made from inside this coroutine and none is
+        deferred to a callback that could outlive it, which is the contract
+        `SocraticExecutor` states and `SocraticDialogueService._drain` relies on
+        for a final note to reach the reader.
+
+        The goal and the stopping condition are prepended as a system-shaped
+        turn rather than baked into `system_prompt`, because they differ per
+        dialogue while the prompt is a module constant -- and because a build
+        that forgot to pass them would then produce a dialogue with no goal in
+        its context and no error, which is the failure this whole feature is
+        about.
+
+        The stream loop is `DeepAgentAskExecutor.run`'s, structurally
+        unchanged. A second streaming shape would be a second place the
+        `values`/`messages` interleaving has to be got right, and that
+        interleaving is the part that decides whether a reader sees anything at
+        all while waiting.
+        """
+        agent = await self._agent(project_id, self._system_prompt)
+        messages = _framed_history(history, goal, stopping_condition, reply)
+        final: list[BaseMessage] = list(messages)
+        reported = len(messages)
+        async for mode, chunk in agent.astream(
+            {"messages": messages}, stream_mode=["values", "messages"]
+        ):
+            if mode == "values":
+                final = chunk.get("messages", final)
+                for message in final[reported:]:
+                    note = to_activity_message(message)
+                    if note is not None:
+                        on_activity(note)
+                reported = len(final)
+            elif mode == "messages":
+                delta = to_activity_delta(chunk)
+                if delta is not None:
+                    on_activity(delta)
+
+        return SocraticPrompt(
+            prompt=last_text(final),
+            citations=citations(final),
+            # `observation` and `concluded` are left at their defaults, and this
+            # is a scoped omission with a named owner rather than an oversight.
+            #
+            # **Until Plan 4 ("concluding a dialogue") lands, nothing anywhere
+            # writes `SocraticDialogueConcluded`.** Both fields need the model to
+            # return structured judgement alongside its prose, and that parse
+            # fails *silently* -- a malformed answer reads as "not concluded"
+            # rather than raising -- so it needs its own slice and its own red
+            # proofs instead of riding along at the end of this one.
+            #
+            # Two consequences to know before you touch anything nearby:
+            #
+            # 1. A dialogue currently ends only when the reader stops replying.
+            #    The design's first sentence is that it should stop when the
+            #    reader has demonstrated the thing rather than when they stop
+            #    typing, so this is the gap between what is built and what was
+            #    designed -- not a detail.
+            # 2. `SocraticDialogueState.status == "concluded"` and
+            #    `SocraticDialogueRow.status`, with the refusal branches in
+            #    `socratic_dialogue.decide` behind them, are therefore
+            #    **unreachable through any live path** and are exercised only by
+            #    unit tests that build the state directly. They are not dead
+            #    code. Deleting them is the obvious tidy-up and it would delete
+            #    the thing Plan 4 is built on.
+            #
+            # The graded route (`SocraticDialogueService.record_attempt`) does
+            # produce `evidence="attempt"` observations with none of this
+            # machinery, which is the half the design argues is worth having
+            # first -- so the stopping condition has evidence accumulating
+            # against it even while nothing can act on it yet.
+        )
