@@ -142,7 +142,20 @@ const Exploring = ({ projectId, spec }: { projectId: ProjectId; spec: ExplorerSp
     // the only way back. Accepted because an explorer is a sitting: a reader
     // sweeps a few windows and moves on, and the alternative is charging them
     // twice for a window they already looked at.
+    //
+    // `gcTime` matters as much as `staleTime` here, and that was *measured
+    // rather than reasoned*: with `staleTime: Infinity` alone, the test below
+    // came back 3 requests instead of 2. A window the reader has moved away
+    // from has no observer, so TanStack's default five-minute `gcTime` evicts
+    // it -- and an evicted entry is refetched on return no matter how fresh it
+    // was declared to be. Freshness without retention is not a cache.
+    //
+    // The cost of the pair, stated rather than only implied: every window a
+    // reader visits is held for the life of the mount, so a reader who sweeps
+    // thirty windows holds thirty responses. Bounded by the sitting, and small
+    // beside the double pass each one would otherwise cost again.
     staleTime: Infinity,
+    gcTime: Infinity,
   })
 
   // The same key builder, the same window, `entityType` dropped. Identical to
@@ -158,6 +171,7 @@ const Exploring = ({ projectId, spec }: { projectId: ProjectId; spec: ExplorerSp
     // cache entry, and a different `staleTime` on each would mean the entry's
     // freshness depended on which hook happened to create it.
     staleTime: Infinity,
+    gcTime: Infinity,
   })
 
   // Sorted so the picker does not reorder itself between renders as bands

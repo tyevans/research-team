@@ -15,7 +15,7 @@
  * twenty. It also means these run alone in a second while iterating.
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 
 import type { AttemptsApi } from '@application/lesson/use-attempts.ts'
 import { componentBlock } from '@presentation/ask/ask-fixtures.ts'
@@ -58,6 +58,14 @@ const from = () => screen.getByLabelText(/^from$/i)
  *  `waitFor` cannot prove a negative and `await Promise.resolve()` does not
  *  drain a fetch TanStack Query would have scheduled. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20))
+
+/** Real timers back for whoever runs next. Only one case fakes the clock, and a
+ *  leaked fake clock does not fail that case -- it fails an unrelated one later,
+ *  which is how a deterministic bug gets filed as flakiness (`CLAUDE.md`, "A
+ *  failure under load is not evidence"). */
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 it('issues one request when the window control is released, not one per change', async () => {
   // The failure this exists against is not hypothetical: a controlled
@@ -182,4 +190,36 @@ it('pays that second read again on each window commit, and no more than that', a
       { from: '0280-01-01', to: '0400-01-01' },
     ]),
   )
+})
+
+it('is still free to revisit after the shared five-minute policy would have gone stale', async () => {
+  // The one case the other five cannot see: they run in milliseconds, so a
+  // widget that dropped its overrides back to `resolvedWidgetQuery`'s five
+  // minutes passes all of them. The design's section 4 means the sitting, not
+  // five minutes -- a reader comparing four windows over a coffee returns to
+  // the first and must not pay the double pass again.
+  //
+  // Fake timers, and `settle()` is deliberately not used inside this case: a
+  // faked clock never fires its `setTimeout`, so awaiting one deadlocks until
+  // vitest's own timeout. `advanceTimersByTimeAsync` is the equivalent -- it
+  // moves the clock and drains the microtasks a resolved fetch left behind.
+  vi.useFakeTimers()
+  const timeline = mount()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(timeline).toHaveBeenCalledTimes(1)
+
+  fireEvent.change(from(), { target: { value: '0200-01-01' } })
+  fireEvent.blur(from())
+  await vi.advanceTimersByTimeAsync(0)
+  expect(timeline).toHaveBeenCalledTimes(2)
+
+  // Six minutes of the reader looking at the second window: past the shared
+  // policy's staleness window, and past the default `gcTime` with it.
+  await vi.advanceTimersByTimeAsync(6 * 60_000)
+
+  fireEvent.change(from(), { target: { value: '0300-01-01' } })
+  fireEvent.blur(from())
+  await vi.advanceTimersByTimeAsync(20)
+
+  expect(timeline).toHaveBeenCalledTimes(2)
 })
