@@ -690,7 +690,13 @@ class SocraticStart(BaseModel):
     the identical hazard as letting a browser or a model pick one.
     """
 
-    topic: str
+    # Constrained because an empty topic is not merely useless: it reaches the
+    # model as the whole framing instruction, and a framing that comes back
+    # unusable surfaces as a 502 -- blaming the provider for a request that was
+    # bad here. 422 from pydantic says the true thing at the true cost (one
+    # round trip, no model call). `test_an_empty_topic_is_refused_before_the_model`
+    # fails on the constraint being dropped.
+    topic: str = Field(min_length=1)
 
 
 class SocraticReply(BaseModel):
@@ -3325,17 +3331,33 @@ def create_app(
         except GradingError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
-        progress = await socratic.record_attempt(
-            project_id=project_id,
-            dialogue_id=dialogue_id,
-            position=body.position,
-            component_id=body.component_id,
-            component_type=component.type,
-            digest=hashlib.sha256(component.raw.encode("utf-8")).hexdigest(),
-            response=body.response,
-            correct=verdict.correct,
-            score=verdict.score,
-        )
+        try:
+            # `record_attempt` writes `ObserveSocraticProgress` to the
+            # transcript, and `socratic_dialogue.decide` refuses EVERY command
+            # against a concluded dialogue -- so an attempt posted at one is a
+            # `CommandRejectedError`, which is a 500 without this. Unreachable
+            # today, because nothing yet writes `SocraticDialogueConcluded`;
+            # that is precisely why it is guarded now rather than when
+            # concluding lands, since the plan that adds concluding has no
+            # reason to look at this route. 409 matches every neighbouring
+            # route (`delete_project` at :941 is the shape).
+            #
+            # `test_an_attempt_at_a_concluded_dialogue_is_a_409` concludes a
+            # dialogue directly and posts to it; it is 500 with this `except`
+            # removed, which is how it was proved.
+            progress = await socratic.record_attempt(
+                project_id=project_id,
+                dialogue_id=dialogue_id,
+                position=body.position,
+                component_id=body.component_id,
+                component_type=component.type,
+                digest=hashlib.sha256(component.raw.encode("utf-8")).hexdigest(),
+                response=body.response,
+                correct=verdict.correct,
+                score=verdict.score,
+            )
+        except CommandRejectedError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         return verdict.as_json() | {
             "progress": item_view(progress, f"turn/{body.position}", body.component_id)
         }

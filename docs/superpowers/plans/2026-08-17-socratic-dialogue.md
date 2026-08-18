@@ -3544,6 +3544,9 @@ async def test_a_dialogue_is_readable_with_its_goal_and_its_turns(app):
     # And the question now outstanding, which is in no turn above. Red against
     # a view that omits it: the page would render a transcript ending on the
     # reader's own words with nothing asking them anything.
+    # NOTE (2026-08-18, as built): this key is `pendingBlocks` -- the raw
+    # prompt was replaced by projected blocks when the answer-key leak was
+    # fixed. Do not copy `pendingPrompt` into a frontend DTO.
     assert body["pendingPrompt"] == "What makes you say that?"
 
 
@@ -3650,11 +3653,15 @@ beside `asks`. Then, after the ask history routes:
             "topic": row.topic,
             "goal": row.goal,
             "stoppingCondition": row.stopping_condition,
+            # NOTE (2026-08-18, as built): `openingBlocks`, projected -- the
+            # raw prompt carried the answer key. Same for `pendingPrompt`
+            # below, which shipped as `pendingBlocks`.
             "openingPrompt": row.opening_prompt,
             # The question the reader is looking at now, which belongs to no
             # turn -- see `SocraticTurnRecorded`. A view that omitted it would
             # render a transcript ending on the reader's own words with
             # nothing asking them anything.
+            # NOTE (2026-08-18, as built): shipped as `pendingBlocks`.
             "pendingPrompt": row.pending_prompt,
             "openedAt": row.opened_at.isoformat(),
             "status": row.status,

@@ -958,12 +958,25 @@ authentication and a separate deny-by-default delivery reader, which is B18's
 whole content. It stays as the marker that this surface follows the rule rather
 than bending it, and it closes when B18 closes.
 
-### B105. Withholding in an ask is weaker than withholding in a file
+### B105. Withholding on the ask's live SSE frame is weaker than withholding in a file
+
+**Narrowed 2026-08-18 to the live stream frame only.** This entry used to say
+"the ask surface" without qualification, and half of that stopped being true in
+`b08d449`: `read_ask` no longer ships the raw `answer` beside its projected
+blocks. What remains is `_ask_frame` (`app.py`, the `AskAnswer` branch around
+:3005), which still sends `"text": note.text` next to `"blocks"` on the live
+SSE frame.
+
+Narrowed rather than left general for the reason B106's own correction gives:
+a written claim of settled state is why nobody looks. Leaving this entry
+describing a route that had already been fixed reproduces that mechanism one
+entry down -- a reader checking `read_ask` finds no leak, concludes the entry
+is stale in general, and stops before the frame that still has one.
 
 The ask surface projects the learner view and grades on the server, so the
-browser cannot mark an answer -- but the raw answer travels in the *same
-response* as the blocks, where B30's subject at least needed a second request
-to a different route.
+browser cannot mark an answer -- but on that frame the raw answer travels in
+the *same response* as the blocks, where B30's subject at least needed a second
+request to a different route.
 
 Taken deliberately. Stripping the prose would mean reconstructing the answer
 from blocks in a client, which is a second renderer and a new class of bug, to
@@ -3526,3 +3539,38 @@ maximum, and leave a one-line pointer at the old heading. The cheap half is
 worth doing first regardless -- a check that refuses a duplicate id when one is
 added. There is no test to hang it on today; the natural home is whatever
 lints documentation, and nothing does.
+
+### B117. Every `ActivityRemark` on the ask surface draws an empty bubble
+
+`_ask_frame`'s final `else` (`app.py`, around :3018) emits
+`{"type": "message", "message_id": "", "kind": "assistant", "payload": {}}` for
+every note it does not recognise, and `ActivityRemark` is the one that actually
+arrives there. The page renders that as an assistant message with nothing in
+it, and the remark's text -- the only thing a remark is -- is dropped on the
+way. Nothing errors; the reader sees a blank bubble appear mid-answer.
+
+**The fix already exists one surface over, and copying it is the pickup route.**
+`_socratic_frame`'s `ActivityRemark` branch (`app.py`, around :3164) is the
+model, and it makes two choices worth taking together:
+
+- an unrecognised note returns `None`, and both `yield` sites in the socratic
+  stream skip a `None` frame rather than sending an empty one -- so "nothing to
+  draw" draws nothing;
+- an `ActivityRemark` is *carried* rather than dropped, as a `message` frame
+  with `kind: "remark"`, an empty `message_id` (a remark has none by design)
+  and `payload: {"text": note.text}`. That lets a page style a remark apart
+  from a model utterance without a new frame type its DTOs would have to learn.
+
+**Not fixed here, deliberately.** The change is not the four lines in
+`_ask_frame`: making the frame function return `None` changes its signature and
+both of the ask stream's yield sites, and shipping a `kind: "remark"` frame
+changes what the ask console receives -- which means the frontend, a rebuild of
+the committed `web/static`, and a browser check that the new bubble is styled
+rather than invisible. That is a frontend slice, and this was a backend fix
+wave with no frontend in scope. Filed on 2026-08-18 rather than done, so the
+carry is on paper instead of in one review's memory.
+
+What a fix would fail on if it were wrong: an ask whose run emits a remark must
+produce either no frame or a frame carrying the remark's text -- asserted on the
+SSE bytes, not on the handler being called, since the current code calls it
+correctly and still sends an empty payload.

@@ -24,6 +24,7 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from research_team.application.socratic import SocraticFraming, SocraticPrompt
 from research_team.composition import build_application
 from research_team.domain.socratic_dialogue import (
+    ConcludeSocraticDialogue,
     SocraticDialogue,
     SocraticProgressObserved,
 )
@@ -382,5 +383,67 @@ async def test_the_verdict_carries_the_progress_the_page_has_to_draw(tmp_path):
         assert progress["path"] == "turn/0"
         assert progress["attempts"] == 2
         assert progress["correct"] is True
+    finally:
+        await application.close()
+
+
+async def test_an_attempt_at_a_concluded_dialogue_is_a_409(tmp_path):
+    """A refusal, not a crash.
+
+    `record_attempt` writes `ObserveSocraticProgress` to the transcript, and
+    `socratic_dialogue.decide` refuses **every** command against a concluded
+    dialogue -- so without the route's `except CommandRejectedError` this is an
+    unhandled exception and a 500. Proved red on 2026-08-18 by removing that
+    `except`: the request raised `CommandRejectedError("dialogue already
+    concluded")` rather than answering.
+
+    The dialogue is concluded here through the transcript aggregate directly,
+    because nothing writes `SocraticDialogueConcluded` over HTTP yet. That is
+    the whole reason the guard is worth having now rather than later: the state
+    is reachable from the domain and not from any route, so the plan that adds
+    concluding would meet a 500 it had no reason to look for.
+    """
+    application, client = await _app(tmp_path, StubExecutor())
+    try:
+        async with client as http:
+            project_id = await _project(http)
+            dialogue_id, _position = await _dialogue_with_an_mcq(http, project_id)
+
+            transcripts = application.socratic._transcripts
+            aggregate = await transcripts.load(UUID(dialogue_id))
+            aggregate.execute(
+                ConcludeSocraticDialogue(dialogue_id=UUID(dialogue_id), reason="met")
+            )
+            await transcripts.save(aggregate)
+
+            response = await http.post(
+                f"/api/projects/{project_id}/dialogues/{dialogue_id}/attempts",
+                json={"position": 0, "component_id": "council-1", "response": 0},
+            )
+
+        assert response.status_code == 409, response.text
+        assert "concluded" in response.json()["detail"]
+    finally:
+        await application.close()
+
+
+async def test_an_empty_topic_is_refused_before_the_model(tmp_path):
+    """422 from the request model, rather than a 502 blaming the provider.
+
+    The topic is the whole of the framing instruction the executor sends, so an
+    empty one reaches the model and comes back unusable -- which the start
+    route reports as a bad gateway, naming the provider for a request that was
+    bad here. Red against `topic: str` with no `min_length`, where a stub
+    executor answers 200 and a real model answers 502; neither is 422.
+    """
+    application, client = await _app(tmp_path, StubExecutor())
+    try:
+        async with client as http:
+            project_id = await _project(http)
+            response = await http.post(
+                f"/api/projects/{project_id}/dialogues", json={"topic": ""}
+            )
+
+        assert response.status_code == 422, response.text
     finally:
         await application.close()
