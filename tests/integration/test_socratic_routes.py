@@ -7,6 +7,7 @@ fixture that seeds through the same call the code under test depends on cannot
 see that dependency go missing.
 """
 
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -133,6 +134,43 @@ async def test_the_list_shows_this_project_s_dialogues_and_what_they_are_for(app
     assert [row["topic"] for row in listed] == ["the Nicene settlement"]
     assert listed[0]["goal"] == "understand the Nicene settlement"
     assert listed[0]["turnCount"] == 0
+    # The three fields a list-only client would otherwise never see. Red
+    # against a `_dialogue_view` that carried them in the detail body only --
+    # and `openingPrompt` is the one that matters, because the index page is
+    # where a reader picks a dialogue back up and it is the transcript's
+    # missing first utterance.
+    assert listed[0]["openingPrompt"] == "Where would you start?"
+    assert listed[0]["stoppingCondition"] == "the reader explains it unaided"
+    assert listed[0]["observations"] == []
+    assert listed[0]["concludedReason"] == ""
+
+
+async def test_the_list_puts_the_most_recently_opened_dialogue_first(app):
+    """`for_project` orders `opened_at desc` and `list_dialogues` promises "most
+    recent first"; with one row in the table a flipped `order_direction` passes.
+
+    The timestamps are explicit and a full day apart rather than two clock
+    reads, because `opened_at desc` breaks a tie with nothing -- two
+    `datetime.now(UTC)` calls microseconds apart can collide, and a test that
+    closed this hole by seeding two rows from the clock would buy a rare flake
+    in exchange. Task 2 hit exactly that.
+
+    Red against `order_direction="asc"`: the two topics come back swapped.
+    """
+    http, application = app
+    project_id = await _project(http)
+    opened = iter(
+        [datetime(2026, 8, 15, 12, 0, tzinfo=UTC), datetime(2026, 8, 16, 12, 0, tzinfo=UTC)]
+    )
+    application.socratic._clock = lambda: next(opened)
+    await application.socratic.begin(project_id=project_id, topic="the older one")
+    await application.socratic.begin(project_id=project_id, topic="the newer one")
+    await application.dialogues.caught_up()
+
+    response = await http.get(f"/api/projects/{project_id}/dialogues")
+
+    assert response.status_code == 200, response.text
+    assert [row["topic"] for row in response.json()] == ["the newer one", "the older one"]
 
 
 async def test_a_dialogue_from_another_project_is_a_404_not_a_read(app):
@@ -188,5 +226,11 @@ async def test_an_unconfigured_build_says_so_rather_than_answering_empty(tmp_pat
             project_id = await _project(http)
             response = await http.get(f"/api/projects/{project_id}/dialogues")
             assert response.status_code == 503, response.text
+            # The detail route's identical guard. Covered separately because
+            # it is a separate `if`: deleting it turns this into a 404, which
+            # is a plausible-looking answer for an unwired build and says
+            # nothing about the projection being absent.
+            detail = await http.get(f"/api/projects/{project_id}/dialogues/{uuid4()}")
+            assert detail.status_code == 503, detail.text
     finally:
         await application.close()

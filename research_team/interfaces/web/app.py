@@ -134,6 +134,7 @@ from research_team.infrastructure.persistence.read_models import (
     MediaProposalRow,
     MediaProposalRunner,
     OntologyRunner,
+    SocraticDialogueRow,
     SocraticDialogueRunner,
 )
 from research_team.interfaces.web.activity import TurnActivity
@@ -3163,8 +3164,12 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(error)) from error
         return verdict.as_json()
 
-    def _dialogue_view(row) -> dict[str, Any]:
+    def _dialogue_view(row: SocraticDialogueRow) -> dict[str, Any]:
         """One dialogue, without its turns -- what a history list needs.
+
+        `row` is annotated, unlike `_conversation_view`'s beside it: a renamed
+        column then fails the type checker rather than the request. Nothing
+        else here reads a row, so the looser sibling is left alone.
 
         Carries `goal` and `stoppingCondition` in the *list* view and not only
         in the detail one, deliberately. A reader picking a dialogue back up
