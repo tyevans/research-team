@@ -22,6 +22,13 @@ failure mode is *silent*: a malformed answer means "not concluded" rather than
 raising. That belongs in its own slice with its own red proofs, and it is
 **Plan 4, "concluding a dialogue"**, planned after Plan 3.
 
+**Why it is a fourth plan rather than folded into this one or merged into Plan
+3.** It is agent judgement, and Plan 3 is a frontend slice — merging them puts a
+parser and a stylesheet under one review pass. And a parse that fails silently
+is exactly the kind of thing that needs its own red proofs rather than riding
+along at the end of another plan, where a green suite would mean only that
+nothing raised.
+
 Why this matters more than a missing field: the spec's opening sentence is that
 a socratic dialogue "stops when the reader has demonstrated the thing — not when
 the reader stops typing". Until Plan 4, it stops when the reader stops typing.
