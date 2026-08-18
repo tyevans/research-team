@@ -5,31 +5,18 @@ reason: a derived list is how `COMPONENTS_FOR[BUILD]` came to advertise five
 widgets that cannot work where its prompt is used -- a registry entry joined a
 prompt by existing. A third type here should be a decision somebody made.
 
-**The last two tests import `socratic_agent` inside the function and are
-`xfail(strict=True)`.** That module does not exist until Task 2, and a
-module-level import of a missing module is a *collection* error -- which
-interrupts the entire pytest run, so a suite that cannot be collected is a
-suite in which no other failure can be read. The deferred import keeps the file
-collectable; the strict xfail is what keeps it honest. `strict=True` means the
-suite goes RED on an unexpected pass, so the moment Task 2 builds
-`SOCRATIC_PROMPT` these fail as XPASS(strict) and whoever made them pass must
-delete the markers deliberately -- where a plain `xfail` or a `skip` would
-leave a working feature behind a permanently-excused test nobody looks at
-again. `pyproject` sets no `xfail_strict`, so the explicit `strict=True` is the
-authority. The reason is hoisted to `_AWAITING_TASK_2` so Task 2's deletion is
-one edit rather than several.
+**The last two tests still import `socratic_agent` inside the function body.**
+They were written before that module existed and carried `xfail(strict=True)`
+until Task 2 landed it; the strict marker is what forced this deletion to be
+deliberate rather than leaving a working feature behind a permanently-excused
+test. The deferred import is kept because it costs nothing and states which
+direction the dependency runs -- an `application/` test reaching into
+`infrastructure/` for the one assertion that touches a real prompt.
 """
-
-import pytest
 
 from research_team.application.socratic_components import (
     SOCRATIC_COMPONENT_TYPES,
     dialogue_document,
-)
-
-_AWAITING_TASK_2 = (
-    "research_team.infrastructure.agent.socratic_agent does not exist until Task 2; "
-    "delete this marker and the two markers that use it when SOCRATIC_PROMPT lands"
 )
 
 
@@ -119,7 +106,6 @@ def test_a_dialogue_offers_no_component_the_ask_withholds_nothing_for():
         assert not component.resolved, f"{name} is a reference, not a question"
 
 
-@pytest.mark.xfail(strict=True, reason=_AWAITING_TASK_2)
 def test_the_prompt_a_socratic_agent_receives_carries_every_offered_type():
     """The end of the wiring, and the only assertion here that touches what a
     real dialogue turn is handed.
@@ -135,7 +121,6 @@ def test_the_prompt_a_socratic_agent_receives_carries_every_offered_type():
         assert f"component:{name}" in SOCRATIC_PROMPT, f"{name} never reaches the model"
 
 
-@pytest.mark.xfail(strict=True, reason=_AWAITING_TASK_2)
 def test_the_socratic_prompt_inherits_nothing_from_the_ask_s_component_reference():
     """The trap the design names by measurement.
 
