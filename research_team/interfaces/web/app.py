@@ -703,6 +703,20 @@ class SocraticReply(BaseModel):
     reply: str
 
 
+class SocraticAttempt(BaseModel):
+    """One reader's answer to a component the dialogue asked.
+
+    Addressed by `(position, component_id)`, matching `AskAttempt`: a dialogue
+    turn has no file path, and the turn is what the server re-parses to recover
+    the key. No `at` -- a `SocraticTurnRecorded` is never rewritten, so there is
+    no second version to grade against.
+    """
+
+    position: int
+    component_id: str
+    response: Any = None
+
+
 class Decision(BaseModel):
     """A human's answer to a parked approval. `type` is langchain's vocabulary."""
 
@@ -3097,7 +3111,16 @@ def create_app(
                 # The question being answered, not the one about to be asked.
                 # On a resumed dialogue this is not the opening one, which is
                 # why the field is not called `opening_prompt`.
-                "pending_prompt": note.pending_prompt,
+                #
+                # Projected rather than raw, and this one is the leak that
+                # nearly survived: `pending_prompt` is the NEWEST turn's prompt
+                # (see `read_models.py`, where it is written from exactly
+                # that), so on a resumed dialogue it is the component-bearing
+                # question the reader is looking at -- key and all. Fixing the
+                # `prompt` frame alone would have left this shipping the answer
+                # to every question a reader had already been asked, the moment
+                # they came back to it.
+                "pending_blocks": dialogue_document(note.pending_prompt)["blocks"],
             }
         elif isinstance(note, ActivityDelta):
             body = {"type": "delta", "message_id": note.message_id, "text": note.text}
@@ -3112,7 +3135,22 @@ def create_app(
         elif isinstance(note, SocraticPrompt):
             body = {
                 "type": "prompt",
-                "text": note.prompt,
+                # **No raw `text` beside `blocks`, and its absence is the
+                # point.** This frame carried `"text": note.prompt` until
+                # `test_the_answer_key_never_reaches_the_reader` measured what
+                # went over the wire: the projection below withholds
+                # `options[].correct`, and the raw copy one key to its left
+                # shipped the whole fenced block with `correct: true` in it. A
+                # page rendering `blocks` looked correct the entire time; the
+                # defect was only ever visible in the bytes.
+                #
+                # The cost is that a client wanting the prose has to walk
+                # `blocks` for its `kind: "markdown"` entries rather than
+                # reading one string. That is the right cost: on this surface a
+                # projection is only real if there is nothing beside it, and a
+                # convenience field that re-adds the source is a hole no
+                # projection can close.
+                #
                 # Parsed here rather than in the browser, for the reasons
                 # `components.py` opens with -- the second binds hardest:
                 # withholding is only real if the projection happens before the
@@ -3231,6 +3269,66 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.post("/api/projects/{project_id}/dialogues/{dialogue_id}/attempts")
+    async def post_dialogue_attempt(
+        project_id: UUID, dialogue_id: UUID, body: SocraticAttempt
+    ):
+        """Mark one attempt at a component the dialogue asked, and remember it.
+
+        **Unlike `post_ask_attempt`, this records.** An ask has no identity to
+        record against; a dialogue is one -- a durable id meaning exactly "one
+        reader working toward one goal" -- which is the design's §3 and the
+        reason this surface can answer a question the ask path was allowed to
+        skip. The visible difference is that a refresh does not blank the
+        widgets here.
+
+        The key is recovered by re-parsing the stored turn's `prompt`, which is
+        the dialogue's utterance -- not `reply`, which is the reader's. Parsed
+        raw and never through `project()`: that call is what strips the key for
+        a browser, and this is the one caller that needs it.
+        """
+        if socratic is None or dialogues is None:
+            raise HTTPException(status_code=503, detail="dialogues are not configured")
+        row = await dialogues.get(dialogue_id)
+        if row is None or row.project_id != project_id:
+            raise HTTPException(
+                status_code=404, detail=f"no dialogue {dialogue_id} in {project_id}"
+            )
+        turn = next(
+            (t for t in await dialogues.turns_for(dialogue_id) if t.position == body.position),
+            None,
+        )
+        if turn is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"dialogue {dialogue_id} has no turn {body.position}",
+            )
+        component = parse_document(turn.prompt, path="").component(body.component_id)
+        if component is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"turn {body.position} has no component {body.component_id!r}",
+            )
+        try:
+            verdict = grade(component, body.response)
+        except GradingError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+        progress = await socratic.record_attempt(
+            project_id=project_id,
+            dialogue_id=dialogue_id,
+            position=body.position,
+            component_id=body.component_id,
+            component_type=component.type,
+            digest=hashlib.sha256(component.raw.encode("utf-8")).hexdigest(),
+            response=body.response,
+            correct=verdict.correct,
+            score=verdict.score,
+        )
+        return verdict.as_json() | {
+            "progress": item_view(progress, f"turn/{body.position}", body.component_id)
+        }
 
     @app.delete("/api/projects/{project_id}/ask/{chat_id}")
     async def forget_ask(project_id: UUID, chat_id: str):
@@ -3369,12 +3467,19 @@ def create_app(
             "topic": row.topic,
             "goal": row.goal,
             "stoppingCondition": row.stopping_condition,
-            "openingPrompt": row.opening_prompt,
+            # Both projected, never raw. `pendingPrompt` used to be
+            # `row.pending_prompt`, which `read_models.py` writes from the
+            # newest turn's prompt -- so an index page listing a reader's
+            # dialogues handed back the answer key to every live question, on a
+            # route nobody thought of as a rendering surface.
+            # `test_the_answer_key_never_reaches_the_reader` measures the bytes
+            # of all three surfaces rather than trusting any of them.
+            "openingBlocks": dialogue_document(row.opening_prompt)["blocks"],
             # The question the reader is looking at now, which belongs to no
             # turn -- see `SocraticTurnRecorded`. A view that omitted it would
             # render a transcript ending on the reader's own words with
             # nothing asking them anything.
-            "pendingPrompt": row.pending_prompt,
+            "pendingBlocks": dialogue_document(row.pending_prompt)["blocks"],
             "openedAt": row.opened_at.isoformat(),
             "status": row.status,
             "concludedReason": row.concluded_reason,
@@ -3428,7 +3533,14 @@ def create_app(
             "turns": [
                 {
                     "position": turn.position,
-                    "prompt": turn.prompt,
+                    # Projected, and no raw `prompt` beside it -- the same
+                    # measurement as `_socratic_frame`'s. A stored turn is
+                    # re-read on every resume, so a raw copy here would hand
+                    # back the answer key to any reader who refreshed, for
+                    # every question they had already been asked. `reply` is
+                    # raw and stays raw: it is the reader's own words and there
+                    # is no key in it.
+                    "blocks": dialogue_document(turn.prompt)["blocks"],
                     "reply": turn.reply,
                     "citations": turn.citations,
                     "recordedAt": turn.recorded_at.isoformat(),

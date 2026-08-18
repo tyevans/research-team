@@ -147,9 +147,16 @@ async def test_a_reply_streams_the_framing_first_and_the_question_last(client):
     assert frames[0]["goal"] == "understand the Nicene settlement"
     assert frames[0]["stopping_condition"] == "the reader explains it unaided"
     # The question the reader was answering, not the one about to be asked.
-    assert frames[0]["pending_prompt"] == "Where would you start?"
+    # Blocks rather than a raw string, on both frames: `pending_prompt` is
+    # written from the newest turn's prompt, so on a resumed dialogue it is a
+    # component-bearing question and a raw copy shipped its answer key beside
+    # the projection that withheld it. Measured by
+    # `test_the_answer_key_never_reaches_the_reader`, not reasoned.
+    assert frames[0]["pending_blocks"] == [
+        {"kind": "markdown", "text": "Where would you start?"}
+    ]
     assert frames[-1]["type"] == "prompt"
-    assert frames[-1]["text"] == "Why do you say that?"
+    assert frames[-1]["blocks"] == [{"kind": "markdown", "text": "Why do you say that?"}]
     assert frames[-1]["position"] == 0
     assert frames[-1]["concluded"] is False
 

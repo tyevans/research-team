@@ -105,7 +105,10 @@ async def test_a_dialogue_is_readable_with_its_goal_and_its_turns(app):
     assert body["turns"] == [
         {
             "position": 0,
-            "prompt": "What makes you say that?",
+            # Projected, never raw: a stored prompt may carry an `mcq`, and a
+            # raw copy handed the answer key back on every refresh. Proved by
+            # `test_the_answer_key_never_reaches_the_reader`, not reasoned.
+            "blocks": [{"kind": "markdown", "text": "What makes you say that?"}],
             "reply": "It settled Arianism.",
             "citations": [{"kind": "source", "id": "s1"}],
             "recordedAt": body["turns"][0]["recordedAt"],
@@ -114,11 +117,11 @@ async def test_a_dialogue_is_readable_with_its_goal_and_its_turns(app):
     # The transcript's first utterance, which is on no turn above. Red against
     # a view that omits it: the page would draw a reader answering something
     # nobody asked.
-    assert body["openingPrompt"] == "Where would you start?"
+    assert body["openingBlocks"] == [{"kind": "markdown", "text": "Where would you start?"}]
     # And the question now outstanding. Red against a view that omits it: the
     # page would render a transcript ending on the reader's own words with
     # nothing asking them anything.
-    assert body["pendingPrompt"] == "What makes you say that?"
+    assert body["pendingBlocks"] == [{"kind": "markdown", "text": "What makes you say that?"}]
 
 
 async def test_the_list_shows_this_project_s_dialogues_and_what_they_are_for(app):
@@ -139,10 +142,12 @@ async def test_the_list_shows_this_project_s_dialogues_and_what_they_are_for(app
     assert listed[0]["turnCount"] == 0
     # The three fields a list-only client would otherwise never see. Red
     # against a `_dialogue_view` that carried them in the detail body only --
-    # and `openingPrompt` is the one that matters, because the index page is
+    # and `openingBlocks` is the one that matters, because the index page is
     # where a reader picks a dialogue back up and it is the transcript's
     # missing first utterance.
-    assert listed[0]["openingPrompt"] == "Where would you start?"
+    assert listed[0]["openingBlocks"] == [
+        {"kind": "markdown", "text": "Where would you start?"}
+    ]
     assert listed[0]["stoppingCondition"] == "the reader explains it unaided"
     assert listed[0]["observations"] == []
     assert listed[0]["concludedReason"] == ""

@@ -1998,6 +1998,15 @@ def build_application(
         now=time.monotonic,
         transcripts=build_socratic_dialogue_repository(repository.store, repository.publisher),
         clock=lambda: datetime.now(UTC),
+        # The same builder `SessionService` uses, over the same log. Keyed on
+        # the dialogue id here rather than a session id -- see
+        # `SocraticDialogueService.progress_for` and the design's §3 for why
+        # this surface can answer the identity question the ask path skipped.
+        # The two share a log and are kept apart by aggregate id, which is what
+        # `LearnerProgress` already does between sessions.
+        progress=build_learner_progress_repository(
+            repository.store, repository.publisher, snapshot_store=repository.snapshot_store
+        ),
     )
 
     # Built here for `ask_service`'s reason, and it is the same reason: this

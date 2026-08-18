@@ -41,6 +41,12 @@ from uuid import UUID, uuid4
 from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application.ports import ActivityNote, ActivityReporter
+from research_team.domain.learner import (
+    LearnerProgress,
+    LearnerProgressState,
+    RecordAttempt,
+)
+from research_team.domain.learner import initial_state as learner_initial_state
 from research_team.domain.socratic_dialogue import (
     Citation,
     ConcludeSocraticDialogue,
@@ -290,6 +296,7 @@ class SocraticDialogueService:
         now: Callable[[], float],
         transcripts: AggregateRepository[SocraticDialogue],
         clock: Callable[[], datetime],
+        progress: AggregateRepository[LearnerProgress] | None = None,
     ) -> None:
         self._executor = executor
         self._dialogues = dialogues
@@ -302,6 +309,13 @@ class SocraticDialogueService:
         self._now = now
         self._transcripts = transcripts
         self._clock = clock
+        # Optional, unlike `read_model`: a build without it grades and does not
+        # remember, which is a degradation a reader can live with, where a build
+        # without a read model resumes wrongly and cannot. Checked with
+        # `is not None` at every use -- an `or` here is the shape that has
+        # already cost this feature two debugging sessions, and see
+        # `DialogueRegistry.__bool__` for the one that shipped.
+        self._progress = progress
         self._running: set[UUID] = set()
 
     async def begin(self, *, project_id: UUID, topic: str) -> UUID:
@@ -446,6 +460,113 @@ class SocraticDialogueService:
             # Freed last, so the guard means what its docstring says: the slot
             # is held until the question has actually been handed over.
             self._running.discard(dialogue_id)
+
+    async def progress_for(self, dialogue_id: UUID) -> LearnerProgressState:
+        """What this reader has answered in this dialogue.
+
+        Keyed on the dialogue id, which is the design's §3 in one line: a
+        dialogue has a durable id, survives eviction, and means exactly "one
+        reader working toward one goal" -- the thing `LearnerProgress` needs and
+        an ask does not have. This answers B33 **for this surface only**; an ask
+        still records nothing, and generalising this is a separate decision with
+        a separate argument.
+        """
+        if self._progress is None:
+            return learner_initial_state()
+        aggregate = await self._progress.load_or_create(dialogue_id)
+        return aggregate.state
+
+    async def record_attempt(
+        self,
+        *,
+        project_id: UUID,
+        dialogue_id: UUID,
+        position: int,
+        component_id: str,
+        component_type: str,
+        digest: str,
+        response: Any = None,
+        correct: bool = False,
+        score: float = 0.0,
+        observation: str = "",
+    ) -> LearnerProgressState:
+        """Record one marked answer, twice.
+
+        **Two writes, and the second is the reason this method exists rather
+        than a call to `SessionService.record_attempt`.** The first is the
+        ordinary progress attempt, keyed on the dialogue. The second is a
+        `SocraticProgressObserved` with `evidence="attempt"` on the dialogue's
+        own stream, which is what lets a stopping condition be met by something
+        the reader *did* rather than by the model's opinion of what they said.
+        Drop it and grading here is grading in an ask: a verdict shown and
+        forgotten. `test_a_correct_answer_is_marked_and_recorded_against_the_dialogue`
+        asserts both writes on stored facts and fails on either being dropped.
+
+        `path` is `turn/{position}` because `LearnerProgress.decide` refuses an
+        empty path and a dialogue has no file. The progress id is already the
+        dialogue, so what `path` disambiguates is which exchange -- see
+        `SocraticPrompt.position` for why that number is `len(messages) // 2`
+        and what the other formula costs here specifically.
+
+        The observation is written even for a wrong answer. A stopping condition
+        fed only by correct attempts is fed by a biased sample of what the
+        reader actually did.
+
+        `project_id` is taken and not used: the dialogue id is the whole key on
+        both writes, and the route has already checked the row belongs to the
+        project. It is in the signature so that a later per-project scope is a
+        change to this method rather than to every call site -- the cost is an
+        argument a reader has to look up, which this paragraph pays.
+        """
+        # The dialogue's own stream FIRST, the progress attempt second, and the
+        # order is deliberate rather than incidental.
+        #
+        # These are two aggregates and there is no transaction across them, so
+        # one of the two can land alone. Which one is the survivable half is the
+        # whole question. Observation-then-attempt leaves a dialogue that knows
+        # the reader answered something and a progress record that never got
+        # written -- the reader loses a tick and the stopping condition still
+        # has its evidence. Attempt-then-observation leaves the opposite: a
+        # progress row nothing points at, and a stopping condition missing the
+        # one thing that was supposed to feed it, with the reader's screen
+        # showing the answer marked. The second failure is invisible and
+        # permanent; the first is visible and costs a tick. Swapping these two
+        # statements is the "simplification" to refuse.
+        #
+        # `observation` defaults with `or` here and that is safe, unlike the
+        # collaborator defaults elsewhere in this module: the fallback is a
+        # *string*, an empty one carries no information, and there is no object
+        # being silently substituted. See `DialogueRegistry.__bool__` for the
+        # case where this idiom was genuinely wrong.
+        observed = ObserveSocraticProgress(
+            dialogue_id=dialogue_id,
+            observation=observation
+            or f"answered {component_id} {'correctly' if correct else 'incorrectly'}",
+            evidence="attempt",
+            detail=f"{component_type} {component_id} at turn {position}: "
+            f"{'correct' if correct else 'incorrect'}",
+        )
+        aggregate = await self._transcripts.load(dialogue_id)
+        aggregate.execute(observed)
+        await self._transcripts.save(aggregate)
+
+        if self._progress is None:
+            return learner_initial_state()
+        progress = await self._progress.load_or_create(dialogue_id)
+        progress.execute(
+            RecordAttempt(
+                progress_id=dialogue_id,
+                path=f"turn/{position}",
+                component_id=component_id,
+                component_type=component_type,
+                digest=digest,
+                response=response,
+                correct=correct,
+                score=score,
+            )
+        )
+        await self._progress.save(progress)
+        return progress.state
 
     async def _resume(self, project_id: UUID, dialogue_id: UUID) -> LiveDialogue:
         """The live dialogue, from the cache or from the read model.
