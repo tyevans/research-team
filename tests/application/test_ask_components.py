@@ -67,6 +67,7 @@ def test_every_resolved_type_is_offered_to_the_ask_agent():
         "graph",
         "timeline",
         "compare",
+        "explorer",
     }
     assert "checklist" not in ASK_COMPONENT_TYPES
 

@@ -285,6 +285,38 @@ def string_list(minimum: int = 1) -> Checker:
     return check
 
 
+def string_subset(*allowed: str) -> Checker:
+    """A list of bare strings drawn from a closed vocabulary.
+
+    `string_list` plus `one_of`, and neither alone will do: `string_list` has
+    no vocabulary and `one_of` checks a scalar, so composing them by hand at
+    the one call site would put the subscript arithmetic in a registry entry --
+    which is where a path like `vary[1]` stops being maintained.
+
+    Shape before vocabulary, deliberately. A mapping where a string belongs is
+    reported by `text` as a mapping, not as "not one of entity_type, window":
+    an author who wrote the wrong *kind* of thing is not helped by a list of
+    the right values.
+    """
+
+    def check(value: Any, path: str) -> list[Note]:
+        if not isinstance(value, list):
+            return [Note(path, f"expected a list, got {_typename(value)}")]
+        if not value:
+            return [Note(path, "expected at least 1 entry, got 0")]
+        notes: list[Note] = []
+        for index, entry in enumerate(value):
+            at = f"{path}[{index}]"
+            shape = text(entry, at)
+            if shape:
+                notes.extend(shape)
+            elif entry not in allowed:
+                notes.append(Note(at, f"expected one of {', '.join(allowed)}, got {entry!r}"))
+        return notes
+
+    return check
+
+
 def listing(item: Mapping[str, Spec], minimum: int = 1) -> Checker:
     """A list of mappings, each checked against `item`, with paths that subscript.
 
@@ -545,6 +577,51 @@ def _compare_collisions(data: dict[str, Any]) -> list[Note]:
             "rows",
         )
     return notes
+
+
+EXPLORER_AXES: tuple[str, ...] = ("entity_type", "window")
+"""Which parameters a reader may be given control of.
+
+`limit` is deliberately absent and the omission is a ruling. `limit` bounds the
+response and not the server's work -- it never reaches the store
+(`graph_reader.py:294-299`) -- so a reader dragging it would change the picture
+without changing what it cost, and would learn, wrongly, that the
+cheap-looking control is the one that governs cost. Every axis here does
+govern the answer honestly.
+
+Named as a constant so the registry entry, the validator and the craft note
+cannot come to list three different sets of axes.
+"""
+
+EXPLORER_BACKING_READS: tuple[str, ...] = ("timeline",)
+"""What `over:` may name today.
+
+A tuple with one entry, and that is the design's section 3 in a line: the field
+exists so that a second backing read is a registry change rather than a new
+component type. `GET /topics` and `GET /sources` take nothing worth varying,
+and a graph explorer needs an entity-type vocabulary route this build does not
+have -- so this stays at one until such a route exists.
+"""
+
+
+def _explorer_over(data: dict[str, Any]) -> list[Note]:
+    """An unsupported `over:` is warned about, never rejected.
+
+    The choice mirrors `_compare_collisions` and `_unknown_keys`: this is a
+    "renders fine, does less than it says" defect, and refusing would cost the
+    author the whole block plus the prose they wrote in `prompt`. The widget
+    renders the refusal as a sentence naming what is supported, which is what
+    every other failure in these widgets does -- and an error would route the
+    block to the error panel where there is no widget left to say it.
+
+    Runs only on a body that already validated, so `over` is present and is
+    text (`ComponentType.warn`'s guarantee).
+    """
+    over = data.get("over")
+    if over in EXPLORER_BACKING_READS:
+        return []
+    supported = ", ".join(repr(name) for name in EXPLORER_BACKING_READS)
+    return [Note("over", f"only {supported} is supported today, got {over!r}")]
 
 
 REGISTRY: dict[str, ComponentType] = {
@@ -877,6 +954,73 @@ REGISTRY: dict[str, ComponentType] = {
             "is deliberately uncached. So write the limit for readability -- "
             "a dozen bands a reader can take in -- and expect no saving from "
             "it.",
+        ),
+    ),
+    "explorer": ComponentType(
+        name="explorer",
+        version=1,
+        summary=(
+            "A timeline the *reader* re-runs. The author fixes some "
+            "parameters, names which ones the reader may change in `vary`, "
+            "and writes a `prompt` inviting them to look."
+        ),
+        example=(
+            "```component:explorer\n"
+            "id: fourth-century-explorer\n"
+            "over: timeline\n"
+            "entity_type: Person\n"
+            'from: "0300-01-01"\n'
+            'to: "0400-01-01"\n'
+            "vary: [entity_type, window]\n"
+            "prompt: |\n"
+            "  Narrow to Emperors and pull the window back to see how much of\n"
+            "  the century the reigns actually cover.\n"
+            "```"
+        ),
+        fields={
+            # Required, and checked as plain text with the vocabulary enforced
+            # by `warn` rather than by `one_of`. See `_explorer_over`: an
+            # unsupported backing read has to reach the widget so the widget
+            # can say so in prose.
+            "over": Spec(text, required=True),
+            "vary": Spec(string_subset(*EXPLORER_AXES), required=True),
+            # Required, and the one field that makes an explorer worth more
+            # than a timeline. Controls with no stated reason to touch them are
+            # dressing, and a model left free to omit this will omit it.
+            "prompt": Spec(text, required=True),
+            # The same four the `timeline` entry takes, with the same
+            # reasoning: quoted ISO instants bounding a half-open window,
+            # either omittable for an open end, checked as text because the
+            # route answers its own 422 naming which parameter was wrong and a
+            # second date parser here would be a second thing to keep in step.
+            "entity_type": Spec(text),
+            "from": Spec(text),
+            "to": Spec(text),
+            "limit": Spec(integer_between(1, MAX_TIMELINE_BANDS)),
+        },
+        resolved=True,
+        warn=_explorer_over,
+        craft=(
+            "Write this when you want the reader to look for something you did "
+            "not name. If you are making a point with a particular window, "
+            "write a `timeline` instead -- that is a view you chose, and this "
+            "is an invitation to leave it.",
+            "Quote the dates. An unquoted `from: 0300-01-01` is a YAML date, "
+            "not a string, and YAML will not give you back the leading zero.",
+            "`vary` is not a formality. Name only the axes you actually want "
+            "moved: an author who set a window deliberately and one who did "
+            "not are indistinguishable to a reader unless you say which.",
+            "The `prompt` is the whole difference between this and a timeline. "
+            "Say what you suspect is in there, not what the controls do -- a "
+            "reader can see the controls.",
+            "A reader cannot link to what they find. Nothing in this app puts "
+            "filter state in the URL, so the only way to keep a view is a "
+            "screenshot. Do not promise to share a result in your prompt.",
+            "`limit` shortens what is drawn; it does not make the read "
+            "cheaper. Measured, not assumed: the server walks the project's "
+            "entities twice and applies the limit to the result, and the read "
+            "is deliberately uncached. That bites harder here than in a "
+            "`timeline`, because the reader re-runs it.",
         ),
     ),
     "compare": ComponentType(

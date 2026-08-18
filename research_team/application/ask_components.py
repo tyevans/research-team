@@ -30,6 +30,7 @@ ASK_COMPONENT_TYPES: tuple[str, ...] = (
     "graph",
     "timeline",
     "compare",
+    "explorer",
 )
 """What the ask agent may author.
 
@@ -54,6 +55,16 @@ The cost of this list is that a sixth type has to be added in two places; the
 benefit is that adding it is a decision somebody made. Measured on 2026-08-17:
 this reference is 3,040 characters with the three original types and 7,947
 with all eight, paid on every ask turn.
+
+`explorer` is the ninth and the first that is not a view but an invitation: the
+reader re-runs the author's query rather than reading the one the author chose.
+It belongs here for the same reason the other resolved types do -- an ask is
+where a reader asks about the corpus -- and it is the type an ask suits best,
+because an ask reader arrived with a question rather than with a curriculum.
+
+The character measurement above was taken with eight types and has not been
+re-taken. It is still the right order of magnitude and still the right warning:
+this reference is paid on every ask turn.
 """
 
 

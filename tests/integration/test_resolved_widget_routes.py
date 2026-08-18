@@ -152,3 +152,27 @@ async def test_a_timeline_refuses_an_unparseable_bound_rather_than_widening_it(c
     response = await client.get(f"/api/projects/{project_id}/timeline?from=the+fourth+century")
 
     assert response.status_code == 422, response.text
+
+
+async def test_an_unfiltered_timeline_answers_for_a_project_nothing_has_opened(client):
+    """The `explorer` widget's *vocabulary* read, which is a request no other
+    widget makes: `/timeline` with no `entity_type` at all, so the response
+    carries every type the picker can offer.
+
+    Deliberately separate from `test_a_timeline_answers_for_a_project_nothing_
+    has_opened` above rather than parametrised onto it. That test sends
+    `entity_type=Person`, and CLAUDE.md's fixture trap is exactly the class of
+    bug where the shape of a request decides whether a dependency is exercised
+    -- collapsing the two would leave the unfiltered path with no test of its
+    own starting from an untouched project.
+
+    Red against a route that reached for a reader without opening the project:
+    503 on the first request for every project and 200 on every one after,
+    which reads as flakiness rather than as a bug.
+    """
+    project_id = await _untouched_project(client)
+
+    response = await client.get(f"/api/projects/{project_id}/timeline")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["bands"] == []

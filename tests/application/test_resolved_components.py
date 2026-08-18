@@ -22,6 +22,7 @@ from research_team.application.components import (
     parse_document,
     project,
     string_list,
+    string_subset,
     text,
     validation_report,
 )
@@ -142,3 +143,30 @@ def test_integer_between_bounds_a_field_against_the_server_s_own_limit(value, ex
 )
 def test_string_list_checks_each_entry_by_its_own_path(value, expected):
     assert [str(note) for note in string_list(minimum=2)(value, "entities")] == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (["entity_type"], []),
+        (["entity_type", "window"], []),
+        ([], ["vary: expected at least 1 entry, got 0"]),
+        ("window", ["vary: expected a list, got text"]),
+        (["window", "topic"], ["vary[1]: expected one of entity_type, window, got 'topic'"]),
+        ([{"axis": "window"}], ["vary[0]: expected text, got mapping"]),
+    ],
+)
+def test_string_subset_names_the_allowed_values_at_the_offending_subscript(value, expected):
+    """A list checker that reports `vary: bad axis` rather than `vary[1]` sends
+    a model back to re-read a list it mostly got right. The path is the whole
+    reason validation feedback is hand-written here -- see `components.py`'s
+    module docstring.
+
+    The mapping case is delegated to `text` rather than reported as "not one
+    of": `{axis: window}` is a shape mistake and `topic` is a vocabulary
+    mistake, and telling an author their mapping is not in a list of two
+    strings is a diagnosis of the wrong problem.
+    """
+    check = string_subset("entity_type", "window")
+
+    assert [str(note) for note in check(value, "vary")] == expected
