@@ -1,10 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
+import { useInteractionLog } from '@app/interaction-log-provider.tsx'
 import { useContainer } from '@app/container-context.tsx'
 import { TERMINAL } from '@application/knowledge/extraction-store.ts'
 import type { FeedFrame } from '@application/ports/event-stream.ts'
 import { queryKeys } from '@application/queries/keys.ts'
-import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
+import {
+  emptyExtractionQueue,
+  type ExtractionQueueBoard,
+} from '@domain/research/extraction-queue.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 import { readExtractionFrame } from '@infrastructure/http/mappers.ts'
 
@@ -101,11 +105,14 @@ const isTerminalExtraction =
 export const useExtractDocument = (projectId: ProjectId) => {
   const { documents } = useContainer()
   const queryClient = useQueryClient()
+  const log = useInteractionLog()
 
   return useMutation({
     mutationFn: (sourceId: SourceId) => documents.extract(projectId, sourceId),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.extractionQueue(projectId) }),
+    onSuccess: (_queued, sourceId) => {
+      log.record('ExtractionQueued', { source_id: sourceId })
+      return queryClient.invalidateQueries({ queryKey: queryKeys.extractionQueue(projectId) })
+    },
   })
 }
 
@@ -157,10 +164,27 @@ export const useExtractAll = (projectId: ProjectId) => {
 export const useCancelExtraction = (projectId: ProjectId) => {
   const { documents } = useContainer()
   const queryClient = useQueryClient()
+  const log = useInteractionLog()
 
   return useMutation({
     mutationFn: () => documents.cancelExtraction(projectId),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.extractionQueue(projectId) }),
+    // The queue has one running item at most, and it is what the domain
+    // event names -- `ExtractionCancelled.source_id` is singular. Snapshotted
+    // here rather than read in `onSuccess`, because the invalidation that
+    // follows a successful cancel is exactly what clears `running` from the
+    // cache; reading it after would always see nothing. When nothing was
+    // running (only queued items existed) there is no source_id to report,
+    // so nothing is emitted for that press -- the queued drops have no event
+    // of their own in this vocabulary.
+    onMutate: () => ({
+      sourceId: queryClient.getQueryData<ExtractionQueueBoard>(queryKeys.extractionQueue(projectId))
+        ?.running,
+    }),
+    onSuccess: (_count, _vars, context) => {
+      if (context?.sourceId) {
+        log.record('ExtractionCancelled', { source_id: context.sourceId })
+      }
+      return queryClient.invalidateQueries({ queryKey: queryKeys.extractionQueue(projectId) })
+    },
   })
 }

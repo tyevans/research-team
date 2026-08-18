@@ -29,7 +29,13 @@ const SILENT: Emitter = {
   pending: () => 0,
 }
 
-const InteractionLogContext = createContext<Emitter>(SILENT)
+// Exported, unlike everything else here, so a hook test can render
+// `<InteractionLogContext.Provider value={fakeEmitter}>` directly rather than
+// standing up a real sink and a fake clock to observe what a mutation's
+// `onSuccess` recorded. `InteractionLogProvider` below is still the only
+// thing that builds a *real* emitter -- this only widens who may substitute
+// one.
+export const InteractionLogContext = createContext<Emitter>(SILENT)
 
 // Module scope, not inline in the provider: `Date.now` reached from inside
 // render trips eslint-plugin-react-hooks' purity rule even though this

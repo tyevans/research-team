@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { notify } from '@application/notifications/toast-store.ts'
 import { queryKeys } from '@application/queries/keys.ts'
@@ -21,7 +21,7 @@ import { Toasts } from '@presentation/shell/Toasts.tsx'
 import { TreeView } from '@presentation/tree/TreeView.tsx'
 
 import { useContainer } from './container-context.tsx'
-import { InteractionLogProvider } from './interaction-log-provider.tsx'
+import { InteractionLogProvider, useInteractionLog } from './interaction-log-provider.tsx'
 
 export const App = () => (
   <StreamProvider>
@@ -135,6 +135,9 @@ const Console = () => {
             children for the surface alone. It stays outside the overlay host on
             purpose -- argued where `--z-toast` is declared. */}
         <Toasts />
+        {/* Renders nothing; see its own comment for why this lives here
+            rather than in `application/`. */}
+        <ProjectSwitchLog projectId={route.name === 'project' ? route.id : null} />
         {/* Above the route's content and inside the surface, on every page.
             A gated call blocks an agent until a person answers it, and the
             person is wherever they happen to be — which is why this is one bar
@@ -150,6 +153,40 @@ const Console = () => {
       </Shell>
     </InteractionLogProvider>
   )
+}
+
+/** Records `ProjectSwitched` when the route's project id changes.
+ *
+ * A component of its own, rendered inside `InteractionLogProvider` rather
+ * than logic inlined in `Console`, for one reason that is not optional:
+ * `Console` is what *renders* the provider, so a hook called at `Console`'s
+ * own level would read the outer (silent) default context, one level above
+ * where the real emitter is provided. This has to be a child of the
+ * provider to see it at all.
+ *
+ * Left in `app/` rather than moved to `application/`, unlike every other
+ * emission site: it exists only to observe a route transition, which is
+ * `useRoute()`'s own concern and has no domain vocabulary of its own the way
+ * a mutation's `onSuccess` or a store's `search()` does. `DecisionBar`'s
+ * approval handler is the other named exception, for the same shape of
+ * reason -- the seam is where the UI event becomes known, not where a
+ * generic "the route changed" statement could be phrased.
+ */
+const ProjectSwitchLog = ({ projectId }: { projectId: string | null }) => {
+  const log = useInteractionLog()
+  const previous = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (projectId !== null && projectId !== previous.current) {
+      log.record('ProjectSwitched', {
+        to_project_id: projectId,
+        from_project_id: previous.current,
+      })
+    }
+    previous.current = projectId
+  }, [projectId, log])
+
+  return null
 }
 
 const CurrentView = ({

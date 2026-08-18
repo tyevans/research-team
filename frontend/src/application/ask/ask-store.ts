@@ -6,6 +6,7 @@
  */
 import { create } from 'zustand'
 
+import type { Emitter } from '@application/interaction-log/emitter.ts'
 import { errorMessage } from '@application/ports/errors.ts'
 import type { AskRepository } from '@application/ports/repositories.ts'
 import { applyEvent, asked, type AskTranscript } from '@domain/ask/conversation.ts'
@@ -33,12 +34,21 @@ export const createAskStore = ({
   ask,
   projectId,
   newChatId,
+  emitter,
 }: {
   ask: AskRepository
   projectId: ProjectId
   newChatId: () => string
-}) =>
-  create<AskState>((set, get) => ({
+  /** Optional so the many tests that build this store need no change. A
+   *  store that records nothing is correct in a test. */
+  emitter?: Pick<Emitter, 'record'>
+}) => {
+  // How many questions have been sent on the current `chatId`. Reset by
+  // `reset()`, which mints a new chat -- a retry is "asked again in the same
+  // conversation", and a fresh conversation is not a retry of anything.
+  let turn = 0
+
+  return create<AskState>((set, get) => ({
     transcript: [],
     asking: false,
     error: null,
@@ -51,6 +61,21 @@ export const createAskStore = ({
       // sending it in the first place is the same answer without the round
       // trip.
       if (!trimmed || get().asking) return
+
+      turn += 1
+      // Emitted before the `await` below, per the brief: the act is the
+      // submission, not the eventual answer, and a turn that fails partway
+      // through streaming should still show up as something that was asked.
+      emitter?.record('AskSubmitted', { query_text: trimmed })
+      if (turn > 1) {
+        // Genuinely known here, unlike a generic "resubmit": `turn` only
+        // advances within one `chatId`, so this is specifically a second
+        // question asked without leaving the conversation -- not a retry of
+        // an identical prompt, which this store has no way to detect (the
+        // model's own answer is what makes two prompts "the same question"
+        // or not, and that judgement does not belong here).
+        emitter?.record('ActionRetried', { action_kind: 'ask', attempt_number: turn })
+      }
 
       set((state) => ({ transcript: asked(state.transcript, trimmed), asking: true, error: null }))
       try {
@@ -82,6 +107,7 @@ export const createAskStore = ({
 
     async reset() {
       const previous = get().chatId
+      turn = 0
       set({ transcript: [], error: null, chatId: newChatId(), conversationId: null })
       try {
         await ask.forget(projectId, previous)
@@ -91,3 +117,4 @@ export const createAskStore = ({
       }
     },
   }))
+}

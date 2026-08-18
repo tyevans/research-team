@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useContainer } from '@app/container-context.tsx'
+import { useInteractionLog } from '@app/interaction-log-provider.tsx'
 import { queryKeys } from '@application/queries/keys.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
@@ -111,10 +112,20 @@ export const useIgnoreMediaProposal = (projectId: ProjectId) => {
 export const useUnignoreMedia = (projectId: ProjectId) => {
   const { mediaProposals } = useContainer()
   const queryClient = useQueryClient()
+  const log = useInteractionLog()
 
   return useMutation({
     mutationFn: ({ grain, key }: { grain: 'asset' | 'host'; key: string }) =>
       mediaProposals.unignore(projectId, grain, key),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.ignoredMedia(projectId) }),
+    onSuccess: (_result, { grain, key }) => {
+      // Not in the brief's table -- picked as the nearest real `ActionUndone`
+      // seam because it is the one place in this console with a button
+      // literally labelled "Undo" (`IgnoredList.tsx`). `target_id` is the
+      // asset/host key rather than a domain id, because that is what
+      // `unignore` itself addresses; the domain has no single id for "this
+      // ignore rule".
+      log.record('ActionUndone', { action_kind: `unignore-${grain}`, target_id: key })
+      return queryClient.invalidateQueries({ queryKey: queryKeys.ignoredMedia(projectId) })
+    },
   })
 }

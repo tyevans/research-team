@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest'
 
+import type { Emitter } from '@application/interaction-log/emitter.ts'
 import { ApiError } from '@application/ports/errors.ts'
 import type { GraphRepository } from '@application/ports/repositories.ts'
 import type { GraphNode, Neighborhood } from '@domain/knowledge/graph.ts'
@@ -33,8 +34,8 @@ const fakeGraphs = (over: Partial<GraphRepository> = {}): GraphRepository => ({
   ...over,
 })
 
-const store = (graphs: GraphRepository = fakeGraphs()) =>
-  createGraphStore({ graphs, projectId: PROJECT })
+const store = (graphs: GraphRepository = fakeGraphs(), emitter?: Pick<Emitter, 'record'>) =>
+  createGraphStore({ graphs, projectId: PROJECT, ...(emitter ? { emitter } : {}) })
 
 it('populates results from a search', async () => {
   const ada = node()
@@ -285,4 +286,95 @@ it('does not fetch for a class node it has never drawn', async () => {
   await graph.getState().expandNode('unknown-to-the-view')
 
   expect(neighborhood).toHaveBeenCalledTimes(1)
+})
+
+it('records EntityOpened with source "graph" when a node is selected explicitly', () => {
+  const record = vi.fn<Emitter['record']>()
+  const graph = store(fakeGraphs(), { record })
+
+  graph.getState().select('ada')
+
+  expect(record).toHaveBeenCalledWith('EntityOpened', { entity_id: 'ada', source: 'graph' })
+})
+
+it('records no EntityOpened when the selection is cleared', () => {
+  const record = vi.fn<Emitter['record']>()
+  const graph = store(fakeGraphs(), { record })
+
+  graph.getState().select(null)
+
+  expect(record).not.toHaveBeenCalledWith('EntityOpened', expect.anything())
+})
+
+it('records EntityOpened when expandNode selects a node, via the same default source', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const neighborhood = vi.fn().mockResolvedValue(hoodOf(node()))
+  const graph = store(fakeGraphs({ neighborhood }), { record })
+
+  await graph.getState().expandNode('ada')
+
+  expect(record).toHaveBeenCalledWith('EntityOpened', { entity_id: 'ada', source: 'graph' })
+})
+
+it('records SearchPerformed with the term and how many results came back', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const ada = node()
+  const search = vi.fn().mockResolvedValue({ entities: [ada], truncated: false })
+  const graph = store(fakeGraphs({ search }), { record })
+
+  await graph.getState().search('ada')
+
+  expect(record).toHaveBeenCalledWith('SearchPerformed', { query_text: 'ada', result_count: 1 })
+})
+
+it('records EmptyResultEncountered alongside SearchPerformed when nothing matches', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const search = vi.fn().mockResolvedValue({ entities: [], truncated: false })
+  const graph = store(fakeGraphs({ search }), { record })
+
+  await graph.getState().search('nobody')
+
+  expect(record).toHaveBeenCalledWith('SearchPerformed', {
+    query_text: 'nobody',
+    result_count: 0,
+  })
+  expect(record).toHaveBeenCalledWith('EmptyResultEncountered', {
+    where: 'graph-search',
+    query_length: 6,
+  })
+})
+
+it('records no ActionRetried for the first search', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const search = vi.fn().mockResolvedValue({ entities: [], truncated: false })
+  const graph = store(fakeGraphs({ search }), { record })
+
+  await graph.getState().search('ada')
+
+  expect(record).not.toHaveBeenCalledWith('ActionRetried', expect.anything())
+})
+
+it('records ActionRetried when the identical search is pressed again', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const search = vi.fn().mockResolvedValue({ entities: [], truncated: false })
+  const graph = store(fakeGraphs({ search }), { record })
+
+  await graph.getState().search('ada')
+  await graph.getState().search('ada')
+
+  expect(record).toHaveBeenCalledWith('ActionRetried', {
+    action_kind: 'search',
+    attempt_number: 2,
+  })
+})
+
+it('does not treat a changed search as a retry', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const search = vi.fn().mockResolvedValue({ entities: [], truncated: false })
+  const graph = store(fakeGraphs({ search }), { record })
+
+  await graph.getState().search('ada')
+  await graph.getState().search('grace')
+
+  expect(record).not.toHaveBeenCalledWith('ActionRetried', expect.anything())
 })

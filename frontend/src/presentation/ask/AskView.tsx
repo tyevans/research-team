@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 
 import { useContainer } from '@app/container-context.tsx'
+import { useInteractionLog } from '@app/interaction-log-provider.tsx'
 import { createAskStore } from '@application/ask/ask-store.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 import { newId } from '@infrastructure/identity/new-id.ts'
@@ -18,13 +19,14 @@ import { AskPage } from './AskPage.tsx'
  */
 export const AskView = ({ projectId }: { projectId: ProjectId }) => {
   const { ask } = useContainer()
+  const log = useInteractionLog()
 
   /** One store per project, as `GraphPane` builds one per project: the chat id
    *  identifies a server-side conversation scoped to this project, and a store
    *  shared across projects would carry one project's questions to another. */
   const store = useMemo(
-    () => createAskStore({ ask, projectId, newChatId: newId }),
-    [ask, projectId],
+    () => createAskStore({ ask, projectId, newChatId: newId, emitter: log }),
+    [ask, projectId, log],
   )
 
   // Read through the hook during render; reach actions through `getState()` in

@@ -1,6 +1,7 @@
 /** What the ask store guarantees on top of the fold and the repository. */
 import { expect, it, vi } from 'vitest'
 
+import type { Emitter } from '@application/interaction-log/emitter.ts'
 import type { AskRepository } from '@application/ports/repositories.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
@@ -18,8 +19,13 @@ const fakeAsk = (over: Partial<AskRepository> = {}): AskRepository => ({
 })
 
 let counter = 0
-const store = (ask: AskRepository = fakeAsk()) =>
-  createAskStore({ ask, projectId: PROJECT, newChatId: () => `chat-${String(++counter)}` })
+const store = (ask: AskRepository = fakeAsk(), emitter?: Pick<Emitter, 'record'>) =>
+  createAskStore({
+    ask,
+    projectId: PROJECT,
+    newChatId: () => `chat-${String(++counter)}`,
+    ...(emitter ? { emitter } : {}),
+  })
 
 it('records the question before the first frame arrives', async () => {
   const ask = fakeAsk({
@@ -138,4 +144,57 @@ it('clears the transcript even when forgetting the server copy fails', async () 
   // The server's copy expires on its own; refusing to clear the page would
   // strand the reader in a conversation they asked to leave.
   expect(asking.getState().transcript).toEqual([])
+})
+
+it('records AskSubmitted before the turn is awaited', () => {
+  const record = vi.fn<Emitter['record']>()
+  const asking = store(
+    fakeAsk({
+      ask: vi.fn(async () => {
+        // If the event were recorded after the await, it would not exist
+        // yet at this point in a still-pending promise.
+        await new Promise(() => {
+          /* never resolves within the test */
+        })
+      }),
+    }),
+    { record },
+  )
+
+  void asking.getState().send('what did we find?')
+
+  expect(record).toHaveBeenCalledWith('AskSubmitted', { query_text: 'what did we find?' })
+})
+
+it('records no ActionRetried for the first question in a conversation', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const asking = store(fakeAsk(), { record })
+
+  await asking.getState().send('one')
+
+  expect(record).not.toHaveBeenCalledWith('ActionRetried', expect.anything())
+})
+
+it('records ActionRetried for a second question in the same conversation', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const asking = store(fakeAsk(), { record })
+
+  await asking.getState().send('one')
+  await asking.getState().send('two')
+
+  expect(record).toHaveBeenCalledWith('ActionRetried', {
+    action_kind: 'ask',
+    attempt_number: 2,
+  })
+})
+
+it('resets the attempt count on reset(), so a new conversation is not a retry', async () => {
+  const record = vi.fn<Emitter['record']>()
+  const asking = store(fakeAsk(), { record })
+
+  await asking.getState().send('one')
+  await asking.getState().reset()
+  await asking.getState().send('one again, in a fresh chat')
+
+  expect(record).not.toHaveBeenCalledWith('ActionRetried', expect.anything())
 })

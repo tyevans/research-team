@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { notify } from '@application/notifications/toast-store.ts'
 import type { Approval, ApprovalAnswer } from '@domain/approval/approval.ts'
 import type { ApprovalId } from '@domain/shared/identifier.ts'
 import { ApiError, errorMessage } from '@application/ports/errors.ts'
 import { useContainer } from '@app/container-context.tsx'
+import { useInteractionLog } from '@app/interaction-log-provider.tsx'
 
 import { useStream } from './StreamProvider.tsx'
 
@@ -38,14 +39,21 @@ export interface ApprovalFeed {
    *  receiver. This one is a `useCallback` closure and has no receiver to
    *  lose, and saying so in the type is more honest than suppressing the rule
    *  at the call site. */
-  readonly decide: (approval: Approval, answer: ApprovalAnswer) => void
+  readonly decide: (approval: Approval, answer: ApprovalAnswer, expandedDetails: boolean) => void
 }
 
 export const useApprovalFeed = (): ApprovalFeed => {
   const container = useContainer()
   const stream = useStream()
+  const log = useInteractionLog()
   const [approvals, setApprovals] = useState<ReadonlyMap<ApprovalId, Approval>>(() => new Map())
   const [deciding, setDeciding] = useState<ApprovalId | null>(null)
+
+  // When each pending approval was first seen, for `ApprovalDecided.latency_ms`
+  // -- the click-through-versus-deliberation distinction `direction.md` §3
+  // turns on. A ref, not state: nothing on screen reads it, so putting it in
+  // state would be a render the timestamp itself never causes.
+  const shownAt = useRef<Map<ApprovalId, number>>(new Map())
 
   useEffect(
     () =>
@@ -53,6 +61,9 @@ export const useApprovalFeed = (): ApprovalFeed => {
         if (frame.kind === 'approvalRequested') {
           const approval = frame.approval
           setApprovals((current) => new Map(current).set(approval.id, approval))
+          if (!shownAt.current.has(approval.id)) {
+            shownAt.current.set(approval.id, Date.now())
+          }
           return
         }
         if (frame.kind === 'approvalSettled') {
@@ -64,6 +75,7 @@ export const useApprovalFeed = (): ApprovalFeed => {
             return next
           })
           setDeciding((current) => (current === settled ? null : current))
+          shownAt.current.delete(settled)
         }
       }),
     [stream],
@@ -77,15 +89,42 @@ export const useApprovalFeed = (): ApprovalFeed => {
   // that cannot show a card for a gate somebody already answered; the cost is
   // a visible flicker on reconnect, and the alternative is a stale card whose
   // buttons all 404.
-  useEffect(() => stream.onReconnect(() => setApprovals(new Map())), [stream])
+  useEffect(
+    () =>
+      stream.onReconnect(() => {
+        setApprovals(new Map())
+        // The re-seed that follows is this tab seeing every parked approval
+        // again; without clearing this, a card re-shown after a long
+        // disconnect would report a `latency_ms` measured from before the
+        // gap, which is not when *this* tab's reader started looking at it.
+        shownAt.current.clear()
+      }),
+    [stream],
+  )
 
   const decide = useCallback(
-    (approval: Approval, answer: ApprovalAnswer) => {
+    (approval: Approval, answer: ApprovalAnswer, expandedDetails: boolean) => {
       if (deciding) return
       setDeciding(approval.id)
+      const shown = shownAt.current.get(approval.id)
       void (async () => {
         try {
           await container.approvals.decide(approval.sessionId, approval.id, answer)
+          // `latency_ms` is required, non-optional, in the domain schema --
+          // there is no honest "unknown" value to put in it. If this tab
+          // never saw the frame that would have started the clock (a settle
+          // racing a mount, or a reconnect landing between request and
+          // decision -- both real and both rare), the kind is skipped
+          // entirely rather than reported with a fabricated zero, which is
+          // the exact confident-wrong-value failure the brief calls out.
+          if (shown !== undefined) {
+            log.record('ApprovalDecided', {
+              decision: answer.decision,
+              latency_ms: Date.now() - shown,
+              expanded_details: expandedDetails,
+              review_id: approval.id,
+            })
+          }
         } catch (error) {
           // A 404 means somebody else already answered it; `ApprovalSettled`
           // will have cleared the card, so there is nothing left to undo.
@@ -97,7 +136,7 @@ export const useApprovalFeed = (): ApprovalFeed => {
         }
       })()
     },
-    [container, deciding],
+    [container, deciding, log],
   )
 
   return { approvals, deciding, decide }

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 
+import type { Emitter } from '@application/interaction-log/emitter.ts'
 import { errorMessage } from '@application/ports/errors.ts'
 import {
   emptyGraph,
@@ -63,7 +64,12 @@ export interface GraphState {
   loadAll(): Promise<void>
   search(term: string, entityType?: string): Promise<void>
   expandNode(id: string): Promise<void>
-  select(id: string | null): void
+  /** `source` says how the reader got here -- graph | search | timeline |
+   *  link -- for `EntityOpened`. Defaults to `'graph'`: every call this store
+   *  makes on its own (from `expandNode`, off a canvas click) is that case,
+   *  and a caller reaching a node through search or a link passes its own
+   *  word instead. */
+  select(id: string | null, source?: string): void
   /** Take one entity off the drawing. See `remove` for what goes with it. */
   removeNode(id: string): void
   /** Put back everything pruning and expanding have changed, by drawing the
@@ -85,11 +91,23 @@ export type GraphStore = ReturnType<typeof createGraphStore>
 export const createGraphStore = ({
   graphs,
   projectId,
+  emitter,
 }: {
   graphs: GraphRepository
   projectId: ProjectId
-}) =>
-  create<GraphState>((set, get) => ({
+  /** Optional so the many tests that build this store need no change. A
+   *  store that records nothing is correct in a test. */
+  emitter?: Pick<Emitter, 'record'>
+}) => {
+  // The last search this store issued, kept outside the zustand state because
+  // it drives `ActionRetried` bookkeeping and not anything drawn -- adding it
+  // to `GraphState` would mean every consumer's selector re-runs on a field
+  // nothing renders. `attempts` resets whenever the term or type changes: a
+  // retry is the *same* search pressed again, not a different one.
+  let lastQuery: { needle: string; entityType: string | undefined } | null = null
+  let attempts = 0
+
+  return create<GraphState>((set, get) => ({
     view: emptyGraph,
     results: [],
     knownTypes: [],
@@ -131,8 +149,11 @@ export const createGraphStore = ({
       await get().loadAll()
     },
 
-    select(id) {
+    select(id, source = 'graph') {
       set({ selected: id })
+      if (id !== null) {
+        emitter?.record('EntityOpened', { entity_id: id, source })
+      }
     },
 
     removeNode(id) {
@@ -165,8 +186,28 @@ export const createGraphStore = ({
         return
       }
       set({ searching: true, error: null })
+      // A retry is the same term and type pressed again -- not "nearly the
+      // same", which is `query_text`'s job and requires reading English, not
+      // comparing strings. Anything else resets the count: a changed term is
+      // a new search, not a second attempt at the old one.
+      if (lastQuery && lastQuery.needle === needle && lastQuery.entityType === entityType) {
+        attempts += 1
+      } else {
+        lastQuery = { needle, entityType }
+        attempts = 1
+      }
+      if (attempts > 1) {
+        emitter?.record('ActionRetried', { action_kind: 'search', attempt_number: attempts })
+      }
       try {
         const { entities, truncated } = await graphs.search(projectId, needle, entityType)
+        emitter?.record('SearchPerformed', { query_text: needle, result_count: entities.length })
+        if (entities.length === 0) {
+          emitter?.record('EmptyResultEncountered', {
+            where: 'graph-search',
+            query_length: needle.length,
+          })
+        }
         set((state) => ({
           results: entities,
           truncated,
@@ -185,7 +226,14 @@ export const createGraphStore = ({
       // clicking an already-expanded node still means "tell me about this
       // one", and a reader who clicks a node whose neighbourhood is already
       // drawn should not be the only one who gets no answer.
-      set({ selected: id })
+      //
+      // Routed through `select` rather than a bare `set`, so a canvas click
+      // -- what `expandNode` actually is, most of the time it is called --
+      // records `EntityOpened` the same way an explicit `select` does. This
+      // is the store's own default source ('graph'); a caller reaching a
+      // node through search or a link is expected to call `select` itself
+      // with its own source before delegating to `expandNode`.
+      get().select(id)
 
       // A synthesised class node has no neighbourhood to fetch: its id comes
       // from the ontology table and belongs to no stored entity, so the
@@ -222,3 +270,4 @@ export const createGraphStore = ({
       }
     },
   }))
+}

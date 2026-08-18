@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 
 import { createGraphStore } from '@application/research/graph-store.ts'
 import { useContainer } from '@app/container-context.tsx'
+import { useInteractionLog } from '@app/interaction-log-provider.tsx'
 import type { GraphNode, GraphView } from '@domain/knowledge/graph.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
@@ -106,7 +107,11 @@ export const GraphPane = ({
   const [term, setTerm] = useState('')
   const [entityType, setEntityType] = useState('')
 
-  const store = useMemo(() => createGraphStore({ graphs, projectId }), [graphs, projectId])
+  const log = useInteractionLog()
+  const store = useMemo(
+    () => createGraphStore({ graphs, projectId, emitter: log }),
+    [graphs, projectId, log],
+  )
   // Data only, not the methods: `store()` is a hook and can only be called
   // during render, so a handler reaches the actions through `store.getState()`
   // instead (the same split `ExtractionPane` uses). Destructuring them here

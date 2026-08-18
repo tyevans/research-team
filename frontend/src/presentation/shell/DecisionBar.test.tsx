@@ -10,6 +10,7 @@ import type { EventStream, EventStreamListener } from '@application/ports/event-
 import type { ApprovalRepository, AutonomyRepository } from '@application/ports/repositories.ts'
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
+import { InteractionLogContext } from '@app/interaction-log-provider.tsx'
 import type { Approval, ApprovalDecision } from '@domain/approval/approval.ts'
 import { ApprovalId, SessionId } from '@domain/shared/identifier.ts'
 
@@ -86,7 +87,10 @@ const controllableStream = () => {
   }
 }
 
-const renderBar = ({ decide: decideResult }: { decide?: () => Promise<void> } = {}) => {
+const renderBar = ({
+  decide: decideResult,
+  record,
+}: { decide?: () => Promise<void>; record?: (kind: string, payload: unknown) => void } = {}) => {
   const feed = controllableStream()
   const decide = decideResult
     ? vi.fn<ApprovalRepository['decide']>().mockImplementation(decideResult)
@@ -105,7 +109,9 @@ const renderBar = ({ decide: decideResult }: { decide?: () => Promise<void> } = 
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
       <ContainerProvider container={container}>
-        <StreamProvider>{children}</StreamProvider>
+        <InteractionLogContext.Provider value={{ record: record ?? (() => {}) } as never}>
+          <StreamProvider>{children}</StreamProvider>
+        </InteractionLogContext.Provider>
       </ContainerProvider>
     </QueryClientProvider>
   )
@@ -337,4 +343,53 @@ it('offers the way to stop being asked, beside the approvals', async () => {
   // And it says what it changes, on the control rather than in a tooltip --
   // the policy is instance-wide although it is reached through one session.
   expect(screen.getByText(/every session on this instance/i)).toBeInTheDocument()
+})
+
+/** `ApprovalDecided.latency_ms` and `.expanded_details` are the entire reason
+ *  this kind exists -- the click-through-versus-deliberation distinction from
+ *  `direction.md` §3 -- so this is not a smoke test of "an event fired", it
+ *  pins the two numbers.
+ */
+it('records ApprovalDecided with the elapsed time and false for a click-through approval', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+  const record = vi.fn()
+  const bar = renderBar({ record })
+  const approval = anApproval('a-1')
+
+  bar.deliver({ kind: 'approvalRequested', approval })
+  await vi.advanceTimersByTimeAsync(400)
+  await user.click(screen.getByRole('button', { name: /^approve$/i }))
+
+  expect(record).toHaveBeenCalledWith('ApprovalDecided', {
+    decision: 'approve',
+    latency_ms: expect.any(Number),
+    expanded_details: false,
+    review_id: approval.id,
+  })
+  const [, payload] = record.mock.calls.find(([kind]) => kind === 'ApprovalDecided')!
+  expect((payload as { latency_ms: number }).latency_ms).toBeGreaterThanOrEqual(400)
+  vi.useRealTimers()
+})
+
+it('records expanded_details: true once Edit or Respond has been opened, even after deciding a plain approve', async () => {
+  const user = userEvent.setup()
+  const record = vi.fn()
+  const bar = renderBar({ record })
+  const approval = anApproval('a-1', {
+    allowedDecisions: ['approve', 'edit', 'reject', 'respond'],
+  })
+
+  bar.deliver({ kind: 'approvalRequested', approval })
+  // Opened and then closed again -- deliberation happened even though the
+  // final decision came through the plain Approve button, and closing the
+  // form must not erase that it was opened.
+  await user.click(screen.getByRole('button', { name: /respond instead/i }))
+  await user.click(screen.getByRole('button', { name: /respond instead/i }))
+  await user.click(screen.getByRole('button', { name: /^approve$/i }))
+
+  expect(record).toHaveBeenCalledWith(
+    'ApprovalDecided',
+    expect.objectContaining({ expanded_details: true }),
+  )
 })

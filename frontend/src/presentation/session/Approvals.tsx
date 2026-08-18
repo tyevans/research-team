@@ -41,7 +41,7 @@ export const Approvals = ({
 }: {
   approvals: ReadonlyMap<ApprovalId, Approval>
   deciding: ApprovalId | null
-  onDecide: (approval: Approval, answer: ApprovalAnswer) => void
+  onDecide: (approval: Approval, answer: ApprovalAnswer, expandedDetails: boolean) => void
 }) => (
   <div className="flex flex-col gap-2">
     {[...approvals.values()].map((approval) => (
@@ -100,9 +100,18 @@ const ApprovalCard = ({
 }: {
   approval: Approval
   busy: boolean
-  onDecide: (approval: Approval, answer: ApprovalAnswer) => void
+  onDecide: (approval: Approval, answer: ApprovalAnswer, expandedDetails: boolean) => void
 }) => {
   const [mode, setMode] = useState<'edit' | 'respond' | null>(null)
+  // `ApprovalDecided.expanded_details`'s operational definition, chosen
+  // because there is nothing here to literally expand -- `GateReview`
+  // renders its whole context whenever `approval.context` exists, with no
+  // collapse to open. Opening Edit or Respond is the one interaction on this
+  // card that means "I want to see or change more before deciding", so it
+  // stands in for the deliberation half of the click-through/deliberation
+  // split. Sticky once true: closing the form again does not undo having
+  // looked.
+  const [expandedDetails, setExpandedDetails] = useState(false)
   const reasonIds = useId()
 
   const allows = (decision: ApprovalDecision) => approval.allowedDecisions.includes(decision)
@@ -141,9 +150,10 @@ const ApprovalCard = ({
                 onClick={() => {
                   if (decision === 'edit' || decision === 'respond') {
                     setMode((current) => (current === decision ? null : decision))
+                    setExpandedDetails(true)
                     return
                   }
-                  onDecide(approval, { decision })
+                  onDecide(approval, { decision }, expandedDetails)
                 }}
               >
                 {label}
@@ -162,13 +172,17 @@ const ApprovalCard = ({
         <EditForm
           approval={approval}
           busy={busy}
-          onSubmit={(editedArgs) => onDecide(approval, { decision: 'edit', editedArgs })}
+          onSubmit={(editedArgs) =>
+            onDecide(approval, { decision: 'edit', editedArgs }, expandedDetails)
+          }
         />
       ) : null}
       {mode === 'respond' ? (
         <RespondForm
           busy={busy}
-          onSubmit={(message) => onDecide(approval, { decision: 'respond', message })}
+          onSubmit={(message) =>
+            onDecide(approval, { decision: 'respond', message }, expandedDetails)
+          }
         />
       ) : null}
     </article>

@@ -542,6 +542,77 @@ it('mounts the interaction log over the application, not merely beside it', asyn
   ).toBe(true)
 })
 
+/** `ProjectSwitched`, seen the same way -- from the composition root, since
+ *  `ProjectSwitchLog`'s own comment says why it cannot be a plain hook test:
+ *  it has to sit inside the provider `Console` renders, not beside it. */
+it('records ProjectSwitched when the route moves from one project to another', async () => {
+  const OTHER = ProjectId('22222222-2222-2222-2222-222222222222')
+  window.location.hash = `#/p/${ATLAS}`
+  const { unmount } = renderApp()
+  await screen.findByRole('group', { name: 'Project regions' })
+
+  window.location.hash = `#/p/${OTHER}`
+  await screen.findByRole('group', { name: 'Project regions' })
+
+  unmount()
+  await Promise.resolve()
+
+  const batch = interactions.sendOnUnload.mock.calls[0]?.[0] as
+    | { kind: string; payload: { to_project_id: string; from_project_id: string | null } }[]
+    | undefined
+  expect(
+    batch?.some(
+      (event) =>
+        event.kind === 'ProjectSwitched' &&
+        event.payload.to_project_id === OTHER &&
+        event.payload.from_project_id === ATLAS,
+    ),
+  ).toBe(true)
+})
+
+/** The first project a session opens still fires -- there is no project
+ *  before it to have switched from, and `from_project_id: null` says exactly
+ *  that rather than the event being withheld. "Opened project X" is itself
+ *  worth knowing, not only "left X for Y". */
+it('records ProjectSwitched with a null from_project_id for the first project the route names', async () => {
+  window.location.hash = `#/p/${ATLAS}`
+  const { unmount } = renderApp()
+  await screen.findByRole('group', { name: 'Project regions' })
+
+  unmount()
+  await Promise.resolve()
+
+  const batch = interactions.sendOnUnload.mock.calls[0]?.[0] as
+    | { kind: string; payload: { to_project_id: string; from_project_id: string | null } }[]
+    | undefined
+  expect(
+    batch?.some(
+      (event) =>
+        event.kind === 'ProjectSwitched' &&
+        event.payload.to_project_id === ATLAS &&
+        event.payload.from_project_id === null,
+    ),
+  ).toBe(true)
+})
+
+/** Navigating within one project -- a facet change, or the same project's
+ *  route re-parsed with a different selection -- is not a project switch and
+ *  must not fire a second event with the same `to_project_id`. */
+it('records no second ProjectSwitched for a facet change inside the same project', async () => {
+  window.location.hash = `#/p/${ATLAS}`
+  const { unmount } = renderApp()
+  await screen.findByRole('group', { name: 'Project regions' })
+
+  window.location.hash = `#/p/${ATLAS}/entity/e1`
+  await screen.findByRole('group', { name: 'Project regions' })
+
+  unmount()
+  await Promise.resolve()
+
+  const batch = interactions.sendOnUnload.mock.calls[0]?.[0] as { kind: string }[] | undefined
+  expect(batch?.filter((event) => event.kind === 'ProjectSwitched')).toHaveLength(1)
+})
+
 /** `viewNameOf` had no test at all, and it is the one function deciding what
  *  every row of the log is filed under. Driven through `parseRoute` rather than
  *  hand-built route objects, so a route shape that stops parsing the way this
