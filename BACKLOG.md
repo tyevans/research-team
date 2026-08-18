@@ -3502,3 +3502,27 @@ payload` enough -- the learner projection announces what it dropped as
 
 Nothing to fix here; this is a checklist item for whoever adds the next route
 that returns authored content.
+
+### B116. Ten backlog ids are already duplicated, and one commit message says otherwise
+
+Ten ids appear **twice each**, always with two unrelated subjects: B36, B54,
+B58, B59, B60, B62, B63, B79, B80, B81. Found 2026-08-18 while renumbering the
+B110/B111 collision (`64dc172`), by listing every `### B<n>.` heading and
+looking for repeats -- not by reading the file, which is how they survived this
+long. That commit's message says "No other duplicate id in the file, checked
+rather than assumed"; it was written concurrently with the check and is wrong.
+This entry is the correction, since the message cannot be edited.
+
+Not fixed on the spot, and the reason is the same one that forced the
+renumber: ids are cited by number in commit messages nobody can rewrite, so
+choosing which of each pair keeps its number is a judgement about which is
+cited where. Getting it wrong silently *redirects* a citation, which is worse
+than the duplicate -- a reader following it lands on a real entry about the
+wrong thing and has no signal that anything is off.
+
+Picking this up means, per pair: `git log -S'B<n>'` over the whole history to
+see which side is cited, keep that one, renumber the other above the current
+maximum, and leave a one-line pointer at the old heading. The cheap half is
+worth doing first regardless -- a check that refuses a duplicate id when one is
+added. There is no test to hang it on today; the natural home is whatever
+lints documentation, and nothing does.
