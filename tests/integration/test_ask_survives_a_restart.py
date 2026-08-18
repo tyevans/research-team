@@ -23,6 +23,7 @@ appended through the composed service reaches the composed read model and the
 route -- not anything about the agent that produces an answer.
 """
 
+import json
 from uuid import UUID, uuid4
 
 import pytest
@@ -141,7 +142,9 @@ async def test_the_history_route_answers_from_the_composed_application(db_file, 
     body = one.json()
     assert body["conversationId"] == str(conversation_id)
     assert [turn["question"] for turn in body["turns"]] == ["why?"]
-    assert [turn["answer"] for turn in body["turns"]] == ["one"]
+    # The prose reached through `blocks`, because there is no raw `answer` key
+    # -- see `read_ask` for why it was removed rather than projected.
+    assert [turn["blocks"][0]["text"] for turn in body["turns"]] == ["one"]
     assert missing.status_code == 404
 
 
@@ -176,6 +179,28 @@ async def test_a_stored_turn_is_parsed_the_same_way_as_a_live_one(db_file, proje
         await application.close()
 
     assert [block["kind"] for block in body["turns"][0]["blocks"]] == ["component"]
+    # The component did reach the reader -- otherwise the absence below would
+    # be the absence of everything.
+    payload = json.dumps(body)
+    assert "Which year?" in payload
+
+    # **And no answer key came with it.** The `kind` assertion above was the
+    # whole of this test until 2026-08-18, and it passed while the route
+    # shipped `"answer": turn.answer` -- the stored markdown, fences and all --
+    # one key to the left of blocks that correctly withheld
+    # `options[].correct`. Measured: restore that field and the three
+    # assertions below go red together while every other assertion in this
+    # file stays green. BACKLOG B106 stated this route withheld the key and
+    # rested on exactly the `kind` check; the claim is what stopped anyone
+    # looking.
+    #
+    # Not a bare `"correct" not in payload`: the projection *announces* what it
+    # dropped, as `"withheld": ["options[].correct", ...]`, and that string is
+    # the projection working rather than failing. What must not appear is a
+    # correctness *value*, or the raw fence that would carry one.
+    assert "correct: true" not in payload, "the stored turn ships the fence's answer key"
+    assert '"correct": true' not in payload, "the stored turn ships the key as JSON"
+    assert "```component:" not in payload, "the stored turn ships the raw component source"
 
 
 async def test_one_projects_history_does_not_list_anothers(db_file, project_id):

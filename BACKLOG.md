@@ -3325,10 +3325,27 @@ has to actually unwind, not just reorder.
 
 ### B106. Ask history has a server half and no client -- reopening a conversation is not reachable
 
-`docs/superpowers/specs/2026-08-16-components-in-an-ask-design.md` §4 and
-`read_ask` (`app.py:3076`) are correct and tested: a stored ask turn carries
-projected `blocks` with the answer key withheld, the same shape the live
-stream sends. But no route in `frontend/src` fetches a stored conversation --
+**Corrected 2026-08-18: the sentence this entry opened with was false.** It
+said `read_ask` was "correct and tested: a stored ask turn carries projected
+`blocks` with the answer key withheld". The blocks were projected, and beside
+them the route shipped `"answer": turn.answer` -- the stored markdown, fences
+and `correct: true` intact -- so every stored turn handed back the key the
+projection had just removed. The test the claim rested on,
+`test_a_stored_turn_is_parsed_the_same_way_as_a_live_one`, asserted only that
+the block's `kind` was `"component"` while its own fixture answer contained
+`correct: true`, and passed throughout. A written claim of no leak is worse
+than an unrecorded leak, because the claim is the reason nobody looks.
+
+Fixed by dropping the raw `answer` key rather than projecting it -- nothing
+consumed it (grepped `frontend/src` and the committed console; both reach only
+the `/attempts` sibling), which is the same finding and the same fix as the
+socratic surface in 95076c9. That test now asserts on the whole response body:
+no `correct: true`, no `"correct": true`, no ` ```component:` fence, while
+still asserting the component reached the reader. Measured red with the field
+restored.
+
+The rest of this entry stands. `docs/superpowers/specs/2026-08-16-components-in-an-ask-design.md` §4
+and `read_ask` (`app.py:3076`) now do withhold the key end to end. But no route in `frontend/src` fetches a stored conversation --
 grepped for any caller of `GET /api/projects/{project_id}/asks/{conversation_id}`
 outside the Python tests, and there is none. `AskView.tsx` holds its
 transcript in memory only and starts empty on every mount; there is no reopen,

@@ -3395,7 +3395,25 @@ def create_app(
                 {
                     "position": turn.position,
                     "question": turn.question,
-                    "answer": turn.answer,
+                    # **No raw `answer` beside `blocks`, and its absence is the
+                    # point.** This shipped `"answer": turn.answer` -- the
+                    # stored markdown, fences and all -- next to blocks that
+                    # correctly withheld `options[].correct`, so every reopened
+                    # conversation handed back the answer key to every question
+                    # in it. Measured 2026-08-18 by dumping the response body:
+                    # `correct: true` was in the bytes while the projection one
+                    # key to its right reported it withheld. `question` stays
+                    # raw; it is the reader's own words and there is no key in
+                    # it. Same shape as `read_dialogue`'s turns, fixed next
+                    # door in 95076c9 for the same reason.
+                    #
+                    # The cost is that a client wanting the prose walks
+                    # `blocks` for its markdown entries instead of reading one
+                    # string. That is the right cost: a convenience field
+                    # re-adding the source is a hole no projection can close.
+                    # Nothing consumed it -- grepped `frontend/src` and the
+                    # committed console, which reach only this route's
+                    # `/attempts` sibling.
                     "blocks": answer_document(turn.answer)["blocks"],
                     "citations": turn.citations,
                     "recordedAt": turn.recorded_at.isoformat(),
