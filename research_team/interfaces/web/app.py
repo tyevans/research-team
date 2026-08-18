@@ -3129,8 +3129,54 @@ def create_app(
                 "pending_blocks": dialogue_document(note.pending_prompt)["blocks"],
             }
         elif isinstance(note, ActivityDelta):
-            body = {"type": "delta", "message_id": note.message_id, "text": note.text}
+            # **The dialogue's own prose never goes over this stream, and that
+            # is the whole of this branch.** `to_activity_delta` carries the
+            # main agent's text exactly as the model produced it, so when the
+            # model writes an `mcq` the fence streams with `correct: true` in
+            # it -- ahead of the `prompt` frame two branches down, which is at
+            # pains to withhold precisely that. Measured on 2026-08-17 by
+            # `test_no_frame_of_a_streamed_turn_carries_the_answer_key`, which
+            # is red with this `return None` removed.
+            #
+            # Suppressed rather than filtered or buffered. Filtering the fenced
+            # region out of a delta means recognising a fence that has not
+            # finished arriving -- a half-written ```` ```component: ```` is
+            # indistinguishable from prose until its closing line, so the
+            # filter's failure mode is shipping the key it exists to hold back.
+            # Buffering until a fence closes has the same recogniser inside it
+            # and defers every delta behind an unclosed one. Suppression has no
+            # recogniser at all, and on this surface a projection is only real
+            # if there is nothing beside it.
+            #
+            # The frame itself survives with an EMPTY `text`, and that is not
+            # tidiness. The console plan for this surface
+            # (`docs/superpowers/plans/2026-08-17-socratic-dialogue-console.md`,
+            # read rather than assumed) already rules that the transcript's
+            # question text comes only from `blocks` and that "deltas drive
+            # nothing but a composing indicator" -- so the page folds over
+            # delta frames for liveness and ignores their text. Dropping the
+            # frame outright would take that liveness signal away with the
+            # leak; emptying it takes only the leak.
+            #
+            # The cost, stated plainly: a reader watching a dialogue compose
+            # gets a "composing" indicator and then the finished question, with
+            # no token-by-token prose. That is what the plan already assumed.
+            # It becomes a real cost the day a console wants the prose itself,
+            # and the answer then is a projected delta channel, not the raw
+            # one.
+            body = {"type": "delta", "message_id": note.message_id, "text": ""}
         elif isinstance(note, ActivityMessage):
+            if note.kind == "assistant":
+                # The same leak by the other route: `to_activity_message`
+                # builds `payload` from `message_to_dict` (`messages.py:54`),
+                # so an assistant message carries the model's whole answer --
+                # fence and key -- in one frame. The same test measures this
+                # one; it caught both halves on the first red run.
+                #
+                # Tool and error messages still stream: they are what a reader
+                # watching a slow turn actually sees, and they carry retrieved
+                # source rather than the dialogue's own authored components.
+                return None
             body = {
                 "type": "message",
                 "message_id": note.message_id,

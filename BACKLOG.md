@@ -3574,3 +3574,42 @@ What a fix would fail on if it were wrong: an ask whose run emits a remark must
 produce either no frame or a frame carrying the remark's text -- asserted on the
 SSE bytes, not on the handler being called, since the current code calls it
 correctly and still sends an empty payload.
+
+### B118. The ask's SSE stream ships the answer key the same way the dialogue's did
+
+**The same leak as the socratic one fixed alongside this entry, on the ask.**
+`_ask_frame` (`app.py`, around :2994) emits `delta` frames straight from
+`to_activity_delta` and `message` frames whose `payload` is `message_to_dict`
+of the assistant's message (`messages.py:54`). Both carry the model's prose
+**verbatim**, so an answer containing a ```` ```component:mcq ```` fence
+streams to the browser with `correct: true` in it -- ahead of, and beside, the
+projected blocks that withhold exactly that.
+
+That the ask's model authors components is not an assumption: `ask_agent.py`
+:117-145 instructs it to, and lists `mcq` first among the types it may write.
+
+**Not fixed in the same commit, deliberately.** The socratic fix suppresses
+both frame types on that stream, which costs nothing there because no client
+consumes it (`grep -rl dialogue frontend/src` matched no file on 2026-08-18).
+The ask has a live console that *does* render streamed prose, so the same
+suppression would visibly stop the answer appearing as it is written -- a
+frontend decision with a rebuild of the committed `web/static` behind it, not
+a backend one-liner. Tangling the two surfaces in one change would mean a
+frontend slice riding on a security fix.
+
+The three options, as weighed for the dialogue: suppress the raw frames;
+filter the fenced region out of each delta; or buffer deltas and release them
+when a fence closes. Filtering and buffering both need to recognise a fence
+that has not finished arriving, and a half-written fence is indistinguishable
+from prose until its closing line -- so their failure mode is shipping the key
+they exist to hold back. For the ask the honest third option is a *projected*
+delta channel: stream the prose outside fenced regions and emit the component
+only once it is whole and projected.
+
+What a fix would fail on if it were wrong: an ask whose model writes an `mcq`
+must produce no `correct: true`, no `"correct": true` and no `` ```component: ``
+in **any** SSE frame, asserted on the bytes of the whole stream body. The guard
+that exists today (`test_socratic_attempts.py`) could not see this class of
+leak until an executor stub that actually streams was written for it -- see
+`test_no_frame_of_a_streamed_turn_carries_the_answer_key`, whose predecessor
+passed for a whole slice because its stub emitted no activity at all.

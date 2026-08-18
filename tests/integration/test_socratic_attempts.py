@@ -21,6 +21,7 @@ from eventsource import StreamId, collect
 from httpx import ASGITransport, AsyncClient
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 
+from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.application.socratic import SocraticFraming, SocraticPrompt
 from research_team.composition import build_application
 from research_team.domain.socratic_dialogue import (
@@ -445,5 +446,85 @@ async def test_an_empty_topic_is_refused_before_the_model(tmp_path):
             )
 
         assert response.status_code == 422, response.text
+    finally:
+        await application.close()
+
+
+class StreamingStubExecutor(StubExecutor):
+    """A stub that also *streams*, which the plain `StubExecutor` never did.
+
+    That omission is why `test_the_answer_key_never_reaches_the_reader` above
+    passed while the key was still shipping: it asserts on the whole SSE body,
+    but its executor reports no activity, so there were no `delta` and no
+    `message` frames in that body to assert against. A real executor
+    (`socratic_agent.py`, the `messages`- and `values`-mode loops) reports both
+    on every turn, carrying the model's prose **verbatim** -- fence, key and
+    all -- ahead of the `prompt` frame that properly withholds it.
+
+    The two notes below are the two shapes the real executor produces for one
+    component-bearing answer: `ActivityDelta` from `to_activity_delta`, and
+    `ActivityMessage` whose `payload` is `message_to_dict` of the same
+    AIMessage (`messages.py:54`). Both are raw.
+    """
+
+    async def respond(self, *, on_activity, **kwargs):
+        on_activity(ActivityDelta(message_id="m1", text=MCQ))
+        on_activity(
+            ActivityMessage(
+                message_id="m1",
+                kind="assistant",
+                payload={"type": "ai", "data": {"content": MCQ, "id": "m1"}},
+                is_error=False,
+            )
+        )
+        return await super().respond(**kwargs)
+
+
+async def test_no_frame_of_a_streamed_turn_carries_the_answer_key(tmp_path):
+    """The same prohibition as `..._never_reaches_the_reader`, over *every* frame.
+
+    That test cannot fail on this: its executor emits no activity, so its body
+    holds only `dialogue` and `prompt` frames. This one drives an executor that
+    streams, and asserts across the whole body -- so it covers the `delta` and
+    `message` frames the reply route emits from raw model prose.
+
+    **Measured red before the fix**, on 2026-08-17: without the suppression in
+    `_socratic_frame` the body carried the fence twice, once in a `delta` frame
+    and once inside an assistant `message` payload, ahead of a `prompt` frame
+    that withheld the key correctly. It would pass again the moment either
+    frame type is re-admitted to this stream.
+    """
+    application, client = await _app(tmp_path, StreamingStubExecutor())
+    try:
+        async with client as http:
+            project_id = await _project(http)
+            started = await http.post(
+                f"/api/projects/{project_id}/dialogues", json={"topic": "t"}
+            )
+            dialogue_id = started.json()["dialogueId"]
+            streamed = await http.post(
+                f"/api/projects/{project_id}/dialogues/{dialogue_id}/reply",
+                json={"reply": "not sure"},
+            )
+            assert streamed.status_code == 200, streamed.text
+            body = streamed.text
+
+        # The question still arrives -- otherwise the absences below are the
+        # absence of the whole turn rather than of the key.
+        assert "council-1" in body
+        assert "correct: true" not in body, "a frame ships the fence's answer key"
+        assert '"correct": true' not in body, "a frame ships the key as JSON"
+        assert "```component:" not in body, "a frame ships the raw component source"
+        # The liveness signal survives the redaction: the console plan folds
+        # over `delta` frames for a "composing" indicator and ignores their
+        # text, so an emptied frame is still a frame and a dropped one is not.
+        frames = [
+            json.loads(line[len("data: ") :])
+            for line in body.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert [f for f in frames if f["type"] == "delta"] == [
+            {"type": "delta", "message_id": "m1", "text": ""}
+        ]
     finally:
         await application.close()
