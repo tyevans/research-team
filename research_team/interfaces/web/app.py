@@ -32,6 +32,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, field_validator
+from starlette.datastructures import Headers
 
 from research_team.application import (
     ApprovalDecision,
@@ -131,6 +132,7 @@ from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.event_store import KNOWLEDGE_CATEGORIES
+from research_team.infrastructure.persistence.interaction_log import ENVELOPE_FIELDS
 from research_team.infrastructure.persistence.read_models import (
     AskConversationRunner,
     MediaProposalRow,
@@ -640,6 +642,71 @@ timer flush without rejecting a batch that is merely unlucky.
 """
 
 
+INTERACTION_BODY_LIMIT_BYTES = 2_000_000
+"""Most bytes one interaction POST may declare.
+
+Comfortably above what a full legitimate batch can be -- 200 events, each
+bounded by `QUERY_TEXT_MAX_LENGTH` plus an envelope of ids, is under a
+megabyte -- so this never rejects a batch the client would actually build.
+Deliberately loose for that reason: a cap tight enough to be interesting is a
+cap that silently loses real batches, and the per-field bounds are what
+actually make the data small. This one exists to stop a body that is large
+before anything can be validated, which per-event checks cannot do.
+"""
+
+
+class _InteractionBodyCap:
+    """Refuse an oversized interaction batch before its body is read.
+
+    The design promised "200 events per batch, and a body-size cap" and only
+    the first shipped. The per-field bounds now make a *well-formed* batch
+    small, so this is not what stops the ordinary case -- it stops a body that
+    is large before anything has looked at its contents, which is the one
+    thing per-event validation structurally cannot do: FastAPI reads the whole
+    body before the route function runs.
+
+    **Raw ASGI rather than `@app.middleware("http")`, and that is a measured
+    constraint rather than a style preference.** The decorator wraps every
+    request in Starlette's `BaseHTTPMiddleware`, which runs the endpoint
+    inside its own anyio task group; that broke four tests in
+    `tests/interfaces/test_extraction_routes.py` -- queueing answered
+    `queued: false` and cancelling reported `cancelled: 0`, because the
+    extraction routes' fire-and-forget work no longer outlived the response.
+    Those four passed with the decorator removed and nothing else changed. A
+    plain ASGI callable adds no task group and leaves every other route's
+    execution exactly as it was.
+
+    `Content-Length` rather than counting the stream: both delivery paths send
+    a `Blob` of known size, so the header is always present from our own
+    client, and a chunked request without one falls through to the batch limit
+    and the field bounds -- the same defence one layer in, which is enough on
+    a local port and cheaper than buffering-while-counting here.
+
+    Scoped to the one path: every other route has its own size story (document
+    upload is the obvious one) and must not inherit a cap chosen for
+    telemetry.
+    """
+
+    def __init__(self, app) -> None:
+        self._app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http" and scope.get("path") == "/api/interactions":
+            declared = Headers(scope=scope).get("content-length")
+            if (
+                declared is not None
+                and declared.isdigit()
+                and int(declared) > INTERACTION_BODY_LIMIT_BYTES
+            ):
+                response = JSONResponse(
+                    status_code=413,
+                    content={"detail": "the interaction batch is too large"},
+                )
+                await response(scope, receive, send)
+                return
+        await self._app(scope, receive, send)
+
+
 class InteractionEnvelope(BaseModel):
     """One reported interaction, as the browser sends it.
 
@@ -801,6 +868,8 @@ def create_app(
     offers for that.
     """
     app = FastAPI(title="research-team", docs_url="/api/docs", lifespan=lifespan)
+
+    app.add_middleware(_InteractionBodyCap)
 
     # Strong references for `accept_media_proposal`'s fire-and-forget worker
     # runs (Task 11b). `asyncio.create_task` only *weakly* holds its task --
@@ -1735,28 +1804,27 @@ def create_app(
 
     _interaction_kinds = {event_type.__name__: event_type for event_type in INTERACTION_EVENTS}
 
-    _INTERACTION_ENVELOPE_KEYS = frozenset(
-        {
-            "aggregate_id",
-            "install_id",
-            "seq",
-            "view",
-            "occurred_at",
-            "project_id",
-            "session_id",
-            "received_at",
-        }
-    )
-    """The keyword arguments the route itself supplies to every event
-    constructor below. `envelope.payload` is splatted alongside them, and a
-    payload that happens to carry one of these names collides with the
-    explicit keyword -- not a `ValidationError` but a `TypeError` ("got
-    multiple values for keyword argument"), which the route's per-event
-    try/except does not catch, so it used to escape the loop and 500 the
-    whole batch. Checked explicitly, before the call, rather than widening
-    the `except`: the envelope's own values must never be reachable from
-    payload content in the first place, whether or not the exception type
-    happens to line up.
+    _INTERACTION_ENVELOPE_KEYS = ENVELOPE_FIELDS
+    """Every field the event envelopes own, imported rather than listed.
+
+    `envelope.payload` is splatted onto the constructor alongside the keyword
+    arguments the route supplies, so a payload key that names an envelope
+    field is either a `TypeError` ("got multiple values for keyword
+    argument") for the eight the route passes explicitly, or -- far worse --
+    a silent write for the nine it does not. `actor_id`, `tenant_id`,
+    `causation_id` and `metadata` are free-form on `DomainEvent`, so a
+    payload carrying one wrote arbitrary user text into the store, *outside*
+    `TEXT_BEARING_FIELDS`, and `row_for` then stripped it back out of the
+    row -- leaving it only in the `events` blob, the one place someone
+    inspecting the log by hand would not look. `aggregate_type` could also be
+    set to disagree with the `StreamId` the recorder appends under.
+
+    Derived from the models rather than hand-picked because the hand-picked
+    version is exactly the defect above: this branch shipped with eight of
+    the seventeen named. `ENVELOPE_FIELDS` is the same expression the
+    projection uses to strip these keys out of a stored payload, so the two
+    directions cannot drift apart. Nothing legitimate collides -- payload
+    fields are kind-specific (`params`, `dwell_ms`, `query_text`, ...).
     """
 
     @app.post("/api/interactions")

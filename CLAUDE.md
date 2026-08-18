@@ -373,6 +373,24 @@ dev-only — which is exactly what makes this invisible: it degrades only the
 one environment where a person would hand-verify the feature by watching it
 run.
 
+## Web middleware
+
+**`@app.middleware("http")` breaks the routes that hand work to a background
+task, and the failure names nothing about middleware.** The decorator is
+Starlette's `BaseHTTPMiddleware`, which runs the endpoint inside its own anyio
+task group, and the routes here that schedule fire-and-forget work no longer
+have it outlive the response. Measured on 2026-08-17: adding one
+content-length check with that decorator turned four passing tests in
+`tests/interfaces/test_extraction_routes.py` red -- queueing answered
+`queued: false`, cancelling reported `cancelled: 0` -- and all four passed
+again with the decorator removed and nothing else changed. Nothing in either
+failure mentions middleware, and the route being wrapped was not one of the
+four.
+
+Write a plain ASGI callable and `app.add_middleware(...)` it instead;
+`_InteractionBodyCap` in `interfaces/web/app.py` is the worked example. It
+adds no task group and leaves every other route's execution exactly as it was.
+
 ## Comments and commit messages
 
 The standard here is higher than most repositories and is worth matching.

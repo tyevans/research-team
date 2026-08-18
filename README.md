@@ -110,14 +110,28 @@ what it turns on is worth reading before turning it off.** The React console
 records what a user does — navigation, dwell (with hidden tab time counted
 separately), and semantic actions like search and approval decisions — and
 POSTs it to a second, separate event store from the one holding sessions.
-**`AskSubmitted` carries the research prompt itself: whatever text someone
-typed to ask the agent something.** That is the most sensitive field in the
-system, logged by default. Setting `AGENT_INTERACTION_LOG=0` removes the
-dependency entirely, and the ingest route then answers 503 rather than
-silently accepting and discarding — the same "unset means the route is not
-there" pattern `AGENT_RESEARCH_RUN` uses. The log has no reader today: no
-read API, no browser view, nothing consumes it yet. It exists to build a real
-corpus before later work designs friction detection against it.
+**Two fields carry text the user typed, and nothing else in the vocabulary
+does: `AskSubmitted.query_text` — the research prompt itself, whatever someone
+typed to ask the agent something — and `SearchPerformed.query_text`, every
+entity search run in the console.** The first is the most sensitive field in
+the system, and both are logged by default. Everything else is structure: ids,
+view names, counts and durations, with a zero-result search recorded as its
+length rather than its text. Each of the two is truncated at 4,000 characters
+— roughly 700 words — so a document pasted into the ask box is stored as its
+opening rather than in full.
+
+Setting `AGENT_INTERACTION_LOG=0` removes the dependency entirely, and the
+ingest route then answers 503 rather than silently accepting and discarding —
+the same "unset means the route is not there" pattern `AGENT_RESEARCH_RUN`
+uses. It stops collection, not the file: `interactions.db` is still created
+and its schema applied, so the database existing is not evidence that the
+switch failed. **The remedy for data already collected is deleting that file**
+— `rm ~/.research-team/interactions.db`. Nothing reads it back and nothing
+migrates it, which is what makes deleting it safe.
+
+The log has no reader today: no read API, no browser view, nothing consumes it
+yet. It exists to build a real corpus before later work designs friction
+detection against it.
 
 **[`docs/configuration.md`](docs/configuration.md) has the rest** — the graph,
 vector and chunk stores, embeddings, Neo4j and pgvector, tracing, and the two
