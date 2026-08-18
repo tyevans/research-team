@@ -11,6 +11,7 @@ import random
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -76,6 +77,7 @@ from research_team.application.prompts import (
     prompting_for,
 )
 from research_team.application.session_service import NO_SEARCH_CLAUSE
+from research_team.application.socratic import DialogueRegistry, SocraticDialogueService
 from research_team.application.stage_exit import (
     findings_path,
     gate_context,
@@ -179,12 +181,16 @@ from research_team.infrastructure.persistence.check_telemetry_reader import (
 )
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.definition_cache import ProjectDefinitionCache
+from research_team.infrastructure.persistence.event_store import (
+    build_socratic_dialogue_repository,
+)
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
 from research_team.infrastructure.persistence.read_models import (
     AskConversationRunner,
     EntityDefinitionRunner,
     MediaProposalRunner,
     OntologyRunner,
+    SocraticDialogueRunner,
 )
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.telemetry import build_tracer
@@ -459,6 +465,25 @@ class Application:
     make "the answer was given" and "the answer was recorded" the same
     assertion, and they are exactly the pair this feature needs kept apart."""
 
+    socratic: SocraticDialogueService
+    """Guided dialogues: framing a topic, and answering a reply with a question.
+
+    A field beside `ask` and for its reason -- it is composed from this build's
+    stores and no caller could assemble it. Its executor is
+    `_UnbuiltSocraticExecutor` until Plan 2 lands the prompted agent, so
+    `begin` and `respond` raise `NotImplementedError` at call time; everything
+    behind them -- the repository, the registry, and the read-through
+    resumption path -- is the real thing."""
+
+    dialogues: SocraticDialogueRunner
+    """The read side of dialogues: a project's dialogues, one dialogue with its
+    turns. Idle until `start()`.
+
+    A field for `asks`'s reason, and it carries one more job than `asks` does:
+    `socratic` above reads *through* this when the live registry has dropped a
+    dialogue, so this is not only the history surface but the whole of
+    resumption. The two must never be collapsed into one object."""
+
     document_extractor: DocumentExtractor
     """Extracts a stored document into its project's graph, without re-fetching.
 
@@ -640,6 +665,7 @@ class Application:
         # land on a projection still mid-replay either.
         self._sweep.append(asyncio.create_task(self._sweep_reconciliation()))
         await self.asks.start()
+        await self.dialogues.start()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
@@ -803,6 +829,7 @@ class Application:
         await self.ontology.stop()
         await self.media_proposals.stop()
         await self.asks.stop()
+        await self.dialogues.stop()
         await self.service.close()
         # Unconditional, whether this client was built here or handed in by a
         # test: whoever built it, `Application` owns it for its lifetime, and
@@ -869,6 +896,26 @@ def _extraction_model(injected: BaseChatModel | None) -> BaseChatModel:
     alone; only extraction is measured to be better off not reasoning.
     """
     return injected if injected is not None else build_extraction_model()
+
+
+class _UnbuiltSocraticExecutor:
+    """A placeholder until Plan 2 builds the real one.
+
+    Raises rather than returning a canned reply, and raises at *call* time
+    rather than at composition: composing must succeed so the runner, the
+    service and the history routes are all reachable and testable now, and a
+    caller that actually tries to hold a dialogue must be told plainly rather
+    than handed a stub answer that looks like a model's.
+
+    Delete this class in Plan 2. `grep _UnbuiltSocraticExecutor` is how you
+    find every line that has to change.
+    """
+
+    async def frame(self, *, project_id, topic):
+        raise NotImplementedError("the socratic executor is not built yet")
+
+    async def respond(self, **_kwargs):
+        raise NotImplementedError("the socratic executor is not built yet")
 
 
 def build_application(
@@ -1113,6 +1160,15 @@ def build_application(
     # answers 200 with an empty history for every conversation anyone ever
     # had, and nothing anywhere raises.
     asks = AskConversationRunner(
+        repository.store, resolved_path, repository.publisher, resolved_tracer
+    )
+    # The ninth, built here with the other eight and for the same reason, with
+    # a worse failure mode than any of them: a dialogue appends whether or not
+    # anything is following, so a build missing this line answers 200 with an
+    # empty history for every dialogue anyone ever held -- AND makes every
+    # resumed dialogue start over with a blank goal while telling the reader it
+    # continued. `test_a_dialogue_survives_a_restart.py` is what fails.
+    dialogues = SocraticDialogueRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
 
@@ -1938,6 +1994,24 @@ def build_application(
         transcripts=build_ask_conversation_repository(repository.store, repository.publisher),
     )
 
+    # Built here for `ask_service`'s reason. The executor is a placeholder --
+    # see `_UnbuiltSocraticExecutor` -- because the prompted agent is a
+    # separate slice; everything else about a dialogue is composed and
+    # reachable now, which is what lets the read model and the resumption path
+    # be tested against a build the composition root actually made.
+    #
+    # `read_model=dialogues` is the whole of resumption's wiring, and it is one
+    # keyword. A build that passed something else here -- or nothing -- would
+    # compose, serve, and start every resumed dialogue over.
+    socratic_service = SocraticDialogueService(
+        executor=_UnbuiltSocraticExecutor(),
+        dialogues=DialogueRegistry(now=time.monotonic),
+        read_model=dialogues,
+        now=time.monotonic,
+        transcripts=build_socratic_dialogue_repository(repository.store, repository.publisher),
+        clock=lambda: datetime.now(UTC),
+    )
+
     # Built here for `ask_service`'s reason, and it is the same reason: this
     # needs the `open_graph` closure above, which is assembled from this
     # build's stores and cannot be reached from anywhere a caller could stand.
@@ -2321,6 +2395,8 @@ def build_application(
         grants=resolved_grants,
         ask=ask_service,
         asks=asks,
+        socratic=socratic_service,
+        dialogues=dialogues,
         document_extractor=document_extractor,
         editor=editor,
         perception=resolved_perception,
