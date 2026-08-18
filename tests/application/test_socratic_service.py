@@ -19,6 +19,7 @@ from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
 from research_team.application.socratic import (
+    DialogueConcluded,
     DialogueInFlight,
     DialogueRegistry,
     LiveDialogue,
@@ -27,7 +28,6 @@ from research_team.application.socratic import (
     SocraticFraming,
     SocraticObservation,
     SocraticPrompt,
-    UnknownDialogue,
 )
 from research_team.domain.socratic_dialogue import (
     SocraticDialogue,
@@ -285,9 +285,14 @@ async def test_a_concluded_dialogue_is_refused_before_the_model_is_called(
     dialogue is safe either way, and that is why this is not the resumption
     file's business. What `decide` cannot do is refuse it *before* the executor
     has been paid for. The executor here raises if it is called at all, so the
-    exception type is the assertion: `UnknownDialogue` means the refusal
+    exception type is the assertion: `DialogueConcluded` means the refusal
     happened at the read model, and `RuntimeError` would mean the model ran
     first and the aggregate cleaned up after.
+
+    The narrower type, not its `UnknownDialogue` base, and that is the whole
+    point of the split: the base would pass just as well against a `_resume`
+    that had lost the concluded branch and was failing to find the row at all,
+    which is the same refusal for the wrong reason.
 
     Red against a `_resume` with the `status == "concluded"` branch deleted --
     checked by deleting it, and this raised RuntimeError.
@@ -306,7 +311,7 @@ async def test_a_concluded_dialogue_is_refused_before_the_model_is_called(
         ),
     )
 
-    with pytest.raises(UnknownDialogue):
+    with pytest.raises(DialogueConcluded):
         await drain(
             service.respond(
                 project_id=PROJECT_ID, dialogue_id=dialogue_id, reply="one more thing"

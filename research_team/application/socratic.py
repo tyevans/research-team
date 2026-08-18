@@ -131,9 +131,30 @@ class UnknownDialogue(LookupError):
     """No dialogue by that id in that project -- or one that has concluded.
 
     A refusal rather than a fresh start. The three cases it covers are set out
-    on `SocraticDialogueService._resume`; they are one exception because a
-    caller has the same move for all three and telling them apart would tell a
-    prober which ids exist.
+    on `SocraticDialogueService._resume`. Two of them -- a guessed id and
+    another project's -- stay one exception on purpose, because a caller has
+    the same move for both and telling them apart would tell a prober which
+    ids exist.
+
+    The third no longer shares that move: see `DialogueConcluded`, which is a
+    subclass so this arm still catches it.
+    """
+
+
+class DialogueConcluded(UnknownDialogue):
+    """This dialogue exists, belongs to this project, and has finished.
+
+    A subclass, not a sibling, so every existing `except UnknownDialogue` keeps
+    catching it and no call site changes behaviour silently when a dialogue
+    starts being able to conclude. That is deliberate and it has a cost: a
+    caller that wants the narrower case must order its `except` arms with this
+    one *first*, or the broader arm swallows it and the code reads as working.
+    `reply_to_dialogue` is the one caller that does, and
+    `test_replying_to_a_concluded_dialogue_says_it_finished_not_that_it_is_missing`
+    is what fails -- with a 404 -- if the arms are ever swapped back.
+
+    Why it is worth the cost: a concluded dialogue is the reader's own and its
+    history is still stored. Reporting it as absent says the opposite.
     """
 
 
@@ -582,7 +603,10 @@ class SocraticDialogueService:
           line of defence -- exactly as `ConversationRegistry.get`'s project
           check is for an ask.
         * a concluded dialogue. `decide` would refuse the turn anyway, but only
-          after the model had been called and paid for.
+          after the model had been called and paid for. Refused as
+          `DialogueConcluded` -- a subclass, so this bullet is still one of
+          three `UnknownDialogue` cases, but a caller that can say something
+          more useful than "missing" is able to.
 
         The turns are folded back into `messages` in stored `position` order,
         which is why `SocraticTurnRow.position` is a column rather than
@@ -613,7 +637,7 @@ class SocraticDialogueService:
         # without the column reads as "not concluded", which is what a dialogue
         # written before conclusions existed in fact was.
         if getattr(row, "status", "started") == "concluded":
-            raise UnknownDialogue(f"dialogue {dialogue_id} has already concluded")
+            raise DialogueConcluded(f"dialogue {dialogue_id} has already concluded")
         messages: list[DialogueMessage] = []
         if row.opening_prompt:
             messages.append(DialogueMessage(role="assistant", text=row.opening_prompt))

@@ -44,7 +44,10 @@ class StubExecutor:
         # `is not None`, never `or`: an empty list is a legitimate argument and
         # `or` would silently substitute the default. Plan 1 was bitten by this
         # twice, once fatally -- see `DialogueRegistry.__bool__`.
-        self._prompts = (
+        # Public, because a test that needs a *particular* next prompt (a
+        # concluding one, say) reassigns it after the fixture has built the
+        # stub: `stub.prompts = [...]`.
+        self.prompts = (
             list(prompts) if prompts is not None else [SocraticPrompt(prompt="Why?")]
         )
         self.calls: list[dict] = []
@@ -60,7 +63,7 @@ class StubExecutor:
         self, *, project_id, history, goal, stopping_condition, reply, on_activity
     ):
         self.calls.append({"reply": reply, "goal": goal, "history": len(history)})
-        return self._prompts.pop(0)
+        return self.prompts.pop(0)
 
 
 @pytest.fixture
@@ -230,9 +233,12 @@ async def test_a_component_in_a_question_arrives_parsed_and_withheld(tmp_path):
 
 
 async def test_a_dialogue_that_does_not_exist_is_a_404_not_a_new_one(client):
-    """`UnknownDialogue` covers a guessed id, a stale one and a concluded one,
-    and all three are 404 -- telling a caller that an id they cannot use does
-    exist is the distinction not worth drawing.
+    """The other half of the split this file's concluded-dialogue test makes,
+    so that split cannot be implemented by turning every refusal into a 409. A
+    guessed id must stay indistinguishable from another project's: confirming
+    that an id a caller cannot use does exist tells a prober which ids exist.
+    A concluded dialogue is the case where that reasoning stops applying, and
+    it is the only one that moved.
 
     404 and not a stream carrying an error frame: this is raised by `_resume`
     before any note is yielded, so it can still be a status code, which is the
@@ -373,3 +379,47 @@ async def test_an_unconfigured_build_says_so_rather_than_answering(tmp_path):
             assert response.status_code == 503, response.text
     finally:
         await application.close()
+
+
+async def test_replying_to_a_concluded_dialogue_says_it_finished_not_that_it_is_missing(
+    client,
+):
+    """A defect this feature *creates*, fixed in the slice that creates it.
+
+    `_resume` raised `UnknownDialogue` for a concluded dialogue and the route
+    turned that into 404 "no dialogue ... in project". That branch could not
+    fire before this plan -- nothing could conclude -- so the wrong status was
+    free.
+
+    It is not free now. A reader who finishes a dialogue, refreshes, and types
+    is told it does not exist, when it exists and it finished. 404 and 409 are
+    a character apart in a log and say opposite things about whether the
+    reader's own history is still there.
+
+    409 rather than 410: the dialogue is not gone, it is in a state that
+    refuses this request -- the same status `post_dialogue_attempt` already
+    answers for an attempt against a concluded dialogue, so the page has one
+    rule for both.
+
+    `forget` drops the cache entry so the second reply takes the read-through
+    path, which is where the refusal lives; without it the cached
+    `LiveDialogue` is returned and the concluded row is never read. Measured
+    red against the route before `DialogueConcluded` existed: 404, not 409.
+    """
+    http, application, stub = client
+    project_id = await _project(http)
+    started = await http.post(f"/api/projects/{project_id}/dialogues", json={"topic": "t"})
+    dialogue_id = started.json()["dialogueId"]
+    stub.prompts = [SocraticPrompt(prompt="", concluded=True)]
+    await http.post(
+        f"/api/projects/{project_id}/dialogues/{dialogue_id}/reply", json={"reply": "done"}
+    )
+    application.socratic.forget(UUID(dialogue_id))
+    await application.dialogues.caught_up()
+
+    response = await http.post(
+        f"/api/projects/{project_id}/dialogues/{dialogue_id}/reply", json={"reply": "more?"}
+    )
+
+    assert response.status_code == 409, response.text
+    assert "concluded" in response.json()["detail"]

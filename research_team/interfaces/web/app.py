@@ -86,6 +86,7 @@ from research_team.application.perception import (
 from research_team.application.ports import ActivityDelta, ActivityMessage, ActivityRemark
 from research_team.application.project_graphs import ProjectGraphs
 from research_team.application.socratic import (
+    DialogueConcluded,
     DialogueInFlight,
     SocraticDialogueOpened,
     SocraticDialogueService,
@@ -3316,8 +3317,14 @@ def create_app(
         The same two-stage shape as `ask_project`, and for the same reason: the
         first note is pulled before the response begins so that the failures
         which can still be a status code -- 404 for an unknown dialogue, 409 for
-        one already running -- are status codes rather than error frames the
-        page has to special-case.
+        one already running or already concluded -- are status codes rather
+        than error frames the page has to special-case.
+
+        A concluded dialogue is a 409 rather than a 404, which is a distinction
+        this route used to argue was not worth drawing. It was not, while
+        nothing could conclude. It is now: a concluded dialogue is the reader's
+        *own*, and their whole history is still stored under that id, so
+        answering "no dialogue in project" says the opposite of what happened.
         """
         if socratic is None:
             raise HTTPException(status_code=503, detail="dialogues are not configured")
@@ -3330,10 +3337,23 @@ def create_app(
         failed: Exception | None = None
         try:
             first = await anext(notes)
+        except DialogueConcluded as finished:
+            # 409 and not 404: the dialogue exists and belongs to this reader,
+            # and it is in a state that refuses this request. The same status
+            # `post_dialogue_attempt` answers for an attempt against a
+            # concluded dialogue, so a page has one rule for both.
+            #
+            # Ordered above `UnknownDialogue` because it is a subclass -- the
+            # broader arm would otherwise swallow it and this reads as working.
+            # Measured, not reasoned: swapping the two arms turns
+            # `test_replying_to_a_concluded_dialogue_says_it_finished_not_that_it_is_missing`
+            # back into a 404.
+            raise HTTPException(status_code=409, detail=str(finished)) from finished
         except UnknownDialogue as missing:
-            # Covers a guessed id, a stale one, and a concluded one. All 404:
-            # telling a caller that an id they cannot use does exist is the
-            # distinction not worth drawing.
+            # A guessed id and another project's id are both 404 and stay
+            # indistinguishable: confirming that an id a caller cannot use does
+            # exist tells a prober which ids exist, and that is a distinction
+            # not worth drawing.
             raise HTTPException(status_code=404, detail=str(missing)) from missing
         except DialogueInFlight as busy:
             raise HTTPException(status_code=409, detail=str(busy)) from busy
