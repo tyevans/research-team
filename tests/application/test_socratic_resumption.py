@@ -378,3 +378,68 @@ async def test_a_dialogue_is_not_resumable_from_another_project(transcripts):
         await drain(
             service.respond(project_id=uuid4(), dialogue_id=dialogue_id, reply="hello?")
         )
+
+
+class EmptyFramingExecutor(RecordingExecutor):
+    """Frames with no opening question at all.
+
+    Not a contrived shape: `SocraticDialogueStarted` explicitly permits an
+    empty `opening_prompt` (it is defaulted for streams written before the
+    field existed), `_resume` guards on it, and Plan 2's real executor can
+    return one.
+    """
+
+    async def frame(self, *, project_id, topic):
+        from research_team.application.socratic import SocraticFraming
+
+        self.calls.append({"kind": "frame", "topic": topic})
+        return SocraticFraming(
+            goal=f"understand {topic}", stopping_condition="s", opening_prompt=""
+        )
+
+
+async def test_both_paths_build_the_same_history_when_there_is_no_opening_prompt(
+    transcripts,
+):
+    """`begin` and `_resume` must agree, and only an empty prompt separates them.
+
+    Red against a `begin` that seeds `messages` unconditionally: the live path
+    hands the executor `[("assistant", "")]` and the resumed path hands it
+    `[]`. Nothing raises and no grading key collides -- `position` is
+    `1 // 2 == 0 // 2 == 0` either way -- so the ONLY divergence is the model's
+    input, which is why this asserts on the history rather than on any outcome,
+    and why Plan 2's real executor is where it would have bitten: answers that
+    change after an eviction, attributable to nothing.
+
+    Chosen for the property that distinguishes the two paths (an empty opening
+    prompt) rather than for a representative dialogue: with a non-empty prompt
+    the paths agree and this test would pass against the defect.
+    """
+    from research_team.application.socratic import DialogueRegistry
+
+    live_executor = EmptyFramingExecutor(["Why?"])
+    live = build(live_executor, transcripts, StubReadModel())
+    live_id = await live.begin(project_id=PROJECT_ID, topic="Arianism")
+    await drain(live.respond(project_id=PROJECT_ID, dialogue_id=live_id, reply="hello"))
+
+    resumed_executor = EmptyFramingExecutor(["Why?"])
+    read_model = StubReadModel()
+    registry = DialogueRegistry(now=lambda: 0.0)
+    resumed = build(resumed_executor, transcripts, read_model, registry)
+    resumed_id = await resumed.begin(project_id=PROJECT_ID, topic="Arianism")
+    read_model.add(
+        resumed_id,
+        project_id=PROJECT_ID,
+        goal="understand Arianism",
+        stopping_condition="s",
+        status="started",
+        opening_prompt="",
+    )
+    read_model.answered(resumed_id)
+    # An hour passes before the reader's first answer, which is the whole of
+    # the difference between the two dialogues.
+    registry.drop(resumed_id)
+    await drain(resumed.respond(project_id=PROJECT_ID, dialogue_id=resumed_id, reply="hello"))
+
+    assert live_executor.calls[-1]["history"] == resumed_executor.calls[-1]["history"]
+    assert live_executor.calls[-1]["history"] == []

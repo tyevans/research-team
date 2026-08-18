@@ -336,7 +336,23 @@ class SocraticDialogueService:
                 project_id=project_id,
                 goal=framing.goal,
                 stopping_condition=framing.stopping_condition,
-                messages=(DialogueMessage(role="assistant", text=framing.opening_prompt),),
+                # Guarded exactly as `_resume` guards it, and the two must
+                # agree: `SocraticDialogueStarted` permits an empty
+                # `opening_prompt` (older streams predate the field), and a
+                # framing may return one. Unconditional, the live path handed
+                # the executor a history opening with an EMPTY assistant
+                # utterance while the resumed path omitted it -- the same
+                # dialogue, two different model inputs, differing only after an
+                # eviction. `position` survives either way (`1//2 == 0//2`), so
+                # no grading key collides and nothing raises; what changes is
+                # only the model's answers, which is why Plan 2's real executor
+                # is where this would have bitten and where it would have been
+                # unattributable.
+                messages=(
+                    (DialogueMessage(role="assistant", text=framing.opening_prompt),)
+                    if framing.opening_prompt
+                    else ()
+                ),
                 used_at=self._now(),
             )
         )

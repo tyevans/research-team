@@ -154,6 +154,31 @@ precondition with a `sleep` and failed against correct code. The tell was
 direction: it failed in a way load could not explain. If the failure does not
 fit the story you are telling about it, the story is wrong.
 
+**A formula correct on every case a test naturally reaches is
+indistinguishable from one that is correct.** `SocraticPrompt.position` was
+written as `(len(history) - 1) // 2` where the ask uses `len(history) // 2`,
+and the reasoning was sound: a dialogue's history opens with an unanswered
+question, where an ask's is pairs. The two formulas **agree exactly on every
+odd-length history** -- and with the opening question present the history is
+odd before every turn, which is every case anyone would think to write down.
+They differ only on an even history, which happens when `opening_prompt` is
+empty, a case schema evolution explicitly permits for streams written before
+the field existed. There the deviation numbers the second exchange as the
+first, collides with the first turn's grading key, and marks a reader against
+a component they were never shown.
+
+The first draft of the test used two turns of one ordinary dialogue. It passed
+under both formulas and proved nothing, and it looked like the most obvious
+test in the file. The defect shipped through a full review round on 2026-08-17
+and was caught by comparing the two formulas rather than by any test.
+
+**The general rule: when a test's inputs and the formula's branches are chosen
+by the same person in the same hour, the test tends to sample the cases the
+formula already handles.** Parametrise over the property that *distinguishes*
+the candidate formulas -- here, history parity -- and not over what looks like
+a representative example. If you cannot say which input would separate your
+formula from the one you rejected, you have not tested the choice you made.
+
 ## Read models
 
 **A read-model change verified only against a fresh database is unverified.**

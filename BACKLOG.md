@@ -505,6 +505,83 @@ not one: an empty table taking the recreate, and the same model against a table
 with one row taking the raise. Flagged by the task that introduced the branch
 (`docs/reports/adopt-0140-task2.md`) rather than found later.
 
+### B110. `ConversationRegistry` carries the falsy-collaborator hazard `DialogueRegistry` closed
+
+`research_team/application/ask.py`. `DialogueRegistry` was given a
+`__bool__ -> True` on the socratic-dialogue work for a reason that applies
+verbatim here: both classes define `__len__`, so an **empty** instance is
+falsy, and any call site defaulting one with `registry or SomeDefault()`
+silently throws the caller's object away and substitutes a different one. The
+registry handed in at construction time is always empty, which is exactly when
+the bug fires.
+
+Measured on 2026-08-17, in the dialogue's case: with `or` in the test helper,
+`test_an_evicted_dialogue_resumes_on_the_same_stream` passed against a
+deliberately broken `DialogueRegistry.get` — the whole feature broken, the one
+test that existed to catch it green, because the service was holding a private
+registry that the test's `drop` never touched.
+
+Left alone on the ask deliberately, and the difference is the consequence, not
+the mechanism. A dialogue that quietly starts over is a correctness bug: the
+reader believes they are continuing toward a goal that the service has
+forgotten. An ask that quietly starts over loses a chat — annoying, visible to
+the reader, and not wrong about anything.
+
+The fix is the same three lines as `DialogueRegistry`'s: a `__bool__` returning
+`True` with a comment saying why an empty registry must not be falsy. Cheap
+enough that the only reason not to do it now is that it touches a surface
+Plan 1 had no business touching.
+
+### B111. A dropped `@handles` on either runner reports as a 10-second timeout, not a missing row
+
+Affects `SocraticDialogueRunner`
+(`research_team/infrastructure/persistence/read_models.py:3717`) and
+`AskConversationRunner` alike. Both wait on a `caught_up` helper, and both
+build their subscription with a `SubscriptionConfig` that leaves
+`event_types=None` — so `EventFilter.from_subscriber` derives the filter from
+the projection's `@handles` set. Remove a handler and the event is filtered out
+*before delivery*: the subscription never advances past it, `caught_up` never
+returns, and the failure surfaces as a bare 10-second `TimeoutError` naming the
+helper. Nothing names the missing handler, and nothing says a row is absent.
+
+Measured on 2026-08-17, by deleting a handler and reading what came back.
+
+Neither runner was diverged for it, and that is the deferral: making the two
+report differently would mean either enumerating `event_types` explicitly (a
+second list to keep in step with `@handles`, which is the thing `@handles` was
+meant to be the single source of) or timing out with a message that inspects
+the subscriber — both are real work for a diagnostic, not a defect. Recorded so
+whoever meets the timeout does not spend an afternoon looking at the read model.
+
+### B112. `apply_schema`'s widening path has never run against the two dialogue tables
+
+`SocraticDialogueRow` and `SocraticTurnRow`
+(`research_team/infrastructure/persistence/read_models.py:3388`, `:3440`).
+`local_copy` was used on 2026-08-17 to prove both tables inert against a real
+checkpointed database — nothing broke, no query failed. That proof is weaker
+than it sounds: both tables are *created whole* on a database that has never
+seen them, so `apply_schema`'s reconcile branch was never entered. What was
+measured is that creation works, not that widening does.
+
+**Whoever first adds a column to either row owes that check**, against a copy of
+a real database made with
+`uv run python -m research_team.infrastructure.persistence.local_copy` and with
+its checkpoints left intact — see `CLAUDE.md` on why clearing them defeats the
+test by turning a resume into a rebuild. This is the highest-consequence item
+carried out of Plan 1: the failure mode is the one `CLAUDE.md` opens the
+read-model section with — every test green on a fresh database, every query 500
+on a real one.
+
+### B113. A composed application built with `dialogues=None` hangs rather than failing
+
+`Application.start()` calls `self.dialogues.start()`, so passing `dialogues=None`
+to the composed application should be an immediate `AttributeError`. One run on
+2026-08-17 instead hung for 12+ minutes and was killed rather than diagnosed.
+
+Unchased on purpose — it was an incidental observation during Plan 1 and no
+production path constructs an application that way. One line here so nobody
+rediscovers it under time pressure and reads the hang as their own change.
+
 ## Topics and autonomous research
 
 Added alongside the topic tracker and auto-research mode
