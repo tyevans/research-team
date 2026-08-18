@@ -1,15 +1,16 @@
 ## Pre-Compact Snapshot
-**Time**: 2026-08-17T17:29:07Z
+**Time**: 2026-08-18T12:36:28Z
 
 ### Recent Commits
-8f49608 Fix the wrong grading key, and three review findings besides
-c8ff10e Document components in an ask, and rebuild the console
-0325ce6 Render a component the model asked back
-59c04f4 Share the attempt state machine between a lesson and an ask
-7044a0f Read blocks and a position off an ask answer frame
+c805ecd File the resumed dialogue's missing conversation (B120)
+cac21ff Make a dialogue a place, so it survives being come back to
+7af7609 Let a reader see the answers the dialogue remembered, and the goal it started with (B114)
+9b7b303 Give the dialogue a place on the project
+fe54b30 Draw the dialogue in the order it happened, and grade what has a turn
 
 ### Working Tree
  M .claude/tackline/memory/sessions/pre-compact.md
+?? docs/superpowers/plans/2026-08-17-socratic-dialogue-concluding.md
 
 ### Open Questions
 (fill in before context is lost)

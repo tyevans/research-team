@@ -136,7 +136,7 @@ export const DialoguePage = ({
         // store state and does not survive a refresh, so a reader who ended a
         // dialogue and comes back is told it reached its goal. Not for want of
         // the reason on the server -- `_dialogue_view` already sends
-        // `concludedReason` (`app.py:3720`); nothing in the browser fetches one
+        // `concludedReason` (`app.py:3700`); nothing in the browser fetches one
         // dialogue whole. That is B120, and it is a client-side gap only.
         //
         // "You ended this dialogue", never "abandoned": `reason="abandoned"` is
@@ -178,8 +178,11 @@ const DialogueComposer = ({
    *  this is where the reader already is when they decide they are done, and
    *  only inside this branch because a concluded dialogue has nothing to end --
    *  a button rendered unconditionally would sit under the "reached its goal"
-   *  line and 409 on every click. The store, not this component, guards the
-   *  case where no dialogue has been started yet. */
+   *  line and 409 on every click. Also gated on `started` below -- before the
+   *  first `start` resolves there is no dialogue id, so the button offered an
+   *  action it could not take, labelled for something that did not exist yet.
+   *  The store still guards the click and its test still passes, so this is
+   *  cosmetic and would not fail a test on its own; it costs one condition. */
   onEnd: () => void
 }) => {
   const [draft, setDraft] = useState('')
@@ -222,9 +225,11 @@ const DialogueComposer = ({
               the action this surface is encouraging, and `type="button"`
               because a default-typed button inside a form submits it -- which
               here would send the draft and end the dialogue on one click. */}
-          <Button tone="quiet" type="button" onClick={onEnd}>
-            End this dialogue
-          </Button>
+          {started && (
+            <Button tone="quiet" type="button" onClick={onEnd}>
+              End this dialogue
+            </Button>
+          )}
           <Button tone="accent" type="submit" disabled={busy || !draft.trim()}>
             {started ? 'Answer' : 'Start'}
           </Button>

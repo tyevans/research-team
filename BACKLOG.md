@@ -3700,7 +3700,7 @@ the dialogue and nothing re-fetches them. The transcript is gone until they
 answer again, at which point one exchange appears with no history above it.
 
 The server half already exists: `GET /api/projects/{id}/dialogues/{dialogue_id}`
-(`app.py:3600`) serves the framing, the turns and `openingBlocks` — it is what
+(`app.py:3754`) serves the framing, the turns and `openingBlocks` — it is what
 Plan 1's Task 5 built and what Task 6 chose not to call, having decided the POST
 should return the framing instead. That decision was right for the fresh case
 and left the resumed one unserved.
@@ -3734,13 +3734,13 @@ reads `concluded` off the newest turn in the transcript (`transcript[transcript
 itself, and a resumed dialogue has no turns to read it from. The fix is this
 entry's own: the missing `read(projectId, dialogueId)` port call would also
 carry `status`, which is where `concluded` should be read from once it exists.
-No new backend work — `_dialogue_view` (`app.py:3650`) already returns `status`
+No new backend work — `_dialogue_view` (`app.py:3700`) already returns `status`
 and `concludedReason`; verified 2026-08-18, this is a client-side gap only.
 
 ### B121. Nothing ends a dialogue the reader simply walked away from
 
 After this plan, a dialogue can conclude two ways: the model judges the
-stopping condition met (`reason="met"`, `socratic.py:712`), or the reader ends
+stopping condition met (`reason="met"`, `socratic.py:746`), or the reader ends
 it deliberately (`reason="abandoned"`, Task 6). Both routes exist, both are
 tested, both reach `SocraticDialogueConcluded` on the aggregate, the
 `concluded_reason` projection column, and the reader-facing status. What

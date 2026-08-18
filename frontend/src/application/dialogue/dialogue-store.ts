@@ -97,7 +97,7 @@ export interface DialogueState {
    *
    * The cause is client-side only, and this comment said otherwise until it was
    * checked: the SERVER already carries the reason -- `_dialogue_view` sends
-   * `concludedReason` (`app.py:3720`) beside `status`. What is missing is a port
+   * `concludedReason` (`app.py:3700`) beside `status`. What is missing is a port
    * that reads one dialogue whole, so nothing in the browser ever fetches it.
    * That is B120, whose fix (`read(projectId, dialogueId)`) would seed this
    * field for free with no backend work.

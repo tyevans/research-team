@@ -531,6 +531,44 @@ async def test_ending_a_dialogue_twice_is_refused_rather_than_written_twice(clie
     assert [type(e) for e in events].count(SocraticDialogueConcluded) == 1
 
 
+async def test_ending_a_dialogue_the_projection_has_not_caught_up_to_yet_still_ends_it(
+    client, monkeypatch
+):
+    """A single projection miss must not read as "no such dialogue".
+
+    `end` is the one route a reader can reach a frame after `start` resolves,
+    and `InMemoryEventBus` dispatches synchronously today -- so the miss this
+    simulates cannot happen on this build, and the test has to force it. The
+    first `get` is made to answer `None` once; `caught_up()` is real, and the
+    retry behind it finds the row that was there all along.
+
+    Red with the `caught_up()` retry removed from `end_dialogue`: 404, and no
+    `SocraticDialogueConcluded` written. The other end tests pass either way,
+    which is why this one exists rather than an assertion added to them.
+    """
+    http, application, _stub = client
+    project_id = await _project(http)
+    started = await http.post(f"/api/projects/{project_id}/dialogues", json={"topic": "t"})
+    dialogue_id = started.json()["dialogueId"]
+
+    real_get = application.dialogues.get
+    misses = [True]
+
+    async def miss_once(wanted):
+        if misses:
+            misses.pop()
+            return None
+        return await real_get(wanted)
+
+    monkeypatch.setattr(application.dialogues, "get", miss_once)
+
+    ended = await http.post(f"/api/projects/{project_id}/dialogues/{dialogue_id}/end")
+
+    assert ended.status_code == 200, ended.text
+    events = await _events(application, UUID(dialogue_id))
+    assert type(events[-1]) is SocraticDialogueConcluded
+
+
 async def test_ending_a_dialogue_in_another_project_is_a_404(client):
     """The project check is the route's, not the command's:
     `ConcludeSocraticDialogue` carries no project id, so `decide` has nothing to

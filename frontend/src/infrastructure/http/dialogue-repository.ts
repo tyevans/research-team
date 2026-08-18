@@ -264,7 +264,7 @@ export class HttpDialogueRepository implements DialogueRepository {
 /** Every field required, defaults nowhere -- this file's opening rule, which
  *  this schema used to be the one exception to.
  *
- * `_dialogue_view` (`app.py:3644`) always sends all four, so a missing `goal`,
+ * `_dialogue_view` (`app.py:3700`) always sends all four, so a missing `goal`,
  * `stoppingCondition` or `openingBlocks` is a server-side rename and nothing
  * else. Defaulted, that rename yielded `''`, `''` and `[]` -- exactly the
  * empty framing over an empty thread that returning the framing from `start`

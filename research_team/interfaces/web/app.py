@@ -3498,6 +3498,21 @@ def create_app(
         if socratic is None or dialogues is None:
             raise HTTPException(status_code=503, detail="dialogues are not configured")
         row = await dialogues.get(dialogue_id)
+        if row is None:
+            # The same `caught_up()` retry `create_dialogue` takes, and for the
+            # same reason: `InMemoryEventBus` dispatches synchronously today, so
+            # a miss here is impossible today -- but this is the one route a
+            # reader can reach a single frame after `start` resolves, and under
+            # `background=True` a reader who ends immediately would be told the
+            # dialogue does not exist. That is the exact "it exists, it
+            # finished, your history is intact" confusion this surface spent a
+            # task correcting in the other direction. Costs one projection wait
+            # on a genuinely unknown id, which is the 404 path and not hot.
+            # `test_ending_a_dialogue_the_projection_has_not_caught_up_to_yet_still_ends_it`
+            # fails with this retry removed; the rest of the end tests pass
+            # either way, because a synchronous bus never misses.
+            await dialogues.caught_up()
+            row = await dialogues.get(dialogue_id)
         if row is None or row.project_id != project_id:
             raise HTTPException(
                 status_code=404, detail=f"no dialogue {dialogue_id} in {project_id}"
