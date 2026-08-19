@@ -910,3 +910,10 @@ export const timelineDto = z.object({
 
 export const idDto = z.object({ id: z.string() })
 export const okDto = z.unknown()
+
+/** What the ingest route answers. Read for a human with curl rather than by
+ *  this client -- the counts cannot reach the beacon path at all. */
+export const interactionReceiptDto = z.object({
+  accepted: z.number(),
+  rejected: z.number(),
+})

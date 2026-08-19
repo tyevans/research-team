@@ -31,7 +31,8 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
+from starlette.datastructures import Headers
 
 from research_team.application import (
     ApprovalDecision,
@@ -114,6 +115,7 @@ from research_team.domain import (
     SelectWorkflow,
     SessionPurpose,
 )
+from research_team.domain.interaction import INTERACTION_EVENTS, InteractionEvent
 from research_team.domain.media_proposals import (
     AcceptMediaProposal,
     IgnoreMediaAsset,
@@ -132,12 +134,14 @@ from research_team.domain.topic import (
     Topic,
     TopicStatus,
 )
+from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.timeline_reader import ProjectTimelineReader
 from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.event_store import KNOWLEDGE_CATEGORIES
+from research_team.infrastructure.persistence.interaction_log import ENVELOPE_FIELDS
 from research_team.infrastructure.persistence.read_models import (
     AskConversationRunner,
     MediaProposalRow,
@@ -642,6 +646,118 @@ class NewRun(BaseModel):
         return list(self.fetch_hosts), self.fetch_budget
 
 
+INTERACTION_BATCH_LIMIT = 200
+"""Most events one POST may carry.
+
+The client flushes at 50, so this leaves room for a page-hide flush racing a
+timer flush without rejecting a batch that is merely unlucky.
+"""
+
+
+INTERACTION_BODY_LIMIT_BYTES = 2_000_000
+"""Most bytes one interaction POST may declare.
+
+Comfortably above what a full legitimate batch can be -- 200 events, each
+bounded by `QUERY_TEXT_MAX_LENGTH` plus an envelope of ids, is under a
+megabyte -- so this never rejects a batch the client would actually build.
+Deliberately loose for that reason: a cap tight enough to be interesting is a
+cap that silently loses real batches, and the per-field bounds are what
+actually make the data small. This one exists to stop a body that is large
+before anything can be validated, which per-event checks cannot do.
+"""
+
+
+class _InteractionBodyCap:
+    """Refuse an oversized interaction batch before its body is read.
+
+    The design promised "200 events per batch, and a body-size cap" and only
+    the first shipped. The per-field bounds now make a *well-formed* batch
+    small, so this is not what stops the ordinary case -- it stops a body that
+    is large before anything has looked at its contents, which is the one
+    thing per-event validation structurally cannot do: FastAPI reads the whole
+    body before the route function runs.
+
+    **Raw ASGI rather than `@app.middleware("http")`, and that is a measured
+    constraint rather than a style preference.** The decorator wraps every
+    request in Starlette's `BaseHTTPMiddleware`, which runs the endpoint
+    inside its own anyio task group; that broke four tests in
+    `tests/interfaces/test_extraction_routes.py` -- queueing answered
+    `queued: false` and cancelling reported `cancelled: 0`, because the
+    extraction routes' fire-and-forget work no longer outlived the response.
+    Those four passed with the decorator removed and nothing else changed. A
+    plain ASGI callable adds no task group and leaves every other route's
+    execution exactly as it was.
+
+    `Content-Length` rather than counting the stream: both delivery paths send
+    a `Blob` of known size, so the header is always present from our own
+    client, and a chunked request without one falls through to the batch limit
+    and the field bounds -- the same defence one layer in, which is enough on
+    a local port and cheaper than buffering-while-counting here.
+
+    Scoped to the one path: every other route has its own size story (document
+    upload is the obvious one) and must not inherit a cap chosen for
+    telemetry.
+    """
+
+    def __init__(self, app) -> None:
+        self._app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http" and scope.get("path") == "/api/interactions":
+            declared = Headers(scope=scope).get("content-length")
+            if (
+                declared is not None
+                and declared.isdigit()
+                and int(declared) > INTERACTION_BODY_LIMIT_BYTES
+            ):
+                response = JSONResponse(
+                    status_code=413,
+                    content={"detail": "the interaction batch is too large"},
+                )
+                await response(scope, receive, send)
+                return
+        await self._app(scope, receive, send)
+
+
+class InteractionEnvelope(BaseModel):
+    """One reported interaction, as the browser sends it.
+
+    Deliberately loose about `payload`: the kind decides its shape, and the
+    domain event validates it. Validating twice would mean two vocabularies to
+    keep in step, and the second one would drift.
+    """
+
+    kind: str
+    browser_session_id: UUID
+    install_id: UUID
+    seq: int
+    view: str
+    occurred_at: datetime
+    project_id: UUID | None = None
+    session_id: UUID | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class InteractionBatch(BaseModel):
+    """One flush.
+
+    Capped rather than unbounded because this route takes unauthenticated
+    input on a local port and the body becomes rows.
+
+    `events` is `list[dict]`, not `list[InteractionEnvelope]`, on purpose:
+    FastAPI validates a typed body before the route runs, so a batch typed as
+    `list[InteractionEnvelope]` would 422 in full the moment any one envelope
+    failed schema validation -- the same whole-batch loss partial acceptance
+    exists to avoid, just moved one layer earlier where the route's own
+    try/except never gets a chance to run. Each dict is validated into an
+    `InteractionEnvelope` by hand, per-event, inside the route.
+    """
+
+    events: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=INTERACTION_BATCH_LIMIT
+    )
+
+
 class NewSeed(BaseModel):
     """What one seeding turn is asked to name topics for.
 
@@ -796,6 +912,7 @@ def create_app(
     media_accept_worker: MediaAcceptWorker | None = None,
     curation_text: MediaCurationTextPort | None = None,
     curation_search: MediaSearchPort | None = None,
+    interactions: EventStoreInteractionRecorder | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -806,6 +923,8 @@ def create_app(
     offers for that.
     """
     app = FastAPI(title="research-team", docs_url="/api/docs", lifespan=lifespan)
+
+    app.add_middleware(_InteractionBodyCap)
 
     # Strong references for `accept_media_proposal`'s fire-and-forget worker
     # runs (Task 11b). `asyncio.create_task` only *weakly* holds its task --
@@ -1737,6 +1856,104 @@ def create_app(
         await _require_project(project_id)
         reader = _topic_reader(project_id)
         return [topic_view(view) for view in await reader.list_topics()]
+
+    _interaction_kinds = {event_type.__name__: event_type for event_type in INTERACTION_EVENTS}
+
+    _INTERACTION_ENVELOPE_KEYS = ENVELOPE_FIELDS
+    """Every field the event envelopes own, imported rather than listed.
+
+    `envelope.payload` is splatted onto the constructor alongside the keyword
+    arguments the route supplies, so a payload key that names an envelope
+    field is either a `TypeError` ("got multiple values for keyword
+    argument") for the eight the route passes explicitly, or -- far worse --
+    a silent write for the nine it does not. `actor_id`, `tenant_id`,
+    `causation_id` and `metadata` are free-form on `DomainEvent`, so a
+    payload carrying one wrote arbitrary user text into the store, *outside*
+    `TEXT_BEARING_FIELDS`, and `row_for` then stripped it back out of the
+    row -- leaving it only in the `events` blob, the one place someone
+    inspecting the log by hand would not look. `aggregate_type` could also be
+    set to disagree with the `StreamId` the recorder appends under.
+
+    Derived from the models rather than hand-picked because the hand-picked
+    version is exactly the defect above: this branch shipped with eight of
+    the seventeen named. `ENVELOPE_FIELDS` is the same expression the
+    projection uses to strip these keys out of a stored payload, so the two
+    directions cannot drift apart. Nothing legitimate collides -- payload
+    fields are kind-specific (`params`, `dwell_ms`, `query_text`, ...).
+    """
+
+    @app.post("/api/interactions")
+    async def post_interactions(body: InteractionBatch):
+        """Record what the console's user did. Capture only; nothing reads
+        this back.
+
+        Answers 202 with counts rather than rejecting a batch that contains
+        one bad event. The client cannot see this response -- it is delivered
+        by `sendBeacon` on page-hide, which reports nothing -- so a
+        whole-batch rejection would silently discard the good events beside
+        the bad one. Partial acceptance loses one event instead of fifty.
+
+        The counts are returned anyway, for a human with curl.
+        """
+        if interactions is None:
+            raise HTTPException(
+                status_code=503, detail="the interaction log is not collecting"
+            )
+
+        received = datetime.now(UTC)
+        events: list[InteractionEvent] = []
+        rejected = 0
+        for raw in body.events:
+            try:
+                envelope = InteractionEnvelope.model_validate(raw)
+            except ValidationError:
+                # The envelope itself doesn't match the shape every kind
+                # shares (a missing `view`, a bad UUID). Counted alongside a
+                # bad `kind` and a bad `payload` below: see the docstring.
+                rejected += 1
+                continue
+            event_type = _interaction_kinds.get(envelope.kind)
+            if event_type is None:
+                rejected += 1
+                continue
+            if not _INTERACTION_ENVELOPE_KEYS.isdisjoint(envelope.payload):
+                # A payload carrying an envelope-owned key (e.g. `seq`)
+                # would otherwise collide with the explicit keyword below
+                # and raise `TypeError`, not `ValidationError` -- see
+                # `_INTERACTION_ENVELOPE_KEYS`. The envelope is the
+                # authority for these fields; payload content never
+                # overrides them, so the event is rejected rather than
+                # silently dropping either value.
+                rejected += 1
+                continue
+            try:
+                events.append(
+                    event_type(
+                        aggregate_id=envelope.browser_session_id,
+                        install_id=envelope.install_id,
+                        seq=envelope.seq,
+                        view=envelope.view,
+                        occurred_at=envelope.occurred_at,
+                        project_id=envelope.project_id,
+                        session_id=envelope.session_id,
+                        received_at=received,
+                        **envelope.payload,
+                    )
+                )
+            except (ValidationError, TypeError):
+                # One event's payload not matching its kind. Counted, not
+                # raised: see the docstring. `TypeError` is belt-and-braces
+                # here, not the primary defense -- the collision check above
+                # is what actually stops an envelope-owned key from reaching
+                # the constructor; this only catches whatever that check
+                # didn't anticipate.
+                rejected += 1
+
+        accepted = await interactions.record(events)
+        return JSONResponse(
+            status_code=202,
+            content={"accepted": accepted, "rejected": rejected},
+        )
 
     @app.post("/api/projects/{project_id}/topics/seed")
     async def seed_topics(project_id: UUID, body: NewSeed):

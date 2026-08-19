@@ -23,6 +23,8 @@ from uuid import UUID, uuid4
 # nothing else would have pulled redstring in.
 import httpx
 import redstring.events  # noqa: F401
+from eventsource import InMemoryEventBus
+from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.observability import Tracer
 from langchain.agents.middleware import AgentMiddleware
@@ -149,6 +151,7 @@ from research_team.infrastructure.agent.workflow_tools import (
     EndTurnOnStageAdvance,
     build_workflow_tools,
 )
+from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
 from research_team.infrastructure.knowledge.ontology_recorder import EventStoreOntologyRecorder
@@ -185,6 +188,7 @@ from research_team.infrastructure.persistence.definition_cache import ProjectDef
 from research_team.infrastructure.persistence.event_store import (
     build_socratic_dialogue_repository,
 )
+from research_team.infrastructure.persistence.interaction_log import InteractionLogRunner
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
 from research_team.infrastructure.persistence.read_models import (
     AskConversationRunner,
@@ -482,6 +486,20 @@ class Application:
     `socratic` above reads *through* this when the live registry has dropped a
     dialogue, so this is not only the history surface but the whole of
     resumption. The two must never be collapsed into one object."""
+    interaction_log: InteractionLogRunner
+    """Keeps `interaction_events` following the interaction log. Idle until
+    `start()`. Its own store, so nothing here can be ordered against the
+    domain log."""
+
+    interaction_recorder: EventStoreInteractionRecorder
+    """Where the ingest route writes. Appends and publishes; see its module
+    docstring for why the publish is not optional."""
+
+    _interaction_store: SQLiteEventStore
+    """The store `interaction_log` and `interaction_recorder` share. Held only
+    so `close()` can close it -- mirrors `_media_http_client` above: neither
+    `InteractionLogRunner.stop()` nor `EventStoreInteractionRecorder` owns the
+    connection, since composition is what opened it."""
 
     document_extractor: DocumentExtractor
     """Extracts a stored document into its project's graph, without re-fetching.
@@ -665,6 +683,7 @@ class Application:
         self._sweep.append(asyncio.create_task(self._sweep_reconciliation()))
         await self.asks.start()
         await self.dialogues.start()
+        await self.interaction_log.start()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
@@ -758,6 +777,14 @@ class Application:
         """
         await self.check_telemetry.caught_up()
 
+    async def interaction_log_caught_up(self) -> None:
+        """Wait until `interaction_events` has seen every appended event.
+
+        For tests. Nothing in production waits on this -- the browser is not
+        told when its batch landed, and could not use the answer.
+        """
+        await self.interaction_log.caught_up()
+
     async def definitions_caught_up(self) -> None:
         """Wait until the definition cache has seen every event appended.
 
@@ -829,6 +856,8 @@ class Application:
         await self.media_proposals.stop()
         await self.asks.stop()
         await self.dialogues.stop()
+        await self.interaction_log.stop()
+        await self._interaction_store.close()
         await self.service.close()
         # Unconditional, whether this client was built here or handed in by a
         # test: whoever built it, `Application` owns it for its lifetime, and
@@ -913,6 +942,7 @@ def build_application(
     activity: TurnActivityBuffer | None = None,
     perception: PerceptionPort | None = None,
     media_http_client: httpx.AsyncClient | None = None,
+    interaction_db_path: str | None = None,
 ) -> Application:
     """Wire everything over one event store.
 
@@ -956,6 +986,11 @@ def build_application(
     client, owned by this `Application` and closed in `close()`.
     """
     resolved_path = db_path if db_path is not None else config.default_db_path()
+    resolved_interaction_path = (
+        interaction_db_path
+        if interaction_db_path is not None
+        else config.interaction_db_path()
+    )
     resolved_model = model if model is not None else build_model()
     # Extraction runs on its own model, not the agent's: it is the one job
     # here that is measurably better off not reasoning first.
@@ -1150,6 +1185,25 @@ def build_application(
     dialogues = SocraticDialogueRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
+
+    # A second store, and its own bus. Not a second projection over the
+    # sessions store: `eventsource` derives a store id from the database
+    # string and every position carries it, so nothing can order a position
+    # from one against the other -- which is the boundary this feature wants
+    # rather than an obstacle to it.
+    #
+    # Its own `InMemoryEventBus` for the same reason. Handing this runner the
+    # sessions bus would give its subscription wake-ups about a log it is not
+    # reading, and that fails as silence.
+    interaction_store = SQLiteEventStore(resolved_interaction_path)
+    interaction_bus = InMemoryEventBus()
+    interaction_log = InteractionLogRunner(
+        interaction_store,
+        resolved_interaction_path,
+        interaction_bus,
+        resolved_tracer,
+    )
+    interaction_recorder = EventStoreInteractionRecorder(interaction_store, interaction_bus)
 
     async def running_workflow(
         session: Session,
@@ -2394,6 +2448,9 @@ def build_application(
         asks=asks,
         socratic=socratic_service,
         dialogues=dialogues,
+        interaction_log=interaction_log,
+        interaction_recorder=interaction_recorder,
+        _interaction_store=interaction_store,
         document_extractor=document_extractor,
         editor=editor,
         perception=resolved_perception,

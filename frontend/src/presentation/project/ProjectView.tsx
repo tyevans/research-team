@@ -201,7 +201,10 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   { id: 'timeline', label: 'Timeline' },
 ]
 
-const DEFAULT_MATERIAL: Facet = 'session'
+/** The tab a bare `#/p/<id>` opens. Exported because `App.tsx`'s
+ *  `viewNameOf` names the same facet in the interaction log, and a duplicated
+ *  literal there would go quietly wrong the day this changes. */
+export const DEFAULT_MATERIAL: Facet = 'session'
 
 /** A project, whole: one page with a sidebar and a content area, instead of two
  *  pages.

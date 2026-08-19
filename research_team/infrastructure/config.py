@@ -72,7 +72,7 @@ DEFAULT_NEO4J_USER = "neo4j"
 #: The two constants must be changed together -- drift makes a transcript
 #: truncate at a different length than a document, which is visible rather
 #: than silent, but still a bug.
-DEFAULT_PERCEPTION_MAX_CHARS = 200_000
+DEFAULT_PERCEPTION_MAX_CHARS = 500_000
 
 #: Seconds between periodic reconciliation sweeps -- see
 #: `media_reconcile_interval_seconds` below for why this number.
@@ -91,6 +91,54 @@ def default_db_path() -> str:
     path = Path.home() / ".research-team" / "sessions.db"
     path.parent.mkdir(parents=True, exist_ok=True)
     return str(path)
+
+
+def interaction_db_path() -> str:
+    """Where the interaction log lives. Its own file, not `sessions.db`.
+
+    Separate because `eventsource` derives a store id from the database string
+    and every checkpoint position carries it, so a position from one store
+    cannot be ordered against a position from another. That makes the split
+    structural rather than tidy: no projection can span both stores, which is
+    exactly the boundary this feature wants.
+
+    Droppable by design. Unlike `sessions.db` there is no evolution contract
+    over these payloads -- when the vocabulary changes, delete the file.
+    """
+    configured = os.getenv("AGENT_INTERACTION_DB")
+    if configured:
+        return configured
+    path = Path.home() / ".research-team" / "interactions.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return str(path)
+
+
+def interaction_log_enabled() -> bool:
+    """Whether the console reports what the user did. On unless switched off.
+
+    The only default-on boolean in this module, and the inversion is
+    deliberate. `research_run_over_http` is off by default because unset
+    meaning "the route is not there" is a stronger promise than a check inside
+    a route that exists -- and that reasoning still holds for anything that
+    spends model time or reaches the network on a caller's behalf. This route
+    does neither: it writes rows to a local file on the user's own machine.
+
+    Default-on because a log nobody collects is worth nothing, and the whole
+    point of this feature is to have a corpus to look at before designing
+    against it. Off by default would mean discovering in a month that
+    collection was never on.
+
+    What the default costs, stated plainly: `AskSubmitted` carries the
+    research prompt, which is a transcript of what someone was thinking
+    about. That is the most sensitive field in the system and this variable is
+    the answer to it.
+    """
+    return os.getenv("AGENT_INTERACTION_LOG", "on").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
 
 
 def blob_root() -> Path:

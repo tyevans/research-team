@@ -1,4 +1,5 @@
 import type { EventStream } from '@application/ports/event-stream.ts'
+import type { InteractionSink } from '@application/ports/interaction-log.ts'
 import type { PreferenceStore } from '@application/ports/preferences.ts'
 import type {
   ApprovalRepository,
@@ -31,6 +32,7 @@ import { HttpDialogueRepository } from '@infrastructure/http/dialogue-repository
 import { HttpDocumentRepository } from '@infrastructure/http/document-repository.ts'
 import { HttpGraphRepository } from '@infrastructure/http/graph-repository.ts'
 import { HttpClient } from '@infrastructure/http/http-client.ts'
+import { HttpInteractionSink } from '@infrastructure/http/interaction-log-repository.ts'
 import { HttpMediaProposalRepository } from '@infrastructure/http/media-proposal-repository.ts'
 import {
   HttpExtractionRepository,
@@ -87,6 +89,9 @@ export interface Container {
   readonly dialogues: DialogueRepository
   readonly stream: EventStream
   readonly preferences: PreferenceStore
+  /** Where the interaction log is reported to. Capture only; nothing reads
+   *  it back, so there is no query hook and no repository beside this. */
+  readonly interactions: InteractionSink
   /** Injected so tests can drive it, and so nothing below reaches for the
    *  global clock directly. */
   readonly now: () => number
@@ -120,6 +125,7 @@ export const createContainer = (baseUrl = ''): Container => {
     dialogues: new HttpDialogueRepository(baseUrl),
     stream: new SseEventStream(`${baseUrl}/api/stream`),
     preferences: new LocalPreferenceStore(),
+    interactions: new HttpInteractionSink(http),
     now: () => Date.now(),
   }
 }

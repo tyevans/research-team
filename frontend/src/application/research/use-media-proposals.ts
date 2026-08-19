@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useContainer } from '@app/container-context.tsx'
+import { useInteractionLog } from '@app/interaction-log-provider.tsx'
 import { queryKeys } from '@application/queries/keys.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
@@ -111,10 +112,27 @@ export const useIgnoreMediaProposal = (projectId: ProjectId) => {
 export const useUnignoreMedia = (projectId: ProjectId) => {
   const { mediaProposals } = useContainer()
   const queryClient = useQueryClient()
+  const log = useInteractionLog()
 
   return useMutation({
     mutationFn: ({ grain, key }: { grain: 'asset' | 'host'; key: string }) =>
       mediaProposals.unignore(projectId, grain, key),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.ignoredMedia(projectId) }),
+    onSuccess: (_result, { grain }) => {
+      // Not in the brief's table -- picked as the nearest real `ActionUndone`
+      // seam because it is the one place in this console with a button
+      // literally labelled "Undo" (`IgnoredList.tsx`).
+      //
+      // `target_id` is deliberately absent. The only identifier `unignore`
+      // addresses is the key, and at `grain: 'asset'` that key *is* the asset
+      // URL -- content, in a payload not on `TEXT_BEARING_FIELDS`, written to
+      // disk with `rm interactions.db` as its only remedy. The domain has no
+      // id for "this ignore rule" to record instead (`IgnoredMedia` is two
+      // arrays of bare strings), and a digest would be an opaque token with
+      // no consumer able to resolve it, so the honest payload is the half
+      // that carries signal: `action_kind` already says which grain was
+      // undone, and repair-versus-no-repair is what §3 reads this kind for.
+      log.record('ActionUndone', { action_kind: `unignore-${grain}` })
+      return queryClient.invalidateQueries({ queryKey: queryKeys.ignoredMedia(projectId) })
+    },
   })
 }

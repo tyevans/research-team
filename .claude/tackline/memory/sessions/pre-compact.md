@@ -1,16 +1,15 @@
 ## Pre-Compact Snapshot
-**Time**: 2026-08-18T12:36:28Z
+**Time**: 2026-08-19T04:01:50Z
 
 ### Recent Commits
-c805ecd File the resumed dialogue's missing conversation (B120)
-cac21ff Make a dialogue a place, so it survives being come back to
-7af7609 Let a reader see the answers the dialogue remembered, and the goal it started with (B114)
-9b7b303 Give the dialogue a place on the project
-fe54b30 Draw the dialogue in the order it happened, and grade what has a turn
+a4968f5 Preserve the rulings taken while building this
+c26b8f0 Retry the projection once before telling a reader their dialogue is gone
+bf73ffa Let a reader end a dialogue they are done with
+d576481 Render a finished dialogue as finished when the reader comes back
+55da685 File what concluding a dialogue still does not cover
 
 ### Working Tree
  M .claude/tackline/memory/sessions/pre-compact.md
-?? docs/superpowers/plans/2026-08-17-socratic-dialogue-concluding.md
 
 ### Open Questions
 (fill in before context is lost)

@@ -3404,7 +3404,104 @@ Whichever way it goes, it wants a test that a forked round is drivable by hand,
 which is the property actually at stake. `_fork_files_from` is a different
 method and is not implicated.
 
-### B107. `componentBlock` builds a `domain/lesson` type from an `ask` fixtures file
+### B107. The interaction log has no consumer
+
+`AGENT_INTERACTION_LOG` collects into `~/.research-team/interactions.db` and
+nothing reads it back: no read API, no view, no aggregation, no friction
+detection, no preemption. That is deliberate — the design's whole argument is
+that a corpus should exist before either consumer is designed against
+imagination rather than data — but it means the feature's actual usefulness is
+unproven until something is built on top of it.
+
+Both plausible families are answerable from what is already collecting:
+friction detection (aggregate, cross-session — where do sessions stall, retry,
+or hit `EmptyResultEncountered` repeatedly) and preemption (an ordered prefix
+within one session — what does the tail of a session look like right before
+someone gives up or asks for help). Neither has a design.
+
+Also true of the same runner and worth noting alongside: `InteractionLogRunner`
+exposes `failures()` and `rebuild()` with no HTTP surface, consistent with five
+of the seven peer projection runners in this codebase (`CorpusRunner` and
+`TopicRunner` set the precedent B44 already names for check telemetry). The
+trigger to revisit is the same shape as B44's: someone who is not reading the
+database by hand wanting these numbers.
+
+### B108. Two pre-existing browser-test failures are invisible because nothing runs `test:browser` in CI
+
+`frontend/src/presentation/project/project-stacked.browser.test.tsx` ("clips
+nothing down to 596" — expects an array of length 0, gets 2, at 640px) and
+`frontend/src/presentation/project/project-tracks.browser.test.tsx` ("keeps
+MATERIAL wide enough for the tab strip it always has" — expects 646 to be >=
+697.484375) both fail on `main`, unrelated to the interaction-log work and
+reproduced there in isolation across several of this branch's commits.
+
+Neither is caused by this branch and neither is fixed by it. The point of
+recording them here is the gate, not the failures: `npm run test:browser` is
+deliberately outside `npm run verify` and outside CI (CLAUDE.md's Verification
+section explains why — jsdom cannot lay anything out, so the suite exists for
+assertions jsdom cannot make), which also means nothing forces anyone to run
+it, and these two have sat red for long enough that several unrelated commits'
+messages have had to disclaim them by name. A suite nobody is made to run is a
+suite nobody is made to notice going red.
+
+### B109. Cross-store correlation between `sessions.db` and `interactions.db` is an application-layer join on wall-clock, not an ordering
+
+`eventsource` derives a store's id from the database connection string, and
+every checkpoint position carries that id — positions from two different
+stores cannot be compared or ordered against each other
+(`PositionForeignError`; see CLAUDE.md's Read models section for the
+mechanism). The interaction log is a second, separate store from the domain
+event log by design, for exactly the isolation that produces.
+
+The consequence for any future consumer: relating "what the domain recorded"
+to "what the user was doing at the time" cannot be a projection spanning both
+streams. It has to be a join on approximate wall-clock timestamps computed
+after the fact, which is weaker than the ordering guarantee every other
+correlation in this codebase gets from position tokens. Nothing currently
+needs this join — B107's absent consumers would be the first callers — but
+whichever one is built first should not assume it can get exact interleaving
+across the two stores; it can't, structurally.
+
+### B110. `select(id, source)` and `EntityTreePane`'s emitter are plumbing with no caller
+
+`GraphState.select` takes a `source` no call site passes, and `EntityTreePane`
+is handed an `emitter` it never uses — it calls neither `select` nor
+`expandNode`. Both were added with the interaction log's emission sites
+(`f3e7adf`) for the follow-up they anticipate: `EntityOpened.source` is
+documented as "graph | search | timeline | link", and today every one of them
+records `'graph'`, because the two seams that could say otherwise — picking a
+result out of the search panel, and clicking a node in the entity tree — both
+reach the store through the default.
+
+Kept rather than deleted, and this entry is the cost of that: the reviewer's
+point stands that a parameter with no caller is dead weight, and the honest
+alternative was to remove it and re-add it with its first real user. The
+argument for keeping is that the field is already in the vocabulary and
+already being written with a value that is right for one path and merely
+unfalsified for the others, so a consumer reading `source` today learns
+nothing it could not have got from the kind alone. Wiring the two call sites
+is a small change; leaving `source` in place is what makes it a one-liner
+rather than a signature change across three files.
+
+If the follow-up has not happened by the time anything actually reads this
+log ([[B107]] is where that starts), delete the parameter instead — an
+always-constant field is worse than no field, because a consumer cannot tell
+"always graph" from "we never told you".
+
+**`ViewEntered.params` is the same shape and belongs here too**, found by the
+whole-branch review rather than a per-slice one. `DwellTracker.enter(view,
+params?)` accepts them and `interaction-log-provider.tsx` calls
+`dwell.enter(view)` with none, so the field — documented "ids only: which
+entity, which topic" — ships `{}` on every event ever recorded. Not fixed
+alongside `source` because it is not the same size of change: the provider
+has `view`, `projectId` and `sessionId` and nothing else, so populating
+`params` means reaching into each route's own parameters at the one place
+that is deliberately route-agnostic, and getting that wrong stamps a view
+with the previous page's ids — the failure the comment above `dwell.enter`
+records having already been made once. Same disposal rule as `source`: by the
+time anything reads this log, either populate it or take it out of the
+vocabulary.
+### B122. `componentBlock` builds a `domain/lesson` type from an `ask` fixtures file
 
 `frontend/src/presentation/ask/ask-fixtures.ts` exports `componentBlock`, and
 what it builds is a `ComponentBlock` out of `@domain/lesson/document.ts` --
@@ -3423,7 +3520,7 @@ commit if the churn wants splitting.
 Worth doing before a fifth widget copies the import, because the wrong import
 path is the thing that teaches the next person where fixtures live.
 
-### B108. The timeline widget's box does not scale beside the graph widget's
+### B123. The timeline widget's box does not scale beside the graph widget's
 
 `.cmp-timeline-box` (`components.css:789`) is `min-height: 12rem` and nothing
 else; `.cmp-graph-box` (:749) is `aspect-ratio: 16 / 10` over a `min-height:
@@ -3442,7 +3539,11 @@ both boxes measure non-zero (which is what `GraphWidget.browser.test.tsx` and
 belong together" is not a number. Recorded so the question is not lost with the
 branch that raised it.
 
-### B109. Two `project-*` browser tests fail on `main`'s CSS and are unrelated to any widget work
+### B124. Two `project-*` browser tests fail on `main`'s CSS and are unrelated to any widget work
+
+Same two failures as B108 above, which arrived on `main` independently and
+frames them as a CI-coverage gap rather than a CSS one. Both are true; close
+them together.
 
 `cd frontend && npm run test:browser` fails two cases:
 

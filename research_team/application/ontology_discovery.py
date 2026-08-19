@@ -82,7 +82,7 @@ from research_team.domain.ontology import (
 #: stated reason and biased the evidence (above).
 #:
 #: **What would make this wrong later**, in the order it is likely to happen: a
-#: model whose context window cannot hold 200,000 characters of prompt, which
+#: model whose context window cannot hold 500,000 characters of prompt, which
 #: is where the refusal would start being a real limit rather than a formality;
 #: or `MAX_DOCUMENT_CHARS` rising, at which point this must rise with it or
 #: quietly reintroduce the gap. It is not pinned to that constant in code --
@@ -94,7 +94,18 @@ from research_team.domain.ontology import (
 #: genuinely larger than a context window needs, and its boundaries reintroduce
 #: the split-table problem this pass exists to avoid, so it wants its own
 #: design rather than an increment here.
-MAX_DISCOVERY_CHARS = 200_000
+#:
+#: **The first of those two has now happened at the same time as the second.**
+#: Raised from 200,000 to 500,000 on 2026-08-17 with `MAX_DOCUMENT_CHARS`, to
+#: keep the equality above. 500,000 characters is roughly 125,000 tokens of
+#: prompt, which is past the context window of a good many locally served
+#: models -- so on such a deployment this ceiling is now the formality the note
+#: above warns about, and the real refusal comes from the model. That failure
+#: is a provider error rather than a silent truncation, which is the outcome
+#: this feature is arranged for, but it is not free: it costs a full call to
+#: reach. A deployment serving a short-context model wants a lower value here,
+#: set deliberately.
+MAX_DISCOVERY_CHARS = 500_000
 
 _KINDS = frozenset({"ordered_scale", "unordered_set", "taxonomy"})
 

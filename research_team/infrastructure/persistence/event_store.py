@@ -21,6 +21,7 @@ from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 from research_team.application import FeedEntry
 from research_team.domain import Corpus, EntityJudgements, Project, Session
 from research_team.domain.ask_conversation import AskConversation
+from research_team.domain.interaction import BROWSER_SESSION_AGGREGATE_TYPE
 from research_team.domain.learner import LearnerProgress
 from research_team.domain.media_proposals import MediaProposals
 from research_team.domain.ontology import ONTOLOGY_AGGREGATE_TYPE
@@ -78,6 +79,7 @@ UNROUTED_AGGREGATE_TYPES = frozenset(
         ONTOLOGY_AGGREGATE_TYPE,
         AskConversation.aggregate_type,
         SocraticDialogue.aggregate_type,
+        BROWSER_SESSION_AGGREGATE_TYPE,
     }
 )
 """Aggregate types deliberately kept off the feed, and the other half of the guard.
@@ -133,9 +135,18 @@ only client that would repaint on a dialogue frame is the browser already
 holding the SSE stream that produced it, so a feed frame would be a second
 signal for a repaint that has already happened.
 
-None is a *correctness* argument, and if any grows a pane the answer is
-to move it into `FEED_AGGREGATE_TYPES` and give `_sse` a branch -- not to
-widen this set.
+`browser_session` is off for a different reason than the rest of this set:
+it is not merely unrendered, it is not reachable here at all. Interaction
+events are appended to their own store (`interactions.db`), not this one, so
+`read_since` -- which queries *this* store -- never sees them regardless of
+this tuple's contents. It is listed anyway so the coverage guard in
+`test_feed_coverage.py`, which walks every registered `DomainEvent` subclass
+in `research_team.domain` without regard to which store it lives in, has
+somewhere to record the decision instead of failing on a type it cannot place.
+
+None of the others is a *correctness* argument, and if any grows a pane the
+answer is to move it into `FEED_AGGREGATE_TYPES` and give `_sse` a branch --
+not to widen this set.
 """
 
 
