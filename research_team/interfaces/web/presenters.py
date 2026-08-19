@@ -1296,3 +1296,40 @@ def progress_view(state: LearnerProgressState, path: str | None = None) -> dict[
             for record in records
         },
     }
+
+
+def dialogue_progress_view(state: LearnerProgressState, dialogue_id: str) -> dict[str, Any]:
+    """Everything this reader has answered in one dialogue, keyed by turn.
+
+    **A third shape beside `progress_view`'s two, and the third is deliberate.**
+    `progress_view` already carries `scope: "file"` (keyed by component id,
+    because the caller holds the path) and `scope: "session"` (keyed
+    `path#component_id`, because ids are only unique within a document). Neither
+    fits a dialogue: its records are stored under `path="turn/{position}"` -- an
+    utterance, not a file -- and a component id is only unique within one
+    utterance, so the key has to carry both. Reusing the file-narrowed shape
+    would mean inventing a `path` per turn and calling it once per turn, which
+    is worse than either.
+
+    The alternative was widening `progress_view` with a third `scope`. That is
+    the smaller diff and the wider blast radius: a presenter shared by the
+    lesson and session surfaces, widened so a third can reuse it, is how
+    surfaces couple without anyone deciding to couple them -- the next change to
+    the session shape would then have to be reasoned about for a dialogue too.
+
+    **The cost of the third shape, stated rather than hidden: it is a third
+    thing to keep true.** A change to how progress is reported now has three
+    presenters to check instead of two. `item_view` is shared by all three,
+    which is what holds that cost to the envelope rather than the record.
+
+    Two levels rather than a flat `turn/0#council-1`, unlike the session shape,
+    because the client consumes it one turn at a time: `useDialogueAttempts` is
+    called once per exchange and wants exactly that exchange's map. A flat key
+    would make every caller re-derive a composite and filter.
+    """
+    turns: dict[str, dict[str, Any]] = {}
+    for record in state.items.values():
+        turns.setdefault(record.path, {})[record.component_id] = item_view(
+            state, record.path, record.component_id
+        )
+    return {"scope": "dialogue", "dialogueId": dialogue_id, "items": turns}

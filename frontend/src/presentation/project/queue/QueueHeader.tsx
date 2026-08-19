@@ -104,6 +104,27 @@ export const QueueHeader = ({
       <span aria-hidden="true">-&gt;</span>
     </a>
 
+    {/* The way in to the dialogue page, and it is the ONLY one.
+        `facet: 'dialogue'` had zero `projectHref` call sites where
+        `facet: 'ask'` has three, so a surface that routes, renders and grades
+        was reachable only by typing `#/p/<id>/dialogue` -- the same one-way
+        door the comment above records, shipped again one plan later. A facet
+        with no entrance is not shipped.
+
+        Beside the ask rather than anywhere else, because it is the same kind
+        of thing: a conversation with the project, and this is where a reader
+        looks for one. The two are deliberately not one link with a mode
+        switch -- the direction is what differs, and a reader choosing between
+        "I have a question" and "ask me questions" is choosing between two
+        activities, not two settings. */}
+    <a
+      className="flex items-center justify-between rounded-md border border-solid border-line px-[12px] py-3 text-sm text-fg-dim no-underline hover:bg-bg-hover hover:text-fg"
+      href={projectHref(projectId, { facet: 'dialogue', id: null })}
+    >
+      Be asked about this project
+      <span aria-hidden="true">-&gt;</span>
+    </a>
+
     <section className={CARD} aria-label="Working now">
       <Workers projectId={projectId} watching={watching} onWatch={onWatch} />
       {/* Inside the same card rather than beside it: the roster row is the

@@ -74,9 +74,18 @@ export const regionOf = (facet: Facet): Region => {
   switch (facet) {
     // A stage and a topic are both work items — things this project owes
     // somebody. That they arrived from two different pages is the accident.
+    //
+    // `dialogue` joins `ask` at the end of this group for the same reason and
+    // with the same caveat: `App.tsx` intercepts both above this view, so
+    // neither is drawn by a region. The map is total over `Facet`, so they
+    // have to be somewhere, and "what is there to do" is where a conversation
+    // belongs. (The comment lives up here rather than beside those two cases
+    // because `no-fallthrough` defaults to `allowEmptyCase: false`, and a
+    // comment between empty cases reads to it as a fallthrough.)
     case 'stage':
     case 'topic':
     case 'ask':
+    case 'dialogue':
       return 'queue'
     // A session used to be its own region — HOLDER, "who is working on this
     // right now" — and is now a tab in MATERIAL. The question it answers has

@@ -174,6 +174,11 @@ describe('the facet grammar', () => {
     // entry here is `id: null` rather than a stand-in, so the four cases
     // below describe the URL that actually exists.
     { facet: 'ask', selection: { facet: 'ask', id: null }, hash: '#/p/abc/ask' },
+    // Unlike `ask` above it, this one has something to select: a dialogue id is
+    // minted by the server and is a row key, so it is a URL segment worth
+    // building. The truncation case below still has to hold -- `#/p/abc/dialogue`
+    // with nothing after it is a reader about to start one.
+    { facet: 'dialogue', selection: { facet: 'dialogue', id: 'd1' }, hash: '#/p/abc/dialogue/d1' },
   ]
 
   it.each(cases)('builds $facet', ({ selection, hash }) => {

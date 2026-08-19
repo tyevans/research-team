@@ -151,6 +151,7 @@ export const WithComponent: Story = {
           unknown: false,
           errors: [],
           withheld: ['answer'],
+          resolved: false,
         },
       ],
     }),

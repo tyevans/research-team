@@ -6,8 +6,14 @@ import { Markdown } from '../common/content.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
 import { Checklist } from './Checklist.tsx'
 import { Cloze } from './Cloze.tsx'
+import { CompareWidget } from './CompareWidget.tsx'
+import { DefinitionWidget } from './DefinitionWidget.tsx'
+import { EvidenceWidget } from './EvidenceWidget.tsx'
+import { ExplorerWidget } from './ExplorerWidget.tsx'
 import { Flashcards } from './Flashcards.tsx'
+import { GraphWidget } from './GraphWidget.tsx'
 import { Mcq } from './Mcq.tsx'
+import { TimelineWidget } from './TimelineWidget.tsx'
 
 /** A parsed markdown artifact: prose, and widgets a learner can operate.
  *
@@ -73,6 +79,7 @@ export const LessonDocument = ({
           block={block}
           attempts={attempts}
           withheldExplanation={withheldExplanation}
+          {...(projectId ? { projectId } : {})}
         />
       ),
     )}
@@ -80,22 +87,41 @@ export const LessonDocument = ({
 )
 
 const RENDERERS: Readonly<
-  Record<string, (props: { block: ComponentBlock; attempts: AttemptsApi }) => React.ReactElement>
+  Record<
+    string,
+    (props: {
+      block: ComponentBlock
+      attempts: AttemptsApi
+      /** Optional because a lesson file is read from a session, which has no
+       *  project in scope -- see this module's `projectId` prop. A resolved
+       *  component handed none renders its `unavailable` state, which is
+       *  prose, which is the same answer as every other failure here. */
+      projectId?: ProjectId
+    }) => React.ReactElement
+  >
 > = {
   flashcards: Flashcards,
   mcq: Mcq,
   cloze: Cloze,
   checklist: Checklist,
+  definition: DefinitionWidget,
+  evidence: EvidenceWidget,
+  graph: GraphWidget,
+  timeline: TimelineWidget,
+  compare: CompareWidget,
+  explorer: ExplorerWidget,
 }
 
 const Component = ({
   block,
   attempts,
   withheldExplanation,
+  projectId,
 }: {
   block: ComponentBlock
   attempts: AttemptsApi
   withheldExplanation: string
+  projectId?: ProjectId
 }) => {
   if (block.unknown) return <UnknownComponent block={block} />
   if (block.errors.length > 0) return <BrokenComponent block={block} />
@@ -117,7 +143,10 @@ const Component = ({
           </Tooltip>
         ) : null}
       </div>
-      <Renderer block={block} attempts={attempts} />
+      {/* Spread rather than a bare `projectId={projectId}`, matching the
+          `Markdown` call above: `exactOptionalPropertyTypes` treats an
+          explicit `undefined` differently from an omitted prop. */}
+      <Renderer block={block} attempts={attempts} {...(projectId ? { projectId } : {})} />
     </section>
   )
 }

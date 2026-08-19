@@ -61,7 +61,13 @@ export const createTimelineStore = ({
       const entityType = get().entityType
       set({ loading: true, error: null })
       try {
-        const timeline = await timelines.timeline(projectId, entityType ?? undefined)
+        // Spread rather than `{ entityType: entityType ?? undefined }`:
+        // `exactOptionalPropertyTypes` treats an explicit `undefined` as a
+        // different thing from an absent key, and the port's window means
+        // "absent" by absence.
+        const timeline = await timelines.timeline(projectId, {
+          ...(entityType === null ? {} : { entityType }),
+        })
         set({
           timeline,
           loading: false,

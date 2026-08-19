@@ -108,6 +108,19 @@ def main() -> None:
             # same tables and answer from whatever the projection it is not
             # following had got to.
             asks=application.asks,
+            # The read side of socratic dialogues, and the same argument as
+            # `asks` above: the started runner from the application, never a
+            # second one built here. It is also what the dialogue *service*
+            # resumes through, so a build that passed a second instance would
+            # answer history from a projection nothing is following.
+            dialogues=application.dialogues,
+            # The write side of dialogues, beside the read side above. `ask`
+            # has the same shape and the same history: routes added to
+            # `create_app` and not to this call have shipped 503ing three times
+            # while every test built its own app and passed.
+            # `test_web_entrypoint.py` exists for that and is what went red
+            # when this parameter was added.
+            socratic=application.socratic,
             extractor=application.document_extractor,
             extract_queue=extract_queue,
             # The write side beside the read side above: without it every

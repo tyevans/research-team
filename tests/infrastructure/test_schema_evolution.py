@@ -52,11 +52,13 @@ from research_team.domain.judgements import (
 from research_team.domain.media_proposals import MediaProposed
 from research_team.domain.ontology import OntologyDiscovered
 from research_team.domain.research_run import ResearchRunStarted
+from research_team.domain.socratic_dialogue import SocraticProgressObserved
 from research_team.domain.topic import OpenTopic, TopicInvestigated
 from research_team.infrastructure.persistence.event_store import (
     build_judgements_repository,
     build_project_repository,
     build_research_run_repository,
+    build_socratic_dialogue_repository,
     build_topic_repository,
 )
 from research_team.infrastructure.persistence.read_models import (
@@ -1179,3 +1181,114 @@ async def test_a_media_proposal_written_before_thumbnail_url_existed_still_loads
     # separates "the field defaulted" from "the whole event failed to parse".
     assert proposed.proposal_id == "prop-1"
     assert proposed.asset_url == "https://example.com/asset.jpg"
+
+
+async def test_a_dialogue_written_before_the_opening_prompt_existed_still_loads(
+    db_path, store
+):
+    """Case 1 of the strategy in `domain/events.py`: a field added with a
+    default that means what its absence meant.
+
+    `opening_prompt` was added to `SocraticDialogueStarted` after the first
+    draft. An older payload has no key, the default fills in, and the value
+    reads as "the opening question was not recorded" -- which is honest,
+    because the dialogue is still resumable from its goal and its turns.
+
+    Red against a build that makes `opening_prompt` required: every dialogue
+    written before it existed stops loading, and the failure surfaces as a
+    reader's dialogue simply refusing to resume.
+    """
+    dialogue_id = uuid4()
+    # Applies the schema lazily, for the media-proposal case's reason: nothing
+    # has written to this database yet, so `events` does not exist to insert
+    # into. The brief's version of this test omitted the line and failed on
+    # `no such table: events`.
+    await collect(store.read_stream(StreamId(dialogue_id, "SocraticDialogue")))
+    await _write_old_event(
+        db_path,
+        dialogue_id,
+        1,
+        "SocraticDialogueStarted",
+        {
+            "aggregate_id": str(dialogue_id),
+            "aggregate_type": "SocraticDialogue",
+            "aggregate_version": 1,
+            "project_id": str(uuid4()),
+            "topic": "the Nicene settlement",
+            "goal": "understand what the creed settled",
+            "stopping_condition": "the reader can state it in their own words",
+            "opened_at": datetime.now(UTC).isoformat(),
+        },
+        aggregate_type="SocraticDialogue",
+    )
+
+    repository = build_socratic_dialogue_repository(store)
+    dialogue = await repository.load(dialogue_id)
+
+    assert dialogue.state.goal == "understand what the creed settled"
+    assert dialogue.state.stopping_condition == ("the reader can state it in their own words")
+    assert dialogue.state.is_started
+
+
+async def test_an_observation_written_before_evidence_kinds_existed_reads_as_assessment(
+    db_path, store
+):
+    """The same case for `SocraticProgressObserved.evidence`.
+
+    The default is `"assessment"` and not `"attempt"`, deliberately: an
+    unlabelled observation is the model's judgement until something says
+    otherwise, and defaulting to `"attempt"` would silently promote every old
+    opinion to a graded fact -- which is the exact distinction `EvidenceKind`
+    exists to keep.
+    """
+    dialogue_id = uuid4()
+    # Applies the schema lazily, for the media-proposal case's reason: nothing
+    # has written to this database yet, so `events` does not exist to insert
+    # into. The brief's version of this test omitted the line and failed on
+    # `no such table: events`.
+    await collect(store.read_stream(StreamId(dialogue_id, "SocraticDialogue")))
+    await _write_old_event(
+        db_path,
+        dialogue_id,
+        1,
+        "SocraticDialogueStarted",
+        {
+            "aggregate_id": str(dialogue_id),
+            "aggregate_type": "SocraticDialogue",
+            "aggregate_version": 1,
+            "project_id": str(uuid4()),
+            "topic": "t",
+            "goal": "g",
+            "stopping_condition": "s",
+            "opened_at": datetime.now(UTC).isoformat(),
+        },
+        aggregate_type="SocraticDialogue",
+    )
+    await _write_old_event(
+        db_path,
+        dialogue_id,
+        2,
+        "SocraticProgressObserved",
+        {
+            "aggregate_id": str(dialogue_id),
+            "aggregate_type": "SocraticDialogue",
+            "aggregate_version": 2,
+            "observation": "named the two parties",
+        },
+        aggregate_type="SocraticDialogue",
+    )
+
+    repository = build_socratic_dialogue_repository(store)
+    dialogue = await repository.load(dialogue_id)
+
+    assert dialogue.state.observations == ["named the two parties"]
+    # And the kind it defaulted to, read off the stream because
+    # `SocraticDialogueState` carries the observation texts and not their
+    # evidence. Without this line the test passes with the default flipped to
+    # `"attempt"` -- which is the failure the docstring above is about, so the
+    # state assertion alone would not have been a test of it.
+    stream = StreamId(dialogue_id, "SocraticDialogue")
+    events = [envelope.event for envelope in await collect(store.read_stream(stream))]
+    observed = events[-1]
+    assert isinstance(observed, SocraticProgressObserved)
+    assert observed.evidence == "assessment"

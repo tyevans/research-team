@@ -505,6 +505,83 @@ not one: an empty table taking the recreate, and the same model against a table
 with one row taking the raise. Flagged by the task that introduced the branch
 (`docs/reports/adopt-0140-task2.md`) rather than found later.
 
+### B110. `ConversationRegistry` carries the falsy-collaborator hazard `DialogueRegistry` closed
+
+`research_team/application/ask.py`. `DialogueRegistry` was given a
+`__bool__ -> True` on the socratic-dialogue work for a reason that applies
+verbatim here: both classes define `__len__`, so an **empty** instance is
+falsy, and any call site defaulting one with `registry or SomeDefault()`
+silently throws the caller's object away and substitutes a different one. The
+registry handed in at construction time is always empty, which is exactly when
+the bug fires.
+
+Measured on 2026-08-17, in the dialogue's case: with `or` in the test helper,
+`test_an_evicted_dialogue_resumes_on_the_same_stream` passed against a
+deliberately broken `DialogueRegistry.get` — the whole feature broken, the one
+test that existed to catch it green, because the service was holding a private
+registry that the test's `drop` never touched.
+
+Left alone on the ask deliberately, and the difference is the consequence, not
+the mechanism. A dialogue that quietly starts over is a correctness bug: the
+reader believes they are continuing toward a goal that the service has
+forgotten. An ask that quietly starts over loses a chat — annoying, visible to
+the reader, and not wrong about anything.
+
+The fix is the same three lines as `DialogueRegistry`'s: a `__bool__` returning
+`True` with a comment saying why an empty registry must not be falsy. Cheap
+enough that the only reason not to do it now is that it touches a surface
+Plan 1 had no business touching.
+
+### B111. A dropped `@handles` on either runner reports as a 10-second timeout, not a missing row
+
+Affects `SocraticDialogueRunner`
+(`research_team/infrastructure/persistence/read_models.py:3717`) and
+`AskConversationRunner` alike. Both wait on a `caught_up` helper, and both
+build their subscription with a `SubscriptionConfig` that leaves
+`event_types=None` — so `EventFilter.from_subscriber` derives the filter from
+the projection's `@handles` set. Remove a handler and the event is filtered out
+*before delivery*: the subscription never advances past it, `caught_up` never
+returns, and the failure surfaces as a bare 10-second `TimeoutError` naming the
+helper. Nothing names the missing handler, and nothing says a row is absent.
+
+Measured on 2026-08-17, by deleting a handler and reading what came back.
+
+Neither runner was diverged for it, and that is the deferral: making the two
+report differently would mean either enumerating `event_types` explicitly (a
+second list to keep in step with `@handles`, which is the thing `@handles` was
+meant to be the single source of) or timing out with a message that inspects
+the subscriber — both are real work for a diagnostic, not a defect. Recorded so
+whoever meets the timeout does not spend an afternoon looking at the read model.
+
+### B112. `apply_schema`'s widening path has never run against the two dialogue tables
+
+`SocraticDialogueRow` and `SocraticTurnRow`
+(`research_team/infrastructure/persistence/read_models.py:3388`, `:3440`).
+`local_copy` was used on 2026-08-17 to prove both tables inert against a real
+checkpointed database — nothing broke, no query failed. That proof is weaker
+than it sounds: both tables are *created whole* on a database that has never
+seen them, so `apply_schema`'s reconcile branch was never entered. What was
+measured is that creation works, not that widening does.
+
+**Whoever first adds a column to either row owes that check**, against a copy of
+a real database made with
+`uv run python -m research_team.infrastructure.persistence.local_copy` and with
+its checkpoints left intact — see `CLAUDE.md` on why clearing them defeats the
+test by turning a resume into a rebuild. This is the highest-consequence item
+carried out of Plan 1: the failure mode is the one `CLAUDE.md` opens the
+read-model section with — every test green on a fresh database, every query 500
+on a real one.
+
+### B113. A composed application built with `dialogues=None` hangs rather than failing
+
+`Application.start()` calls `self.dialogues.start()`, so passing `dialogues=None`
+to the composed application should be an immediate `AttributeError`. One run on
+2026-08-17 instead hung for 12+ minutes and was killed rather than diagnosed.
+
+Unchased on purpose — it was an incidental observation during Plan 1 and no
+production path constructs an application that way. One line here so nobody
+rediscovers it under time pressure and reads the hang as their own change.
+
 ## Topics and autonomous research
 
 Added alongside the topic tracker and auto-research mode
@@ -881,12 +958,25 @@ authentication and a separate deny-by-default delivery reader, which is B18's
 whole content. It stays as the marker that this surface follows the rule rather
 than bending it, and it closes when B18 closes.
 
-### B105. Withholding in an ask is weaker than withholding in a file
+### B105. Withholding on the ask's live SSE frame is weaker than withholding in a file
+
+**Narrowed 2026-08-18 to the live stream frame only.** This entry used to say
+"the ask surface" without qualification, and half of that stopped being true in
+`b08d449`: `read_ask` no longer ships the raw `answer` beside its projected
+blocks. What remains is `_ask_frame` (`app.py`, the `AskAnswer` branch around
+:3005), which still sends `"text": note.text` next to `"blocks"` on the live
+SSE frame.
+
+Narrowed rather than left general for the reason B106's own correction gives:
+a written claim of settled state is why nobody looks. Leaving this entry
+describing a route that had already been fixed reproduces that mechanism one
+entry down -- a reader checking `read_ask` finds no leak, concludes the entry
+is stale in general, and stops before the frame that still has one.
 
 The ask surface projects the learner view and grades on the server, so the
-browser cannot mark an answer -- but the raw answer travels in the *same
-response* as the blocks, where B30's subject at least needed a second request
-to a different route.
+browser cannot mark an answer -- but on that frame the raw answer travels in
+the *same response* as the blocks, where B30's subject at least needed a second
+request to a different route.
 
 Taken deliberately. Stripping the prose would mean reconstructing the answer
 from blocks in a client, which is a second renderer and a new class of bug, to
@@ -3248,10 +3338,27 @@ has to actually unwind, not just reorder.
 
 ### B106. Ask history has a server half and no client -- reopening a conversation is not reachable
 
-`docs/superpowers/specs/2026-08-16-components-in-an-ask-design.md` §4 and
-`read_ask` (`app.py:3076`) are correct and tested: a stored ask turn carries
-projected `blocks` with the answer key withheld, the same shape the live
-stream sends. But no route in `frontend/src` fetches a stored conversation --
+**Corrected 2026-08-18: the sentence this entry opened with was false.** It
+said `read_ask` was "correct and tested: a stored ask turn carries projected
+`blocks` with the answer key withheld". The blocks were projected, and beside
+them the route shipped `"answer": turn.answer` -- the stored markdown, fences
+and `correct: true` intact -- so every stored turn handed back the key the
+projection had just removed. The test the claim rested on,
+`test_a_stored_turn_is_parsed_the_same_way_as_a_live_one`, asserted only that
+the block's `kind` was `"component"` while its own fixture answer contained
+`correct: true`, and passed throughout. A written claim of no leak is worse
+than an unrecorded leak, because the claim is the reason nobody looks.
+
+Fixed by dropping the raw `answer` key rather than projecting it -- nothing
+consumed it (grepped `frontend/src` and the committed console; both reach only
+the `/attempts` sibling), which is the same finding and the same fix as the
+socratic surface in 95076c9. That test now asserts on the whole response body:
+no `correct: true`, no `"correct": true`, no ` ```component:` fence, while
+still asserting the component reached the reader. Measured red with the field
+restored.
+
+The rest of this entry stands. `docs/superpowers/specs/2026-08-16-components-in-an-ask-design.md` §4
+and `read_ask` (`app.py:3076`) now do withhold the key end to end. But no route in `frontend/src` fetches a stored conversation --
 grepped for any caller of `GET /api/projects/{project_id}/asks/{conversation_id}`
 outside the Python tests, and there is none. `AskView.tsx` holds its
 transcript in memory only and starts empty on every mount; there is no reopen,
@@ -3394,3 +3501,382 @@ with the previous page's ids — the failure the comment above `dwell.enter`
 records having already been made once. Same disposal rule as `source`: by the
 time anything reads this log, either populate it or take it out of the
 vocabulary.
+### B122. `componentBlock` builds a `domain/lesson` type from an `ask` fixtures file
+
+`frontend/src/presentation/ask/ask-fixtures.ts` exports `componentBlock`, and
+what it builds is a `ComponentBlock` out of `@domain/lesson/document.ts` --
+nothing about it is ask-specific. It landed there because the ask surface
+needed one first, and it now has four callers outside `presentation/ask`: the
+`definition`, `graph`, `timeline` and `compare` widget test files all reach
+across into an ask fixtures module to construct a lesson-domain value.
+
+Not fixed on the spot because moving it is a four-file import churn on test
+files that were being written in the same pass, and a rename mid-implementation
+is exactly the kind of change that makes a review diff unreadable for no
+behavioural gain. The move itself is small: a fixtures module beside the domain
+type (or in `presentation/lesson/`), re-exported from `ask-fixtures.ts` for one
+commit if the churn wants splitting.
+
+Worth doing before a fifth widget copies the import, because the wrong import
+path is the thing that teaches the next person where fixtures live.
+
+### B123. The timeline widget's box does not scale beside the graph widget's
+
+`.cmp-timeline-box` (`components.css:789`) is `min-height: 12rem` and nothing
+else; `.cmp-graph-box` (:749) is `aspect-ratio: 16 / 10` over a `min-height:
+15rem` floor. Put one under the other in a single answer and the timeline sits
+at 12rem at every width while the graph grows with the column -- not broken,
+and not obviously right either.
+
+The absent ratio is deliberate and the CSS says so: a timeline is a horizontal
+instrument, its readable height does not depend on how wide the column is, and
+an aspect ratio would make it absurdly tall in a wide layout. What has not been done is looking
+at the two together and deciding whether they *read* as one system.
+
+**This wants an eye in Storybook, not a test.** There is no assertion to write:
+both boxes measure non-zero (which is what `GraphWidget.browser.test.tsx` and
+`TimelineWidget.browser.test.tsx` already pin), and "these two look like they
+belong together" is not a number. Recorded so the question is not lost with the
+branch that raised it.
+
+### B124. Two `project-*` browser tests fail on `main`'s CSS and are unrelated to any widget work
+
+Same two failures as B108 above, which arrived on `main` independently and
+frames them as a CI-coverage gap rather than a CSS one. Both are true; close
+them together.
+
+`cd frontend && npm run test:browser` fails two cases:
+
+- `project-stacked.browser.test.tsx > clips nothing down to 596`
+- `project-tracks.browser.test.tsx > keeps MATERIAL wide enough for the tab
+  strip it always has`
+
+**Proven pre-existing, not reasoned**, in the whole-branch review of the
+data-bound-components work: the branch's own new CSS was reverted and the suite
+re-run three times, and both failed identically each time. They were
+independently read against the new code and there is no path from a lesson
+widget to either -- `project-stacked` and `project-tracks`
+measure the project console's layout, which no component block is mounted
+inside.
+
+Left as-is deliberately: they are a real defect in the console's stacked and
+track layouts, they are outside `verify` and outside CI (per CLAUDE.md,
+`test:browser` is not a gate), and fixing a console layout from a branch about
+markdown widgets would put an unreviewable change in an unrelated diff. Whoever
+picks this up should start by reproducing on `main` with nothing else checked
+out, because a browser measurement under load is exactly the failure CLAUDE.md
+says not to trust on one run.
+
+### B114. Closed 2026-08-18 — the dialogue-scoped read route landed, and a console calls it
+
+**Closed by Task 6 of
+`.superpowers/sdd/2026-08-17-socratic-dialogue-console/`.** Kept as a stub
+rather than deleted, because the console plan's brief, three task reports and
+`post_dialogue_attempt`'s docstring all cite this number.
+
+What landed:
+
+- `GET /api/projects/{project_id}/dialogues/{dialogue_id}/progress` in
+  `app.py`, beside the attempts route and checking ownership the way both its
+  neighbours do. An untouched dialogue answers `{"items": {}}` and not a 404.
+- `dialogue_progress_view` in `presenters.py` — a **third** shape beside
+  `progress_view`'s `"file"` and `"session"`, not a widening of the shared
+  presenter. A dialogue's records are keyed by an utterance (`turn/{position}`)
+  and a component id is unique only within one, so neither existing key fits.
+  The cost is stated in that docstring rather than hidden: a third thing to keep
+  true, and three presenters to check when progress reporting changes.
+- `HttpDialogueRepository.progress`, `DialogueState.progress`, and the prop
+  chain `DialogueView` → `DialoguePage` → `DialogueThread` → `DialogueExchange`
+  → `useDialogueAttempts(…, stored)`. Indexed by the turn's `position`, never
+  its array index.
+- `tests/integration/test_socratic_progress_route.py`, every assertion on a
+  stored value reaching the body. Red-proved three ways: no route (404), the
+  wrong id read (three tests), and no ownership check (the 404 test returns
+  another reader's answers).
+
+Still not covered, and it is the same gap B119 records: a component in the
+**opening** question belongs to no turn, so there is no `turn/{position}` to
+key its progress under and none is loaded for it.
+
+The original entry follows.
+
+---
+
+`POST /api/projects/{project_id}/dialogues/{dialogue_id}/attempts` (95076c9)
+grades an attempt and records it against the **dialogue** id, so the progress
+survives a refresh in storage. Nothing can fetch it. The only progress read
+route is `GET /api/sessions/{session_id}/progress`, which resolves its id
+through `_load(session_id)` and therefore cannot serve a dialogue id, and
+`SocraticDialogueService.progress_for` is in-process only.
+
+So the property the attempts route was built for -- widgets that stay filled in
+across a reload, the thing that distinguishes this surface from the ask -- is
+real in the event log and invisible in the browser. The console plan needs the
+route before it can render any of it; picking this up means a
+dialogue-scoped sibling of the session progress route (the repository and the
+aggregate id are already there; only the HTTP surface is missing) and a client
+that calls it.
+
+Not done in Task 5 deliberately: adding a read route is the console plan's
+work, and widening a task that had already been reviewed to add an endpoint
+nothing yet calls would have put an unreviewed surface in the diff.
+`post_dialogue_attempt`'s docstring now states the gap rather than claiming the
+capability, which is how this entry was found.
+
+### B115. Grep any new read surface for a raw field shipped beside a projected one
+
+**Measured 2026-08-18, not reasoned: two of two surfaces audited had it, on
+four routes.** The socratic surface shipped raw `text` on the `prompt` SSE
+frame, raw `prompt` on `read_dialogue`'s turns, and raw `pendingPrompt` on
+`_dialogue_view` -- each sitting *beside* `blocks` that had correctly withheld
+`options[].correct` (fixed in 95076c9). The ask surface shipped raw `answer`
+beside its projected blocks on `read_ask` (fixed in b08d449), where B106 above
+had recorded the opposite as settled fact.
+
+The shape is what to look for, because it survives a working projection: the
+projection strips the answer key, and a raw copy of the same source string in
+the same response hands it straight back. A page that renders `blocks` looks
+right; only the bytes disagree.
+
+**The guard that caught all four was an assertion through the real route that
+no correctness value reaches the reader** -- driving an `mcq` end to end and
+searching the whole response body for `correct: true`, `"correct": true` and
+the raw fence marker. An assertion that the projection helper was *called*
+would have passed in every one of the four cases, and did: each of those routes
+called it, correctly, on the field beside the leak. Nor is `"correct" not in
+payload` enough -- the learner projection announces what it dropped as
+`"withheld": ["options[].correct", ...]`, which is the projection working.
+
+Nothing to fix here; this is a checklist item for whoever adds the next route
+that returns authored content.
+
+### B116. Ten backlog ids are already duplicated, and one commit message says otherwise
+
+Ten ids appear **twice each**, always with two unrelated subjects: B36, B54,
+B58, B59, B60, B62, B63, B79, B80, B81. Found 2026-08-18 while renumbering the
+B110/B111 collision (`64dc172`), by listing every `### B<n>.` heading and
+looking for repeats -- not by reading the file, which is how they survived this
+long. That commit's message says "No other duplicate id in the file, checked
+rather than assumed"; it was written concurrently with the check and is wrong.
+This entry is the correction, since the message cannot be edited.
+
+Not fixed on the spot, and the reason is the same one that forced the
+renumber: ids are cited by number in commit messages nobody can rewrite, so
+choosing which of each pair keeps its number is a judgement about which is
+cited where. Getting it wrong silently *redirects* a citation, which is worse
+than the duplicate -- a reader following it lands on a real entry about the
+wrong thing and has no signal that anything is off.
+
+Picking this up means, per pair: `git log -S'B<n>'` over the whole history to
+see which side is cited, keep that one, renumber the other above the current
+maximum, and leave a one-line pointer at the old heading. The cheap half is
+worth doing first regardless -- a check that refuses a duplicate id when one is
+added. There is no test to hang it on today; the natural home is whatever
+lints documentation, and nothing does.
+
+### B117. Every `ActivityRemark` on the ask surface draws an empty bubble
+
+`_ask_frame`'s final `else` (`app.py`, around :3018) emits
+`{"type": "message", "message_id": "", "kind": "assistant", "payload": {}}` for
+every note it does not recognise, and `ActivityRemark` is the one that actually
+arrives there. The page renders that as an assistant message with nothing in
+it, and the remark's text -- the only thing a remark is -- is dropped on the
+way. Nothing errors; the reader sees a blank bubble appear mid-answer.
+
+**The fix already exists one surface over, and copying it is the pickup route.**
+`_socratic_frame`'s `ActivityRemark` branch (`app.py`, around :3164) is the
+model, and it makes two choices worth taking together:
+
+- an unrecognised note returns `None`, and both `yield` sites in the socratic
+  stream skip a `None` frame rather than sending an empty one -- so "nothing to
+  draw" draws nothing;
+- an `ActivityRemark` is *carried* rather than dropped, as a `message` frame
+  with `kind: "remark"`, an empty `message_id` (a remark has none by design)
+  and `payload: {"text": note.text}`. That lets a page style a remark apart
+  from a model utterance without a new frame type its DTOs would have to learn.
+
+**Not fixed here, deliberately.** The change is not the four lines in
+`_ask_frame`: making the frame function return `None` changes its signature and
+both of the ask stream's yield sites, and shipping a `kind: "remark"` frame
+changes what the ask console receives -- which means the frontend, a rebuild of
+the committed `web/static`, and a browser check that the new bubble is styled
+rather than invisible. That is a frontend slice, and this was a backend fix
+wave with no frontend in scope. Filed on 2026-08-18 rather than done, so the
+carry is on paper instead of in one review's memory.
+
+What a fix would fail on if it were wrong: an ask whose run emits a remark must
+produce either no frame or a frame carrying the remark's text -- asserted on the
+SSE bytes, not on the handler being called, since the current code calls it
+correctly and still sends an empty payload.
+
+### B118. The ask's SSE stream ships the answer key the same way the dialogue's did
+
+**The same leak as the socratic one fixed alongside this entry, on the ask.**
+`_ask_frame` (`app.py`, around :2994) emits `delta` frames straight from
+`to_activity_delta` and `message` frames whose `payload` is `message_to_dict`
+of the assistant's message (`messages.py:54`). Both carry the model's prose
+**verbatim**, so an answer containing a ```` ```component:mcq ```` fence
+streams to the browser with `correct: true` in it -- ahead of, and beside, the
+projected blocks that withhold exactly that.
+
+That the ask's model authors components is not an assumption: `ask_agent.py`
+:117-145 instructs it to, and lists `mcq` first among the types it may write.
+
+**Not fixed in the same commit, deliberately.** The socratic fix suppresses
+both frame types on that stream, which costs nothing there because no client
+consumes it (`grep -rl dialogue frontend/src` matched no file on 2026-08-18).
+The ask has a live console that *does* render streamed prose, so the same
+suppression would visibly stop the answer appearing as it is written -- a
+frontend decision with a rebuild of the committed `web/static` behind it, not
+a backend one-liner. Tangling the two surfaces in one change would mean a
+frontend slice riding on a security fix.
+
+The three options, as weighed for the dialogue: suppress the raw frames;
+filter the fenced region out of each delta; or buffer deltas and release them
+when a fence closes. Filtering and buffering both need to recognise a fence
+that has not finished arriving, and a half-written fence is indistinguishable
+from prose until its closing line -- so their failure mode is shipping the key
+they exist to hold back. For the ask the honest third option is a *projected*
+delta channel: stream the prose outside fenced regions and emit the component
+only once it is whole and projected.
+
+What a fix would fail on if it were wrong: an ask whose model writes an `mcq`
+must produce no `correct: true`, no `"correct": true` and no `` ```component: ``
+in **any** SSE frame, asserted on the bytes of the whole stream body. The guard
+that exists today (`test_socratic_attempts.py`) could not see this class of
+leak until an executor stub that actually streams was written for it -- see
+`test_no_frame_of_a_streamed_turn_carries_the_answer_key`, whose predecessor
+passed for a whole slice because its stub emitted no activity at all.
+
+### B119. A component in a dialogue's OPENING question cannot be graded
+
+`LessonDocument` needs an `AttemptsApi`, and the dialogue console wires a real
+one (`use-dialogue-attempts.ts`) for every question that belongs to a turn: an
+attempt is `{position, componentId, response}`, and a turn carries the
+`position` the attempts route matches against a `SocraticTurnRow`. The opening
+question is the one exception. It lives on the dialogue row and belongs to no
+turn, so there is no row to match and no position to send; inventing one would
+404. `DialogueExchange.tsx`'s `UNGRADED` is what it gets instead.
+
+The cost, which is why this is filed rather than left implicit: a component in
+the opening question **draws and does nothing at all**. `update` is a no-op, so
+a reader's pick does not even highlight -- a broken control, and one a reader
+cannot tell from a fault in their own browser. No dialogue that has a turn has
+this problem.
+
+Two ways out, and the cheaper one is also the better one:
+
+- **(a) A synthetic position for the opening question.** Needs a server change
+  and a row that does not exist until the reader has answered something --
+  either a position the route special-cases, or a turn row minted at framing
+  time with no answer in it. Both put a fiction in the grading log so that a
+  page can render a widget.
+- **(b) Recommended: tell the framing model not to author components in the
+  opening question.** One sentence in the framing prompt, and it removes the
+  case rather than plumbing it. The opening question is *framing* -- it sets up
+  what the dialogue is for -- and a graded widget there asks the reader to
+  answer before the conversation has started, which is the wrong shape for this
+  surface regardless of what the client can submit. Do (b), and (a) only if
+  something later needs a gradeable opener for a reason this entry does not
+  anticipate.
+
+What a fix would fail on if it were wrong: an opening question containing an
+`mcq`, answered in the browser, must either not exist (b) or reach the attempts
+route and come back with a verdict (a). An assertion that the widget *renders*
+passes today and is exactly the reassurance this entry is about.
+
+
+### B120. A resumed dialogue comes back with its answers and without its conversation
+
+`cac21ff` made a dialogue a place: its id reaches the URL, a remount reads it
+back, and the answers a reader marked arrive as `stored` and re-render against
+the turn they belong to. That is the half B114 was about, and it works.
+
+The other half does not. `DialogueRepository` has `start`, `reply`,
+`submitDialogueAttempt` and `progress` — **no port reads one dialogue whole.**
+So a reader who refreshes gets their marked answers back over an empty thread,
+under the placeholder line "Pick something to work through.", because `goal`,
+`stoppingCondition` and `openingBlocks` all arrive from the POST that started
+the dialogue and nothing re-fetches them. The transcript is gone until they
+answer again, at which point one exchange appears with no history above it.
+
+The server half already exists: `GET /api/projects/{id}/dialogues/{dialogue_id}`
+(`app.py:3754`) serves the framing, the turns and `openingBlocks` — it is what
+Plan 1's Task 5 built and what Task 6 chose not to call, having decided the POST
+should return the framing instead. That decision was right for the fresh case
+and left the resumed one unserved.
+
+Why it is not fixed here: it is a new port method, a new DTO and mapper, a fetch
+on mount that has to interleave with the store's existing framing state, and a
+decision about what the page shows while it is in flight. That is a task, not a
+fix wave, and it was found by a whole-plan review after the last task had
+shipped.
+
+Picking it up: add `read(projectId, dialogueId)` to `DialogueRepository` against
+the existing route, call it from `DialogueView` when `selection.id` names a
+dialogue the store is not on, and seed `goal`/`stoppingCondition`/
+`openingBlocks`/`transcript` from it. The test that would fail today is the
+whole-chain one in `App.test.tsx` extended past the answers: start a dialogue,
+answer once, remount from the hash, and assert the earlier exchange is on the
+page — not merely that the progress arrived.
+
+The cheaper half-measure, if the fetch proves awkward: render nothing where the
+framing would go rather than the "Pick something to work through." placeholder,
+which currently tells a reader with a live dialogue that they have not started
+one.
+
+**Second symptom, added once dialogues could conclude.** A reader returning to
+a *finished* dialogue now gets an empty thread and a live composer, same as
+above, but the consequence is sharper: their first reply is answered 409
+(`ConclusionReason` already recorded on the aggregate) rather than 404, which is
+correct and still a page offering an action it cannot perform. `DialoguePage.tsx`
+reads `concluded` off the newest turn in the transcript (`transcript[transcript
+.length - 1]?.concluded`, `DialoguePage.tsx:72`) rather than off the dialogue
+itself, and a resumed dialogue has no turns to read it from. The fix is this
+entry's own: the missing `read(projectId, dialogueId)` port call would also
+carry `status`, which is where `concluded` should be read from once it exists.
+No new backend work — `_dialogue_view` (`app.py:3700`) already returns `status`
+and `concludedReason`; verified 2026-08-18, this is a client-side gap only.
+
+### B121. Nothing ends a dialogue the reader simply walked away from
+
+After this plan, a dialogue can conclude two ways: the model judges the
+stopping condition met (`reason="met"`, `socratic.py:746`), or the reader ends
+it deliberately (`reason="abandoned"`, Task 6). Both routes exist, both are
+tested, both reach `SocraticDialogueConcluded` on the aggregate, the
+`concluded_reason` projection column, and the reader-facing status. What
+neither route reaches is the third case: a dialogue nobody returns to. It
+stays `status="started"` forever — not wrong, exactly, but permanent, because
+nothing in this system revisits a dialogue that has gone quiet.
+
+The obvious shape for a fix is a sweep: a job that walks dialogues idle past
+some duration and concludes them with a third reason, `"idle"` or similar.
+**That shape was refused on principle here, not deferred for lack of time.**
+The reason is the same ruling this plan's design section already made about
+the *other* stopping condition: a fixed number decided outside the aggregate,
+with no reader behavior it is answerable to, is not a stopping condition —
+it is a guess wearing one. "Conclude when the model judges the goal met" is
+testable against a transcript; "conclude when 48 hours have passed" is testable
+against a clock and nothing else, and the number is arbitrary in the way the
+design section already spent a paragraph refusing to be for the *understanding*
+side of this feature. Applying the same shape to the reader's *attention*
+instead — picking a duration nobody can justify, past which absence becomes
+abandonment — is the identical mistake with the argument swapped out. If it was
+wrong there, it does not become right here because the aggregate under
+discussion changed.
+
+What would change the calculus: a way to distinguish "abandoned" from "still
+open" that is not a timer. A reader explicitly leaving a project, a session
+boundary the client already tracks, an event that means something to a person
+rather than a duration meaning something to a cron job — any of those would be
+a real signal rather than a threshold, and this entry is where that design
+should be written once someone has one. Until then the honest state is: two
+conclusion routes, deliberately no third.
+
+Cost of leaving it unfiled as well as unfixed: a walked-away dialogue is
+indistinguishable, in every read model, from one still being worked. Any future
+"dialogues in progress" count is an over-count with no upper bound — it grows
+by one every time a reader opens a dialogue and never comes back, and nothing
+ever subtracts from it. That is a real cost of the refusal above, not a reason
+to reverse it; it is what a metrics feature building on `status="started"`
+should know going in.

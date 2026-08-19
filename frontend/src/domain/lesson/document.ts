@@ -41,6 +41,34 @@ export interface ComponentBlock {
   /** Field names the learner projection stripped. Non-empty means an answer key
    *  exists and is being graded on the server rather than in this page. */
   readonly withheld: readonly string[]
+  /** Whether this component fetches its data from the project rather than
+   *  carrying it, as the server classified it.
+   *
+   * **The renderer does not read this**, and that is deliberate rather than an
+   * omission. `LessonDocument` spreads `projectId` into every renderer
+   * unconditionally: a widget that does not resolve simply ignores the prop,
+   * which costs nothing, whereas gating the spread on this flag would make a
+   * resolved widget's ability to fetch depend on the server having classified
+   * it correctly. A mis-flagged component would then render `unavailable`
+   * forever with nothing raising -- the same silent-empty failure CLAUDE.md
+   * describes for a missing projection. Unconditional threading has one
+   * behaviour whether the flag is right or wrong.
+   *
+   * **Nothing in `frontend/src` reads it today.** All six resolved widgets
+   * shipped without it, for the reason above -- they take `projectId`
+   * unconditionally and never ask whether they were classified as resolved --
+   * so an earlier version of this docstring promising "Tasks 3-7 are its
+   * first readers" turned out to be wrong about its own feature.
+   *
+   * Kept rather than deleted, and the case is narrow: it is the server's
+   * classification, already emitted, already validated by the block schema
+   * and already mapped, and it is the only thing on the client that can tell
+   * a reference component from a content one without a hardcoded type list.
+   * A surface that needs that distinction -- a print or export view that
+   * cannot fetch, say -- gets it for free. The cost of being wrong about that
+   * guess is one boolean on the wire. Grep before writing the first reader:
+   * if this paragraph is still the only mention, it is dead and should go. */
+  readonly resolved: boolean
 }
 
 export interface ComponentError {

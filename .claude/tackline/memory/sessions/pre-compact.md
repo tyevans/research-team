@@ -1,12 +1,12 @@
 ## Pre-Compact Snapshot
-**Time**: 2026-08-17T17:29:07Z
+**Time**: 2026-08-19T04:01:50Z
 
 ### Recent Commits
-8f49608 Fix the wrong grading key, and three review findings besides
-c8ff10e Document components in an ask, and rebuild the console
-0325ce6 Render a component the model asked back
-59c04f4 Share the attempt state machine between a lesson and an ask
-7044a0f Read blocks and a position off an ask answer frame
+a4968f5 Preserve the rulings taken while building this
+c26b8f0 Retry the projection once before telling a reader their dialogue is gone
+bf73ffa Let a reader end a dialogue they are done with
+d576481 Render a finished dialogue as finished when the reader comes back
+55da685 File what concluding a dialogue still does not cover
 
 ### Working Tree
  M .claude/tackline/memory/sessions/pre-compact.md

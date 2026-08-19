@@ -306,3 +306,43 @@ def test_the_ask_prompt_carries_the_component_reference():
     # Craft, not only syntax -- Task 1's notes reach this prompt through the
     # same generated reference the stage prompt uses.
     assert "distractor" in ASK_PROMPT
+
+
+def test_the_hand_written_paragraph_names_exactly_the_resolved_types_on_offer():
+    """The two halves of this prompt have to agree about what exists.
+
+    `ASK_COMPONENT_PROMPT` is a hand-written paragraph followed by a
+    registry-generated reference. The generated half cannot drift; the
+    hand-written half is a copy of `{n for n in ASK_COMPONENT_TYPES if
+    REGISTRY[n].resolved}` kept by hand, and it drifted the first time it was
+    given the chance -- commit `0f2f9b5` registered `explorer` as the sixth
+    resolved type while the paragraph went on saying "The other five" and
+    listing five names. The generated reference below it carried six examples.
+    Nothing caught it: not the four gates, not a full review. A model reading
+    that prompt was handed a false inventory of what it may write, which is the
+    exact failure the generated reference exists to prevent, arriving through
+    the one half the registry does not generate.
+
+    Would have gone red at `0f2f9b5`, which is the only reason it is worth its
+    runtime.
+
+    **It pins the inventory and not the prose.** A paragraph that names every
+    right type and describes all of them wrongly still passes here, and no test
+    can replace reading it. What this refuses is a name that is missing or a
+    name that should not be there.
+    """
+    from research_team.application.ask_components import ASK_COMPONENT_TYPES
+    from research_team.application.components import REGISTRY
+    from research_team.infrastructure.agent.ask_agent import ASK_COMPONENT_PROMPT
+
+    # Split at the first fenced example: everything before it is hand-written,
+    # everything after is `component_reference` output. Naming a type only in
+    # the generated half is exactly the drift this is about, so the halves are
+    # compared rather than the whole string searched.
+    hand_written = ASK_COMPONENT_PROMPT.split("```component:")[0]
+    named = {name for name in REGISTRY if f"`{name}`" in hand_written}
+    resolved = {name for name in ASK_COMPONENT_TYPES if REGISTRY[name].resolved}
+
+    assert named >= resolved, f"offered but unnamed: {sorted(resolved - named)}"
+    unoffered = named - set(ASK_COMPONENT_TYPES)
+    assert not unoffered, f"named but not on offer: {sorted(unoffered)}"

@@ -607,6 +607,401 @@
    boundary is not a `BREAKPOINTS` value, and 900 never was one. That is worth
    keeping here, because this file is where the 900 lived. */
 
+/* A resolved component that did not resolve. Deliberately typographic rather
+   than panelled: these states are prose the reader should be able to read
+   past, and a bordered box would make an ordinary gap in the corpus look like
+   a failure of the page. */
+.cmp-ref {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.cmp-ref-name {
+  font-weight: 600;
+  color: var(--fg);
+}
+.cmp-ref-note {
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+  margin: 0;
+}
+
+/* A resolved name is a link into the project's entity facet (`ResolvedName`).
+   `--accent` and no rest-state underline, matching `.md-link` -- an entity
+   reference in a widget and one in the surrounding prose are the same thing to
+   a reader and should not be two different colours. Without this the anchor
+   would take `.cmp-ref-name`'s `--fg` and the UA's underline, which reads as
+   emphasised body text rather than as a link. */
+a.cmp-ref-name {
+  color: var(--accent);
+  text-decoration: none;
+}
+a.cmp-ref-name:hover {
+  text-decoration: underline;
+}
+
+/* `loading` and `unavailable`, dimmer than a reference the page has actually
+   checked. The state carries no note -- neither may make a claim about the
+   corpus -- so weight is the only thing left to say the name is unconfirmed,
+   and without a rule here the class was in the attribute and absent from the
+   bundle, which is CLAUDE.md's silent-failure shape. `resolved-frame-dressing
+   .browser.test.tsx` fails if this stops applying; jsdom cannot see it. */
+.cmp-ref-quiet .cmp-ref-name {
+  font-weight: 500;
+  color: var(--fg-dim);
+}
+
+.cmp-ref-ambiguous {
+  flex-direction: column;
+  align-items: stretch;
+}
+.cmp-ref-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* The full four-side `border` shorthand, not a directional width. CLAUDE.md's
+   `border-solid` trap is about a Tailwind utility leaving three sides with a
+   style and no explicit width; a shorthand naming width, style and colour
+   together cannot land in that state. */
+.cmp-ref-pick {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  background: var(--bg-panel-2);
+  color: var(--fg);
+  cursor: pointer;
+}
+.cmp-ref-pick-type {
+  font-size: var(--t-xs);
+  color: var(--fg-dim);
+}
+
+/* The citation row under a `definition` widget's text.
+ *
+ * Layout only. The anchors inside come from `DefinitionCitations`, which
+ * carries its own `text-xs text-fg-dim` -- restating them here would be two
+ * sources for one appearance, and the utilities are the half the research
+ * panel shares. `--fg-dim`, not `--fg-muted`: the latter is not a token this
+ * build defines, so a rule naming it sets no colour at all and looks like one
+ * that worked. */
+.cmp-definition-citations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The passages under an `evidence` claim. A list rather than a stack of
+ * divs because it is one: the reader is meant to see that the claim rests on
+ * *these, numbered*, and a screen reader announcing the count is the whole
+ * affordance. `list-style: none` because the marker would compete with the
+ * quote rules beside it. */
+.cmp-evidence-list {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cmp-passage {
+  margin: 0;
+  /* `border: 0` first, then the one directional width. A bare `border-solid`
+     beside a single side's width gives the other three the browser's `medium`
+     (~3px) and draws a box where one edge was meant -- see CLAUDE.md. This
+     build imports no preflight, so the browser's defaults are what is left
+     wherever nothing sets a width. */
+  border: 0;
+  border-left: 2px solid var(--line);
+  padding-left: 12px;
+}
+
+.cmp-passage blockquote {
+  margin: 0;
+  font-style: italic;
+}
+
+/* `--fg-dim`, not `--fg-muted`: the latter is not a token this build defines,
+   so a rule naming it sets no colour and looks exactly like one that worked. */
+.cmp-passage figcaption {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+/* The canvas measures this box with a ResizeObserver, and a markdown flow
+   gives it no height -- so without an explicit one it measures 0 and draws
+   nothing, silently. `aspect-ratio` rather than a fixed height so a narrow
+   column gets a shorter graph rather than a squashed one.
+   Asserted in `GraphWidget.browser.test.tsx`: jsdom reports 0 here whatever
+   this rule says, so no jsdom test can defend it. */
+.cmp-graph-box {
+  /* What `GraphCanvas`'s own `absolute inset-0` is positioned against. Without
+     it the canvas would resolve to the nearest positioned ancestor somewhere
+     up the page and measure that instead. */
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  /* A floor as well as a ratio: at a very narrow width the ratio alone gives
+     a box too short to show a neighbourhood in. */
+  min-height: 15rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0.5rem;
+  /* `--bg-raise`, not `--bg-raised`: the latter is not a token this build
+     defines, so a rule naming it sets no background and looks exactly like one
+     that worked -- the same trap `.cmp-passage figcaption` records for
+     `--fg-muted`. Measured against `tokens.css`, not reasoned. Asserted in
+     `GraphWidget.browser.test.tsx`, where an undefined property resolves to
+     `rgba(0, 0, 0, 0)`. */
+  background: var(--bg-raise);
+}
+
+/* An explicit height for `.cmp-graph-box`'s reason: `TimelineCanvas` draws
+   into an SVG sized by its container, and a markdown flow gives it none.
+   Measured in `TimelineWidget.browser.test.tsx`; jsdom reports 0 here
+   whatever this rule says.
+
+   No `aspect-ratio`, unlike the graph box: an axis is read left to right and
+   gains nothing from height, so a floor is the whole requirement and a ratio
+   would make a wide answer column absurdly tall.
+
+   `border: 0` paired with no directional width, deliberately -- the box has
+   no rule, and the pairing is here so that adding one later cannot fall into
+   the `border-solid` trap CLAUDE.md records.
+
+   `--bg-raise`, not `--bg-raised`: the latter is not a token this build
+   defines, and a rule naming it sets no background while looking exactly like
+   one that worked. Measured against `tokens.css`, not reasoned, and asserted
+   in the browser test where an undefined property resolves to
+   `rgba(0, 0, 0, 0)`. */
+.cmp-timeline-box {
+  /* What the canvas's own absolute positioning resolves against; without it
+     it would find some ancestor further up the page and measure that. */
+  position: relative;
+  width: 100%;
+  min-height: 12rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0.5rem;
+  background: var(--bg-raise);
+}
+
+/* `--fg-dim`, matching `.cmp-ref-note`. `--fg-muted` is not a token this build
+   defines, and naming it would leave the counts in the body colour -- legible,
+   so nothing would look wrong, and the line would simply stop reading as the
+   aside it is. */
+.cmp-timeline-counts {
+  margin: 0.5rem 0 0;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
+/* The explorer reuses `.cmp-timeline-box` for its axis verbatim -- it is the
+   same drawing in the same kind of flow, and a second box rule would be a
+   second thing to keep in step with the measurement in
+   `TimelineWidget.browser.test.tsx`. Only the control row is new. */
+
+/* The invitation, and the one thing that makes this worth more than a
+   timeline. Body colour and not `--fg-dim`: this is prose the author wrote for
+   the reader to act on, not an aside about the widget. */
+.cmp-explorer-prompt {
+  margin: 0 0 0.75rem;
+  color: var(--fg);
+}
+
+.cmp-explorer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin: 0 0 0.75rem;
+  padding: 0.75rem;
+  /* `border: 0` and no directional width: this row has no rule. A `<fieldset>`
+     carries a UA border, so leaving this off draws one nobody asked for. The
+     pairing is written out so that adding a directional width later cannot
+     fall into the `border-solid` trap CLAUDE.md records. */
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--bg-raise);
+}
+
+/* A `<legend>` inside a flex `<fieldset>` is laid out by the UA rather than by
+   the flex container, which is why this is only coloured and padded. */
+.cmp-explorer-legend {
+  padding: 0 0.25rem;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
+.cmp-explorer-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
+/* Full-width so it sits under the controls rather than beside them: it is a
+   statement about the whole row, and a reader scanning left to right for the
+   next control should not find a sentence there. */
+.cmp-explorer-note {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
+.cmp-compare {
+  width: 100%;
+  border-collapse: collapse;
+  /* Wide tables scroll inside their own container rather than pushing the
+     document sideways -- a markdown column is narrow and three entities is
+     already wider than it. */
+  display: block;
+  overflow-x: auto;
+}
+
+.cmp-compare th,
+.cmp-compare td {
+  /* Zeroes the three sides this rule does not want. `<th>` carries a UA border
+     in some stylesheets, and `border-bottom: 1px solid` below says nothing
+     about the other three. */
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.cmp-compare thead th {
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   the socratic dialogue
+
+   Named rules rather than utilities, for `layout.css`'s reason and one of this
+   surface's own: the question and the answer have to be told apart at a glance
+   and the distinction is measured in a browser test, so it needs somewhere a
+   measurement can point at. Every `var()` below was grepped against
+   `tokens.css` rather than recalled -- `--fg-muted` and `--bg-raised` do not
+   exist here, and a rule naming one sets no colour while looking exactly like
+   a rule that worked.
+
+   The direction is carried by the paint, not only by the DOM: the DIALOGUE's
+   question is the prominent block and the READER's answer is the quiet one,
+   which is the inverse of the ask surface beside it. That inversion is the
+   whole trap this page is shaped around -- a page drawing them the other way
+   round still reads as a conversation, just one where the reader asks
+   everything.
+   --------------------------------------------------------------------------- */
+
+.dlg-framing {
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-raise);
+  /* `border: 0` first: `border-bottom: 1px solid` says nothing about the other
+     three sides, and a side with a style but no width falls back to the
+     browser's `medium` (~3px). The same defect `.cmp-compare` documents. */
+  border: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.dlg-goal {
+  margin: 0;
+  font-size: var(--t-lg);
+  color: var(--fg);
+}
+
+/* Dimmer than the goal on purpose. Both must be readable -- a reader who
+   disagrees with either should see it before spending twenty minutes -- but
+   the goal is what the dialogue is for and the condition is when it stops. */
+.dlg-condition {
+  margin: var(--space-2) 0 0;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
+.dlg-exchange {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* What the dialogue asked. The panel and the accent rule are the loud half of
+   the pair: on this surface the question is the thing being put to the reader,
+   where on the ask surface the reader's own words carry the panel. */
+.dlg-question,
+.dlg-pending {
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-panel-2);
+  border: 0;
+  border-left: 2px solid var(--accent-dim);
+  border-radius: var(--radius);
+  color: var(--fg);
+}
+
+/* The outstanding question, which belongs to no turn. Louder than a settled
+   one because it is the only thing on the page waiting on the reader. */
+.dlg-pending {
+  border-left-color: var(--accent);
+}
+
+/* The reader's own words: no panel, dimmer, and indented under the question,
+   so a transcript scans as question / answer without a label on every line.
+   `pre-wrap` because they typed the newlines. */
+.dlg-answer {
+  margin: 0;
+  padding-left: var(--space-4);
+  white-space: pre-wrap;
+  color: var(--fg-dim);
+}
+
+/* Says the dialogue is writing, and never says what. The delta frames that
+   drive this carry an empty `text` deliberately -- see
+   `domain/dialogue/conversation.ts` -- so there is no half-written question to
+   show even if this wanted to. */
+.dlg-composing {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--fg-faint);
+}
+
+/* The failed progress load, said once and quietly. Muted and small on purpose:
+   it is not the reader's action that failed, and an error-coloured box here
+   reads as "your answer did not go through". Sized like `.dlg-composing`
+   beside it, which is the other line on this page nobody is asked to act on. */
+.dlg-progress-lost {
+  flex-shrink: 0;
+  margin: 0;
+  padding: var(--space-2) var(--space-5) 0;
+  font-size: var(--t-sm);
+  color: var(--fg-faint);
+}
+
+.dlg-concluded {
+  flex-shrink: 0;
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  border: 0;
+  border-top: 1px solid var(--line);
+  text-align: center;
+  font-size: var(--t-sm);
+  color: var(--fg-dim);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001s !important;

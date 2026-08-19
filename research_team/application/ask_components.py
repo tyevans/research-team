@@ -21,7 +21,17 @@ from typing import Any
 
 from research_team.application.components import View, parse_document, project
 
-ASK_COMPONENT_TYPES: tuple[str, ...] = ("mcq", "cloze", "flashcards")
+ASK_COMPONENT_TYPES: tuple[str, ...] = (
+    "mcq",
+    "cloze",
+    "flashcards",
+    "definition",
+    "evidence",
+    "graph",
+    "timeline",
+    "compare",
+    "explorer",
+)
 """What the ask agent may author.
 
 `checklist` is absent and that is a ruling, not an omission. A checklist is a
@@ -29,6 +39,34 @@ record of a procedure someone performed, and its only interesting mode is
 `persist: true` -- which needs a learner identity the ask path deliberately
 does not have. A checklist that cannot remember a tick is a list of bullets
 with worse affordances than a list of bullets.
+
+All six resolved types are here, and for the opposite reason. An ask is
+precisely where a reader asks about the corpus, and a resolved component is
+the only thing in this registry that can answer with what the project actually
+holds rather than with what the model can describe. A widget whose reference
+misses renders as prose, so the cost of offering one that does not land is a
+word rather than an error -- which is what makes offering all six at once
+reasonable rather than reckless.
+
+Written out rather than derived from `REGISTRY`, deliberately. A derived tuple
+is how `COMPONENTS_FOR[BUILD]` came to advertise five widgets that cannot
+resolve where its prompt is used: a registry entry joined a prompt by existing.
+The cost of this list is that a new type has to be added in two places; the
+benefit is that adding it is a decision somebody made. Measured on 2026-08-17:
+this reference is 3,040 characters with the three original types, 7,947 with
+eight, and 9,600 with all nine -- paid on every ask turn.
+
+`explorer` is the ninth and the first that is not a view but an invitation: the
+reader re-runs the author's query rather than reading the one the author chose.
+It belongs here for the same reason the other resolved types do -- an ask is
+where a reader asks about the corpus -- and it is the type an ask suits best,
+because an ask reader arrived with a question rather than with a curriculum.
+
+It is also the most expensive entry in this tuple: re-measured on 2026-08-17
+when it was added, `explorer` alone costs 1,653 of those characters -- six
+craft notes where `timeline` has four -- and `ASK_PROMPT` went from 11,302 to
+12,955. That is the price of the ninth type, and it is charged on every turn
+whether or not the model writes one.
 """
 
 

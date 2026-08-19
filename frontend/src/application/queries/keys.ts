@@ -94,6 +94,43 @@ export const queryKeys = {
    *  and a shared key would make a definition refetch invalidate the
    *  passages too, and vice versa. */
   definition: (project: ProjectId, entityId: string) => ['definition', project, entityId] as const,
+  /** One entity-name lookup, shared by every resolved widget on the page.
+   *
+   * Keyed on the name rather than on the component id: an answer that cites
+   * "Constantine" in a `definition` and again in a `graph` is one search, not
+   * two, and keying by component would make the same question a cache miss
+   * per widget. Not the zustand graph store (`graph-store.ts:85`) for the
+   * spec's reason -- that store is per-project console state with selection
+   * and expansion in it, and a widget wants a cached read rather than a share
+   * in someone else's cursor. */
+  entityReference: (project: ProjectId, name: string) =>
+    ['entity-reference', project, name] as const,
+  /** One entity's neighbourhood at one depth. Depth is in the key rather than
+   *  refetched over: two widgets on the same entity at depths 1 and 2 are two
+   *  different graphs, and a shared key would draw one under the other. */
+  neighborhood: (project: ProjectId, entityId: string, depth: number) =>
+    ['neighborhood', project, entityId, depth] as const,
+  /** One window over the timeline. Every bound is in the key: two widgets
+   *  asking for two centuries are two different answers, and a key on the
+   *  project alone would show one century's bands under the other's heading
+   *  -- the same mistake `document`'s range key exists to avoid. */
+  timeline: (
+    project: ProjectId,
+    window: {
+      entityType?: string | null
+      from?: string | null
+      to?: string | null
+      limit?: number | null
+    },
+  ) =>
+    [
+      'timeline',
+      project,
+      window.entityType ?? null,
+      window.from ?? null,
+      window.to ?? null,
+      window.limit ?? null,
+    ] as const,
   /** One project's discovered classes. Keyed on the project alone: the view
    *  shows all of them at once, and a per-class key would be a cache entry
    *  nothing ever reads on its own. */

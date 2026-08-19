@@ -1,5 +1,6 @@
 import type { Approval, ApprovalAnswer } from '@domain/approval/approval.ts'
 import type { AskEvent } from '@domain/ask/conversation.ts'
+import type { DialogueEvent } from '@domain/dialogue/conversation.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
@@ -12,7 +13,7 @@ import type {
 } from '@domain/knowledge/graph.ts'
 import type { OntologyClass } from '@domain/knowledge/ontology.ts'
 import type { Timeline } from '@domain/knowledge/timeline.ts'
-import type { ComponentAudience, LessonDocument } from '@domain/lesson/document.ts'
+import type { ComponentAudience, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
 import type { Project, WorkflowPreset } from '@domain/project/project.ts'
@@ -510,14 +511,31 @@ export interface OntologyRepository {
   discover(projectId: ProjectId, sourceId: string): Promise<number | null>
 }
 
+/** A window over the project's timeline. Every part optional: the whole
+ *  timeline is a real thing to ask for, and it is the console's own request. */
+export interface TimelineWindowQuery {
+  readonly entityType?: string
+  /** ISO instants bounding a half-open `[from, to)` window; either may be
+   *  omitted for an open end. Sent as `from`/`to` -- the route aliases them
+   *  back onto `from_`, because `from` is a Python keyword. */
+  readonly from?: string
+  readonly to?: string
+  readonly limit?: number
+}
+
 export interface TimelineRepository {
-  /** The project's dated entities in time order, up to the server's cap.
+  /** The project's dated entities in time order, inside `window`, up to the
+   *  server's cap.
    *
    * `undatedCount` on the result is not optional dressing -- most entities in
    * a real graph carry no dates, so a timeline is a view of a minority of the
    * corpus and the caller must show the denominator. `truncated` says the cap
-   * bit, the same way `WholeGraph.truncated` does. */
-  timeline(projectId: ProjectId, entityType?: string): Promise<Timeline>
+   * bit, the same way `WholeGraph.truncated` does.
+   *
+   * An options object rather than the positional `entityType` this replaced:
+   * three of the four parameters are optional and independent, and a
+   * positional list of four optionals is a call site nobody can read. */
+  timeline(projectId: ProjectId, window?: TimelineWindowQuery): Promise<Timeline>
 }
 
 export interface WorkerRepository {
@@ -579,6 +597,95 @@ export interface AskRepository {
     conversationId: string,
     input: { position: number; componentId: ComponentId; response: AttemptResponse },
   ): Promise<Verdict>
+}
+
+/** A dialogue's framing: what it is for, when it is done, and how it opened.
+ *
+ * Returned whole from `start` rather than fetched afterwards. The route
+ * `POST /dialogues` answered `{"dialogueId"}` alone for three commits while its
+ * own docstring claimed the goal arrived there, so a freshly framed dialogue
+ * drew an empty framing block and an empty thread until the reader answered a
+ * question they could not see. `app.py`'s `start_dialogue` carries the trade
+ * against a second `GET`.
+ *
+ * `openingBlocks`, never a raw prompt string: no dialogue surface carries raw
+ * prompt text, because the raw copy ships the fenced component's answer key
+ * beside a projection that withheld it. */
+export interface DialogueFraming {
+  readonly dialogueId: string
+  readonly goal: string
+  readonly stoppingCondition: string
+  readonly openingBlocks: readonly DocumentBlock[]
+}
+
+/** What this reader has had marked in one dialogue, keyed `turn/{position}`
+ *  and then by component id.
+ *
+ * Two levels because a component id is unique only within one utterance. Each
+ * turn's value is exactly the shape `useAttemptMachine`'s `stored` port takes,
+ * so an exchange passes its own entry through unadapted. */
+export type DialogueProgress = Readonly<Record<string, ReadonlyMap<ComponentId, ItemProgress>>>
+
+/** The socratic surface, which runs the other way round from the ask: the
+ *  system asks and the reader answers. Its own port rather than a widened
+ *  `AskRepository` for the reason `domain/dialogue/conversation.ts` opens
+ *  with -- a shared type would make that inversion a runtime concern.
+ *
+ * Moved here from above `DialogueFraming`, where it read as that record's
+ * docstring and explained nothing about it while the interface it is actually
+ * about had none. */
+export interface DialogueRepository {
+  /** Frames a dialogue and returns it, id and framing together. Not a stream:
+   *  framing produces three strings and no activity worth watching, and the
+   *  id is the server's to mint because it is a row key and a URL segment. */
+  start(projectId: ProjectId, topic: string): Promise<DialogueFraming>
+  /** Streams one exchange. Rejects with a 404 for an unknown or concluded
+   *  dialogue and a 409 for one already running -- both are raised before the
+   *  stream opens, so both are status codes. A failure after the first frame
+   *  arrives as an `error` event and resolves, so a caller that only handles
+   *  rejection will show a turn that silently stops. */
+  reply(
+    projectId: ProjectId,
+    dialogueId: string,
+    reply: string,
+    onEvent: (event: DialogueEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void>
+  /** Marks one answer to a component the dialogue asked. The key never left
+   *  the server, so the browser cannot grade it.
+   *
+   *  Unlike `submitAskAttempt` this attempt is *recorded* against the dialogue
+   *  id, and `progress` below is what reads it back -- which is what makes the
+   *  recording visible to a reader rather than only true in the log. */
+  submitDialogueAttempt(
+    projectId: ProjectId,
+    dialogueId: string,
+    input: { position: number; componentId: ComponentId; response: AttemptResponse },
+  ): Promise<Verdict>
+  /** Everything this reader has had marked in this dialogue.
+   *
+   * The whole argument for this surface being its own principal: an ask
+   * discards an attempt and a dialogue keeps one, so this is the call that
+   * makes "your answers survive a refresh" true on screen and not just in
+   * storage. An untouched dialogue answers `{}` rather than rejecting. */
+  progress(projectId: ProjectId, dialogueId: string): Promise<DialogueProgress>
+  /** Ends a dialogue because the reader chose to stop.
+   *
+   * POST and not DELETE: nothing is removed -- the dialogue, its turns and
+   * every marked answer stay readable, and the wrong verb would tell a reader
+   * otherwise.
+   *
+   * There is no matching read: nothing here reads one dialogue whole, so the
+   * fact that the reader ended it lives only in the store for this session.
+   * The server does carry it -- `_dialogue_view` sends `concludedReason` -- and
+   * B120's `read(projectId, dialogueId)` is where it would arrive from.
+   *
+   * Rejects with a 409 when the dialogue had already concluded, most likely
+   * because the model concluded it on the previous turn. That is not a
+   * failure: the reader wanted it stopped and it is stopped. It is a separate
+   * status rather than a success because the caller must not then claim the
+   * reader ended it. */
+  end(projectId: ProjectId, dialogueId: string): Promise<void>
 }
 
 export interface HealthRepository {

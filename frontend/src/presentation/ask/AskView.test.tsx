@@ -196,6 +196,7 @@ it('submits a widget attempt against the server-issued conversation id, not the 
             unknown: false,
             errors: [],
             withheld: ['answer'],
+            resolved: false,
           },
         ],
         position: 0,

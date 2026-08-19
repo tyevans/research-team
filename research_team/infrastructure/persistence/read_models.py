@@ -107,6 +107,13 @@ from research_team.domain.ontology import (
     DiscoveredClass,
     OntologyDiscovered,
 )
+from research_team.domain.socratic_dialogue import (
+    SocraticDialogue,
+    SocraticDialogueConcluded,
+    SocraticDialogueStarted,
+    SocraticProgressObserved,
+    SocraticTurnRecorded,
+)
 
 LOCAL_RETRY_POLICY = ExponentialBackoffRetryPolicy(
     config=RetryConfig(max_retries=2, initial_delay=0.05, max_delay=1.0)
@@ -3366,6 +3373,515 @@ class AskConversationRunner:
         if self._asks is not None:
             await self._asks.close()
             self._asks = None
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None
+
+
+SOCRATIC_NAMESPACE = UUID("e1c7a9d2-4b0f-4a6e-9c31-2f58d7b6e410")
+"""Namespace for derived socratic row ids. A fresh uuid5 namespace rather than
+reusing `ASK_NAMESPACE`: the two id spaces would otherwise collide on a
+dialogue and a conversation that happened to share an id and a position, which
+is astronomically unlikely and free to prevent."""
+
+
+class SocraticDialogueRow(ReadModel):
+    """One dialogue. `id` is the dialogue id.
+
+    The aggregate id itself with no `uuid5` over it, for `AskConversationRow`'s
+    reason: the id is minted by the server and handed to the client, so
+    deriving a second one would give every read route a key nothing returned.
+
+    **`goal` and `stopping_condition` are the resumption path's source of
+    truth.** When the live registry has dropped a dialogue, this row is what it
+    is rebuilt from -- so a projection that stored the topic and dropped these
+    two would resume a dialogue aimed at nothing, and every request would still
+    answer 200.
+
+    `observations` is a JSON list for `AskTurnRow.citations`' reason. A third
+    table was the alternative and buys a query nothing issues; the spec asks
+    for the two-table pattern and this is what keeps it.
+    """
+
+    __table_name__ = "socratic_dialogues"
+
+    project_id: UUID
+    topic: str
+    goal: str
+    stopping_condition: str
+    opening_prompt: str = ""
+    pending_prompt: str = ""
+    """The question the reader is currently looking at.
+
+    **Derived, not a second copy.** It is the last turn's `prompt`, or
+    `opening_prompt` when there are no turns -- the projection writes it on
+    start and overwrites it on each turn, so the log still holds each utterance
+    once and this column is the precomputation a read model exists to do. A
+    client asking "what am I answering?" would otherwise have to fetch every
+    turn to find out.
+
+    `rebuild()` reproduces it, because it is written in log order from event
+    payloads like every other column here."""
+
+    opened_at: datetime
+    status: str = "started"
+    concluded_reason: str = ""
+    turn_count: int = 0
+    observations: list[dict] = Field(default_factory=list)
+
+    @field_validator("observations", mode="before")
+    @classmethod
+    def _decode_json_list(cls, value: object) -> object:
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+
+class SocraticTurnRow(ReadModel):
+    """One exchange: what the reader said, and what the dialogue said back.
+
+    **`position` is stored, not inferred**, for `AskTurnRow`'s reason: a read
+    leaning on insertion order is correct until `rebuild()` truncates and
+    replays, which is supported here and free to insert in a different physical
+    order.
+
+    `prompt` is the dialogue's utterance and `reply` is the reader's -- the
+    inverse of `AskTurnRow`, because this surface runs in the opposite
+    direction. See `test_the_speakers_are_not_swapped_on_the_way_into_the_table`
+    for what a swap would look like: a transcript that still reads as a
+    conversation, just one where the reader asks all the questions.
+
+    **A row is one exchange, reader first.** The question this row's `reply`
+    answers is the *previous* row's `prompt` -- or `opening_prompt` on the
+    dialogue, for row 0. So a client rendering only this table draws a
+    transcript that starts with the reader; the dialogue's `opening_prompt` is
+    the missing first utterance.
+    """
+
+    __table_name__ = "socratic_turns"
+
+    dialogue_id: UUID
+    project_id: UUID
+    position: int
+    prompt: str
+    reply: str
+    citations: list[dict] = Field(default_factory=list)
+    recorded_at: datetime
+
+    @field_validator("citations", mode="before")
+    @classmethod
+    def _decode_json_list(cls, value: object) -> object:
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+    @staticmethod
+    def row_id(dialogue_id: UUID, position: int) -> UUID:
+        """Derived from the pair, so replaying one event twice rewrites a row
+        rather than appending a second copy of the same turn."""
+        return uuid5(SOCRATIC_NAMESPACE, f"{dialogue_id}:{position}")
+
+
+class SocraticDialogueStore:
+    """The two dialogue tables and the connection they share.
+
+    One store rather than one per table, for `AskConversationStore`'s reason: a
+    turn and its dialogue's `turn_count` and `pending_prompt` are written
+    together, and two stores over two connections would leave a window in which
+    a dialogue claims a turn that cannot be read yet.
+    """
+
+    def __init__(
+        self,
+        connection: aiosqlite.Connection,
+        dialogues: ReadModelRepository[SocraticDialogueRow],
+        turns: ReadModelRepository[SocraticTurnRow],
+    ) -> None:
+        self._connection = connection
+        self._dialogues = dialogues
+        self._turns = turns
+
+    @classmethod
+    async def open(cls, db_path: str, tracer=None) -> "SocraticDialogueStore":
+        connection = await aiosqlite.connect(db_path)
+        await apply_schema(connection, SocraticDialogueRow)
+        await apply_schema(connection, SocraticTurnRow)
+        # `apply_schema` reconciles columns and not indexes -- the same note as
+        # on `AskConversationStore.open`. Both reads here are scoped: the
+        # history list by project and one dialogue's turns by dialogue, so
+        # without these every read scans every dialogue anyone ever had.
+        for statement in (
+            f"CREATE INDEX IF NOT EXISTS idx_socratic_dialogues_project "
+            f"ON {SocraticDialogueRow.table_name()}(project_id)",
+            f"CREATE INDEX IF NOT EXISTS idx_socratic_turns_dialogue "
+            f"ON {SocraticTurnRow.table_name()}(dialogue_id, position)",
+        ):
+            await connection.execute(statement)
+        await connection.commit()
+        return cls(
+            connection,
+            SQLiteReadModelRepository(connection, SocraticDialogueRow, tracer),
+            SQLiteReadModelRepository(connection, SocraticTurnRow, tracer),
+        )
+
+    async def start(
+        self,
+        dialogue_id: UUID,
+        project_id: UUID,
+        *,
+        topic: str,
+        goal: str,
+        stopping_condition: str,
+        opening_prompt: str,
+        opened_at: datetime,
+    ) -> None:
+        await self._dialogues.save(
+            SocraticDialogueRow(
+                id=dialogue_id,
+                project_id=project_id,
+                topic=topic,
+                goal=goal,
+                stopping_condition=stopping_condition,
+                opening_prompt=opening_prompt,
+                # With no turns yet, the opening question is the outstanding
+                # one. `record` overwrites this on every turn.
+                pending_prompt=opening_prompt,
+                opened_at=opened_at,
+            )
+        )
+
+    async def record(
+        self,
+        dialogue_id: UUID,
+        *,
+        reply: str,
+        prompt: str,
+        citations: list[dict],
+        recorded_at: datetime,
+    ) -> None:
+        """Store one exchange at the next position, and move the dialogue on.
+
+        A turn against a dialogue with no row is dropped rather than raised on,
+        for `AskConversationStore.record`'s reason: `decide` refuses a turn
+        before a start, so the only way to arrive here is a log whose head this
+        projection never saw, and a DLQ entry per turn would bury a real
+        failure under a stream that cannot be repaired anyway.
+        """
+        dialogue = await self._dialogues.get(dialogue_id)
+        if dialogue is None:
+            return
+        position = dialogue.turn_count
+        await self._turns.save(
+            SocraticTurnRow(
+                id=SocraticTurnRow.row_id(dialogue_id, position),
+                dialogue_id=dialogue_id,
+                project_id=dialogue.project_id,
+                position=position,
+                reply=reply,
+                prompt=prompt,
+                citations=citations,
+                recorded_at=recorded_at,
+            )
+        )
+        dialogue.turn_count = position + 1
+        # Precomputed, not a second copy: this turn's `prompt` is the newest
+        # thing the dialogue said, so it is what the reader is now answering.
+        # Derivable from the turns table; kept here so a client does not have
+        # to fetch every turn to learn it.
+        dialogue.pending_prompt = prompt
+        await self._dialogues.save(dialogue)
+
+    async def observe(
+        self, dialogue_id: UUID, *, observation: str, evidence: str, detail: str
+    ) -> None:
+        """Append one observation to the dialogue's list.
+
+        Read-modify-write on a JSON column, which is only safe because this
+        projection is the single writer of these tables and processes one event
+        at a time -- the same assumption `record`'s position counter already
+        makes.
+        """
+        dialogue = await self._dialogues.get(dialogue_id)
+        if dialogue is None:
+            return
+        dialogue.observations = [
+            *dialogue.observations,
+            {"observation": observation, "evidence": evidence, "detail": detail},
+        ]
+        await self._dialogues.save(dialogue)
+
+    async def conclude(self, dialogue_id: UUID, *, reason: str) -> None:
+        dialogue = await self._dialogues.get(dialogue_id)
+        if dialogue is None:
+            return
+        dialogue.status = "concluded"
+        dialogue.concluded_reason = reason
+        await self._dialogues.save(dialogue)
+
+    async def get(self, dialogue_id: UUID) -> SocraticDialogueRow | None:
+        return await self._dialogues.get(dialogue_id)
+
+    async def for_project(self, project_id: UUID) -> list[SocraticDialogueRow]:
+        """A project's dialogues, most recently opened first."""
+        return await self._dialogues.find(
+            Query(
+                filters=[Filter(field="project_id", operator="eq", value=str(project_id))],
+                order_by="opened_at",
+                order_direction="desc",
+            )
+        )
+
+    async def turns_for(self, dialogue_id: UUID) -> list[SocraticTurnRow]:
+        """One dialogue's exchanges, in the order they happened -- by the
+        stored `position`, never by arrival. See `SocraticTurnRow`."""
+        return await self._turns.find(
+            Query(
+                filters=[Filter(field="dialogue_id", operator="eq", value=str(dialogue_id))],
+                order_by="position",
+                order_direction="asc",
+            )
+        )
+
+    async def truncate(self) -> None:
+        """Empty both tables, for a rebuild to fill again -- a hard delete for
+        `SessionSummaryStore.truncate`'s reason."""
+        for table in (SocraticDialogueRow.table_name(), SocraticTurnRow.table_name()):
+            await self._connection.execute(f"DELETE FROM {table}")
+        await self._connection.commit()
+
+    async def close(self) -> None:
+        await self._connection.close()
+
+
+class SocraticDialogueProjection(DeclarativeProjection):
+    """Writes dialogues into the two tables above.
+
+    Nothing else writes them: every column comes from an event payload, which
+    is what lets `rebuild()` truncate.
+    """
+
+    def __init__(
+        self,
+        dialogues: SocraticDialogueStore,
+        checkpoint_repo=None,
+        dlq_repo=None,
+        tracer=None,
+    ) -> None:
+        self._dialogues = dialogues
+        super().__init__(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+            retry_policy=LOCAL_RETRY_POLICY,
+            tracer=tracer,
+        )
+
+    @handles(SocraticDialogueStarted)
+    async def _on_started(self, event: SocraticDialogueStarted) -> None:
+        await self._dialogues.start(
+            event.aggregate_id,
+            event.project_id,
+            topic=event.topic,
+            goal=event.goal,
+            stopping_condition=event.stopping_condition,
+            opening_prompt=event.opening_prompt,
+            opened_at=event.opened_at,
+        )
+
+    @handles(SocraticTurnRecorded)
+    async def _on_turn(self, event: SocraticTurnRecorded) -> None:
+        """`event.occurred_at` rather than a clock read, for the reason
+        `AskConversationProjection._on_turn` gives: a rebuild has to reproduce
+        the timestamps it produced the first time, not today's."""
+        await self._dialogues.record(
+            event.aggregate_id,
+            reply=event.reply,
+            prompt=event.prompt,
+            citations=[{"kind": kind, "id": cited} for kind, cited in event.citations],
+            recorded_at=event.occurred_at,
+        )
+
+    @handles(SocraticProgressObserved)
+    async def _on_observed(self, event: SocraticProgressObserved) -> None:
+        await self._dialogues.observe(
+            event.aggregate_id,
+            observation=event.observation,
+            evidence=event.evidence,
+            detail=event.detail,
+        )
+
+    @handles(SocraticDialogueConcluded)
+    async def _on_concluded(self, event: SocraticDialogueConcluded) -> None:
+        await self._dialogues.conclude(event.aggregate_id, reason=event.reason)
+
+
+class SocraticDialogueRunner:
+    """Keeps the dialogue tables following the log.
+
+    A ninth runner, for `AskConversationRunner`'s reason: a
+    `rebuild()`/`failures()`-shaped surface for these tables alone, and a
+    `rebuild()` that cannot truncate tables it does not own.
+
+    **This is also the read side of resumption.** `get` and `turns_for` are
+    what `SocraticDialogueService` reads through when the live registry has
+    dropped a dialogue, so a build that never constructs this does not merely
+    serve an empty history list -- it makes every resumed dialogue start over
+    while telling the reader it continued.
+    """
+
+    def __init__(
+        self,
+        store: SQLiteEventStore,
+        db_path: str,
+        bus: InMemoryEventBus,
+        tracer=None,
+    ):
+        self._store = store
+        self._db_path = db_path
+        self._bus = bus
+        self._tracer = tracer
+        self._dialogues: SocraticDialogueStore | None = None
+        self._manager: SubscriptionManager | None = None
+        self._subscription = None
+        self._checkpoints: SQLCheckpointRepository | None = None
+        self._dlq: SQLDLQRepository | None = None
+        self._engine: AsyncEngine | None = None
+
+    @property
+    def projection_name(self) -> str:
+        return SocraticDialogueProjection.__name__
+
+    async def start(self) -> None:
+        """Open the tables and start following the log.
+
+        Same shape as `AskConversationRunner.start`, including touching the
+        event store first so `projection_checkpoints` exists before anything
+        reads it.
+        """
+        if self._manager is not None:
+            return
+        await self._store.current_position()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        self._engine = engine
+        self._checkpoints = SQLCheckpointRepository(engine)
+        self._dlq = SQLDLQRepository(engine)
+        self._dialogues = await SocraticDialogueStore.open(self._db_path, self._tracer)
+        projection = SocraticDialogueProjection(
+            self._dialogues, self._checkpoints, self._dlq, self._tracer
+        )
+        self._manager = SubscriptionManager(
+            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
+        )
+        self._subscription = await self._manager.subscribe(
+            projection, SubscriptionConfig(start_from="checkpoint")
+        )
+        results = await self._manager.start()
+        failures = {name: err for name, err in results.items() if err is not None}
+        if failures:
+            raise RuntimeError(f"the socratic projection failed to start: {failures}")
+
+    async def failures(self, limit: int = 100) -> list[DLQEntry]:
+        if self._dlq is None:
+            return []
+        return await self._dlq.get_failed_events(
+            projection_name=self.projection_name, limit=limit
+        )
+
+    def _started(self) -> SocraticDialogueStore:
+        """The open store, or a refusal naming what was not done -- delegated
+        rather than handed out, for `AskConversationRunner._started`'s reason."""
+        if self._dialogues is None:
+            raise RuntimeError("the socratic projection has not been started")
+        return self._dialogues
+
+    async def get(self, dialogue_id: UUID) -> SocraticDialogueRow | None:
+        return await self._started().get(dialogue_id)
+
+    async def for_project(self, project_id: UUID) -> list[SocraticDialogueRow]:
+        return await self._started().for_project(project_id)
+
+    async def turns_for(self, dialogue_id: UUID) -> list[SocraticTurnRow]:
+        return await self._started().turns_for(dialogue_id)
+
+    async def rebuild(self) -> None:
+        """Truncate and replay.
+
+        Allowed here, as on `AskConversationRunner.rebuild`, because every
+        column in both tables is written from an event payload -- including
+        `position`, which the projection derives in log order and therefore
+        reproduces, and `pending_prompt`, which is derived from the newest
+        turn's `prompt` in that same order.
+        """
+        if self._manager is None:
+            raise RuntimeError("the socratic projection has not been started")
+        await self._manager.stop()
+        for entry in await self.failures(limit=1000):
+            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
+        await self._checkpoints.reset_checkpoint(self.projection_name)
+        await self._started().truncate()
+        self._manager = None
+        self._subscription = None
+        await self._dialogues.close()
+        self._dialogues = None
+        await self.start()
+        await self.caught_up()
+
+    async def caught_up(self, timeout: float = 10.0) -> None:
+        """Block until every `SocraticDialogue` event appended so far is in the
+        tables.
+
+        Scoped by aggregate type and started from what the subscription has
+        already processed, **not** compared against the store's global end --
+        `SessionSummaryRunner.caught_up` documents at length why that
+        comparison runs its full timeout for a scoped subscription, and
+        dialogues share a store with sessions, asks, the corpus and redstring's
+        documents, any of which moves the end to a position this projection
+        never reaches.
+
+        No event-type filter: this projection handles *all four* event types on
+        its aggregate, so the scope is already exact.
+
+        **A dropped `@handles` reports here as a timeout, not as a missing
+        row.** `SubscriptionConfig` leaves `event_types=None`, so
+        `EventFilter.from_subscriber` derives the filter from the projection's
+        `@handles` set -- remove one and that event is never delivered, so
+        `last_processed_position` never advances past it while this method
+        keeps reading it back as remaining, for the full timeout. The
+        diagnostic then names this method rather than the handler that went
+        missing. Measured on 2026-08-17;
+        `test_a_dialogue_whose_start_nothing_handles_is_silently_empty` is the
+        test that had to work around it, and its docstring carries the detail.
+
+        This shape is copied verbatim from `AskConversationRunner.caught_up`,
+        so the sibling has the same property. Left alone deliberately:
+        diverging one runner from the established shape for this alone buys
+        a better error message and costs a difference nobody expects.
+        """
+        if self._manager is None:
+            return
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            remaining = await collect(
+                self._store.read_all(
+                    from_position=self._subscription.last_processed_position,
+                    options=FeedReadOptions(aggregate_type=SocraticDialogue.aggregate_type),
+                )
+            )
+            if not remaining:
+                return
+            await asyncio.sleep(0.01)
+        raise TimeoutError(
+            f"the socratic projection did not consume every "
+            f"{SocraticDialogue.aggregate_type} event within {timeout}s"
+        )
+
+    async def stop(self) -> None:
+        if self._manager is not None:
+            await self._manager.stop()
+            self._manager = None
+            self._subscription = None
+        if self._dialogues is not None:
+            await self._dialogues.close()
+            self._dialogues = None
         if self._engine is not None:
             await self._engine.dispose()
             self._engine = None

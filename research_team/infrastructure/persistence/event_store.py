@@ -26,6 +26,7 @@ from research_team.domain.learner import LearnerProgress
 from research_team.domain.media_proposals import MediaProposals
 from research_team.domain.ontology import ONTOLOGY_AGGREGATE_TYPE
 from research_team.domain.research_run import ResearchRun
+from research_team.domain.socratic_dialogue import SocraticDialogue
 from research_team.domain.topic import Topic
 
 SNAPSHOT_THRESHOLD = 50
@@ -77,6 +78,7 @@ UNROUTED_AGGREGATE_TYPES = frozenset(
         EntityJudgements.aggregate_type,
         ONTOLOGY_AGGREGATE_TYPE,
         AskConversation.aggregate_type,
+        SocraticDialogue.aggregate_type,
         BROWSER_SESSION_AGGREGATE_TYPE,
     }
 )
@@ -127,6 +129,11 @@ mid-conversation does not repaint, because nothing on that path reaches
 be left open while another tab asks -- the missing repaint only matters once
 something is watching for it, the same condition `Ontology`'s paragraph
 above names for its own pane.
+
+`SocraticDialogue` is off for `AskConversation`'s reason and one more: the
+only client that would repaint on a dialogue frame is the browser already
+holding the SSE stream that produced it, so a feed frame would be a second
+signal for a repaint that has already happened.
 
 `browser_session` is off for a different reason than the rest of this set:
 it is not merely unrendered, it is not reachable here at all. Interaction
@@ -187,6 +194,30 @@ def build_ask_conversation_repository(
     grows the turns themselves rather than a count of them.
     """
     return AggregateRepository(store, AskConversation, event_publisher=publisher)
+
+
+def build_socratic_dialogue_repository(
+    store: SQLiteEventStore,
+    publisher: InMemoryEventBus | None = None,
+) -> AggregateRepository[SocraticDialogue]:
+    """Guided dialogues, over the same log as everything else.
+
+    Published like its neighbours even though `SocraticDialogue` is in
+    `UNROUTED_AGGREGATE_TYPES`, for `build_ask_conversation_repository`'s
+    reason: publishing is what `read_since`'s local append flag watches, and
+    the scoping decision is made there rather than by half-wiring the bus here.
+
+    **No snapshots, and this one is closer to the line than the ask's.**
+    `SocraticDialogueState.observations` holds the observation texts rather
+    than a count, so unlike `AskConversationState` this fold grows with the
+    dialogue -- which is precisely the condition
+    `build_ask_conversation_repository` names as the trigger to revisit. It is
+    still the right call for the first release: a dialogue is a person typing,
+    an observation is a sentence, and a stream long enough for the threshold to
+    matter is a conversation nobody has had yet. Revisit when a dialogue can
+    run unattended, which is the change that would make the length unbounded.
+    """
+    return AggregateRepository(store, SocraticDialogue, event_publisher=publisher)
 
 
 def build_research_run_repository(

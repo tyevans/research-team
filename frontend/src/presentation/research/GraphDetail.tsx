@@ -8,6 +8,7 @@ import { Markdown } from '../common/content.tsx'
 import { Disclosure } from '../common/primitives.tsx'
 import { useEscape } from '../layout/OverlayHost.tsx'
 import { projectHref } from '../routing/routes.ts'
+import { DefinitionCitations } from './DefinitionCitations.tsx'
 import { useDefinition } from './use-definition.ts'
 import { useUsages } from './use-usages.ts'
 
@@ -254,47 +255,18 @@ export const GraphDetail = ({
                   Updating — this definition may be out of date while a newer one generates.
                 </p>
               ) : null}
-              {/* Rendered, not just carried on the object: the backend refuses
-                to store a definition that cites nothing (see
-                `entity_definitions.py`), on the premise that an ungrounded
-                definition is indistinguishable from a correct one at a
-                glance. Leaving the citations off this panel would throw that
-                guarantee away at the last step -- a reader would see prose
-                that reads as fact with no way to tell it was checked. Same
-                link pattern as the mentions list below (`doc` facet,
-                `shortId`), so the two halves of the panel cite the same
-                way; same known gap, too -- `Selection`'s `PlainFacet` arm
-                has no `start`/`end` to carry, so this opens the document
-                rather than the exact cited span. */}
-              {definitionQuery.data.citations.length > 0 ? (
-                <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
-                  {definitionQuery.data.citations.map((citation) => (
-                    <li key={`${citation.sourceId}|${citation.start}|${citation.end}`}>
-                      <a
-                        className="font-mono text-xs text-fg-dim no-underline hover:underline"
-                        href={
-                          projectHref(projectId, { facet: 'doc', id: citation.sourceId }) +
-                          // Checked against `null`, not truthiness: `atSeconds`
-                          // is `0` for a real citation at a source's first
-                          // second, and `0 ? … : …` would silently drop the
-                          // query for exactly that case. Same `?t=` query
-                          // `expandReferences` emits for an inline reference
-                          // -- one seek param, not two -- formatted with
-                          // `String()` rather than `toFixed`: it prints `252`
-                          // for the common whole-second case (matching the
-                          // integer-only grammar `[[src:id@252]]` parses) and
-                          // keeps a genuine fraction like `252.5` intact,
-                          // where a fixed precision would either truncate or
-                          // pad zeros nobody asked for.
-                          (citation.atSeconds === null ? '' : `?t=${String(citation.atSeconds)}`)
-                        }
-                      >
-                        {shortId(citation.sourceId)}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
+              {/* The markup moved to `DefinitionCitations` when the lesson
+                `definition` widget became a second caller: two hand-written
+                citation lists would be two places to get the `atSeconds ===
+                null` check wrong. The reasoning for rendering them at all,
+                and the `PlainFacet` gap they inherit, live in that module's
+                docstring. Same link pattern as the mentions list below (`doc`
+                facet, `shortId`), so the two halves of the panel still cite
+                the same way. */}
+              <DefinitionCitations
+                projectId={projectId}
+                citations={definitionQuery.data.citations}
+              />
             </div>
           )}
         </section>

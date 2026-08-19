@@ -222,7 +222,12 @@ describe('TimelinePane', () => {
     await screen.findByText('Waterloo')
     await userEvent.selectOptions(screen.getByLabelText(/type/i), 'event')
 
-    await waitFor(() => expect(fetchTimeline).toHaveBeenLastCalledWith(expect.anything(), 'event'))
+    // An options object since the port was widened to carry a whole window;
+    // the pane still asks for one filter and nothing else, and the absent
+    // keys are what keep the other three bounds open.
+    await waitFor(() =>
+      expect(fetchTimeline).toHaveBeenLastCalledWith(expect.anything(), { entityType: 'event' }),
+    )
   })
 
   it('keeps every type on offer after one of them is chosen', async () => {

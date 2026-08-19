@@ -6,6 +6,7 @@ import { queryKeys } from '@application/queries/keys.ts'
 import { createSessionStore, type SessionStore } from '@application/session/session-store.ts'
 import type { Course } from '@domain/project/course.ts'
 import { AskView } from '@presentation/ask/AskView.tsx'
+import { DialogueView } from '@presentation/dialogue/DialogueView.tsx'
 import { Shell } from '@presentation/layout/Shell.tsx'
 import { DEFAULT_MATERIAL, ProjectView } from '@presentation/project/ProjectView.tsx'
 import { homeHref, type Route } from '@presentation/routing/routes.ts'
@@ -217,6 +218,21 @@ const CurrentView = ({
   // URL and nothing to read it against, so it is a view rather than a region.
   // `ProjectView.regionOf` maps it anyway, and says why.
   if (selection?.facet === 'ask') return <AskView key={id} projectId={id} />
+
+  // Intercepted for `ask`'s reason -- a dialogue is one conversation with no
+  // parts worth a URL segment beyond its own id, so it is a view rather than a
+  // region.
+  //
+  // The id is a PROP now, not part of the `key`, and the difference is what
+  // makes a dialogue resumable. Keyed on it, the view remounted the instant it
+  // navigated to its own freshly minted id -- discarding the transcript that
+  // had just streamed. `DialogueView` rebuilds its own store when the URL
+  // names a dialogue it is not already on, which is the case the old key was
+  // reaching for (`switching dialogues must not inherit the first's
+  // transcript`) without the self-navigation collateral.
+  if (selection?.facet === 'dialogue') {
+    return <DialogueView key={id} projectId={id} dialogueId={selection.id} />
+  }
 
   // Unconditional, which is the whole of what this slice changed here. The
   // branch that stood between the two facet sets, and the `RESEARCH_FACETS`
