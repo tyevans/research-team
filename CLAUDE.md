@@ -30,21 +30,21 @@ and a bundle-size budget. Run it rather than the individual commands -- the
 prettier check and the size budget are only in the chain, and they are the two
 that fail in CI.
 
-**But `verify` is not the whole of the frontend job, and the gate it misses
-is invisible from here.** `research_team/interfaces/web/static` is a build
-artefact committed to the repository, and CI has a step -- `the committed
-build matches src/` -- that runs `npm run build` and fails if the working
-tree then shows drift. `verify` *runs* the build too, and never compares its
-output against the committed tree, so **a stale console passes `verify` green
-every time**. Any change under `frontend/src` has to be followed by `cd
-frontend && npm run build` and a commit of the rebuilt `assets/app.js` and
-`assets/index.css`.
+**The built console is not committed, and was until 2026-08-18.** If you are
+reading a commit older than that, `research_team/interfaces/web/static` is
+tracked, `.gitattributes` hands it to a `merge=ours` driver, and CI has a step
+named `the committed build matches src/` that fails on a stale bundle. All
+three are gone. What replaced them is a prerequisite: **`cd frontend && npm run
+build` before the server will serve a console at all** — `create_app` mounts
+nothing when `static/` is absent and `/` answers 503 naming the command
+(`tests/interfaces/test_web_missing_console.py`).
 
-Measured on 2026-08-16, not reasoned: PR #209 carried a frontend change whose
-own `npm run verify` had passed in full, and this was the only red job of the
-four. The tell is unhelpful -- the job is named `frontend`, so it reads as a
-test failure, and the actual error is eleven lines below a successful build's
-output.
+Why the swap: the reason for committing it was that `uv run web.py` then needed
+no Node toolchain. The cost was paid on every merge — two branches that both
+touched `frontend/src` produce two different bundles over the same handful of
+stable filenames, and the conflict is over bytes nobody reads or reviews, whose
+only correct resolution is to rebuild. That happened often enough to outweigh
+the toolchain-free run.
 
 **There is a further command, and it is not a gate.**
 

@@ -29,7 +29,12 @@ from fastapi import (
     Response,
     UploadFile,
 )
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from starlette.datastructures import Headers
@@ -4512,6 +4517,20 @@ def create_app(
             # assets is the mismatch that paints nothing.
             return FileResponse(
                 STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"}
+            )
+    else:
+        # The console is a build artefact and is no longer committed, so a
+        # fresh clone has no `static/` at all. Answering that with the router's
+        # bare 404 makes a missing build look like a missing route -- the same
+        # blank page a broken one gives, with nothing naming the cause. What a
+        # test would fail on: `test_web_missing_console.py` asserts the 503 and
+        # the command in its body.
+        @app.get("/")
+        async def console_not_built() -> PlainTextResponse:
+            return PlainTextResponse(
+                "The web console has not been built.\n"
+                "Run `npm run build` in `frontend/`, then restart.\n",
+                status_code=503,
             )
 
     return app

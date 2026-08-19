@@ -179,12 +179,14 @@ export default defineConfig({
          *  real disagreement. 89 of this repository's 297 commits carry build
          *  output, so it is not rare.
          *
-         *  Stable names turn that into an ordinary same-path content conflict,
-         *  which `.gitattributes` can hand to a merge driver and dispose of --
-         *  see the root `.gitattributes`. A driver cannot do the same for
-         *  rename/rename: the paths differ, so there is no single path for it
-         *  to be invoked on. That was tested rather than assumed, and it is the
-         *  reason dropping the hash comes first rather than the driver alone.
+         *  Stable names turned that into an ordinary same-path content
+         *  conflict, which a `merge=ours` driver could dispose of. That whole
+         *  argument expired on 2026-08-18, when the build output stopped being
+         *  committed at all (`.gitignore` carries why) and the driver and its
+         *  `.gitattributes` went with it. The hash stays off anyway, for the
+         *  reason below: this server sends `no-cache` rather than
+         *  far-future-immutable, so a hash buys nothing here and a stable name
+         *  keeps `npm run dev` and the built console naming the same files.
          *
          *  What the hash cost us to give up: cache-busting. Less than it
          *  sounds, because this server was never taking the payoff. `StaticFiles`

@@ -59,32 +59,22 @@ log. Every session belongs to a project, so start with `/project use <name>`.
 
 ### Working on the console
 
-`frontend/` is a standalone TypeScript app, built and committed into the
-directory the server mounts — so `uv run web.py` needs no Node toolchain.
-Changing it does:
+`frontend/` is a standalone TypeScript app that builds into the directory the
+server mounts, so **the console has to be built once before `uv run web.py`
+serves anything** — until then `/` answers 503 and says so:
 
 ```bash
 cd frontend
 npm install
+npm run build    # what web.py serves; required once, and after any src change
 npm run dev      # http://localhost:5173, proxying /api to the server above
-npm run build    # rebuilds what web.py serves; commit the result
 ```
 
-Because the built console is committed, two branches that both touched
-`frontend/src/` produce two different bundles and git offers a conflict over
-which to keep. Neither side is right — the merged *source* has not been built
-yet, so the only correct resolution is to rebuild. `.gitattributes` hands those
-paths to a merge driver that resolves them without asking, and CI's "the
-committed build matches src/" step rebuilds afterwards and fails if the result
-is stale. The driver is resolved through git *config*, which cannot be
-committed, so once per clone:
-
-```bash
-git config merge.ours.driver true
-```
-
-Skip it and the merge conflicts exactly as if `.gitattributes` were not there,
-with nothing to say why.
+The build output is *not* committed. It was until 2026-08-18, so that running
+the server needed no Node toolchain; the price was that every branch touching
+`frontend/src/` rewrote the same chunk files, and any two such branches
+conflicted over bytes nobody reads. A merge driver and a CI staleness gate
+existed only to manage that, and both are gone with it.
 
 `frontend/README.md` has the layering and the three files carrying most of the
 subtlety.
