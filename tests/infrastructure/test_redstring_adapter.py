@@ -16,7 +16,7 @@ from redstring import (
     tokenize,
 )
 
-from research_team.application.knowledge import KnowledgeError, SourceRef
+from research_team.application.knowledge import KnowledgeError, SearchMode, SourceRef
 from research_team.domain.judgements import EntityKey, HoldSame
 from research_team.infrastructure.knowledge import redstring_adapter
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
@@ -443,7 +443,7 @@ async def test_search_finds_an_ingested_entity_by_substring(tmp_path, build_adap
         SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
     )
 
-    matches = await adapter.search("lovelace")
+    matches = (await adapter.search("lovelace")).matches
 
     assert matches, "an ingested entity should be findable"
     assert any("lovelace" in match.name.lower() for match in matches)
@@ -470,7 +470,7 @@ async def test_search_finds_an_entity_by_an_interior_fragment(tmp_path, build_ad
         SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
     )
 
-    matches = await adapter.search("ovelace")
+    matches = (await adapter.search("ovelace")).matches
 
     assert [match.name for match in matches] == ["Ada Lovelace"]
 
@@ -489,7 +489,7 @@ async def test_search_finds_an_entity_by_a_short_prefix(tmp_path, build_adapter)
         SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
     )
 
-    matches = await adapter.search("Ada")
+    matches = (await adapter.search("Ada")).matches
 
     assert [match.name for match in matches] == ["Ada Lovelace"]
 
@@ -531,7 +531,7 @@ async def test_search_finds_an_entity_despite_a_misspelling(tmp_path, build_adap
         SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
     )
 
-    matches = await adapter.search("Adah Lovelace")
+    matches = (await adapter.search("Adah Lovelace")).matches
 
     assert [match.name for match in matches] == ["Ada Lovelace"]
 
@@ -565,13 +565,68 @@ async def test_search_reads_relationships_once_regardless_of_match_count(
 
     adapter._store.get_relationships_for = counting
 
-    matches = await adapter.search("a")
+    matches = (await adapter.search("a")).matches
 
     assert len(matches) == 2, "fixture needs both entities to match"
     assert all(match.relationship_count == 1 for match in matches), (
         "the batched read must still count each endpoint's edge"
     )
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_search_reports_substring_mode_when_embeddings_are_unavailable(
+    tmp_path, build_adapter
+):
+    """A dead embedding endpoint degrades entity search, and says so.
+
+    `_embedding_pair` latches `(None, None)` when its probe fails. That is the
+    right trade for consolidation -- losing an optional scoring feature beats
+    discarding a document that has already been fetched and extracted -- and
+    the wrong one for retrieval, where it silently removes the fuzzy channel
+    and leaves plausible substring hits behind.
+
+    This asserts the degradation is legible from the **result**. With this
+    reverted the only trace was a log line at warning, and a caller could not
+    tell a thin answer from a degraded one.
+
+    Note what it does *not* assert: that the search failed. Degrading is the
+    intended behaviour and `Ada Lovelace` still comes back.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+    )
+
+    outcome = await adapter.search("Ada")
+
+    assert outcome.mode is SearchMode.SUBSTRING
+    assert [match.name for match in outcome.matches] == ["Ada Lovelace"]
+
+
+@pytest.mark.asyncio
+async def test_search_reports_fused_mode_when_embeddings_work(tmp_path, build_adapter):
+    """The healthy case names itself too.
+
+    Without this, `mode` could be hardcoded to SUBSTRING and the test above
+    would pass -- which is the whole failure shape the field exists to close,
+    reproduced inside its own test.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(
+        tmp_path,
+        project_id,
+        embeddings=FakeEmbeddingProvider(dimension=8),
+        vector_store=InMemoryVectorStore(dimension=8),
+    )
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+    )
+
+    outcome = await adapter.search("Ada")
+
+    assert outcome.mode is SearchMode.FUSED
 
 
 @pytest.mark.asyncio
@@ -585,10 +640,10 @@ async def test_search_caps_at_the_limit(tmp_path, build_adapter):
         SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
     )
 
-    uncapped = await adapter.search("a")
+    uncapped = (await adapter.search("a")).matches
     assert len(uncapped) >= 2, "fixture needs at least two entities matching 'a'"
 
-    assert len(await adapter.search("a", limit=1)) == 1
+    assert len((await adapter.search("a", limit=1)).matches) == 1
 
 
 @pytest.mark.asyncio
@@ -608,7 +663,7 @@ async def test_search_of_a_blank_query_returns_nothing(tmp_path, build_adapter):
         SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
     )
 
-    assert await adapter.search("   ") == []
+    assert (await adapter.search("   ")).matches == ()
 
 
 @pytest.mark.asyncio
@@ -1356,8 +1411,8 @@ async def test_a_held_same_judgement_merges_what_scoring_never_pairs(
     await adapter.ingest(SourceRef(source_id="a", text="JFK commanded PT-109."))
     await adapter.ingest(SourceRef(source_id="b", text="The inauguration was cold."))
 
-    assert len(await adapter.search("JFK")) == 0, "the short spelling was absorbed"
-    assert len(await adapter.search("Kennedy")) == 1, "one person, one node"
+    assert len((await adapter.search("JFK")).matches) == 0, "the short spelling was absorbed"
+    assert len((await adapter.search("Kennedy")).matches) == 1, "one person, one node"
 
 
 @pytest.mark.asyncio
@@ -1377,5 +1432,5 @@ async def test_without_a_judgements_repository_the_same_pair_stays_two_nodes(
     await adapter.ingest(SourceRef(source_id="a", text="JFK commanded PT-109."))
     await adapter.ingest(SourceRef(source_id="b", text="The inauguration was cold."))
 
-    assert len(await adapter.search("JFK")) == 1, "still its own node"
-    assert len(await adapter.search("Kennedy")) == 1, "and so is the long spelling"
+    assert len((await adapter.search("JFK")).matches) == 1, "still its own node"
+    assert len((await adapter.search("Kennedy")).matches) == 1, "and so is the long spelling"

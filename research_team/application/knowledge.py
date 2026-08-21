@@ -14,6 +14,7 @@ import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Literal, Protocol
 from uuid import UUID
 
@@ -252,6 +253,48 @@ class Match:
     relationship_count: int
 
 
+class SearchMode(StrEnum):
+    """Which channels actually ran for one search.
+
+    This layer's own vocabulary rather than redstring's `RetrievalMode`, for
+    two reasons and not one: `application/` may not import redstring
+    (`tests/test_architecture.py`), and the two do not mean the same thing --
+    this counts the substring channel, which redstring has no concept of.
+    """
+
+    FUSED = "fused"
+    """Substring matching and redstring's blocking-key channel both ran."""
+
+    SUBSTRING = "substring"
+    """Substring matching only. No embedding provider, so no fuzzy channel."""
+
+
+@dataclass(frozen=True)
+class SearchOutcome:
+    """What a search returned, and which channels produced it.
+
+    **`mode` exists because the degradation it reports is otherwise
+    invisible.** The adapter's embedding probe latches `(None, None)` when the
+    endpoint is wrong or absent, and entity search quietly becomes a substring
+    scan: plausible results, fewer of them, and a warning in a log nobody
+    reads. Nothing raises and no count looks wrong.
+
+    That is the shape stark-bench found every one of its real bugs in -- two
+    rerank arms ran against a peer answering `502 Bad Gateway`, fell back
+    exactly as designed, and wrote plausible scores, while the field that
+    would have caught it had been in every report from the beginning and
+    nothing read it.
+
+    Deliberately **not** an exception. A dead embedding endpoint should
+    degrade entity lookup, not break it -- the same trade the probe already
+    makes for consolidation, and the right one. What changes is that a test
+    can assert on the degradation and a caller can say so out loud.
+    """
+
+    matches: tuple[Match, ...]
+    mode: SearchMode
+
+
 class KnowledgePort(Protocol):
     """Committing to the graph, reading it back, and reversing a merge."""
 
@@ -291,8 +334,13 @@ class KnowledgePort(Protocol):
         """
         ...
 
-    async def search(self, query: str, *, limit: int = 10) -> list[Match]:
-        """Entities whose name matches `query`. Entry points, not traversal."""
+    async def search(self, query: str, *, limit: int = 10) -> SearchOutcome:
+        """Entities whose name matches `query`. Entry points, not traversal.
+
+        Returns a `SearchOutcome` rather than a bare list so a caller can tell
+        a thin result from a degraded one -- see that class for why the
+        distinction is worth a type.
+        """
         ...
 
     async def undo_merge(self, merge_id: UUID) -> MergeRecord:

@@ -110,7 +110,7 @@ async def test_a_cross_document_duplicate_merges_with_no_floor(
     await adapter.ingest(SourceRef(source_id="a", text="The breed originates in Canada."))
     await adapter.ingest(SourceRef(source_id="b", text="The breed is used for duck hunting."))
 
-    matches = await adapter.search("Nova Scotia Duck Tolling Retriever")
+    matches = (await adapter.search("Nova Scotia Duck Tolling Retriever")).matches
     assert len(matches) == 1, f"one breed, one node; got {[match.name for match in matches]}"
 
 
@@ -136,7 +136,7 @@ async def test_without_embeddings_the_same_pair_stays_two_nodes(
     await adapter.ingest(SourceRef(source_id="a", text="The breed originates in Canada."))
     await adapter.ingest(SourceRef(source_id="b", text="The breed is used for duck hunting."))
 
-    matches = await adapter.search("Nova Scotia Duck Tolling Retriever")
+    matches = (await adapter.search("Nova Scotia Duck Tolling Retriever")).matches
     assert len(matches) == 2, "two features cannot reach 0.75; this is the #84 bug"
 
 
@@ -170,7 +170,7 @@ async def test_auto_merge_stays_out_of_reach_so_every_duplicate_costs_a_call(
     await adapter.ingest(SourceRef(source_id="a", text="The breed originates in Canada."))
     await adapter.ingest(SourceRef(source_id="b", text="The breed is used for duck hunting."))
 
-    matches = await adapter.search("Nova Scotia Duck Tolling Retriever")
+    matches = (await adapter.search("Nova Scotia Duck Tolling Retriever")).matches
     assert len(matches) == 2, "0.8 is in the adjudication band, not the auto-merge one"
 
 
@@ -416,5 +416,5 @@ async def test_half_a_configuration_is_no_configuration(
     await adapter.ingest(SourceRef(source_id="a", text="The breed originates in Canada."))
     await adapter.ingest(SourceRef(source_id="b", text="The breed is used for duck hunting."))
 
-    matches = await adapter.search("Nova Scotia Duck Tolling Retriever")
+    matches = (await adapter.search("Nova Scotia Duck Tolling Retriever")).matches
     assert len(matches) == 2, "a provider with no store must not score as three features"

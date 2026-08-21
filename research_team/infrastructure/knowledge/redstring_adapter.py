@@ -57,6 +57,8 @@ from research_team.application.knowledge import (
     KnowledgeError,
     Match,
     MergeRecord,
+    SearchMode,
+    SearchOutcome,
     SourceRef,
 )
 from research_team.application.retry import with_retry
@@ -937,7 +939,7 @@ class RedstringKnowledge:
         """Whether `undo_merge` survives a restart. False means the log is in-memory."""
         return self._consolidator.remembers_merges_across_restarts
 
-    async def search(self, query: str, *, limit: int = 10) -> list[Match]:
+    async def search(self, query: str, *, limit: int = 10) -> SearchOutcome:
         """Entities matching `query`, best first.
 
         Two channels, unioned: a substring test over the tenant's names, and
@@ -1008,7 +1010,11 @@ class RedstringKnowledge:
             raise KnowledgeError("limit must be at least 1")
         needle = query.strip().lower()
         if not needle:
-            return []
+            # `Retriever.retrieve` raises on a blank query and this returns
+            # nothing, which is the older contract and the one the agent tool
+            # depends on. Reported as FUSED rather than SUBSTRING: no channel
+            # was degraded, the question was empty.
+            return SearchOutcome(matches=(), mode=SearchMode.FUSED)
 
         try:
             async with tenant_scope(self._project_id):
@@ -1033,6 +1039,11 @@ class RedstringKnowledge:
                 }
 
                 embeddings, vectors = await self._embedding_pair()
+                mode = (
+                    SearchMode.FUSED
+                    if embeddings is not None and vectors is not None
+                    else SearchMode.SUBSTRING
+                )
                 ordered: list[UUID] = []
                 if embeddings is not None and vectors is not None:
                     retrieved = await Retriever(
@@ -1081,7 +1092,7 @@ class RedstringKnowledge:
                 ]
         except RedstringError as error:
             raise KnowledgeError(str(error)) from error
-        return matches
+        return SearchOutcome(matches=tuple(matches), mode=mode)
 
     async def undo_merge(self, merge_id: UUID) -> MergeRecord:
         """Reverse a consolidation.
