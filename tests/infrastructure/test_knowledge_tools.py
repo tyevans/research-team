@@ -7,6 +7,8 @@ from research_team.application.knowledge import (
     KnowledgeError,
     Match,
     MergeRecord,
+    SearchMode,
+    SearchOutcome,
     source_id_for_url,
 )
 from research_team.infrastructure.agent.knowledge_tools import build_knowledge_tools
@@ -14,10 +16,11 @@ from research_team.infrastructure.agent.recall import PageMemo
 
 
 class StubKnowledge:
-    def __init__(self, *, report=None, matches=(), error=None):
+    def __init__(self, *, report=None, matches=(), error=None, search_mode=SearchMode.FUSED):
         self._report = report
         self._matches = list(matches)
         self._error = error
+        self._search_mode = search_mode
         self.undone = []
         self.ingested = []
 
@@ -30,7 +33,7 @@ class StubKnowledge:
     async def search(self, query, *, limit=10):
         if self._error:
             raise self._error
-        return self._matches[:limit]
+        return SearchOutcome(matches=tuple(self._matches[:limit]), mode=self._search_mode)
 
     async def undo_merge(self, merge_id):
         if self._error:
@@ -124,6 +127,53 @@ async def test_graph_search_says_so_when_empty():
     tools = tools_by_name(StubKnowledge(matches=[]))
 
     assert "No" in await tools["graph_search"].ainvoke({"query": "nothing"})
+
+
+@pytest.mark.asyncio
+async def test_graph_search_tells_the_model_when_matching_is_degraded():
+    """A degraded search says so **on a hit**, not only on a miss.
+
+    The tempting version of this feature warns only when nothing came back.
+    That is the case where the model can already tell something is off. The
+    dangerous case is a short list of exact-substring hits that looks like a
+    complete answer -- the fuzzy channel changes which entities come back and
+    in what order, so a degraded search succeeding is indistinguishable from
+    a healthy one unless it is labelled.
+
+    Fails with the mode line removed, which is the whole point: without it
+    nothing anywhere tells the model, and the tool's output is identical in
+    both configurations.
+    """
+    matches = [
+        Match(
+            entity_id=uuid4(),
+            name="Ada Lovelace",
+            entity_type="Person",
+            relationship_count=3,
+        )
+    ]
+    tools = tools_by_name(StubKnowledge(matches=matches, search_mode=SearchMode.SUBSTRING))
+
+    result = await tools["graph_search"].ainvoke({"query": "ada"})
+
+    assert "Ada Lovelace" in result, "the hit is still reported"
+    assert "degraded" in result
+    assert "misspelling" in result
+
+
+@pytest.mark.asyncio
+async def test_graph_search_stays_quiet_when_matching_is_healthy():
+    """The note is absent in the ordinary case.
+
+    Guards the other direction: a warning printed on every search is one the
+    model learns to ignore, and would make the degraded case invisible again
+    by drowning it.
+    """
+    tools = tools_by_name(StubKnowledge(matches=[], search_mode=SearchMode.FUSED))
+
+    result = await tools["graph_search"].ainvoke({"query": "nothing"})
+
+    assert "degraded" not in result
 
 
 @pytest.mark.asyncio

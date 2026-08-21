@@ -3880,3 +3880,60 @@ by one every time a reader opens a dialogue and never comes back, and nothing
 ever subtracts from it. That is a real cost of the refusal above, not a reason
 to reverse it; it is what a metrics feature building on `status="started"`
 should know going in.
+
+### B-SEARCH-REORDER-1. Entity search finds nothing for a reordered name
+
+`search("lovelace ada")` returns nothing for an ingested `Ada Lovelace`.
+Measured against the live adapter 2026-08-21.
+
+Neither channel answers it and neither is at fault. The substring pass tests
+whether the *query* is contained in the *name*, so any reordering fails it.
+`redstring.Retriever`'s lexical channel blocks on a five-character prefix of
+the normalized name plus a soundex of the whole name, and reordering changes
+both.
+
+It matters because the caller is an agent writing free text: "Lovelace, Ada"
+and "Babbage Charles" are natural things for a model to produce from a
+citation or a table, and they read as "no such entity" rather than as a
+missed match.
+
+Not fixed alongside the fused-retrieval change, because every fix is a real
+choice rather than an oversight to patch: matching per-token against the name
+(cheap, and makes `search("worked with")` match a person), sorting the query's
+tokens into the blocking key (an upstream change to redstring's blocking
+scheme, affecting consolidation as well as retrieval), or a third lexical
+channel scoring token overlap. The middle one is redstring's to decide.
+
+Worth knowing before choosing: this document's design spec was wrong about
+this case twice in one day, in both directions, and each reading took ten
+seconds to check against the adapter. Check before arguing.
+
+### B-LEXICAL-NEEDS-EMBEDDINGS-1. A purely lexical entity search still requires an embedding provider
+
+`RedstringKnowledge.search` asks `redstring.Retriever` for
+`RetrievalMode.LEXICAL` -- blocking keys over the entity name, scored by
+Jaro-Winkler, with no vector involved. It still cannot run without an
+`EmbeddingProvider` and a `VectorStore`, because `Retriever.__init__` takes
+both and dimension-checks them against each other before any mode is chosen.
+
+So `AGENT_VECTOR_STORE=none`, and any deployment whose embedding probe failed
+and latched `(None, None)`, loses misspelling-tolerant entity search for a
+dependency that search does not use.
+
+The obvious local workaround is unavailable: calling `find_by_blocking_keys`
+and `lexical_score` directly -- exactly what `UsageReader` does with
+redstring's chunk-ranking internals, and for this same reason -- would name
+`redstring.domain.blocking`, and `tests/test_architecture.py` refuses
+`redstring.domain.*`. Neither function is exported from redstring's package
+root.
+
+Two ways out, and the first is upstream's to weigh: make `embeddings` and
+`vectors` optional on `Retriever` when the caller only ever asks for
+`LEXICAL` (it already branches per mode inside `retrieve`), or export the
+blocking-key helpers so a caller can assemble a lexical-only search the way
+`UsageReader` assembles a lexical-only chunk search.
+
+Not urgent: `AGENT_VECTOR_STORE` defaults to `memory`, so the common
+configuration has both. It bites the configuration that switched embeddings
+off deliberately, which is also the one least likely to be watching for a
+quiet loss of capability -- `SearchOutcome.mode` is what makes it visible.

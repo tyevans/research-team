@@ -19,7 +19,8 @@ from research_team.application.knowledge import (
     IngestReport,
     KnowledgeError,
     KnowledgePort,
-    Match,
+    SearchMode,
+    SearchOutcome,
     SourceRef,
     source_id_for_url,
 )
@@ -66,14 +67,36 @@ def format_ingest(report: IngestReport) -> str:
     return "\n".join(lines)
 
 
-def format_matches(matches: list[Match]) -> str:
-    if not matches:
-        return "No matching entities."
-    return "\n".join(
-        f"{match.name} ({match.entity_type}) -- {match.relationship_count} "
-        f"relationship(s) [{match.entity_id}]"
-        for match in matches
+def format_matches(outcome: SearchOutcome) -> str:
+    """The matches, and a line about the search itself when it was degraded.
+
+    **The degraded note is shown on a hit as well as a miss.** It is easy to
+    reason that a caller only needs telling when it got nothing, and wrong:
+    the fuzzy channel changes which entities come back and in what order, so a
+    short list of exact-substring hits is exactly what a degraded search looks
+    like when it succeeds. An agent told nothing would read that list as the
+    whole answer.
+
+    Phrased for a model that has to decide what to do next -- "a misspelling
+    will not be found" is actionable, "the embedding endpoint is unavailable"
+    on its own is not.
+    """
+    body = (
+        "No matching entities."
+        if not outcome.matches
+        else "\n".join(
+            f"{match.name} ({match.entity_type}) -- {match.relationship_count} "
+            f"relationship(s) [{match.entity_id}]"
+            for match in outcome.matches
+        )
     )
+    if outcome.mode is SearchMode.SUBSTRING:
+        return (
+            f"{body}\n\n(Name matching is degraded: the embedding endpoint is "
+            f"unavailable, so this searched for entities *containing* your text "
+            f"and a misspelling will not be found.)"
+        )
+    return body
 
 
 def build_knowledge_tools(
@@ -177,10 +200,10 @@ def build_knowledge_tools(
     async def graph_search(query: str) -> str:
         """Find entities in the project's knowledge graph by name."""
         try:
-            matches = await knowledge.search(query, limit=limit)
+            outcome = await knowledge.search(query, limit=limit)
         except KnowledgeError as error:
             return f"Could not search the graph: {error}"
-        return format_matches(matches)
+        return format_matches(outcome)
 
     @tool(UNMERGE_TOOL)
     async def unmerge(merge_id: str) -> str:
