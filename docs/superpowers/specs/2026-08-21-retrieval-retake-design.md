@@ -22,8 +22,8 @@ useful and deliberately ordered so that each is informed by the last.
 
 ## Part 0 -- Four measurements taken while designing this
 
-These are recorded first because two of them killed an earlier draft of this
-design, and a reader who does not have them will re-propose it.
+Two of them killed an earlier draft of this design and one of them killed a
+planned pull request. A reader who does not have them will re-propose both.
 
 ### `Retriever` matches names, on both channels
 
@@ -74,8 +74,16 @@ default_overlap=500)` over 2,700 characters returns six chunks:
 ```
 
 The last chunk is **wholly contained in the one before it**. This is
-`stark-bench`'s `B-SLIDING-REDUNDANT-1`, open upstream, and present in the
-version this repository installs.
+`stark-bench`'s `B-SLIDING-REDUNDANT-1`; it is *not* filed in redstring's own
+backlog, and it is present in the version this repository installs.
+
+*Measured here*, across lengths from 450 to 4,500 characters at 1000/500:
+**exactly one redundant chunk, always the last, for every document longer
+than the window.** The final chunk is always `(len - overlap, len)` while the
+penultimate chunk already reaches `len` -- it is emitted despite the previous
+chunk already covering the document's end. Documents at or under the window
+size are unaffected (450 and 900 characters give one chunk and no
+containment).
 
 It lands on us twice. `UsageReader` deduplicates on
 `(source_id, start_char, end_char)`, and `1975 != 2200`, so it will not
@@ -84,7 +92,7 @@ other, on the tail of every document longer than the window. And BM25 counts
 the tail's terms in two chunks, so `aggregation: max` gives tail passages a
 second draw that mid-document passages do not get.
 
-### Chunk ids collapse on repetitive text, and our table corpus is the worst case
+### Chunk ids collapse on repetitive text -- and the collapse is correct
 
 *Measured here.* Two hundred identical markdown table rows, chunked at
 1000/500, return **ten chunks carrying two distinct texts**. The same text
@@ -94,17 +102,35 @@ appears at `(0,1000)`, `(500,1500)`, `(1000,2000)`, `(1500,2500)`,
 Chunk ids are content-addressed on `(source, text)` with no `start_char`, so
 those nine windows collapse to one row on upsert. This is `stark-bench`'s
 harness bug 3 -- *"189 chunks silently deduplicated"* -- reproducing on
-exactly the corpus shape `MarkdownTableChunker` exists to serve. A long
-uniform table indexes as roughly one chunk instead of ten, and `UsageReader`
-can only ever cite one offset for content that recurs throughout it.
+exactly the corpus shape `MarkdownTableChunker` exists to serve.
 
-Nothing raises. The corpus simply holds fewer rows than the chunker emitted.
+**An earlier draft of this document called that a defect and proposed adding
+`start_char` to the id. It is not a defect, and redstring has already
+considered and rejected that fix** (`redstring` BACKLOG **B161**, filed
+2026-08-20 from this same `stark-bench` measurement):
 
-**`BoundaryPreferenceChunker` does not have this problem** -- the same input
-gives two chunks with two distinct texts, at `(0,3000)` and `(2800,5000)`.
-Both defects above are *introduced* by moving to small overlapping windows,
-and Part 3 accounts for that honestly rather than presenting the chunker
-switch as free.
+> The dedup is right and must stay. Two byte-identical chunk texts embed to
+> the same vector, so the second row buys no retrieval and costs storage;
+> adding `start_char` to the id would "fix" the count by storing redundant
+> duplicates, which is worse [...] The defect is not the merge -- it is that
+> the merge is unobservable.
+
+That reasoning holds, and the consequence for us is smaller than the earlier
+draft claimed. Byte-identical chunks cannot be ranked differently by BM25, so
+dropping the duplicates costs no retrieval quality; and the surviving
+citation is still **truthful**, because the text really is at the offset it
+reports. What is lost is only that a reader looking for *every* occurrence of
+a repeated passage is shown one of them.
+
+So no work here follows from this measurement. It is recorded because it
+looks alarming, because it will be re-measured by the next person to chunk a
+table, and because the reasoning that makes it benign is not obvious from the
+number.
+
+**`BoundaryPreferenceChunker` does not collapse** -- the same input gives two
+chunks with two distinct texts, at `(0,3000)` and `(2800,5000)`. That is a
+property of chunk size, not a virtue: its chunks are large enough to differ
+from one another, which is the same size that loses on retrieval.
 
 ## Part I -- The three surfaces
 
@@ -313,29 +339,28 @@ they work: the first chunk of a 2,700-character document at size 1000 is
 difference against `BoundaryPreferenceChunker` is overlap and size, not
 whether a quoted passage begins mid-sentence.
 
-### Two upstream defects ride along, and are pinned here
+### One upstream defect rides along, and is pinned here
 
-Both were measured in Part 0. Both are `redstring`'s and cannot be fixed in
-this repository. The decision is to **switch now and fix upstream in
-parallel**, which means this repository carries a test for each so that the
-day upstream lands is visible rather than inferred:
+Part 0 measured two candidates and only one of them is a defect. The id
+collapse is correct behaviour and no work follows from it.
 
-1. **The redundant tail chunk.** A test asserting that no chunk of an indexed
-   document is wholly contained in another. It fails today. When upstream
-   fixes `B-SLIDING-REDUNDANT-1` it goes green, and until then it is the
-   record of a known defect rather than an unexplained duplicate in the UI.
-2. **The content-addressed id collapse.** A test that indexes a long uniform
-   table and asserts the corpus holds as many chunks as the chunker emitted.
-   It fails today. The upstream fix is `start_char` in the chunk id
-   derivation -- the same class of defect as redstring PR #64 and PR #71,
-   both of which `stark-bench` found and redstring fixed.
+What remains is the redundant tail chunk. It is `redstring`'s and cannot be
+fixed in this repository. The decision is to **switch now and fix upstream in
+parallel**, which means this repository carries a test so that the day
+upstream lands is visible rather than inferred:
 
-Each test must be proved red before it is trusted, per this repository's
-convention, and each docstring says which upstream change turns it green.
+**A test asserting that no chunk of an indexed document is wholly contained
+in another.** It fails today, on every document longer than the window. Its
+docstring says that redstring's `SlidingWindowChunker` is what turns it green
+and that it is expected to fail until then -- so a fresh reader meets a known
+defect rather than an unexplained duplicate in the usages list.
 
-The interim cost, stated plainly so nobody rediscovers it as a mystery: a
-long uniform table under-indexes, and the tail of every document longer than
-the window yields one duplicate passage in the usages list.
+It must be proved red before it is trusted, per this repository's convention.
+
+The interim cost, stated plainly so nobody rediscovers it as a mystery: the
+tail of every document longer than the window yields one duplicate passage in
+the usages list, and `UsageReader`'s dedup cannot collapse it because the two
+spans differ.
 
 ## Part V -- Testing
 
@@ -363,7 +388,7 @@ exception:
 * **Cards track the graph.** After a consolidation merges two entities, the
   absorbed entity's card is gone and the canonical entity's card names the
   union of both neighbourhoods.
-* **The two upstream defects**, as Part IV describes, each proved red first.
+* **The redundant tail chunk**, as Part IV describes, proved red first.
 
 A note carried from `stark-bench` II.6 that applies directly to the last
 group: a test whose inputs and whose code's branches are chosen by the same
@@ -419,9 +444,9 @@ agent's search tool. Does not touch the corpus, so it is independent of PR 2
 in both directions: `Retriever` reads entities and vectors, never chunks.
 
 **PR 2 -- the chunker switch.** `SlidingWindowChunker` in place of
-`BoundaryPreferenceChunker` in `RedstringKnowledge.index`, plus the two
-red-first tests pinning the upstream defects. Changes `chunking_signature`,
-so existing corpora re-index on the next `index` call rather than needing a
+`BoundaryPreferenceChunker` in `RedstringKnowledge.index`, plus the red-first
+test pinning the redundant tail chunk. Changes `chunking_signature`, so
+existing corpora re-index on the next `index` call rather than needing a
 migration.
 
 Stage B (the card corpus) is a third PR and is not planned until these two
@@ -431,21 +456,22 @@ and it should not be measured against a baseline that moved underneath it.
 ### redstring
 
 **PR 3 -- the redundant tail chunk.** `SlidingWindowChunker` emits a final
-window wholly contained in the previous one whenever `overlap > 0` and the
-document is longer than the window. Self-contained, no id or storage
-implications, and the smaller of the two.
+window wholly contained in the previous one for every document longer than
+the window. Self-contained: no id, storage or identity implications, and
+nothing downstream needs to change to receive it.
 
-**PR 4 -- `start_char` in the chunk id derivation.** The riskier one, and
-deliberately second. Chunk ids are content-addressed on `(source, text)`, so
-adding `start_char` **changes every existing chunk id**. For any consumer
-with a persisted chunk store that is a full re-index, not a migration --
-which is affordable here (this repository's chunk store is in-memory and
-rebuilt by replay) and may not be elsewhere. The PR should say so in its
-description rather than leaving a downstream consumer to discover it.
+**There is no fourth PR, and that is a correction rather than a descoping.**
+This document originally planned one for `start_char` in the chunk id
+derivation. redstring's B161 had already rejected that fix, with a reason
+that holds (Part 0). The remaining half of B161 -- that a colliding write is
+unobservable, because `ChunkWriter.upsert_many` returns `None` -- is real,
+already filed upstream, and deliberately deferred there. Nothing in this
+design needs it: no decision here turns on the row count, and inventing a
+second PR to match a planned count would be the worst reason to write one.
 
 Sequencing between the repositories is deliberately none. research-team PR 2
-lands against the defects, not after their fix, and its two tests are what
-make the upstream landing visible when it happens.
+lands against the defect, not after its fix, and its test is what makes the
+upstream landing visible when it happens.
 
 ## Provenance
 
