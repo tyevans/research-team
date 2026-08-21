@@ -448,6 +448,51 @@ async def test_search_finds_an_ingested_entity_by_substring(tmp_path, build_adap
 
 
 @pytest.mark.asyncio
+async def test_search_finds_an_entity_by_an_interior_fragment(tmp_path, build_adapter):
+    """`ovelace` finds `Ada Lovelace`.
+
+    Passes today against the substring scan. It is here because it does *not*
+    pass against `redstring.Retriever`'s lexical channel, which blocks on a
+    five-character prefix of the normalized name and a soundex of the whole
+    name -- an interior fragment shares neither. Measured 2026-08-21.
+
+    The existing `test_search_finds_an_ingested_entity_by_substring` cannot
+    catch that loss: it searches `lovelace`, which is a prefix of the
+    *surname* but the fused channel is blocking on `ada l`, and more to the
+    point a full-name query matches under every candidate implementation.
+    If this test goes red, the substring channel was dropped.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+    )
+
+    matches = await adapter.search("ovelace")
+
+    assert [match.name for match in matches] == ["Ada Lovelace"]
+
+
+@pytest.mark.asyncio
+async def test_search_finds_an_entity_by_a_short_prefix(tmp_path, build_adapter):
+    """`Ada` finds `Ada Lovelace`.
+
+    Fails against `Retriever` alone: the query's prefix key is `p:ada` and the
+    entity's is `p:ada l` -- five characters, space included -- and their
+    soundexes differ (`A300` against `A314`). Measured 2026-08-21.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+    )
+
+    matches = await adapter.search("Ada")
+
+    assert [match.name for match in matches] == ["Ada Lovelace"]
+
+
+@pytest.mark.asyncio
 async def test_search_caps_at_the_limit(tmp_path, build_adapter):
     """Distinguish "capped correctly" from "returned nothing": both entities
     match "a" (Ada Lovelace, Charles Babbage), so an uncapped search returns
