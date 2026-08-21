@@ -401,6 +401,52 @@ enough.
   would be unwelcome, but because that single field is what separates "the
   feature is off" from "the feature is working" and costs one assertion.
 
+## Part VIII -- Delivery
+
+Four pull requests, two per repository. The split is for attributability:
+each of these changes what retrieval returns, and landing two together means
+neither can be credited or blamed on its own. That is not a hypothetical
+concern -- `stark-bench` I.3 spent three measurements and two wrong published
+conclusions on a comparison whose arms differed in a second variable nobody
+had noticed.
+
+### research-team
+
+**PR 1 -- `Retriever` for entity lookup (Stage A).** Replaces
+`RedstringKnowledge.search`'s substring scan. Touches the adapter, the
+`KnowledgePort` result shape (it gains the mode actually used), and the
+agent's search tool. Does not touch the corpus, so it is independent of PR 2
+in both directions: `Retriever` reads entities and vectors, never chunks.
+
+**PR 2 -- the chunker switch.** `SlidingWindowChunker` in place of
+`BoundaryPreferenceChunker` in `RedstringKnowledge.index`, plus the two
+red-first tests pinning the upstream defects. Changes `chunking_signature`,
+so existing corpora re-index on the next `index` call rather than needing a
+migration.
+
+Stage B (the card corpus) is a third PR and is not planned until these two
+have landed, for the reason above: it changes what entity retrieval returns,
+and it should not be measured against a baseline that moved underneath it.
+
+### redstring
+
+**PR 3 -- the redundant tail chunk.** `SlidingWindowChunker` emits a final
+window wholly contained in the previous one whenever `overlap > 0` and the
+document is longer than the window. Self-contained, no id or storage
+implications, and the smaller of the two.
+
+**PR 4 -- `start_char` in the chunk id derivation.** The riskier one, and
+deliberately second. Chunk ids are content-addressed on `(source, text)`, so
+adding `start_char` **changes every existing chunk id**. For any consumer
+with a persisted chunk store that is a full re-index, not a migration --
+which is affordable here (this repository's chunk store is in-memory and
+rebuilt by replay) and may not be elsewhere. The PR should say so in its
+description rather than leaving a downstream consumer to discover it.
+
+Sequencing between the repositories is deliberately none. research-team PR 2
+lands against the defects, not after their fix, and its two tests are what
+make the upstream landing visible when it happens.
+
 ## Provenance
 
 Measured in this repository on 2026-08-21 against `redstring 0.9.2`: the
