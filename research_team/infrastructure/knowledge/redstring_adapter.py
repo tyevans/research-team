@@ -40,6 +40,8 @@ from redstring import (
     GraphStore,
     LlmProvider,
     RedstringError,
+    RetrievalMode,
+    Retriever,
     SourceDocument,
     VectorStore,
     build_graph,
@@ -936,13 +938,71 @@ class RedstringKnowledge:
         return self._consolidator.remembers_merges_across_restarts
 
     async def search(self, query: str, *, limit: int = 10) -> list[Match]:
-        """Entities whose name contains `query`, case-insensitively.
+        """Entities matching `query`, best first.
 
-        Filtered here rather than by the store because `find_entities(name=...)`
-        matches `normalized_name` exactly -- no substring, no fuzziness -- and a
-        tool the agent drives with free text needs more give than that. The cost
-        is a page of the tenant's entities per call, which is acceptable against
-        an in-memory store and is the first thing to revisit behind Neo4j.
+        Two channels, unioned: a substring test over the tenant's names, and
+        `redstring.Retriever`'s **lexical** channel -- blocking keys over the
+        name, scored by Jaro-Winkler.
+
+        **The substring channel is neither redundant nor legacy.** Measured
+        2026-08-21 against this adapter: `Retriever` finds `Adah Lovelace` for
+        `Ada Lovelace`, which no substring test can reach, and misses both an
+        interior fragment (`ovelace`) and a short prefix (`Ada`), which the
+        substring test finds -- its lexical channel blocks on a five-character
+        prefix of the normalized name plus a soundex of the whole name, and a
+        fragment shares neither. Neither channel dominates, so both run.
+        `test_search_finds_an_entity_by_an_interior_fragment` and its
+        short-prefix sibling are what fail if this one is ever dropped for the
+        library's class; the original reasoning still holds too --
+        `find_entities(name=...)` matches `normalized_name` exactly, and a
+        tool the agent drives with free text needs more give than that.
+
+        Reordered names (`lovelace ada`) match in neither and are not a
+        regression from this change: they returned nothing before it.
+        See `BACKLOG.md` B-SEARCH-REORDER-1.
+
+        `Retriever` ranks; the substring pass does not. So fused hits come
+        first in `Retriever`'s order and substring-only hits follow in store
+        order, and an entity found by both appears once, at its ranked
+        position.
+
+        **`RetrievalMode.LEXICAL`, not `HYBRID`, and that is a decision.**
+        Turning the semantic channel on makes this tool answer with entities
+        that match the query nowhere in their text: measured here, searching
+        `Nova Scotia Duck Tolling Retriever` also returned `Duck hunting` and
+        `Canada`. Three reasons not to:
+
+        * The tool this backs is documented to the model as finding entities
+          **by name**, and an agent counting what it found is misled -- which
+          is not hypothetical, it is how this was noticed
+          (`test_embedded_consolidation.py` uses `search` to assert that a
+          duplicate merged into one node).
+        * stark-bench I.2 measured a model shown entities unrelated to its
+          query scoring **below** one shown none. Unrelated names are not
+          free context; they are attention spent.
+        * Retrieving an entity by *describing* it is a real capability and it
+          is deliberately the next stage's, over a corpus built for it. A weak
+          version here would move the baseline that stage has to be measured
+          against.
+
+        So the entity vectors `build_graph` writes are still read by exactly
+        one consumer -- consolidation scoring. This stage does not change that.
+
+        **`Retriever` is skipped entirely when embeddings are unavailable, and
+        that is a wart rather than a design.** Its lexical channel needs no
+        embedding at all, but `Retriever.__init__` takes an
+        `EmbeddingProvider` and dimension-checks it against the vector store,
+        so there is no way to ask for the lexical half alone. Calling
+        `find_by_blocking_keys` and `lexical_score` directly -- the way
+        `UsageReader` calls redstring's chunk-ranking internals, for this
+        exact reason -- is not available either: neither name is exported, and
+        `tests/test_architecture.py` refuses `redstring.domain.*`. So a
+        deployment with `AGENT_VECTOR_STORE=none`, or one whose embedding
+        probe failed, gets substring matching only. See `BACKLOG.md`
+        B-LEXICAL-NEEDS-EMBEDDINGS-1.
+
+        The page of entities per call is unchanged and is still the first
+        thing to revisit behind Neo4j.
         """
         if limit < 1:
             raise KnowledgeError("limit must be at least 1")
@@ -963,28 +1023,62 @@ class RedstringKnowledge:
                 canonical = await self._store.resolve_entity_ids(
                     [entity.id for entity in entities], self._project_id
                 )
-                matches = []
-                for entity in entities:
-                    # `==`, not `is`: an adapter may rebuild the UUID for an id
-                    # that is not an alias, and `is` would filter out
-                    # everything and answer that the project is empty.
-                    if canonical[entity.id] != entity.id:
-                        continue
-                    if needle not in entity.name.lower():
-                        continue
-                    edges = await self._store.get_relationships_for(
-                        [entity.id], self._project_id
+                # `==`, not `is`: an adapter may rebuild the UUID for an id
+                # that is not an alias, and `is` would filter out everything
+                # and answer that the project is empty.
+                by_id = {
+                    entity.id: entity
+                    for entity in entities
+                    if canonical[entity.id] == entity.id
+                }
+
+                embeddings, vectors = await self._embedding_pair()
+                ordered: list[UUID] = []
+                if embeddings is not None and vectors is not None:
+                    retrieved = await Retriever(
+                        embeddings=embeddings, vectors=vectors, graph=self._store
+                    ).retrieve(query, self._project_id, k=limit, mode=RetrievalMode.LEXICAL)
+                    # A ranked id may name an absorbed entity, which `by_id`
+                    # has already dropped; skipping here rather than resolving
+                    # keeps one rule about what a match is.
+                    ordered = [
+                        scored.entity.id
+                        for scored in retrieved.matches
+                        if scored.entity.id in by_id
+                    ]
+
+                seen = set(ordered)
+                ordered.extend(
+                    entity_id
+                    for entity_id, entity in by_id.items()
+                    if entity_id not in seen and needle in entity.name.lower()
+                )
+                ordered = ordered[:limit]
+
+                # One read, not one per match. The previous shape issued a
+                # `get_relationships_for` inside the match loop, which is N
+                # round trips to answer one question and was invisible to
+                # every test because the answers were identical either way.
+                edges = (
+                    await self._store.get_relationships_for(ordered, self._project_id)
+                    if ordered
+                    else []
+                )
+                counts: dict[UUID, int] = dict.fromkeys(ordered, 0)
+                for edge in edges:
+                    for endpoint in (edge.source_entity_id, edge.target_entity_id):
+                        if endpoint in counts:
+                            counts[endpoint] += 1
+
+                matches = [
+                    Match(
+                        entity_id=entity_id,
+                        name=by_id[entity_id].name,
+                        entity_type=by_id[entity_id].entity_type,
+                        relationship_count=counts[entity_id],
                     )
-                    matches.append(
-                        Match(
-                            entity_id=entity.id,
-                            name=entity.name,
-                            entity_type=entity.entity_type,
-                            relationship_count=len(edges),
-                        )
-                    )
-                    if len(matches) == limit:
-                        break
+                    for entity_id in ordered
+                ]
         except RedstringError as error:
             raise KnowledgeError(str(error)) from error
         return matches

@@ -5,8 +5,10 @@ import pytest
 from eventsource import StreamId, collect
 from eventsource.adapters.sqlite import SQLiteEventStore
 from redstring import (
+    FakeEmbeddingProvider,
     FakeLlmProvider,
     InMemoryChunkStore,
+    InMemoryVectorStore,
     LlmProviderError,
     SlidingWindowChunker,
     document_stream,
@@ -490,6 +492,86 @@ async def test_search_finds_an_entity_by_a_short_prefix(tmp_path, build_adapter)
     matches = await adapter.search("Ada")
 
     assert [match.name for match in matches] == ["Ada Lovelace"]
+
+
+@pytest.mark.asyncio
+async def test_search_finds_an_entity_despite_a_misspelling(tmp_path, build_adapter):
+    """`Adah Lovelace` finds `Ada Lovelace`.
+
+    The capability this stage adds, and the reason for taking on
+    `redstring.Retriever` at all. A substring test cannot reach it at any
+    threshold -- the query is not contained in the name -- so it returns
+    nothing today and fails with the fused channels reverted.
+
+    It works through the soundex blocking key: `Adah Lovelace` and `Ada
+    Lovelace` both soundex to `A314`.
+
+    **`embeddings` and `vector_store` are passed because `Retriever.__init__`
+    requires them**, not because anything here uses a semantic channel --
+    `search` asks for `RetrievalMode.LEXICAL` and the match is a soundex hit.
+    See `search`'s docstring for what that constructor requirement costs a
+    deployment with embeddings switched off, and `BACKLOG.md`
+    B-LEXICAL-NEEDS-EMBEDDINGS-1.
+
+    Exactly one result, not "at least one": the lexical channel is asked for
+    names and `Charles Babbage` is not one. An earlier draft of this test ran
+    under `RetrievalMode.HYBRID`, where the semantic channel returned
+    `Charles Babbage` too -- `FakeEmbeddingProvider` hashes text into a unit
+    vector, so those neighbours were the hash rather than a meaning. That is
+    the observation that moved `search` off HYBRID; see its docstring.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(
+        tmp_path,
+        project_id,
+        embeddings=FakeEmbeddingProvider(dimension=8),
+        vector_store=InMemoryVectorStore(dimension=8),
+    )
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+    )
+
+    matches = await adapter.search("Adah Lovelace")
+
+    assert [match.name for match in matches] == ["Ada Lovelace"]
+
+
+@pytest.mark.asyncio
+async def test_search_reads_relationships_once_regardless_of_match_count(
+    tmp_path, build_adapter
+):
+    """One `get_relationships_for`, not one per match.
+
+    The previous shape issued the call inside the match loop: N round trips to
+    answer one question, and invisible to every test because the counts came
+    out identical either way. Counted through a wrapper rather than timed,
+    because a per-match call is correct-looking and differs only in cost.
+
+    Fails with the batching reverted, at 2 calls for 2 matches.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+    )
+
+    calls = 0
+    original = adapter._store.get_relationships_for
+
+    async def counting(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return await original(*args, **kwargs)
+
+    adapter._store.get_relationships_for = counting
+
+    matches = await adapter.search("a")
+
+    assert len(matches) == 2, "fixture needs both entities to match"
+    assert all(match.relationship_count == 1 for match in matches), (
+        "the batched read must still count each endpoint's edge"
+    )
+    assert calls == 1
 
 
 @pytest.mark.asyncio
