@@ -78,6 +78,40 @@ async def test_indexing_a_document_writes_retrievable_passages(tmp_path, build_a
 
 
 @pytest.mark.asyncio
+async def test_the_quotable_corpus_is_chunked_small_enough_to_rank(tmp_path, build_adapter):
+    """A long document becomes several chunks, not one.
+
+    Chunk size is a retrieval parameter, not a storage detail. BM25 discounts
+    a term matched inside a long document and does not discount it inside a
+    short one, and a source takes its best chunk -- so the same term in the
+    same document ranks differently depending only on how it was cut.
+    stark-bench measured whole-document against sliding-1000-500 on one corpus
+    and model: +0.071 dense, +0.072 lexical, +0.070 hybrid, with the gain 1.7x
+    larger on the longest third of documents.
+
+    Fails with the switch reverted: `BoundaryPreferenceChunker` at its
+    defaults cuts at 3,000 characters, so this 2,700-character document is a
+    single chunk and the discount applies to all of it.
+
+    The ceiling is 1,100 rather than 1,000 because `MarkdownTableChunker`
+    prepends a header to a chunk of table rows, which this document has none
+    of -- the slack is there so a table document does not fail a test about
+    window size for a reason that has nothing to do with it.
+    """
+    project_id = uuid4()
+    chunk_store = InMemoryChunkStore(dimension=8)
+    knowledge, _, _ = build_adapter(tmp_path, project_id, chunks=chunk_store)
+    text = "The quick brown fox jumps over the lazy dog. " * 60
+
+    await knowledge.index(SourceRef(source_id="doc-1", text=text))
+
+    chunks = await chunk_store.get_by_source("doc-1", project_id)
+
+    assert len(chunks) >= 4, f"one long document should be several chunks, got {len(chunks)}"
+    assert max(len(chunk.text) for chunk in chunks) <= 1_100
+
+
+@pytest.mark.asyncio
 async def test_indexing_the_same_document_twice_writes_nothing_the_second_time(
     tmp_path, build_adapter
 ):
