@@ -185,7 +185,7 @@ and `Vantage Holdings`:
 | `Blackwell` (5-char prefix) | matches | matches |
 | `Acme` (short prefix) | matches | **misses** |
 | `corp` (interior fragment) | matches | **misses** |
-| `Corporation Acme` (reordered) | matches | **misses** |
+| `Corporation Acme` (reordered) | **misses** | **misses** |
 
 `Acme` misses because the query's prefix key is `p:acme` while the entity's
 is `p:acme ` -- five characters including the space -- and their soundexes
@@ -193,9 +193,15 @@ differ (`A250` against `A252`). An interior fragment has no key in common
 with the name at all.
 
 **Neither dominates.** `Retriever` wins on misspellings and brings real
-ranking; the substring scan wins on interior and reordered fragments. An
-earlier draft of this document called reordered names a win for `Retriever`;
-they are a loss.
+ranking; the substring scan wins on interior fragments and short prefixes.
+
+**Reordered names work in neither, and this document has now been wrong about
+them twice** -- first calling them a win for `Retriever`, then a win for the
+substring scan. *Measured against the live adapter 2026-08-21*: searching
+`lovelace ada` against an ingested `Ada Lovelace` returns nothing today. The
+substring test asks whether the **query** is contained in the **name**, so any
+reordering fails it. Neither reading was checked before it was written down;
+both took ten seconds to check. See BACKLOG for the capability itself.
 
 So Stage A **adds fused retrieval as channels beside the substring pass**
 rather than replacing it. `search`'s existing docstring already justifies the
@@ -411,14 +417,17 @@ passes with the feature removed entirely.
 Every test here therefore asserts on **data**, never on the absence of an
 exception:
 
-* **Entity lookup gains a case.** A **misspelling** (`Akme Corporation` for
-  `Acme Corporation`) returns the entity. This fails with Stage A reverted,
-  which is the point. A reordered name is deliberately *not* this test --
-  measurement says `Retriever` misses it and the substring pass catches it.
-* **Entity lookup loses no case.** An interior fragment (`corp`), a short
-  prefix (`Acme`) and a reordered name each still return the entity. These
-  pass today and must keep passing; they are what would silently regress if
-  the substring channel were dropped for the library's class.
+* **Entity lookup gains a case.** A **misspelling** (`Adah Lovelace` for
+  `Ada Lovelace`) returns the entity. It returns nothing today, and fails with
+  Stage A reverted, which is the point.
+* **Entity lookup loses no case.** An interior fragment (`ovelace`), a short
+  prefix (`Ada`) and a single letter (`a`, which `test_search_caps_at_the_limit`
+  already depends on) each still return the entity. These pass today and must
+  keep passing; they are what would silently regress if the substring channel
+  were dropped for the library's class.
+* **A reordered name is deliberately not a test here.** Neither channel
+  answers it, so asserting it would be writing a test for a capability this
+  stage does not add.
 * **Degraded mode is visible.** With the embedding probe forced to fail, a
   `HYBRID` request reports that it ran `LEXICAL`. Proved by breaking the
   probe on purpose.

@@ -3880,3 +3880,30 @@ by one every time a reader opens a dialogue and never comes back, and nothing
 ever subtracts from it. That is a real cost of the refusal above, not a reason
 to reverse it; it is what a metrics feature building on `status="started"`
 should know going in.
+
+### B-SEARCH-REORDER-1. Entity search finds nothing for a reordered name
+
+`search("lovelace ada")` returns nothing for an ingested `Ada Lovelace`.
+Measured against the live adapter 2026-08-21.
+
+Neither channel answers it and neither is at fault. The substring pass tests
+whether the *query* is contained in the *name*, so any reordering fails it.
+`redstring.Retriever`'s lexical channel blocks on a five-character prefix of
+the normalized name plus a soundex of the whole name, and reordering changes
+both.
+
+It matters because the caller is an agent writing free text: "Lovelace, Ada"
+and "Babbage Charles" are natural things for a model to produce from a
+citation or a table, and they read as "no such entity" rather than as a
+missed match.
+
+Not fixed alongside the fused-retrieval change, because every fix is a real
+choice rather than an oversight to patch: matching per-token against the name
+(cheap, and makes `search("worked with")` match a person), sorting the query's
+tokens into the blocking key (an upstream change to redstring's blocking
+scheme, affecting consolidation as well as retrieval), or a third lexical
+channel scoring token overlap. The middle one is redstring's to decide.
+
+Worth knowing before choosing: this document's design spec was wrong about
+this case twice in one day, in both directions, and each reading took ten
+seconds to check against the adapter. Check before arguing.
