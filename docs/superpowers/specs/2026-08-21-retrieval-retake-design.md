@@ -167,14 +167,48 @@ what it *calls*.
 issues a `get_relationships_for` per surviving match. Its own docstring calls
 it *"the first thing to revisit behind Neo4j"*.
 
-Replace it with `Retriever.retrieve(query, tenant_id, k=limit, mode=HYBRID)`.
-All three collaborators are already fields on the adapter: `self._embeddings`,
-`self._vectors`, `self._store`.
+All three collaborators `Retriever` needs are already fields on the adapter:
+`self._embeddings`, `self._vectors`, `self._store`.
 
-What this buys, in order of how much it matters:
+### It is not a replacement, and measuring that saved a regression
 
-* **Fuzzy name matching.** Blocking keys match a misspelled or reordered name
-  that a substring test rejects outright.
+*Measured here.* `Retriever`'s lexical channel blocks on
+`blocking_keys_for(entity)` -- a **five-character prefix of the normalized
+name** and a **soundex of the whole name** -- then scores survivors with
+Jaro-Winkler. Against a store holding `Acme Corporation`, `Blackwell Systems`
+and `Vantage Holdings`:
+
+| query | substring scan (today) | `Retriever` lexical |
+|---|---|---|
+| `Acme Corporation` | matches | matches |
+| `Akme Corporation` (misspelt) | **misses** | **matches** |
+| `Blackwell` (5-char prefix) | matches | matches |
+| `Acme` (short prefix) | matches | **misses** |
+| `corp` (interior fragment) | matches | **misses** |
+| `Corporation Acme` (reordered) | matches | **misses** |
+
+`Acme` misses because the query's prefix key is `p:acme` while the entity's
+is `p:acme ` -- five characters including the space -- and their soundexes
+differ (`A250` against `A252`). An interior fragment has no key in common
+with the name at all.
+
+**Neither dominates.** `Retriever` wins on misspellings and brings real
+ranking; the substring scan wins on interior and reordered fragments. An
+earlier draft of this document called reordered names a win for `Retriever`;
+they are a loss.
+
+So Stage A **adds fused retrieval as channels beside the substring pass**
+rather than replacing it. `search`'s existing docstring already justifies the
+substring filter -- `find_entities(name=...)` matches `normalized_name`
+exactly, and *"a tool the agent drives with free text needs more give than
+that"* -- and that reasoning survives this change unchanged. Dropping the
+substring channel would trade a capability the agent uses today for one it
+does not have yet, which is not what "adopt the library's class" should mean.
+
+What the addition buys, in order of how much it matters:
+
+* **Fuzzy name matching.** Soundex blocking matches a misspelling that
+  neither a substring test nor exact matching can reach.
 * **A semantic channel we already pay for.** `build_graph` embeds every
   extracted entity for consolidation scoring. Those vectors are written,
   stored, and read by exactly one consumer today. `Retriever` reads the same
@@ -184,8 +218,13 @@ What this buys, in order of how much it matters:
   are the ones just past each channel's cutoff, and asking each channel for
   exactly `k` makes them invisible.
 * **Type filtering**, applied before truncation.
-* **Deletion.** The substring loop, the per-hit relationship fetch and the
-  canonical-id filter go away.
+* **One relationship read instead of N.** The per-hit
+  `get_relationships_for` becomes a single batched call over the fused match
+  set. That is a straight fix regardless of the rest of this stage.
+
+The substring loop and the canonical-id filter stay. This stage adds a
+ranking model and a channel; it does not delete the one capability the tool
+currently has.
 
 ### The degradation this introduces, and why it must be loud
 
@@ -372,9 +411,14 @@ passes with the feature removed entirely.
 Every test here therefore asserts on **data**, never on the absence of an
 exception:
 
-* **Entity lookup.** A query that a substring scan cannot answer -- a
-  misspelling, or a reordered name -- returns the entity. This fails with
-  Stage A reverted, which is the point.
+* **Entity lookup gains a case.** A **misspelling** (`Akme Corporation` for
+  `Acme Corporation`) returns the entity. This fails with Stage A reverted,
+  which is the point. A reordered name is deliberately *not* this test --
+  measurement says `Retriever` misses it and the substring pass catches it.
+* **Entity lookup loses no case.** An interior fragment (`corp`), a short
+  prefix (`Acme`) and a reordered name each still return the entity. These
+  pass today and must keep passing; they are what would silently regress if
+  the substring channel were dropped for the library's class.
 * **Degraded mode is visible.** With the embedding probe forced to fail, a
   `HYBRID` request reports that it ran `LEXICAL`. Proved by breaking the
   probe on purpose.
