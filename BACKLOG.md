@@ -3943,3 +3943,68 @@ redstring is the method.
 Cost of leaving it: a default that is defensible rather than justified, on a knob
 whose failure mode is silent — a batch too wide does not error, it merges fewer
 things and looks faster while doing it.
+
+### B126. Embedding-nudged clustering, when there are embeddings to nudge with
+
+`docs/design/learning-areas-and-paths.md` §4 designs it and says plainly that
+it is not built: `AreaProjection.used_embeddings` is carried, rendered on
+every surface, and always `false`.
+
+**The blocker is not the arithmetic, it is that there is nothing to read.**
+Entity vectors do not survive the process on any default install --
+`stores.py`: "a vector store lost with the process is *gone*: this project
+never appends `EntitiesEmbedded`" -- and `VectorStore` has no enumeration
+method, only `get` and `search`. So the work is upstream of the clustering:
+either `pgvector` becomes ordinary rather than exceptional, or an
+`EntitiesEmbedded` event makes vectors foldable like everything else.
+
+The second is the one worth wanting, and it is the larger change. It would
+also close the gap this feature works around rather than solves: redstring
+embeds `entity.name` and nothing else, so even with durable vectors the signal
+is a measurement of spellings. An embedding of an entity's *definition* or its
+strongest passage would be a genuinely second opinion; an embedding of its name
+is a blurrier copy of the name feature.
+
+Bound the nudge when it lands. The design says at most `EMBEDDING_NUDGE`, and
+the reason is not caution: the projection with vectors present and the
+projection without them must differ only where modularity was already
+indifferent, or a process restart hands somebody a different curriculum.
+
+### B127. A curriculum is invalidated by counts, not by the log
+
+`CurriculumService` caches per `(project_id, entity_count, relationship_count)`.
+A graph that grows reprojects; a graph that changes *without* changing either
+count -- a consolidation that merged two entities and dropped an edge -- serves
+a stale projection until the next extraction moves a number.
+
+Deliberate, and the reasoning is in the class docstring: the failure is bounded
+and visible, because every surface renders the counts the projection was built
+from and a reader can see them disagree with the graph page. An exact
+invalidation that was subtly wrong would be neither.
+
+What would close it: a subscription to the same frames the console already
+watches, invalidating on the extraction and consolidation events rather than on
+a derived pair of integers. Small, and worth doing only when somebody has
+actually been misled -- the cache sits in front of a pure function, not a read
+model, so the worst case is a recomputation nobody asked for.
+
+### B128. A course is written but never checked against the area it teaches
+
+`CourseAuthor` runs three turns and returns their replies. Nothing verifies
+that the unit's assessments cover its enduring understandings, that the lessons
+build toward assessments that exist, or that a resolved component's entity id
+is one of the ones the prompt supplied. All three are exactly the shape
+`application/checks.py` and `application/coverage.py` already handle -- an
+objective grid over intent x evidence is `coverage.matrix_from_links`, and it
+was written to be the one implementation of that diagnostic rather than the
+first of three.
+
+The one that will bite first is the entity id. A component naming an id the
+model invented renders `unavailable` forever and nothing warns the author --
+the same silent degradation `LessonDocument`'s own docstring describes. That is
+a check with a definite answer (is this id in the area's membership?) and it
+needs no model to run.
+
+Not done here because it is a second feature wearing the first one's clothes:
+a check with a severity, a preset binding and somewhere to report to, none of
+which the authoring path has yet.

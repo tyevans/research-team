@@ -47,6 +47,35 @@ refresh blanks the widget back to its unanswered form. The withholding is
 weaker here than on a course file, because the answer key travels in the same
 response as the block rather than behind a second request — see B105.
 
+A project's fourth page asks a different question: **what is there to learn
+here?** It folds the knowledge graph into *learning areas* — clusters of
+entities the corpus actually connects — orders them into a path by which areas
+the others depend on, and will write each one a course: a UbD unit plan and
+numbered lesson files, in markdown, into the project's own workspace.
+
+**The areas come from the graph, not from the embeddings**, and that went the
+opposite way from the obvious design. Entity vectors do not survive a restart
+on a default install, `VectorStore` cannot be enumerated at all, and redstring
+embeds `entity.name` and nothing else — so clustering them would cluster
+spellings rather than subject matter. The graph is folded from the log, so the
+same log projects the same areas years later. `docs/design/learning-areas-and-paths.md`
+has the full reasoning and the four checks behind it.
+
+Nothing about the projection is stored. It is a pure function of a graph that
+is itself folded from the log, and every view shows the entity, relationship
+and passage counts it was built from — so a thin result is visible as thin
+rather than merely looking like a small project. The ordering is derived too,
+never asked of a model: each step carries the evidence that placed it, and
+where two areas genuinely depend on each other the path says so instead of
+quietly picking one.
+
+Writing the courses is the one part that costs model turns — three per area,
+run in sequence so that backward design is enforced by the arrangement rather
+than requested in a prompt. The lessons they write can carry the same
+interactive components the ask page uses, including the six that resolve
+against this project's own graph, so a lesson quotes and links the material it
+came from.
+
 Point at your model server if it is not on the default
 `http://localhost:8080/v1/`:
 

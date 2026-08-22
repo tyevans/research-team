@@ -61,6 +61,7 @@ from research_team.application.blobs import BlobStorePort
 from research_team.application.check_telemetry_read import CheckTelemetryReadPort
 from research_team.application.components import component_guidance
 from research_team.application.corpus_editing import CorpusEditor
+from research_team.application.course_authoring import CourseAuthor
 from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
@@ -382,6 +383,16 @@ class Application:
     topic repository, the queue projection and the turn supervisor -- and both
     front ends want the same one. Two supervisors over one database would each
     believe they held the only run on a project."""
+
+    course_author: CourseAuthor
+    """Writes one learning area's unit and lessons, by Understanding by Design.
+
+    A field for `topic_seeder`'s reason: built from the same `service` and
+    `turns` this module already holds, and wanted by whichever front end is
+    running. The projection it authors *from* is not a field -- see
+    `CurriculumService`, which is a cache in front of a pure function and has
+    no dependencies to compose.
+    """
 
     topic_seeder: TopicSeeder
     """Names a project's first topics in one turn, given a subject.
@@ -2337,6 +2348,11 @@ def build_application(
     # through -- a seeding turn is a turn like any other, and `TopicSeeder`
     # joins and releases the project the same way `start_research_run` does.
     topic_seeder = TopicSeeder(service, turns)
+    # Same `service` and `turns` a third time. An authoring run is three turns
+    # rather than one, but they are ordinary turns against a joined project --
+    # which is the point: a lesson can quote the corpus because the agent
+    # writing it has the same tools every other turn has.
+    course_author = CourseAuthor(service, turns)
     # Same `service` and `turns` again: a dispatch turn is a turn like any
     # other. `topic_reader` is the same factory the read routes close over, so
     # the number in `/topics/<nn>-<slug>/` and the order the topic list renders
@@ -2457,6 +2473,7 @@ def build_application(
         topic_repository=topic_repository,
         research=research_supervisor,
         topic_seeder=topic_seeder,
+        course_author=course_author,
         dispatcher=dispatcher,
         stage_runner=stage_runner,
         workers=worker_roster,

@@ -12,6 +12,8 @@ import type {
   WholeGraph,
 } from '@domain/knowledge/graph.ts'
 import type { OntologyClass } from '@domain/knowledge/ontology.ts'
+import type { AuthoringRun, AuthoringStatus } from '@domain/knowledge/authoring.ts'
+import type { Curriculum, LearningArea, LearningPath } from '@domain/knowledge/curriculum.ts'
 import type { Timeline } from '@domain/knowledge/timeline.ts'
 import type { ComponentAudience, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
@@ -521,6 +523,51 @@ export interface TimelineWindowQuery {
   readonly from?: string
   readonly to?: string
   readonly limit?: number
+}
+
+export interface CurriculumRepository {
+  /** The project's learning areas and the complete path through them.
+   *
+   * One call rather than two because the two are derived from one read of the
+   * graph: a map with no order is a bag, an order with no areas is a list of
+   * slugs, and two calls could be answered from two projections while a
+   * project is still extracting.
+   *
+   * `derivedFrom` on the result is not dressing. An area map over forty
+   * entities and one over four thousand draw identically, so a caller must
+   * show what the projection was built from or a reader cannot tell a thin
+   * result from a rich one -- or from a feature that never ran. */
+  curriculum(projectId: ProjectId): Promise<Curriculum>
+
+  /** One area with its full membership rather than its anchors.
+   *
+   * A separate call rather than a field on the above, because the map wants
+   * five names per area and the area page wants sixty: sending every member of
+   * every area to draw a map is the response growing with the project while
+   * what it draws does not. */
+  area(projectId: ProjectId, slug: string): Promise<LearningArea>
+
+  /** The complete path (`complete`), or the prerequisite closure of one area.
+   *
+   * Both from one route because they are cuts of one digraph. A destination
+   * path's steps are always a subsequence of the complete path's -- two orders
+   * that disagreed would be two curricula, and a reader switching views would
+   * have no way to choose between them. */
+  path(projectId: ProjectId, slug: string): Promise<LearningPath>
+
+  /** Whether an authoring run is in flight, and how the last one went.
+   *
+   * Both halves, because a tab that arrived mid-run and one that arrived after
+   * it finished need different answers and neither can reconstruct the other's
+   * from the file list. */
+  authoringStatus(projectId: ProjectId): Promise<AuthoringStatus>
+
+  /** Start writing courses: one area, or every area on the path.
+   *
+   * Answers the run that has *begun*, not the files. Those arrive over the log
+   * like any other write, so a caller wanting them invalidates its file list on
+   * those frames rather than reading this result for them. */
+  author(projectId: ProjectId, request: { area?: string; lessons?: number }): Promise<AuthoringRun>
 }
 
 export interface TimelineRepository {

@@ -1,0 +1,387 @@
+"""`/api/projects/{id}/curriculum`: the envelope, and the seam behind it.
+
+The arithmetic belongs to `test_area_projection.py` and `test_learning_paths.py`.
+What can only break here is the field names the browser parses by exact key,
+and one seam this repository has been caught by before: `CLAUDE.md` records a
+defect where a call site fetched a project's chunks *before* opening it, so
+the first request for any newly-touched project answered 503 and every later
+one succeeded -- once per project, and indistinguishable from flakiness. Every
+test in that feature missed it because each fixture had already opened the
+project while seeding. `test_the_first_request_for_an_untouched_project_works`
+below is written to start from a project the fixture has not opened.
+
+Follows `test_timeline_route.py`'s `app_and_client`, duplicated module-locally
+for that module's stated reason.
+"""
+
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from uuid import UUID, uuid4
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+from redstring import Entity, ExtractionMethod, Provenance, Relationship
+
+from research_team.application import SummaryProjects, WorkerRoster
+from research_team.application.curriculum import CurriculumService
+from research_team.composition import build_application
+from research_team.interfaces.web import create_app
+from research_team.interfaces.web.authoring import AuthoringActivity
+from research_team.interfaces.web.extraction import ExtractionActivity
+
+pytestmark = pytest.mark.asyncio
+
+
+class StubAuthor:
+    """A `CourseAuthor` that records its asks and runs no turns.
+
+    The real one is three model turns per area against a joined project, and a
+    route test that drove it would be testing `TurnSupervisor` -- slowly, and
+    while leaving a background task running past the fixture that owns the
+    application. `test_course_authoring.py` owns the sequencing; what can only
+    break *here* is which areas the route decides to hand over.
+    """
+
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    async def author_area(self, project_id, area, subject, *, lesson_count=3, run_id=None):
+        self.asked.append(area.slug)
+        return SimpleNamespace(session_id=uuid4())
+
+    async def author_path(self, project_id, path, areas, *, run_id=None):
+        self.asked.append(path.slug)
+        return SimpleNamespace(session_id=uuid4())
+
+
+@pytest.fixture
+async def app_and_client(db_path, fake_model):
+    application = build_application(model=fake_model, db_path=db_path)
+    await application.start()
+    extraction = ExtractionActivity()
+    author = StubAuthor()
+    authoring = AuthoringActivity()
+    curriculum = CurriculumService()
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        blob_store=application.blob_store,
+        workers=WorkerRoster(
+            application.service,
+            turns=application.turns,
+            runs=application.research,
+            extractions=extraction,
+            summaries=SummaryProjects(application.summaries),
+        ),
+        extraction=extraction,
+        policy=application.policy,
+        topics=application.topic_readers,
+        topic_repository=application.topic_repository,
+        graphs=application.graphs,
+        curriculum=curriculum,
+        course_author=author,
+        authoring=authoring,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield SimpleNamespace(
+            application=application,
+            client=client,
+            authoring=authoring,
+            author=author,
+            curriculum=curriculum,
+        )
+    await application.close()
+
+
+def _entity(tenant_id: UUID, name: str) -> Entity:
+    return Entity(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        name=name,
+        normalized_name=name.lower(),
+        entity_type="concept",
+        provenance=Provenance(
+            observed_at=datetime(2026, 1, 1, tzinfo=UTC),
+            extraction_method=ExtractionMethod.MANUAL,
+            confidence=1.0,
+        ),
+    )
+
+
+async def _new_project(client) -> str:
+    created = await client.post("/api/projects", json={"name": f"curriculum-{uuid4()}"})
+    assert created.status_code == 200
+    return created.json()["id"]
+
+
+async def _seed_two_clusters(application, project_id: str) -> None:
+    """Two four-cliques joined by one edge: an unambiguous two-area graph.
+
+    Seeded through `GraphStore.upsert_entities` -- `test_timeline_route.py`'s
+    shortcut -- because what is under test is the read route, not extraction.
+    """
+    tenant_id = UUID(project_id)
+    store = await application.graphs.open(tenant_id)
+    groups = [
+        [_entity(tenant_id, f"Alpha {i}") for i in range(4)],
+        [_entity(tenant_id, f"Beta {i}") for i in range(4)],
+    ]
+    await store.upsert_entities([e for group in groups for e in group])
+
+    edges = []
+    for group in groups:
+        for i, left in enumerate(group):
+            for right in group[i + 1 :]:
+                edges.append(
+                    Relationship(
+                        id=uuid4(),
+                        tenant_id=tenant_id,
+                        source_entity_id=left.id,
+                        target_entity_id=right.id,
+                        relationship_type="relates_to",
+                        confidence=1.0,
+                    )
+                )
+    await store.upsert_relationships(edges)
+
+
+async def test_the_curriculum_route_returns_the_keys_the_browser_parses(app_and_client):
+    """Field names, asserted literally.
+
+    The browser parses these by exact key, so a rename fails as a
+    `ContractError` there with nothing failing in Python. Written out rather
+    than compared against a constant, so the two spellings are independent.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+
+    response = await client.get(f"/api/projects/{project_id}/curriculum")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"areas", "path", "derived_from"}
+    assert set(body["derived_from"]) == {
+        "entities",
+        "relationships",
+        "passages",
+        "used_embeddings",
+        "truncated",
+    }
+    assert set(body["path"]) == {"slug", "title", "destination", "areas", "edges"}
+    assert set(body["areas"][0]) == {
+        "slug",
+        "title",
+        "summary",
+        "size",
+        "truncated_members",
+        "members",
+    }
+
+
+async def test_the_route_finds_the_areas_that_are_there(app_and_client):
+    """Not merely that the request succeeded.
+
+    `CLAUDE.md` is explicit that asserting a 200 is worthless as a test of a
+    projection: an endpoint answers 200 with nothing in it when the machinery
+    was never wired. The assertion has to be that the *data* is there.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+
+    body = (await client.get(f"/api/projects/{project_id}/curriculum")).json()
+
+    assert len(body["areas"]) == 2
+    assert body["derived_from"]["entities"] == 8
+    assert sorted(body["path"]["areas"]) == sorted(a["slug"] for a in body["areas"])
+
+
+async def test_the_first_request_for_an_untouched_project_works(app_and_client):
+    """The seam `CLAUDE.md` records: chunks fetched before the project is open.
+
+    This fixture deliberately does **not** seed a graph, so nothing has called
+    `graphs.open` for this project before the request arrives. A route that
+    reached for `graphs.chunks` first would answer 503 here and succeed on
+    every later call in the same process -- once per project, and looking
+    exactly like flakiness.
+    """
+    _application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+
+    response = await client.get(f"/api/projects/{project_id}/curriculum")
+
+    assert response.status_code == 200
+    assert response.json()["areas"] == []
+
+
+async def test_an_area_route_returns_its_full_membership(app_and_client):
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+    listed = (await client.get(f"/api/projects/{project_id}/curriculum")).json()
+    slug = listed["areas"][0]["slug"]
+
+    response = await client.get(f"/api/projects/{project_id}/curriculum/areas/{slug}")
+
+    assert response.status_code == 200
+    assert len(response.json()["members"]) == 4
+    assert set(response.json()["members"][0]) == {
+        "entity_id",
+        "name",
+        "entity_type",
+        "centrality",
+        "temporal",
+    }
+
+
+async def test_an_unknown_area_is_a_404(app_and_client):
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+
+    response = await client.get(f"/api/projects/{project_id}/curriculum/areas/nope")
+
+    assert response.status_code == 404
+
+
+async def test_the_complete_path_is_readable_by_its_own_slug(app_and_client):
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+
+    response = await client.get(f"/api/projects/{project_id}/curriculum/paths/complete")
+
+    assert response.status_code == 200
+    assert len(response.json()["areas"]) == 2
+    assert response.json()["destination"] is None
+
+
+async def test_a_path_toward_an_area_is_cut_to_that_area(app_and_client):
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+    complete = (
+        await client.get(f"/api/projects/{project_id}/curriculum/paths/complete")
+    ).json()
+    destination = complete["areas"][-1]
+
+    response = await client.get(f"/api/projects/{project_id}/curriculum/paths/{destination}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["destination"] == destination
+    assert body["areas"][-1] == destination
+    positions = [complete["areas"].index(s) for s in body["areas"]]
+    assert positions == sorted(positions)
+
+
+async def test_an_unknown_project_is_a_404(app_and_client):
+    _application, client = app_and_client.application, app_and_client.client
+
+    assert (await client.get(f"/api/projects/{uuid4()}/curriculum")).status_code == 404
+
+
+async def test_authoring_with_no_areas_is_refused_rather_than_reported_started(
+    app_and_client,
+):
+    """202 over an empty target list settles instantly as "done" and reads, on
+    every surface, exactly like a run that authored everything."""
+    _application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+
+    response = await client.post(f"/api/projects/{project_id}/curriculum/author", json={})
+
+    assert response.status_code == 409
+
+
+async def test_a_single_area_run_does_not_write_the_path_overview(app_and_client):
+    """A one-area run has no order to write up.
+
+    Worth its own test because the overview is appended to `targets` rather
+    than run after them, and an append that forgot its condition would have
+    every single-area run rewrite the whole path's file from a projection the
+    reader did not ask about.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+    listed = (await client.get(f"/api/projects/{project_id}/curriculum")).json()
+    slug = listed["areas"][0]["slug"]
+
+    response = await client.post(
+        f"/api/projects/{project_id}/curriculum/author", json={"area": slug}
+    )
+
+    assert response.status_code == 202
+    assert response.json()["targets"] == [slug]
+    await app_and_client.authoring.wait(UUID(project_id))
+    assert app_and_client.author.asked == [slug]
+
+
+async def test_authoring_an_unknown_area_is_a_404(app_and_client):
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+
+    response = await client.post(
+        f"/api/projects/{project_id}/curriculum/author", json={"area": "nope"}
+    )
+
+    assert response.status_code == 404
+
+
+async def test_an_authoring_run_is_reported_before_it_finishes(app_and_client):
+    """202 and a frame naming what it will do, matching `seed_topics`."""
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+
+    response = await client.post(f"/api/projects/{project_id}/curriculum/author", json={})
+
+    assert response.status_code == 202
+    frame = response.json()
+    assert frame["status"] == "running"
+    assert frame["kind"] == "path"
+    # Two areas plus the path's own overview file.
+    assert frame["targets"] == [*frame["targets"][:2], "complete"]
+    assert len(frame["targets"]) == 3
+    # Settled before the fixture tears the application down. A background task
+    # outliving the app it was started against is how this module first hung.
+    await app_and_client.authoring.wait(UUID(project_id))
+    assert app_and_client.author.asked == frame["targets"]
+
+
+async def test_the_authoring_catch_up_route_answers_before_anything_has_run(
+    app_and_client,
+):
+    """An absent run is a state, not a missing resource."""
+    _application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+
+    response = await client.get(f"/api/projects/{project_id}/curriculum/author")
+
+    assert response.status_code == 200
+    assert response.json() == {"current": None, "last": None}
+
+
+async def test_deleting_a_project_forgets_its_curriculum(app_and_client):
+    """A cache holding a dead project's clusters for the life of the process.
+
+    Asserted on the cache rather than through a second request, because a
+    second request on a deleted project 404s before it reaches the cache --
+    which is exactly why the leak would be invisible without this.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+    await client.get(f"/api/projects/{project_id}/curriculum")
+    assert UUID(project_id) in app_and_client.curriculum._cache
+
+    deleted = await client.delete(f"/api/projects/{project_id}")
+
+    assert deleted.status_code == 200
+    assert UUID(project_id) not in app_and_client.curriculum._cache

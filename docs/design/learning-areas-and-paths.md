@@ -67,17 +67,32 @@ weighted differently because they mean different things:
 | Source | Weight | Why |
 |---|---|---|
 | An extracted `GraphRelationship` | `RELATION_WEIGHT` = 1.0 | A model read a document and asserted these two things are connected. That is the strongest evidence available. |
-| Co-occurrence in one source document | `co_weight(n)` | Two entities a document mentions together are about the same thing more often than not. Weak individually, decisive in aggregate. |
+| Co-mention in one *passage* | `CO_MENTION_BUDGET / pairs` | Two entities named in one paragraph are about the same thing more often than not. Weak individually, decisive in aggregate. |
 
-Co-occurrence is weighted **`1 / (n - 1)`** where `n` is the number of
-distinct entities the document mentions, capped at `CO_OCCURRENCE_CEILING`.
-Without the normalisation a single long document dominates: 200 entities in
-one source is 19,900 pairs, every one of them weight 1, against a few hundred
-real relationships in the whole project. The graph would then be a projection
-of *document length*, and the biggest source document would become the
-curriculum. Dividing by `n - 1` makes every document contribute the same total
-influence regardless of how much of it there is, which is the property we
-want — a document is one voice.
+**Passages, not documents**, and the grain matters more than it looks. Two
+entities in one paragraph are evidence about the same subject; two entities in
+one fifty-page document are evidence that the document is long. The corpus
+already stores chunks and already rebuilds them by folding `DocumentChunked`,
+so the tighter grain is also the one that costs nothing extra and replays
+identically.
+
+Each passage contributes **`CO_MENTION_BUDGET` in total**, divided among its
+pairs. Without that normalisation a single long passage dominates: pairs grow
+quadratically where relationships grow linearly, so twenty entities in one
+chunk is 190 unit edges against a project that may hold only a few hundred
+stated relationships in all. The graph would then be a projection of *passage
+length*, and the longest paragraph in the corpus would become the curriculum.
+Dividing by the pair count makes every passage contribute the same total
+influence regardless of how much of it there is: a passage is one voice.
+
+A second guard sits above it. `MAX_PASSAGE_ENTITIES` drops a passage naming
+more than twenty-five entities entirely, and it is a *relevance* guard rather
+than a performance one — a passage listing forty entities is a contents page,
+an index or a glossary, and the "these belong together" inference it licenses
+is false, because everything in the project appears in it. Normalisation stops
+such a passage dominating by volume; it cannot stop it wiring the whole graph
+into one blob at low weight, which is exactly what a curriculum must not be.
+
 
 Both edge sets are symmetric and summed into one undirected weighted graph.
 Direction is not lost: it is read separately in §3, off the original
@@ -120,7 +135,7 @@ curriculum wants:**
   with one member is not an area, and shipping fifty of them buries the eight
   real ones.
 - *Oversized communities are split.* Modularity is happy to produce one
-  community holding 60% of the graph. `MAX_AREA_SIZE` re-runs the pass on
+  community holding 60% of the graph. `MAX_AREA_FRACTION` re-runs the pass on
   that community's induced subgraph. This is bounded to one recursion, and
   the reason is that unbounded recursion on a genuinely homogeneous cluster
   splits it into arbitrary halves forever; one pass catches the "two subjects
@@ -128,10 +143,20 @@ curriculum wants:**
 
 ## 4. Where embeddings do come in
 
-Not as the substrate — as a **tie-break available when it is real**. When a
-live vector store holds vectors for both endpoints of a candidate merge, the
-cosine similarity of the two communities' centroids adjusts ΔQ by at most
-`EMBEDDING_NUDGE`. The bound is the whole design: the projection with
+**Not built, and this section is the design for when it is.** `AreaProjection`
+carries `used_embeddings` and the field crosses the wire on every curriculum
+response, so the seam exists and answers `false` honestly. It is deliberately
+*not* rendered: a line on screen saying "no embeddings were used" on every
+projection forever is noise, and the moment it can be `true` is the moment it
+becomes worth a reader's attention. Saying so here rather
+than describing the plan in the present tense: a design document that reads as
+though a feature shipped is the one that stops anyone building it.
+
+The shape, when it is built: not the substrate — a **tie-break available when
+it is real**. When a live vector store holds vectors for both endpoints of a
+candidate merge, the cosine similarity of the two communities' centroids
+adjusts ΔQ by at most `EMBEDDING_NUDGE`. The bound is the whole design: the
+projection with
 embeddings present and the projection with them absent differ only where
 modularity was already close to indifferent, so **a restart that loses every
 vector changes the areas at the margin and never wholesale**. A person cannot
