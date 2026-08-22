@@ -169,6 +169,7 @@ async def test_the_curriculum_route_returns_the_keys_the_browser_parses(app_and_
         "entities",
         "relationships",
         "passages",
+        "semantic_edges",
         "used_embeddings",
         "truncated",
     }
