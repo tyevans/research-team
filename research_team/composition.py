@@ -1842,6 +1842,7 @@ def build_application(
             # the same object.
             vector_store=await graphs.vectors(),
             concurrency=config.extraction_concurrency(),
+            consolidation_batch=config.consolidation_batch_size(),
             # One chunker per project adapter rather than one for the process.
             # `SlidingWindowChunker` holds only its three numbers -- no buffer,
             # no state carried between `chunk` calls -- so sharing one would

@@ -37,6 +37,11 @@ DEFAULT_KNOWLEDGE_DOMAIN = "research_corpus"
 DEFAULT_EXTRACTION_CONCURRENCY = 8
 DEFAULT_EXTRACTION_CHUNK_SIZE = 2_000
 
+#: How many extracted entities are decided together in one consolidation pass.
+#: 25 rather than "all of them" -- see `consolidation_batch_size` for the two
+#: costs that grow with it and why neither has been measured to a limit yet.
+DEFAULT_CONSOLIDATION_BATCH = 25
+
 VECTOR_STORES = ("none", "memory", "pgvector")
 #: On, since the third scoring feature is what lets consolidation merge a
 #: cross-document duplicate on evidence rather than on an overridden threshold.
@@ -341,6 +346,40 @@ def extraction_concurrency() -> int:
     return int(os.getenv("AGENT_EXTRACTION_CONCURRENCY", str(DEFAULT_EXTRACTION_CONCURRENCY)))
 
 
+def consolidation_batch_size() -> int:
+    """How many entities one `resolve_many` pass decides together. 25 by default.
+
+    This is the knob on the cost `extraction_chunk_size`'s docstring names as
+    the one to watch -- adjudicator calls per document. Consolidation used to
+    resolve entity by entity, and `Adjudicator.adjudicate` batches only within
+    one subject, where the ambiguous band is nearly always a single pair. So a
+    document with twenty cross-document duplicates spent twenty round trips
+    asking twenty one-pair questions. Batched, the whole batch's band goes in
+    one `adjudicate_many` call.
+
+    **Bigger is not simply better, and "all of them" was rejected.** Two costs
+    grow with this number:
+
+    - Phase 1 completes before any merge is emitted, so a bigger batch is a
+      wider window in which a decision can go stale. redstring re-resolves and
+      *skips* rather than retrying, which is correct and also means a bigger
+      batch quietly consolidates less per pass.
+    - One `adjudicate_many` call is rendered into one prompt. A poisoned batch
+      -- one whose verdict count disagrees with what was asked -- yields
+      `None` for **every** pair in it, so a wider batch is a wider blast
+      radius for one bad answer.
+
+    25 is a starting point chosen against the first cost, not measured to the
+    second: it is comfortably more than the duplicates a single document
+    usually carries, so the common case is one call, while staying far enough
+    below a context limit that batch rendering is not the thing that breaks.
+    **Not measured against a real corpus.** The number to watch if this is
+    raised is not wall clock but merges-per-pass -- if it falls, phase 1's
+    staleness window is what took them.
+    """
+    return int(os.getenv("AGENT_CONSOLIDATION_BATCH", str(DEFAULT_CONSOLIDATION_BATCH)))
+
+
 def extraction_chunk_size() -> int:
     """Characters per extraction chunk. 2000 by default, against redstring's 3000.
 
@@ -377,6 +416,12 @@ def extraction_chunk_size() -> int:
     Overlap is left at redstring's 200 deliberately: it is what keeps an
     entity spanning a chunk boundary from being lost, and it does not scale
     with chunk size on its own.
+
+    `consolidation_batch_size` is the other end of this trade and postdates
+    the paragraph above: the calls it describes are now batched across
+    subjects rather than spent one per duplicate, so "more candidate pairs"
+    no longer means "proportionally more round trips". The direction to watch
+    is unchanged; the slope is not.
     """
     return int(os.getenv("AGENT_EXTRACTION_CHUNK_SIZE", str(DEFAULT_EXTRACTION_CHUNK_SIZE)))
 

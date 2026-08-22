@@ -3907,3 +3907,39 @@ channel scoring token overlap. The middle one is redstring's to decide.
 Worth knowing before choosing: this document's design spec was wrong about
 this case twice in one day, in both directions, and each reading took ten
 seconds to check against the adapter. Check before arguing.
+
+### B122. `AGENT_CONSOLIDATION_BATCH` is a chosen number, not a measured one
+
+Consolidation now decides entities in batches of 25 (`consolidation_batch_size`)
+rather than one at a time, which collapses one adjudicator round trip per
+cross-document duplicate into one per batch. The batching is measured — the
+call count is pinned at the provider seam in `test_batched_consolidation.py`,
+three duplicates costing `[3]` where the per-entity loop cost `[1, 1, 1]`. **The
+number 25 is not.**
+
+Two costs grow with it and neither has been taken to a limit:
+
+- Phase 1 of `resolve_many` completes before any merge is emitted, so a wider
+  batch is a wider window for a decision to go stale. redstring re-resolves and
+  *skips* rather than retrying — correct, and it means a wider batch quietly
+  consolidates less per pass.
+- One `adjudicate_many` call renders one prompt, and a batch whose verdict count
+  disagrees with what was asked yields `None` for **every** pair in it. A wider
+  batch is a wider blast radius for one bad answer, and it is also closer to a
+  context limit that nothing here checks.
+
+25 was picked against the first cost only: comfortably more than the duplicates
+one document usually carries, so the common case is one call, while staying far
+enough below any plausible context window that batch rendering is not what
+breaks. Nobody has run a real corpus at 10, 25, 50 and 100.
+
+**The number to watch is not wall clock.** Wall clock will keep improving as the
+batch grows, because the round trips keep collapsing, right past the point where
+the pass has started consolidating less. The measurement is merges-per-pass on a
+fixed corpus: if it falls as the batch rises, phase 1's staleness window is what
+took them, and that is the ceiling. `docs/how-to/tune-ingestion-throughput.md` in
+redstring is the method.
+
+Cost of leaving it: a default that is defensible rather than justified, on a knob
+whose failure mode is silent — a batch too wide does not error, it merges fewer
+things and looks faster while doing it.
