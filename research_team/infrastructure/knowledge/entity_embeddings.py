@@ -20,10 +20,19 @@ Measured on 2026-08-22 against a copy of the real database: **zero
 `EntitiesMerged`.** Embeddings have been on by default the whole time. Every
 one of them was thrown away.
 
-The fix is that this module builds the event and the caller appends it, so
-`rebuild_graph` can fold it back at project open exactly as it folds the graph
-and the corpus. See `rebuild.py` for the replay half and for why it filters on
-the embedding model.
+The fix has two halves, one per channel. The **card** channel is this
+module's: it builds the event and the caller appends it, so `rebuild_graph` can
+fold it back at project open exactly as it folds the graph and the corpus. See
+`rebuild.py` for the replay half and for why it filters on the embedding model.
+
+The **document** channel is redstring's again. `RedstringKnowledge.ingest` now
+passes `event_store=` to `build_graph` -- it has to, or extraction's
+`DocumentChunked` and its entity links never reach the log -- and with a log
+`_embed_entities` records `EntitiesEmbedded` on the same aggregate as the
+extraction and `_persist` saves both together. A `recover_document_embeddings`
+helper lived here to do that half by reading the vectors back out of the store
+`build_graph` had just written them to; it is gone, because a second event per
+ingest built from the same vectors is accretion rather than durability.
 
 ## They encoded only the name
 
@@ -79,7 +88,7 @@ from redstring import (
 )
 from redstring.aggregates.document import Document
 from redstring.events.streams import document_stream
-from redstring.ports.vector_store import VectorReader, VectorWriter
+from redstring.ports.vector_store import VectorWriter
 
 from research_team.application.knowledge import KnowledgeError
 from research_team.infrastructure.knowledge.entity_cards import Card, assemble_cards
@@ -188,47 +197,59 @@ async def embed_entities(
     )
 
 
-async def recover_document_embeddings(
+async def embed_entity_names(
     *,
-    vectors: "VectorReader",
-    entity_ids: Sequence[UUID],
+    entities: Sequence[object],
+    provider: EmbeddingProvider,
     tenant_id: UUID,
     source_id: str,
-    embedding_model: str,
 ) -> EntitiesEmbedded | None:
-    """The `EntitiesEmbedded` `build_graph` built and did not hand back.
+    """Embed each entity's bare name. Returns the event, unappended.
 
-    **Read back rather than recomputed.** `build_graph` embeds each entity's
-    name, folds the vectors into the `VectorStore` through `VectorProjection`,
-    and returns `GraphBuildReport.embedded` -- an integer. The event itself is
-    reachable only by giving `build_graph` an `event_store`, which would also
-    have it append a `DocumentChunked` carrying the document's full text under
-    the *extraction* chunking. That is not free here: this system already
-    chunks through `index_documents` under the same source id, `replace_source`
-    is last-write-wins, and whichever chunking replayed last would own the
-    corpus every citation is checked against. Two chunkings competing for one
-    source is a worse problem than the one being solved.
+    The document channel: what `CandidateFinder` scores a merge with, and the
+    channel consolidation's thresholds were tuned against. The name is most of
+    the evidence for "are these the same entity", which is a different question
+    from "what is this entity about" -- see the module docstring for why the
+    card channel is not simply better.
 
-    So the vectors are fetched back out of the store `build_graph` just wrote
-    them to, by the ids it just wrote. That is exact rather than approximate --
-    the port guarantees `get` returns what was upserted -- and it costs one
-    lookup per entity against a store that is in memory on every install this
-    ships with.
+    Unappended for `embed_entities`' reason: the caller owns the event store
+    and the stream.
 
-    The cost worth naming: the vectors are float32 in the store (the port says
-    so), so the recovered event carries single-precision values even if the
-    provider returned double. Nothing compares a stored vector to a written one
-    for equality, and cosine at float32 is what every adapter computes anyway.
+    `entities` is typed `Sequence[object]` and read for `.id` and `.name`. The
+    concrete type is redstring's `Entity`, and naming it here would put a
+    redstring import in a signature this module's callers pass a
+    `DocumentExtracted`'s entities into -- which they already have.
 
-    `None` when nothing was embedded -- embeddings off, the endpoint probe
-    failed, or the extraction produced no entities. Not an error in any of
-    those cases.
+    Batched and short-reply-tolerant exactly as `embed_entities` is, and for
+    the same reason: one oversized or misaligned batch must cost that batch
+    rather than the pass. redstring's own `_embed_entities` raises instead,
+    which is right for a library and wrong for a channel whose failure must not
+    reach an extraction that has already landed.
+
+    `None` when there is nothing to embed or nothing survived, which is not an
+    error and the caller should not log it.
     """
+    if not entities:
+        return None
+
     records: list[VectorRecord] = []
-    for entity_id in entity_ids:
-        stored = await vectors.get(entity_id, tenant_id)
-        if stored is not None:
-            records.append(stored)
+    for start in range(0, len(entities), EMBED_BATCH):
+        batch = entities[start : start + EMBED_BATCH]
+        vectors = await provider.embed([entity.name for entity in batch])
+        if len(vectors) != len(batch):
+            logger.warning(
+                "embedding provider %s returned %d vectors for %d names; "
+                "results are positional, so this batch is dropped rather than "
+                "matched to the wrong entities",
+                provider.model,
+                len(vectors),
+                len(batch),
+            )
+            continue
+        records.extend(
+            VectorRecord(entity_id=entity.id, tenant_id=tenant_id, vector=vector)
+            for entity, vector in zip(batch, vectors, strict=True)
+        )
 
     if not records:
         return None
@@ -237,7 +258,7 @@ async def recover_document_embeddings(
     return Document(stream.aggregate_id).record_embeddings(
         tenant_id=tenant_id,
         source_id=source_id,
-        embedding_model=embedding_model,
+        embedding_model=provider.model,
         embeddings=records,
     )
 

@@ -67,3 +67,48 @@ async def known_names(graph: GraphStore, entity_id: UUID, tenant_id: UUID) -> li
     # alias's recorded name (e.g. a merge undone and redone under the same
     # spelling).
     return list(dict.fromkeys(names))
+
+
+async def absorbed_ids(graph: GraphStore, entity_id: UUID, tenant_id: UUID) -> list[UUID]:
+    """Every id this entity now stands for, including its own, canonical first.
+
+    The mirror of `known_names`, over ids rather than spellings, and it exists
+    for a defect that spelling could not reach: a `StoredChunk`'s `entity_ids`
+    are **pre-consolidation**. redstring's extraction pipeline reads them off
+    `map_extraction`'s return, before `merge_extractions` and long before
+    `Consolidator.resolve`, and nothing ever rewrites a stored chunk. So a
+    passage that produced an entity later absorbed into another records the
+    *absorbed* id, while every graph read returns canonical entities only.
+
+    Two consequences follow, and a caller needs both halves:
+
+    - `get_by_entity(canonical)` misses that passage entirely, because the
+      chunk is keyed by the absorbed id.
+    - Intersecting a chunk's ids against a set of canonical ids drops the
+      absorbed one, so a passage naming two entities that were merged into
+      one and one other reads as naming one -- below any co-mention threshold.
+
+    Walks breadth-first for `known_names`' reason: `find_aliases` answers
+    directly-absorbed only, so `C` absorbing `A` which had absorbed `B` loses
+    `B` unless this recurses -- and `B` is exactly the oldest spelling, so the
+    oldest passages are the ones that go missing.
+
+    `seen` bounds the walk. `AliasStore.resolve_entity_ids` is the method whose
+    contract promises termination; `find_aliases` makes no such promise, and a
+    hang here reads as infrastructure trouble and gets retried rather than
+    investigated.
+
+    Ids are compared with `==`, never `is`: an adapter may hand back a rebuilt
+    `UUID` for an id it already holds, and `is` would terminate the walk early
+    -- which looks like a correct answer and is not.
+    """
+    seen: list[UUID] = [entity_id]
+    frontier = [entity_id]
+    while frontier:
+        current = frontier.pop()
+        for alias in await graph.find_aliases(current, tenant_id):
+            if any(alias.alias_entity_id == known for known in seen):
+                continue
+            seen.append(alias.alias_entity_id)
+            frontier.append(alias.alias_entity_id)
+    return seen

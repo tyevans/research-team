@@ -10,6 +10,28 @@ process, and nothing on the log could bring it back.
 
 Two of the tests here fail against that build. The rest pin the parts of the
 fix whose absence would be silent.
+
+**The document channel changed writer on 2026-08-22, after these were
+written, and every docstring below has been re-read against that.** Three
+arrangements were tried in one day and the third is the one in the tree:
+
+1. *Recover it from the store.* `build_graph`, given no event store, embedded
+   and returned a count; `recover_document_embeddings` read the vectors back
+   out by the ids just written and rebuilt the event. That is what these tests
+   were written against.
+2. *Let `build_graph` own it.* The co-mention repair has to pass
+   `event_store=` -- it is the only way extraction's `DocumentChunked` reaches
+   the log -- and with a log `_embed_entities` records the event itself. Fewer
+   parts, and it puts the embedding call inside a function whose failure
+   discards a document already folded into the graph.
+3. *Own it here.* `build_graph` is given no embedding pair at all, and
+   `_record_embeddings` writes both channels under one failure policy. That is
+   what makes `test_an_ingest_survives_an_embedding_endpoint_that_dies` below
+   able to reach the path it claims to -- under (1) and (2) it could not.
+
+Where a test is satisfied by a different writer than the one it was written
+against, its docstring says so rather than being left to read as though
+nothing moved.
 """
 
 from uuid import uuid4
@@ -55,6 +77,12 @@ async def test_an_ingest_puts_its_embeddings_on_the_log(build_adapter, tmp_path)
     `DocumentExtracted` and left the vectors in memory. Asserting on the log
     rather than on the store is the entire point: a store holding vectors is
     exactly what that build also had, right up until it exited.
+
+    **Weaker than it looks.** Two channels write `EntitiesEmbedded` and this
+    assertion is satisfied by either, so it passes on the card channel alone
+    even if the document channel writes nothing.
+    `test_the_card_channel_records_against_its_own_source` below is what
+    separates them. This one is kept as the plain statement of the defect.
     """
     project_id = uuid4()
     _, event_store, _, _ = await _ingest(build_adapter, tmp_path, project_id)
@@ -108,8 +136,15 @@ async def test_the_two_channels_do_not_cross(build_adapter, tmp_path):
 
     Both channels are `EntitiesEmbedded` over the same entity ids, so a fold
     that ignored `source_id` would fill both stores with whichever event came
-    last and every lookup would still succeed. The failure has no symptom
-    except wrong neighbours, which is why it is asserted on the *value*.
+    last and every lookup would still succeed.
+
+    **The document side is `embed_entity_names` now**, not a recovery of what
+    redstring wrote and not redstring's own `_embed_entities`. The text being
+    embedded is the same -- the entity's bare name, on both -- so what this
+    test asserts is unchanged; the code it exercises is this repository's.
+
+    The failure has no symptom except wrong neighbours, which is why it is
+    asserted on the *value*.
 
     `FakeEmbeddingProvider` hashes its input, so the two channels' vectors
     differ exactly because the texts differ -- a card carries the entity's type
@@ -196,6 +231,17 @@ async def test_the_card_channel_records_against_its_own_source(build_adapter, tm
 
     That is what the fold tells the channels apart by, so it is the one detail
     of the event that another part of the system depends on.
+
+    **This is also the test that the document channel is written at all.** The
+    second assertion -- that some `EntitiesEmbedded` records against a source
+    other than the synthetic one -- was a sanity check on a hand-built event.
+    It is now the assertion that fails if `_record_embeddings` loses its
+    document half, since `test_an_ingest_puts_its_embeddings_on_the_log` is
+    satisfied by the card channel alone. **Proved red on 2026-08-22** by
+    deleting the `if vectors is not None:` block from `_record_embeddings`:
+    this test failed on its second assertion and
+    `test_the_two_channels_do_not_cross` failed alongside it for the same cause
+    -- no document-channel event exists to cross with.
     """
     project_id = uuid4()
     _, event_store, _, _ = await _ingest(build_adapter, tmp_path, project_id)
@@ -218,22 +264,67 @@ async def test_an_ingest_survives_an_embedding_endpoint_that_dies(build_adapter,
     before anything is embedded, so a provider raising afterwards has to leave
     that alone. Without the guard the ingest raises, the caller sees a failed
     document, and the graph quietly contains it anyway.
+
+    **This test did not reach that path until 2026-08-22, and read as though it
+    did.** `_embedding_pair` probes the endpoint with one `embed` of one short
+    string before the first ingest uses it, so a provider that raises on
+    *every* call -- which is what this test used -- is latched unusable and
+    nothing downstream ever embeds. What it proved was that the probe degrades
+    rather than failing, which is worth having and is a different claim.
+
+    So `Dying` now answers the probe and fails afterwards. That is the real
+    shape of the failure: an endpoint that was up when the process started and
+    is down by the time a document is extracted.
+
+    It also could not have passed under either earlier arrangement. redstring's
+    `_embed_entities` raises `EmbeddingProviderError` from inside `build_graph`,
+    downstream of the graph write and the log append, and there is no
+    `try/except` this adapter can put around it that would not also swallow the
+    extraction's own failures. `build_graph` is therefore given no embedding
+    pair, and `_record_embeddings` -- this repository's code, with its own
+    `except Exception` -- owns both channels.
+
+    **Proved red on 2026-08-22** by passing `embedding_provider`/`vector_store`
+    back to `build_graph`, which is arrangement (2) in the module docstring:
+    1 failed, `KnowledgeError: extraction failed: endpoint is down`, with the
+    entities in the graph store the whole time.
     """
 
     class Dying(FakeEmbeddingProvider):
+        """Answers the probe, then refuses.
+
+        The probe is one string; every real batch is more than one. Keying on
+        the batch size rather than on a call counter keeps the fixture honest
+        if the probe ever moves or is called twice.
+        """
+
         async def embed(self, texts):
+            if len(texts) == 1:
+                return await super().embed(texts)
             raise RuntimeError("endpoint is down")
 
     project_id = uuid4()
-    adapter, _, _ = build_adapter(
+    vectors = InMemoryVectorStore(dimension=DIMENSION)
+    adapter, event_store, _ = build_adapter(
         tmp_path,
         project_id,
         embeddings=Dying(dimension=DIMENSION, model="fake-embed"),
-        vector_store=InMemoryVectorStore(dimension=DIMENSION),
+        vector_store=vectors,
         card_vector_store=InMemoryVectorStore(dimension=DIMENSION),
     )
 
     report = await adapter.ingest(SourceRef(source_id="notes", text=TEXT))
 
-    assert report.entity_count > 0
-    assert await adapter._store.find_entities(project_id)
+    assert report.entity_count > 0, "the extraction must survive the embedding failure"
+    entities = await adapter._store.find_entities(project_id)
+    assert entities, "and must be in the graph the caller was told about"
+
+    embedded = [
+        envelope.event
+        async for envelope in event_store.read_all()
+        if type(envelope.event).__name__ == "EntitiesEmbedded"
+    ]
+    assert not embedded, (
+        "the vectors are what the failure costs; an event here would mean "
+        "something recorded embeddings the provider never produced"
+    )

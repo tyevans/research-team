@@ -19,6 +19,8 @@ get wrong:
 
 import hashlib
 import logging
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -50,6 +52,7 @@ from redstring import (
     rank_chunks,
     tokenize,
 )
+from redstring.events.document import DocumentChunked
 
 from research_team.application.knowledge import (
     MAX_DOCUMENT_CHARS,
@@ -66,6 +69,7 @@ from research_team.application.knowledge import (
 from research_team.application.retry import with_retry
 from research_team.domain import Corpus, EntityJudgements, StoreSourceDocument
 from research_team.infrastructure.config import DEFAULT_CONSOLIDATION_BATCH
+from research_team.infrastructure.knowledge.co_mentions import CoMentionIndex
 from research_team.infrastructure.knowledge.domain_schemas import (
     RESEARCH_CORPUS,
     resolve_domain,
@@ -74,10 +78,14 @@ from research_team.infrastructure.knowledge.entity_cards import index_cards
 from research_team.infrastructure.knowledge.entity_embeddings import (
     PROJECT_EMBEDDING_SOURCE,
     embed_entities,
-    recover_document_embeddings,
+    embed_entity_names,
 )
 from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
+from research_team.infrastructure.knowledge.rebuild import (
+    CoMentionProjection,
+    carries_entity_links,
+)
 from research_team.infrastructure.knowledge.temporal_expressions import (
     RAW_TEMPORAL_PROPERTY,
     normalize_for_parsing,
@@ -325,6 +333,7 @@ class RedstringKnowledge:
         chunker: Chunker | None = None,
         chunks: ChunkStore | None = None,
         cards: ChunkStore | None = None,
+        co_mentions: CoMentionIndex | None = None,
         judgements: AggregateRepository[EntityJudgements] | None = None,
     ) -> None:
         self._project_id = project_id
@@ -340,6 +349,14 @@ class RedstringKnowledge:
         #: A different store from `_chunks` on purpose -- see `ProjectGraphs`
         #: for why the separation is structural rather than a convention.
         self._cards = cards
+        #: Which entities each passage named, folded from the *extraction*
+        #: chunking. Not a chunk store and not a corpus: three fields per
+        #: passage, because that is all `CoMentionPort`'s only reader asks for.
+        #: See `infrastructure/knowledge/co_mentions.py`. `None` when the
+        #: channel is off, and then this ingest still puts the links on the log
+        #: -- `build_graph` records the chunking whenever it has an event store
+        #: -- so turning it on is a project open away rather than a re-ingest.
+        self._co_mentions = co_mentions
         # Both default to redstring's own serial behaviour rather than to the
         # configured values, so a test constructing this directly gets the
         # deterministic pipeline unless it asks otherwise. The composition
@@ -473,6 +490,12 @@ class RedstringKnowledge:
             published_at=published_at,
             metadata=metadata,
         )
+        # Snapshotted **before** `_store_document`, which calls `index` and so
+        # can itself record a chunking. What is wanted is "did anything chunk
+        # this document afresh during this ingest", and both write paths count:
+        # a re-`index` of changed bytes is as good a signal that the text moved
+        # as a re-extraction would be.
+        before = await self._chunking_signatures(source.source_id)
         await self._store_document(source)
         announce("storing")
         # `built`, not `report` -- the parameter owns that name now, and the
@@ -490,15 +513,28 @@ class RedstringKnowledge:
                 )
             )
             async with tenant_scope(self._project_id):
-                embeddings, vectors = await self._embedding_pair()
                 built = await build_graph(
                     document,
                     provider=wrapped,
                     store=self._store,
                     tenant_id=self._project_id,
                     domain=self._domain,
-                    embedding_provider=embeddings,
-                    vector_store=vectors,
+                    # **No `embedding_provider=`/`vector_store=`, deliberately.**
+                    # redstring embeds inside `build_graph` and, with an event
+                    # store, appends the `EntitiesEmbedded` itself -- which
+                    # this adapter would then have to either duplicate or
+                    # defer to, and both were tried. Owning the write here
+                    # instead buys three things that the deferral does not:
+                    # the two embedding channels become one method with one
+                    # failure policy, an endpoint that dies mid-ingest costs
+                    # the vectors rather than the extraction (`build_graph`
+                    # raising there discards a document already folded into
+                    # the graph -- see `_record_embeddings`), and the text
+                    # being embedded is this repository's decision on both
+                    # channels rather than redstring's on one of them.
+                    #
+                    # Both must be absent together or `_check_embedding_wiring`
+                    # raises; both absent is redstring's own default.
                     # Chunks go out in batches of `concurrency` and carryover
                     # folds back in *chunk* order rather than completion
                     # order, so this stays reproducible: the same document
@@ -508,10 +544,72 @@ class RedstringKnowledge:
                     # passed here rather than kept behind a flag.
                     concurrency=self._concurrency,
                     chunker=self._chunker,
+                    # **Required, and no `chunks=` beside it.** Without an
+                    # event store `_persist` is a no-op, so the
+                    # `DocumentChunked` the aggregate builds is discarded
+                    # inside the library and `GraphBuildReport` exposes only a
+                    # count -- the entity links are computed on every ingest
+                    # and thrown away, which is exactly the state
+                    # `docs/design/co-mention-channel-findings.md` measured.
+                    #
+                    # With one, the event reaches the log **whether or not
+                    # `chunks=` is given**: `record_chunking` runs
+                    # unconditionally on the aggregate and only the write into
+                    # a `ChunkStore` is gated. That is `build_graph`'s own
+                    # docstring and it is why there is no second chunk store
+                    # here; `infrastructure/knowledge/co_mentions.py` records
+                    # what building one would have cost.
+                    #
+                    # It also moves the append of `built.event` in here, and
+                    # makes `built.event is None` reachable: the aggregate is
+                    # loaded from the log, so `record_extraction` refuses a
+                    # second extraction of one document under one model
+                    # version. That refusal keys on the model version **alone**
+                    # -- not on the text -- which is why the branch below has
+                    # to tell an unchanged document from a changed one itself.
+                    event_store=self._event_store,
                 )
+                # Read back rather than returned: without `chunks=`,
+                # `GraphBuildReport` carries no chunk event, and the live
+                # co-mention index would otherwise hold nothing until the next
+                # project open -- an ingest's own curriculum would not see its
+                # own passages. The card-vector channel takes the same shape
+                # for the same reason (`_record_embeddings` writes the store as
+                # well as the log).
+                chunking = await self._chunking_recorded_now(source.source_id, before)
                 if built.event is None:
-                    # `Document.record_extraction` found nothing new to record
-                    # -- the same content and model version as a previous run.
+                    # `Document.record_extraction` refused: this document has
+                    # already been extracted under this model version. Now
+                    # reachable, where before this adapter passed
+                    # `event_store=` the aggregate was fresh on every call and
+                    # this branch was dead.
+                    #
+                    # **Two cases hide in here and only one of them is fine.**
+                    # The refusal keys on the model version alone, not on the
+                    # text, so a document whose content has changed since it
+                    # was extracted also lands here. Reporting zero for that is
+                    # the failure this repository is most insistent about: the
+                    # corpus records the new revision (`_store_document` ran
+                    # above) while the graph goes on describing the old one,
+                    # and nothing says so.
+                    #
+                    # A new chunking signature is the tell, and it is free --
+                    # `record_chunking` keys on
+                    # `f"{chunker_type}:{digest}:{model_version}"`, so the
+                    # aggregate refuses a repeat and emits for new bytes. If
+                    # anything chunked this document afresh during *this* call
+                    # while extraction refused, the text is new.
+                    if chunking.signatures:
+                        detail = (
+                            f"{source.source_id!r} has already been extracted "
+                            f"under this model and its text has changed since; "
+                            f"redstring keys extraction on the model version "
+                            f"alone, so re-extracting it needs a new source_id "
+                            f"or a cleared project. The new text has been "
+                            f"stored either way."
+                        )
+                        announce("failed", detail=detail)
+                        raise KnowledgeError(detail)
                     # Still announced through to `consolidated`: a pane opened
                     # on a re-ingest would otherwise hang with no closing note.
                     announce(
@@ -537,20 +635,21 @@ class RedstringKnowledge:
                     domain=built.domain,
                     domain_confidence=built.domain_confidence,
                 )
-                await self._event_store.append(
-                    document_stream(tenant_id=self._project_id, source_id=source.source_id),
-                    [built.event],
-                    ExpectedVersion.any_(),
-                )
-                # After the extraction event and before consolidation. Before,
+                # `built.event` is **not** appended here. `build_graph` was
+                # given this event store, so its own repository saved the
+                # aggregate -- extraction, chunking and the document-channel
+                # embeddings in one `save`. Appending again would put a second
+                # `DocumentExtracted` on the log, which `GraphProjection`
+                # applies twice: idempotent on upserts and not on anything that
+                # counts.
+                #
+                # Before consolidation. Before,
                 # because `_consolidate` scores with the vector store and the
                 # card pass reads the graph `build_graph` has just written --
                 # and after, because an embedding failure must not cost the
                 # extraction that is already folded into the store.
-                await self._record_embeddings(
-                    [entity.id for entity in built.event.entities],
-                    source_id=source.source_id,
-                )
+                await self._apply_co_mentions(chunking.event)
+                await self._record_embeddings(built.event.entities, source_id=source.source_id)
                 merges, failures = await self._consolidate(
                     built.event.entities, announce=announce
                 )
@@ -581,7 +680,80 @@ class RedstringKnowledge:
             consolidation_failures=failures,
         )
 
-    async def _record_embeddings(self, entity_ids: list[UUID], *, source_id: str) -> None:
+    @dataclass(frozen=True, slots=True)
+    class _Chunking:
+        """What this ingest recorded about how the document was split."""
+
+        #: Chunking signatures this ingest added, in log order. Empty means the
+        #: aggregate refused every one -- the document has been chunked under
+        #: exactly these settings before, which is what "the text is unchanged"
+        #: looks like from here.
+        signatures: tuple[str, ...]
+        #: The newest *entity-linked* chunking, or `None`. Only extraction
+        #: produces one; `index_documents` omits links entirely.
+        event: object | None
+
+    async def _chunking_signatures(self, source_id: str) -> frozenset[str]:
+        """Every chunking this document's stream already records."""
+        stream = document_stream(tenant_id=self._project_id, source_id=source_id)
+        # `collect` rather than an async comprehension inside `frozenset(...)`:
+        # that builds an async generator and hands it to a synchronous
+        # constructor, which raises `TypeError: 'async_generator' object is not
+        # iterable` from a line that reads as though it iterates.
+        envelopes = await collect(self._event_store.read_stream(stream))
+        return frozenset(
+            envelope.event.chunking_signature
+            for envelope in envelopes
+            if isinstance(envelope.event, DocumentChunked)
+        )
+
+    async def _chunking_recorded_now(self, source_id: str, before: frozenset[str]):
+        """The chunkings this ingest added, and the linked one among them.
+
+        Two reads of one short stream per ingest, which is the price of
+        `build_graph` returning a count rather than the event it built. The
+        alternative -- passing `chunks=` so redstring hands the projection the
+        event directly -- costs a whole second `ChunkStore` holding the corpus
+        text again; see `infrastructure/knowledge/co_mentions.py`.
+        """
+        stream = document_stream(tenant_id=self._project_id, source_id=source_id)
+        envelopes = await collect(self._event_store.read_stream(stream))
+        added = [
+            envelope.event
+            for envelope in envelopes
+            if isinstance(envelope.event, DocumentChunked)
+            and envelope.event.chunking_signature not in before
+        ]
+        linked = [event for event in added if carries_entity_links(event)]
+        return self._Chunking(
+            signatures=tuple(event.chunking_signature for event in added),
+            event=linked[-1] if linked else None,
+        )
+
+    async def _apply_co_mentions(self, event: object | None) -> None:
+        """Fold this ingest's entity links into the live co-mention index.
+
+        A no-op with no index (the channel off) or no linked chunking (an
+        extraction that found nothing, or a re-chunk the aggregate refused).
+
+        **Live as well as on the log**, matching the card-vector channel below.
+        The index is folded from `DocumentChunked` at project open, but a
+        curriculum requested later in the same session reads the instance
+        `ProjectGraphs` opened -- so without this, a project's own ingest is
+        invisible to it until the next restart, which is indistinguishable from
+        the channel not working.
+        """
+        if self._co_mentions is None or event is None:
+            return
+        # `handle(event)`, one argument: `StoreProjection.handle` takes the
+        # event alone and passes the context to the decorated method itself.
+        # Calling it with `(None, event)` -- the shape the `@handles` method
+        # signature suggests -- raises a TypeError naming
+        # `CheckpointTrackingProjection`, which is a base class nothing here
+        # mentions.
+        await CoMentionProjection(self._co_mentions).handle(event)
+
+    async def _record_embeddings(self, entities: Sequence[Any], *, source_id: str) -> None:
         """Append this ingest's embeddings to the log, on both channels.
 
         **Nothing here raises.** Every call site is downstream of an extraction
@@ -592,30 +764,42 @@ class RedstringKnowledge:
         which is exactly the state every project was in before this method
         existed, so it degrades to the old behaviour rather than to a new one.
 
-        The two channels are independent on purpose -- see
-        `entity_embeddings` -- and the second is skipped when the first found
-        nothing only in the sense that both are guarded by the same provider.
-        A failure in one does not suppress the other.
+        **That guarantee is the reason `build_graph` is given no embedding
+        pair.** redstring embeds inside `build_graph`, after the extraction has
+        been folded into the graph store and appended to the log, and raises on
+        a failed or short reply -- so an endpoint that answers the probe and
+        dies on the batch discards a document the graph already contains, and
+        the caller sees a failed ingest for a document that is in fact there.
+        There is no `try/except` this adapter can put around that without also
+        swallowing the extraction's own failures. Owning both channels here is
+        what makes the paragraph above true rather than aspirational; the test
+        is `test_an_ingest_survives_an_embedding_endpoint_that_dies`.
+
+        **Called before `_consolidate`, and the order is load-bearing.**
+        `CandidateFinder` scores the third similarity feature against the
+        document channel's vectors, so consolidation has to run after they are
+        written or it silently falls back to two features -- which is a working
+        configuration and therefore not something anything would notice.
         """
 
-        if not entity_ids:
+        if not entities:
             return
 
         embeddings, vectors = await self._embedding_pair()
         if embeddings is None:
             return
 
-        # The document channel: redstring's own name vectors, recovered from
-        # the store it just wrote them to so they reach the log and survive a
-        # restart. Before this, every one of them died with the process.
+        # The document channel: the bare name, which is what redstring's own
+        # `_embed_entities` embedded when it owned this and what consolidation's
+        # thresholds were tuned against. Written straight into the store as
+        # well as the log, because `_consolidate` below reads that store.
         if vectors is not None:
             try:
-                event = await recover_document_embeddings(
-                    vectors=vectors,
-                    entity_ids=entity_ids,
+                event = await embed_entity_names(
+                    entities=entities,
+                    provider=embeddings,
                     tenant_id=self._project_id,
                     source_id=source_id,
-                    embedding_model=embeddings.model,
                 )
                 if event is not None:
                     await self._event_store.append(
@@ -623,6 +807,7 @@ class RedstringKnowledge:
                         [event],
                         ExpectedVersion.any_(),
                     )
+                    await vectors.upsert_many(event.embeddings)
             except Exception:
                 logger.exception("could not record document embeddings for %s", source_id)
 
@@ -646,7 +831,7 @@ class RedstringKnowledge:
                     graph=self._store,
                     provider=embeddings,
                     tenant_id=self._project_id,
-                    only=set(entity_ids),
+                    only={entity.id for entity in entities},
                 )
                 if event is not None:
                     await self._event_store.append(
@@ -1207,12 +1392,13 @@ class RedstringKnowledge:
         already been absorbed, which `_consolidate` counts rather than
         propagates.
         """
-        stream = document_stream(tenant_id=self._project_id, source_id=source_id)
-        envelopes = await collect(self._event_store.read_stream(stream))
-        if not envelopes:
-            raise KnowledgeError(f"no extraction recorded for source_id {source_id!r}")
-
-        entities = envelopes[-1].event.entities
+        # Through `entities_for` rather than reading the stream again. The two
+        # had the same three lines and the same latent defect -- the last event
+        # on a document's stream is a `DocumentChunked` now, not the extraction
+        # -- and one of them was fixed alone first. `entities_for`'s docstring
+        # already promised this is "the same set `reconsolidate` would act on";
+        # it is now the same call.
+        entities = await self.entities_for(source_id)
         async with tenant_scope(self._project_id):
             merges, failures = await self._consolidate(entities)
         return tuple(merges), failures
@@ -1225,9 +1411,24 @@ class RedstringKnowledge:
         """
         stream = document_stream(tenant_id=self._project_id, source_id=source_id)
         envelopes = await collect(self._event_store.read_stream(stream))
-        if not envelopes:
+        # The last `DocumentExtracted`, not the last event. This stream carries
+        # three event types -- extraction, chunking and embeddings -- and it
+        # used to carry one in practice, because `index` was a no-op with no
+        # chunk store and `build_graph` was given no event store. Both changed
+        # with the co-mention repair: `build_graph` records a `DocumentChunked`
+        # whenever it has a log, *whether or not* it was given a chunk store
+        # (its own docstring says so), so the last event on this stream is now
+        # routinely not an extraction. `envelopes[-1].event.entities` then
+        # raises `AttributeError` from inside pydantic, which names the wrong
+        # attribute rather than the wrong event.
+        extractions = [
+            envelope
+            for envelope in envelopes
+            if type(envelope.event).__name__ == "DocumentExtracted"
+        ]
+        if not extractions:
             raise KnowledgeError(f"no extraction recorded for source_id {source_id!r}")
-        return tuple(envelopes[-1].event.entities)
+        return tuple(extractions[-1].event.entities)
 
     @property
     def remembers_merges_across_restarts(self) -> bool:

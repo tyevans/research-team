@@ -4051,3 +4051,60 @@ the *duration*.
 route and a progress frame. Not done here because the small version is
 genuinely enough at the sizes this system runs at today, and the machinery is
 a feature rather than a refactor.
+
+### B132. Extraction's idempotence key should include the content digest
+
+`RedstringKnowledge.ingest` passes `event_store=` to `build_graph` — it has to,
+or extraction's `DocumentChunked` and the entity links it carries never reach
+the log. With a log the aggregate is loaded rather than built fresh, so
+`Document.record_extraction` can refuse — and it keys on the **model version
+alone**, not on the text:
+
+```python
+if model_version in self._current.extraction_model_versions:
+    return None
+```
+
+So a re-ingest of a document whose content has changed lands in the same branch
+as a re-ingest of an unchanged one.
+
+**Detected and refused, not handled.** `ingest` tells the two apart by whether
+anything recorded a new chunking during the call — `record_chunking` keys on a
+signature carrying a digest of the text, so it refuses a repeat and emits for
+new bytes — and raises a `KnowledgeError` naming the document on the changed
+case. That closes the silent half (the corpus recording the new revision while
+the graph describes the old one, with no error anywhere) and leaves the
+functional half open: **there is still no way to re-extract a document in
+place.** The repairs are a new `source_id` or a cleared project, and the error
+message says so.
+
+The real fix is upstream and small: `record_chunking` already keys on
+`f"{chunker_type}:{digest}:{model_version}"`, and `record_extraction` could key
+on `(model_version, content_digest)` the same way. Until it does, this
+repository is paying two reads of a document's stream per ingest to reconstruct
+a fact the aggregate could have kept.
+
+### B133. `get_by_entity` has no caller left, and the better answer is now available
+
+`ChunkStore.get_by_entity` now has **no caller at all**: `RecordedCoMentions`
+was its only one and reads `CoMentionIndex` instead.
+`GraphDetail`'s passage list, `usages` and `entity_definitions`' evidence all
+reach "which passages mention this entity" through BM25 over the entity's
+names, which is a *different question*: it finds passages that spell the name,
+not passages extraction attributed to the entity. Until this change the
+entity-link half of the corpus was empty, so there was no better answer to
+offer them. There is now.
+
+Two cautions for whoever takes it. `CoMentionIndex` holds no text — it is
+`(source_id, chunk_index, entity_ids)` and nothing else — so a surface that
+wants the *passage* has to join back to the retrieval corpus, whose chunking is
+a different split of the same document. The offsets do not line up and there is
+no correspondence to compute; the honest join is by `source_id` and character
+range, which means widening the index or reading the extraction chunking off
+the log.
+
+And the resolution of pre-consolidation ids through the alias graph currently
+lives inside `RecordedCoMentions` (`absorbed_ids`) — the narrowest place it
+could go, and the wrong place for a second consumer. If this is taken up, that
+belongs in a shared reader rather than copied; copied, the next consumer
+inherits the silent under-reporting rather than the fix.

@@ -153,6 +153,7 @@ from research_team.infrastructure.agent.workflow_tools import (
     build_workflow_tools,
 )
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
+from research_team.infrastructure.knowledge.co_mentions import CoMentionIndex
 from research_team.infrastructure.knowledge.entity_cards import index_cards
 from research_team.infrastructure.knowledge.entity_embeddings import (
     refresh_project_embeddings,
@@ -1814,6 +1815,14 @@ def build_application(
         build_chunk_store=lambda: build_chunk_store(
             config.chunk_store(), dimension=embedding_dimension
         ),
+        # No config switch and no `kind`: the co-mention index is three fields
+        # per passage with no backend to choose, folded from the same
+        # `DocumentChunked` events the corpus is. Unconditional for the reason
+        # `build_card_vector_store` is in-memory unconditionally -- it is
+        # derived, so having it costs a fold and not a decision. Unlike the
+        # corpus it does **not** honour `AGENT_CHUNK_STORE=none`: that setting
+        # turns off holding passage *text*, which this does not hold.
+        build_co_mentions=CoMentionIndex,
         # Cards are chunked with the same settings as the quotable corpus, and
         # for a different reason than symmetry: a card is short, so the window
         # almost never fires, and matching the corpus keeps one number to
@@ -1962,6 +1971,14 @@ def build_application(
             # a store nothing reads while the store the reader holds stayed at
             # whatever `open` left. `None` when cards are off.
             cards=graphs.cards(target_project_id),
+            # Where this ingest's entity links land live. They reach the log
+            # either way -- `build_graph` records the chunking whenever it has
+            # an event store -- so this is about the *current* session seeing
+            # its own passages rather than about durability.
+            # `graphs.co_mentions(...)` for `chunks`' reason: `open` already
+            # folded this one, and a second built here would be written to by
+            # ingest while every reader held the other.
+            co_mentions=graphs.co_mentions(target_project_id),
         )
         # Both tool sets travel back through the one channel `KnowledgeAttachment`
         # already has. A second callable for the corpus would need its own copy of

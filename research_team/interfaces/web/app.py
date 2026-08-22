@@ -143,7 +143,7 @@ from research_team.domain.topic import (
     TopicStatus,
 )
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
-from research_team.infrastructure.knowledge.co_mention_reader import ChunkCoMentions
+from research_team.infrastructure.knowledge.co_mention_reader import RecordedCoMentions
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.semantic_neighbours import VectorNeighbours
 from research_team.infrastructure.knowledge.timeline_reader import ProjectTimelineReader
@@ -2953,10 +2953,19 @@ def create_app(
         store = await graphs.open(project_id)
         return ProjectTimelineReader(project_id=project_id, store=store)
 
-    async def _co_mentions(project_id: UUID) -> ChunkCoMentions:
-        """This project's `CoMentionPort`, over the chunk store `graphs` owns.
+    async def _co_mentions(project_id: UUID) -> RecordedCoMentions:
+        """This project's `CoMentionPort`, over the co-mention index `graphs` owns.
 
-        `graphs.open` first and `graphs.chunks` second, in that order, which
+        **`graphs.co_mentions`, not `graphs.chunks`.** The retrieval corpus is
+        filled by `index_documents`, which has no entity knowledge and writes
+        every chunk with an empty `entity_ids` -- so this route answered 200
+        with nothing in it for the whole life of the feature. The index holds
+        the *extraction* chunking's links, folded from the same log.
+
+        The graph store goes in as well, because recorded links are
+        pre-consolidation ids; see `RecordedCoMentions`.
+
+        `graphs.open` first and the store lookups second, in that order, which
         is not stylistic: `CLAUDE.md` records a defect where a call site
         fetched chunks before opening and every first request for a
         newly-touched project answered 503 while every later one succeeded --
@@ -2964,11 +2973,11 @@ def create_app(
         """
         if graphs is None:
             raise HTTPException(status_code=503, detail="no graph read model is configured")
-        await graphs.open(project_id)
-        chunk_store = graphs.chunks(project_id)
-        if chunk_store is None:
-            raise HTTPException(status_code=503, detail="no chunk store is configured")
-        return ChunkCoMentions(chunk_store, project_id)
+        store = await graphs.open(project_id)
+        index = graphs.co_mentions(project_id)
+        if index is None:
+            raise HTTPException(status_code=503, detail="no co-mention index is configured")
+        return RecordedCoMentions(index, project_id, store)
 
     async def _semantic(project_id: UUID) -> VectorNeighbours | None:
         """This project's `SemanticPort`, or None when there is nothing to read.

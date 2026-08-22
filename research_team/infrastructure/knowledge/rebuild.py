@@ -17,15 +17,18 @@ from uuid import UUID
 from eventsource import ReplayFailedError, replay
 from eventsource.application.projections import StoreProjection, handles
 from redstring import (
-    ChunkProjection,
     ChunkStore,
     EntitiesEmbedded,
     GraphProjection,
     GraphStore,
 )
+from redstring.domain.ids import TenantId
+from redstring.events.document import DocumentChunked
+from redstring.ports.chunk_store import ChunkWriter
 from redstring.ports.vector_store import VectorWriter
 
 from research_team.application.knowledge import KnowledgeError
+from research_team.infrastructure.knowledge.co_mentions import CoMentionIndex
 from research_team.infrastructure.knowledge.entity_embeddings import (
     PROJECT_EMBEDDING_SOURCE,
 )
@@ -111,12 +114,107 @@ class EmbeddingsForModel(StoreProjection[VectorWriter]):
         )
 
 
+def carries_entity_links(event: DocumentChunked) -> bool:
+    """Whether this chunking came from extraction rather than from indexing.
+
+    **The discriminator is the presence of entity links, not the signature
+    string.** Parsing `f"{chunker_type}:{digest}:{model_version}"` looks like
+    the intended test and is unsafe: `MarkdownTableChunker.chunker_type` is
+    `"markdown_table(sliding_window)"` and a delegate's name is not ours to
+    constrain, while a model id may itself contain a colon -- Ollama's
+    `name:tag` is the obvious case, and `provider.model` is what lands in the
+    signature. Counting colons would then route an extraction event into the
+    retrieval corpus, which is the exact failure this test exists to prevent.
+
+    The link test is also *more* correct where it matters. `index_documents`
+    omits `entity_ids_by_index` entirely (`redstring/extraction/corpus.py`, and
+    its docstring says so), so its chunks are always unlinked -- and a
+    re-`index` after an extraction therefore cannot wipe the co-mention model
+    for that source. A signature test gives nothing for free there.
+
+    **The hole in the rule, stated rather than left to be found.** An
+    extraction that found no entities anywhere in a document produces an
+    all-unlinked event, which this reads as an indexing. Two consequences, both
+    accepted: that document's passages replace the retrieval corpus's at the
+    extraction chunk size, and `RedstringKnowledge.ingest` cannot use the event
+    to notice that the document's text has changed (see its
+    `_new_chunking_signatures`). The damage is bounded to a document nothing
+    was extracted from, and the alternative is the fragile string parse above.
+    """
+    return any(chunk.entity_ids for chunk in event.chunks)
+
+
+class RetrievalChunks(StoreProjection[ChunkWriter]):
+    """Folds only the *indexing* chunkings into the corpus quotes are drawn from.
+
+    There are two write paths over one `source_id`. `index_documents` chunks a
+    document at 1000/500 for retrieval; redstring's extraction chunks it at
+    `extraction_chunk_size` and is the only path that knows which entities came
+    out of which passage. `ChunkProjection` applies each with `replace_source`,
+    which is last-write-wins per `(tenant, source_id)` -- and extraction's is
+    last, so redstring's own projection would silently change the granularity
+    of every quote and citation on every project open.
+
+    That was not reachable before this change, because `build_graph` was given
+    no `event_store` and its `DocumentChunked` never reached the log. It is
+    reachable now, on the replay path only: live behaviour would be unchanged
+    and a reopened project would quote differently, which is the worst of the
+    available shapes. Hence a filter rather than redstring's `ChunkProjection`.
+    """
+
+    @handles(DocumentChunked)
+    async def _apply_chunking(self, _context: object, event: DocumentChunked) -> None:
+        # Not logged: every `DocumentChunked` is offered to both this and
+        # `CoMentionProjection`, and exactly one declines each, so a line here
+        # would be one per document per open.
+        if carries_entity_links(event):
+            return
+        await self._store.replace_source(
+            event.source_id, TenantId(event.tenant_id), event.chunks
+        )
+
+
+class CoMentionProjection(StoreProjection[CoMentionIndex]):
+    """Folds the *extraction* chunkings into a project's co-mention index.
+
+    The mirror of `RetrievalChunks`, and the whole of what a `chunks=` argument
+    to `build_graph` would have bought: `record_chunking` runs unconditionally
+    once `build_graph` has an event store, so the entity links are on the log
+    whether or not redstring was given anywhere to write them. See
+    `co_mentions.CoMentionIndex` for why that is a three-field model rather
+    than a third `ChunkStore`.
+
+    Not a `StoreProjection` over a `ChunkWriter`: `CoMentionIndex.replace_source`
+    is synchronous and takes ids rather than `StoredChunk`s, which is the point
+    of it existing.
+    """
+
+    @handles(DocumentChunked)
+    async def _apply_chunking(self, _context: object, event: DocumentChunked) -> None:
+        if not carries_entity_links(event):
+            return
+        self._store.replace_source(
+            event.source_id, {chunk.chunk_index: chunk.entity_ids for chunk in event.chunks}
+        )
+
+    async def _truncate_read_models(self) -> None:
+        """Not supported, matching every other projection here.
+
+        A cross-tenant wipe has no meaning for a model that holds one project,
+        and `ProjectGraphs` discards the whole instance on close.
+        """
+        raise NotImplementedError(
+            "CoMentionIndex holds one project; discard the instance rather than truncating it"
+        )
+
+
 async def rebuild_graph(
     store: GraphStore,
     *,
     feed,
     project_id: UUID,
     chunks: ChunkStore | None = None,
+    co_mentions: CoMentionIndex | None = None,
     vectors: VectorWriter | None = None,
     card_vectors: VectorWriter | None = None,
     embedding_model: str | None = None,
@@ -146,6 +244,15 @@ async def rebuild_graph(
     it truthfully says about an entity that has none. Nothing here can raise
     to catch that; it is why the corresponding test asserts retrieval, not
     that `rebuild_graph` merely returned.
+
+    `co_mentions` is the passage-to-entities index the curriculum's co-mention
+    channel reads -- three fields per passage, no text; see `CoMentionIndex`.
+    It is folded from the same `DocumentChunked` events as `chunks` and told
+    apart from them by the presence of entity links, which is also what stops
+    extraction's chunking replacing the retrieval corpus. Omitting *that*
+    filter is the silent-regression case: live behaviour would be unchanged and
+    a reopened project would quote at a different granularity. See
+    `RetrievalChunks`.
 
     `vectors` is the same shape and the same warning applies twice over, because
     the embedding half of this fold is *newer than the logs it has to read*.
@@ -184,7 +291,9 @@ async def rebuild_graph(
         # Folded in the same pass rather than a second replay: the log is
         # read once and both read models are derived from it, so a corpus can
         # never be a different age than the graph its citations sit alongside.
-        projections.append(ChunkProjection(chunks))
+        projections.append(RetrievalChunks(chunks))
+    if co_mentions is not None:
+        projections.append(CoMentionProjection(co_mentions))
     try:
         report = await replay(feed, projections, tenant_id=project_id, strict=True)
     except ReplayFailedError as error:

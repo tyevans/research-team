@@ -79,6 +79,16 @@ OpenVectorStore = Callable[[], Awaitable[Any | None]]
 #: are separate stores at all.
 BuildCardVectors = Callable[[], Any | None]
 
+#: Builds a fresh, empty co-mention index for one project.
+#:
+#: A callable rather than an import for `BuildStore`'s reason: this layer may
+#: not name redstring (`tests/test_architecture.py`), and the index is folded
+#: by a projection that does. Optional, and `None` is the whole of the
+#: co-mention channel staying off -- which is the state every test that
+#: predates it is in, and the state a `rebuild` that does not accept a
+#: `co_mentions=` keyword needs this class to stay in.
+BuildCoMentions = Callable[[], Any | None]
+
 
 class ProjectGraphs:
     """Opens, caches, and closes one `GraphStore` per project.
@@ -102,6 +112,7 @@ class ProjectGraphs:
         build_card_vectors: BuildCardVectors | None = None,
         embedding_model: str | None = None,
         build_chunk_store: BuildChunkStore | None = None,
+        build_co_mentions: BuildCoMentions | None = None,
         index_cards: IndexCards | None = None,
     ) -> None:
         self._build_store = build_store
@@ -127,6 +138,22 @@ class ProjectGraphs:
         # model call, so they are rebuilt from the folded graph on every open
         # rather than replayed.
         self._card_stores: dict[UUID, Any] = {}
+        # Which entities each passage named, per project. **Not a third chunk
+        # store**, and the first design of this was: three fields per passage
+        # rather than the passage, because the only reader asks for frozensets
+        # of ids and never touches a passage's text. A `ChunkStore` here would
+        # hold the whole corpus a third time in memory to record a set of ids.
+        # See `infrastructure/knowledge/co_mentions.py`, which carries the
+        # measurement that made the store unnecessary.
+        #
+        # Unlike the card store this one *is* projected into. The comment above
+        # says two `DocumentChunked` projections over one event store would
+        # both apply every event; that is true of `eventsource`'s
+        # `ProjectionOptions` and not of a projection written here, and
+        # `rebuild.RetrievalChunks` and `rebuild.CoMentionProjection` are the
+        # pair that discriminate.
+        self._build_co_mentions = build_co_mentions
+        self._co_mentions: dict[UUID, Any] = {}
         self._index_cards = index_cards
         # One vector store for the process, not one per project: it scopes by
         # tenant internally, and a second would buy isolation redstring already
@@ -242,9 +269,12 @@ class ProjectGraphs:
             # expects chunking (no `build_chunk_store` configured) is never
             # called with a parameter it doesn't accept, and the same holds for
             # a build with embeddings switched off.
+            co_mentions = self._build_co_mentions() if self._build_co_mentions else None
             folds: dict[str, Any] = {}
             if chunk_store is not None:
                 folds["chunks"] = chunk_store
+            if co_mentions is not None:
+                folds["co_mentions"] = co_mentions
             # `self.vectors()` was awaited above, so this is the opened store
             # rather than a second one. Read through the attribute rather than
             # awaited again to keep `open` holding one lock at a time.
@@ -260,6 +290,8 @@ class ProjectGraphs:
             await self._rebuild(store, project_id, **folds)
             if chunk_store is not None:
                 self._chunk_stores[project_id] = chunk_store
+            if co_mentions is not None:
+                self._co_mentions[project_id] = co_mentions
             if card_vectors is not None:
                 self._card_vectors[project_id] = card_vectors
             # After the replay, not inside it: cards are derived from the
@@ -286,6 +318,24 @@ class ProjectGraphs:
         `build_chunk_store` was never given to this instance (chunking off).
         """
         return self._chunk_stores.get(project_id)
+
+    def co_mentions(self, project_id: UUID) -> Any | None:
+        """Which entities each of this project's passages named, if `open` folded it.
+
+        Folded from the *extraction* chunking, whose passages carry
+        `entity_ids`; the retrieval corpus `chunks` returns never does, which
+        is why they are two read models and not one. `None` before `open` has
+        run for this project, or when no builder was supplied.
+
+        **Empty is the expected state for any project ingested before
+        2026-08-22.** Extraction's `DocumentChunked` was never persisted --
+        `build_graph` was given no `event_store` -- so there is nothing on an
+        old log for this to fold and no amount of `/rebuild` creates one.
+        Re-ingesting in place does not fix it either, because the aggregate now
+        refuses a second extraction under the same model. Delete the project
+        and ingest again.
+        """
+        return self._co_mentions.get(project_id)
 
     def card_vectors(self, project_id: UUID) -> Any | None:
         """This project's entity-card embeddings, if `open` folded any.
@@ -324,6 +374,9 @@ class ProjectGraphs:
         chunk_store = self._chunk_stores.pop(project_id, None)
         if chunk_store is not None and hasattr(chunk_store, "close"):
             await chunk_store.close()
+        # Popped, not closed: it holds no connection and no file. Evicting it
+        # is the whole of releasing it, and a later `open` folds a fresh one.
+        self._co_mentions.pop(project_id, None)
         card_store = self._card_stores.pop(project_id, None)
         if card_store is not None and hasattr(card_store, "close"):
             await card_store.close()

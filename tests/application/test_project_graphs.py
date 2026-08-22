@@ -310,18 +310,78 @@ async def test_a_chunk_store_is_built_once_per_project_and_handed_to_rebuild():
     this project's log, not a process-wide index, so sharing one across
     projects the way `_vector_store` is shared would leak one project's
     chunks into another's BM25 candidates.
+
+    The co-mention index comes from its own builder, not from this one -- it
+    holds no passage text and has no backend to choose -- so a build that
+    confused the two would hand `rebuild` the same object under both keywords.
+    That is asserted below rather than left to the type checker, of which there
+    is none.
     """
     chunk_store = _FakeChunkStore()
+    index = object()
     rebuild = _RecordingRebuild()
     graphs = ProjectGraphs(
-        build_store=_FakeStore, rebuild=rebuild, build_chunk_store=lambda: chunk_store
+        build_store=_FakeStore,
+        rebuild=rebuild,
+        build_chunk_store=lambda: chunk_store,
+        build_co_mentions=lambda: index,
     )
     project_id = uuid4()
 
     await graphs.open(project_id)
 
     assert graphs.chunks(project_id) is chunk_store
-    assert rebuild.calls == [{"chunks": chunk_store}]
+    assert graphs.co_mentions(project_id) is index
+    assert rebuild.calls == [{"chunks": chunk_store, "co_mentions": index}]
+
+
+async def test_no_co_mention_builder_rebuilds_without_the_keyword():
+    """`build_co_mentions` omitted must not add a `co_mentions=` kwarg.
+
+    Same contract as `chunks`, and the same failure if it is broken: a
+    `rebuild` that predates the co-mention channel raises `TypeError` on an
+    unexpected keyword. Every test in this file that does not name the builder
+    is that caller.
+
+    **Proved red on 2026-08-22** by building the index unconditionally: **12
+    failed** in this file, every test whose `rebuild` or store assertions did
+    not expect a `co_mentions` key. That breadth is the point -- an
+    unconditional keyword is not a local mistake, it changes what every caller
+    of `rebuild` is handed.
+    """
+    rebuild = _RecordingRebuild()
+    graphs = ProjectGraphs(build_store=_FakeStore, rebuild=rebuild)
+
+    await graphs.open(uuid4())
+
+    assert rebuild.calls == [{}]
+    assert graphs.co_mentions(uuid4()) is None
+
+
+async def test_closing_a_project_evicts_its_co_mention_index():
+    """The index is dropped on close, so a later open folds a fresh one.
+
+    **Evicted, not closed**, unlike the two chunk stores beside it: it holds no
+    connection and no file, so there is nothing to release. What matters is
+    that a reopened project does not keep answering from an index folded before
+    whatever made the caller close it.
+
+    **Proved red on 2026-08-22** by deleting the `_co_mentions.pop` line from
+    `close`: **1 failed, this one**, 19 passed.
+    """
+    index = object()
+    graphs = ProjectGraphs(
+        build_store=_FakeStore,
+        rebuild=_RecordingRebuild(),
+        build_co_mentions=lambda: index,
+    )
+    project_id = uuid4()
+    await graphs.open(project_id)
+    assert graphs.co_mentions(project_id) is index
+
+    await graphs.close(project_id)
+
+    assert graphs.co_mentions(project_id) is None
 
 
 async def test_no_chunk_store_configured_rebuilds_without_the_keyword():

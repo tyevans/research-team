@@ -8,7 +8,6 @@ from redstring import (
     Entity,
     ExtractionMethod,
     InMemoryGraphStore,
-    InMemoryVectorStore,
     Provenance,
     Relationship,
 )
@@ -17,7 +16,6 @@ from redstring.llm.adapters.fake_embedding import FakeEmbeddingProvider
 from research_team.infrastructure.knowledge.entity_cards import assemble_cards
 from research_team.infrastructure.knowledge.entity_embeddings import (
     embed_entities,
-    recover_document_embeddings,
 )
 
 DIMENSION = 32
@@ -159,33 +157,3 @@ async def test_a_short_reply_drops_its_batch_rather_than_misaligning_it():
     )
 
     assert event is None, "a batch that cannot be aligned must contribute nothing"
-
-
-@pytest.mark.asyncio
-async def test_recovery_reads_back_exactly_what_the_store_holds():
-    """The document channel, which never had its event handed to it.
-
-    redstring returns a count and keeps the event, so the only way to get the
-    vectors onto the log without changing how `build_graph` is called is to
-    fetch them back from the store it just wrote them to.
-    """
-    tenant_id = uuid4()
-    vectors = InMemoryVectorStore(dimension=DIMENSION)
-    entity_id = uuid4()
-    written = [0.5] * DIMENSION
-    await vectors.upsert(entity_id, written, tenant_id)
-
-    event = await recover_document_embeddings(
-        vectors=vectors,
-        entity_ids=[entity_id, uuid4()],
-        tenant_id=tenant_id,
-        source_id="notes",
-        embedding_model="fake",
-    )
-
-    assert event is not None
-    assert [record.entity_id for record in event.embeddings] == [entity_id], (
-        "an id with no stored vector contributes nothing and is not an error"
-    )
-    assert event.embeddings[0].vector == pytest.approx(written)
-    assert event.source_id == "notes"
