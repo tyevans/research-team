@@ -61,3 +61,29 @@ describe('the build target', () => {
     expect(build?.target?.toLowerCase()).toBe(target?.target?.toLowerCase())
   })
 })
+
+describe('output filenames', () => {
+  /** No content hash in any emitted filename.
+   *
+   *  A hash reappearing is silent: a hashed build serves perfectly well, and
+   *  the only symptoms are downstream and delayed. `scripts/check-size.mjs`
+   *  buckets by filename and its keys are these names, so a hash empties every
+   *  bucket; and `_RevalidatedStatics` in `app.py` sends `no-cache` *because*
+   *  these names are stable, which becomes a pure download tax the moment they
+   *  are not.
+   *
+   *  Asserted against `vite.config.ts` rather than against the built output.
+   *  The Python suite used to check this by listing
+   *  `web/static/assets` -- which stopped being possible when the built console
+   *  was untracked, since that directory does not exist until someone builds.
+   *  The config is the source of truth anyway: a build can only carry a hash
+   *  the config asked for.
+   */
+  it('carries no content hash', () => {
+    const output = viteConfig.build?.rollupOptions?.output as Record<string, string>
+
+    for (const key of ['entryFileNames', 'chunkFileNames', 'assetFileNames']) {
+      expect(output[key], `${key} must not interpolate a hash`).not.toContain('[hash]')
+    }
+  })
+})

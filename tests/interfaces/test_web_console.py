@@ -1,4 +1,4 @@
-"""What the server says when nobody has built the console.
+"""What `/` serves, built and unbuilt.
 
 The built console lives in `research_team/interfaces/web/static` and is no
 longer committed (`.gitignore` carries why), so a fresh clone reaches this path
@@ -38,3 +38,32 @@ def test_a_clone_with_no_built_console_is_told_how_to_build_it(
     # not, which is the same shape as every other unwired-feature answer here.
     assert response.status_code == 503
     assert "npm run build" in response.text
+
+
+@pytest.fixture
+def built(monkeypatch, tmp_path) -> TestClient:
+    """A console that exists, without requiring anyone to have run a build.
+
+    This case used to live in `test_web.py` as `test_index_is_served`, mounting
+    the real `STATIC_DIR`. That worked only while the built console was
+    committed; once untracked it asserted 200 and got the 503 below, in a job
+    that has no Node toolchain and so cannot produce the thing it was waiting
+    for. What it actually tests is the route -- that `/` returns the console's
+    HTML as HTML -- and a one-line `index.html` exercises that as well as a
+    real build does, in every clone.
+    """
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<!doctype html><title>console</title>")
+    monkeypatch.setattr(web_app, "STATIC_DIR", static)
+    return TestClient(
+        web_app.create_app(service=Mock(), feed=Mock(), turns=Mock()),
+        raise_server_exceptions=False,
+    )
+
+
+def test_a_built_console_is_served_at_the_root(built: TestClient) -> None:
+    response = built.get("/")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
