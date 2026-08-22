@@ -119,6 +119,10 @@ class AuthoringActivity:
                 "targets": list(targets),
                 "completed": completed,
                 "failures": failures,
+                # Parallel to `completed`, and the only route back to what the
+                # run wrote: each authoring run writes into its *own* session's
+                # workspace, so without these the files are reachable only by
+                # finding that session in the fork tree.
                 "sessions": sessions,
                 "current": None,
             }

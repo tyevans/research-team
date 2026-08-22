@@ -975,6 +975,13 @@ export const authoringFrameDto = z.object({
   targets: z.array(z.string()).default([]),
   completed: z.array(z.string()).default([]),
   current: z.string().nullable().default(null),
+  /** One session id per completed target, in the same order as `completed`.
+   *
+   * Parallel arrays rather than a list of pairs because that is the shape the
+   * server already builds, and zipping them here is cheaper than a wire change
+   * -- but it is a shape that can go wrong silently, so `courseLinks` below is
+   * the only thing allowed to read them together. */
+  sessions: z.array(z.string()).default([]),
   failures: z.array(z.object({ target: z.string(), detail: z.string().default('') })).default([]),
 })
 

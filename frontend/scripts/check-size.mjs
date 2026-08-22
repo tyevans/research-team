@@ -106,7 +106,25 @@ const BUDGET_KB = {
   // on the standing position above rather than on necessity, and this line
   // says so plainly so nobody later reads 96 as a number the measurement
   // demanded.
-  app: 96, // our code: every component, store, mapper and stylesheet rule
+  //
+  // 96 -> 104: the curriculum layer -- the area map, the path steps, the area
+  // detail, the authoring bar, the repository, the DTOs and mappers, and a
+  // tenth tab. **Measured at 97.0 kB against 96**, so the raise is 7 kB of
+  // headroom over a 1.0 kB overage rather than a number the measurement
+  // demanded, and this line says so for the reason the note above says the
+  // same of 96.
+  //
+  // What the 1 kB bought: a project's knowledge graph folded into learning
+  // areas and an ordered path, both readable in the console, with the
+  // evidence for every ordering claim on screen beside it.
+  //
+  // Nothing here is lazy, deliberately. The two lazy chunks in this build are
+  // canvases over ~60 kB of third-party drawing code; this is a few kB of
+  // ordinary components with no dependency of their own, and a chunk boundary
+  // around it would buy a fraction of a kilobyte on the default tab in
+  // exchange for a suspense boundary and a second network round trip on the
+  // tab a reader actually opened.
+  app: 104, // our code: every component, store, mapper and stylesheet rule
   react: 66, // react + react-dom + scheduler
   text: 34, // marked, dompurify, jsdiff — markdown and diff rendering
   // 48, from 38, on the same instruction and the same reasoning as `app-`.

@@ -258,30 +258,64 @@ came from* rather than merely written about it.
 
 ## 8. The UX
 
-A new facet, `path`, alongside the existing eleven. `Selection` already
-carries an id for every plain facet, so the routing grammar needs no change
-beyond the constant — a fact worth stating because it is the third facet in a
-row to cost exactly that.
+Two new facets, `area` and `path`, alongside the existing eleven. `Selection`
+already carries an id for every plain facet, so the routing grammar needs no
+change beyond the constants.
+
+**They share one tab, and that is a correction rather than the plan.** The
+first arrangement gave each its own tab in MATERIAL and broke the strip. So
+there is one **Curriculum** tab, and a radio group inside the pane chooses the
+reading — writing the facet rather than local state, so which reading somebody
+is looking at survives a reload and can be sent to a colleague, which is the
+whole argument for `path` being a facet at all.
+
+Three measured consequences, all recorded for whoever adds the twelfth tab:
+
+- Two tabs needed **837px** of strip against MATERIAL's **646px** floor, and
+  `project-stacked.browser.test.tsx` found two clipped controls in the narrow
+  band.
+- With one tab the strip needs **780.703125px**, so the floor moved **646 ->
+  784**. That leaves ~50px of clearance in the wide band where 646 had ~300: a
+  twelfth tab does not fit without shorter labels or a wider breakpoint.
+- `.tabs` gained `overflow-x: auto`. `project-stacked.browser.test.tsx` had
+  predicted this edit and deliberately left the choice open between wrapping
+  and accepting the clip. Wrapping was rejected because a wrapped tab row is
+  *taller*, so every tab strip in the console would change height at some
+  width; a scroller is inert until the content does not fit, which is every
+  existing use of `.tabs`.
 
 Three surfaces, in the order a person meets them:
 
 1. **The area map.** What this project turned out to be about: areas as
-   cards, sized by member count, each naming its anchor entities. Its job is
-   to be *falsifiable at a glance* — a reader who knows the subject can see
-   immediately that two areas should be one, and the projection is worth
-   nothing if they cannot.
-2. **The path.** Areas in prerequisite order, with the reason for each edge
-   readable and contested edges marked. Not a pretty graph: an ordered list
-   with rationale, because the question a person has is "why is this second"
-   and a force-directed drawing cannot answer it.
+   cards, each naming its anchor entities. Its job is to be *falsifiable at a
+   glance* — a reader who knows the subject can see immediately that two areas
+   should be one, and the projection is worth nothing if they cannot. That is
+   why a card leads with entity names rather than with a generated title: a
+   plausible title fits a wrong cluster perfectly.
+2. **The path.** Areas in prerequisite order, with the reason for each step
+   readable and contested edges lifted to the top. Not a graph drawing: the
+   question a person has is "why is this second", and a force-directed picture
+   cannot answer it while an ordered list with rationale can — and stays
+   readable at forty areas.
 3. **The course.** The generated files, in the reader that already renders
-   them.
+   them. Each authoring run writes into its **own** session's workspace, so
+   the run frame carries a session id per finished area and the panel links
+   them; without that the files are reachable only by finding the session in
+   the fork tree, which is to say not reachable.
 
-**Projection is explicit, not automatic.** A person asks for areas to be
-projected, and the result is shown with what it was derived from. An
-automatic re-projection on every extraction would silently rewrite a
-curriculum somebody was halfway through, and the cost of that is much higher
-than the cost of a button.
+**Reading is automatic; writing is not**, and an earlier draft of this section
+had that backwards. It said "a person asks for areas to be projected", which
+would mean a button and a poll in front of a pure function — the projection is
+recomputed per request behind a cache keyed on the graph's counts, so a plain
+GET is both cheaper and simpler than the machinery that would let somebody
+trigger it.
+
+What *is* explicit is authoring, and for the reason the earlier draft gave
+about projection: it costs three model turns per area, and a run started
+without somebody asking would commit a local model to twenty minutes. Nothing
+re-projects and nothing re-authors on extraction, so a curriculum somebody is
+halfway through is never rewritten underneath them.
+
 
 ## 9. What this does not do
 

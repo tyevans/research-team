@@ -1,4 +1,14 @@
-import { isRunning, progressOf, type AuthoringStatus } from '@domain/knowledge/authoring.ts'
+import {
+  courseLinks,
+  isRunning,
+  progressOf,
+  type AuthoringStatus,
+} from '@domain/knowledge/authoring.ts'
+import { SessionId } from '@domain/shared/identifier.ts'
+import { FilePath } from '@domain/shared/file-path.ts'
+import { AREAS_DIR, PATHS_DIR } from './course-paths.ts'
+
+import { sessionHref } from '../routing/routes.ts'
 
 /** Start writing courses, and see how the writing is going.
  *
@@ -75,7 +85,29 @@ export const AuthoringBar = ({
         )}
         {!running && last !== null && (
           <p className="m-0">
-            Last run wrote {last.completed.length} of {last.targets.length}.
+            Last run wrote {last.completed.length} of {last.targets.length}.{' '}
+            {/* Links, not a count. Each authoring run writes into its **own**
+                session's workspace, so without these the files it produced are
+                reachable only by finding that session in the tree -- which is
+                to say, not reachable. This is the whole way in to the thing the
+                feature exists to make. */}
+            {courseLinks(last).map(({ target, sessionId }) => (
+              <a
+                key={target}
+                href={sessionHref(
+                  SessionId(sessionId),
+                  null,
+                  FilePath.of(
+                    target === 'complete'
+                      ? `${PATHS_DIR}/${target}.md`
+                      : `${AREAS_DIR}/${target}/unit.md`,
+                  ),
+                )}
+                className="focus-visible:lay-ring-inward mr-2 text-fg underline"
+              >
+                {target}
+              </a>
+            ))}
             {/* Failures are listed rather than folded into the status. A run
                 that wrote seven of eight is `done`, and reporting it as failed
                 would hide seven courses that exist -- but reporting it as done

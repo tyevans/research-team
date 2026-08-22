@@ -885,6 +885,7 @@ export const toAuthoringRun = (raw: Dto<typeof dto.authoringFrameDto>): Authorin
   kind: raw.kind,
   targets: raw.targets,
   completed: raw.completed,
+  sessions: raw.sessions,
   current: raw.current,
   failures: raw.failures.map((f) => ({ target: f.target, detail: f.detail })),
 })

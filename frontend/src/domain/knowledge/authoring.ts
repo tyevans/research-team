@@ -25,6 +25,12 @@ export interface AuthoringRun {
   readonly kind: string
   readonly targets: readonly string[]
   readonly completed: readonly string[]
+  /** One session id per completed target, in `completed`'s order.
+   *
+   * Load-bearing rather than diagnostic: each authoring run writes into its own
+   * session's workspace, so this is the *only* way back to the files it wrote.
+   * Read through `courseLinks` and never index-matched by hand -- see there. */
+  readonly sessions: readonly string[]
   /** The area being authored right now, or `null` between and after them.
    *
    * The field that makes a long run legible. A run over eight areas is up to
@@ -44,6 +50,22 @@ export interface AuthoringStatus {
 }
 
 export const noAuthoring: AuthoringStatus = { current: null, last: null }
+
+/** Where each finished course can be read: one target, one session.
+
+ * Zips two parallel arrays, and refuses to guess when they disagree. A run
+ * whose `sessions` is shorter than its `completed` -- an older server, a frame
+ * from before the field existed -- yields the pairs it can and drops the rest,
+ * rather than pairing a target with the wrong run's session. A link to the
+ * wrong course is worse than no link: it opens something real, so nobody
+ * suspects it.
+ */
+export const courseLinks = (
+  run: AuthoringRun,
+): readonly { readonly target: string; readonly sessionId: string }[] =>
+  run.completed
+    .map((target, index) => ({ target, sessionId: run.sessions[index] ?? null }))
+    .filter((pair): pair is { target: string; sessionId: string } => pair.sessionId !== null)
 
 export const isRunning = (status: AuthoringStatus): boolean =>
   status.current !== null && status.current.status === 'running'
