@@ -1874,6 +1874,12 @@ def build_application(
             # `AGENT_CHUNK_STORE=none`, matching `ProjectGraphs.chunks`'s own
             # None-when-off return.
             chunks=graphs.chunks(target_project_id),
+            # `graphs.cards(...)`, for `chunks`' reason: `graphs.open` above
+            # already built and filled this project's card store, and a second
+            # one built here would be empty -- every ingest would re-card into
+            # a store nothing reads while the store the reader holds stayed at
+            # whatever `open` left. `None` when cards are off.
+            cards=graphs.cards(target_project_id),
         )
         # Both tool sets travel back through the one channel `KnowledgeAttachment`
         # already has. A second callable for the corpus would need its own copy of

@@ -16,6 +16,7 @@ from research_team.infrastructure.knowledge.entity_cards import (
     card_text,
     index_cards,
 )
+from tests.conftest import fake_provider
 
 
 def test_a_card_names_its_neighbours_and_their_relationship():
@@ -206,3 +207,75 @@ async def test_re_indexing_replaces_a_card_rather_than_adding_one(tmp_path, buil
     ids = {candidate.chunk.id for candidate in found}
     assert len(found) == len(ids), "duplicate chunk rows"
     assert len(found) <= 2, f"three indexings produced {len(found)} chunks"
+
+
+@pytest.mark.asyncio
+async def test_a_new_edge_reaches_the_other_end_s_card(tmp_path, build_adapter):
+    """An ingest refreshes both endpoints of every edge it created.
+
+    The input that separates a correct refresh from a plausible one. Re-carding
+    only the entities the ingested document *mentions* is the obvious
+    narrowing, and it is wrong in one direction only: an edge changes two
+    neighbourhoods, and the far endpoint may have been carded long ago by a
+    different document. That card then omits an edge the graph has, which is
+    invisible -- it is a truthful description of an older neighbourhood, and
+    every query it does answer still answers correctly.
+
+    Asserted from Babbage's side, which is the side a subject-only refresh
+    would miss if the extraction happened to name Lovelace first.
+    """
+    project_id = uuid4()
+    cards = InMemoryChunkStore(dimension=8)
+    adapter, _, _ = build_adapter(tmp_path, project_id, cards=cards)
+
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+    )
+
+    terms = tokenize("Ada Lovelace")
+    found = await cards.lexical_candidates(terms, project_id, 10)
+    ranked = list(rank_chunks(terms, found, 10))
+    babbage = [
+        candidate for candidate in ranked if candidate.chunk.text.startswith("Charles Babbage")
+    ]
+
+    assert babbage, "Babbage must have a card"
+    assert "Ada Lovelace" in babbage[0].chunk.text, (
+        "the edge reaches both ends, not only the one extraction named first"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_merge_leaves_one_card_for_the_pair(tmp_path, build_adapter):
+    """After consolidation the absorbed entity has no card of its own.
+
+    A refresh that skips absorbed entities on *write* but never removes what a
+    previous indexing wrote leaves the old card in place, where it keeps
+    matching every query the absorbed name used to -- so the merge looks undone
+    from the retrieval side while the graph is correct. `index_cards` skipping
+    absorbed entities is not enough on its own; the stale row has to go.
+    """
+    project_id = uuid4()
+    cards = InMemoryChunkStore(dimension=8)
+    adapter, _, _ = build_adapter(
+        tmp_path,
+        project_id,
+        cards=cards,
+        provider=fake_provider(
+            {
+                "entities": [
+                    {"name": "Ada Lovelace", "entity_type": "Person"},
+                    {"name": "Ada Lovelace", "entity_type": "Person"},
+                ],
+                "relationships": [],
+            }
+        ),
+    )
+
+    await adapter.ingest(SourceRef(source_id="notes", text="Ada Lovelace, twice."))
+
+    terms = tokenize("Ada Lovelace")
+    found = (await cards.lexical_candidates(terms, project_id, 20)).candidates
+    sources = {candidate.chunk.source_id for candidate in found}
+
+    assert len(sources) == 1, f"one entity, one card source; got {sources}"

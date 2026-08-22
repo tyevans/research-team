@@ -67,6 +67,7 @@ from research_team.infrastructure.knowledge.domain_schemas import (
     RESEARCH_CORPUS,
     resolve_domain,
 )
+from research_team.infrastructure.knowledge.entity_cards import index_cards
 from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
 from research_team.infrastructure.knowledge.temporal_expressions import (
@@ -302,6 +303,7 @@ class RedstringKnowledge:
         concurrency: int = 1,
         chunker: Chunker | None = None,
         chunks: ChunkStore | None = None,
+        cards: ChunkStore | None = None,
         judgements: AggregateRepository[EntityJudgements] | None = None,
     ) -> None:
         self._project_id = project_id
@@ -313,6 +315,10 @@ class RedstringKnowledge:
         # to a no-op rather than every call site having to know whether the
         # feature is configured before it can store a document at all.
         self._chunks = chunks
+        #: The entity-card corpus for this project, or None when cards are off.
+        #: A different store from `_chunks` on purpose -- see `ProjectGraphs`
+        #: for why the separation is structural rather than a convention.
+        self._cards = cards
         # Both default to redstring's own serial behaviour rather than to the
         # configured values, so a test constructing this directly gets the
         # deterministic pipeline unless it asks otherwise. The composition
@@ -514,6 +520,8 @@ class RedstringKnowledge:
         except Exception as error:  # provider transports raise their own types
             announce("failed", detail=f"extraction failed: {error}")
             raise KnowledgeError(f"extraction failed: {error}") from error
+
+        await self._recard()
 
         announce(
             "consolidated",
@@ -743,6 +751,37 @@ class RedstringKnowledge:
                 SlidingWindowChunker(default_chunk_size=1000, default_overlap=500)
             ),
             event_store=self._event_store,
+        )
+
+    async def _recard(self) -> None:
+        """Rebuild every card in this project. No model call, no-op when off.
+
+        **The whole tenant, not the entities this ingest touched**, and that is
+        correctness rather than laziness in the first version. An edge changes
+        *two* neighbourhoods and only one of them is the document's subject, so
+        a subject-only refresh leaves the far endpoint's card describing a graph
+        it no longer matches -- invisibly, because that card is a truthful
+        description of an older neighbourhood and everything it does answer is
+        still right. A consolidation is worse: the absorbed entity keeps the
+        card a previous pass wrote, which answers every query its name used to,
+        so the merge looks undone from the retrieval side while the graph is
+        correct. `index_cards` skipping absorbed entities on write does not
+        remove what an earlier write left.
+
+        The cost is real and is the obvious thing to narrow: O(entities) of
+        assembly per ingest, on top of an ingest that already costs model calls
+        per chunk. Narrowing it needs the two-endpoint rule above plus a way to
+        delete the cards of entities that stopped being canonical, and getting
+        either subtly wrong is silent. `tests/infrastructure/test_entity_cards.py`
+        holds one test per failure mode so a narrowing has something to fail.
+        """
+        if self._cards is None:
+            return
+        await index_cards(
+            graph=self._store,
+            cards=self._cards,
+            tenant_id=self._project_id,
+            chunker=SlidingWindowChunker(default_chunk_size=1000, default_overlap=500),
         )
 
     async def _store_document(self, source: SourceRef) -> None:

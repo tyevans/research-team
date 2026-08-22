@@ -53,6 +53,7 @@ async def build_adapter():
         adjudicate=False,
         embeddings=None,
         vector_store=None,
+        cards=None,
         judgements=False,
         **knowledge_kwargs,
     ):
@@ -79,6 +80,7 @@ async def build_adapter():
                 adjudicate=adjudicate,
                 embeddings=embeddings,
                 vector_store=vector_store,
+                cards=cards,
                 # A flag rather than a repository, because the repository has
                 # to be built over the store this factory creates and a caller
                 # cannot reach it until after the call returns. Off by default
