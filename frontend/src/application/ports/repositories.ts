@@ -525,6 +525,34 @@ export interface TimelineWindowQuery {
   readonly limit?: number
 }
 
+/** Which serialisation of a graph export to ask for.
+ *
+ * `html` is the one that opens on its own — a single self-contained file with
+ * the drawing in it. The other two exist because the first thing anybody does
+ * with a graph they were sent is try to load it somewhere else. */
+export type GraphExportFormat = 'html' | 'json' | 'graphml'
+
+/** How much of the graph to export.
+ *
+ * A discriminated union rather than three optional fields, so a caller cannot
+ * ask for an area scope and forget the slug — the server answers that with a
+ * 422, and a download route's 422 is a page the browser navigates to rather
+ * than an error this console can show. */
+export type GraphExportScope =
+  | { readonly kind: 'project' }
+  | { readonly kind: 'area'; readonly slug: string }
+  | { readonly kind: 'entity'; readonly entityId: string; readonly depth: number }
+
+export interface ExportRepository {
+  /** Where the authored course can be downloaded as one archive, or one area
+   *  of it. A URL and not a promise — see the adapter for why a download is
+   *  the browser's job rather than this console's. */
+  courseUrl(projectId: ProjectId, area?: string): string
+
+  /** Where a drawing of the graph, or a cut of it, can be downloaded. */
+  graphUrl(projectId: ProjectId, format: GraphExportFormat, scope?: GraphExportScope): string
+}
+
 export interface CurriculumRepository {
   /** The project's learning areas and the complete path through them.
    *

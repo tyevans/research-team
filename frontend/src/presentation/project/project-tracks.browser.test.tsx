@@ -206,6 +206,10 @@ const container = () =>
       neighborhood: vi.fn().mockResolvedValue({ root: NODES[0], entities: [], relationships: [] }),
     },
     autonomy: { read: vi.fn().mockResolvedValue(null) },
+    // The research track's graph pane reads this to build its download links.
+    // Absent, it survives the cast and throws on first render -- which is how
+    // it was found, by `test:browser` rather than by `verify`.
+    exports: { courseUrl: vi.fn(() => '/course.zip'), graphUrl: vi.fn(() => '/graph.html') },
   }) as unknown as Container
 
 const show = async (selection: Selection | null = null) => {
