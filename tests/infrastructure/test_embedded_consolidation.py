@@ -37,6 +37,7 @@ in every prefixing scheme tried (bare -0.235, `clustering:` -0.114,
 does not gate. See BACKLOG B58 for the table and what follows from it.
 """
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -47,6 +48,9 @@ from redstring import (
     InMemoryVectorStore,
 )
 from redstring.consolidation.policy import MergeDecision, decide
+from redstring.domain.blocking import blocking_keys_for
+from redstring.domain.entity import Entity
+from redstring.domain.provenance import Provenance
 from redstring.domain.similarity import (
     CONTAINMENT_CEILING,
     SimilarityFeatures,
@@ -418,3 +422,160 @@ async def test_half_a_configuration_is_no_configuration(
 
     matches = (await adapter.search("Nova Scotia Duck Tolling Retriever")).matches
     assert len(matches) == 2, "a provider with no store must not score as three features"
+
+
+#: `Julius Caesar` against `Gaius Julius Caesar`, from the two-article ingest of
+#: 2026-08-22 (`docs/design/curriculum-input-quality.md` §3), scored through a
+#: real `CandidateFinder` over the folded graph against `qwen3-embedding-0.6b`.
+#: A containment pair -- `{julius, caesar}` is a subset -- so the name is
+#: `CONTAINMENT_CEILING` exactly.
+_CAESAR_TRUE_PAIR = (CONTAINMENT_CEILING, 0.9786)
+
+#: `Gaius Marius` against `Gaius Rabirius`, from the same run. Two different
+#: Romans. Scores *above* the true pair on both features it carries.
+_TWO_ROMANS = (0.9223, 0.9493)
+
+
+def test_the_real_caesar_pair_is_rejected_and_b58_would_merge_two_different_romans():
+    """B58's cost measured on a real corpus, where its fixture measured none.
+
+    The three Caesars in `docs/design/curriculum-input-quality.md` §3 are B58
+    and nothing else. `Julius Caesar` and `Gaius Julius Caesar` are both
+    `person`, block together on `t:person`, and score:
+
+        0.5(0.8500) + 0.3(0.9786) + 0.2(0.0000)  =  0.7186  <  0.75
+
+    Rejected before the adjudicator, exactly as
+    `test_containment_does_not_fire_for_a_cross_document_pair` predicts for the
+    synthetic case -- and here the two entities are in the **same** document, so
+    the disjoint neighbourhoods are not a document-boundary artefact at all.
+    Measured on the real graph: 15 neighbour names against 8, intersection
+    empty. B58 is filed as a cross-document problem and is wider than that.
+
+    **The second half is the new finding, and it revises B58's own table.** That
+    entry measured "graph absent" over twenty hand-built pairs and recorded
+    `silent bad merges 0/10`. Over the real corpus -- 361 entities, 19,822
+    blocked pairs -- the same change takes auto-merges from **3 to 84**, 26 of
+    them from pairs previously rejected outright, because a present zero
+    compresses the whole distribution just under 0.75 and renormalizing lifts
+    it bodily past `HIGH_SIMILARITY`. What merges with no model call:
+
+        Gaius Marius        / Gaius Rabirius        0.9324
+        Cassius             / Crassus               0.9298
+        P. Servilius Isauricus / P. Servilius Vatia 0.9364
+        photosystem II      / Photosystem I         0.9779
+        Light-independent reactions / light-dependent reactions  0.9255
+        arsenate            / arsenite              0.9549
+        chlorophyll         / Chlorophyta           0.9237
+
+    The last three are the shape that matters: a negation, a one-letter
+    oxidation state, and a pigment against a phylum. `Gaius Marius`/`Gaius
+    Rabirius` is the one pinned below because it is the sharpest against the
+    Caesars -- it scores **higher on both features** than the pair we want, so
+    no threshold placed anywhere admits one and refuses the other.
+
+    This does not argue B58 is wrong: its recall finding stands and the fix is
+    still upstream. It argues the fix cannot land alone -- `HIGH_SIMILARITY`
+    has to move in the same change, which is what B59 already says about the
+    nomic prefix for the same reason. Nothing here changes scoring; these
+    numbers are the evidence for *not* changing it.
+
+    Proved red on 2026-08-22 by making `combined_score` in redstring's
+    `domain/similarity.py` drop a `0.0` graph feature from `present` -- which
+    is B58's fix. Both REJECT assertions failed: the true pair scored 0.8982
+    and the two Romans 0.9324. Restored from a saved copy, not `git checkout`.
+    """
+    true_name, true_embedding = _CAESAR_TRUE_PAIR
+    false_name, false_embedding = _TWO_ROMANS
+
+    assert false_name > true_name and false_embedding > 0.9, (
+        "the two different Romans look more alike than the one man's two names"
+    )
+
+    true_pair = _score(true_name, true_embedding, 0.0)
+    assert true_pair == pytest.approx(0.7186, abs=1e-4)
+    assert decide(true_pair) is MergeDecision.REJECT, "never reaches the adjudicator"
+
+    two_romans = _score(false_name, false_embedding, 0.0)
+    assert two_romans == pytest.approx(0.7459, abs=1e-4)
+    assert decide(two_romans) is MergeDecision.REJECT
+    assert two_romans > true_pair, (
+        "so no floor separates them: dropping `low` to 0.70 admits the Caesars "
+        "and 210 other pairs here, this one among them"
+    )
+
+    # B58's fix, as the graph feature going absent. The true pair is rescued
+    # into the band; the two Romans merge with no model call at all.
+    assert decide(_score(true_name, true_embedding, None)) is MergeDecision.ADJUDICATE
+    assert decide(_score(false_name, false_embedding, None)) is MergeDecision.MERGE
+
+
+def _caesar(entity_type: str) -> Entity:
+    """One of the two `Caesar` entities the real ingest produced."""
+    return _named("Caesar", entity_type)
+
+
+def _named(name: str, entity_type: str) -> Entity:
+    """An entity carrying the keys `blocking_keys_for` would give the real one."""
+    return Entity(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        name=name,
+        normalized_name=name.lower(),
+        entity_type=entity_type,
+        provenance=Provenance(
+            observed_at=datetime(2026, 8, 22, tzinfo=UTC),
+            extraction_method="llm",
+            confidence=1.0,
+        ),
+    )
+
+
+def test_the_type_key_gates_only_pairs_whose_names_already_disagree():
+    """What the `concept`/`person` split in §3 does and does not cost.
+
+    The lead was half right and the half matters. `blocking_keys_for` returns a
+    *union* of three keys and `_block` returns everything sharing **any** one,
+    so the prefix and soundex keys ignore the type entirely -- two entities
+    with one name block together whatever their types, and nothing downstream
+    reads a type either (`combined_score` has three features and none is it).
+    The real log proves that direction: `Caesar`(person) merged into
+    `Caesar`(concept) at 0.8000, reason "Identical strings referring to the
+    same concept", with nine further cross-type merges beside it.
+
+    **But when the names differ the type key is the only key left**, and then a
+    type disagreement is fatal. Measured on the real graph: `Caesar`(concept)
+    blocks 190 entities and `Julius Caesar` is not among them, because
+    `p:caesa`/`p:juliu` and `s:C260`/`s:J422` both differ and `t:` is all that
+    remains. That pair is never scored at all -- it fails at blocking, not at
+    the 0.75 floor.
+
+    So the failure is real and is extraction typing, and it got *worse* on
+    merge: before it, `Caesar`(person) did block with `Julius Caesar` on
+    `t:person`; after it the canonical Caesar is `concept` and that route is
+    gone. Fixing the typing alone would still not merge them -- the pair scores
+    0.6664 (name 0.8500, embedding 0.8048, graph 0.0) and would be rejected --
+    so both barriers are present and the scoring one is B58.
+
+    Proved red on 2026-08-22 in two steps against a saved copy of redstring's
+    `domain/blocking.py`, not `git checkout`. Appending the normalized type to
+    every key made the first assertion fail, naming both missing keys.
+    Dropping `entity_type_key` from `DEFAULT_STRATEGIES` made the second fail:
+    the differently-named pair shares nothing either way, so `t:person` really
+    is what carries such a pair when the types agree.
+    """
+    same_name = blocking_keys_for(_caesar("person")) & blocking_keys_for(_caesar("concept"))
+    assert same_name == {"p:caesa", "s:C260"}, "a shared name blocks across types"
+
+    cross_type = blocking_keys_for(_caesar("concept")) & blocking_keys_for(
+        _named("Julius Caesar", "person")
+    )
+    assert cross_type == frozenset(), "different names and different types share nothing"
+
+    same_type = blocking_keys_for(_caesar("person")) & blocking_keys_for(
+        _named("Julius Caesar", "person")
+    )
+    assert same_type == {"t:person"}, "agreeing on the type is the only thing that blocks them"
+
+    # And blocking is not the only barrier: scored, that pair is rejected too.
+    assert decide(_score(0.8500, 0.8048, 0.0)) is MergeDecision.REJECT

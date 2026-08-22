@@ -290,3 +290,121 @@ def test_slugify_never_returns_an_empty_segment():
     is the worse failure because it looks like it worked."""
     assert slugify("!!!", fallback="fallback") == "fallback"
     assert slugify("Marcus Aurelius, Emperor", fallback="x") == "marcus-aurelius-emperor"
+
+
+# An area's name comes from a member, and some members are sentences. These
+# four are shaped against the *plausible* implementation -- naming from
+# `anchors[0]`, which is what shipped and what anyone would write first --
+# rather than against a broken one. See `application/name_shape.py` for the
+# measure and `docs/design/curriculum-input-quality.md` §2 for the graph that
+# produced `observation-that-chloroplasts-resemble-cyanobacteria`.
+
+
+def _naming_fixture(names: dict[str, str]) -> Graph:
+    """Two disjoint cliques: six nodes to name, nine to keep the ceiling clear.
+
+    The six are a clique so every member's within-area centrality is equal and
+    the ranking falls through to entity id -- which makes `a0`..`a5` the anchor
+    order, exactly and on every machine, without the test having to reason
+    about weights. The nine exist only so `MAX_AREA_FRACTION` leaves the six
+    intact; at fifteen nodes the ceiling is six, and without them the area
+    under test is split before it is ever named.
+    """
+    a = [f"a{i}" for i in range(6)]
+    b = [f"b{i}" for i in range(9)]
+    edges = [
+        rel(x, y) for group in (a, b) for i, x in enumerate(group) for y in group[i + 1 :]
+    ]
+    return graph([entity(e, names.get(e)) for e in a + b], edges)
+
+
+def _area_of(projection, prefix: str):
+    return next(
+        area for area in projection.areas if area.anchors[0].entity_id.startswith(prefix)
+    )
+
+
+def test_an_area_is_not_named_after_a_sentence():
+    """The most central member is a proposition; the name comes from the next.
+
+    Proved red on 2026-08-22 by replacing `_naming_anchor`'s body with
+    `return ranked[0]` -- the implementation that shipped. The slug comes back
+    as `chloroplasts-are-found-in-the-leaves-of-plants`, which is the real
+    defect in miniature.
+    """
+    area = _area_of(
+        project_areas(
+            _naming_fixture(
+                {
+                    "a0": "Chloroplasts are found in the leaves of plants",
+                    "a1": "Cyanobacteria",
+                }
+            ),
+            [],
+        ),
+        "a",
+    )
+    assert area.slug == "cyanobacteria"
+    assert area.anchors[0].name == "Chloroplasts are found in the leaves of plants", (
+        "the ranking itself must be untouched; only the name taken from it changes"
+    )
+
+
+def test_the_title_is_set_from_the_same_member_as_the_slug():
+    """A clean slug with an empty title is half a fix and looks like a whole one.
+
+    `LearningArea.display_name` falls back to `anchors[0].name`, so an area
+    left titleless goes on *showing* the sentence in the console and in every
+    authored course while the URL looks fine. Proved red on 2026-08-22 by
+    dropping the `title=` argument from `_to_area`'s `LearningArea(...)`: the
+    slug assertion in the test above still passes, and this test and
+    `test_an_area_of_nothing_but_sentences_keeps_its_top_anchor` both fail.
+    """
+    area = _area_of(
+        project_areas(
+            _naming_fixture(
+                {
+                    "a0": "Chloroplasts are found in the leaves of plants",
+                    "a1": "Cyanobacteria",
+                }
+            ),
+            [],
+        ),
+        "a",
+    )
+    assert area.title == "Cyanobacteria"
+    assert area.display_name() == "Cyanobacteria"
+
+
+def test_an_area_of_nothing_but_sentences_keeps_its_top_anchor():
+    """Degradation is to the old behaviour, not to a placeholder.
+
+    Every candidate is clause-shaped, so there is no better name available and
+    inventing one (`area-1`, a hash) would trade a bad name for a meaningless
+    one. Proved red on 2026-08-22 by making `_naming_anchor` return `None` when
+    it finds no clean candidate: the slug falls back to an entity-id prefix,
+    which is the failure this asserts against.
+    """
+    sentences = {
+        f"a{i}": f"Chloroplast number {i} is found in the leaves of plants" for i in range(6)
+    }
+    area = _area_of(project_areas(_naming_fixture(sentences), []), "a")
+    assert area.slug.startswith("chloroplast-number-0-is-found")
+    assert area.title == sentences["a0"]
+
+
+def test_the_scan_for_a_clean_name_does_not_reach_the_periphery():
+    """A tidy name at rank six does not get to name the area.
+
+    The bound is the point: an area's identity should come from its anchors,
+    and a name lifted from a member the reader would not recognise as central
+    describes something else. Proved red on 2026-08-22 by removing the
+    `[:MAX_ANCHOR_SCAN]` slice -- the slug becomes `cyanobacteria`, taken from
+    the *least* central member of six.
+    """
+    names = {
+        f"a{i}": f"Chloroplast number {i} is found in the leaves of plants" for i in range(5)
+    }
+    names["a5"] = "Cyanobacteria"
+    area = _area_of(project_areas(_naming_fixture(names), []), "a")
+    assert area.slug.startswith("chloroplast-number-0-is-found")
