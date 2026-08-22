@@ -51,6 +51,15 @@ Rebuild = Callable[..., Awaitable[None]]
 #: whole of that feature staying off.
 BuildChunkStore = Callable[[], Any | None]
 
+IndexCards = Callable[..., Awaitable[int]]
+"""Write a card per entity from `graph` into `cards`, returning how many.
+
+A callable rather than an import, for `BuildStore`'s reason: this layer may
+not name redstring (`tests/test_architecture.py`), and card assembly reads
+redstring entities. Composition supplies
+`research_team.infrastructure.knowledge.entity_cards.index_cards`.
+"""
+
 #: Opens the one vector store this process shares, or returns None when
 #: embeddings are off. A callable rather than a store because opening one is
 #: asynchronous for pgvector and `build_application`, which builds this, is
@@ -78,11 +87,32 @@ class ProjectGraphs:
         rebuild: Rebuild,
         open_vector_store: OpenVectorStore | None = None,
         build_chunk_store: BuildChunkStore | None = None,
+        index_cards: IndexCards | None = None,
     ) -> None:
         self._build_store = build_store
         self._rebuild = rebuild
         self._build_chunk_store = build_chunk_store
         self._chunk_stores: dict[UUID, Any] = {}
+        # A *second* chunk store per project, built by the same factory and
+        # holding entity cards rather than passages. Two stores rather than one
+        # with a source-id convention, because the separation has to survive
+        # somebody not knowing about it: `application/entity_definitions.py`
+        # promises every citation is `(source_id, start, end)` into a real
+        # document, and a card is synthesised text no source contains. A
+        # citation into one would name a passage that does not exist while
+        # looking exactly as checked as a real one. A convention is enforced by
+        # whoever remembers it; a second store is enforced by `UsageReader` not
+        # holding it.
+        #
+        # Nothing projects into it. `eventsource`'s `ProjectionOptions` offers
+        # only a `tenant_filter`, so two `ChunkProjection`s over one event store
+        # would each apply every `DocumentChunked` and both stores would end up
+        # holding everything -- the exact crossing this split is for. Cards need
+        # no projection anyway: they are an assembly of graph state with no
+        # model call, so they are rebuilt from the folded graph on every open
+        # rather than replayed.
+        self._card_stores: dict[UUID, Any] = {}
+        self._index_cards = index_cards
         # One vector store for the process, not one per project: it scopes by
         # tenant internally, and a second would buy isolation redstring already
         # provides and pay for it in sockets. It is opened *here* rather than
@@ -183,6 +213,16 @@ class ProjectGraphs:
                 self._chunk_stores[project_id] = chunk_store
             else:
                 await self._rebuild(store, project_id)
+            # After the replay, not inside it: cards are derived from the
+            # *folded* graph, so anything that runs before the last event is
+            # applied would card a neighbourhood that is still filling in.
+            if self._index_cards is not None and self._build_chunk_store is not None:
+                card_store = self._build_chunk_store()
+                if card_store is not None:
+                    await self._index_cards(
+                        graph=store, cards=card_store, tenant_id=project_id
+                    )
+                    self._card_stores[project_id] = card_store
             self._stores[project_id] = store
             return store
 
@@ -197,6 +237,15 @@ class ProjectGraphs:
         `build_chunk_store` was never given to this instance (chunking off).
         """
         return self._chunk_stores.get(project_id)
+
+    def cards(self, project_id: UUID) -> Any | None:
+        """This project's entity-card store, if `open` has built one.
+
+        Mirrors `chunks` and is deliberately a *different* store: see the
+        comment on `_card_stores`. `None` before `open` has run for this
+        project, when chunking is off, or when no card indexer was supplied.
+        """
+        return self._card_stores.get(project_id)
 
     async def close(self, project_id: UUID) -> None:
         """Evict this project's store, closing it if it has a close to run.
@@ -213,6 +262,9 @@ class ProjectGraphs:
         chunk_store = self._chunk_stores.pop(project_id, None)
         if chunk_store is not None and hasattr(chunk_store, "close"):
             await chunk_store.close()
+        card_store = self._card_stores.pop(project_id, None)
+        if card_store is not None and hasattr(card_store, "close"):
+            await card_store.close()
 
     async def close_all(self) -> None:
         """Close every cached store, and the shared vector store. For shutdown.

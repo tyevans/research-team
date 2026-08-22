@@ -152,6 +152,7 @@ from research_team.infrastructure.agent.workflow_tools import (
     build_workflow_tools,
 )
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
+from research_team.infrastructure.knowledge.entity_cards import index_cards
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
 from research_team.infrastructure.knowledge.ontology_recorder import EventStoreOntologyRecorder
@@ -1770,6 +1771,16 @@ def build_application(
         # of another without a rebuild.
         build_chunk_store=lambda: build_chunk_store(
             config.chunk_store(), dimension=embedding_dimension
+        ),
+        # Cards are chunked with the same settings as the quotable corpus, and
+        # for a different reason than symmetry: a card is short, so the window
+        # almost never fires, and matching the corpus keeps one number to
+        # reason about instead of two that happen to agree.
+        index_cards=lambda *, graph, cards, tenant_id: index_cards(
+            graph=graph,
+            cards=cards,
+            tenant_id=tenant_id,
+            chunker=SlidingWindowChunker(default_chunk_size=1000, default_overlap=500),
         ),
     )
 

@@ -354,3 +354,110 @@ async def test_closing_a_project_closes_its_chunk_store_too():
 
     assert chunk_store.closed is True
     assert graphs.chunks(project_id) is None
+
+
+# ---------------- entity cards ----------------
+
+
+class _AnyRebuild:
+    """A rebuild that accepts `chunks=`, which `_CountingRebuild` does not.
+
+    These tests all configure a chunk store, and `open` passes `chunks=` only
+    when one exists -- so the older double is not usable here and swapping it
+    in would make every card test fail for a reason that has nothing to do
+    with cards.
+    """
+
+    async def __call__(self, store, project_id, **kwargs):
+        return None
+
+
+async def test_the_card_store_is_not_the_chunk_store():
+    """Two stores, so a card cannot reach a reader through `UsageReader`.
+
+    `application/entity_definitions.py` enforces that every citation is
+    `(source_id, start, end)` into a real document, because a claim a reader
+    cannot check against its source is the failure that module exists to
+    prevent. A card is synthesised text no source contains, so a citation into
+    one would name a passage that does not exist while looking exactly as
+    checked as a real one.
+
+    **This passes trivially, and that is the argument for the design rather
+    than a reason to skip it.** Filtering by a source-id convention would also
+    work today and would stop working the first time somebody indexed cards
+    without knowing the convention. Written down so that collapsing the two
+    stores fails here, next to the reasoning, rather than in a reader's
+    citation months later.
+    """
+    built: list[object] = []
+
+    def build_chunk_store():
+        store = object()
+        built.append(store)
+        return store
+
+    async def index_cards(*, graph, cards, tenant_id):
+        return 0
+
+    graphs = ProjectGraphs(
+        build_store=_FakeStore,
+        rebuild=_AnyRebuild(),
+        build_chunk_store=build_chunk_store,
+        index_cards=index_cards,
+    )
+    project_id = uuid4()
+
+    await graphs.open(project_id)
+
+    assert graphs.chunks(project_id) is not None
+    assert graphs.cards(project_id) is not None
+    assert graphs.cards(project_id) is not graphs.chunks(project_id)
+
+
+async def test_cards_are_indexed_from_the_folded_graph():
+    """Card assembly runs after the replay, not during it.
+
+    A card is a snapshot of a neighbourhood, so one taken before the last event
+    is applied describes a graph that is still filling in -- and nothing would
+    say so, because a partial neighbourhood is a well-formed card.
+    """
+    order: list[str] = []
+
+    class _RecordingRebuild:
+        async def __call__(self, store, project_id, **kwargs):
+            order.append("rebuild")
+
+    async def index_cards(*, graph, cards, tenant_id):
+        order.append("cards")
+        return 1
+
+    graphs = ProjectGraphs(
+        build_store=_FakeStore,
+        rebuild=_RecordingRebuild(),
+        build_chunk_store=lambda: object(),
+        index_cards=index_cards,
+    )
+
+    await graphs.open(uuid4())
+
+    assert order == ["rebuild", "cards"]
+
+
+async def test_a_project_without_a_card_indexer_still_opens():
+    """Cards are optional, the way chunking is.
+
+    A build with no card indexer must open exactly as it did before this
+    feature existed -- `cards()` answers `None` rather than raising, and
+    nothing about the graph or the corpus changes.
+    """
+    graphs = ProjectGraphs(
+        build_store=_FakeStore,
+        rebuild=_AnyRebuild(),
+        build_chunk_store=lambda: object(),
+    )
+    project_id = uuid4()
+
+    await graphs.open(project_id)
+
+    assert graphs.chunks(project_id) is not None
+    assert graphs.cards(project_id) is None
