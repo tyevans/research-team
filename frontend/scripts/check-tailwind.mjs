@@ -112,35 +112,49 @@ for (const file of sources) {
   })
 }
 
-/* `index.css`, exactly, rather than the `index-*.css` glob this arrived with.
-   The glob was written against hashed filenames and this commit's own change
-   removes the hash, so it now matches nothing and the check exits 1 before it
-   has read anything -- which is what it did on the first merge of main into
-   this branch.
+/** The built stylesheet, or a message naming the command that produces it.
 
-   Naming the file outright is also the stronger check. The glob existed to
-   fail on a *second* stylesheet, because a stale one left beside the fresh one
-   would make this answer about the wrong build; with a stable name there is
-   only ever one, and a stale build overwrites rather than accumulates. */
-const stylesheet = join(ASSETS, 'index.css')
-if (!existsSync(stylesheet)) {
-  console.error(
-    `No ${stylesheet}. Run \`npm run build\` first -- this check reads the built stylesheet, ` +
-      'and has nothing to say about a tree that has not been built.',
-  )
-  process.exit(1)
+    **Read here rather than at module scope, and that is load-bearing.** This
+    file is imported by `check-tailwind.test.ts` to unit-test
+    `findSilentUtilities`, and `npm run verify` runs `test:coverage` *before*
+    `build` -- so at import time during a test run the stylesheet legitimately
+    does not exist yet. With the read at module scope the `process.exit(1)`
+    below fired during the import and killed the vitest process, reported as
+    "process.exit unexpectedly called with 1" against a suite that had nothing
+    to do with it. That was invisible while `static/` was committed, because
+    the file was then always present; untracking it made every run of the
+    frontend job fail. `check-tailwind.test.ts`'s own docstring predicted this
+    shape and blamed the `process.argv[1]` guard -- the guard was fine, the
+    filesystem work simply sat outside it.
+
+    `index.css`, exactly, rather than the `index-*.css` glob this arrived
+    with. The glob was written against hashed filenames, which this build does
+    not produce, so it matched nothing and exited 1 before reading anything.
+    Naming the file outright is also the stronger check: the glob existed to
+    fail on a *second* stylesheet left beside the fresh one, and with a stable
+    name there is only ever one, because a stale build overwrites rather than
+    accumulates. */
+const readStylesheet = () => {
+  const stylesheet = join(ASSETS, 'index.css')
+  if (!existsSync(stylesheet)) {
+    console.error(
+      `No ${stylesheet}. Run \`npm run build\` first -- this check reads the built stylesheet, ` +
+        'and has nothing to say about a tree that has not been built.',
+    )
+    process.exit(1)
+  }
+  return readFileSync(stylesheet, 'utf8')
 }
-const css = readFileSync(stylesheet, 'utf8')
 
 /** CSS escapes every character that cannot appear bare in an identifier, which
  *  is why `.m-[0px]` is written `.m-\[0px\]` and `.py-1.5` is `.py-1\.5`. A
  *  grep that forgets this reports every arbitrary value as missing. */
 const escape = (name) => name.replace(/[.[\]/():%!#,*+>~^$@&?=|'"`{} ]/g, (char) => `\\${char}`)
 
-/** Whether a rule exists for this class. The trailing character has to be
- *  checked: a substring search for `.p-3` also finds `.p-32`, and one for
- *  `.m-0` finds `.m-0\.5`. */
-const emitsARule = (name) => {
+/** Whether a rule exists for this class, against `css`. The trailing character
+ *  has to be checked: a substring search for `.p-3` also finds `.p-32`, and
+ *  one for `.m-0` finds `.m-0\.5`. */
+const emitsARuleIn = (css) => (name) => {
   const selector = `.${escape(name)}`
   for (let at = css.indexOf(selector); at !== -1; at = css.indexOf(selector, at + 1)) {
     const next = css[at + selector.length]
@@ -156,7 +170,7 @@ export const findSilentUtilities = (used, emits) =>
     .sort((a, b) => a.name.localeCompare(b.name))
 
 if (process.argv[1]?.endsWith('check-tailwind.mjs')) {
-  const silent = findSilentUtilities(candidates, emitsARule)
+  const silent = findSilentUtilities(candidates, emitsARuleIn(readStylesheet()))
   for (const { name, where } of silent) {
     console.log(`✗ ${name} generates no rule — ${where.join(', ')}`)
   }

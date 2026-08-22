@@ -200,24 +200,12 @@ jobs:
         run: npm run deleted
         working-directory: frontend
 
-      # The built console is committed, because that is what `uv run web.py`
-      # serves and requiring a Node toolchain to run the web UI would be a
-      # regression. Committed output can go stale, so this is the gate: rebuild,
-      # and fail if the result differs from what the commit carries.
-      #
-      # `status --porcelain`, not `diff`: the output is content-hashed
-      # filenames, so a change can arrive purely as a new file alongside
-      # unchanged ones — and `git diff` does not see untracked files. That gate
-      # would pass on a commit whose console is missing a chunk.
-      - name: the committed build matches src/
-        run: |
-          npm run build
-          drift="$(git status --porcelain -- ../research_team/interfaces/web/static)"
-          if [ -n "$drift" ]; then
-            echo "::error::The committed console is stale. Run 'npm run build' in frontend/ and commit the result."
-            echo "$drift"
-            exit 1
-          fi
+      # The built console is no longer committed (see `.gitignore`), so there
+      # is nothing here to compare against and nothing to go stale. The build
+      # still runs, because the bundle budget below measures its output and a
+      # branch that cannot build is a branch that cannot serve.
+      - name: build
+        run: npm run build
         working-directory: frontend
 
       # After the build, because it measures the build. A dependency's weight is

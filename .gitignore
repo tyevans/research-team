@@ -28,10 +28,17 @@ mutants/
 .claude/worktrees/
 
 # --- frontend ---------------------------------------------------------------
-# Installed packages and tool caches. The *built* console is deliberately not
-# here: `research_team/interfaces/web/static/` is what `uv run web.py` serves,
-# so committing it is what keeps the web UI working without a Node toolchain.
+# Installed packages and tool caches, and the built console itself.
+#
+# `research_team/interfaces/web/static/` was committed for a year, because it is
+# what `uv run web.py` serves and committing it meant the web UI ran without a
+# Node toolchain. That stopped paying: every branch that touched `frontend/src`
+# rebuilt the same handful of chunk files, so any two such branches conflicted
+# on bytes nobody reads or reviews, and the conflict had to be resolved by
+# rebuilding rather than by reading. The cost of the swap is a prerequisite:
+# `cd frontend && npm run build` before the console will serve.
 node_modules/
+research_team/interfaces/web/static/
 frontend/.vite/
 *.tsbuildinfo
 frontend/coverage/

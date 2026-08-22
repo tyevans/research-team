@@ -876,10 +876,12 @@ async def test_stream_reaches_a_real_browser_over_a_real_socket(db_path, fake_mo
 # ---------------- the page itself ----------------
 
 
-async def test_index_is_served(client):
-    response = await client.get("/")
-    assert response.status_code == 200
-    assert "text/html" in response.headers["content-type"]
+# `test_index_is_served` moved to `test_web_console.py`, beside the unbuilt
+# case. It mounted the real `STATIC_DIR`, which no longer exists in a clone
+# that has not run `npm run build` -- so it asserted 200 and got the 503 that
+# absence is now supposed to produce, in a CI job with no Node toolchain to
+# fix it with. Its replacement builds a one-line `index.html` and tests the
+# route, which is what it was ever about.
 
 
 # ---------------- concurrent clients ----------------
